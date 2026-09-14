@@ -1,9 +1,12 @@
 import { expect, test } from 'bun:test'
+import { gzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
-import { Effect, FileSystem } from 'effect'
+import { Clock, Effect, FileSystem } from 'effect'
+import { TestClock } from 'effect/testing'
+import { makeReplayTimeline } from './session'
 import { canonicalHashV1, sha256 } from '../hash'
 import { retainedReplayFixture as fixture } from '../testing/retained-replay-fixture'
-import { openRetainedReplaySource, validateRetainedReplayCapture } from './source'
+import { openBacktestSource, validateBacktestSourceReceipt } from './source'
 import { Result } from 'effect'
 
 test('retained source preflights its bytes and advances only available records across the whole file', async () => {
@@ -12,8 +15,8 @@ test('retained source preflights its bytes and advances only available records a
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const path = yield* fs.makeTempFileScoped()
-      yield* fs.writeFileString(path, data.body)
-      const source = yield* openRetainedReplaySource(path, data.manifest, data.input.source.runId, data.capture)
+      yield* fs.writeFile(path, gzipSync(data.body))
+      const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
       expect(source.source.sourceManifestHash).toBe(canonicalHashV1(data.manifest))
       yield* source.advanceTo(data.manifest.firstAvailableAtMs - 1)
       expect((yield* source.cursor).processedRecords).toBe(0)
@@ -24,6 +27,39 @@ test('retained source preflights its bytes and advances only available records a
       yield* source.finish
       expect((yield* Effect.exit(source.advanceTo(data.manifest.firstAvailableAtMs)))._tag).toBe('Failure')
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('a delayed source tail is consumed after trading stops without advancing execution or database time', async () => {
+  const data = fixture()
+  const closeMs = data.manifest.lastAvailableAtMs - 35
+  const sqlTimes: string[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, gzipSync(data.body))
+      const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+      yield* TestClock.setTime(closeMs - 1)
+      const advance = yield* makeReplayTimeline(
+        source,
+        {
+          advanceTo: (at) =>
+            Effect.sync(() => {
+              sqlTimes.push(at)
+            }),
+        },
+        closeMs + 1,
+      )
+      yield* advance(closeMs + 1)
+      expect((yield* source.cursor).processedRecords).toBeLessThan(data.events.length)
+      const beforeTail = [...sqlTimes]
+      yield* source.finish
+      expect((yield* source.cursor).processedRecords).toBe(data.events.length)
+      expect(yield* Clock.currentTimeMillis).toBe(closeMs + 1)
+      expect(sqlTimes).toEqual(beforeTail)
+      expect((yield* Effect.exit(advance(data.manifest.lastAvailableAtMs)))._tag).toBe('Failure')
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(NodeServices.layer)),
   )
 })
 
@@ -46,17 +82,21 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
         { body: data.body, manifest: { ...data.manifest, lastAvailableAtMs: data.manifest.lastAvailableAtMs + 1 } },
         { body: data.body, manifest: { ...data.manifest, positions: [] } },
         { body: data.body, manifest: { ...data.manifest, positions: [...data.manifest.positions].reverse() } },
-        { body: reversed, manifest: { ...data.manifest, dataSha256: sha256(reversed) } },
+        { body: reversed, manifest: { ...data.manifest, dataSha256: sha256(gzipSync(reversed)) } },
         {
           body: duplicate,
-          manifest: { ...data.manifest, dataSha256: sha256(duplicate), recordCount: data.manifest.recordCount + 1 },
+          manifest: {
+            ...data.manifest,
+            dataSha256: sha256(gzipSync(duplicate)),
+            recordCount: data.manifest.recordCount + 1,
+          },
         },
       ]
       for (const input of cases) {
-        yield* fs.writeFileString(path, input.body)
+        yield* fs.writeFile(path, gzipSync(input.body))
         expect(
           (yield* Effect.exit(
-            Effect.scoped(openRetainedReplaySource(path, input.manifest, data.input.source.runId, data.capture)),
+            Effect.scoped(openBacktestSource(path, input.manifest, data.input.source.runId, data.capture)),
           ))._tag,
         ).toBe('Failure')
       }
@@ -78,18 +118,17 @@ test('preflight rejects omitted partition endpoints and interior records even wh
       for (const omitted of [matching[0], matching[1], matching.at(-1)]) {
         const events = data.events.filter((event) => event !== omitted)
         const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
-        yield* fs.writeFileString(path, body)
+        yield* fs.writeFile(path, gzipSync(body))
         const manifest = {
           ...data.manifest,
-          dataSha256: sha256(body),
+          dataSha256: sha256(gzipSync(body)),
           recordCount: events.length,
           firstAvailableAtMs: events[0]?.availableAtMs,
           lastAvailableAtMs: events.at(-1)?.availableAtMs,
         }
         expect(
-          (yield* Effect.exit(
-            Effect.scoped(openRetainedReplaySource(path, manifest, data.input.source.runId, data.capture)),
-          ))._tag,
+          (yield* Effect.exit(Effect.scoped(openBacktestSource(path, manifest, data.input.source.runId, data.capture))))
+            ._tag,
         ).toBe('Failure')
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -102,8 +141,8 @@ test('execution consumes the validated snapshot after the original file is chang
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const path = yield* fs.makeTempFileScoped()
-      yield* fs.writeFileString(path, data.body)
-      const source = yield* openRetainedReplaySource(path, data.manifest, data.input.source.runId, data.capture)
+      yield* fs.writeFile(path, gzipSync(data.body))
+      const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
       yield* fs.writeFileString(path, 'changed in place\n')
       yield* fs.remove(path)
       yield* fs.writeFileString(path, 'replacement file\n')
@@ -124,7 +163,7 @@ test('an entire omitted partition cannot redefine completeness by changing the f
   const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
   const manifest = {
     ...data.manifest,
-    dataSha256: sha256(body),
+    dataSha256: sha256(gzipSync(body)),
     recordCount: events.length,
     firstAvailableAtMs: events[0]?.availableAtMs,
     lastAvailableAtMs: events.at(-1)?.availableAtMs,
@@ -136,12 +175,10 @@ test('an entire omitted partition cannot redefine completeness by changing the f
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const path = yield* fs.makeTempFileScoped()
-      yield* fs.writeFileString(path, body)
-      const outcome = yield* Effect.exit(
-        openRetainedReplaySource(path, manifest, data.input.source.runId, data.capture),
-      )
+      yield* fs.writeFile(path, gzipSync(body))
+      const outcome = yield* Effect.exit(openBacktestSource(path, manifest, data.input.source.runId, data.capture))
       expect(outcome._tag).toBe('Failure')
-      expect(JSON.stringify(outcome)).toContain('every partition in the Torghut capture topology')
+      expect(JSON.stringify(outcome)).toContain('every partition in the declared source topology')
       expect(
         data.manifest.positions.filter((position) => position.topic === data.manifest.universe.topics.quotes),
       ).toHaveLength(13)
@@ -171,7 +208,7 @@ test('one partition cannot redefine its captured prefix or suffix while other ar
         const body = events.map((event) => JSON.stringify(event)).join('\n') + '\n'
         const manifest = {
           ...data.manifest,
-          dataSha256: sha256(body),
+          dataSha256: sha256(gzipSync(body)),
           recordCount: events.length,
           firstAvailableAtMs: events[0]?.availableAtMs,
           lastAvailableAtMs: events.at(-1)?.availableAtMs,
@@ -186,12 +223,10 @@ test('one partition cannot redefine its captured prefix or suffix while other ar
                 },
           ),
         }
-        yield* fs.writeFileString(path, body)
-        const outcome = yield* Effect.exit(
-          openRetainedReplaySource(path, manifest, data.input.source.runId, data.capture),
-        )
+        yield* fs.writeFile(path, gzipSync(body))
+        const outcome = yield* Effect.exit(openBacktestSource(path, manifest, data.input.source.runId, data.capture))
         expect(outcome._tag).toBe('Failure')
-        expect(JSON.stringify(outcome)).toContain('independently captured session offsets')
+        expect(JSON.stringify(outcome)).toContain('independently pinned receipt')
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
@@ -201,9 +236,9 @@ test('capture receipt replacement fails against the separately pinned hash', () 
   const data = fixture()
   const original = JSON.stringify(data.capture.value)
   const pinnedHash = sha256(original)
-  expect(Result.isSuccess(validateRetainedReplayCapture(original, pinnedHash))).toBe(true)
+  expect(Result.isSuccess(validateBacktestSourceReceipt(original, pinnedHash))).toBe(true)
   const changed = JSON.stringify({ ...data.capture.value, positions: data.capture.value.positions.slice(1) })
-  const result = validateRetainedReplayCapture(changed, pinnedHash)
+  const result = validateBacktestSourceReceipt(changed, pinnedHash)
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) expect(String(result.failure)).toContain('independently pinned capture hash')
 })

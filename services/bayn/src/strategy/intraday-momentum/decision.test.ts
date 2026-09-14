@@ -1,10 +1,11 @@
+import { streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
 import { makeExecutionCalendarObservation } from '../../cycle'
 import { canonicalHashV1 } from '../../hash'
-import { verifyIntradaySnapshot, type IntradayMarketSnapshot, type IntradaySnapshotRows } from '../../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../../market-data/intraday/model'
+import { verifyIntradaySnapshot, type IntradaySnapshotRows } from '../../market-data'
+import type { IntradayMarketSnapshot } from '../../market-data/intraday/model'
 import { strictParseOptions } from '../../schemas'
 import { decideIntradayMomentum, makeIntradayMomentumDefinition } from './decision'
 import {
@@ -211,24 +212,13 @@ const marketContextAt = (options: FixtureOptions) => {
     quotes,
     trades,
   } satisfies IntradaySnapshotRows
-  const snapshot = success(verifyIntradaySnapshot(request, rows)) as ArchiveVerifiedIntradayMarketSnapshot
-  return Object.freeze({ snapshot, session: boundSession })
+  const snapshot = success(verifyIntradaySnapshot(request, rows)) as IntradayMarketSnapshot
+  return Object.freeze({ snapshot: streamingFixtureFromRaw(snapshot, request).snapshot, session: boundSession })
 }
 
 const qualifyingReturns = Object.freeze({ AAPL: 50, AMZN: 45, NVDA: 40, SPY: 5 })
 
 describe('intraday momentum strategy', () => {
-  test('requires an archive-verified snapshot at the pure decision boundary', () => {
-    type DecisionSnapshot = Parameters<typeof decideIntradayMomentum>[0]['snapshot']
-    const acceptsArchiveVerified: ArchiveVerifiedIntradayMarketSnapshot extends DecisionSnapshot ? true : false = true
-    const rejectsEnvelopeOnly: IntradayMarketSnapshot extends DecisionSnapshot ? false : true = true
-
-    expect({ acceptsArchiveVerified, rejectsEnvelopeOnly }).toEqual({
-      acceptsArchiveVerified: true,
-      rejectsEnvelopeOnly: true,
-    })
-  })
-
   test('binds one small result-blind protocol to the full-session execution model', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     expect(protocol).toEqual(defaultIntradayMomentumProtocolDocument)
@@ -526,24 +516,18 @@ describe('intraday momentum strategy', () => {
     ).toMatchObject({ reason: 'snapshot-identity' })
   })
 
-  test('rejects a fully verified snapshot sourced from alternate archive topics', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
-    expect(
-      error(
-        decideIntradayMomentum(
-          marketContextAt({
-            rangeEndAt: '2026-08-18T18:00:00.000Z',
-            returnBps: qualifyingReturns,
-            sourceTopics: {
-              bars: 'torghut.bars.1m.experimental.v1',
-              quotes: 'torghut.quotes.experimental.v1',
-              trades: 'torghut.trades.experimental.v1',
-            },
-          }),
-          protocol,
-        ),
-      ),
-    ).toMatchObject({ reason: 'snapshot-identity' })
+  test('rejects alternate raw topics before admitting a strategy snapshot', () => {
+    expect(() =>
+      marketContextAt({
+        rangeEndAt: '2026-08-18T18:00:00.000Z',
+        returnBps: qualifyingReturns,
+        sourceTopics: {
+          bars: 'torghut.bars.1m.experimental.v1',
+          quotes: 'torghut.quotes.experimental.v1',
+          trades: 'torghut.trades.experimental.v1',
+        },
+      }),
+    ).toThrow('identity-or-availability')
   })
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {
@@ -681,20 +665,14 @@ describe('intraday momentum strategy', () => {
     expect(signal?.rejectionReasons).toContain(expectedReason as IntradayMomentumRejectionReason)
   })
 
-  test('requires a complete rolling baseline for every configured liquid symbol', () => {
-    const protocol = success(decodeDefaultIntradayMomentumProtocol())
-    expect(
-      error(
-        decideIntradayMomentum(
-          marketContextAt({
-            rangeEndAt: '2026-08-18T18:00:00.000Z',
-            returnBps: qualifyingReturns,
-            omitFirstBarFor: 'AAPL',
-          }),
-          protocol,
-        ),
-      ),
-    ).toMatchObject({ reason: 'snapshot-coverage', symbol: 'AAPL' })
+  test('rejects an incomplete required rolling feature before admitting a strategy snapshot', () => {
+    expect(() =>
+      marketContextAt({
+        rangeEndAt: '2026-08-18T18:00:00.000Z',
+        returnBps: qualifyingReturns,
+        omitFirstBarFor: 'AAPL',
+      }),
+    ).toThrow('Required rolling feature is unavailable for AAPL')
   })
 
   test('locally excludes a candidate missing the first rolling bar while preserving a fresh peer', () => {
@@ -717,7 +695,7 @@ describe('intraday momentum strategy', () => {
       {
         symbol: 'AAPL',
         reason: 'not-ready',
-        message: 'intraday candidate lacks a complete rolling bar window',
+        message: 'matching complete rolling feature is unavailable',
       },
     ])
   })

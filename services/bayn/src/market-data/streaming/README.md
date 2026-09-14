@@ -1,13 +1,13 @@
 # Streaming market data
 
-The execution worker uses `BAYN_MARKET_DATA_MODE=streaming` with `BAYN_KAFKA_BROKERS`, `BAYN_KAFKA_USERNAME`,
+The execution worker requires `BAYN_KAFKA_BROKERS`, `BAYN_KAFKA_USERNAME`,
 `BAYN_KAFKA_PASSWORD`, and `BAYN_KAFKA_TIMESTAMP_POLICY=dorvud.producer-clock.v1`. The reviewed bootstrap deadline
 is 300 seconds. SCRAM-SHA-512 uses the existing 9092 listener. The KafkaUser secret reaches Bayn through the existing
 secret reflection path. The public status service and archive research commands do not start a consumer.
 
-Optional shadow mode keeps archive execution and compares raw input hashes and strategy results at the same observation.
-Logs distinguish different input cuts, unavailable streams, invalid decisions and matching or mismatching decisions.
-Streaming execution blocks when its required inputs are unavailable. Any mode change requires reviewed GitOps.
+Trading has one market-data capability: load a verified feature and raw-data snapshot, then verify its source reference.
+The production adapter consumes Kafka; backtesting supplies recorded events on its simulated clock. An unavailable
+adapter blocks observations. ClickHouse remains the historical archive and does not supply an execution fallback.
 
 The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
 
@@ -47,59 +47,17 @@ the trading runtime's configured 300-second deadline is unchanged. Every partiti
 bootstrap end offset. The command retains all decoding, identity, availability, and exact raw-bar join checks.
 An expired budget is a failed probe and produces no successful receipt.
 
-## Recorded decisions
+## Historical execution
 
-From the built service directory:
+The backtest command drives the same trading engine using a frozen event source and a simulated clock.
+Raw events, matched feature revisions, candidate exclusions, and freshness checks use the production projection.
+The source adapter declares simulated availability and preserves original event and ingestion times. Kafka
+captures retain their independently recorded partition bounds and source hashes. Regenerated features retain
+actual generation timestamps and explicitly modeled availability.
 
-```sh
-node dist/streaming-replay-command.js --file decision.json
-node dist/streaming-replay-command.js --decision <decision-content-hash>
-```
-
-The second form reads PostgreSQL using the existing Bayn database configuration. Both forms reproduce the saved
-input cut, strategy, planner and risk evidence. They neither submit orders nor rewrite evidence. A replay receipt
-does not grant authority to trade or establish actual consumer availability for unused records.
-
-## Historical experiments
-
-Live snapshots and historical observations share `selectStreamingInputs` for raw selection, exact feature revisions,
-candidate exclusions, and input validation. The live constructor separately requires observed availability and a
-complete Kafka source cut. Calling the shared selector cannot turn a simulated projection into live execution evidence.
-
-`createHistoricalMarketCursor` and `advanceHistoricalMarketCursor` accept ordered arrivals incrementally and retain
-only the projection's bounded history. Both the cursor and the existing JSON runner use the same arrival ordering and
-reducer. The JSON command below still has its explicit 500,000-record input limit and evaluates one observation; the
-incremental cursor is the input primitive for the full-session execution driver, not an execution or accounting receipt.
-
-```sh
-node dist/streaming-replay-command.js --historical experiment.json
-```
-
-The input uses `bayn.historical-streaming-strategy-input.v1`, the current strategy's `protocolHash` and
-`behaviorHash`, a `sessionDate`, the retained Alpaca `calendar` response (`date`, `open`, `close`), and an
-`arrivals` document described below. The command validates the calendar, decision interval, raw records,
-freshness, and exact feature-to-bar joins before calling the same intraday momentum core. It evaluates all six
-candidates and SPY. Missing candidates remain explicit exclusions; a missing benchmark or absence of every
-candidate rejects the experiment observation. Invalid input cannot become a successful no-trade result.
-
-The resulting research receipt binds the input, protocol, behavior, calendar, delivery model, window, selected
-feature payloads and simulated arrival times to its content hash. It contains signals and target weights,
-without an executable snapshot or order authority. `--historical` reads only the supplied file and opens no
-database, Kafka, or broker connection. Keep the source export with the receipt to reproduce the run.
-
-`replayHistoricalMarketArrivals` uses the same reducer with an immutable run ID, supplied arrival times and the
-declared `availability-topic-partition-offset` tie-break. It consumes original raw envelopes and feature payloads
-exported with their Kafka coordinates. A delivery model that reverses offsets within one Kafka partition is rejected
-before projection, including reversals later in the supplied experiment. Its output explicitly identifies simulated consumer availability. Feature
-computation timestamps are never backdated. A `regeneratedFeatures` declaration binds the generation run ID and
-actual recording time when an experiment assigns earlier simulated arrivals. Every historical projection is marked
-as simulated and is rejected by the live snapshot boundary. A regenerated feature therefore cannot be represented as an original
-historical receipt.
-
-The existing bar archive stores ingestion times at millisecond precision. Exact feature-input reconstruction must join archived bars to feature provenance by Kafka coordinates, recover the original nanosecond timestamp from that provenance, and verify every producer content hash. A millisecond row alone cannot establish the original nanosecond revision. The deployment check verified all 180 referenced bar hashes for six features through this path.
-
-The existing archive economics harness remains a separate evidence mode. Feature plumbing, deterministic replay and
-PAPER operation do not establish profitability.
+The backtest report includes decisions, orders, simulated fills, positions, fees, and PostgreSQL/TigerBeetle
+reconciliation for every requested session. The decision-only historical experiment and archive replay commands
+have been removed. See the [backtest workflow](../../../README.md#replay-and-backtesting).
 
 ## Session measurements
 
@@ -209,34 +167,34 @@ closed-window economic reports.
 ## Full calendar-session command
 
 ```sh
-BAYN_REPLAY_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
-BAYN_REPLAY_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
-BAYN_REPLAY_TIGERBEETLE_CLUSTER_ID=20912 BAYN_REPLAY_TIGERBEETLE_LEDGER=70912 \
-node dist/session-replay-command.js --input session.json --arrivals source.ndjson \
-  --capture capture.json --capture-sha256 "$CAPTURE_SHA256" --output new-run-directory
+BAYN_BACKTEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
+BAYN_BACKTEST_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
+BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID=20912 BAYN_BACKTEST_TIGERBEETLE_LEDGER=70912 \
+node dist/backtest-command.js --input session.json --arrivals source.ndjson.gz \
+  --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
 Run this command against separately provisioned local stores. It accepts only local PostgreSQL databases whose names
 end in `_replay`/`_test` (or `replay`/`test`) and a local TigerBeetle replica. It requires an unused PostgreSQL authority
 state and never clears either database. Give each attempt a distinct `replicate` in the frozen input; resetting
-PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. A 30-minute wall-clock deadline bounds a stalled offline run without changing its modeled session interval.
+PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. Individual database and reconciliation operations retain their deadlines; the total backtest length is governed by the selected sessions.
 The normal service composition does not load this command or its virtual clock.
 
-`bayn.execution-replay-session.v1` binds the calendar session, source manifest, unchanged source-controlled strategy
+`bayn.backtest.v1` binds consecutive calendar sessions, source manifest, unchanged source-controlled strategy
 and build, opening cash, IOC latency/liquidity/slippage/fee assumptions, and production polling/reconciliation cadence.
 It also retains asset metadata and its observation time. Asset eligibility captured after the session must explicitly
 use `counterfactual-current-asset-eligibility`; it cannot be described as historical as-of evidence. Embedded builds
 must match the input build; source invocations identify their build verification as `development-configured`.
 
-The `bayn.retained-replay-source.v1` manifest binds the SHA-256 of the complete NDJSON file, record count, export
-coverage interval, first/last arrival, partition bounds, universe, origin, and delivery policy. Each line uses
+The `bayn.backtest-source.v1` manifest requires `encoding: "ndjson-gzip"` and binds the SHA-256 of the complete compressed NDJSON file, record count, export
+coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka` or `alpaca-rest` transport. Each line uses
 `HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
 while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
 records outside the frozen cuts, and changed bytes/counts. The current Torghut capture profile independently requires
 three bar partitions, thirteen quote partitions, three trade partitions, and three retained feature partitions.
 The offline regenerated feature stream has its own single partition. Every partition needs a cut, including empty
 cuts with equal start/end offsets. Record-derived partition inventories cannot establish source completeness.
-The verified first and last arrivals must also span the exchange session; declared coverage alone is insufficient.
+The independently pinned receipt must cover the full exchange session. The file must match its exact first/last arrivals; a quiet opening or closing interval does not fabricate missing events.
 Every partition cut must also equal the independently captured offset receipt. Its separately supplied SHA-256 is
 trusted configuration, outside the editable session input; replacing the receipt without that authority is rejected.
 It rehashes the consumed stream before a final report. Initial and final reconciliation use the configured live
@@ -262,8 +220,7 @@ full-process crash/restart test.
 Each replayed IOC retains its actual modeled arrival quote, source coordinates and record hash, quote availability
 and age, and the fill, cancellation or rejection reason. Price-limit cancellations include the rounded adverse price
 used by the execution model. Order limits and quantities remain on the same broker order; the report binds the
-latency, slippage, liquidity and fee assumptions. These receipts survive broker checkpoints. Older checkpoints may
-lack an execution receipt and cannot establish an unsuccessful order's arrival cause.
+latency, slippage, liquidity and fee assumptions. These receipts survive broker checkpoints. Every newly settled IOC retains its execution receipt.
 
 Every pass also retains the production cycle result and broker state. The final report binds the pass file's SHA-256
 and record count. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies
@@ -271,15 +228,24 @@ the existing lifecycle rule that waits after terminal entry intents, including a
 distinguishes a waiting bound decision from a fresh strategy evaluation. Retaining these facts does not change entry
 thresholds, the lifecycle rule, or the modeled execution price.
 
-The required capture receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
+For captured Kafka, the required receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
 `coverageEndMs`, `universe`, and complete `positions` (`topic`, `partition`, `startOffset`, `endOffsetExclusive`).
 Capture the raw cuts with Kafka ListOffsets at both requested boundaries, resolving a missing timestamp match to the
 captured high-water mark. Obtain regenerated-feature extents from the independently retained producer receipt.
 Freeze the receipt and its byte SHA-256 at capture time; do not derive them from whichever records the replay export
-happens to contain. Supply that trusted hash through `--capture-sha256`. The command checks both receipt bytes and
+happens to contain. Supply that trusted hash through `--source-receipt-sha256`. The command checks both receipt bytes and
 every manifest cut before touching a database, copies the receipt to its output, and binds its hash into the run ID
 and final report. This establishes completeness relative to the pinned capture authority; it does not authenticate
 market prices or calibrate the data feed.
+
+REST exports use `bayn.alpaca-rest-replay-receipt.v2`, which binds the dataset ID, acquired symbols, unacquired strategy
+candidates, raw chunk hashes, Dorvud feature receipt, final source hash, modeled coordinate policy, and `NOT_OBSERVED`
+original stream availability. The declared universe is a strategy contract, not a claim that every candidate was
+acquired. The receipt must list the exact complement of its acquired symbols; unacquired candidates remain excluded.
+Version 2 normalization includes raw delivery delay after bar finalization. Its virtual
+streams have one partition each. The same source validator and projection consume both transports. See the
+[historical data workflow](../../../README.md#historical-data-workflow) for acquisition, ClickHouse publication,
+verified restoration, and feature production outside the deployed service.
 
 ## Process recovery acceptance
 

@@ -35,6 +35,7 @@ jobs:
           while IFS= read -r path; do
             case "${path}" in
               services/bayn/* | \
+              services/dorvud/* | \
               packages/scripts/src/bayn/* | \
               packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts | \
               argocd/applications/bayn/* | \
@@ -161,7 +162,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:18-alpine
@@ -250,6 +251,19 @@ jobs:
         run: docker rm -f bayn-replay-tigerbeetle || true
       - name: Verify Bayn ClickHouse Date query semantics
         run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
+      - name: Set up Java 25 for shared Dorvud features
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+      - name: Build the production Dorvud feature jar
+        working-directory: services/dorvud
+        run: ./gradlew :technical-analysis-flink:uberJar
+      - name: Verify historical storage and shared feature export
+        env:
+          BAYN_TEST_DORVUD_JAR: ${{ github.workspace }}/services/dorvud/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar
+        run: bun test services/bayn/src/market-data/alpaca-history/history.integration.test.ts
 
   dependency-input-invariant:
     needs: changes

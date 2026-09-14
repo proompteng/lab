@@ -263,7 +263,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         reconciliationHash,
         policyHash,
         decisionMarketData: {
-          schemaVersion: 'bayn.execution-market-data-binding.v2',
+          schemaVersion: 'bayn.execution-market-data-binding.v3',
           snapshotId,
           contentHash: snapshotContentHash,
           observedAt,
@@ -459,14 +459,15 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             )
         `
         const queries = makeCycleQueries(sql)
-        const missingArchiveReference = yield* queries.decisionEvidenceMatches(document)
+        const missingStreamReference = yield* queries.decisionEvidenceMatches(document)
         yield* sql`
-          INSERT INTO intraday_snapshot_references (
+          INSERT INTO streaming_snapshot_references (
             snapshot_id, schema_version, content_hash, observed_at, manifest
           ) VALUES (
-            ${snapshotId}, 'bayn.intraday-snapshot-reference.v1', ${snapshotContentHash}, ${observedAt},
+            ${snapshotId}, 'bayn.streaming-snapshot-reference.v1', ${snapshotContentHash}, ${observedAt},
             ${sql.json({
-              schemaVersion: 'bayn.intraday-market-snapshot.v1',
+              schemaVersion: 'bayn.streaming-market-snapshot.v1',
+              streaming: { schemaVersion: 'bayn.streaming-input-cut.v1' },
               snapshotId,
               contentHash: snapshotContentHash,
               observedAt,
@@ -476,14 +477,14 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         const exact = yield* queries.decisionEvidenceMatches(document)
         const unverifiedSnapshotId = 'd'.repeat(64)
         const unverifiedSnapshotContentHash = 'e'.repeat(64)
-        const unverifiedArchiveReference = yield* queries.decisionEvidenceMatches({
+        const unverifiedStreamReference = yield* queries.decisionEvidenceMatches({
           ...document,
           bindings: {
             ...document.bindings,
             snapshotId: unverifiedSnapshotId,
             snapshotContentHash: unverifiedSnapshotContentHash,
             decisionMarketData: {
-              schemaVersion: 'bayn.execution-market-data-binding.v2',
+              schemaVersion: 'bayn.execution-market-data-binding.v3',
               snapshotId: unverifiedSnapshotId,
               contentHash: unverifiedSnapshotContentHash,
               observedAt,
@@ -516,9 +517,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
         return {
-          missingArchiveReference,
+          missingStreamReference,
           exact,
-          unverifiedArchiveReference,
+          unverifiedStreamReference,
           forgedAuthority,
           forgedEquity,
           forgedPolicyHash,
@@ -528,9 +529,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     )
 
     expect(result).toEqual({
-      missingArchiveReference: false,
+      missingStreamReference: false,
       exact: true,
-      unverifiedArchiveReference: false,
+      unverifiedStreamReference: false,
       forgedAuthority: false,
       forgedEquity: false,
       forgedPolicyHash: false,
