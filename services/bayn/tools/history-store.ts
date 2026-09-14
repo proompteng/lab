@@ -41,10 +41,10 @@ const readRecords = (datasetId: string, chunk: HistoricalChunk, first: number, l
     SELECT DISTINCT record_id, toString(row_ordinal) AS row_ordinal, provider, transport, feed,
       toString(session_date) AS session_date, symbol, kind, toString(event_at) AS event_at,
       toString(retrieved_at) AS retrieved_at, payload
-    FROM signal.historical_market_records_v1
+    FROM signal.historical_market_records_v1 AS records
     WHERE dataset_id = ${datasetId} AND query_hash = ${chunk.queryHash}
-      AND toUInt64(row_ordinal) >= ${sql.param('UInt64', first)} AND toUInt64(row_ordinal) < ${sql.param('UInt64', last)}
-    ORDER BY toUInt64(row_ordinal)
+      AND records.row_ordinal >= ${sql.param('UInt64', first)} AND records.row_ordinal < ${sql.param('UInt64', last)}
+    ORDER BY records.row_ordinal
   `.pipe(Effect.flatMap(decodeRecords))
   })
 const checkStoredBounds = (datasetId: string, chunk: HistoricalChunk, complete: boolean) =>
