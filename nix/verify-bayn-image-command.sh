@@ -63,21 +63,19 @@ resolve_image_entry() {
 
 forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
 forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
-replay_wrapper="$(resolve_image_entry /bin/bayn-intraday-replay)"
-replay_command="$(resolve_image_entry /app/services/bayn/dist/intraday-replay-command.js)"
-vendor_wrapper="$(resolve_image_entry /bin/bayn-vendor-intraday-replay)"
-vendor_command="$(resolve_image_entry /app/services/bayn/dist/vendor-intraday-replay-command.js)"
+replay_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
+replay_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
 image_node="$(resolve_image_entry /bin/node)"
+streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
 
 test -x "${forward_wrapper}"
 test -f "${forward_command}"
 test -x "${replay_wrapper}"
 test -f "${replay_command}"
-test -x "${vendor_wrapper}"
-test -f "${vendor_command}"
 test -f "${execution_server}"
 test -x "${image_node}"
+test -f "${streaming_diagnostics}"
 
 image_ref="$(jq -er '.[0].RepoTags | if length == 1 then .[0] else error("expected one image tag") end' \
   "${archive}/manifest.json")"
@@ -117,13 +115,13 @@ replay_actual="$(
     --memory 512m \
     --cpus 1 \
     --env NODE_ENV=production \
-    --entrypoint /bin/bayn-intraday-replay \
+    --entrypoint /bin/bayn-backtest \
     "${image_id}" \
     --help
 )"
-expected_replay='Usage: bayn-intraday-replay --input <path> | --study <path> [--output-directory <new-directory>] | --help'
+expected_replay='Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help'
 if [[ "${replay_actual}" != "${expected_replay}" ]]; then
-  printf 'Unexpected Bayn intraday-replay help output:\n%s\n' "${replay_actual}" >&2
+  printf 'Unexpected Bayn backtest help output:\n%s\n' "${replay_actual}" >&2
   exit 1
 fi
 
@@ -139,51 +137,31 @@ compiled_replay_actual="$(
     --env NODE_ENV=production \
     --entrypoint /bin/node \
     "${image_id}" \
-    /app/services/bayn/dist/intraday-replay-command.js \
+    /app/services/bayn/dist/backtest-command.js \
     --help
 )"
 if [[ "${compiled_replay_actual}" != "${expected_replay}" ]]; then
-  printf 'Unexpected compiled Bayn intraday-replay help output:\n%s\n' "${compiled_replay_actual}" >&2
+  printf 'Unexpected compiled Bayn backtest help output:\n%s\n' "${compiled_replay_actual}" >&2
   exit 1
 fi
 
-vendor_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/bayn-vendor-intraday-replay \
-    "${image_id}" \
-    --help
-)"
-expected_vendor='Usage: bayn-vendor-intraday-replay --input <path> --cache <directory> | --help'
-if [[ "${vendor_actual}" != "${expected_vendor}" ]]; then
-  printf 'Unexpected Bayn vendor-intraday-replay help output:\n%s\n' "${vendor_actual}" >&2
+# Loading diagnostics also loads the external Kafka client and its codec dependencies.
+expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help'
+streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
+  /app/services/bayn/dist/streaming-diagnostics-command.js --help)"
+if [[ "${streaming_actual}" != "${expected_streaming}" ]]; then
+  printf 'Unexpected Bayn diagnostics help output: %s\n' "${streaming_actual}" >&2
   exit 1
 fi
 
-compiled_vendor_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/node \
-    "${image_id}" \
-    /app/services/bayn/dist/vendor-intraday-replay-command.js \
-    --help
-)"
-if [[ "${compiled_vendor_actual}" != "${expected_vendor}" ]]; then
-  printf 'Unexpected compiled Bayn vendor-intraday-replay help output:\n%s\n' "${compiled_vendor_actual}" >&2
+codecs_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
+  /app/services/bayn/dist/streaming-diagnostics-command.js --codecs)"
+if [[ "${codecs_actual}" != 'Kafka codecs verified: gzip,snappy,lz4,zstd' ]]; then
+  printf 'Unexpected Kafka codec verification output: %s\n' "${codecs_actual}" >&2
   exit 1
 fi
 

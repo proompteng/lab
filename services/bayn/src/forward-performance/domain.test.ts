@@ -1,3 +1,5 @@
+import { makeIntradayPerformanceFixture } from './intraday-cycle.test-support'
+import { makeIntradayPerformanceVolumeEvidence } from './intraday-volume'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
@@ -6,6 +8,7 @@ import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
 import { makeForwardPerformanceReceipt } from './domain'
 import type {
+  ForwardPerformanceDailyMarketVolumeEvidence,
   ForwardPerformanceEvidenceInput,
   ForwardPerformanceExecutionEvidence,
   ForwardPerformanceMarketVolumeEvidence,
@@ -205,7 +208,7 @@ const exactExecutionEvidence = (reverse = false) => {
 }
 
 const exactMarketVolumeEvidence = (): readonly ForwardPerformanceMarketVolumeEvidence[] => {
-  const material: Omit<ForwardPerformanceMarketVolumeEvidence, 'contentHash'> = {
+  const material: Omit<ForwardPerformanceDailyMarketVolumeEvidence, 'contentHash'> = {
     schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1' as const,
     cycleId: hash('a'),
     decisionSnapshotId: hash('5'),
@@ -269,6 +272,29 @@ const success = (value: Result.Result<ForwardPerformanceReceipt, unknown>): Forw
   assert(Result.isSuccess(value), 'forward-performance fixture must produce a receipt')
   return value.success
 }
+
+test('keeps accounting totals while any unverified decision withholds execution measurements', () => {
+  const baseline = success(makeForwardPerformanceReceipt(input({ executionEvidence: exactExecutionEvidence() })))
+  for (const executionEvidence of [[], exactExecutionEvidence()]) {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          executionEvidence,
+          unverifiedDecisionHashes: [hash('9')],
+        }),
+      ),
+    )
+    expect(receipt.totals).toEqual(baseline.totals)
+    expect(receipt.executionQuality).toEqual({
+      status: 'UNDETERMINED',
+      reasonCodes: ['PLANNED_DECISION_EVIDENCE_GAP'],
+      unverifiedDecisionHashes: [hash('9')],
+      evidenceHash: canonicalHashV1({ unverifiedDecisionHashes: [hash('9')] }),
+      implementationShortfall: null,
+    })
+    expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
+  }
+})
 
 describe('forward performance domain', () => {
   test('reports positive net realized returns after charged costs', () => {
@@ -1057,6 +1083,35 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
   })
 
+  test('deducts delayed broker fees and refunds without fabricating fills', () => {
+    const receipt = success(
+      makeForwardPerformanceReceipt(
+        input({
+          transactions: exactTransactions(),
+          executionEvidence: exactExecutionEvidence(),
+          marketVolumeEvidence: exactMarketVolumeEvidence(),
+          brokerFees: [
+            { accountId: 'paper-account-1', activityId: 'fee', date: '2026-07-20', netAmountMicros: '-150' },
+            { accountId: 'paper-account-1', activityId: 'refund', date: '2026-07-20', netAmountMicros: '10' },
+          ],
+          ledgerTotals: {
+            realizedGainMicros: '100',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '160',
+            otherChargedCostsMicros: '0',
+            cashYieldMicros: '0',
+          },
+        }),
+      ),
+    )
+    expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
+    expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+    expect(receipt.executionQuality.reasonCodes).not.toContain('EXPLICIT_COST_EVIDENCE_GAP')
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.executionQuality.implementationShortfall?.totalImplementationShortfallMicros).toBe('1600160')
+    expect(receipt.observedCapacity.status).toBe('MEASURED')
+  })
+
   test('fees can flip gross profit into a net realized loss', () => {
     const receipt = success(
       makeForwardPerformanceReceipt(
@@ -1399,4 +1454,47 @@ describe('forward performance domain', () => {
     expect(receipt.evidence.reasonCodes).toContain('ACCOUNT_IDENTITY_GAP')
     expect(receipt.profitability).toBe('UNDETERMINED')
   })
+})
+
+test('retains measured native execution quality when missing minutes prevent complete session participation', () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  for (const missing of [false, true]) {
+    const evidence = Result.getOrThrow(
+      makeIntradayPerformanceVolumeEvidence(request, archive, missing ? bars.slice(1) : bars),
+    )
+    if (evidence === undefined) throw new Error('expected terminal mark')
+    const { contentHash: _hash, ...source } = evidence
+    const material = { ...source, cycleId: hash('a') }
+    const volume = { ...material, contentHash: canonicalHashV1(material) }
+    // Move the existing synthetic accounting fixture into the native session's window.
+    const accounting = JSON.parse(
+      JSON.stringify(input({ transactions: exactTransactions(), executionEvidence: exactExecutionEvidence() }))
+        .replaceAll('2026-07-20', '2026-09-11')
+        .replaceAll('T20:00:', 'T19:55:'),
+    ) as ForwardPerformanceEvidenceInput
+    const receipt = success(makeForwardPerformanceReceipt({ ...accounting, marketVolumeEvidence: [volume] }))
+    expect(receipt.executionQuality.status).toBe('MEASURED')
+    expect(receipt.observedCapacity.status).toBe(missing ? 'UNDETERMINED' : 'MEASURED')
+    expect(receipt.observedCapacity.reasonCodes).toEqual(missing ? ['MARKET_VOLUME_EVIDENCE_GAP'] : [])
+    expect(receipt.observedCapacity.observations[0]?.intradaySource?.evidenceHash).toBe(volume.contentHash)
+    expect(receipt.observedCapacity.intradaySources).toEqual([volume])
+    if (missing) expect(receipt.observedCapacity.boundedObservedReferenceNotionalMicros).toBeNull()
+  }
+})
+
+test('retains native archive evidence even when a missing fill prevents execution-quality measurement', () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  const volume = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(1)))
+  if (volume === undefined) throw new Error('expected native evidence')
+  const receipt = success(
+    makeForwardPerformanceReceipt(
+      input({
+        executionEvidence: exactExecutionEvidence().map((evidence) => ({ ...evidence, fills: [] })),
+        marketVolumeEvidence: [volume],
+      }),
+    ),
+  )
+  expect(receipt.executionQuality.status).toBe('UNDETERMINED')
+  expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
+  expect(receipt.observedCapacity.intradaySources).toEqual([volume])
 })

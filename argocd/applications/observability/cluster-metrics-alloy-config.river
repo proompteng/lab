@@ -473,12 +473,6 @@ prometheus.scrape "flink" {
 			"namespace"   = "torghut",
 			"service"     = "torghut-ta-metrics",
 		},
-		{
-			"__address__" = "torghut-ta-sim-metrics.torghut.svc.cluster.local:9249",
-			"job"         = "torghut-sim",
-			"namespace"   = "torghut",
-			"service"     = "torghut-ta-sim-metrics",
-		},
 	]
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"

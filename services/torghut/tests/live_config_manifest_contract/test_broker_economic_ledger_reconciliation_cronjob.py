@@ -142,13 +142,13 @@ class BrokerEconomicLedgerReconciliationCronJobTests(TestCase):
         )
         self.assertNotIn("BROKER_ECONOMIC_LEDGER_PUBLISH_TOKEN", env)
 
-    def test_cronjob_is_rendered_by_torghut_kustomization(self) -> None:
+    def test_retired_cronjob_is_excluded_from_torghut_kustomization(self) -> None:
         kustomization = _load_yaml_mapping(
             "argocd/applications/torghut/kustomization.yaml"
         )
         resources = cast(list[str], kustomization["resources"])
 
-        self.assertIn(
+        self.assertNotIn(
             "broker-economic-ledger-reconciliation-cronjob.yaml",
             resources,
         )

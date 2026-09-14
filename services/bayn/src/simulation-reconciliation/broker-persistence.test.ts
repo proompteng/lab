@@ -45,6 +45,7 @@ const snapshot: StableBrokerSnapshot = {
   history: {
     orders: { rows: [], observedAt },
     fills: [],
+    fees: [],
   },
 }
 

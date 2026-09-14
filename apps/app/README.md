@@ -52,4 +52,7 @@ Unauthenticated users are redirected to `/login`. The app marks pages as `noinde
 
 - Styling comes from Tailwind CSS and shared components in `@proompteng/design`.
 - `start` serves the built app from `.output/server/index.mjs`.
+- `server.ts` forwards Nitro requests to Vite's SSR environment. That environment uses one output bundle to avoid
+  CommonJS initialization cycles in the generated server. After packaging, `build` imports the generated SSR entry
+  and checks its `fetch` handler; an import failure or missing handler fails the build.
 - This README intentionally documents the current shell and auth flow rather than the original scaffold examples.

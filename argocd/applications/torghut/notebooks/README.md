@@ -1,6 +1,6 @@
 # Torghut notebooks
 
-This overlay renders upstream `jupyterhub/jupyterhub` chart `4.4.0` into the existing `torghut` namespace. The public
+This overlay renders upstream `jupyterhub/jupyterhub` chart `4.4.2` (Hub `5.5.2`, configurable HTTP proxy `5.3.0`) into the existing `torghut` namespace. The public
 proxy remains `ClusterIP`; `torghut-notebooks.ide-newton.ts.net` is reachable only through the Tailscale ingress.
 The runtime is standard JupyterLab on the cluster; it does not use a Colab VM or local-runtime bridge.
 
@@ -20,12 +20,30 @@ Torghut scheduler status URL. They do not receive broker, TigerBeetle, Kafka, Fl
 and service-account token automounting is disabled.
 The dedicated image installs only the locked `notebook-runtime` dependency group, so mutation SDKs are absent as well.
 
-The rendered NetworkPolicies document intended traffic, but the current cluster uses Flannel without a policy engine.
-They are not an isolation claim. The operative controls are the Tailscale boundary, one trusted operator, read-only
-principals, statement/result/memory/thread caps, and absence of mutation secrets.
+The rendered NetworkPolicies restrict intended traffic and require live policy enforcement to provide network isolation.
+The Tailscale boundary, one trusted operator, read-only principals, statement/result/memory/thread caps, and absence
+of mutation secrets also constrain notebook access.
 
 Resources are deliberately bounded: a notebook requests 2 CPU/8 GiB and is limited to 8 CPU/16 GiB; Hub requests
 250m/512 MiB and proxy requests 100m/128 MiB. The persistent workspace is 50 GiB and Hub SQLite is 1 GiB. Tighten or
 aggregate a query before increasing these limits.
 
 Rollback is a Git revert of the chart or notebook image digest pin. Both PVCs and the read-only principals are retained.
+
+
+## Hub and proxy upgrade
+
+Hub and proxy images use immutable multi-architecture digests. The notebook runtime
+uses JupyterHub 5.5.2 as well, keeping the Hub and single-user packages aligned.
+The existing Kargo Torghut release publishes all required runtime images from the
+same source commit and promotes their exact digests before Argo reconciles.
+
+Before the 4.4.2 rollout, create a native SQLite backup of the running Hub database
+under `/srv/jupyterhub/upgrade-backups/`, run `PRAGMA integrity_check`, and retain
+its checksum and original PVC/Secret identities. Verify a separate copy with the
+target Hub's `jupyterhub upgrade-db` and compare all table records and credentials.
+The native 5.5.2 rehearsal preserved all 17 tables and passed integrity checks.
+The Hub and proxy can restart without replacing the notebook workspace PVC or
+changing the existing single-operator admission and read-only data principals.
+After rollout, verify those identities and exercise notebook startup and a kernel
+request through the existing private endpoint. Keep the database backup for recovery.

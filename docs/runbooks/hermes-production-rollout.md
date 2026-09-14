@@ -3,6 +3,23 @@
 This runbook deploys Hermes as Tuslagch's production runtime, migrates non-secret OpenClaw user data, transfers the Discord
 channel without dual writers, and retains a tested rollback path. All `kubectl` commands use an explicit namespace.
 
+## Steady-state reconciliation
+
+The completed production cutover uses `automation: auto` on the verified
+`kargo/hermes-toolchain` branch. Kargo remains the only image promotion owner.
+Argo prunes obsolete generated ConfigMaps after the new workload is healthy;
+namespace and recovery-resource retention annotations remain authoritative.
+Kargo 1.11.4 does not request pruning in its `argocd-update` sync operation,
+so steady-state reconciliation must remain enabled for this cleanup.
+
+The staged migration and credential-transfer procedures below require manual
+reconciliation while they run. Before repeating one, commit the Hermes
+ApplicationSet entry back to `automation: manual`, reconcile the exact reviewed
+root revision, verify that no Kargo promotion or Argo sync is active, then
+acquire the maintenance Lease. Restore automatic reconciliation through GitOps
+only after the complete maintenance acceptance checks. OpenClaw remains manual.
+Do not race a new image promotion with any maintenance operation.
+
 ## Invariants
 
 - Never run OpenClaw and Hermes with the same Discord token at the same time.
@@ -29,6 +46,12 @@ and Stage `lab-delivery/hermes-toolchain` automatically copies the exact source 
 updates the StatefulSet reference, commits and pushes that branch, and lets Argo CD reconcile it. Do not create or merge a
 digest bump PR, release PR, or manual SHA change.
 
+Before the first rollout using a new Hermes Agent release, dispatch the repository's `hermes-agent-mirror` workflow and
+wait for its immutable-index, platform, attached SLSA subject, predicate, and source-revision checks to pass. It publishes the exact verified upstream index
+under `registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64`; the manifest below then proves that the private
+amd64 digest is the upstream amd64 manifest. The workflow does not publish Kargo tags or alter the Kargo-managed toolchain
+reference.
+
 ```bash
 set -euo pipefail
 git fetch --quiet origin main
@@ -36,8 +59,8 @@ git fetch --quiet origin kargo/hermes-toolchain
 main_revision=$(git rev-parse origin/main)
 kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)
 test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"
-upstream_ref=docker.io/nousresearch/hermes-agent:v2026.8.27
-mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.8.27-amd64
+upstream_ref=docker.io/nousresearch/hermes-agent:v2026.9.7
+mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64
 upstream_digest=$(crane digest "$upstream_ref")
 upstream_manifest=$(crane manifest "$upstream_ref")
 upstream_amd64_digest=$(printf '%s' "$upstream_manifest" | jq -er '
@@ -51,23 +74,39 @@ upstream_attestation_digest=$(printf '%s' "$upstream_manifest" | jq -er --arg su
     )
   | .digest
 ')
-provenance_subject=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest" | \
-  jq -er '.subject.digest')
-upstream_revision=$(crane config --platform linux/amd64 "$upstream_ref" | \
-  jq -er '.config.Labels["org.opencontainers.image.revision"]')
-mirror_digest=$(crane digest "$mirror_ref")
-mirror_revision=$(crane config "$mirror_ref" | jq -er '.config.Labels["org.opencontainers.image.revision"]')
+provenance_manifest=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest")
+provenance_subject=$(printf '%s' "$provenance_manifest" | jq -er '.subject.digest')
+case "$provenance_subject" in
+  sha256:*) ;;
+  *) provenance_subject="sha256:$provenance_subject" ;;
+esac
+provenance_layer_digest=$(printf '%s' "$provenance_manifest" | jq -er '
+  [.layers[] | select(.mediaType == "application/vnd.in-toto+json") | .digest]
+  | if length == 1 then .[0] else error("expected exactly one SLSA provenance layer") end
+')
+provenance_path=$(mktemp)
+trap 'rm -f "$provenance_path"' EXIT
+crane blob "docker.io/nousresearch/hermes-agent@$provenance_layer_digest" > "$provenance_path"
+test "$(jq -er '.predicateType' "$provenance_path")" = 'https://slsa.dev/provenance/v1'
+upstream_revision=$(jq -er '.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]' "$provenance_path")
+mirror_index_digest=$(crane digest "$mirror_ref")
+mirror_manifest=$(crane manifest "$mirror_ref")
+mirror_digest=$(printf '%s' "$mirror_manifest" | jq -er --arg subject "$upstream_amd64_digest" '
+  .manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64" and .digest == $subject) | .digest
+')
+mirror_revision=$(crane config --platform linux/amd64 "$mirror_ref" | jq -er '.config.Labels["org.opencontainers.image.revision"]')
 toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" | \
   sed -n 's#.*reference: \(registry\.ide-newton\.ts\.net/lab/hermes-toolchain@sha256:[0-9a-f]\{64\}\).*#\1#p')
 test -n "$toolchain_ref"
 test "$(printf '%s\n' "$toolchain_ref" | wc -l | tr -d '[:space:]')" -eq 1
 toolchain_digest=$(crane digest "$toolchain_ref")
-test "$upstream_digest" = sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79
-test "$upstream_amd64_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
-test "$upstream_attestation_digest" = sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c
+test "$upstream_digest" = sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7
+test "$upstream_amd64_digest" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+test "$upstream_attestation_digest" = sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db
 test "$provenance_subject" = "$upstream_amd64_digest"
-test "$upstream_revision" = 5fc308a70719a83cccdbba4c0e39c23f5a8239d5
-test "$mirror_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+test "$upstream_revision" = 2237be355906fbe6065ce1815711eee52b2d646e
+test "$mirror_index_digest" = "$upstream_digest"
+test "$mirror_digest" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
 test "$mirror_revision" = "$upstream_revision"
 test "$toolchain_digest" = "${toolchain_ref##*@}"
 toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
@@ -91,22 +130,25 @@ hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status
 hermes_target_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.spec.source.targetRevision}')
 test "$hermes_target_revision" = kargo/hermes-toolchain
 test "$hermes_revision" = "$kargo_revision"
-printf 'main=%s kargo=%s upstream=%s amd64=%s attestation=%s mirror=%s revision=%s argo=%s\n' \
+printf 'main=%s kargo=%s upstream=%s amd64=%s attestation=%s mirror_index=%s mirror_amd64=%s revision=%s argo=%s\n' \
   "$main_revision" "$kargo_revision" "$upstream_digest" "$upstream_amd64_digest" \
-  "$upstream_attestation_digest" "$mirror_digest" "$upstream_revision" "$hermes_revision"
+  "$upstream_attestation_digest" "$mirror_index_digest" "$mirror_digest" "$upstream_revision" "$hermes_revision"
 printf 'toolchain=%s platforms=%s\n' "$toolchain_digest" "$toolchain_platforms"
+rm -f "$provenance_path"
+trap - EXIT
 unset main_revision kargo_revision upstream_ref mirror_ref upstream_digest upstream_manifest upstream_amd64_digest
-unset upstream_attestation_digest provenance_subject upstream_revision mirror_digest mirror_revision
+unset upstream_attestation_digest provenance_manifest provenance_subject provenance_layer_digest provenance_path
+unset upstream_revision mirror_index_digest mirror_manifest mirror_digest mirror_revision
 unset toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
 ```
 
-The expected upstream index digest is `sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79`.
+The expected upstream index digest is `sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7`.
 The expected upstream amd64 manifest digest is
-`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`; its attached SLSA provenance manifest is
-`sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c` and records source revision
-`5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
+`sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b`; its attached SLSA provenance manifest is
+`sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db` and records source revision
+`2237be355906fbe6065ce1815711eee52b2d646e`.
 The expected mirrored amd64 manifest digest is
-`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
+`sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b`.
 The current Hermes toolchain digest is intentionally not repeated in this runbook. The Kargo-managed StatefulSet on
 `kargo/hermes-toolchain` is the sole committed owner; derive its `reference` as shown above and verify the resolved image
 digest and platform labels from that reference.
@@ -287,9 +329,10 @@ digest and platform labels from that reference.
    Job must complete and its log, archived SQLite integrity checks, and checksum verification must succeed. The data mount
    is write-capable only because SQLite read-only WAL connections require shared-memory sidecar access; the pinned backup
    process still opens each source database in read-only mode and fails closed on any safe-copy fallback.
-   Hermes 0.20.6 may report its live root `gateway.sock` as the only skipped file. The production wrapper accepts that exact
-   warning only when the path is a Unix socket, rejects every other skipped file or incomplete database copy, and verifies
-   that the transient socket is absent from the published archive.
+   Hermes 0.21.1 runs as PID 1 and may omit the live `gateway.sock` and `state/gateway.loop-tick.1.sock` runtime sockets.
+   The production wrapper requires every warning to match one of those exact paths and proves each is a Unix socket,
+   not a regular file or symlink. It rejects every other skipped file or incomplete database copy and verifies that
+   neither transient socket is present in the published archive.
    A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success,
    then monitors its last successful completion. A missing CronJob still alerts, and backup failure never changes the
    gateway Pod's readiness.

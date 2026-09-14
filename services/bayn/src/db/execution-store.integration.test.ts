@@ -27,6 +27,7 @@ import {
   TimeInForce,
 } from '../execution/contracts'
 import { WriterFenceLive } from '../execution/writer-fence'
+import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
 import { canonicalHashV1 } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -42,6 +43,8 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { accountBrokerFees } from './broker-fees'
+import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -264,9 +267,25 @@ describePostgres('PostgreSQL execution persistence', () => {
           maximum: Authority.Observe,
         })
         const lineage = yield* authority.readAuthorityGenerationLineage(generationHash)
-        yield* restriction.restrictAuthority('reconciliation discrepancy fixture', '2026-08-28T14:32:00.000Z')
-        yield* restriction.restrictAuthority('reconciliation discrepancy fixture', '2026-08-28T14:33:00.000Z')
-        return { initial, replay, lineage, restricted: yield* authority.readAuthorityState }
+        yield* restriction.restrictAuthority('reconciliation pass incomplete', '2026-08-28T14:31:00.000Z')
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('first-discrepancy')}`,
+          '2026-08-28T14:32:00.000Z',
+        )
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('first-discrepancy')}`,
+          '2026-08-28T14:33:00.000Z',
+        )
+        yield* restriction.restrictAuthority(
+          `reconciliation discrepancy ${hash('next-discrepancy')}`,
+          '2026-08-28T14:33:00.000Z',
+        )
+        const restricted = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority(
+          `${executionMandateFailureRestrictionPrefix} permanent failure`,
+          '2026-08-28T14:34:00.000Z',
+        )
+        return { initial, replay, lineage, restricted, promoted: yield* authority.readAuthorityState }
       }),
     )
 
@@ -287,8 +306,14 @@ describePostgres('PostgreSQL execution persistence', () => {
       generationHash,
       effective: Authority.Observe,
       kill: KillState.Active,
-      reason: 'reconciliation discrepancy fixture',
-      version: 2,
+      reason: `reconciliation discrepancy ${hash('first-discrepancy')}`,
+      version: 3,
+    })
+    expect(result.promoted).toMatchObject({
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: `${executionMandateFailureRestrictionPrefix} permanent failure`,
+      version: 4,
     })
   })
 
@@ -360,6 +385,39 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
   })
 
+  test('persists exact broker cost basis beside legacy position history', async () => {
+    const sourceHash = hash('position-cost-basis-v2')
+    const legacy = positionEvent(sourceHash, 'NVDA', '3000000', '303000000')
+    const position = {
+      ...legacy.position,
+      schemaVersion: 'bayn.position.v2' as const,
+      averageEntryPriceMicros: '100333333',
+      costBasisMicros: '301000000',
+    }
+    const current: PositionEventInput = { ...legacy, position, contentHash: canonicalHashV1({ sourceHash, position }) }
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const receipt = yield* events.ingestPositions(positionSnapshot(sourceHash, [current]))
+        const replay = yield* events.ingestPositions(positionSnapshot(sourceHash, [current]))
+        const sql = yield* PgClient.PgClient
+        const rows = yield* sql<{ schema_version: string; cost_basis_micros: string; content_hash: string }>`
+        SELECT p.schema_version, p.cost_basis_micros::text, e.content_hash
+        FROM positions p JOIN broker_events e ON e.event_id = p.event_id
+        WHERE p.snapshot_id = ${receipt.snapshotId}
+      `
+        return { receipt, replay, rows }
+      }),
+    )
+    expect(result.replay.snapshotId).toBe(result.receipt.snapshotId)
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0]).toMatchObject({
+      schema_version: 'bayn.position.v2',
+      cost_basis_micros: '301000000',
+      content_hash: current.contentHash,
+    })
+  })
+
   test('resumes a prepared fill after a ledger failure without duplicating durable accounting', async () => {
     const fill = fillEvent('fill-buy-1', OrderSide.Buy, '3000000', '100000000')
     journalControl.failPosts = true
@@ -390,6 +448,54 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(journalControl.postCount).toBe(3)
   })
 
+  test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
+    await runtime.runPromise(Effect.flatMap(BrokerEventStore, (events) => events.ingest(flatAccountEvent())))
+    const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
+      value: { accountId, activityId: `fee-${index}`, date: '2026-08-28', netAmountMicros },
+      evidence: { requestId: 'fee-request', status: 200, contentHash: hash('fee-response'), observedAt },
+    }))
+    const post = (items: typeof fees) =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql.withTransaction(
+          accountBrokerFees(sql, journal(journalControl), accountId, items, config.tigerBeetle),
+        )
+      })
+    const prebaseline = fees.map((item) => ({ ...item, value: { ...item.value, date: '2026-08-27' } }))
+    expect(await runtime.runPromise(post(prebaseline).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
+    expect(journalControl.postCount).toBe(0)
+    journalControl.failPosts = true
+    const failed = await runtime.runPromise(post(fees).pipe(Effect.flip))
+    expect(failed).toMatchObject({ failure: 'ledger' })
+    journalControl.failPosts = false
+    const recovered = await runtime.runPromise(post(fees))
+    const replay = await runtime.runPromise(post(fees))
+    expect(replay).toEqual(recovered)
+    expect(recovered.fees.reduce((sum, fee) => sum + BigInt(fee.netAmountMicros), 0n)).toBe(-230000n)
+    expect(journalControl.postCount).toBe(4)
+    const changed = fees.map((item, index) =>
+      index === 0 ? { ...item, value: { ...item.value, netAmountMicros: '-220000' } } : item,
+    )
+    expect(await runtime.runPromise(post(changed).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
+    expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql`SELECT count(*)::integer AS count, sum(net_amount_micros)::text AS net FROM broker_fee_accounting WHERE posted_at IS NOT NULL`
+      }),
+    )
+    expect(rows).toEqual([{ count: 3, net: '-230000' }])
+    const forward = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* readForwardPerformancePostgres(sql, accountId)
+      }),
+    )
+    expect(forward.brokerFeeRecords).toHaveLength(3)
+    expect(forward.generationBrokerFeeIds).toEqual(['fee-0', 'fee-1', 'fee-2'])
+    expect(forward.ambiguousBrokerFeeCount).toBe(0)
+  })
+
   test('persists exact and discrepant reconciliation history and never clears a safety restriction implicitly', async () => {
     const generationHash = hash('reconciliation-observe-generation')
     const account = flatAccountEvent()
@@ -417,6 +523,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           orders: [],
           ordersObservedAt: observedAt,
           fills: [],
+          fees: [],
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const

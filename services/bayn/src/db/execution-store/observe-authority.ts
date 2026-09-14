@@ -10,6 +10,7 @@ import {
 import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
+  reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
   executionMandateFailureRestrictionPrefix,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -154,7 +155,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const [databaseTime] = yield* sql<Record<string, unknown>>`
-        SELECT clock_timestamp() AS activated_at
+        SELECT ${authority.clock.now} AS activated_at
       `.pipe(Effect.flatMap(decodeDatabaseInstant))
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
@@ -245,6 +246,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
+              OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
@@ -375,6 +377,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
+                  OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (
                       ${executionMandateCompletedRestrictionReason},
@@ -446,7 +449,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, clock_timestamp() AS observed_at
+          version::text AS version, updated_at, ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -485,7 +488,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, clock_timestamp() AS observed_at
+          version::text AS version, updated_at, ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE

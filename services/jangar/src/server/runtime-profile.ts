@@ -1,3 +1,5 @@
+import { isTorghutLegacyRetired } from './torghut-retirement'
+
 export type JangarRuntimeStartup = {
   torghutQuantRuntime: boolean
   whitepaperFinalizeConsumer: boolean
@@ -46,8 +48,13 @@ export const resolveJangarRuntimeProfile = (
   env: Record<string, string | undefined> = process.env,
 ): JangarRuntimeProfile => {
   const requested = normalizeProfileName(env.JANGAR_SERVER_PROFILE)
-  if (requested === 'vite-dev-api') return JANGAR_RUNTIME_PROFILES.viteDevApi
-  if (requested === 'test') return JANGAR_RUNTIME_PROFILES.test
+  const profile =
+    requested === 'vite-dev-api'
+      ? JANGAR_RUNTIME_PROFILES.viteDevApi
+      : requested === 'test'
+        ? JANGAR_RUNTIME_PROFILES.test
+        : JANGAR_RUNTIME_PROFILES.httpServer
 
-  return JANGAR_RUNTIME_PROFILES.httpServer
+  if (!isTorghutLegacyRetired(env)) return profile
+  return { ...profile, startup: { torghutQuantRuntime: false, whitepaperFinalizeConsumer: false } }
 }

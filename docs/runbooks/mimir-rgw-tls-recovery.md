@@ -1,5 +1,10 @@
 # Recover Mimir RGW uploads without remounting its storage
 
+This procedure applies only to the Mimir 3.1.2/chart 6.1.0 recovery. Current
+Mimir 3.2 uses the [ordered rolling upgrade procedure](mimir-3-2-upgrade.md).
+Do not use the historical process-reload helper against rolling StatefulSets
+or newer binaries; its version and strategy checks must remain enforced.
+
 Mimir 3.1.2's MinIO HTTP signer is incompatible with Ceph 20.2.4. The
 [RGW compatibility runbook](ceph-rgw-sigv4-compatibility.md) describes the verified internal TLS endpoint and
 certificate. This procedure changes the transport while preserving Mimir's Pods, PVCs, credentials, and buckets.

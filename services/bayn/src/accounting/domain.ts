@@ -467,3 +467,42 @@ const prepareAccountingDataFirst = (
   )
 
 export const prepareAccounting = Pipeable.dual(4, prepareAccountingDataFirst)
+
+export const brokerFeeLedgerPlan = (
+  accountId: string,
+  activityId: string,
+  netAmountMicros: string,
+  ledger: number,
+): LedgerPlan => {
+  const net = BigInt(netAmountMicros)
+  const eventId = stableU128('bayn.broker-fee-event.v1', accountId, activityId).toString()
+  const transactionId = stableU128('bayn.broker-fee-transaction.v1', accountId, activityId).toString()
+  const debit =
+    net < 0n ? { name: 'fee-expense', code: AccountCode.feeExpense } : { name: 'cash', code: AccountCode.cash }
+  const credit =
+    net < 0n ? { name: 'cash', code: AccountCode.cash } : { name: 'fee-expense', code: AccountCode.feeExpense }
+  return {
+    runKey: stableU128('bayn-paper-account-v1', accountId),
+    runTag: stableU64('bayn-paper-account-v1', accountId),
+    accounts:
+      net === 0n
+        ? []
+        : [makeAccount(accountId, ledger, debit), makeAccount(accountId, ledger, credit)].toSorted((a, b) =>
+            a.id < b.id ? -1 : 1,
+          ),
+    transfers:
+      net === 0n
+        ? []
+        : [
+            makeTransfer(transactionId, eventId, accountId, ledger, {
+              leg: 'broker-fee',
+              debitName: debit.name,
+              debitCode: debit.code,
+              creditName: credit.name,
+              creditCode: credit.code,
+              amount: net < 0n ? -net : net,
+              code: TransferCode.fee,
+            }),
+          ],
+  }
+}

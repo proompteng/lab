@@ -108,6 +108,9 @@ describe('executionMandateAllocationCapitalMicros', () => {
 
 describe('execution mandate decisions', () => {
   test('recognizes only canonical and exact legacy system failure restrictions', () => {
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy ' + 'a'.repeat(64))).toBe(true)
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy unknown')).toBe(false)
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy ' + 'a'.repeat(64) + ' extra')).toBe(false)
     const cycleId = 'a'.repeat(64)
     const intentId = 'b'.repeat(64)
 
@@ -251,6 +254,7 @@ describe('execution mandate decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
     for (const reason of [
+      'reconciliation discrepancy ' + 'a'.repeat(64),
       executionActivationExpiredRestrictionReason,
       executionMandateCompletedRestrictionReason,
       legacyExecutionActivationExpiredRestrictionReason,
@@ -275,7 +279,7 @@ describe('execution mandate decisions', () => {
         effective: 'OBSERVE',
         kill: 'ACTIVE',
         currentGenerationMatchesRequest: true,
-        reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+        reason: 'reconciliation discrepancy ' + 'a'.repeat(64),
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
     expect(

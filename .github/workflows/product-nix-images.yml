@@ -17,6 +17,9 @@ on:
       - 'packages/design/**'
       - 'services/tengri/proto/**'
       - 'nix/images/app.nix'
+      - 'nix/check-bun-dependency-closure.sh'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - '.github/workflows/product-nix-images.yml'
       - 'nix/images/docs.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/images/synthesis.nix'
@@ -48,6 +51,9 @@ on:
       - 'packages/design/**'
       - 'services/tengri/proto/**'
       - 'nix/images/app.nix'
+      - 'nix/check-bun-dependency-closure.sh'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - '.github/workflows/product-nix-images.yml'
       - 'nix/images/docs.nix'
       - 'nix/images/proompteng.nix'
       - 'nix/images/synthesis.nix'
@@ -137,6 +143,9 @@ jobs:
               - 'apps/app/**'
               - 'packages/design/**'
               - 'nix/images/app.nix'
+              - 'nix/check-bun-dependency-closure.sh'
+              - '.github/workflows/nix-bun-dependency-closure.yml'
+              - '.github/workflows/product-nix-images.yml'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/packages.nix'
               - 'nix/cache-push.sh'
@@ -208,8 +217,19 @@ jobs:
       latest: true
     secrets: inherit
 
-  build-app:
+  verify-app-dependency-closure:
+    name: Verify App dependency closure
     needs: changes
+    if: needs.changes.outputs.app == 'true'
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: app
+    secrets: inherit
+
+  build-app:
+    needs:
+      - changes
+      - verify-app-dependency-closure
     if: needs.changes.outputs.app == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:

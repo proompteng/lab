@@ -235,6 +235,7 @@ const emptyRead = (): BrokerReadShape => ({
   assetBySymbol: unusedAssetBySymbol,
   positions: Effect.succeed({ value: [], evidence: evidence('positions') }),
   orders: () => Effect.succeed({ value: [], evidence: evidence('orders') }),
+  feeActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fees') }),
   fillActivities: () => Effect.succeed({ value: { items: [] }, evidence: evidence('fills') }),
   orderById: () => Effect.die(new Error('unexpected order lookup')),
   orderByClientId: () => Effect.die(new Error('unexpected client order lookup')),
@@ -325,6 +326,7 @@ describe('reconciliation pure decisions', () => {
     const emptyHistory = {
       orders: { rows: [], observedAt },
       fills: [],
+      fees: [],
     }
     expect(decideStableHistory(emptyHistory, emptyHistory)).toEqual(Result.succeed(emptyHistory))
 
@@ -399,7 +401,9 @@ describe('execution reconciliation loop', () => {
   })
 
   test('reads every broker page before persisting and binds fills to their orders', async () => {
-    const allOrders = Array.from({ length: 501 }, (_, index) => order(index))
+    const allOrders = Array.from({ length: 501 }, (_, index) =>
+      index < 101 ? order(index) : { ...order(index), status: BrokerOrderStatus.New, filledQuantityMicros: '0' },
+    )
     const allFills = Array.from({ length: 101 }, (_, index) => fill(index, allOrders[index]))
     const orderCursors: Array<string | undefined> = []
     const fillCursors: Array<string | undefined> = []
@@ -565,7 +569,7 @@ describe('execution reconciliation loop', () => {
   })
 
   test('retains the exact typed cause of a normalization failure', async () => {
-    const malformedOrder = { ...order(0), extendedHours: true }
+    const malformedOrder = { ...order(0), extendedHours: true, filledQuantityMicros: '0' }
     const read: BrokerReadShape = {
       ...emptyRead(),
       orders: () => Effect.succeed({ value: [malformedOrder], evidence: evidence('orders') }),
@@ -607,6 +611,8 @@ describe('execution reconciliation loop', () => {
     const read: BrokerReadShape = {
       ...emptyRead(),
       orders: () => Effect.succeed({ value: [first, duplicateClient], evidence: evidence('orders') }),
+      fillActivities: () =>
+        Effect.succeed({ value: { items: [fill(0, first), fill(1, duplicateClient)] }, evidence: evidence('fills') }),
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
@@ -685,7 +691,45 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
 
-  test('rejects a broker mutation that races the account snapshot before any durable write', async () => {
+  test('recaptures late fee postings before persisting an account snapshot', async () => {
+    let reads = 0
+    const fee = { accountId: account.id, activityId: 'fee-1', date: '2026-07-22', netAmountMicros: '-230000' }
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      feeActivities: () => {
+        reads += 1
+        return Effect.succeed({ value: { items: reads === 1 ? [] : [fee] }, evidence: evidence(`fees-${reads}`) })
+      },
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* provide(read, makeStore(control)).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* TestClock.adjust(500)
+          yield* Fiber.join(fiber)
+        }),
+      ).pipe(provideTestLayer(TestClock.layer())),
+    )
+    expect(reads).toBe(4)
+    expect(control.reconciliations[0]?.fees.map((item) => item.value)).toEqual([fee])
+    expect(control.restrictions).toEqual([])
+  })
+
+  test('rejects duplicate fee history before accounting', async () => {
+    const fee = { accountId: account.id, activityId: 'fee-1', date: '2026-07-22', netAmountMicros: '-230000' }
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      feeActivities: () => Effect.succeed({ value: { items: [fee, fee] }, evidence: evidence('fees') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+    expect(failure).toMatchObject({ failure: { _tag: 'Pagination', reason: 'InvalidFeeHistory' } })
+    expect(control.writes).toBe(0)
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('recaptures a broker mutation that races the account snapshot before persisting', async () => {
     const racedOrder = order(0)
     const racedFill = fill(0, racedOrder)
     let orderReads = 0
@@ -709,22 +753,59 @@ describe('execution reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
-    const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* provide(read, makeStore(control)).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* TestClock.adjust(500)
+          yield* Fiber.join(fiber)
+        }),
+      ).pipe(provideTestLayer(TestClock.layer())),
+    )
 
-    expect(failure).toMatchObject({
-      _tag: 'ReconciliationError',
-      operation: 'snapshot',
-      message: 'broker history changed during reconciliation',
-      failure: {
-        _tag: 'Snapshot',
-        reason: 'HistoryChanged',
-      },
-    })
-    expect(orderReads).toBe(2)
-    expect(fillReads).toBe(2)
-    expect(control.writes).toBe(0)
-    expect(control.reconciliations).toEqual([])
-    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    expect(orderReads).toBe(4)
+    expect(fillReads).toBe(4)
+    expect(control.reconciliations).toHaveLength(1)
+    expect(control.restrictions).toEqual([])
+  })
+  test.each([false, true])('waits for broker fill activity convergence; permanent=%s', async (permanent) => {
+    let fillReads = 0
+    const sourceOrder = order(0)
+    const sourceFill = fill(0, sourceOrder)
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [sourceOrder], evidence: evidence('order') }),
+      fillActivities: () =>
+        Effect.sync(() => {
+          fillReads += 1
+          expect(control.writes).toBe(0)
+          return { value: { items: permanent || fillReads <= 2 ? [] : [sourceFill] }, evidence: evidence('fills') }
+        }),
+    }
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* provide(read, makeStore(control)).pipe(
+            Effect.result,
+            Effect.forkScoped({ startImmediately: true }),
+          )
+          yield* TestClock.adjust(1000)
+          return yield* Fiber.join(fiber)
+        }),
+      ).pipe(provideTestLayer(TestClock.layer())),
+    )
+    if (permanent) {
+      expect(Result.isFailure(result)).toBe(true)
+      expect(fillReads).toBe(6)
+      expect(control.writes).toBe(0)
+      expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    } else {
+      expect(Result.isSuccess(result)).toBe(true)
+      expect(fillReads).toBe(4)
+      expect(control.reconciliations).toHaveLength(1)
+      expect(control.restrictions).toEqual([])
+    }
   })
 
   test('returns exact history materialization and canonicalization failures without defecting', async () => {

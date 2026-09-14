@@ -113,13 +113,16 @@ const compareObservedOrder = (
             expectedOrder,
             observedOrder,
           ),
-          lifecycle: compareValue(
-            snapshot.accountId,
-            DiscrepancyKind.Order,
-            `${intent.clientOrderId}:lifecycle`,
-            intent.terminalOutcome ?? openOrder,
-            terminalOutcome(order.status) ?? openOrder,
-          ),
+          lifecycle:
+            intent.state === IntentState.Acknowledged
+              ? Result.succeed<readonly DiscrepancyInput[]>([])
+              : compareValue(
+                  snapshot.accountId,
+                  DiscrepancyKind.Order,
+                  `${intent.clientOrderId}:lifecycle`,
+                  intent.terminalOutcome ?? openOrder,
+                  terminalOutcome(order.status) ?? openOrder,
+                ),
         }),
         Result.map(({ content, lifecycle }) => [...content, ...lifecycle]),
       )

@@ -10,14 +10,16 @@
 let
   imageRepository = "registry.ide-newton.ts.net/lab/signal-publisher";
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
+  dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
 in
 import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
+  inherit dependencySource;
   serviceName = "signal-publisher";
   packageName = "@proompteng/signal-publisher";
   depsHash = {
-    x86_64-linux = "sha256-bAyu051/ENh2rYwF9T3ssjrZotU7VmdfVjxx7gIVJmM=";
-    aarch64-linux = "sha256-/ELWbRhtZNy0DEPJXmqfk9L6eI2uKfz0k0aqgfNcIM8=";
+    x86_64-linux = "sha256-yj99BX72khrbE+LXP86oTBjjdRkwHm2MwnY4hbA2Zr0=";
+    aarch64-linux = "sha256-BrND6olKZ5m4IWXoyjja3cvnhPzhS58v1T17r5kZh9U=";
   };
   installFilters = [
     "@proompteng/signal-publisher"

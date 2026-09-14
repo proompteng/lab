@@ -93,7 +93,7 @@ export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
 
 export type ExecutionCapability =
   | { readonly _tag: 'RecoveryOnly' }
-  | { readonly _tag: 'Mutation'; readonly executionProgram: ExecutionProgram }
+  | { readonly _tag: 'Mutation' | 'CloseOnly'; readonly executionProgram: ExecutionProgram }
 
 export type MutationCycleExecutionMode = ExecutionCapability['_tag']
 

@@ -51,7 +51,7 @@ data:
         "${ruler_url}" || true
     )"
     if [ "${get_code}" = "200" ]; then
-      awk '/^  - name: / { sub(/^  - name: /, ""); print }' "${current_rules}" > "${current_groups}"
+      awk '/^[[:space:]]*- name: / { sub(/^[[:space:]]*- name: /, ""); print }' "${current_rules}" > "${current_groups}"
       while IFS= read -r group; do
         if ! grep -Fxq "${group}" "${desired_groups}"; then
           echo "deleting stale Mimir rule group ${group}"

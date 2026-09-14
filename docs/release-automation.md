@@ -64,6 +64,15 @@ Every application image follows this transaction:
    merge—is the deployed revision. `workflow_dispatch` may run the same verifier diagnostically; it is not a promotion
    or recovery fallback.
 
+Torghut's five-image release takes its source commit from the immutable images. Its Warehouse requires every image
+to share the same eligible tag, each tag to match its OCI revision annotation, and every source annotation to name
+this repository. The Stage checks out that exact revision. It has no separate path-filtered Git subscription:
+an atomic stack push can build its final commit while the last commit touching Torghut's paths is an earlier stack
+member. Equating those different identities would strand a complete release. Configuration changes under the
+Torghut application paths remain inputs to all five existing main-only image workflows, so their next release
+includes the configuration from the built source. This uses Kargo's
+[image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
+
 There is no Image Updater, SHA-manifest bump, release branch, deployment PR, release automerge, manual Argo sync, or
 direct `kubectl` deployment in this path. A failed build, Warehouse, Freight, Stage, Argo, or rollout gate blocks the
 transaction at that gate; it is not repaired by bypassing the gate.
@@ -74,9 +83,10 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
-Bayn is the one safety exception and is not enrolled in a Kargo Warehouse or Stage. Its `bayn-release` activation and
-source-lineage branch remain the authority for strategy activation; an image digest alone never creates Freight or
-authorizes a Bayn promotion.
+Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Stage updates the public service,
+execution worker, and activation hook to the same source and digest, and carries the existing authored research
+request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
+The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
 
 ## Application enrollment
 

@@ -269,6 +269,36 @@ describePostgres('PostgreSQL intraday observability projection', () => {
     })
   })
 
+  test('includes posted broker fees and refunds in account economics without mixing accounts or future posts', async () => {
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(draft(), acquiredAt)
+        yield* seedSafetyState
+        const sql = yield* PgClient.PgClient
+        for (const fee of [
+          { id: 'fee', account: accountId, net: '-230000', posted: reconciledAt },
+          { id: 'refund', account: accountId, net: '10000', posted: reconciledAt },
+          { id: 'pending', account: accountId, net: '-900000', posted: null },
+          { id: 'future', account: accountId, net: '-900000', posted: '2999-01-01T00:00:00.000Z' },
+          { id: 'other', account: 'other-account', net: '-900000', posted: reconciledAt },
+        ]) {
+          const data = { accountId: fee.account, activityId: fee.id, date: sessionDate, netAmountMicros: fee.net }
+          yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at,posted_at)
+          VALUES (${fee.account},${fee.id},${sessionDate},${fee.net},${sql.json(data)},${sql.json({ requestId: 'fee-read', status: 200, contentHash: stateHash, observedAt: reconciledAt })},${stateHash},${stateHash},1,1,${reconciledAt},${fee.posted})`
+        }
+        return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+      }),
+    )
+    expect(projection.economics?.accounting).toMatchObject({
+      fillCount: 0,
+      transactionCount: 0,
+      grossRealizedPnlMicros: '0',
+      executionFeesMicros: '220000',
+      netRealizedPnlAfterExecutionFeesMicros: '-220000',
+    })
+  })
+
   test('selects account snapshots by durable broker sequence', async () => {
     const projection = await runtime.runPromise(
       Effect.gen(function* () {

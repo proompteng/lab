@@ -6,13 +6,17 @@
   nodejs,
 }:
 
+let
+  dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
+in
 import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
+  inherit dependencySource;
   serviceName = "oirat";
   packageName = "@proompteng/oirat";
   depsHash = {
-    x86_64-linux = "sha256-mBAkBn5cxxkZtRE/5mjosMO6JLPfqE2w8pa+0jPb4qA=";
-    aarch64-linux = "sha256-iUebc+lJzQ6LA5Pzs2Pizl6vtOvagS2R4IeiXI5ISUY=";
+    x86_64-linux = "sha256-MwH1rr0qGDKtUUH7PeuXoOfz2dZnJmyWwt68IdvOPn8=";
+    aarch64-linux = "sha256-GOuwFb/D/evsUV/V7+pqHxByKRUS0Z7v7b/OjGEXQgE=";
   };
   installFilters = [
     "@proompteng/discord"

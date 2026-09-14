@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
+import { postgresWallClock, type DatabaseClock } from '../../db/clock'
 
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../../shadow-decision-contract'
@@ -32,7 +33,10 @@ export interface CycleQueries {
   ) => Effect.Effect<boolean, CycleStoreInternalError>
 }
 
-export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
+export const makeCycleQueries = (
+  sql: PgClient.PgClient,
+  clock: DatabaseClock = postgresWallClock(sql),
+): CycleQueries => {
   const selectCycle: CycleQueries['selectCycle'] = (cycleId, locked) => {
     const rows = locked
       ? sql<Record<string, unknown>>`
@@ -125,7 +129,7 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
         paper_cycle_completion_evidence_matches(
           cycle_id,
           decision_hash,
-          clock_timestamp()
+          ${clock.now}
         ) AS execution_completion_evidence_matches,
         paper_cycle_generation_is_superseded(
           cycle_id,
@@ -349,14 +353,15 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
                 AND snapshot.manifest ->> 'finalizedAt' = ${document.bindings.snapshotFinalizedAt}
             )
           `
-        : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v2'
+        : decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
+            decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v4'
           ? sql`
               ${document.bindings.snapshotId} = ${decisionMarketData.snapshotId}
               AND ${document.bindings.snapshotContentHash} = ${decisionMarketData.contentHash}
               AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
               AND EXISTS (
                 SELECT 1
-                FROM intraday_snapshot_references AS snapshot
+                FROM ${sql(decisionMarketData.schemaVersion === 'bayn.execution-market-data-binding.v4' ? 'simulated_snapshot_references' : 'streaming_snapshot_references')} AS snapshot
                 WHERE snapshot.snapshot_id = ${decisionMarketData.snapshotId}
                   AND snapshot.content_hash = ${decisionMarketData.contentHash}
                   AND snapshot.observed_at = ${decisionMarketData.observedAt}::timestamptz
@@ -367,11 +372,21 @@ export const makeCycleQueries = (sql: PgClient.PgClient): CycleQueries => {
               AND ${document.bindings.snapshotContentHash} = ${decisionMarketData.contentHash}
               AND ${document.bindings.snapshotFinalizedAt} = ${decisionMarketData.observedAt}
             `
+    const pricing = document.bindings.executionMarketData
+    const pricingEvidence =
+      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
+      pricing?.schemaVersion === 'bayn.execution-market-data-binding.v4'
+        ? sql`EXISTS (SELECT 1 FROM ${sql(pricing.schemaVersion === 'bayn.execution-market-data-binding.v4' ? 'simulated_snapshot_references' : 'streaming_snapshot_references')} AS snapshot
+          WHERE snapshot.snapshot_id = ${pricing.snapshotId}
+            AND snapshot.content_hash = ${pricing.contentHash}
+            AND snapshot.observed_at = ${pricing.observedAt}::timestamptz)`
+        : sql`true`
     return sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1
         FROM reconciliations AS reconciliation
         WHERE ${snapshotEvidence}
+          AND ${pricingEvidence}
           AND ${riskContextEvidence}
           AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
           AND reconciliation.account_id = ${document.bindings.accountId}

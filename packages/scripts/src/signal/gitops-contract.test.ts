@@ -157,6 +157,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT INSERT ON signal.intraday_bars_1m_v2',
       'GRANT INSERT ON signal.intraday_quotes_v1',
       'GRANT INSERT ON signal.intraday_trades_v1',
+      'GRANT INSERT ON signal.intraday_features_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v2',
     ])
@@ -168,6 +169,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.intraday_bars_1m_v2',
       'GRANT SELECT ON signal.intraday_quotes_v1',
       'GRANT SELECT ON signal.intraday_trades_v1',
+      'GRANT SELECT ON signal.intraday_features_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])
@@ -254,7 +256,7 @@ describe('Signal publisher GitOps authority contract', () => {
         entryClass: 'ai.proompteng.dorvud.ta.flink.MarketDataArchiveJobKt',
         parallelism: 16,
         state: 'running',
-        upgradeMode: 'stateless',
+        upgradeMode: 'savepoint',
       },
       taskManager: {
         replicas: 8,

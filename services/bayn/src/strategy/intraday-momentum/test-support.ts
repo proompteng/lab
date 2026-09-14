@@ -1,6 +1,6 @@
 import { canonicalHashV1 } from '../../hash'
 import type { IntradaySnapshotRequest } from '../../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../../market-data/intraday/model'
+import type { IntradayMarketSnapshot } from '../../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../../time'
 import type { IntradayMomentumProtocol } from './protocol'
 
@@ -16,7 +16,7 @@ export const makeIntradayMomentumTestSnapshot = (
   premiums: Readonly<Record<string, number>> = {},
   basePrice = 100,
   bidSizes: Readonly<Record<string, number>> = {},
-): ArchiveVerifiedIntradayMarketSnapshot => {
+): IntradayMarketSnapshot => {
   const rangeStartEpoch = Date.parse(request.rangeStartAt)
   const rangeMinutes = (Date.parse(request.rangeEndAt) - rangeStartEpoch) / 60_000
   const requestedSymbols = request.symbols ?? request.universe
@@ -147,5 +147,5 @@ export const makeIntradayMomentumTestSnapshot = (
       contentHash,
       snapshotId: canonicalHashV1({ ...material, contentHash }),
     },
-  } as unknown as ArchiveVerifiedIntradayMarketSnapshot
+  } as unknown as IntradayMarketSnapshot
 }

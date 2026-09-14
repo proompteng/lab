@@ -6,18 +6,24 @@ until the live NetworkPolicy enforcement probe passes. Hermes and OpenClaw must 
 
 ## Release and supply chain
 
-- Hermes Agent release: `v2026.8.27` (Hermes `0.20.6`), upstream commit
-  `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
-- Upstream multi-architecture index: `sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79`.
-- Upstream amd64 manifest: `sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
-- Upstream amd64 SLSA provenance manifest: `sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c`.
-  Its subject is the exact amd64 manifest and its BuildKit provenance records GitHub Actions run `33070373247` and source
-  revision `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
-- Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
+- Hermes Agent release: `v2026.9.7` (Hermes `0.21.1`), upstream commit
+  `2237be355906fbe6065ce1815711eee52b2d646e`.
+- Upstream multi-architecture index: `sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7`.
+- Upstream amd64 manifest: `sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b`.
+- Upstream amd64 SLSA provenance manifest: `sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db`.
+  Its subject is the exact amd64 manifest and its BuildKit provenance records GitHub Actions run `34166135981` and source
+  revision `2237be355906fbe6065ce1815711eee52b2d646e`.
+- Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b`.
 - Squid egress proxy: `docker.io/ubuntu/squid:6.6-24.04_edge` pinned by digest in `egress-proxy.yaml`.
 - Lab toolchain: the dedicated multi-architecture Nix OCI image is pinned by index digest in the Kargo-managed StatefulSet reference;
   it is restricted to Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`,
   ShellCheck `0.11.0`, jq `1.8.1`, and yq `4.49.2`.
+
+The pinned upstream release is mirrored by the dispatchable `hermes-agent-mirror` workflow. That workflow runs only from
+`main`, verifies the complete upstream index, amd64/arm64 platforms, attached SLSA manifest, matching amd64 subject, and
+the fetched in-toto predicate/source revision before copying the immutable index to
+`registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64`. Run it before syncing the manifest so the private digest
+reference is pullable. The workflow never writes a Kargo tag or the Kargo-managed toolchain digest.
 
 All runtime image references are immutable digests. A merge to `main` starts the Hermes toolchain image build; once the
 multi-architecture image is published, Kargo creates Freight and automatically promotes Stage `lab-delivery/hermes-toolchain`.

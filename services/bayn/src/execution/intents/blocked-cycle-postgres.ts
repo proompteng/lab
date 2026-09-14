@@ -278,12 +278,30 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               WHERE intent.cycle_id = cycle.cycle_id
             )
           FOR UPDATE OF cycle
+        ), completed_cycles AS MATERIALIZED (
+          SELECT cycle.cycle_id
+          FROM current_generation AS generation
+          JOIN autonomous_cycles AS cycle
+            ON cycle.account_id = generation.account_id
+          JOIN autonomous_cycle_shadow_decisions AS decision
+            ON decision.cycle_id = cycle.cycle_id
+           AND decision.decision_hash = cycle.decision_hash
+          WHERE generation.requires_blocked_cycle
+            AND cycle.state = 'COMPLETED'
+            AND cycle.terminal_at >= generation.restricted_at
+            AND cycle.terminal_at <= ${input.observedAt}::timestamptz
+            AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+            AND paper_cycle_completion_evidence_matches(
+              cycle.cycle_id, cycle.decision_hash, ${input.observedAt}::timestamptz
+            )
+          FOR UPDATE OF cycle
         ), recoverable_generation AS MATERIALIZED (
           SELECT generation.*
           FROM current_generation AS generation
           WHERE NOT generation.requires_blocked_cycle
              OR EXISTS (SELECT 1 FROM blocked_cycles)
              OR EXISTS (SELECT 1 FROM preserved_cycles)
+             OR EXISTS (SELECT 1 FROM completed_cycles)
         ), terminalized AS (
           UPDATE intents AS intent
           SET

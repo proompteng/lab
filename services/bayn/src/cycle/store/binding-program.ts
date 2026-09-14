@@ -1,3 +1,5 @@
+import type { SimulatedSnapshotReference } from '../../market-data/streaming/simulation-service'
+import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 
@@ -7,7 +9,6 @@ import {
   snapshotReferenceIssueTags,
 } from '../../db/snapshot-reference'
 import { decodeInputManifestArtifact } from '../../evidence-contracts'
-import type { ArchiveVerifiedIntradaySnapshotReference } from '../../market-data/intraday/model'
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest } from '../../types'
@@ -150,12 +151,16 @@ const makeCycleBindingProgramsDataFirst = (
     )
 
   const persistIntradaySnapshotReference = (
-    reference: ArchiveVerifiedIntradaySnapshotReference,
+    reference: StreamingVerifiedSnapshotReference | SimulatedSnapshotReference,
   ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.gen(function* () {
       const manifest = reference.manifest
+      const table =
+        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1'
+          ? 'simulated_snapshot_references'
+          : 'streaming_snapshot_references'
       yield* sql`
-        INSERT INTO intraday_snapshot_references (
+        INSERT INTO ${sql(table)} (
           snapshot_id, schema_version, content_hash, observed_at, manifest
         ) VALUES (
           ${manifest.snapshotId}, ${reference.schemaVersion}, ${manifest.contentHash},
@@ -166,7 +171,7 @@ const makeCycleBindingProgramsDataFirst = (
       const [match] = yield* sql<{ matches: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM intraday_snapshot_references AS reference
+          FROM ${sql(table)} AS reference
           WHERE reference.snapshot_id = ${manifest.snapshotId}
             AND reference.schema_version = ${reference.schemaVersion}
             AND reference.content_hash = ${manifest.contentHash}
@@ -178,7 +183,7 @@ const makeCycleBindingProgramsDataFirst = (
         return yield* failCycleStore(
           'bind-decision',
           'conflict',
-          'stored intraday snapshot reference diverged from the archive-verified manifest',
+          'stored intraday snapshot reference diverged from the verified market manifest',
         )
       }
     })
@@ -186,10 +191,14 @@ const makeCycleBindingProgramsDataFirst = (
   const persistDecisionEvidence = (
     evidence: CycleDecisionBindingEvidence | undefined,
   ): Effect.Effect<void, CycleStoreInternalError> =>
-    Effect.forEach(evidence?.intradaySnapshotReferences ?? [], persistIntradaySnapshotReference, {
-      concurrency: 1,
-      discard: true,
-    })
+    Effect.forEach(
+      [...(evidence?.streamingSnapshotReferences ?? []), ...(evidence?.simulatedSnapshotReferences ?? [])],
+      persistIntradaySnapshotReference,
+      {
+        concurrency: 1,
+        discard: true,
+      },
+    )
 
   const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
     queries

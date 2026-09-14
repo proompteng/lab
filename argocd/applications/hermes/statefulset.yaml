@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: hermes
     app.kubernetes.io/component: gateway
-    app.kubernetes.io/version: v2026.8.27
+    app.kubernetes.io/version: v2026.9.7
 spec:
   serviceName: hermes
   replicas: 1
@@ -27,7 +27,7 @@ spec:
       labels:
         app.kubernetes.io/name: hermes
         app.kubernetes.io/component: gateway
-        app.kubernetes.io/version: v2026.8.27
+        app.kubernetes.io/version: v2026.9.7
     spec:
       serviceAccountName: hermes
       automountServiceAccountToken: true
@@ -55,7 +55,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: bootstrap
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -137,7 +137,7 @@ spec:
               mountPath: /opt/github-auth
       containers:
         - name: hermes
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
           imagePullPolicy: IfNotPresent
           workingDir: /opt/data/workspace/tuslagch/lab
           command:

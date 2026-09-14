@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Safely restart one Tempo 2.x ingester container in place.
+"""Historical Tempo 2.x ingester recovery; not applicable to Tempo 3.
+
+Tempo 3 retired these ingester resources. Use docs/runbooks/tempo-3-migration.md
+for the current recovery procedure. This retained helper only describes the
+older same-Pod container reload contract.
 
 The default mode is read-only and reports whether the preconditions for a
 same-Pod restart are true.  ``--execute`` is deliberately narrow: it appends

@@ -1,0 +1,19 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: observability.mimir.ingest.v1
+  namespace: kafka
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  # One partition per ingester. Grow the topic before increasing replicas.
+  partitions: 3
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    min.insync.replicas: 2
+    # Mimir's maximum Kafka record is 15.2 MB; the broker default is 1 MB.
+    max.message.bytes: 16000000
+    retention.ms: 86400000
