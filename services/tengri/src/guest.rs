@@ -1,0 +1,1381 @@
+use std::{pin::Pin, time::Duration};
+
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use futures::{Stream, StreamExt};
+use k8s_openapi::api::core::v1::Secret;
+use kube::{Api, Client, ResourceExt};
+use reqwest::{Method, StatusCode, header::HeaderValue};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+
+use crate::crd::{MicroVM, MicroVMPhase};
+
+mod codex_history;
+
+const GUEST_API_PORT: u16 = 8080;
+pub const EDITOR_PORT: u16 = 13337;
+pub const EDITOR_BRIDGE_PORT: u16 = 13338;
+const BOOTSTRAP_TOKEN_KEY: &str = "token";
+const MAX_GUEST_ERROR_BYTES: usize = 64 << 10;
+const MAX_GUEST_FILE_BYTES: usize = 4 << 20;
+const MAX_GUEST_JSON_BYTES: usize = 10 << 20;
+const MAX_GUEST_STREAM_LINE_BYTES: usize = 3 << 20;
+const GUEST_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const GUEST_UNARY_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Error)]
+pub enum GuestError {
+    #[error("Kubernetes API request failed: {0}")]
+    Kubernetes(#[from] kube::Error),
+    #[error("MicroVM {0} is not ready")]
+    NotReady(String),
+    #[error("MicroVM {0} has no guest IP")]
+    MissingGuestIp(String),
+    #[error("bootstrap secret {0} is missing token data")]
+    MissingToken(String),
+    #[error("Nanoagent API request failed: {0}")]
+    Transport(#[from] reqwest::Error),
+    #[error("Nanoagent API returned {status}: {message}")]
+    Api { status: StatusCode, message: String },
+    #[error("Nanoagent stream returned invalid UTF-8")]
+    InvalidUtf8,
+    #[error("Nanoagent returned invalid JSON: {0}")]
+    InvalidJson(#[from] serde_json::Error),
+    #[error("Nanoagent does not support atomic Codex snapshot cursors")]
+    MissingCodexSnapshotCursor,
+    #[error("Nanoagent returned invalid Codex history: {0}")]
+    InvalidCodexHistory(&'static str),
+    #[error("Codex conversation history retrieval timed out")]
+    CodexHistoryTimeout,
+    #[error("Nanoagent returned terminal creation identity {actual:?}; expected {expected:?}")]
+    TerminalCreationIdentityMismatch {
+        expected: String,
+        actual: String,
+        created_terminal_id: Option<String>,
+    },
+    #[error("Nanoagent did not return a strong SHA-256 file revision")]
+    MissingFileRevision,
+    #[error("Nanoagent returned an invalid file revision")]
+    InvalidFileRevision,
+    #[error("Nanoagent file revision does not match the returned content")]
+    FileRevisionMismatch,
+    #[error("Nanoagent response exceeded the {0}-byte limit")]
+    ResponseTooLarge(usize),
+}
+
+#[derive(Clone)]
+pub struct GuestClient {
+    http: reqwest::Client,
+    base_url: String,
+    token: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub directory: bool,
+    pub size: i64,
+    pub modified_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileList {
+    pub path: String,
+    pub entries: Vec<FileEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchResult {
+    pub entries: Vec<FileEntry>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug)]
+pub struct FileContent {
+    pub path: String,
+    pub content: Vec<u8>,
+    pub content_type: String,
+    pub revision: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteResult {
+    pub path: String,
+    pub size: i64,
+    #[serde(default)]
+    pub revision: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEvent {
+    pub sequence: u64,
+    pub kind: String,
+    pub path: String,
+    #[serde(default)]
+    pub previous_path: String,
+    #[serde(default)]
+    pub entry: Option<FileEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSession {
+    pub id: String,
+    #[serde(default)]
+    pub creation_id: String,
+    pub cwd: String,
+    pub created_at: String,
+    pub last_activity_at: String,
+    pub attached: bool,
+}
+
+#[derive(Debug)]
+pub struct TerminalCreation {
+    pub session: TerminalSession,
+    pub created: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminalList {
+    sessions: Vec<TerminalSession>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexEvent {
+    pub sequence: u64,
+    pub method: String,
+    #[serde(default)]
+    pub approval_id: String,
+    pub raw: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexCallResponse {
+    result: Value,
+    #[serde(default)]
+    event_sequence: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLoginSnapshot {
+    pub active: bool,
+    #[serde(default)]
+    pub result: Value,
+    #[serde(default)]
+    pub started_at: String,
+}
+
+#[derive(Debug)]
+pub struct CodexCallResult {
+    pub result: Value,
+    pub event_sequence: u64,
+}
+
+impl GuestClient {
+    pub async fn for_agent(
+        client: Client,
+        namespace: &str,
+        agent_id: &str,
+    ) -> Result<Self, GuestError> {
+        Self::for_agent_incarnation(client, namespace, agent_id, None).await
+    }
+
+    pub async fn for_agent_incarnation(
+        client: Client,
+        namespace: &str,
+        agent_id: &str,
+        incarnation: Option<&str>,
+    ) -> Result<Self, GuestError> {
+        let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
+        let microvm = microvms.get(agent_id).await?;
+        if incarnation.is_some_and(|expected| microvm.metadata.uid.as_deref() != Some(expected)) {
+            return Err(GuestError::Api {
+                status: StatusCode::GONE,
+                message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
+            });
+        }
+        let status = microvm
+            .status
+            .as_ref()
+            .filter(|status| {
+                status.phase == MicroVMPhase::Ready
+                    && status.guest_ready
+                    && status.observed_generation >= microvm.metadata.generation.unwrap_or_default()
+            })
+            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
+        let guest_ip = status
+            .pod_ip
+            .as_ref()
+            .ok_or_else(|| GuestError::MissingGuestIp(agent_id.to_owned()))?;
+        let secret_name = format!("{}-bootstrap", microvm.name_any());
+        let secrets: Api<Secret> = Api::namespaced(client, namespace);
+        let secret = secrets.get(&secret_name).await?;
+        let token_bytes = secret
+            .data
+            .as_ref()
+            .and_then(|data| data.get(BOOTSTRAP_TOKEN_KEY))
+            .ok_or_else(|| GuestError::MissingToken(secret_name.clone()))?;
+        let token = String::from_utf8(token_bytes.0.clone())
+            .map_err(|_| GuestError::MissingToken(secret_name))?;
+
+        Ok(Self {
+            http: reqwest::Client::builder()
+                .connect_timeout(GUEST_CONNECT_TIMEOUT)
+                .build()?,
+            base_url: format!("http://{guest_ip}:{GUEST_API_PORT}"),
+            token,
+        })
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    pub async fn open_editor(&self) -> Result<(), GuestError> {
+        let response = self
+            .request(Method::POST, "/v1/editor")
+            .timeout(Duration::from_secs(300))
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Err(GuestError::Api { status: StatusCode::SERVICE_UNAVAILABLE, message: "This guest predates VS Code. Sleep and resume the agent to use the current guest image.".to_owned() });
+        }
+        let response = checked_response(response).await?;
+        let body = bounded_response_body(response, 4096).await?;
+        let value: Value = serde_json::from_slice(&body)?;
+        if value.get("port").and_then(Value::as_u64) != Some(u64::from(EDITOR_PORT)) {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message: "invalid VS Code endpoint".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
+        self.json(
+            self.request(Method::GET, "/v1/files")
+                .query(&[("path", path)]),
+        )
+        .await
+    }
+
+    pub async fn read_file(&self, path: &str) -> Result<FileContent, GuestError> {
+        let response = checked_response(
+            self.send_unary(
+                self.request(Method::GET, "/v1/files/content")
+                    .query(&[("path", path)]),
+            )
+            .await?,
+        )
+        .await?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        let revision = strong_file_revision(response.headers().get(reqwest::header::ETAG))?;
+        let content = bounded_response_body(response, MAX_GUEST_FILE_BYTES).await?;
+        if let Some(revision) = &revision
+            && revision_for_content(&content) != *revision
+        {
+            return Err(GuestError::FileRevisionMismatch);
+        }
+        Ok(FileContent {
+            path: path.to_owned(),
+            content,
+            content_type,
+            revision: revision.unwrap_or_default(),
+        })
+    }
+
+    pub async fn write_file(
+        &self,
+        path: &str,
+        content: &[u8],
+        expected_revision: &str,
+    ) -> Result<WriteResult, GuestError> {
+        validate_expected_revision(expected_revision)?;
+        let result: WriteResult = self
+            .json(
+                self.request(Method::PUT, "/v1/files/content")
+                    .json(&serde_json::json!({
+                        "path": path,
+                        "content": BASE64.encode(content),
+                        "expectedRevision": expected_revision,
+                    })),
+            )
+            .await?;
+        if result.revision.is_empty() {
+            return Err(GuestError::MissingFileRevision);
+        }
+        if !is_file_revision(&result.revision) {
+            return Err(GuestError::InvalidFileRevision);
+        }
+        if revision_for_content(content) != result.revision {
+            return Err(GuestError::FileRevisionMismatch);
+        }
+        Ok(result)
+    }
+
+    pub async fn create_directory(&self, path: &str) -> Result<FileEntry, GuestError> {
+        self.json(
+            self.request(Method::POST, "/v1/files/directory")
+                .json(&serde_json::json!({"path": path})),
+        )
+        .await
+    }
+
+    pub async fn move_file(
+        &self,
+        source_path: &str,
+        destination_path: &str,
+    ) -> Result<FileEntry, GuestError> {
+        self.json(
+            self.request(Method::POST, "/v1/files/move")
+                .json(&serde_json::json!({
+                    "sourcePath": source_path,
+                    "destinationPath": destination_path,
+                })),
+        )
+        .await
+    }
+
+    pub async fn delete_file(&self, path: &str, recursive: bool) -> Result<(), GuestError> {
+        checked_response(
+            self.send_unary(
+                self.request(Method::DELETE, "/v1/files")
+                    .json(&serde_json::json!({"path": path, "recursive": recursive})),
+            )
+            .await?,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn search_files(
+        &self,
+        query: &str,
+        path: &str,
+        limit: u32,
+    ) -> Result<FileSearchResult, GuestError> {
+        self.json(self.request(Method::GET, "/v1/files/search").query(&[
+            ("query", query.to_owned()),
+            ("path", path.to_owned()),
+            ("limit", limit.to_string()),
+        ]))
+        .await
+    }
+
+    pub async fn watch_files(
+        &self,
+        path: &str,
+        after: Option<u64>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<FileEvent, GuestError>> + Send>>, GuestError> {
+        self.ndjson(self.file_watch_request(path, after)).await
+    }
+
+    fn file_watch_request(&self, path: &str, after: Option<u64>) -> reqwest::RequestBuilder {
+        let request = self
+            .request(Method::GET, "/v1/files/watch")
+            .query(&[("path", path)]);
+        match after {
+            Some(after) => request.query(&[("after", after)]),
+            None => request,
+        }
+    }
+
+    pub async fn create_terminal(
+        &self,
+        creation_id: &str,
+        cwd: &str,
+        columns: u32,
+        rows: u32,
+    ) -> Result<TerminalCreation, GuestError> {
+        let response = match self
+            .send_unary(
+                self.request(Method::POST, "/v1/terminals")
+                    .json(&serde_json::json!({
+                        "creationId": creation_id,
+                        "cwd": cwd,
+                        "columns": columns,
+                        "rows": rows
+                    })),
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return self
+                    .reconcile_terminal_creation_error(creation_id, error, false)
+                    .await;
+            }
+        };
+        let created = response.status() == StatusCode::CREATED;
+        match terminal_creation(response, creation_id).await {
+            Ok(creation) => Ok(creation),
+            Err(error @ GuestError::TerminalCreationIdentityMismatch { .. }) => Err(error),
+            Err(error) => {
+                self.reconcile_terminal_creation_error(creation_id, error, created)
+                    .await
+            }
+        }
+    }
+
+    async fn reconcile_terminal_creation_error(
+        &self,
+        creation_id: &str,
+        original_error: GuestError,
+        created: bool,
+    ) -> Result<TerminalCreation, GuestError> {
+        if let Ok(sessions) = self.list_terminals().await
+            && let Some(session) = sessions
+                .into_iter()
+                .find(|session| session.creation_id == creation_id)
+        {
+            return Ok(TerminalCreation { session, created });
+        }
+        Err(original_error)
+    }
+
+    pub async fn list_terminals(&self) -> Result<Vec<TerminalSession>, GuestError> {
+        let response: TerminalList = self
+            .json(self.request(Method::GET, "/v1/terminals"))
+            .await?;
+        Ok(response.sessions)
+    }
+
+    pub async fn terminate_terminal(&self, id: &str) -> Result<(), GuestError> {
+        checked_response(
+            self.send_unary(self.request(Method::DELETE, &format!("/v1/terminals/{id}")))
+                .await?,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn codex_call(&self, method: &str, params: Value) -> Result<Value, GuestError> {
+        Ok(self.codex_call_response(method, params).await?.result)
+    }
+
+    pub async fn codex_login(&self) -> Result<CodexLoginSnapshot, GuestError> {
+        self.json(self.request(Method::GET, "/v1/codex/login"))
+            .await
+    }
+
+    pub async fn codex_call_with_sequence(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<CodexCallResult, GuestError> {
+        let response = self.codex_call_response(method, params).await?;
+        Ok(CodexCallResult {
+            result: response.result,
+            event_sequence: response
+                .event_sequence
+                .ok_or(GuestError::MissingCodexSnapshotCursor)?,
+        })
+    }
+
+    async fn codex_call_response(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<CodexCallResponse, GuestError> {
+        self.json(
+            self.request(Method::POST, "/v1/codex/call")
+                .json(&serde_json::json!({"method": method, "params": params})),
+        )
+        .await
+    }
+
+    pub async fn resolve_codex_approval(
+        &self,
+        approval_id: &str,
+        decision: &str,
+    ) -> Result<(), GuestError> {
+        checked_response(
+            self.send_unary(
+                self.request(Method::POST, &format!("/v1/codex/approvals/{approval_id}"))
+                    .json(&serde_json::json!({"decision": decision})),
+            )
+            .await?,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn watch_codex_events(
+        &self,
+        after: u64,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<CodexEvent, GuestError>> + Send>>, GuestError>
+    {
+        self.ndjson(
+            self.request(Method::GET, "/v1/codex/events")
+                .query(&[("after", after.to_string())]),
+        )
+        .await
+    }
+
+    fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
+        self.http
+            .request(method, format!("{}{path}", self.base_url))
+            .bearer_auth(&self.token)
+    }
+
+    async fn send_unary(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, GuestError> {
+        Ok(self.unary_request(request).send().await?)
+    }
+
+    fn unary_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request.timeout(GUEST_UNARY_TIMEOUT)
+    }
+
+    async fn json<T: DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<T, GuestError> {
+        let response = checked_response(self.send_unary(request).await?).await?;
+        let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
+        Ok(serde_json::from_slice(&body)?)
+    }
+
+    async fn ndjson<T: DeserializeOwned + Send + 'static>(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<T, GuestError>> + Send>>, GuestError> {
+        let response = checked_response(request.send().await?).await?;
+        let mut bytes = response.bytes_stream();
+        let stream = async_stream::try_stream! {
+            let mut buffer = Vec::new();
+            while let Some(chunk) = bytes.next().await {
+                buffer.extend_from_slice(&chunk?);
+                for line in drain_ndjson_lines(&mut buffer, MAX_GUEST_STREAM_LINE_BYTES)? {
+                    let line = std::str::from_utf8(&line)
+                        .map_err(|_| GuestError::InvalidUtf8)?
+                        .trim();
+                    if !line.is_empty() {
+                        yield serde_json::from_str::<T>(line)?;
+                    }
+                }
+            }
+            if !buffer.is_empty() {
+                let line = std::str::from_utf8(&buffer).map_err(|_| GuestError::InvalidUtf8)?.trim();
+                if !line.is_empty() {
+                    yield serde_json::from_str::<T>(line)?;
+                }
+            }
+        };
+        Ok(Box::pin(stream))
+    }
+}
+
+fn drain_ndjson_lines(buffer: &mut Vec<u8>, limit: usize) -> Result<Vec<Vec<u8>>, GuestError> {
+    let mut lines = Vec::new();
+    while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+        if newline > limit {
+            return Err(GuestError::ResponseTooLarge(limit));
+        }
+        let mut line = buffer.drain(..=newline).collect::<Vec<_>>();
+        line.pop();
+        lines.push(line);
+    }
+    if buffer.len() > limit {
+        return Err(GuestError::ResponseTooLarge(limit));
+    }
+    Ok(lines)
+}
+
+async fn checked_response(response: reqwest::Response) -> Result<reqwest::Response, GuestError> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    let status = response.status();
+    let message = bounded_response_body(response, MAX_GUEST_ERROR_BYTES)
+        .await
+        .ok()
+        .and_then(|body| String::from_utf8(body).ok())
+        .unwrap_or_else(|| {
+            "Nanoagent request failed without a valid bounded response body".to_owned()
+        });
+    Err(GuestError::Api { status, message })
+}
+
+async fn terminal_creation(
+    response: reqwest::Response,
+    requested_creation_id: &str,
+) -> Result<TerminalCreation, GuestError> {
+    let response = checked_response(response).await?;
+    let created = response.status() == StatusCode::CREATED;
+    let body = bounded_response_body(response, MAX_GUEST_JSON_BYTES).await?;
+    let session: TerminalSession = serde_json::from_slice(&body)?;
+    if session.creation_id != requested_creation_id {
+        return Err(GuestError::TerminalCreationIdentityMismatch {
+            expected: requested_creation_id.to_owned(),
+            actual: session.creation_id,
+            created_terminal_id: created.then_some(session.id),
+        });
+    }
+    Ok(TerminalCreation { session, created })
+}
+
+async fn bounded_response_body(
+    response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, GuestError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(GuestError::ResponseTooLarge(limit));
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(GuestError::ResponseTooLarge(limit));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+fn revision_for_content(content: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(content))
+}
+
+fn is_file_revision(value: &str) -> bool {
+    value.len() == Sha256::output_size() * 2
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn validate_expected_revision(value: &str) -> Result<(), GuestError> {
+    if value != "missing" && !is_file_revision(value) {
+        return Err(GuestError::InvalidFileRevision);
+    }
+    Ok(())
+}
+
+fn strong_file_revision(value: Option<&HeaderValue>) -> Result<Option<String>, GuestError> {
+    let Some(value) = value else {
+        // Older Nanoagent guests do not emit ETags. Preserve their read path so callers can
+        // inspect the file, while the editor can keep it read-only until the guest is resumed.
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| GuestError::InvalidFileRevision)?;
+    let revision = value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .ok_or(GuestError::InvalidFileRevision)?;
+    if !is_file_revision(revision) {
+        return Err(GuestError::InvalidFileRevision);
+    }
+    Ok(Some(revision.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use axum::{
+        Json, Router,
+        routing::{get, post, put},
+    };
+    fn terminal_json(creation_id: &str) -> Value {
+        serde_json::json!({
+            "id": "abcdefghijklmnopqrstuvwx",
+            "creationId": creation_id,
+            "cwd": "/workspace",
+            "createdAt": "2026-08-28T00:00:00Z",
+            "lastActivityAt": "2026-08-28T00:00:00Z",
+            "attached": false
+        })
+    }
+
+    #[tokio::test]
+    async fn editor_start_authenticates_and_rejects_invalid_or_legacy_guests() {
+        for (status, body, expected) in [
+            (StatusCode::OK, r#"{"port":13337}"#, None),
+            (
+                StatusCode::OK,
+                r#"{"port":8080}"#,
+                Some(StatusCode::BAD_GATEWAY),
+            ),
+            (
+                StatusCode::NOT_FOUND,
+                "old guest",
+                Some(StatusCode::SERVICE_UNAVAILABLE),
+            ),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "installer failed",
+                Some(StatusCode::SERVICE_UNAVAILABLE),
+            ),
+        ] {
+            let router = Router::new().route(
+                "/v1/editor",
+                post(move |headers: http::HeaderMap| async move {
+                    assert_eq!(
+                        headers[http::header::AUTHORIZATION],
+                        "Bearer editor-test-token"
+                    );
+                    (status, body)
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            });
+            let guest = GuestClient {
+                http: reqwest::Client::new(),
+                base_url: format!("http://{address}"),
+                token: "editor-test-token".to_owned(),
+            };
+            let result = guest.open_editor().await;
+            match expected {
+                None => assert!(result.is_ok()),
+                Some(expected) => assert!(
+                    matches!(result, Err(GuestError::Api { status, .. }) if status == expected)
+                ),
+            }
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn an_editor_session_cannot_bind_to_a_recreated_microvm() {
+        let service = tower::service_fn(|request: http::Request<kube::client::Body>| async move {
+            assert!(
+                request.uri().path().ends_with("/microvms/editor-fixture"),
+                "stale session read a bootstrap secret"
+            );
+            let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
+                "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                "resources":{"cpuMillis":2000,"memoryMib":4096,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
+            }});
+            Ok::<_, std::io::Error>(
+                http::Response::builder()
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(kube::client::Body::from(value.to_string().into_bytes()))
+                    .unwrap(),
+            )
+        });
+        let result = GuestClient::for_agent_incarnation(
+            Client::new(service, "tengri"),
+            "tengri",
+            "editor-fixture",
+            Some("old-incarnation"),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(GuestError::Api {
+                status: StatusCode::GONE,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn guest_response_body_is_bounded_before_and_during_streaming() {
+        let declared: reqwest::Response = http::Response::builder()
+            .header(http::header::CONTENT_LENGTH, "5")
+            .body("12345")
+            .expect("declared response")
+            .into();
+        assert!(matches!(
+            bounded_response_body(declared, 4).await,
+            Err(GuestError::ResponseTooLarge(4))
+        ));
+
+        let streamed: reqwest::Response = http::Response::builder()
+            .body("12345")
+            .expect("streamed response")
+            .into();
+        assert!(matches!(
+            bounded_response_body(streamed, 4).await,
+            Err(GuestError::ResponseTooLarge(4))
+        ));
+    }
+
+    #[tokio::test]
+    async fn read_file_forwards_a_verified_strong_revision() {
+        let body = b"versioned content\n".to_vec();
+        let revision = revision_for_content(&body);
+        let fixture_revision = revision.clone();
+        let router = Router::new().route(
+            "/v1/files/content",
+            get(move || {
+                let body = body.clone();
+                let revision = fixture_revision.clone();
+                async move { ([(http::header::ETAG, format!("\"{revision}\""))], body) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent read fixture");
+        let address = listener.local_addr().expect("Nanoagent read address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent read fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let result = client
+            .read_file("/workspace/main.rs")
+            .await
+            .expect("revisioned file response");
+        assert_eq!(result.content, b"versioned content\n");
+        assert_eq!(result.revision, revision);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn read_file_keeps_legacy_content_usable_without_an_etag() {
+        let router = Router::new().route(
+            "/v1/files/content",
+            get(|| async { (StatusCode::OK, "legacy content") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind legacy Nanoagent read fixture");
+        let address = listener
+            .local_addr()
+            .expect("legacy Nanoagent read address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve legacy Nanoagent read fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let result = client
+            .read_file("/workspace/legacy.txt")
+            .await
+            .expect("legacy file response");
+        assert_eq!(result.content, b"legacy content");
+        assert!(result.revision.is_empty());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn read_file_rejects_a_valid_but_mismatched_etag() {
+        let body = b"actual content\n".to_vec();
+        let revision = revision_for_content(b"different content\n");
+        let fixture_body = body.clone();
+        let fixture_revision = revision.clone();
+        let router = Router::new().route(
+            "/v1/files/content",
+            get(move || {
+                let body = fixture_body.clone();
+                let revision = fixture_revision.clone();
+                async move { ([(http::header::ETAG, format!("\"{revision}\""))], body) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mismatched Nanoagent read fixture");
+        let address = listener
+            .local_addr()
+            .expect("mismatched Nanoagent read address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve mismatched Nanoagent read fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        assert!(matches!(
+            client.read_file("/workspace/mismatched.txt").await,
+            Err(GuestError::FileRevisionMismatch)
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn write_file_forwards_the_required_revision_and_verifies_the_receipt() {
+        let content = b"saved content\n".to_vec();
+        let revision = revision_for_content(&content);
+        let expected_revision = "a".repeat(64);
+        let fixture_content = content.clone();
+        let fixture_revision = revision.clone();
+        let fixture_expected_revision = expected_revision.clone();
+        let router = Router::new().route(
+            "/v1/files/content",
+            put(move |Json(body): Json<Value>| {
+                let content = fixture_content.clone();
+                let revision = fixture_revision.clone();
+                let expected_revision = fixture_expected_revision.clone();
+                async move {
+                    assert_eq!(body["path"], "/workspace/main.rs");
+                    assert_eq!(body["expectedRevision"], expected_revision);
+                    let decoded = BASE64
+                        .decode(body["content"].as_str().expect("encoded content"))
+                        .expect("base64 content");
+                    assert_eq!(decoded, content);
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "path": "/workspace/main.rs",
+                            "size": 14,
+                            "revision": revision,
+                        })),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent write fixture");
+        let address = listener.local_addr().expect("Nanoagent write address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent write fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let result = client
+            .write_file("/workspace/main.rs", &content, &expected_revision)
+            .await
+            .expect("revisioned write response");
+        assert_eq!(result.path, "/workspace/main.rs");
+        assert_eq!(result.size, content.len() as i64);
+        assert_eq!(result.revision, revision);
+        server.abort();
+    }
+
+    #[test]
+    fn file_revisions_require_lowercase_sha256_values() {
+        assert!(is_file_revision(&"a".repeat(64)));
+        assert!(!is_file_revision(&"A".repeat(64)));
+        assert!(!is_file_revision(&"a".repeat(63)));
+        assert!(validate_expected_revision("missing").is_ok());
+        assert!(validate_expected_revision("").is_err());
+    }
+
+    #[test]
+    fn strong_etag_validation_rejects_weak_or_unmatched_revisions() {
+        let valid = HeaderValue::from_static(
+            "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        );
+        assert_eq!(
+            strong_file_revision(Some(&valid)).expect("valid strong ETag"),
+            Some("a".repeat(64))
+        );
+
+        for value in [
+            "W/\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"",
+        ] {
+            let header = HeaderValue::from_static(value);
+            assert!(matches!(
+                strong_file_revision(Some(&header)),
+                Err(GuestError::InvalidFileRevision)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn file_search_preserves_truncation_metadata() {
+        let router = Router::new().route(
+            "/v1/files/search",
+            get(|| async {
+                Json(serde_json::json!({
+                    "entries": [{
+                        "name": "main.rs",
+                        "path": "/workspace/main.rs",
+                        "directory": false,
+                        "size": 42,
+                        "modifiedAt": "2026-08-28T00:00:00Z"
+                    }],
+                    "truncated": true
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent search fixture");
+        let address = listener.local_addr().expect("Nanoagent search address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent search fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let result = client
+            .search_files("main", "/workspace", 100)
+            .await
+            .expect("search response");
+        assert!(result.truncated);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].path, "/workspace/main.rs");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn legacy_codex_calls_without_snapshot_cursors_remain_compatible() {
+        let router = Router::new().route(
+            "/v1/codex/call",
+            post(|| async { Json(serde_json::json!({"result": {"authenticated": true}})) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind legacy Nanoagent Codex fixture");
+        let address = listener
+            .local_addr()
+            .expect("legacy Nanoagent Codex address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve legacy Nanoagent Codex fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let account = client
+            .codex_call("account/read", serde_json::json!({}))
+            .await
+            .expect("legacy non-snapshot call");
+        assert_eq!(account["authenticated"], true);
+        assert!(matches!(
+            client
+                .codex_call_with_sequence(
+                    "thread/resume",
+                    serde_json::json!({"threadId": "thread"})
+                )
+                .await,
+            Err(GuestError::MissingCodexSnapshotCursor)
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn codex_login_snapshot_preserves_the_active_attempt() {
+        let router = Router::new().route(
+            "/v1/codex/login",
+            get(|| async {
+                Json(serde_json::json!({
+                    "active": true,
+                    "result": {
+                        "loginId": "login-one",
+                        "verificationUrl": "https://example.test/device",
+                        "userCode": "TENG-RI01"
+                    },
+                    "startedAt": "2026-08-31T09:00:00Z"
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent login fixture");
+        let address = listener.local_addr().expect("Nanoagent login address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent login fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let snapshot = client.codex_login().await.expect("login snapshot");
+        assert!(snapshot.active);
+        assert_eq!(snapshot.result["loginId"], "login-one");
+        assert_eq!(snapshot.started_at, "2026-08-31T09:00:00Z");
+        server.abort();
+    }
+
+    #[test]
+    fn file_search_accepts_legacy_response_without_truncation_metadata() {
+        let result: FileSearchResult = serde_json::from_value(serde_json::json!({"entries": []}))
+            .expect("legacy Nanoagent search response");
+        assert!(!result.truncated);
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_distinguishes_new_sessions_from_idempotent_replays() {
+        let body = r#"{
+            "id":"abcdefghijklmnopqrstuvwx",
+            "creationId":"terminal-creation-status",
+            "cwd":"/workspace",
+            "createdAt":"2026-08-28T00:00:00Z",
+            "lastActivityAt":"2026-08-28T00:00:00Z",
+            "attached":false
+        }"#;
+        for (status, expected_created) in [(StatusCode::CREATED, true), (StatusCode::OK, false)] {
+            let response: reqwest::Response = http::Response::builder()
+                .status(status)
+                .body(body)
+                .expect("terminal response")
+                .into();
+            let creation = terminal_creation(response, "terminal-creation-status")
+                .await
+                .expect("valid terminal creation response");
+            assert_eq!(creation.created, expected_created);
+            assert_eq!(creation.session.creation_id, "terminal-creation-status");
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_rejects_a_missing_or_changed_creation_identity() {
+        for actual in ["", "different-terminal-creation"] {
+            let response: reqwest::Response = http::Response::builder()
+                .status(StatusCode::CREATED)
+                .body(terminal_json(actual).to_string())
+                .expect("terminal response")
+                .into();
+
+            assert!(matches!(
+                terminal_creation(response, "terminal-creation-current").await,
+                Err(GuestError::TerminalCreationIdentityMismatch {
+                    expected,
+                    actual: returned,
+                    created_terminal_id: Some(terminal_id),
+                }) if expected == "terminal-creation-current"
+                    && returned == actual
+                    && terminal_id == "abcdefghijklmnopqrstuvwx"
+            ));
+        }
+
+        let replay: reqwest::Response = http::Response::builder()
+            .status(StatusCode::OK)
+            .body(terminal_json("different-terminal-creation").to_string())
+            .expect("terminal replay response")
+            .into();
+        assert!(matches!(
+            terminal_creation(replay, "terminal-creation-current").await,
+            Err(GuestError::TerminalCreationIdentityMismatch {
+                created_terminal_id: None,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_reconciliation_preserves_a_known_created_session() {
+        const CREATION_ID: &str = "terminal-creation-timeout";
+        let created = Arc::new(AtomicBool::new(false));
+        let creation_state = Arc::clone(&created);
+        let list_state = Arc::clone(&created);
+        let router = Router::new().route(
+            "/v1/terminals",
+            get(move || {
+                let created = Arc::clone(&list_state);
+                async move {
+                    let sessions = if created.load(Ordering::SeqCst) {
+                        vec![terminal_json(CREATION_ID)]
+                    } else {
+                        Vec::new()
+                    };
+                    Json(serde_json::json!({"sessions": sessions}))
+                }
+            })
+            .post(move |Json(body): Json<Value>| {
+                let created = Arc::clone(&creation_state);
+                async move {
+                    assert_eq!(
+                        body.get("creationId").and_then(Value::as_str),
+                        Some(CREATION_ID)
+                    );
+                    created.store(true, Ordering::SeqCst);
+                    (StatusCode::CREATED, "unreadable terminal response")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent reconciliation fixture");
+        let address = listener
+            .local_addr()
+            .expect("Nanoagent reconciliation address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent reconciliation fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let creation = client
+            .create_terminal(CREATION_ID, "/workspace", 120, 32)
+            .await
+            .expect("created terminal is reconciled after its response times out");
+
+        assert!(creation.created);
+        assert_eq!(creation.session.id, "abcdefghijklmnopqrstuvwx");
+        assert_eq!(creation.session.creation_id, CREATION_ID);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn terminal_creation_reconciles_a_lost_replay_without_recounting_it() {
+        const CREATION_ID: &str = "terminal-creation-replay";
+        let router = Router::new().route(
+            "/v1/terminals",
+            get(|| async {
+                Json(serde_json::json!({
+                    "sessions": [terminal_json(CREATION_ID)]
+                }))
+            })
+            .post(|| async { (StatusCode::OK, "unreadable terminal replay") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind Nanoagent replay fixture");
+        let address = listener.local_addr().expect("Nanoagent replay address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("serve Nanoagent replay fixture");
+        });
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: format!("http://{address}"),
+            token: "test-bootstrap-token".to_owned(),
+        };
+
+        let replay = client
+            .create_terminal(CREATION_ID, "/workspace", 120, 32)
+            .await
+            .expect("existing terminal is reconciled after its replay response is lost");
+
+        assert!(!replay.created);
+        assert_eq!(replay.session.creation_id, CREATION_ID);
+        server.abort();
+    }
+
+    #[test]
+    fn ndjson_limit_applies_to_remainder_after_complete_lines() {
+        let mut buffer = b"{}\n12345".to_vec();
+        assert!(matches!(
+            drain_ndjson_lines(&mut buffer, 4),
+            Err(GuestError::ResponseTooLarge(4))
+        ));
+    }
+
+    #[test]
+    fn unary_guest_requests_have_a_deadline_while_streams_remain_long_lived() {
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:8080".to_owned(),
+            token: "token".to_owned(),
+        };
+        let unary = client
+            .unary_request(client.request(Method::GET, "/v1/files"))
+            .build()
+            .expect("unary request");
+        let stream = client
+            .request(Method::GET, "/v1/files/watch")
+            .build()
+            .expect("stream request");
+
+        assert_eq!(unary.timeout(), Some(&GUEST_UNARY_TIMEOUT));
+        assert_eq!(stream.timeout(), None);
+    }
+
+    #[test]
+    fn file_watch_preserves_optional_cursor_presence() {
+        let client = GuestClient {
+            http: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:8080".to_owned(),
+            token: "token".to_owned(),
+        };
+        let initial = client
+            .file_watch_request("/workspace", None)
+            .build()
+            .expect("initial file watch request");
+        let from_zero = client
+            .file_watch_request("/workspace", Some(0))
+            .build()
+            .expect("zero-cursor file watch request");
+        let resumed = client
+            .file_watch_request("/workspace", Some(42))
+            .build()
+            .expect("resumed file watch request");
+
+        let initial_query = initial.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            initial_query.get("path").map(|value| value.as_ref()),
+            Some("/workspace")
+        );
+        assert!(!initial_query.contains_key("after"));
+        let zero_query = from_zero.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            zero_query.get("after").map(|value| value.as_ref()),
+            Some("0")
+        );
+        let resumed_query = resumed.url().query_pairs().collect::<HashMap<_, _>>();
+        assert_eq!(
+            resumed_query.get("path").map(|value| value.as_ref()),
+            Some("/workspace")
+        );
+        assert_eq!(
+            resumed_query.get("after").map(|value| value.as_ref()),
+            Some("42")
+        );
+    }
+}

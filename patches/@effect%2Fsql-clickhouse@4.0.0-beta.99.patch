@@ -1,0 +1,25 @@
+diff --git a/dist/ClickhouseClient.js b/dist/ClickhouseClient.js
+index c97676fc8913cfedc2c793bf9d4fed179a265f32..34a80630e4262f36f4c4b3f8bfa848271716b13c 100644
+--- a/dist/ClickhouseClient.js
++++ b/dist/ClickhouseClient.js
+@@ -97,7 +97,7 @@ export const make = options => Effect.gen(function* () {
+   const transformRows = options.transformResultNames ? Statement.defaultTransforms(options.transformResultNames).array : undefined;
+   const client = Clickhouse.createClient(options);
+   yield* Effect.acquireRelease(Effect.tryPromise({
+-    try: () => client.exec({
++    try: () => client.command({
+       query: "SELECT 1"
+     }),
+     catch: cause => new SqlError({
+diff --git a/src/ClickhouseClient.ts b/src/ClickhouseClient.ts
+index fb5883eb1201b651040b50059c4f991657a5252a..69350d70013a4bfc3268da4e6318c544ea0f5c54 100644
+--- a/src/ClickhouseClient.ts
++++ b/src/ClickhouseClient.ts
+@@ -180,6 +180,6 @@ export const make = (
+     yield* Effect.acquireRelease(
+       Effect.tryPromise({
+-        try: () => client.exec({ query: "SELECT 1" }),
++        try: () => client.command({ query: "SELECT 1" }),
+         catch: (cause) =>
+           new SqlError({ reason: classifyError(cause, "ClickhouseClient: Failed to connect", "connect", "connection") })
+       }),

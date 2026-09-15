@@ -1,0 +1,103 @@
+# Declarative PostgreSQL image plan for the galactic CNPG migration.
+#
+# This file is an operational plan, not a Kubernetes resource and must not be
+# added to an application's Kustomization. `currentImage` is the image observed
+# on the live Cluster at the configuration wave. `preparationImage` is the
+# same-major, same-OS-family convergence target. `majorImage` is the approved
+# PostgreSQL 18.6 target (or the 18.6 minor target for clusters already on
+# PostgreSQL 18). The manifest path is the GitOps source that owns each image.
+planVersion: 1
+context: galactic-lan
+clusters:
+  - namespace: agents
+    name: agents-db-next
+    manifest: argocd/applications/agents/postgres-cluster.yaml
+    backupManifest: argocd/applications/agents/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  - namespace: app
+    name: app-db
+    manifest: argocd/applications/app/postgres-cluster.yaml
+    backupManifest: argocd/applications/app/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:17.0
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
+  - namespace: attic
+    name: attic-db
+    manifest: argocd/applications/attic/postgres-cluster.yaml
+    backupManifest: argocd/applications/attic/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  - namespace: bayn
+    name: bayn-db
+    manifest: argocd/applications/bayn/postgres-cluster.yaml
+    configWave: false
+    currentImage: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie@sha256:9287ce030c6f3ce822e383b019ae4aaf1e8370bff3b39f9c51dc10d69dc97219
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  - namespace: bilig
+    name: bilig-db
+    manifest: argocd/applications/bilig/postgres-cluster.yaml
+    backupManifest: argocd/applications/bilig/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:17.0
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
+  - namespace: buzz
+    name: buzz-db
+    manifest: argocd/applications/buzz/postgres-cluster.yaml
+    configWave: false
+    currentImage: ghcr.io/cloudnative-pg/postgresql:17.7-system-trixie@sha256:08775f8bdeb112878b8f2ef63578c47959ee332fc9e076d5d6735a710c4500e2
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:17.11-system-trixie@sha256:362b039f643f1c09a34edd63d9a78903e5f1f4f43c24236cc8459621eb676d12
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  - namespace: coder
+    name: coder-cluster
+    manifest: argocd/applications/coder/coder-cluster.yaml
+    backupManifest: argocd/applications/coder/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:17.0
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
+  - namespace: forgejo
+    name: forgejo-db
+    manifest: argocd/applications/forgejo/postgres-cluster.yaml
+    backupManifest: argocd/applications/forgejo/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:17.0
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
+  - namespace: jangar
+    name: jangar-db
+    manifest: argocd/applications/jangar/postgres-cluster.yaml
+    configWave: false
+    currentImage: ghcr.io/cloudnative-pg/postgresql:17.0
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
+  - namespace: keycloak
+    name: keycloak-db
+    manifest: argocd/applications/keycloak/postgres-cluster.yaml
+    backupManifest: argocd/applications/keycloak/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  - namespace: synthesis
+    name: synthesis-db
+    manifest: argocd/applications/synthesis/postgres-cluster.yaml
+    backupManifest: argocd/applications/synthesis/postgres-upgrade-backup.yaml
+    configWave: true
+    currentImage: ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1
+  - namespace: torghut
+    name: torghut-db
+    manifest: argocd/applications/torghut/postgres-cluster.yaml
+    configWave: false
+    currentImage: ghcr.io/cloudnative-pg/postgresql:17.0
+    preparationImage: ghcr.io/cloudnative-pg/postgresql:17.11@sha256:70664ebcfa1100361b5bdc28bbf06fdbe08db2dc4ad7bd14de33c5e05fe8ea8e
+    majorImage: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533

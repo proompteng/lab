@@ -1,0 +1,84 @@
+# Chart RBAC Cluster-Scoped Guardrails
+
+Status: Draft (2026-02-07)
+
+Docs index: [README](../README.md)
+
+## Overview
+
+The Agents chart can run with cluster-scoped RBAC (`rbac.clusterScoped=true`) or namespaced RBAC (`false`). Misconfiguration can lead to controller errors (insufficient permissions) or excessive permissions (overbroad access).
+
+This doc defines guardrails in chart schema and controller startup validation.
+
+## Goals
+
+- Prevent mismatched RBAC and controller namespace scope.
+- Provide predictable permission sets for production.
+- Make RBAC mode visible in runtime logs and `/health` output.
+
+## Non-Goals
+
+- Enforcing organization-wide RBAC standards beyond this chart.
+
+## Current State
+
+- Values: `charts/agents/values.yaml` has `rbac.clusterScoped`.
+- Chart templates:
+  - RBAC objects: `charts/agents/templates/rbac.yaml`
+  - Controllers deployment exports `AGENTS_RBAC_CLUSTER_SCOPED`: `charts/agents/templates/deployment-controllers.yaml`
+- Runtime uses `AGENTS_RBAC_CLUSTER_SCOPED` when deciding listing/watching behavior: `services/agents/src/server/*` (notably `kube-watch.ts` and namespace helpers).
+- GitOps uses `rbac.clusterScoped: false` in `argocd/applications/agents/values.yaml`.
+
+## Design
+
+### Guardrail matrix
+
+- If `rbac.clusterScoped=false`:
+  - For each enabled controller, `*.namespaces` must be a non-empty explicit list and must NOT include `\"*\"`.
+- If `rbac.clusterScoped=true`:
+  - `*.namespaces` MAY be wildcard `\"*\"` or a non-empty list (for partial scope), but RBAC remains cluster-wide.
+
+### Validation points
+
+- Chart render-time validation in `charts/agents/templates/validation.yaml` (including explicit `[]` rejection and namespace token validation).
+- Controller startup validation:
+  - Log `clusterScoped` and resolved namespaces.
+  - If `clusterScoped=false` but namespaces is empty: exit non-zero with actionable error.
+
+## Config Mapping
+
+| Helm value                 | Env var                            | Intended behavior                                               |
+| -------------------------- | ---------------------------------- | --------------------------------------------------------------- |
+| `rbac.clusterScoped=false` | `AGENTS_RBAC_CLUSTER_SCOPED=false` | Controllers restrict API calls to configured namespaces only.   |
+| `rbac.clusterScoped=true`  | `AGENTS_RBAC_CLUSTER_SCOPED=true`  | Controllers may list/watch across namespaces (when configured). |
+
+## Rollout Plan
+
+1. Add schema validation for common misconfigs (no behavior change for correct installs).
+2. Add controller startup log lines and warnings first.
+3. Promote warnings to fail-fast once canary confirms no hidden dependencies.
+
+Rollback:
+
+- Disable validation rules and keep RBAC objects unchanged.
+
+## Validation
+
+```bash
+mise exec helm@3 -- helm template agents charts/agents -f argocd/applications/agents/values.yaml | rg -n \"ClusterRole|Role|clusterScoped\"
+kubectl -n agents get deploy agents-controllers -o yaml | rg -n \"AGENTS_RBAC_CLUSTER_SCOPED\"
+```
+
+## Failure Modes and Mitigations
+
+- Controllers get RBAC forbidden errors: mitigate by surfacing `clusterScoped` and scope in logs and health.
+- Overbroad RBAC accidentally enabled: mitigate by defaulting `clusterScoped=false` and adding schema warnings for prod overlays.
+
+## Acceptance Criteria
+
+- Invalid RBAC/scope combinations are rejected at render time.
+- Runtime logs clearly indicate RBAC mode and namespace scope.
+
+## References
+
+- Kubernetes RBAC overview: https://kubernetes.io/docs/reference/access-authn-authz/rbac/

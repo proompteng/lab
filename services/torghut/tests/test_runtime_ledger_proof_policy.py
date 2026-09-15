@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+from decimal import Decimal
+from unittest import TestCase
+
+from app.trading.runtime_ledger_proof_policy import (
+    DEFAULT_RUNTIME_LEDGER_PROOF_POLICY,
+    runtime_ledger_proof_policy_from_env,
+)
+
+
+class TestRuntimeLedgerProofPolicy(TestCase):
+    def test_default_policy_matches_goal_and_risk_gates(self) -> None:
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload(),
+            {
+                "proof_mode": "smoke",
+                "final_authority": False,
+                "evidence_collection_only": True,
+                "evidence_collection_ok": True,
+                "canary_collection_authorized": False,
+                "promotion_allowed": False,
+                "capital_promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "min_runtime_ledger_net_pnl_after_costs": "500",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "500",
+                "min_runtime_ledger_trading_days": 1,
+                "max_runtime_ledger_drawdown_pct_equity": "0.08",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.5",
+                "min_runtime_ledger_closed_round_trips": 1,
+                "min_runtime_ledger_filled_notional": "0",
+            },
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.max_drawdown_pct_equity,
+            Decimal("0.08"),
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload("authority")[
+                "max_runtime_ledger_drawdown_pct_equity"
+            ],
+            "0.03",
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.target_payload("authority"),
+            {
+                "proof_mode": "authority",
+                "final_authority": True,
+                "evidence_collection_only": False,
+                "evidence_collection_ok": False,
+                "canary_collection_authorized": False,
+                "promotion_allowed": False,
+                "capital_promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "min_runtime_ledger_net_pnl_after_costs": "10000",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "500",
+                "min_runtime_ledger_trading_days": 20,
+                "max_runtime_ledger_drawdown_pct_equity": "0.03",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.35",
+                "min_runtime_ledger_closed_round_trips": 300,
+                "min_runtime_ledger_filled_notional": "10000000",
+                "min_runtime_ledger_median_daily_net_pnl_after_costs": "250",
+                "min_runtime_ledger_p10_daily_net_pnl_after_costs": "-250",
+                "min_runtime_ledger_worst_day_net_pnl_after_costs": "-750",
+                "max_runtime_ledger_intraday_drawdown": "1500",
+            },
+        )
+
+    def test_mode_contract_makes_non_authority_defaults_explicit(self) -> None:
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.mode_contract(),
+            {
+                "proof_mode": "smoke",
+                "default_proof_mode": "smoke",
+                "authority_scope": "plumbing_only",
+                "mode_can_grant_final_authority": False,
+                "mode_can_grant_promotion_authority": False,
+                "requires_explicit_authority_mode_for_final_promotion": True,
+                "implicit_default_final_authority": False,
+            },
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.mode_contract("probation"),
+            {
+                "proof_mode": "probation",
+                "default_proof_mode": "smoke",
+                "authority_scope": "bounded_evidence_collection_only",
+                "mode_can_grant_final_authority": False,
+                "mode_can_grant_promotion_authority": False,
+                "requires_explicit_authority_mode_for_final_promotion": True,
+                "implicit_default_final_authority": False,
+            },
+        )
+        self.assertEqual(
+            DEFAULT_RUNTIME_LEDGER_PROOF_POLICY.mode_contract("authority"),
+            {
+                "proof_mode": "authority",
+                "default_proof_mode": "smoke",
+                "authority_scope": "final_promotion_authority_candidate",
+                "mode_can_grant_final_authority": True,
+                "mode_can_grant_promotion_authority": True,
+                "requires_explicit_authority_mode_for_final_promotion": True,
+                "implicit_default_final_authority": False,
+            },
+        )
+
+    def test_policy_can_be_overridden_without_touching_call_sites(self) -> None:
+        policy = runtime_ledger_proof_policy_from_env(
+            {
+                "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_NET_PNL_AFTER_COSTS": "750",
+                "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_DAILY_NET_PNL_AFTER_COSTS": "625",
+                "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_TRADING_DAYS": "3",
+                "TORGHUT_RUNTIME_LEDGER_PROOF_MODE": "probation",
+                "TORGHUT_RUNTIME_LEDGER_PROOF_PROBATION_MIN_TRADING_DAYS": "6",
+                "TORGHUT_RUNTIME_LEDGER_PROOF_MAX_DRAWDOWN_PCT_EQUITY": "0.12",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_DRAWDOWN_PCT_EQUITY": "0.025",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS": "25",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_CLOSED_ROUND_TRIPS": "400",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_FILLED_NOTIONAL": "12500000",
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_SYMBOL_CONCENTRATION_SHARE": "0.30",
+            }
+        )
+
+        self.assertEqual(policy.min_net_pnl_after_costs, Decimal("750"))
+        self.assertEqual(policy.min_daily_net_pnl_after_costs, Decimal("625"))
+        self.assertEqual(policy.min_trading_days, 3)
+        self.assertEqual(policy.proof_mode, "probation")
+        self.assertEqual(policy.probation_min_trading_days, 6)
+        self.assertEqual(policy.max_drawdown_pct_equity, Decimal("0.12"))
+        self.assertEqual(policy.authority_min_trading_days, 25)
+        self.assertEqual(policy.authority_max_drawdown_pct_equity, Decimal("0.025"))
+        self.assertEqual(
+            policy.authority_max_symbol_concentration_share,
+            Decimal("0.30"),
+        )
+        self.assertEqual(
+            policy.target_payload(),
+            {
+                "proof_mode": "probation",
+                "final_authority": False,
+                "evidence_collection_only": True,
+                "evidence_collection_ok": True,
+                "canary_collection_authorized": True,
+                "promotion_allowed": False,
+                "capital_promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "min_runtime_ledger_net_pnl_after_costs": "3750",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "625",
+                "min_runtime_ledger_trading_days": 6,
+                "max_runtime_ledger_drawdown_pct_equity": "0.12",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.5",
+                "min_runtime_ledger_closed_round_trips": 1,
+                "min_runtime_ledger_filled_notional": "0",
+            },
+        )
+        self.assertEqual(
+            policy.target_payload("authority"),
+            {
+                "proof_mode": "authority",
+                "final_authority": True,
+                "evidence_collection_only": False,
+                "evidence_collection_ok": False,
+                "canary_collection_authorized": False,
+                "promotion_allowed": False,
+                "capital_promotion_allowed": False,
+                "final_promotion_allowed": False,
+                "min_runtime_ledger_net_pnl_after_costs": "15625",
+                "min_runtime_ledger_daily_net_pnl_after_costs": "625",
+                "min_runtime_ledger_trading_days": 25,
+                "max_runtime_ledger_drawdown_pct_equity": "0.025",
+                "max_runtime_ledger_best_day_share": "0.25",
+                "max_runtime_ledger_symbol_concentration_share": "0.3",
+                "min_runtime_ledger_closed_round_trips": 400,
+                "min_runtime_ledger_filled_notional": "12500000",
+                "min_runtime_ledger_median_daily_net_pnl_after_costs": "250",
+                "min_runtime_ledger_p10_daily_net_pnl_after_costs": "-250",
+                "min_runtime_ledger_worst_day_net_pnl_after_costs": "-750",
+                "max_runtime_ledger_intraday_drawdown": "1500",
+            },
+        )
+
+    def test_authority_env_overrides_cannot_weaken_promotion_floors(self) -> None:
+        weak_overrides = [
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_TRADING_DAYS", "19"),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_MEAN_DAILY_NET_PNL_AFTER_COSTS",
+                "499",
+            ),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_MEDIAN_DAILY_NET_PNL_AFTER_COSTS",
+                "249",
+            ),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_P10_DAILY_NET_PNL_AFTER_COSTS",
+                "-251",
+            ),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_WORST_DAY_NET_PNL_AFTER_COSTS",
+                "-751",
+            ),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_CLOSED_ROUND_TRIPS", "299"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MIN_FILLED_NOTIONAL", "9999999"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_INTRADAY_DRAWDOWN", "1500.01"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_DRAWDOWN_PCT_EQUITY", "0.031"),
+            ("TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_BEST_DAY_SHARE", "0.251"),
+            (
+                "TORGHUT_RUNTIME_LEDGER_AUTHORITY_MAX_SYMBOL_CONCENTRATION_SHARE",
+                "0.351",
+            ),
+        ]
+        for env_name, value in weak_overrides:
+            with self.subTest(env_name=env_name):
+                with self.assertRaisesRegex(ValueError, "cannot weaken authority"):
+                    runtime_ledger_proof_policy_from_env({env_name: value})
+
+    def test_invalid_policy_env_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be a decimal"):
+            runtime_ledger_proof_policy_from_env(
+                {
+                    "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_NET_PNL_AFTER_COSTS": "nope",
+                }
+            )
+
+        with self.assertRaisesRegex(ValueError, "must be non-negative"):
+            runtime_ledger_proof_policy_from_env(
+                {
+                    "TORGHUT_RUNTIME_LEDGER_PROOF_MIN_TRADING_DAYS": "-1",
+                }
+            )
+
+        with self.assertRaisesRegex(ValueError, "must be one of"):
+            runtime_ledger_proof_policy_from_env(
+                {
+                    "TORGHUT_RUNTIME_LEDGER_PROOF_MODE": "pretend",
+                }
+            )

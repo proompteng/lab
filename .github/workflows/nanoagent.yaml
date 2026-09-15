@@ -1,0 +1,44 @@
+name: Nanoagent
+
+on:
+  pull_request:
+    paths:
+      - 'services/nanoagent/**'
+      - '.github/workflows/nanoagent.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/nanoagent/**'
+      - '.github/workflows/nanoagent.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: nanoagent-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.mod
+
+      - name: Test
+        working-directory: services/nanoagent
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l .)"
+          GOWORK=off go test -race ./...
+          GOWORK=off go vet ./...

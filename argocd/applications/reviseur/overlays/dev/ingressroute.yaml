@@ -1,0 +1,14 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: reviseur-ingress
+  namespace: reviseur
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`reviseur.lan`)
+      kind: Rule
+      services:
+        - name: reviseur
+          port: 80

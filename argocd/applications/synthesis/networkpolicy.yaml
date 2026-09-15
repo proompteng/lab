@@ -1,0 +1,15 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: synthesis-ingress
+  namespace: synthesis
+spec:
+  podSelector:
+    matchLabels:
+      app: synthesis
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: http

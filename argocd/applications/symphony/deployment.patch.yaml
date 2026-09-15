@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symphony
+spec:
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-08-27T21:16:35Z"
+    spec:
+      volumes:
+        - name: codex-auth
+          secret:
+            secretName: codex-auth

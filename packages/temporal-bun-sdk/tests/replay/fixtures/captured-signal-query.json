@@ -1,0 +1,259 @@
+{
+  "name": "captured-signal-query",
+  "info": {
+    "namespace": "default",
+    "taskQueue": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+    "workflowId": "replay-captured-signal-query-0ce3dda6-aaa6-412c-922b-0dedcf5b9380",
+    "runId": "019dfeaa-dc58-7ba0-9323-ce93755d17b0",
+    "workflowType": "integrationSignalQueryWorkflow",
+    "temporalVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)"
+  },
+  "history": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-05-06T19:01:43.640762Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "48235495",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "integrationSignalQueryWorkflow"
+        },
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "019dfeaa-dc58-7ba0-9323-ce93755d17b0",
+        "identity": "temporal-cli:gregkonush@Mac.pihole.lan",
+        "firstExecutionRunId": "019dfeaa-dc58-7ba0-9323-ce93755d17b0",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "header": {},
+        "workflowId": "replay-captured-signal-query-0ce3dda6-aaa6-412c-922b-0dedcf5b9380"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-05-06T19:01:43.640799Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48235496",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-05-06T19:01:43.642872Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48235501",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "9c7af8f0-55f4-4f7e-8cfd-fcc974a2d6e3",
+        "historySizeBytes": "432"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-05-06T19:01:43.648117Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "48235505",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-05-06T19:01:43.648138Z",
+      "eventType": "EVENT_TYPE_MARKER_RECORDED",
+      "taskId": "48235506",
+      "markerRecordedEventAttributes": {
+        "markerName": "temporal-bun-sdk/determinism",
+        "details": {
+          "snapshot": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "eyJzY2hlbWFWZXJzaW9uIjoxLCJ3b3JrZmxvdyI6eyJuYW1lc3BhY2UiOiJkZWZhdWx0IiwidGFza1F1ZXVlIjoidGVtcG9yYWwtYnVuLWludGVncmF0aW9uLTIyNmVmODQ3LTI1MjktNGE1Ny1hMjA5LTQ4MDM3NDUyNTJiMyIsIndvcmtmbG93SWQiOiJyZXBsYXktY2FwdHVyZWQtc2lnbmFsLXF1ZXJ5LTBjZTNkZGE2LWFhYTYtNDEyYy05MjJiLTBkZWRjZjViOTM4MCIsInJ1bklkIjoiMDE5ZGZlYWEtZGM1OC03YmEwLTkzMjMtY2U5Mzc1NWQxN2IwIiwid29ya2Zsb3dUeXBlIjoiaW50ZWdyYXRpb25TaWduYWxRdWVyeVdvcmtmbG93In0sImRldGVybWluaXNtU3RhdGUiOnsiY29tbWFuZEhpc3RvcnkiOltdLCJyYW5kb21WYWx1ZXMiOltdLCJ0aW1lVmFsdWVzIjpbMTc3ODA5NDEwMzY0NywxNzc4MDk0MTAzNjQ3LDE3NzgwOTQxMDM2NDcsMTc3ODA5NDEwMzY0N10sInNpZ25hbHMiOltdLCJxdWVyaWVzIjpbXX0sImxhc3RFdmVudElkIjoiMyIsInJlY29yZGVkQXRJc28iOiIyMDI2LTA1LTA2VDE5OjAxOjQzLjY0N1oifQ=="
+              }
+            ]
+          }
+        },
+        "workflowTaskCompletedEventId": "4"
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-05-06T19:01:43.653027Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "48235509",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "unblock",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "ImludGVncmF0aW9uLXJlYWR5Ig=="
+            }
+          ]
+        },
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-05-06T19:01:43.653029Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48235510",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3-sticky-temporal-bun-worker-Mac-pihole-lan-95624",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-05-06T19:01:43.654413Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48235514",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "7",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "3af6c37f-096b-4ed2-a10c-1e8984b36f29",
+        "historySizeBytes": "1590"
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-05-06T19:01:43.657378Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "48235518",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "7",
+        "startedEventId": "8",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-05-06T19:01:43.660340Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "taskId": "48235520",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "finish",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "e30="
+            }
+          ]
+        },
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-05-06T19:01:43.660342Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48235521",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3-sticky-temporal-bun-worker-Mac-pihole-lan-95624",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2026-05-06T19:01:43.661458Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48235525",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "11",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "57f97a5b-830d-4054-b203-2abe3b2293f1",
+        "historySizeBytes": "2099"
+      }
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2026-05-06T19:01:43.664500Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "48235529",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "11",
+        "startedEventId": "12",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2026-05-06T19:01:43.664516Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "taskId": "48235530",
+      "workflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "ImludGVncmF0aW9uLXJlYWR5Ig=="
+            }
+          ]
+        },
+        "workflowTaskCompletedEventId": "13"
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [],
+    "randomValues": [],
+    "timeValues": [
+      1778094103647,
+      1778094103647,
+      1778094103647,
+      1778094103647
+    ],
+    "signals": [
+      {
+        "signalName": "unblock",
+        "payloadHash": "[\"integration-ready\"]",
+        "eventId": "6",
+        "workflowTaskCompletedEventId": null,
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      },
+      {
+        "signalName": "finish",
+        "payloadHash": "[{}]",
+        "eventId": "10",
+        "workflowTaskCompletedEventId": null,
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    ],
+    "queries": []
+  }
+}

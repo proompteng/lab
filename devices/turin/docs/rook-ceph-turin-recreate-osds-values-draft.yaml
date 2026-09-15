@@ -1,0 +1,25 @@
+# Draft only. Do not point Argo CD at this file.
+#
+# Purpose:
+#   Replacement snippet for argocd/applications/rook-ceph/cluster-values.yaml
+#   after explicitly choosing to forget the missing external DB device and
+#   recreate the three transferred 24TB HDD OSDs on Turin.
+#
+# Preconditions:
+#   - Old OSD IDs 0, 1, and 2 have been accepted as unrecoverable.
+#   - Ceph has no inactive or stale PGs.
+#   - Old OSD IDs 0, 1, and 2 have been purged from the Ceph cluster.
+#   - The three old HDD-backed Ceph LVM OSD block devices on Turin have been
+#     zapped with ceph-volume.
+#   - The ORICO OS disk and all non-OS NVMe disks have not been included in
+#     any Rook device list or wipe command.
+#
+# Apply shape:
+#   Replace the second entry in cephClusterSpec.storage.nodes with this Turin
+#   node entry. Keep the talos-192-168-1-85 entry unchanged.
+
+name: turin
+devices:
+  - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
+  - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
+  - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9

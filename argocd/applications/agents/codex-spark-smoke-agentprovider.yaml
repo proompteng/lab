@@ -1,0 +1,83 @@
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: AgentProvider
+metadata:
+  name: codex-spark-smoke
+spec:
+  binary: /usr/local/bin/agent-runner
+  adapter:
+    type: codex-app-server
+    codex:
+      binaryPath: /usr/local/bin/agents-fake-codex-app-server
+      model: agents-fake-codex-app-server
+      effort: low
+      sandbox: danger-full-access
+      approval: never
+      prompt: |-
+        Execute a read-only Codex app-server runner smoke validation.
+
+        Requirements:
+        - Do not modify repository state, branches, commits, pull requests, issues, or cluster resources.
+        - Verify the app-server protocol, stream handling, runner status writer, artifact declaration path, and runner image.
+        - Do not call external model providers.
+        - Write `/workspace/.agentrun/smoke/result.md` with:
+          - startup status
+          - resolved repository/base/head
+          - resolved stage
+          - one-line confirmation that no repo or external side effects were performed
+        - Keep the run short and deterministic.
+        - After the file is written, stop immediately and respond with exactly `OK`.
+
+        Resolved inputs:
+        - repository: {{ inputs.repository }}
+        - base: {{ inputs.base }}
+        - head: {{ inputs.head }}
+        - stage: {{ inputs.stage }}
+        - objective: {{ inputs.objective }}
+      goal:
+        objective: Validate the Codex app-server Agents runner protocol can start, run one deterministic turn, and write the smoke artifact.
+      threadConfig:
+        mcp_servers: {}
+        web_search: off
+  argsTemplate: []
+  envTemplate:
+    AGENTS_FAKE_CODEX_APP_SERVER_ARTIFACT: /workspace/.agentrun/smoke/result.md
+    CODEX_LOG_LEVEL: info
+    HOME: /root
+    CODEX_CONFIG: /root/.codex/config.toml
+    CODEX_DISABLE_RESUME: "1"
+    CODEX_MAX_SESSION_ATTEMPTS: "1"
+    CODEX_MODEL: agents-fake-codex-app-server
+  inputFiles:
+    - path: /root/.codex/config.toml
+      content: |-
+        model = "agents-fake-codex-app-server"
+        model_reasoning_summary = "none"
+        model_reasoning_effort = "low"
+        model_verbosity = "medium"
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        web_search = "off"
+        suppress_unstable_features_warning = true
+
+        [features]
+        enable_request_compression = true
+        unified_exec = true
+        shell_snapshot = true
+        multi_agent = true
+        goals = true
+
+        [shell_environment_policy]
+        ignore_default_excludes = true
+
+        [projects."/workspace/lab"]
+        trust_level = "trusted"
+
+        [projects."/root"]
+        trust_level = "trusted"
+  outputArtifacts:
+    - name: smoke-result
+      path: /workspace/.agentrun/smoke/result.md
+    - name: runner-log
+      path: /workspace/.agent/runner.log
+    - name: runner-status
+      path: /workspace/.agent/status.json

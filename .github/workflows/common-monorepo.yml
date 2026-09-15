@@ -1,0 +1,87 @@
+name: common-monorepo
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '24.11.1'
+      bun-version:
+        required: false
+        type: string
+        default: '1.4.0'
+      install-command:
+        required: true
+        type: string
+      lint-command:
+        required: false
+        type: string
+        default: ''
+      oxlint-command:
+        required: false
+        type: string
+        default: ''
+      oxlint-type-command:
+        required: false
+        type: string
+        default: ''
+      test-command:
+        required: false
+        type: string
+        default: ''
+      build-command:
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        required: false
+        type: string
+        default: '.'
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ inputs.bun-version }}-
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install dependencies
+        run: ${{ inputs.install-command }}
+
+      - name: Lint
+        if: inputs.lint-command != ''
+        run: ${{ inputs.lint-command }}
+
+      - name: Oxlint
+        if: inputs.oxlint-command != ''
+        run: ${{ inputs.oxlint-command }}
+
+      - name: Oxlint (type-aware)
+        if: inputs.oxlint-type-command != ''
+        run: ${{ inputs.oxlint-type-command }}
+
+      - name: Test
+        if: inputs.test-command != ''
+        run: ${{ inputs.test-command }}
+
+      - name: Build
+        if: inputs.build-command != ''
+        run: ${{ inputs.build-command }}

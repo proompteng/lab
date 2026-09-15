@@ -1,0 +1,1117 @@
+name: torghut-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/torghut/**'
+      - 'packages/scripts/src/torghut/**'
+      - '!packages/scripts/src/torghut/__tests__/**'
+      - '!packages/scripts/src/torghut/**/*.test.ts'
+      - '!packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/git.ts'
+      - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
+  pull_request:
+    paths:
+      - 'services/torghut/**'
+      - 'packages/scripts/src/torghut/**'
+      - '!packages/scripts/src/torghut/__tests__/**'
+      - '!packages/scripts/src/torghut/**/*.test.ts'
+      - '!packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/git.ts'
+      - 'argocd/applications/torghut/**'
+      - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Changed-file plan
+    runs-on: ubuntu-latest
+    outputs:
+      service: ${{ steps.filter.outputs.service }}
+      manifests: ${{ steps.filter.outputs.manifests }}
+    steps:
+      - name: Check changed Torghut paths
+        id: filter
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            {
+              echo "service=true"
+              echo "manifests=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(mktemp)"
+          github_api() {
+            local url="$1"
+            local attempt
+
+            for attempt in 1 2 3; do
+              if curl -fsSL \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "${url}"; then
+                return 0
+              fi
+              sleep $((attempt * 2))
+            done
+
+            echo "Failed to fetch GitHub API URL after retries: ${url}" >&2
+            return 1
+          }
+
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            page=1
+            while true; do
+              response="$(
+                github_api "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"
+              )"
+              count="$(jq 'length' <<< "${response}")"
+              if [ "${count}" -eq 0 ]; then
+                break
+              fi
+              jq -r '.[].filename' <<< "${response}" >> "${changed_files}"
+              page=$((page + 1))
+            done
+          else
+            github_api "https://api.github.com/repos/${GH_REPO}/compare/${BEFORE_SHA}...${HEAD_SHA}" \
+              | jq -r '.files[].filename' > "${changed_files}"
+          fi
+
+          matches_any() {
+            local regex="$1"
+            grep -Eq "${regex}" "${changed_files}"
+          }
+
+          service=false
+          manifests=false
+          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|git|nix-oci-deploy|oci-digest)\.ts$)'; then
+            service=true
+          fi
+          if matches_any '^argocd/applications/(torghut|torghut-options|torghut-hyperliquid-runtime)/'; then
+            manifests=true
+          fi
+
+          {
+            echo "service=${service}"
+            echo "manifests=${manifests}"
+          } >> "$GITHUB_OUTPUT"
+
+  release-manifests:
+    name: Release manifest changes
+    # The digest contract check inspects registry.ide-newton.ts.net, which is only
+    # reachable from ARC runners on the lab network.
+    runs-on: arc-amd64
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service != 'true' && needs.changes.outputs.manifests == 'true' }}
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            if git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"; then
+              git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            elif git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pull/${PR_NUMBER}/head"; then
+              echo "Pull request merge ref is unavailable; checking out pull request head ref."
+              git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/head"
+            elif [ -n "${PR_HEAD_SHA}" ]; then
+              echo "Pull request refs are unavailable; checking out recorded head SHA ${PR_HEAD_SHA}."
+              git fetch --no-tags --prune origin "${PR_HEAD_SHA}"
+              git checkout --force "${PR_HEAD_SHA}"
+            else
+              echo "Unable to fetch pull request merge ref, head ref, or head SHA for #${PR_NUMBER}" >&2
+              exit 1
+            fi
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          install-ci-toolchain: 'true'
+          require-preinstalled: 'true'
+
+      - name: Verify Torghut Alloy config rollout digest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          config_manifest='argocd/applications/torghut/alloy-configmap.yaml'
+          deployment_manifest='argocd/applications/torghut/alloy-deployment.yaml'
+          annotation='torghut.proompteng.ai/alloy-config-sha256'
+          expected="$(yq -r ".spec.template.metadata.annotations.\"${annotation}\"" "${deployment_manifest}")"
+          actual="$(
+            yq -o=json -I=0 '.data."config.river"' "${config_manifest}" \
+              | jq -jr . \
+              | sha256sum \
+              | awk '{print $1}'
+          )"
+
+          if ! [[ "${expected}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "${deployment_manifest} is missing a valid ${annotation} annotation" >&2
+            exit 1
+          fi
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Alloy config digest mismatch: update ${annotation} to ${actual}" >&2
+            exit 1
+          fi
+
+          echo "Torghut Alloy Deployment digest matches config.river."
+
+      - name: Verify source image digest contract
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          changed_files="$(mktemp)"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            if [ -z "${BASE_REF}" ]; then
+              echo "BASE_REF is required for pull_request release manifest verification" >&2
+              exit 1
+            fi
+            diff_base="$(git merge-base "origin/${BASE_REF}" HEAD)"
+          elif [ -n "${BEFORE_SHA}" ] && ! [[ "${BEFORE_SHA}" =~ ^0+$ ]] && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            diff_base="${BEFORE_SHA}"
+          else
+            diff_base="$(git rev-parse HEAD^)"
+          fi
+          git diff --name-only "${diff_base}...HEAD" > "${changed_files}"
+
+          matches_changed() {
+            local regex="$1"
+            grep -Eq "${regex}" "${changed_files}"
+          }
+
+          resolve_source_sha() {
+            local manifest_path="$1"
+            local env_name="$2"
+            awk -v env_name="${env_name}" '
+              $0 ~ "^[[:space:]]*- name:[[:space:]]*" env_name "[[:space:]]*$" { found = 1; next }
+              found && /^[[:space:]]*value:/ {
+                sub(/^[[:space:]]*value:[[:space:]]*/, "")
+                gsub(/"/, "")
+                print
+                exit
+              }
+            ' "${manifest_path}"
+          }
+
+          resolve_image_ref() {
+            local manifest_path="$1"
+            local image_name="$2"
+            awk -v expected="${image_name}" '
+              /^[[:space:]]*image:[[:space:]]*/ {
+                sub(/^[[:space:]]*image:[[:space:]]*/, "")
+                gsub(/"/, "")
+                if (index($0, expected "@sha256:") == 1) {
+                  print
+                  exit
+                }
+              }
+            ' "${manifest_path}"
+          }
+
+          assert_multi_arch_image() {
+            local image_ref="$1"
+            local image_digest
+
+            image_digest="${image_ref#*@}"
+            if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Release manifest image is not digest pinned: ${image_ref}"
+              exit 1
+            fi
+
+            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
+          }
+
+          verify_image_contract() {
+            local label="$1"
+            local manifest_path="$2"
+            local env_name="$3"
+            local image_name="$4"
+            local source_sha image_ref
+
+            source_sha="$(resolve_source_sha "${manifest_path}" "${env_name}")"
+            if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "Unable to resolve ${env_name} from ${manifest_path}"
+              exit 1
+            fi
+
+            image_ref="$(resolve_image_ref "${manifest_path}" "${image_name}")"
+            if [ -z "${image_ref}" ]; then
+              echo "Unable to resolve digest-pinned ${image_name} image from ${manifest_path}"
+              exit 1
+            fi
+
+            assert_multi_arch_image "${image_ref}"
+            echo "${label} release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
+          }
+
+          assert_image_contract_parity() {
+            local env_name="$1"
+            local image_name="$2"
+            local reference_manifest="$3"
+            shift 3
+            local reference_source_sha reference_image_ref manifest_path source_sha image_ref
+
+            reference_source_sha="$(resolve_source_sha "${reference_manifest}" "${env_name}")"
+            reference_image_ref="$(resolve_image_ref "${reference_manifest}" "${image_name}")"
+            for manifest_path in "$@"; do
+              source_sha="$(resolve_source_sha "${manifest_path}" "${env_name}")"
+              image_ref="$(resolve_image_ref "${manifest_path}" "${image_name}")"
+              if [ "${source_sha}" != "${reference_source_sha}" ]; then
+                echo "Runtime manifest ${manifest_path} ${env_name}=${source_sha:-unset} differs from ${reference_manifest}=${reference_source_sha:-unset}"
+                exit 1
+              fi
+              if [ "${image_ref}" != "${reference_image_ref}" ]; then
+                echo "Runtime manifest ${manifest_path} image=${image_ref:-unset} differs from ${reference_manifest}=${reference_image_ref:-unset}"
+                exit 1
+              fi
+            done
+          }
+
+          verified_any=false
+          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|generated-resource-retention-cronjob|broker-economic-ledger-reconciliation-cronjob|order-lineage-reconciliation-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
+            verify_image_contract \
+              "Torghut" \
+              argocd/applications/torghut/knative-service.yaml \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut
+            verify_image_contract \
+              "Torghut simulation" \
+              argocd/applications/torghut/knative-service-sim.yaml \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut
+            verify_image_contract \
+              "Torghut scheduler" \
+              argocd/applications/torghut/scheduler-deployment.yaml \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut
+            assert_image_contract_parity \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut \
+              argocd/applications/torghut/knative-service.yaml \
+              argocd/applications/torghut/knative-service-sim.yaml \
+              argocd/applications/torghut/scheduler-deployment.yaml \
+              argocd/applications/torghut/broker-economic-ledger-reconciliation-cronjob.yaml \
+              argocd/applications/torghut/order-lineage-reconciliation-cronjob.yaml
+            verified_any=true
+          fi
+          if matches_changed '^argocd/applications/(torghut/(ta|ta-sim|market-data-archive)/flinkdeployment\.yaml|torghut-options/ta/flinkdeployment\.yaml)$'; then
+            verify_image_contract \
+              "Torghut TA" \
+              argocd/applications/torghut/ta/flinkdeployment.yaml \
+              TORGHUT_TA_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut-ta
+            verify_image_contract \
+              "Torghut TA simulation" \
+              argocd/applications/torghut/ta-sim/flinkdeployment.yaml \
+              TORGHUT_TA_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut-ta
+            verify_image_contract \
+              "Bayn market-data archive" \
+              argocd/applications/torghut/market-data-archive/flinkdeployment.yaml \
+              TORGHUT_TA_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut-ta
+            verify_image_contract \
+              "Torghut options TA" \
+              argocd/applications/torghut-options/ta/flinkdeployment.yaml \
+              TORGHUT_TA_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut-ta
+            verified_any=true
+          fi
+          if matches_changed '^argocd/applications/(torghut/ws/deployment\.yaml|torghut-options/ws/deployment\.yaml)$'; then
+            verify_image_contract \
+              "Torghut WS" \
+              argocd/applications/torghut/ws/deployment.yaml \
+              TORGHUT_WS_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut-ws
+            verified_any=true
+          fi
+
+          if [ "${verified_any}" != 'true' ]; then
+            echo "No Torghut image promotion manifests changed; release manifest check passed."
+          fi
+
+  pyright:
+    name: Pyright
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Verify lockfile
+        working-directory: services/torghut
+        run: uv lock --check
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Type check (pyright strict app)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.json
+
+      - name: Type check (pyright alpha profile)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.alpha.json
+
+      - name: Type check (pyright scripts profile)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.scripts.json
+
+      - name: Type check (pyright strict alpha slice)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.alpha.strict.json
+
+      - name: Type check (pyright strict scripts slice)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.scripts.strict.json
+
+  static-guards:
+    name: Bytecode + lint + migration guard
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Resolve Torghut diff base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            if [ -z "${BASE_REF}" ]; then
+              echo "BASE_REF is required for pull_request Torghut diff base resolution" >&2
+              exit 1
+            fi
+            base="$(git -C "${repo_root}" merge-base "origin/${BASE_REF}" HEAD)"
+          elif [ -n "${BEFORE_SHA}" ] && ! [[ "${BEFORE_SHA}" =~ ^0+$ ]] && git -C "${repo_root}" cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            base="${BEFORE_SHA}"
+          else
+            base="$(git -C "${repo_root}" rev-parse HEAD^)"
+          fi
+
+          echo "Resolved Torghut diff base: ${base}"
+          echo "TORGHUT_DIFF_BASE=${base}" >> "${GITHUB_ENV}"
+
+      - name: Bytecode check
+        working-directory: services/torghut
+        run: uv run --frozen python -m compileall app scripts
+
+      - name: Format check
+        working-directory: services/torghut
+        run: uv run --frozen ruff format --check app tests scripts migrations
+
+      - name: Lint
+        working-directory: services/torghut
+        run: uv run --frozen ruff check app tests scripts migrations
+
+      - name: Unused import and suppression gate
+        working-directory: services/torghut
+        run: uv run --frozen ruff check app tests scripts migrations --select F401 --preview
+
+      - name: Pylint structural hardening gate
+        working-directory: services/torghut
+        run: uv run --frozen python scripts/run_pylint_torghut_structural_gate.py
+
+      - name: Pylint refactor quality gate
+        working-directory: services/torghut
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          base="${TORGHUT_DIFF_BASE:?TORGHUT_DIFF_BASE is required}"
+          changed_python=()
+          while IFS= read -r python_file; do
+            changed_python+=("${python_file}")
+          done < <(
+            git -C "${repo_root}" diff --name-only --diff-filter=ACMR "${base}...HEAD" \
+              -- services/torghut/app services/torghut/scripts services/torghut/tests services/torghut/migrations |
+              sed 's#^services/torghut/##' |
+              grep -E '^(app|scripts|tests|migrations)/.*\.pyi?$' || true
+          )
+
+          if [ "${#changed_python[@]}" -eq 0 ]; then
+            echo "No changed Torghut Python files for Pylint refactor quality gate."
+            exit 0
+          fi
+
+          uv run --frozen python scripts/run_pylint_torghut_quality_diff_gate.py \
+            --base "${base}" \
+            "${changed_python[@]}"
+
+      - name: Pylint changed-file design gate
+        working-directory: services/torghut
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          base="${TORGHUT_DIFF_BASE:?TORGHUT_DIFF_BASE is required}"
+          changed_python=()
+          while IFS= read -r python_file; do
+            changed_python+=("${python_file}")
+          done < <(
+            git -C "${repo_root}" diff --name-only --diff-filter=ACMR "${base}...HEAD" -- services/torghut/app services/torghut/scripts |
+              sed 's#^services/torghut/##' |
+              grep -E '^(app|scripts)/.*\.py$' || true
+          )
+
+          if [ "${#changed_python[@]}" -eq 0 ]; then
+            echo "No changed Torghut app/script Python files for Pylint design gate."
+            exit 0
+          fi
+
+          uv run --frozen python scripts/run_pylint_torghut_quality_diff_gate.py \
+            --base "${base}" \
+            --ignore-base-lines \
+            --enable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-return-statements,too-many-statements,too-many-nested-blocks \
+            "${changed_python[@]}"
+
+      - name: Pylint file length gate
+        working-directory: services/torghut
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo_root="$(git rev-parse --show-toplevel)"
+          base="${TORGHUT_DIFF_BASE:?TORGHUT_DIFF_BASE is required}"
+          changed_python=()
+          while IFS= read -r python_file; do
+            changed_python+=("${python_file}")
+          done < <(
+            git -C "${repo_root}" diff --name-only --diff-filter=ACMR "${base}...HEAD" \
+              -- services/torghut/app services/torghut/scripts services/torghut/tests services/torghut/migrations |
+              sed 's#^services/torghut/##' |
+              grep -E '^(app|scripts|tests|migrations)/.*\.pyi?$' || true
+          )
+
+          if [ "${#changed_python[@]}" -eq 0 ]; then
+            echo "No changed Torghut Python files for Pylint file length gate."
+            exit 0
+          fi
+
+          uv run --frozen python scripts/run_pylint_torghut_file_length_gate.py \
+            --base "${base}" \
+            "${changed_python[@]}"
+
+      - name: Pylint design complexity inventory (non-blocking)
+        continue-on-error: true
+        working-directory: services/torghut
+        run: >
+          uv run --frozen pylint app scripts
+          --disable=all
+          --enable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-return-statements,too-many-statements,too-many-nested-blocks
+          --score=n
+
+      - name: Torghut tech-debt ratchet
+        working-directory: services/torghut
+        run: >
+          uv run --frozen python scripts/measure_torghut_tech_debt.py
+          --baseline config/quality/tech-debt-baseline.json
+          --enforce-ratchet
+          --format markdown
+
+      - name: Migration lineage guardrail
+        working-directory: services/torghut
+        run: uv run --frozen python scripts/check_migration_graph.py
+
+  postgres-cas:
+    name: PostgreSQL mutation fencing CAS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: torghut
+          POSTGRES_PASSWORD: torghut
+          POSTGRES_DB: torghut_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U torghut -d torghut_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: PostgreSQL mutation fencing integration
+        working-directory: services/torghut
+        shell: bash
+        env:
+          COVERAGE_FILE: .coverage.postgres-cas
+          TORGHUT_TEST_POSTGRES_DSN: postgresql+psycopg://torghut:torghut@127.0.0.1:5432/torghut_test
+        run: |
+          set -euo pipefail
+          : "${TORGHUT_TEST_POSTGRES_DSN:?TORGHUT_TEST_POSTGRES_DSN is required}"
+          uv run --frozen pytest -q \
+            --cov \
+            --cov-branch \
+            --cov-fail-under=0 \
+            --cov-report= \
+            tests/execution/test_decision_submission_claims_postgres.py \
+            tests/execution/test_decision_submission_claim_identity_races_postgres.py \
+            tests/execution/test_broker_mutation_receipts_postgres.py \
+            tests/execution/test_broker_mutation_linked_receipts_postgres.py \
+            tests/execution/test_broker_mutation_receipt_boundaries_postgres.py \
+            tests/execution/test_broker_mutation_coordinator_postgres.py \
+            tests/execution/test_broker_reduction_coordinator_postgres.py \
+            tests/execution/test_broker_account_activities_postgres.py \
+            tests/execution/test_broker_economic_ledger_postgres.py \
+            tests/execution/test_validation_quarantine_postgres.py \
+            tests/execution/test_linked_submission_terminal_postgres.py \
+            tests/execution/test_validation_observation_timestamp_postgres.py \
+            tests/order_lineage/test_order_lineage_postgres.py \
+            tests/order_lineage/test_order_lineage_runs_postgres.py \
+            tests/trading/test_strategy_capital_authority_postgres.py
+
+      - name: Upload PostgreSQL coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torghut-coverage-postgres-cas
+          path: services/torghut/.coverage.postgres-cas
+          if-no-files-found: error
+          include-hidden-files: true
+
+  pytest-shards:
+    name: Pytest shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Pytest shard coverage
+        working-directory: services/torghut
+        shell: bash
+        env:
+          COVERAGE_FILE: .coverage.${{ matrix.shard }}
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: 4
+        run: |
+          set -euo pipefail
+          collected_tests="$(mktemp)"
+          uv run --frozen pytest --collect-only -q tests --ignore=tests/autoresearch_runner > "${collected_tests}"
+          mapfile -t TEST_NODES < <(
+            awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '
+              /^tests\/.*::/ {
+                collected += 1
+                if (((collected - 1) % total) == shard) {
+                  print
+                }
+              }
+            ' "${collected_tests}"
+          )
+          printf 'Running %s test nodes in shard %s/%s\n' "${#TEST_NODES[@]}" "${SHARD_INDEX}" "${SHARD_TOTAL}"
+          if [ "${#TEST_NODES[@]}" -eq 0 ]; then
+            echo "No test nodes selected for shard ${SHARD_INDEX}"
+            exit 1
+          fi
+
+          uv run --frozen pytest \
+            -n auto \
+            --dist=worksteal \
+            --cov \
+            --cov-branch \
+            --cov-fail-under=0 \
+            --cov-report= \
+            "${TEST_NODES[@]}"
+
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torghut-coverage-shard-${{ matrix.shard }}
+          path: services/torghut/.coverage.${{ matrix.shard }}*
+          if-no-files-found: error
+          include-hidden-files: true
+
+  pytest-autoresearch-runner:
+    name: Pytest autoresearch runner ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Pytest autoresearch runner coverage
+        working-directory: services/torghut
+        shell: bash
+        env:
+          COVERAGE_FILE: .coverage.autoresearch-runner-${{ matrix.shard }}
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: 2
+        run: |
+          set -euo pipefail
+          collected_tests="$(mktemp)"
+          uv run --frozen pytest --collect-only -q tests/autoresearch_runner > "${collected_tests}"
+          mapfile -t TEST_NODES < <(
+            awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '
+              /^tests\/.*::/ {
+                collected += 1
+                if (((collected - 1) % total) == shard) {
+                  print
+                }
+              }
+              END {
+                if (collected != 185) {
+                  printf "EXPECTED_COUNT_MISMATCH:%d\n", collected
+                }
+              }
+            ' "${collected_tests}"
+          )
+          last_index=$((${#TEST_NODES[@]} - 1))
+          if [ "${#TEST_NODES[@]}" -gt 0 ] && [[ "${TEST_NODES[${last_index}]}" == EXPECTED_COUNT_MISMATCH:* ]]; then
+            collected_count="${TEST_NODES[${last_index}]#EXPECTED_COUNT_MISMATCH:}"
+            unset 'TEST_NODES[${last_index}]'
+            echo "Expected 185 autoresearch runner tests after split, got ${collected_count}"
+            exit 1
+          fi
+          printf 'Running %s autoresearch runner test nodes in shard %s/%s\n' \
+            "${#TEST_NODES[@]}" "${SHARD_INDEX}" "${SHARD_TOTAL}"
+          if [ "${#TEST_NODES[@]}" -eq 0 ]; then
+            echo "No autoresearch runner test nodes selected for shard ${SHARD_INDEX}"
+            exit 1
+          fi
+
+          uv run --frozen pytest \
+            -n auto \
+            --dist=worksteal \
+            --cov \
+            --cov-branch \
+            --cov-fail-under=0 \
+            --cov-report= \
+            "${TEST_NODES[@]}"
+
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torghut-coverage-autoresearch-runner-${{ matrix.shard }}
+          path: services/torghut/.coverage.autoresearch-runner-${{ matrix.shard }}*
+          if-no-files-found: error
+          include-hidden-files: true
+
+  lint-and-tests:
+    name: Bytecode + pytest + coverage
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - postgres-cas
+      - static-guards
+      - pytest-autoresearch-runner
+      - pytest-shards
+    if: ${{ always() && needs.changes.outputs.service == 'true' }}
+    steps:
+      - name: Check prerequisite jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.static-guards.result }}" != "success" ]; then
+            echo "Static guard job failed: ${{ needs.static-guards.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.postgres-cas.result }}" != "success" ]; then
+            echo "PostgreSQL CAS job failed: ${{ needs.postgres-cas.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.pytest-shards.result }}" != "success" ]; then
+            echo "Pytest shard job failed: ${{ needs.pytest-shards.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.pytest-autoresearch-runner.result }}" != "success" ]; then
+            echo "Pytest autoresearch runner job failed: ${{ needs.pytest-autoresearch-runner.result }}"
+            exit 1
+          fi
+
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Download shard coverage data
+        uses: actions/download-artifact@v4
+        with:
+          pattern: torghut-coverage-*
+          path: services/torghut
+          merge-multiple: true
+
+      - name: Combine coverage data
+        working-directory: services/torghut
+        run: |
+          set -euo pipefail
+          coverage_files=(.coverage.*)
+          if [ "${coverage_files[0]}" = ".coverage.*" ]; then
+            echo "No shard coverage files were downloaded"
+            exit 1
+          fi
+          uv run --frozen python -m coverage combine "${coverage_files[@]}"
+          uv run --frozen python -m coverage report --fail-under=70
+          uv run --frozen python -m coverage xml -o coverage.xml
+
+      - name: Changed-file coverage
+        working-directory: services/torghut
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 80
+
+  quality-signals:
+    name: Quality signals (complexity + security)
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: Complexity scan (ruff C901, non-blocking)
+        working-directory: services/torghut
+        run: uv run --frozen ruff check app scripts migrations --select C901 --statistics --exit-zero
+
+      - name: Security scan (ruff S, non-blocking)
+        working-directory: services/torghut
+        run: uv run --frozen ruff check app scripts migrations --select S --statistics --exit-zero
+
+      - name: Dead-code scan (vulture)
+        working-directory: services/torghut
+        run: uv run --frozen vulture --config pyproject.toml

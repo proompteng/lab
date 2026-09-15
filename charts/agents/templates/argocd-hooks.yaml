@@ -1,0 +1,130 @@
+{{- if .Values.argocdHooks.enabled -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $serviceAccount := .Values.argocdHooks.serviceAccountName | default (include "agents.serviceAccountName" .) -}}
+{{- $hookImage := .Values.argocdHooks.image | default dict -}}
+{{- $hookImageDigest := $hookImage.digest | default "" -}}
+{{- $agentRuns := list -}}
+{{- $primaryAgentRun := .Values.argocdHooks.smoke.agentRun | default dict -}}
+{{- if gt (len $primaryAgentRun) 0 -}}
+{{- $agentRuns = append $agentRuns $primaryAgentRun -}}
+{{- end -}}
+{{- range $agentRun := .Values.argocdHooks.smoke.additionalAgentRuns -}}
+{{- $agentRuns = append $agentRuns $agentRun -}}
+{{- end -}}
+{{- $labelSelector := .Values.argocdHooks.smoke.labelSelector | default "" -}}
+{{- if and .Values.argocdHooks.preSync.enabled (or (gt (len $agentRuns) 0) $labelSelector) -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agents.fullname" . }}-smoke-cleanup
+  namespace: {{ $namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: {{ .Values.argocdHooks.syncWaves.preSync | quote }}
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: {{ .Values.argocdHooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $serviceAccount }}
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}{{- if $hookImageDigest }}@{{ $hookImageDigest }}{{ end }}"
+          imagePullPolicy: {{ .Values.argocdHooks.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              set -euo pipefail
+{{ range $agentRun := $agentRuns }}
+{{ $smokeName := required "argocdHooks smoke AgentRun metadata.name is required" (dig "metadata" "name" "" $agentRun) }}
+              kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai "{{ $smokeName }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete jobs -l "agents.proompteng.ai/agent-run={{ $smokeName }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete configmaps -l "agents.proompteng.ai/agent-run={{ $smokeName }}" --ignore-not-found
+{{ end }}
+{{ if $labelSelector }}
+              kubectl -n "{{ $namespace }}" delete jobs -l "{{ $labelSelector }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete configmaps -l "{{ $labelSelector }}" --ignore-not-found
+{{ end }}
+{{ end }}
+{{ if and .Values.argocdHooks.postSync.enabled (gt (len $agentRuns) 0) -}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "agents.fullname" . }}-smoke-run
+  namespace: {{ $namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/sync-wave: {{ .Values.argocdHooks.syncWaves.postSync | quote }}
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: {{ .Values.argocdHooks.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $serviceAccount }}
+      restartPolicy: Never
+      containers:
+        - name: smoke
+          image: "{{ .Values.argocdHooks.image.repository }}:{{ .Values.argocdHooks.image.tag }}{{- if $hookImageDigest }}@{{ $hookImageDigest }}{{ end }}"
+          imagePullPolicy: {{ .Values.argocdHooks.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              set -euo pipefail
+{{ range $agentRun := $agentRuns }}
+              cat <<'EOF' | kubectl -n "{{ $namespace }}" apply -f -
+{{ toYaml $agentRun | nindent 14 }}
+              EOF
+{{ end }}
+              timeout {{ .Values.argocdHooks.postSync.waitTimeout }} sh -c '
+                while true; do
+                  pending=0
+                  for smoke_name in "$@"; do
+                    phase="$(kubectl -n "{{ $namespace }}" get "agentruns.agents.proompteng.ai/${smoke_name}" -o jsonpath="{.status.phase}" 2>/dev/null || true)"
+                    case "$phase" in
+                      Succeeded)
+                        ;;
+                      Failed|Cancelled)
+                        kubectl -n "{{ $namespace }}" get "agentruns.agents.proompteng.ai/${smoke_name}" -o yaml
+                        exit 1
+                        ;;
+                      *)
+                        pending=1
+                        ;;
+                    esac
+                  done
+                  if [ "$pending" -eq 0 ]; then
+                    exit 0
+                  fi
+                  sleep 5
+                done
+              ' --{{ range $agentRun := $agentRuns }} "{{ required "argocdHooks smoke AgentRun metadata.name is required" (dig "metadata" "name" "" $agentRun) }}"{{ end }}
+{{ if .Values.argocdHooks.postSync.cleanup }}
+{{ range $agentRun := $agentRuns }}
+{{ $smokeName := required "argocdHooks smoke AgentRun metadata.name is required" (dig "metadata" "name" "" $agentRun) }}
+              kubectl -n "{{ $namespace }}" delete agentruns.agents.proompteng.ai "{{ $smokeName }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete jobs -l "agents.proompteng.ai/agent-run={{ $smokeName }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete configmaps -l "agents.proompteng.ai/agent-run={{ $smokeName }}" --ignore-not-found
+{{ end }}
+{{ end }}
+{{ if and .Values.argocdHooks.postSync.cleanup $labelSelector }}
+              kubectl -n "{{ $namespace }}" delete jobs -l "{{ $labelSelector }}" --ignore-not-found
+              kubectl -n "{{ $namespace }}" delete configmaps -l "{{ $labelSelector }}" --ignore-not-found
+{{ end }}
+{{- end }}
+{{- end }}

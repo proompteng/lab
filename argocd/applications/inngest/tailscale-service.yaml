@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: inngest-tailscale
+  namespace: inngest
+  annotations:
+    tailscale.com/hostname: inngest
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/instance: inngest
+    app.kubernetes.io/name: inngest
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8288

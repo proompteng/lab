@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: convex-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: convex-backend
+  template:
+    metadata:
+      labels:
+        app: convex-backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/get-convex/convex-backend:latest
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - >-
+              mkdir -p "$HOME/.postgresql" &&
+              cp /etc/postgres-ca/ca.crt "$HOME/.postgresql/root.crt" &&
+              export POSTGRES_URL="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT?sslmode=verify-full" &&
+              export DATABASE_URL="$POSTGRES_URL" &&
+              exec ./run_backend.sh
+          ports:
+            - containerPort: 3210
+              name: api-ws
+            - containerPort: 3211
+              name: api-http
+          envFrom:
+            - configMapRef:
+                name: convex-backend-config
+            - secretRef:
+                name: convex-backend-secrets
+          env:
+            - name: INSTANCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: convex-backend-secrets
+                  key: INSTANCE_NAME
+            - name: INSTANCE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: convex-backend-secrets
+                  key: INSTANCE_SECRET
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: user
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: password
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: host
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: port
+            - name: POSTGRES_DATABASE
+              value: convex_self_hosted
+            - name: PGDATABASE
+              value: convex_self_hosted
+            - name: PGSSLROOTCERT
+              value: /etc/postgres-ca/ca.crt
+            - name: SSL_CERT_FILE
+              value: /etc/postgres-ca/ca.crt
+            - name: POSTGRES_SSL
+              value: "true"
+            - name: PGSSLMODE
+              value: verify-full
+          volumeMounts:
+            - name: convex-db-ca
+              mountPath: /etc/postgres-ca
+              readOnly: true
+      volumes:
+        - name: convex-db-ca
+          secret:
+            secretName: convex-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

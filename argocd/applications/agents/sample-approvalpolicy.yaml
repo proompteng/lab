@@ -1,0 +1,8 @@
+apiVersion: approvals.proompteng.ai/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: sample-approval-policy
+  namespace: agents
+spec:
+  mode: manual
+  defaultDecision: deny

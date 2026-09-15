@@ -1,0 +1,4 @@
+.godot/
+.venv/
+build/
+art/source/*.blend1

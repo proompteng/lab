@@ -1,0 +1,33 @@
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: Redis
+metadata:
+  name: jangar-openwebui-redis
+  namespace: jangar
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  kubernetesConfig:
+    image: quay.io/opstree/redis:v8.10.1@sha256:d3ef5a7f11eb501034b6612b842c864e1946088c52c04b29a22f38b1fe37c99b
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+  redisExporter:
+    enabled: true
+    image: oliver006/redis_exporter:v1.91.1@sha256:c67a432dba6b4ae30f471e3c77cf14a289133bbeeb89abb0bb03e6092efb2836
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi
+        storageClassName: rook-ceph-block

@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: restate
+images:
+- name: restate-runtime
+  newName: registry.ide-newton.ts.net/lab/restate
+  digest: sha256:fb17dfc471c9900259a1a0ed5cf0b7468cf8515e350db4bf96cf874a1e22dd19
+resources:
+- serviceaccount.yaml
+- request-identity-sealedsecret.yaml
+- objectbucketclaim.yaml
+- service-cluster.yaml
+- service.yaml
+- admin-tailscale-ingress.yaml
+- statefulset.yaml
+- poddisruptionbudget.yaml
+- networkpolicy.yaml
+- resilience-scripts-configmap.yaml
+- snapshot-bootstrap-job.yaml
+- replication-migration-job.yaml
+- snapshot-restore-proof-job.yaml
+- snapshot-restore-drill-cronjob.yaml

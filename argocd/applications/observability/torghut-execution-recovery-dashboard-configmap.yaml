@@ -1,0 +1,274 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: torghut-execution-recovery-dashboard
+  namespace: observability
+data:
+  torghut-execution-recovery-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "graphTooltip": 0,
+      "id": null,
+      "iteration": 1,
+      "panels": [
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+          "id": 1,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "torghut_trading_execution_clean_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}",
+              "legendFormat": "clean ratio",
+              "refId": "A"
+            },
+            {
+              "expr": "torghut_trading_execution_reject_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}",
+              "legendFormat": "reject ratio",
+              "refId": "B"
+            }
+          ],
+          "title": "Clean vs Reject Ratio",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+          "id": 2,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\", reason=\"qty_below_min\"}[30m]) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]), 1)",
+              "legendFormat": "qty_below_min ratio (30m)",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\", reason=~\"llm_unavailable_.*\"}[30m])) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]), 1)",
+              "legendFormat": "llm_unavailable ratio (30m)",
+              "refId": "B"
+            }
+          ],
+          "title": "Recovery Gate Ratios (30m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+          "id": 3,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "topk(10, increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[2h]))",
+              "legendFormat": "{{reason}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Top Reject Reasons (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+          "id": 4,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_llm_unavailable_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[2h])",
+              "legendFormat": "{{reason}}",
+              "refId": "A"
+            }
+          ],
+          "title": "LLM Unavailable Sources (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+          "id": 5,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_llm_unavailable_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[2h])",
+              "legendFormat": "{{reason}}",
+              "refId": "A"
+            }
+          ],
+          "title": "LLM Unavailable Reject Classes (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "id": 6,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "rate(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
+              "legendFormat": "submitted/s",
+              "refId": "A"
+            },
+            {
+              "expr": "rate(torghut_trading_orders_rejected_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
+              "legendFormat": "rejected/s",
+              "refId": "B"
+            }
+          ],
+          "title": "Submit vs Reject Rates",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+          "id": 7,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(jangar_torghut_market_context_batch_runs_total{domain=~\"fundamentals|news\"}[2h])",
+              "legendFormat": "{{domain}} {{outcome}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Market-Context Batch Outcomes (2h)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+          "id": 8,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(jangar_torghut_market_context_batch_run_duration_ms_bucket[30m])) by (le, domain))",
+              "legendFormat": "{{domain}} p95",
+              "refId": "A"
+            }
+          ],
+          "title": "Market-Context Batch Duration p95",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+          "id": 9,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "sum(increase(torghut_trading_feature_quality_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m]))",
+              "legendFormat": "quality rejected",
+              "refId": "A"
+            },
+            {
+              "expr": "increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
+              "legendFormat": "decisions",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(increase(torghut_trading_execution_submit_attempt_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m]))",
+              "legendFormat": "submit attempts",
+              "refId": "C"
+            },
+            {
+              "expr": "sum(increase(torghut_trading_execution_submit_result_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\", status=\"accepted\"}[15m]))",
+              "legendFormat": "submit accepted",
+              "refId": "D"
+            },
+            {
+              "expr": "increase(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
+              "legendFormat": "orders submitted",
+              "refId": "E"
+            }
+          ],
+          "title": "Trading Funnel (15m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+          "id": 10,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "sum by (stage, outcome) (increase(torghut_trading_qty_resolution_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]))",
+              "legendFormat": "{{stage}} {{outcome}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Quantity Resolution Outcomes (30m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+          "id": 11,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "sum by (stage, context) (increase(torghut_trading_sell_inventory_context_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]))",
+              "legendFormat": "{{stage}} {{context}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Sell Inventory Context (30m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {"defaults": {}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+          "id": 12,
+          "options": {"tooltip": {"mode": "single"}},
+          "targets": [
+            {
+              "expr": "increase(torghut_trading_signal_batch_order_violation_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m])",
+              "legendFormat": "order violations",
+              "refId": "A"
+            },
+            {
+              "expr": "increase(torghut_trading_execution_validation_mismatch_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m])",
+              "legendFormat": "validation mismatches",
+              "refId": "B"
+            },
+            {
+              "expr": "sum by (code, reason) (increase(torghut_trading_execution_local_reject_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]))",
+              "legendFormat": "{{code}} {{reason}}",
+              "refId": "C"
+            }
+          ],
+          "title": "Local Rejects and Contract Violations (30m)",
+          "type": "timeseries"
+        }
+      ],
+      "schemaVersion": 39,
+      "style": "dark",
+      "tags": ["torghut", "execution", "recovery"],
+      "templating": {"list": []},
+      "time": {"from": "now-24h", "to": "now"},
+      "timezone": "",
+      "title": "Torghut Execution Recovery",
+      "uid": "torghut-execution-recovery",
+      "version": 2
+    }

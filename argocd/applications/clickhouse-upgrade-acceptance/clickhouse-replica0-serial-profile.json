@@ -1,0 +1,12 @@
+{
+  "jobs": ["clickhouse-native-20260910-v6-0"],
+  "sources": {
+    "chi-torghut-clickhouse-default-0-0-0": [9000, 8123],
+    "chi-torghut-clickhouse-default-0-1-0": [9000, 8123],
+    "chk-torghut-keeper-default-0-0-0": [2181]
+  },
+  "phases": {
+    "v26-3": "v26_3"
+  },
+  "proofPrefix": "/proof/v6/"
+}

@@ -1,0 +1,3 @@
+images:
+  - path: data/NANOAGENT_IMAGE
+    kind: ConfigMap

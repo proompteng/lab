@@ -1,0 +1,36 @@
+name: galette
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/galette/**'
+      - '.github/workflows/galette-ci.yml'
+  pull_request:
+    paths:
+      - 'services/galette/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: '0.15.1'
+
+      - name: Build
+        working-directory: services/galette
+        run: zig build
+
+      - name: Test
+        working-directory: services/galette
+        run: zig build test

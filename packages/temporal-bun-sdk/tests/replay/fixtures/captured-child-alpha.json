@@ -1,0 +1,241 @@
+{
+  "name": "captured-child-alpha",
+  "info": {
+    "namespace": "default",
+    "taskQueue": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+    "workflowId": "replay-captured-child-alpha-0adf21d4-ef7e-4b45-a93b-8a0ca0e58f48",
+    "runId": "019dfeaa-b214-7032-a9f3-fe44908a21c2",
+    "workflowType": "integrationParentWorkflow",
+    "temporalVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)"
+  },
+  "history": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-05-06T19:01:32.820013Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "48234901",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "integrationParentWorkflow"
+        },
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJ2YWx1ZSI6ImFscGhhLWNoaWxkIn0="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "019dfeaa-b214-7032-a9f3-fe44908a21c2",
+        "identity": "temporal-cli:gregkonush@Mac.pihole.lan",
+        "firstExecutionRunId": "019dfeaa-b214-7032-a9f3-fe44908a21c2",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "header": {},
+        "workflowId": "replay-captured-child-alpha-0adf21d4-ef7e-4b45-a93b-8a0ca0e58f48"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-05-06T19:01:32.820052Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48234902",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-05-06T19:01:32.822008Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48234907",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "743c1566-be70-4c6b-9711-568e5e44c061",
+        "historySizeBytes": "479"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-05-06T19:01:32.827352Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "48234911",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-05-06T19:01:32.827552Z",
+      "eventType": "EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED",
+      "taskId": "48234912",
+      "startChildWorkflowExecutionInitiatedEventAttributes": {
+        "namespace": "default",
+        "workflowId": "replay-captured-child-alpha-0adf21d4-ef7e-4b45-a93b-8a0ca0e58f48-child-019dfeaa-b214-7032-a9f3-fe44908a21c2-0",
+        "workflowType": {
+          "name": "integrationChildWorkflow"
+        },
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "ImFscGhhLWNoaWxkIg=="
+            }
+          ]
+        },
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "parentClosePolicy": "PARENT_CLOSE_POLICY_TERMINATE",
+        "workflowTaskCompletedEventId": "4",
+        "workflowIdReusePolicy": "WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE",
+        "namespaceId": "019df5ec-e8d4-7343-9e4d-0dd0f44da2ab"
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-05-06T19:01:32.827591Z",
+      "eventType": "EVENT_TYPE_MARKER_RECORDED",
+      "taskId": "48234913",
+      "markerRecordedEventAttributes": {
+        "markerName": "temporal-bun-sdk/determinism",
+        "details": {
+          "snapshot": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "eyJzY2hlbWFWZXJzaW9uIjoxLCJ3b3JrZmxvdyI6eyJuYW1lc3BhY2UiOiJkZWZhdWx0IiwidGFza1F1ZXVlIjoidGVtcG9yYWwtYnVuLWludGVncmF0aW9uLTIyNmVmODQ3LTI1MjktNGE1Ny1hMjA5LTQ4MDM3NDUyNTJiMyIsIndvcmtmbG93SWQiOiJyZXBsYXktY2FwdHVyZWQtY2hpbGQtYWxwaGEtMGFkZjIxZDQtZWY3ZS00YjQ1LWE5M2ItOGEwY2EwZTU4ZjQ4IiwicnVuSWQiOiIwMTlkZmVhYS1iMjE0LTcwMzItYTlmMy1mZTQ0OTA4YTIxYzIiLCJ3b3JrZmxvd1R5cGUiOiJpbnRlZ3JhdGlvblBhcmVudFdvcmtmbG93In0sImRldGVybWluaXNtU3RhdGUiOnsiY29tbWFuZEhpc3RvcnkiOlt7ImludGVudCI6eyJpZCI6InN0YXJ0LWNoaWxkLXdvcmtmbG93LTAiLCJraW5kIjoic3RhcnQtY2hpbGQtd29ya2Zsb3ciLCJzZXF1ZW5jZSI6MCwid29ya2Zsb3dUeXBlIjoiaW50ZWdyYXRpb25DaGlsZFdvcmtmbG93Iiwid29ya2Zsb3dJZCI6InJlcGxheS1jYXB0dXJlZC1jaGlsZC1hbHBoYS0wYWRmMjFkNC1lZjdlLTRiNDUtYTkzYi04YTBjYTBlNThmNDgtY2hpbGQtMDE5ZGZlYWEtYjIxNC03MDMyLWE5ZjMtZmU0NDkwOGEyMWMyLTAiLCJuYW1lc3BhY2UiOiJkZWZhdWx0IiwidGFza1F1ZXVlIjoidGVtcG9yYWwtYnVuLWludGVncmF0aW9uLTIyNmVmODQ3LTI1MjktNGE1Ny1hMjA5LTQ4MDM3NDUyNTJiMyIsImlucHV0IjpbImFscGhhLWNoaWxkIl0sInRpbWVvdXRzIjp7fX19XSwicmFuZG9tVmFsdWVzIjpbXSwidGltZVZhbHVlcyI6WzE3NzgwOTQwOTI4MjYsMTc3ODA5NDA5MjgyNl0sInNpZ25hbHMiOltdLCJxdWVyaWVzIjpbXX0sImxhc3RFdmVudElkIjoiMyIsInJlY29yZGVkQXRJc28iOiIyMDI2LTA1LTA2VDE5OjAxOjMyLjgyNloifQ=="
+              }
+            ]
+          }
+        },
+        "workflowTaskCompletedEventId": "4"
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-05-06T19:01:32.830899Z",
+      "eventType": "EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "48234921",
+      "childWorkflowExecutionStartedEventAttributes": {
+        "namespace": "default",
+        "initiatedEventId": "5",
+        "workflowExecution": {
+          "workflowId": "replay-captured-child-alpha-0adf21d4-ef7e-4b45-a93b-8a0ca0e58f48-child-019dfeaa-b214-7032-a9f3-fe44908a21c2-0",
+          "runId": "019dfeaa-b21d-7280-8be1-9039b566766d"
+        },
+        "workflowType": {
+          "name": "integrationChildWorkflow"
+        },
+        "namespaceId": "019df5ec-e8d4-7343-9e4d-0dd0f44da2ab"
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-05-06T19:01:32.830902Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48234922",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3-sticky-temporal-bun-worker-Mac-pihole-lan-95624",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-05-06T19:01:32.831967Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48234930",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "8",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "b6f4c81b-1809-4fb3-8f94-0455d8e02745",
+        "historySizeBytes": "2461"
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-05-06T19:01:32.839089Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "48234944",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "8",
+        "startedEventId": "9",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-05-06T19:01:32.839101Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "taskId": "48234945",
+      "workflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "ImNoaWxkLXN0YXJ0ZWQi"
+            }
+          ]
+        },
+        "workflowTaskCompletedEventId": "10"
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [
+      {
+        "intent": {
+          "id": "start-child-workflow-0",
+          "kind": "start-child-workflow",
+          "sequence": 0,
+          "workflowType": "integrationChildWorkflow",
+          "workflowId": "replay-captured-child-alpha-0adf21d4-ef7e-4b45-a93b-8a0ca0e58f48-child-019dfeaa-b214-7032-a9f3-fe44908a21c2-0",
+          "namespace": "default",
+          "taskQueue": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "input": [
+            "alpha-child"
+          ],
+          "timeouts": {}
+        }
+      }
+    ],
+    "randomValues": [],
+    "timeValues": [
+      1778094092826,
+      1778094092826
+    ],
+    "signals": [],
+    "queries": []
+  }
+}

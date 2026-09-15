@@ -1,0 +1,20 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argo-workflows
+  namespace: argo-workflows
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`workflows.proompteng.ai`)
+      kind: Rule
+      middlewares:
+        - name: workflows-canonical-host
+      services:
+        - name: argo-workflows-server
+          port: 2746
+  tls:
+    secretName: wildcard-proompteng-ai-tls

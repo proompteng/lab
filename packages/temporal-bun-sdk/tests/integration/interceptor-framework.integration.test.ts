@@ -1,0 +1,175 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import crypto from 'node:crypto'
+import { Effect } from 'effect'
+
+import { createTemporalClient, type TemporalClient } from '../../src/client'
+import { loadTemporalConfig } from '../../src/config'
+import { type TemporalInterceptor } from '../../src/interceptors/types'
+import { WorkerRuntime } from '../../src/worker/runtime'
+import { TemporalCliUnavailableError } from './harness'
+import { acquireIntegrationTestEnv, releaseIntegrationTestEnv, type IntegrationTestEnv } from './test-env'
+import { integrationActivities, integrationWorkflows } from './workflows'
+
+const shouldRunIntegration = process.env.TEMPORAL_INTEGRATION_TESTS === '1'
+const describeIntegration = shouldRunIntegration ? describe : describe.skip
+const hookTimeoutMs = 60_000
+
+const CLI_CONFIG = {
+  address: process.env.TEMPORAL_ADDRESS ?? '127.0.0.1:7233',
+  namespace: process.env.TEMPORAL_NAMESPACE ?? 'default',
+}
+
+describeIntegration('interceptor framework wiring', () => {
+  let integrationEnv: IntegrationTestEnv | null = null
+  let runtime: WorkerRuntime | null = null
+  let runtimePromise: Promise<void> | null = null
+  let client: TemporalClient | null = null
+  let cliUnavailable = false
+  const interceptorTaskQueue = `${process.env.TEMPORAL_TASK_QUEUE ?? 'temporal-bun-integration'}-interceptor-${crypto.randomUUID()}`
+
+  const clientEvents: string[] = []
+  const workerEvents: string[] = []
+
+  const captureClientInterceptor: TemporalInterceptor = {
+    name: 'capture-client',
+    outbound: (ctx, next) =>
+      Effect.sync(() => {
+        clientEvents.push(`${ctx.kind}:out`)
+      }).pipe(Effect.flatMap(() => next())),
+    inbound: (ctx, next) =>
+      Effect.sync(() => {
+        clientEvents.push(`${ctx.kind}:in`)
+      }).pipe(Effect.flatMap(() => next())),
+  }
+
+  const captureWorkerInterceptor: TemporalInterceptor = {
+    name: 'capture-worker',
+    outbound: (ctx, next) =>
+      Effect.sync(() => {
+        workerEvents.push(`${ctx.kind}:out`)
+      }).pipe(Effect.flatMap(() => next())),
+    inbound: (ctx, next) =>
+      Effect.sync(() => {
+        workerEvents.push(`${ctx.kind}:in`)
+      }).pipe(Effect.flatMap(() => next())),
+  }
+
+  beforeAll(async () => {
+    integrationEnv = await acquireIntegrationTestEnv()
+    if (integrationEnv.isCliUnavailable()) {
+      cliUnavailable = true
+      console.warn('[temporal-bun-sdk] skipping interceptor integration: Temporal CLI unavailable')
+      return
+    }
+
+    const baseConfig = await loadTemporalConfig({
+      defaults: {
+        address: CLI_CONFIG.address,
+        namespace: CLI_CONFIG.namespace,
+        taskQueue: interceptorTaskQueue,
+      },
+    })
+
+    runtime = await WorkerRuntime.create({
+      config: baseConfig,
+      workflows: integrationWorkflows,
+      activities: integrationActivities,
+      taskQueue: interceptorTaskQueue,
+      namespace: CLI_CONFIG.namespace,
+      interceptors: [captureWorkerInterceptor],
+      workflowGuards: 'warn',
+    })
+    runtimePromise = runtime.run()
+
+    const clientHandles = await createTemporalClient({
+      config: baseConfig,
+      taskQueue: interceptorTaskQueue,
+      clientInterceptors: [captureClientInterceptor],
+    })
+    client = clientHandles.client
+  }, { timeout: hookTimeoutMs })
+
+  afterAll(async () => {
+    if (client) {
+      await client.shutdown()
+    }
+    if (runtime) {
+      await runtime.shutdown()
+    }
+    if (runtimePromise) {
+      await runtimePromise
+    }
+    if (integrationEnv) {
+      await releaseIntegrationTestEnv()
+    }
+  }, { timeout: hookTimeoutMs })
+
+  const runOrSkip = async <A>(name: string, fn: () => Promise<A>): Promise<A | undefined> => {
+    if (cliUnavailable) {
+      console.warn(`[temporal-bun-sdk] interceptor scenario skipped (${name})`)
+      return undefined
+    }
+    if (!integrationEnv || !client) {
+      throw new Error('Integration environment not initialised')
+    }
+    try {
+      return await integrationEnv.runOrSkip(name, fn)
+    } catch (error) {
+      if (error instanceof TemporalCliUnavailableError) {
+        cliUnavailable = true
+        console.warn(`[temporal-bun-sdk] interceptor scenario skipped (${name}): ${error.message}`)
+        return undefined
+      }
+      throw error
+    }
+  }
+
+  test('fires hooks for start, signal, query, update, and activity paths', async () => {
+    await runOrSkip('start-signal-query-update', async () => {
+      clientEvents.length = 0
+      workerEvents.length = 0
+
+      const activityWorkflowHandle = await client!.startWorkflow({
+        workflowType: 'integrationActivityWorkflow',
+        workflowId: `int-activity-${crypto.randomUUID()}`,
+        taskQueue: interceptorTaskQueue,
+        args: [{ value: 'ok' }],
+      })
+      integrationEnv?.harness?.trackWorkflow(activityWorkflowHandle)
+
+      const signalWorkflowHandle = await client!.startWorkflow({
+        workflowType: 'integrationSignalQueryWorkflow',
+        workflowId: `int-signal-${crypto.randomUUID()}`,
+        taskQueue: interceptorTaskQueue,
+      })
+      integrationEnv?.harness?.trackWorkflow(signalWorkflowHandle)
+
+      await client!.signalWorkflow(signalWorkflowHandle.handle, 'unblock', 'go')
+      await client!.queryWorkflow(signalWorkflowHandle.handle, 'state', {})
+
+      const updateWorkflowHandle = await client!.startWorkflow({
+        workflowType: 'integrationUpdateWorkflow',
+        workflowId: `int-update-${crypto.randomUUID()}`,
+        taskQueue: interceptorTaskQueue,
+        args: [{ initialMessage: 'boot' }],
+      })
+      integrationEnv?.harness?.trackWorkflow(updateWorkflowHandle)
+
+      await client!.updateWorkflow(updateWorkflowHandle.handle, {
+        updateName: 'integrationUpdate.setMessage',
+        args: [{ value: 'patched' }],
+        waitForStage: 'completed',
+      })
+
+      expect(clientEvents.some((entry) => entry.startsWith('workflow.start'))).toBeTrue()
+      expect(clientEvents.some((entry) => entry.startsWith('workflow.signal'))).toBeTrue()
+      expect(clientEvents.some((entry) => entry.startsWith('workflow.query'))).toBeTrue()
+      expect(clientEvents.some((entry) => entry.startsWith('workflow.update'))).toBeTrue()
+
+      expect(workerEvents.some((entry) => entry.startsWith('worker.activityTask'))).toBeTrue()
+      expect(workerEvents.some((entry) => entry.startsWith('worker.workflowTask'))).toBeTrue()
+      expect(workerEvents.some((entry) => entry.startsWith('worker.queryTask'))).toBeTrue()
+      expect(workerEvents.some((entry) => entry.startsWith('worker.updateTask'))).toBeTrue()
+    })
+  })
+})

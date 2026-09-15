@@ -1,0 +1,10 @@
+# Build artifacts
+bin/
+coverage/
+*.test
+
+# Node/yarn caches
+node_modules/
+
+# Go modules
+vendor/

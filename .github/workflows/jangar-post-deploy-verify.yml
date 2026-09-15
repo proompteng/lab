@@ -1,0 +1,151 @@
+name: jangar-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - kargo/jangar
+    paths:
+      - 'argocd/applications/jangar/**'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
+
+concurrency:
+  group: jangar-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.11.1
+
+      - name: Install Temporal routing dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts \
+            --filter @proompteng/source \
+            --filter @proompteng/scripts \
+            --filter @proompteng/temporal-bun-sdk
+          bun run --filter @proompteng/temporal-bun-sdk build
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+        with:
+          version: v1.31.2
+
+      - name: Install Temporal CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
+          echo "${HOME}/.temporalio/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Temporal CLI
+        shell: bash
+        run: temporal --version
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            echo "Service account token is missing"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+            echo "Service account CA cert is missing"
+            exit 1
+          fi
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=jangar \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Validate kubectl context
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+
+      - name: Verify deployment health and digest
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+          ARGS=(
+            --require-synced
+            --health-attempts 90
+            --health-interval-seconds 10
+            --digest-attempts 30
+            --digest-interval-seconds 10
+          )
+
+          if [ "${EVENT_NAME}" = "push" ]; then
+            ARGS+=(--expected-revision "${GITHUB_SHA}" --expected-revision-mode ancestor)
+          elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            ARGS+=(--expected-revision "${EXPECTED_REVISION_INPUT}" --expected-revision-mode ancestor)
+          fi
+
+          bun run packages/scripts/src/jangar/verify-deployment.ts "${ARGS[@]}"
+
+      - name: Sync Temporal routing after rollout
+        shell: bash
+        env:
+          TEMPORAL_ADDRESS: temporal-frontend.temporal.svc.cluster.local:7233
+          TEMPORAL_NAMESPACE: default
+        run: |
+          set -euo pipefail
+          bun run packages/scripts/src/jangar/sync-temporal-routing.ts \
+            --task-queue jangar \
+            --deployment-name jangar-deployment \
+            --migrate-stale-running \
+            --allow-no-versioned-pollers

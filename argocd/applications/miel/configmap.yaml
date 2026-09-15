@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: miel-config
+  labels:
+    app.kubernetes.io/name: miel
+    app.kubernetes.io/part-of: miel
+    app.kubernetes.io/component: api
+  annotations:
+    description: Base configuration for the Miel trading service.
+data:
+  HTTP_PORT: "8080"
+  ALPACA_BASE_URL: "https://paper-api.alpaca.markets"
+  ALPACA_DATA_BASE_URL: "https://data.alpaca.markets"
+  ALPACA_REQUEST_TIMEOUT_SECONDS: "30"
+  BACKTEST_MAX_BARS: "5000"
+  OTEL_SERVICE_NAME: "miel"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://observability-tempo-distributor.observability:4318"
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://observability-mimir-gateway.observability/otlp"
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://observability-loki-loki-distributed-gateway.observability/otlp"
+  TIGERBEETLE_ENABLED: "false"
+  TIGERBEETLE_ADDRESSES: ""
+  TIGERBEETLE_CLUSTER_ID: ""
+  TIGERBEETLE_LEDGER: "1"
+  TIGERBEETLE_ORDER_CODE: "100"
+  TIGERBEETLE_BACKTEST_CODE: "200"
+  TIGERBEETLE_AMOUNT_SCALE: "6"
+  TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID: ""
+  TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID: ""
+  TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID: ""
+  TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID: ""

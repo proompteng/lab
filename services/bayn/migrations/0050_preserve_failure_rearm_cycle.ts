@@ -1,0 +1,230 @@
+import { Effect } from 'effect'
+import { SqlClient } from 'effect/unstable/sql'
+
+// The pre-v50 recovery path rotated this untouched future cycle through OBSERVE without forwarding its plan binding.
+// Keep the data repair incident-specific; the runtime guard below prevents the class of failure for future cycles.
+export const failureRearmIncidentCycleId = '3225bd19446632700c6e2296311626f347c6145b4202207645e6a168dbceeb28'
+
+const extendRearmEligibility = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+
+  // Migration 49 already owns the narrow reconciliation-cycle exception. Extend that exact exception to
+  // system-authored execution failures; completed and expired mandates remain terminal and cannot preserve a cycle.
+  yield* sql`
+    DO $migration$
+    DECLARE
+      function_definition text := pg_get_functiondef(
+        'research_paper_rearm_eligible(text,bigint,timestamptz)'::regprocedure
+      );
+      previous_guard constant text := $guard$AND cycle.state IN ('PENDING', 'ACTIVE')
+              AND NOT (
+                state.reason = 'reconciliation pass incomplete'
+                AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+                AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
+                AND cycle.snapshot_id IS NULL
+                AND cycle.decision_hash IS NULL
+                AND cycle.updated_at <= candidate_activated_at
+                AND candidate_activated_at < cycle.submission_open_at
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM intents AS cycle_intent
+                  WHERE cycle_intent.cycle_id = cycle.cycle_id
+                )
+              )$guard$;
+      replacement_guard constant text := $guard$AND cycle.state IN ('PENDING', 'ACTIVE')
+              AND NOT (
+                (
+                  state.reason = 'reconciliation pass incomplete'
+                  AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+                  AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
+                  AND cycle.snapshot_id IS NULL
+                  AND cycle.decision_hash IS NULL
+                  AND cycle.updated_at <= candidate_activated_at
+                  AND candidate_activated_at < cycle.submission_open_at
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM intents AS cycle_intent
+                    WHERE cycle_intent.cycle_id = cycle.cycle_id
+                  )
+                )
+                OR (
+                  state.maximum = 'PAPER'
+                  AND state.effective = 'OBSERVE'
+                  AND state.kill_state = 'ACTIVE'
+                  AND (
+                    state.reason LIKE 'execution cycle loop restricted effective authority:%'
+                    OR state.reason LIKE 'PAPER autonomous cycle loop restricted effective authority:%'
+                  )
+                  AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+                  AND previous_generation.proof_plan_hash = cycle.qualification_run_id
+                  AND previous_generation.research_plan_hash = cycle.qualification_run_id
+                  AND previous_generation.strategy_protocol_hash = cycle.strategy_protocol_hash
+                  AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
+                  AND cycle.identity_schema_version = 'bayn.autonomous-cycle-identity.v3'
+                  AND cycle.snapshot_id IS NULL
+                  AND cycle.decision_hash IS NULL
+                  AND cycle.updated_at <= candidate_activated_at
+                  AND candidate_activated_at < cycle.submission_open_at
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM intents AS cycle_intent
+                    WHERE cycle_intent.cycle_id = cycle.cycle_id
+                  )
+                )
+              )$guard$;
+    BEGIN
+      IF strpos(function_definition, replacement_guard) > 0 THEN
+        RAISE EXCEPTION 'execution failure rearm guard already exists' USING ERRCODE = '55000';
+      END IF;
+
+      IF (
+        length(function_definition) - length(replace(function_definition, previous_guard, ''))
+      ) <> length(previous_guard) THEN
+        RAISE EXCEPTION 'expected exactly one reconciliation rearm guard' USING ERRCODE = '55000';
+      END IF;
+
+      function_definition := replace(function_definition, previous_guard, replacement_guard);
+      EXECUTE function_definition;
+    END
+    $migration$
+  `
+})
+
+/** Repairs only the reviewed untouched cycle terminalized by the pre-v50 source-recovery rollover. */
+export const repairSamePlanSourceRearmCycle = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+
+  yield* sql`
+    DO $migration$
+    DECLARE
+      incident_cycle_id constant text := '3225bd19446632700c6e2296311626f347c6145b4202207645e6a168dbceeb28';
+      repaired_count integer;
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgrelid = 'autonomous_cycles'::regclass
+          AND tgname = 'autonomous_cycle_lifecycle'
+          AND tgenabled = 'O'
+      ) THEN
+        RAISE EXCEPTION 'autonomous cycle lifecycle trigger is not enabled' USING ERRCODE = '55000';
+      END IF;
+
+      LOCK TABLE autonomous_cycles IN SHARE ROW EXCLUSIVE MODE;
+      EXECUTE 'ALTER TABLE autonomous_cycles DISABLE TRIGGER autonomous_cycle_lifecycle';
+
+      WITH repairable AS (
+        SELECT cycle.cycle_id
+        FROM autonomous_cycles AS cycle
+        JOIN authority_state AS state ON state.singleton
+        JOIN authority_generations AS current_generation
+          ON current_generation.generation_hash = state.generation_hash
+        JOIN authority_generations AS observe_generation
+          ON observe_generation.generation_hash = current_generation.previous_generation_hash
+        JOIN authority_generations AS previous_generation
+          ON previous_generation.generation_hash = observe_generation.previous_generation_hash
+        JOIN LATERAL (
+          SELECT reconciliation.*
+          FROM reconciliations AS reconciliation
+          WHERE reconciliation.account_id = cycle.account_id
+          ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+          LIMIT 1
+        ) AS reconciliation ON true
+        WHERE cycle.cycle_id = incident_cycle_id
+          AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
+          AND cycle.identity_schema_version = 'bayn.autonomous-cycle-identity.v3'
+          AND cycle.state = 'BLOCKED'
+          AND cycle.terminal_reason = 'BLOCKED_PROVENANCE_MISMATCH'
+          AND cycle.snapshot_id IS NULL
+          AND cycle.decision_hash IS NULL
+          AND cycle.terminal_at = cycle.updated_at
+          AND clock_timestamp() < cycle.submission_open_at
+          AND state.maximum = 'PAPER'
+          AND state.effective = 'PAPER'
+          AND state.kill_state = 'CLEAR'
+          AND state.reason IS NULL
+          AND current_generation.maximum = 'PAPER'
+          AND current_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+          AND current_generation.proof_plan_hash = cycle.qualification_run_id
+          AND current_generation.research_plan_hash = cycle.qualification_run_id
+          AND current_generation.strategy_protocol_hash = cycle.strategy_protocol_hash
+          AND current_generation.account_id = cycle.account_id
+          AND current_generation.activated_at >= observe_generation.activated_at
+          AND observe_generation.maximum = 'OBSERVE'
+          AND observe_generation.activation_schema_version IS NULL
+          AND observe_generation.activated_at = cycle.terminal_at
+          AND previous_generation.maximum = 'PAPER'
+          AND previous_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+          AND previous_generation.proof_plan_hash = current_generation.proof_plan_hash
+          AND previous_generation.research_plan_hash = current_generation.research_plan_hash
+          AND previous_generation.strategy_name = current_generation.strategy_name
+          AND previous_generation.strategy_behavior_hash = current_generation.strategy_behavior_hash
+          AND previous_generation.strategy_parameter_hash = current_generation.strategy_parameter_hash
+          AND previous_generation.strategy_parameter_schema_version = current_generation.strategy_parameter_schema_version
+          AND previous_generation.strategy_protocol_hash = current_generation.strategy_protocol_hash
+          AND previous_generation.risk_policy_hash = current_generation.risk_policy_hash
+          AND previous_generation.account_id = current_generation.account_id
+          AND previous_generation.broker_identity_schema_version = current_generation.broker_identity_schema_version
+          AND previous_generation.broker_identity_hash = current_generation.broker_identity_hash
+          AND previous_generation.broker_provider = current_generation.broker_provider
+          AND previous_generation.broker_environment = current_generation.broker_environment
+          AND reconciliation.status = 'EXACT'
+          AND reconciliation.expected_hash = reconciliation.observed_hash
+          AND jsonb_array_length(reconciliation.discrepancies) = 0
+          AND reconciliation.reconciled_at > state.updated_at
+          AND NOT paper_account_has_unresolved_mutation(cycle.account_id, reconciliation.reconciled_at)
+          AND EXISTS (
+            SELECT 1
+            FROM position_snapshots AS position_snapshot
+            WHERE position_snapshot.account_id = cycle.account_id
+              AND position_snapshot.position_count = 0
+              AND position_snapshot.observed_at <= reconciliation.reconciled_at
+              AND NOT EXISTS (
+                SELECT 1
+                FROM position_snapshots AS later_snapshot
+                WHERE later_snapshot.account_id = position_snapshot.account_id
+                  AND (
+                    later_snapshot.observed_at > position_snapshot.observed_at
+                    OR (
+                      later_snapshot.observed_at = position_snapshot.observed_at
+                      AND later_snapshot.snapshot_id COLLATE "C" > position_snapshot.snapshot_id COLLATE "C"
+                    )
+                  )
+              )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM intents AS cycle_intent
+            WHERE cycle_intent.cycle_id = cycle.cycle_id
+          )
+        FOR UPDATE OF cycle
+      )
+      UPDATE autonomous_cycles AS cycle
+      SET
+        state = 'ACTIVE',
+        terminal_reason = NULL,
+        state_version = cycle.state_version + 1,
+        updated_at = greatest(clock_timestamp(), cycle.updated_at + interval '1 microsecond'),
+        terminal_at = NULL
+      FROM repairable
+      WHERE cycle.cycle_id = repairable.cycle_id;
+
+      GET DIAGNOSTICS repaired_count = ROW_COUNT;
+      IF repaired_count > 1 THEN
+        RAISE EXCEPTION 'refusing to repair more than one source-rearm cycle' USING ERRCODE = '55000';
+      END IF;
+
+      EXECUTE 'ALTER TABLE autonomous_cycles ENABLE TRIGGER autonomous_cycle_lifecycle';
+    EXCEPTION
+      WHEN OTHERS THEN
+        EXECUTE 'ALTER TABLE autonomous_cycles ENABLE TRIGGER autonomous_cycle_lifecycle';
+        RAISE;
+    END
+    $migration$
+  `
+})
+
+export default Effect.gen(function* () {
+  yield* extendRearmEligibility
+  yield* repairSamePlanSourceRearmCycle
+})

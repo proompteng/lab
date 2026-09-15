@@ -1,0 +1,28 @@
+# Legacy standalone manifest retained pending repository cleanup. Do not apply it: the `agents` Application is generated
+# by `argocd/applicationsets/product.yaml` and promoted from `kargo/agents`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agents
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agents
+  source:
+    repoURL: https://github.com/proompteng/lab.git
+    targetRevision: main
+    path: argocd/applications/agents
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/preserveUnknownFields

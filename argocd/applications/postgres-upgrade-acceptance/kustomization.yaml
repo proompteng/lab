@@ -1,0 +1,57 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- three-comparison-sources.yaml
+- base
+- upgrade-preflight.yaml
+- three-upgrade-preflight.yaml
+patches:
+- target:
+    group: postgresql.cnpg.io
+    kind: Cluster
+    namespace: postgres-upgrade-acceptance
+    name: (app|bilig|coder|forgejo)-pg18-source
+  patch: "- op: replace\n  path: /spec/imageName\n  value: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533\n"
+- target:
+    group: postgresql.cnpg.io
+    kind: Cluster
+    namespace: postgres-upgrade-acceptance
+    name: buzz-pg18-source
+  patch: "- op: replace\n  path: /spec/imageName\n  value: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1\n"
+- target:
+    group: postgresql.cnpg.io
+    kind: Cluster
+    namespace: postgres-upgrade-acceptance
+    name: jangar-pg18-source
+  patch: "- op: replace\n  path: /spec/imageName\n  value: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533\n"
+- target:
+    group: postgresql.cnpg.io
+    kind: Cluster
+    namespace: postgres-upgrade-acceptance
+    name: torghut-pg18-source
+  patch: "- op: replace\n  path: /spec/imageName\n  value: ghcr.io/cloudnative-pg/postgresql:18.6-system-bullseye@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533\n"
+configMapGenerator:
+- name: postgres-major-upgrade-ready
+  namespace: postgres-upgrade-acceptance
+  files:
+  - upgrade-ready.py
+  options:
+    labels:
+      app.kubernetes.io/part-of: postgres-upgrade-acceptance
+      postgres.proompteng.ai/rehearsal: 18-6-v1
+    annotations:
+      argocd.argoproj.io/hook: PreSync
+      argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+      argocd.argoproj.io/sync-wave: '-33'
+- name: postgres-three-major-upgrade-ready
+  namespace: postgres-upgrade-acceptance
+  files:
+  - upgrade-ready.py=three-upgrade-ready.py
+  options:
+    labels:
+      app.kubernetes.io/part-of: postgres-upgrade-acceptance
+      postgres.proompteng.ai/rehearsal: 18-6-v2
+    annotations:
+      argocd.argoproj.io/hook: PreSync
+      argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+      argocd.argoproj.io/sync-wave: '-33'

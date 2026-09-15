@@ -1,0 +1,131 @@
+@import '@proompteng/design/globals.css';
+@import '@xterm/xterm/css/xterm.css';
+
+@source "./**/*.{js,jsx,ts,tsx}";
+@source not "../node_modules";
+@source not "../.output";
+@source not "../../../.pnpm-store";
+@source not "../../../.bun";
+
+@font-face {
+  font-family: 'JetBrains Mono Nerd Font';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('./assets/fonts/JetBrainsMonoNerdFontMono-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Nerd Font';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('./assets/fonts/JetBrainsMonoNerdFontMono-Bold.ttf') format('truetype');
+}
+
+:root {
+  --font-sans:
+    'JetBrains Mono Nerd Font', 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo,
+    Monaco, Consolas, monospace;
+  --font-mono:
+    'JetBrains Mono Nerd Font', 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo,
+    Monaco, Consolas, monospace;
+  --jangar-grid-line: color-mix(in oklch, var(--border) 45%, transparent);
+  --jangar-glow: color-mix(in oklch, var(--accent) 16%, transparent);
+}
+
+@layer base {
+  body {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(circle at 12% 12%, var(--jangar-glow) 0, transparent 36%),
+      radial-gradient(circle at 88% 18%, color-mix(in oklch, var(--accent) 10%, transparent) 0, transparent 40%),
+      linear-gradient(to right, var(--jangar-grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--jangar-grid-line) 1px, transparent 1px);
+    background-position: center;
+    background-size:
+      auto,
+      auto,
+      24px 24px,
+      24px 24px;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--accent) 40%, transparent);
+    color: var(--foreground);
+  }
+
+  :focus-visible {
+    outline: 1px solid color-mix(in oklch, var(--ring) 80%, transparent);
+    outline-offset: 2px;
+  }
+
+  /*
+   * Native dropdown menus in Jangar render via the OS/browser picker UI.
+   * Keep them in dark mode so menu chrome and inherited option text stay legible.
+   */
+  select {
+    color-scheme: dark;
+  }
+
+  select,
+  option,
+  optgroup {
+    color: var(--popover-foreground);
+    background-color: var(--popover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    scroll-behavior: auto;
+    transition-duration: 0.01ms;
+  }
+}
+
+.xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--border) 60%, transparent) transparent;
+  scrollbar-gutter: stable;
+  margin: 0;
+  padding: 0;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 4px;
+  background: transparent;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 0;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--border) 60%, transparent);
+  border-radius: 999px;
+  border: 0;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.truncate-log {
+  --truncate-lines: 6;
+  display: -webkit-box;
+  -webkit-line-clamp: var(--truncate-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -1,0 +1,304 @@
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files, which are likely to contain sensitive data, such as
+# password, private keys, and other secrets. These should not be part of version
+# control as they are data points which are potentially sensitive and subject
+# to change depending on the environment.
+*.tfvars
+*.tfvars.json
+
+# Ignore override files as they are usually used to override resources locally and so
+# are not checked in
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Include override files you do wish to add to version control using negated pattern
+# !example_override.tf
+
+# Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
+# example: *tfplan*
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+
+node_modules/
+.DS_Store
+kubernetes/kubeconfig
+kubeconfig
+token
+tok
+
+devices/ryzen/controlplane.yaml
+devices/ryzen/worker.yaml
+devices/ryzen/talosconfig
+devices/ryzen/node-machineconfig.yaml
+devices/ryzen/manifests/tailscale-extension-service.yaml
+
+devices/ampone/controlplane.yaml
+devices/ampone/worker.yaml
+devices/ampone/talosconfig
+devices/ampone/node-machineconfig.yaml
+devices/ampone/manifests/tailscale-extension-service.yaml
+devices/*/secrets.yaml
+devices/altra/controlplane.yaml
+devices/altra/worker.yaml
+devices/altra/talosconfig
+devices/altra/node-machineconfig.yaml
+devices/altra/manifests/tailscale-extension-service.yaml
+devices/turin/controlplane.yaml
+devices/turin/worker.yaml
+devices/turin/talosconfig
+devices/turin/node-machineconfig.yaml
+devices/turin/manifests/tailscale-extension-service.yaml
+SMCIPMITool.properties
+smcrakp.properties
+**/charts/*.tgz
+**/generated/*
+**/_generated/
+!argocd/applications/*/generated/**
+!packages/backend/convex/_generated/
+!services/jangar/convex/_generated/
+argocd/applications/*/charts/
+argocd/applications/**/charts/
+
+**/temporal/lib
+
+## IntelliJ files
+
+.idea/
+*.iml
+*.class
+out/
+bin/
+!services/dernier/bin/
+!services/dernier/bin/entrypoint
+!packages/temporal-bun-sdk/src/bin/
+
+# Node.js
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Astro
+dist/
+.astro/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Build files
+build/
+
+# Cache
+.cache/
+.pnpm-store/
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dependency directories
+jspm_packages/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variable files
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# Local dev/ops artifacts (secrets, one-off outputs, etc.)
+.local/
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# Next.js build output
+.next
+out
+
+# Nuxt.js build / generate output
+.nuxt
+dist
+dist-electron/
+
+# Gatsby files
+.cache/
+# Comment in the public line in if your project uses Gatsby and not Next.js
+# https://nextjs.org/blog/next-9-1#public-directory-support
+# public
+
+# vuepress build output
+.vuepress/dist
+
+# vuepress v2.x temp and cache directory
+.temp
+.cache
+
+# Docusaurus cache and generated files
+.docusaurus
+
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+.nx/cache
+.nx/workspace-data
+
+.turbo
+.playwright-mcp/
+
+apps/alchimie/*.egg-info
+
+.tmp_dagster*/
+services/headlamp/.upstream/
+
+# Python
+*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+__pycache__/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.python-version
+venv/
+ENV/
+env/
+.env/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+
+!**/*/s2i/bin
+
+# Temporary files and directories
+tmp/
+.ipynb_checkpoints/
+
+# Rails credentials
+services/dernier/config/master.key
+/packages/temporal-bun-sdk/native/temporal-bun-bridge/target/
+/services/tengri/target/
+/packages/temporal-bun-sdk/vendor/
+
+# Temporal libraries cache and releases
+packages/temporal-bun-sdk/.temporal-libs-cache/
+packages/temporal-bun-sdk/releases/
+packages/temporal-bun-sdk/vendor/
+packages/temporal-bun-sdk/Users/
+**/zig-out/
+.codex/
+.codex-*
+.codex/cache
+.worktrees/
+
+# Graf Kotlin service artifacts
+/services/graf/.gradle/
+/services/graf/.kotlin/
+/services/graf/build/
+/services/graf/gradle/wrapper/dists/
+# Kotlin Gradle build caches
+**/.gradle/

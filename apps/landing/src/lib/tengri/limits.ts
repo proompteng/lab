@@ -1,0 +1,1 @@
+export const MAX_EVENT_STREAMS_PER_SUBJECT = 20

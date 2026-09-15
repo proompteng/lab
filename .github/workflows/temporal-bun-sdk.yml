@@ -1,0 +1,409 @@
+name: Temporal Bun SDK CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - 'packages/temporal-bun-sdk-example/**'
+      - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
+      - '.github/workflows/temporal-bun-sdk.yml'
+  pull_request:
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - 'packages/temporal-bun-sdk-example/**'
+      - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
+      - '.github/workflows/temporal-bun-sdk.yml'
+  workflow_dispatch:
+    inputs:
+      npm_tag:
+        description: 'npm dist-tag (latest, beta, next, etc.)'
+        type: string
+        required: false
+        default: latest
+      dry_run:
+        description: 'Run npm publish in dry-run mode instead of releasing'
+        type: boolean
+        required: false
+        default: false
+      release_mode:
+        description: 'prepare → open release PR, publish → release to npm'
+        type: choice
+        default: prepare
+        options:
+          - prepare
+          - publish
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEMPORAL_TEST_TIMEOUT: '30000'
+      TEMPORAL_INTEGRATION_TESTS: '0'
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.11.1'
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
+      - name: Build Temporal Bun SDK
+        run: bun run --filter @proompteng/temporal-bun-sdk build
+      - name: Run Oxfmt check (temporal-bun-sdk)
+        run: bunx oxfmt --check packages/temporal-bun-sdk/src packages/temporal-bun-sdk/tests packages/temporal-bun-sdk/scripts packages/temporal-bun-sdk/docs
+      - name: Run Oxlint (temporal-bun-sdk)
+        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint
+      - name: Run Oxlint (temporal-bun-sdk, type-aware)
+        run: bun run --cwd packages/temporal-bun-sdk lint:oxlint:type
+      - name: Run Oxlint (temporal-bun-sdk-example)
+        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint
+      - name: Run Oxlint (temporal-bun-sdk-example, type-aware)
+        run: bun run --cwd packages/temporal-bun-sdk-example lint:oxlint:type
+      - name: Run Temporal Bun SDK non-integration tests
+        run: |
+          cd packages/temporal-bun-sdk
+          mapfile -d '' test_files < <(find tests -type f -name '*.test.ts' ! -path 'tests/integration/*' -print0)
+          if [ "${#test_files[@]}" -eq 0 ]; then
+            echo 'No Temporal Bun SDK non-integration tests were discovered.' >&2
+            exit 1
+          fi
+          bun test "${test_files[@]}" --timeout=30000
+      - name: Verify replay corpus
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:replay-corpus
+      - name: Upload deterministic readiness evidence
+        uses: actions/upload-artifact@v5
+        with:
+          name: temporal-bun-sdk-determinism-artifacts
+          path: |
+            packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
+            packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json
+          if-no-files-found: error
+
+  integration:
+    if: github.event_name != 'pull_request'
+    needs:
+      - test
+    runs-on: arc-arm64
+    timeout-minutes: 60
+    env:
+      TEMPORAL_TEST_SERVER: '1'
+      TEMPORAL_TEST_TIMEOUT: '30000'
+      TEMPORAL_INTEGRATION_TESTS: '1'
+      TEMPORAL_BUN_RELEASE_GATE: '1'
+      TEMPORAL_ADDRESS: temporal-grpc:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_ENFORCE_REMOTE_ADDRESS: '1'
+      TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: '12000'
+      TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: '12000'
+      TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '32'
+      TEMPORAL_BUN_EVIDENCE_PURPOSE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && 'publish' || 'ci' }}
+      TEMPORAL_BUN_NPM_TAG: ${{ github.event.inputs.npm_tag || 'latest' }}
+      TEMPORAL_BUN_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Download deterministic readiness evidence
+        uses: actions/download-artifact@v5
+        with:
+          name: temporal-bun-sdk-determinism-artifacts
+          path: packages/temporal-bun-sdk/.artifacts
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.11.1'
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
+      - name: Build Temporal Bun SDK
+        run: bun run --filter @proompteng/temporal-bun-sdk build
+      - name: Install Temporal CLI
+        run: |
+          curl -sSfL https://temporal.download/cli.sh | bash -s -- -b "${HOME}/.temporalio/bin"
+          echo "${HOME}/.temporalio/bin" >> "$GITHUB_PATH"
+      - name: Verify Temporal CLI and remote endpoint
+        run: |
+          temporal --version
+          if ! getent hosts temporal-grpc >/dev/null; then
+            echo "temporal-grpc must resolve on ARC runners via Tailscale search domains."
+            exit 1
+          fi
+          case "${TEMPORAL_ADDRESS}" in
+            "127.0.0.1":*|"localhost":*|"[::1]":*)
+              echo "TEMPORAL_ADDRESS must not point to localhost in CI."
+              exit 1
+              ;;
+          esac
+      - name: Clean stale Temporal Bun SDK integration workflows
+        run: |
+          bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --terminate \
+            --reason "pre-test cleanup for GitHub Actions run ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Run Temporal Bun SDK integration tests
+        run: |
+          cd packages/temporal-bun-sdk
+          bun test tests/integration --timeout=30000 --max-concurrency=1
+      - name: Verify Temporal Bun SDK integration cleanup
+        run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
+
+      - name: Run worker load suite
+        run: |
+          TEMPORAL_TEST_SERVER=1 bun run --filter @proompteng/temporal-bun-sdk test:load
+
+      - name: Verify Temporal Bun SDK load cleanup
+        run: bun packages/temporal-bun-sdk/scripts/cleanup-integration-workflows.ts --verify
+
+      - name: Verify production package boundary
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:production
+
+      - name: Upload worker load artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: worker-load-artifacts
+          path: |
+            packages/temporal-bun-sdk/.artifacts/worker-load/metrics.jsonl
+            packages/temporal-bun-sdk/.artifacts/worker-load/memory.jsonl
+            packages/temporal-bun-sdk/.artifacts/worker-load/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-load/temporal-cli.log
+            packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
+
+      - name: Upload production readiness artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: production-readiness-artifacts
+          path: |
+            packages/temporal-bun-sdk/dist/production-readiness.json
+            packages/temporal-bun-sdk/dist/agent-readiness.json
+            packages/temporal-bun-sdk/dist/release-provenance.json
+            packages/temporal-bun-sdk/.artifacts/async-fuzz/report.json
+            packages/temporal-bun-sdk/.artifacts/replay-corpus/report.json
+            packages/temporal-bun-sdk/.artifacts/worker-load/report.json
+
+  prepare-release:
+    name: Prepare Temporal Bun SDK Release
+    runs-on: arc-arm64
+    needs:
+      - test
+      - integration
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'prepare'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.11.1'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
+
+      - name: Run release-please (manifest)
+        id: release_please
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          include-component-in-tag: true
+          skip-github-release: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch release branch
+        id: release_branch
+        run: |
+          branch="release-please--branches--main--components--temporal-bun-sdk"
+          if git ls-remote --exit-code origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch":"$branch"
+            git checkout "$branch"
+            echo "branch=$branch" >> "$GITHUB_OUTPUT"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release-please branch $branch not found; nothing to build yet"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Temporal Bun SDK
+        if: steps.release_branch.outputs.found == 'true'
+        run: bun run --filter @proompteng/temporal-bun-sdk build
+
+  publish-release:
+    name: Publish Temporal Bun SDK
+    runs-on: ubuntu-latest
+    needs:
+      - test
+      - integration
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.11.1'
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@11.5.1
+          npm --version
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
+
+      - name: Derive release metadata
+        id: release_meta
+        run: |
+          set -euo pipefail
+          version_value=$(node -p "require('./packages/temporal-bun-sdk/package.json').version")
+          npm_tag_input="${{ github.event.inputs.npm_tag || 'latest' }}"
+          dry_run_input="${{ github.event.inputs.dry_run || 'false' }}"
+
+          case "$dry_run_input" in
+            true|True|TRUE) dry_run_value=true ;;
+            false|False|FALSE|"" ) dry_run_value=false ;;
+            *)
+              echo 'dry_run input must be true or false' >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "version=$version_value"
+            echo "npm_tag=$npm_tag_input"
+            echo "dry_run=$dry_run_value"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Confirm package version
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const pkg = JSON.parse(
+            fs.readFileSync('packages/temporal-bun-sdk/package.json', 'utf8'),
+          )
+          console.log(`Publishing @proompteng/temporal-bun-sdk v${pkg.version}`)
+          NODE
+
+      - name: Build Temporal Bun SDK
+        run: bun run --filter @proompteng/temporal-bun-sdk build
+
+      - name: Download readiness evidence
+        uses: actions/download-artifact@v5
+        with:
+          name: production-readiness-artifacts
+          path: packages/temporal-bun-sdk
+
+      - name: Verify production package boundary
+        env:
+          TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
+          TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:production
+
+      - name: Verify default-choice readiness
+        env:
+          TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
+          TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:default-choice
+
+      - name: Verify packed readiness artifacts
+        env:
+          TEMPORAL_REQUIRE_DEFAULT_CHOICE: '1'
+        run: bun run --filter @proompteng/temporal-bun-sdk verify:packed-readiness
+
+      - name: Publish package to npm
+        working-directory: packages/temporal-bun-sdk
+        env:
+          TEMPORAL_BUN_EVIDENCE_PURPOSE: publish
+          TEMPORAL_BUN_NPM_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          TEMPORAL_BUN_DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+          TEMPORAL_REQUIRE_DEFAULT_CHOICE: '1'
+          NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
+          DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          spec="@proompteng/temporal-bun-sdk@${{ steps.release_meta.outputs.version }}"
+          if [[ "${DRY_RUN}" != "true" ]] && npm view "$spec" version --json >/dev/null 2>&1; then
+            echo "$spec is already published; skipping npm publish and verifying the published artifact next."
+            exit 0
+          fi
+
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            echo 'Running npm publish in dry-run mode'
+            npm publish --tag "$NPM_DIST_TAG" --access public --provenance --dry-run
+          else
+            npm publish --tag "$NPM_DIST_TAG" --access public --provenance
+          fi
+
+      - name: Verify published readiness artifacts
+        if: steps.release_meta.outputs.dry_run == 'false'
+        working-directory: packages/temporal-bun-sdk
+        run: |
+          set -euo pipefail
+          spec="@proompteng/temporal-bun-sdk@${{ steps.release_meta.outputs.version }}"
+          for attempt in {1..40}; do
+            if bun run verify:packed-readiness --npm "$spec"; then
+              exit 0
+            fi
+            echo "Published package not verifiable yet for $spec; retry ${attempt}/40"
+            sleep 15
+          done
+          bun run verify:packed-readiness --npm "$spec"
+
+      - name: Update release PR label
+        if: ${{ github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch="release-please--branches--main--components--temporal-bun-sdk"
+          pr_number=$(gh pr list --head "$branch" --state merged --limit 1 --json number --jq '.[0].number // empty')
+          if [[ -n "$pr_number" ]]; then
+            if gh pr edit "$pr_number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"; then
+              echo "Updated labels on release PR #$pr_number"
+            else
+              echo "::warning::Failed to update labels on release PR #$pr_number"
+            fi
+          else
+            echo "No merged release PR found for $branch; skipping label update"
+          fi

@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: milvus-minio-bucket-init
+  namespace: milvus
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:RELEASE.2024-12-18T13-15-44Z
+          env:
+            - name: MINIO_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"
+            - name: MINIO_SCHEME
+              value: "http"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-external-minio
+                  key: accesskey
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-external-minio
+                  key: secretkey
+            - name: MINIO_BUCKET
+              value: "milvus-bucket"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              mc alias set myminio "$MINIO_SCHEME://$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+              if mc ls myminio/"$MINIO_BUCKET" >/dev/null 2>&1; then
+                echo "Bucket exists: $MINIO_BUCKET"
+              else
+                echo "Creating bucket: $MINIO_BUCKET"
+                mc mb myminio/"$MINIO_BUCKET"
+                mc anonymous set none myminio/"$MINIO_BUCKET" || true
+              fi

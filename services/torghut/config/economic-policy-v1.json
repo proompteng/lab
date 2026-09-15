@@ -1,0 +1,94 @@
+{
+  "schema_version": "torghut.economic-policy.v1",
+  "policy_id": "alpaca-us-equity-v1",
+  "effective_from": "2026-07-01",
+  "venue": "alpaca",
+  "asset_class": "us_equity",
+  "engine": {
+    "strategy_runtime_mode": "scheduler_v3"
+  },
+  "session": {
+    "calendar": "XNYS",
+    "timezone_name": "America/New_York",
+    "weekdays": [0, 1, 2, 3, 4],
+    "regular_open": "09:30:00",
+    "new_exposure_cutoff": "15:30:00",
+    "flatten_start": "15:45:00",
+    "flat_confirmation": "15:50:00",
+    "regular_close": "16:00:00",
+    "allow_extended_hours": false
+  },
+  "sizing": {
+    "allow_shorts": true,
+    "fractional_equities": true,
+    "max_order_pct_equity": "0.50",
+    "max_symbol_pct_equity": "0.50",
+    "max_gross_exposure_pct_equity": "1.0",
+    "max_net_exposure_pct_equity": "0.50",
+    "buying_power_reserve_bps": "1000",
+    "max_participation_rate": "0.10",
+    "prefer_limit": true
+  },
+  "fees": {
+    "commission_bps": "0",
+    "commission_per_share": "0",
+    "min_commission": "0",
+    "sec_fee_rate_on_sales": "0.0000206",
+    "taf_fee_per_share_on_sales": "0.000195",
+    "taf_fee_cap_per_trade": "9.79",
+    "cat_fee_per_share": "0.000003",
+    "rounding_increment": "0.01",
+    "rounding_scope": "daily_account_fee_type",
+    "estimation_rounding_scope": "per_order_fee_type_conservative",
+    "schedule_revised_on": "2026-07-01",
+    "source_urls": [
+      "https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf",
+      "https://www.sec.gov/rules-regulations/fee-rate-advisories/2026-2",
+      "https://www.finra.org/rules-guidance/rule-filings/sr-finra-2024-019/fee-adjustment-schedule"
+    ]
+  },
+  "borrow": {
+    "easy_to_borrow_only": true,
+    "easy_to_borrow_annual_rate": "0",
+    "hard_to_borrow_behavior": "reject",
+    "missing_borrow_status_behavior": "reject",
+    "margin_debit_annual_rate": "0.0625"
+  },
+  "latency": {
+    "assumed_execution_seconds": 60,
+    "execution_advisor_timeout_ms": 250
+  },
+  "slippage": {
+    "include_half_spread_for_aggressive_orders": true,
+    "include_volatility_drift": true,
+    "impact_bps_at_full_participation": "50",
+    "impact_participation_exponent": "0.5",
+    "max_executable_spread_bps": "50",
+    "max_quote_mid_jump_bps": "150",
+    "max_jump_with_wide_spread_bps": "25"
+  },
+  "stale_data": {
+    "signal_max_lag_seconds": 300,
+    "executable_quote_max_age_seconds": 60,
+    "executable_quote_forward_seconds": 0,
+    "broker_quote_max_age_seconds": 20,
+    "market_context_max_age_seconds": 300,
+    "missing_behavior": "reject",
+    "stale_behavior": "reject"
+  },
+  "risk": {
+    "daily_loss_stop_pct_equity": "0.01",
+    "persistent_drawdown_stop_pct_equity": "0.05",
+    "pair_delta_tolerance_bps": "8",
+    "closeout_slippage_bps": "8",
+    "overnight_positions": "forbidden",
+    "missing_risk_input_behavior": "reject"
+  },
+  "accounting": {
+    "base_currency": "USD",
+    "position_cost_basis": "average_cost",
+    "pnl_basis": "net_of_fees_and_modeled_execution_costs",
+    "fee_accrual": "daily_account_fee_type",
+    "numeric_representation": "decimal"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "candidate_id": "cand-v3-demo",
+  "strategy_name": "cand-v3-demo",
+  "strategy_type": "legacy_macd_rsi",
+  "base_timeframe": "1Min",
+  "universe_symbols": ["AAPL"],
+  "max_notional_per_trade": 2500,
+  "max_position_pct_equity": 0.02
+}

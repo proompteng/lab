@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ceph-dashboard-private
+  namespace: rook-ceph
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`ceph.k8s.proompteng.ai`)
+      services:
+        - name: rook-ceph-mgr-dashboard
+          port: 7000
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

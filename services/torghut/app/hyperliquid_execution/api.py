@@ -1,0 +1,361 @@
+"""FastAPI entrypoint for Hyperliquid execution v2."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import AsyncIterator, cast
+
+from fastapi import FastAPI, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.db import SessionLocal
+from app.trading.loop_status import (
+    LoopStatusOptions,
+    QuerySession,
+    build_trading_loop_status,
+)
+from app.trading.broker_mutation_recovery_worker import (
+    BrokerMutationRecoveryPolicy,
+    BrokerMutationRecoveryWorker,
+)
+
+from .config import HyperliquidExecutionConfig
+from .exchange import exchange_from_config
+from .feed_reader import ClickHouseFeedReader
+from .metrics import HyperliquidExecutionMetrics
+from .models import CycleResult, RuntimeDependencyStatus
+from .repository import HyperliquidExecutionRepository
+from .service import HyperliquidExecutionService, runtime_readiness
+from .mutation_recovery import HyperliquidMutationRecoveryRoute
+
+
+logger = logging.getLogger(__name__)
+
+
+class RuntimeAppState:
+    """Mutable app state isolated to the deployment process."""
+
+    def __init__(self) -> None:
+        self.config = HyperliquidExecutionConfig.from_env()
+        self.metrics = HyperliquidExecutionMetrics()
+        self.latest_cycle: CycleResult | None = None
+        self.latest_error: str | None = None
+        exchange = exchange_from_config(self.config)
+        recovery_worker = BrokerMutationRecoveryWorker(
+            session_factory=SessionLocal,
+            routes=(
+                HyperliquidMutationRecoveryRoute(
+                    config=self.config,
+                    exchange=exchange,
+                ),
+            ),
+            component="hyperliquid-recovery",
+            enabled=self.config.broker_mutation_recovery_enabled,
+            policy=BrokerMutationRecoveryPolicy(
+                batch_size=1,
+                retry_seconds=self.config.broker_mutation_recovery_interval_seconds,
+                absence_observation_spacing_seconds=60,
+            ),
+        )
+        self.service = HyperliquidExecutionService(
+            config=self.config,
+            feed=ClickHouseFeedReader(self.config),
+            exchange=exchange,
+            recovery_worker=recovery_worker,
+        )
+        self.task: asyncio.Task[None] | None = None
+
+
+runtime_state = RuntimeAppState()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    if runtime_state.config.enabled:
+        runtime_state.task = asyncio.create_task(_runtime_loop())
+    try:
+        yield
+    finally:
+        if runtime_state.task is not None:
+            runtime_state.task.cancel()
+            await asyncio.gather(runtime_state.task, return_exceptions=True)
+
+
+app = FastAPI(title="Torghut Hyperliquid Execution", lifespan=lifespan)
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz(response: Response) -> dict[str, object]:
+    ready, reasons, dependencies = runtime_readiness(
+        config=runtime_state.config,
+        latest_cycle=runtime_state.latest_cycle,
+        latest_error=runtime_state.latest_error,
+    )
+    if not ready:
+        response.status_code = 503
+    return {
+        "ready": ready,
+        "reasons": reasons,
+        "trading_enabled": runtime_state.config.trading_enabled,
+        "order_policy": runtime_state.config.order_policy,
+        "execution_network": runtime_state.config.execution_network,
+        "market_data_network": runtime_state.config.market_data_network,
+        "dependencies": [
+            {
+                "name": dependency.name,
+                "ready": dependency.ready,
+                "lag_seconds": dependency.lag_seconds,
+                "reason": dependency.reason,
+                "details": dependency.details,
+            }
+            for dependency in dependencies
+        ],
+    }
+
+
+@app.get("/trading/status")
+def trading_status() -> dict[str, object]:
+    ready, reasons, dependencies = runtime_readiness(
+        config=runtime_state.config,
+        latest_cycle=runtime_state.latest_cycle,
+        latest_error=runtime_state.latest_error,
+    )
+    gate = _operational_submission_gate(
+        ready=ready,
+        reasons=reasons,
+        config=runtime_state.config,
+    )
+    runtime_payload = _runtime_report_payload()
+    return {
+        "ready": ready,
+        "reasons": reasons,
+        "trading_enabled": runtime_state.config.trading_enabled,
+        "execution_route": runtime_state.config.execution_network,
+        "order_policy": runtime_state.config.order_policy,
+        "execution_network": runtime_state.config.execution_network,
+        "market_data_network": runtime_state.config.market_data_network,
+        "dependencies": [
+            _dependency_payload(dependency) for dependency in dependencies
+        ],
+        "latest_cycle": runtime_payload,
+        "config": _config_payload(),
+        "profitability_gate": _latest_profitability_gate(runtime_payload),
+        "operational_submission_gate": gate,
+        "live_submission_gate": dict(gate),
+    }
+
+
+@app.get("/trading/loop/status")
+def trading_loop_status() -> JSONResponse:
+    session = SessionLocal()
+    try:
+        payload = build_trading_loop_status(
+            cast(QuerySession, session),
+            options=LoopStatusOptions(
+                generated_at=datetime.now(timezone.utc),
+                trading_mode=_loop_status_trading_mode(runtime_state.config),
+                trading_enabled=runtime_state.config.trading_enabled,
+                configured_symbols=runtime_state.config.trade_coins,
+            ),
+        )
+    finally:
+        session.close()
+    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(
+        runtime_state.metrics.render(runtime_state.config.metrics_namespace),
+        media_type="text/plain; version=0.0.4",
+    )
+
+
+@app.get("/report")
+def report() -> dict[str, object]:
+    session = SessionLocal()
+    try:
+        runtime_payload = _runtime_report_payload()
+        payload = HyperliquidExecutionRepository(session).operational_report(
+            runtime_payload=runtime_payload,
+            config_payload=_config_payload(),
+        )
+        payload["profitability_gate"] = _latest_profitability_gate(runtime_payload)
+        return payload
+    finally:
+        session.close()
+
+
+async def _runtime_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(_run_one_cycle)
+        except Exception:
+            logger.exception("Hyperliquid execution cycle failed")
+        await asyncio.sleep(runtime_state.config.poll_interval_seconds)
+
+
+def _run_one_cycle() -> CycleResult:
+    session = SessionLocal()
+    cycle_failed = False
+    try:
+        result = runtime_state.service.run_once(session)
+        runtime_state.latest_cycle = result
+        runtime_state.latest_error = None
+        runtime_state.metrics.record_cycle(result)
+        return result
+    except Exception as exc:
+        cycle_failed = True
+        runtime_state.latest_error = f"{type(exc).__name__}:{exc}"
+        runtime_state.metrics.record_error(exc)
+        try:
+            session.rollback()
+        except SQLAlchemyError:
+            logger.exception("Hyperliquid execution cycle rollback failed")
+        raise
+    finally:
+        try:
+            session.close()
+        except SQLAlchemyError:
+            if not cycle_failed:
+                raise
+            logger.exception("Hyperliquid execution cycle session close failed")
+
+
+def _runtime_report_payload() -> dict[str, object]:
+    latest_cycle = runtime_state.latest_cycle
+    if latest_cycle is None:
+        return {
+            "latest_cycle_at": None,
+            "selected_coins": [],
+            "markets_seen": 0,
+            "signals_written": 0,
+            "orders_submitted": 0,
+            "orders_cancelled": 0,
+            "universe": {},
+        }
+    return {
+        "latest_cycle_at": latest_cycle.observed_at.isoformat(),
+        "selected_coins": list(latest_cycle.selected_coins),
+        "markets_seen": latest_cycle.markets_seen,
+        "signals_written": latest_cycle.signals_written,
+        "orders_submitted": latest_cycle.orders_submitted,
+        "orders_cancelled": latest_cycle.orders_cancelled,
+        "universe": latest_cycle.universe_details,
+    }
+
+
+def _config_payload() -> dict[str, object]:
+    config = runtime_state.config
+    return {
+        "trading_enabled": config.trading_enabled,
+        "allow_short_entries": config.allow_short_entries,
+        "market_data_network": config.market_data_network,
+        "execution_network": config.execution_network,
+        "trade_coins": list(config.trade_coins),
+        "excluded_coins": list(config.excluded_coins),
+        "min_order_notional_usd": str(config.min_order_notional_usd),
+        "target_margin_utilization": str(config.target_margin_utilization),
+        "max_symbol_margin_utilization": str(config.max_symbol_margin_utilization),
+        "max_order_margin_utilization": str(config.max_order_margin_utilization),
+        "max_daily_loss_usd": str(config.max_daily_loss_usd),
+        "cost_buffer_bps": str(config.cost_buffer_bps),
+        "min_after_cost_edge_bps": str(config.min_after_cost_edge_bps),
+        "min_edge_cost_ratio": str(config.min_edge_cost_ratio),
+        "max_symbol_turnover_equity_multiple_1h": str(
+            config.max_symbol_turnover_equity_multiple_1h
+        ),
+        "min_seconds_between_symbol_entries": config.min_seconds_between_symbol_entries,
+        "min_seconds_between_side_flip": config.min_seconds_between_side_flip,
+        "signal_staleness_seconds": config.signal_staleness_seconds,
+        "feed_readiness_url_configured": config.feed_readiness_url is not None,
+        "feed_readiness_timeout_seconds": config.feed_readiness_timeout_seconds,
+        "broker_mutation_recovery_enabled": config.broker_mutation_recovery_enabled,
+        "broker_mutation_recovery_interval_seconds": (
+            config.broker_mutation_recovery_interval_seconds
+        ),
+        "broker_mutation_recovery_request_timeout_seconds": (
+            config.broker_mutation_recovery_request_timeout_seconds
+        ),
+        "order_policy": config.order_policy,
+        "effective_order_tif": config.effective_order_tif,
+        "marketable_ioc_slippage_bps": str(config.marketable_ioc_slippage_bps),
+        "order_ttl_seconds": config.order_ttl_seconds,
+        "max_open_orders_per_symbol": config.max_open_orders_per_symbol,
+        "reject_cooldown_threshold": config.reject_cooldown_threshold,
+        "reject_cooldown_window_seconds": config.reject_cooldown_window_seconds,
+        "reject_cooldown_seconds": config.reject_cooldown_seconds,
+        "maintenance_reduce_only_close_enabled": config.maintenance_reduce_only_close_enabled,
+    }
+
+
+def _latest_profitability_gate(runtime_payload: dict[str, object]) -> dict[str, object]:
+    universe = runtime_payload.get("universe")
+    if not isinstance(universe, dict):
+        return {}
+    typed_universe = cast(dict[str, object], universe)
+    gate = typed_universe.get("profitability_gate")
+    if not isinstance(gate, dict):
+        return {}
+    typed_gate = cast(dict[str, object], gate)
+    return dict(typed_gate)
+
+
+def _loop_status_trading_mode(config: HyperliquidExecutionConfig) -> str:
+    if config.execution_network in {"mainnet", "live"}:
+        return "live"
+    return "paper"
+
+
+def _dependency_payload(dependency: RuntimeDependencyStatus) -> dict[str, object]:
+    return {
+        "name": dependency.name,
+        "ready": dependency.ready,
+        "observed_at": dependency.observed_at.isoformat()
+        if dependency.observed_at
+        else None,
+        "lag_seconds": dependency.lag_seconds,
+        "reason": dependency.reason,
+        "details": dependency.details,
+    }
+
+
+def _operational_submission_gate(
+    *,
+    ready: bool,
+    reasons: list[str],
+    config: HyperliquidExecutionConfig,
+) -> dict[str, object]:
+    blockers = list(reasons)
+    if not config.enabled:
+        blockers.append("runtime_disabled")
+    if not config.trading_enabled:
+        blockers.append("trading_disabled")
+    deduped_blockers = _dedupe_strings(blockers)
+    allowed = ready and config.trading_enabled and not deduped_blockers
+    return {
+        "allowed": allowed,
+        "enabled": allowed,
+        "blockers": deduped_blockers,
+    }
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result

@@ -1,0 +1,188 @@
+name: sag-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/sag/**'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
+
+concurrency:
+  group: sag-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine Sag ApplicationSet state
+        id: sag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          enabled="$(
+            awk '
+              /^[[:space:]]+- name: sag[[:space:]]*$/ {
+                in_sag = 1
+                next
+              }
+              in_sag && /^[[:space:]]+- name:/ {
+                exit
+              }
+              in_sag && $1 == "enabled:" {
+                gsub(/["[:space:]]/, "", $2)
+                print $2
+                exit
+              }
+            ' argocd/applicationsets/product.yaml
+          )"
+
+          case "${enabled}" in
+            true)
+              echo "enabled=true" >> "${GITHUB_OUTPUT}"
+              ;;
+            false)
+              echo "enabled=false" >> "${GITHUB_OUTPUT}"
+              echo "Sag is disabled in the product ApplicationSet; post-deploy verification is not applicable."
+              ;;
+            *)
+              echo "Unable to resolve the Sag enabled state from argocd/applicationsets/product.yaml" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Set up kubectl
+        if: steps.sag.outputs.enabled == 'true'
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        if: steps.sag.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/token
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=sag \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Verify Sag Argo health and deployment digest
+        if: steps.sag.outputs.enabled == 'true'
+        shell: bash
+        env:
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+
+          expected_digest="$(
+            awk '
+              $0 ~ /name:[[:space:]]*registry\.ide-newton\.ts\.net\/lab\/sag/ { in_image = 1; next }
+              in_image && $1 == "digest:" {
+                print $2
+                exit
+              }
+            ' argocd/sag/kustomization.yaml
+          )"
+          if ! [[ "${expected_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unable to resolve expected Sag digest from argocd/sag/kustomization.yaml" >&2
+            exit 2
+          fi
+
+          expected_revision="${EXPECTED_REVISION_INPUT:-${GITHUB_SHA}}"
+          for attempt in $(seq 1 90); do
+            app_json="$(kubectl -n argocd get application sag -o json 2> "${RUNNER_TEMP}/sag-application.err" || true)"
+            if ! jq -e . >/dev/null 2>&1 <<< "${app_json}"; then
+              if [ "${attempt}" -eq 90 ]; then
+                echo "Sag Argo application did not become readable." >&2
+                cat "${RUNNER_TEMP}/sag-application.err" >&2 || true
+                exit 1
+              fi
+              echo "Attempt ${attempt}: Sag Argo application is not readable yet; retrying."
+              sleep 10
+              continue
+            fi
+            sync_status="$(jq -r '.status.sync.status // ""' <<< "${app_json}")"
+            health_status="$(jq -r '.status.health.status // ""' <<< "${app_json}")"
+            revision="$(jq -r '.status.sync.revision // ""' <<< "${app_json}")"
+
+            if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ] &&
+              { [ "${revision}" = "${expected_revision}" ] || git merge-base --is-ancestor "${expected_revision}" "${revision}" 2>/dev/null; }; then
+              break
+            fi
+
+            if [ "${attempt}" -eq 90 ]; then
+              echo "Sag Argo did not become Synced/Healthy at expected revision." >&2
+              echo "${app_json}" | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision}'
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          deployment_json="$(kubectl -n sag get deployment sag -o json)"
+          desired_replicas="$(jq -r '.spec.replicas // 1' <<< "${deployment_json}")"
+          live_image="$(jq -r '.spec.template.spec.containers[] | select(.name=="sag") | .image' <<< "${deployment_json}")"
+          echo "live_image=${live_image}"
+          if [[ "${live_image}" != *"@${expected_digest}"* ]]; then
+            echo "Sag deployment image does not contain expected digest ${expected_digest}" >&2
+            exit 1
+          fi
+
+          echo "desired_replicas=${desired_replicas}"
+          if [ "${desired_replicas}" = "0" ]; then
+            echo "Sag desired replicas is 0; runtime rollout smoke is intentionally skipped after digest verification."
+            exit 0
+          fi
+
+          kubectl -n sag rollout status deployment/sag --timeout=180s
+          deployment_json="$(kubectl -n sag get deployment sag -o json)"
+          available_replicas="$(jq -r '.status.availableReplicas // 0' <<< "${deployment_json}")"
+          echo "available_replicas=${available_replicas}"
+          if [ "${available_replicas}" -lt "${desired_replicas}" ]; then
+            echo "Sag available replicas ${available_replicas} is below desired replicas ${desired_replicas}" >&2
+            exit 1
+          fi

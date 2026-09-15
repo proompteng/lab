@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: local-path-storage
+resources:
+  - github.com/rancher/local-path-provisioner/deploy?ref=v0.0.37
+  - storageclasses-turin-nvme.yaml
+images:
+  - name: rancher/local-path-provisioner
+    newName: docker.io/rancher/local-path-provisioner
+    newTag: v0.0.37
+    digest: sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f
+patches:
+  - target:
+      kind: Namespace
+      name: local-path-storage
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: local-path-storage
+      $patch: delete
+  - target:
+      kind: ConfigMap
+      name: local-path-config
+      namespace: local-path-storage
+    path: patches/local-path-config.patch.yaml
+  - target:
+      kind: StorageClass
+      name: local-path
+    path: patches/local-path-storageclass.patch.yaml

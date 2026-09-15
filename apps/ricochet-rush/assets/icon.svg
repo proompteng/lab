@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Ricochet Rush industrial combat icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#24292a"/>
+      <stop offset="1" stop-color="#080a0e"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e0dfd4"/>
+      <stop offset="1" stop-color="#919792"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="34" fill="url(#bg)" stroke="#4b5554" stroke-width="8"/>
+  <path d="M46 204 66 48h27l-7 46 81-50 32 24-65 46 56 62-27 25-54-58-10 61Z" fill="#111619" stroke="#66706d" stroke-width="5" stroke-linejoin="bevel"/>
+  <path d="m71 184 13-108h48c25 0 38 12 35 31-2 14-12 25-27 30l36 41h-31l-30-36h-12l-5 42Zm36-67h19c10 0 16-4 17-11 1-7-3-10-13-10h-19Z" fill="url(#plate)"/>
+  <path d="m147 69 64 20-7 20-65-20Z" fill="#7a4d3c" stroke="#b77a54" stroke-width="4" stroke-linejoin="bevel"/>
+  <path d="M165 182h51" stroke="#fff1d1" stroke-width="7" stroke-linecap="square"/>
+  <path d="M53 216h92" stroke="#151a1d" stroke-width="6" stroke-linecap="square"/>
+  <circle cx="58" cy="55" r="7" fill="#b48a58"/>
+  <circle cx="206" cy="204" r="7" fill="#b48a58"/>
+</svg>

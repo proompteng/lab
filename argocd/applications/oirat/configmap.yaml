@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oirat-config
+  labels:
+    app.kubernetes.io/name: oirat
+    app.kubernetes.io/part-of: lab
+
+data:
+  JANGAR_BASE_URL: http://jangar.jangar.svc.cluster.local
+  JANGAR_SYSTEM_PROMPT: You are a helpful assistant in Discord. Keep replies concise, be direct, and avoid unnecessary pings.
+  DISCORD_HISTORY_LIMIT: "24"
+  DISCORD_THREAD_NAME_PREFIX: Jangar
+  DISCORD_THREAD_AUTO_ARCHIVE_MINUTES: "1440"
+  DISCORD_ALLOWED_GUILD_IDS: ""
+  DISCORD_ALLOWED_CHANNEL_IDS: ""

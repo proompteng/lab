@@ -1,0 +1,6 @@
+data/logs/
+data/custom_ssl/
+data/database.sqlite
+data/keys.json
+letsencrypt/
+settings-export.json

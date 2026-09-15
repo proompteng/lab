@@ -1,0 +1,187 @@
+package ai.proompteng.dorvud.ws
+
+import io.ktor.client.plugins.ResponseException
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import org.apache.kafka.common.errors.AuthenticationException
+import org.apache.kafka.common.errors.AuthorizationException
+import org.apache.kafka.common.errors.ClusterAuthorizationException
+import org.apache.kafka.common.errors.GroupAuthorizationException
+import org.apache.kafka.common.errors.LeaderNotAvailableException
+import org.apache.kafka.common.errors.NotLeaderOrFollowerException
+import org.apache.kafka.common.errors.SaslAuthenticationException
+import org.apache.kafka.common.errors.TimeoutException
+import org.apache.kafka.common.errors.TopicAuthorizationException
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException
+
+enum class ReadinessErrorClass(
+  val id: String,
+) {
+  Alpaca406SecondConnection("alpaca_406_second_connection"),
+  AlpacaAuth("alpaca_auth"),
+  OptionsEventStarvation("options_event_starvation"),
+  KafkaAuth("kafka_auth"),
+  KafkaMetadata("kafka_metadata"),
+  KafkaProduce("kafka_produce"),
+  MarketDataChannelStarvation("market_data_channel_starvation"),
+  Unknown("unknown"),
+}
+
+internal fun ReadinessErrorClass.shouldEscalateToLivenessFailure(): Boolean =
+  when (this) {
+    ReadinessErrorClass.OptionsEventStarvation -> false
+    else -> true
+  }
+
+@Serializable
+data class ReadinessGates(
+  @SerialName("alpaca_ws") val alpacaWs: Boolean,
+  val kafka: Boolean,
+  @SerialName("trade_updates") val tradeUpdates: Boolean,
+  @SerialName("market_data_channels") val marketDataChannels: Boolean = true,
+)
+
+@Serializable
+data class ReadinessInfo(
+  val status: String,
+  val ready: Boolean,
+  @SerialName("error_class") val errorClass: String? = null,
+  val gates: ReadinessGates,
+  @SerialName("alpaca_market_data_ws") val alpacaMarketDataWs: AlpacaMarketDataWebsocketStatus = AlpacaMarketDataWebsocketStatus(),
+  @SerialName("market_data_channels") val marketDataChannels: List<MarketDataChannelReadiness> = emptyList(),
+  @SerialName("market_data_feeds") val marketDataFeeds: List<MarketDataFeedReadiness> = emptyList(),
+  @SerialName("market_data_universe") val marketDataUniverse: MarketDataUniverseInfo? = null,
+)
+
+@Serializable
+data class MarketDataFeedReadiness(
+  val feed: String,
+  val core: Boolean,
+  val ready: Boolean,
+  @SerialName("auth_ok") val authOk: Boolean,
+  @SerialName("subscription_ok") val subscriptionOk: Boolean,
+  @SerialName("kafka_ready") val kafkaReady: Boolean,
+  @SerialName("error_class") val errorClass: String? = null,
+  val channels: List<MarketDataChannelReadiness>,
+)
+
+@Serializable
+data class MarketDataUniverseInfo(
+  val id: String,
+  @SerialName("symbol_hash") val symbolHash: String,
+  val symbols: List<String>,
+)
+
+@Serializable
+data class AlpacaMarketDataWebsocketStatus(
+  @SerialName("auth_ok") val authOk: Boolean = false,
+  @SerialName("subscription_ok") val subscriptionOk: Boolean = false,
+  @SerialName("latest_auth_success_at_ms") val latestAuthSuccessAtMs: Long? = null,
+  @SerialName("latest_subscription_ack_at_ms") val latestSubscriptionAckAtMs: Long? = null,
+  @SerialName("subscribed_symbol_count") val subscribedSymbolCount: Int = 0,
+  @SerialName("subscribed_symbols") val subscribedSymbols: List<String> = emptyList(),
+  @SerialName("subscribed_symbols_by_channel") val subscribedSymbolsByChannel: Map<String, List<String>> = emptyMap(),
+  @SerialName("missing_subscription_symbols_by_channel")
+  val missingSubscriptionSymbolsByChannel: Map<String, List<String>> = emptyMap(),
+  @SerialName("error_class") val errorClass: String? = null,
+)
+
+internal enum class KafkaFailureContext {
+  Metadata,
+  Produce,
+}
+
+internal object ReadinessClassifier {
+  fun readinessErrorClassForResponse(
+    ready: Boolean,
+    errorClass: ReadinessErrorClass?,
+  ): ReadinessErrorClass? {
+    if (ready) return null
+    return errorClass ?: ReadinessErrorClass.Unknown
+  }
+
+  fun readinessErrorClassForGates(
+    ready: Boolean,
+    gates: ReadinessGates,
+    alpacaErrorClass: ReadinessErrorClass?,
+    kafkaErrorClass: ReadinessErrorClass?,
+    tradeUpdatesErrorClass: ReadinessErrorClass?,
+    fallbackErrorClass: ReadinessErrorClass?,
+    marketDataChannelErrorClass: ReadinessErrorClass? = null,
+  ): ReadinessErrorClass? {
+    if (ready) return null
+    return when {
+      !gates.alpacaWs -> alpacaErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.kafka -> kafkaErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.marketDataChannels -> marketDataChannelErrorClass ?: ReadinessErrorClass.MarketDataChannelStarvation
+      !gates.tradeUpdates -> tradeUpdatesErrorClass ?: ReadinessErrorClass.Unknown
+      else -> fallbackErrorClass ?: ReadinessErrorClass.Unknown
+    }
+  }
+
+  fun classifyAlpacaError(
+    code: Int?,
+    msg: String?,
+  ): ReadinessErrorClass {
+    if (code == 406) return ReadinessErrorClass.Alpaca406SecondConnection
+    if (code == 401 || code == 403) return ReadinessErrorClass.AlpacaAuth
+
+    val lowered = msg?.lowercase()
+    if (lowered != null) {
+      if (lowered.contains("406") || lowered.contains("connection limit")) {
+        return ReadinessErrorClass.Alpaca406SecondConnection
+      }
+      if (lowered.contains("401") || lowered.contains("403") || lowered.contains("unauthorized") || lowered.contains("forbidden")) {
+        return ReadinessErrorClass.AlpacaAuth
+      }
+    }
+
+    return ReadinessErrorClass.Unknown
+  }
+
+  fun classifyAlpacaHandshakeFailure(exception: Throwable): ReadinessErrorClass? {
+    val responseException = exception.findCause<ResponseException>() ?: return null
+    return when (responseException.response.status.value) {
+      401, 403 -> ReadinessErrorClass.AlpacaAuth
+      406 -> ReadinessErrorClass.Alpaca406SecondConnection
+      else -> null
+    }
+  }
+
+  fun classifyKafkaFailure(
+    exception: Throwable,
+    context: KafkaFailureContext,
+  ): ReadinessErrorClass {
+    if (exception.findCause<SaslAuthenticationException>() != null ||
+      exception.findCause<AuthenticationException>() != null ||
+      exception.findCause<AuthorizationException>() != null ||
+      exception.findCause<TopicAuthorizationException>() != null ||
+      exception.findCause<GroupAuthorizationException>() != null ||
+      exception.findCause<ClusterAuthorizationException>() != null
+    ) {
+      return ReadinessErrorClass.KafkaAuth
+    }
+
+    if (exception.findCause<TimeoutException>() != null ||
+      exception.findCause<UnknownTopicOrPartitionException>() != null ||
+      exception.findCause<LeaderNotAvailableException>() != null ||
+      exception.findCause<NotLeaderOrFollowerException>() != null
+    ) {
+      return ReadinessErrorClass.KafkaMetadata
+    }
+
+    return when (context) {
+      KafkaFailureContext.Metadata -> ReadinessErrorClass.KafkaMetadata
+      KafkaFailureContext.Produce -> ReadinessErrorClass.KafkaProduce
+    }
+  }
+
+  private inline fun <reified T : Throwable> Throwable.findCause(): T? {
+    var cursor: Throwable? = this
+    while (cursor != null) {
+      if (cursor is T) return cursor
+      cursor = cursor.cause
+    }
+    return null
+  }
+}

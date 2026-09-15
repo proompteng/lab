@@ -1,0 +1,20 @@
+{
+  "name": "@proompteng/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "bun run lint:oxlint && bunx oxfmt --check .",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json . && oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.jangar.json src/jangar src/shared"
+  },
+  "dependencies": {
+    "@proompteng/bumba": "workspace:*",
+    "@proompteng/temporal-bun-sdk": "workspace:*",
+    "yaml": "^2.8.4"
+  },
+  "devDependencies": {
+    "bun-types": "^1.4.0",
+    "typescript": "^7.0.2"
+  }
+}

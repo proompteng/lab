@@ -1,0 +1,261 @@
+fullnameOverride: pgadmin
+
+image:
+  tag: "9.17"
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: true
+  ingressClassName: tailscale
+  annotations:
+    tailscale.com/tags: tag:k8s
+  hosts:
+    - host: pgadmin.ide-newton.ts.net
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - pgadmin.ide-newton.ts.net
+
+env:
+  email: greg@proompteng.ai
+  enhanced_cookie_protection: "False"
+
+existingSecret: pgadmin-auth
+
+strategy:
+  type: Recreate
+
+startupProbe:
+  # pgAdmin can take a while to initialize (first run + PV perms + db migrations).
+  # The chart default (60s total) is too aggressive for this cluster.
+  failureThreshold: 90
+  periodSeconds: 2
+
+persistentVolume:
+  enabled: true
+  storageClass: rook-ceph-block
+
+envVarsExtra:
+  - name: PGADMIN_SERVER_JSON_FILE
+    value: /var/lib/pgadmin/servers/servers.json
+  - name: PGADMIN_REPLACE_SERVERS_ON_STARTUP
+    value: "True"
+  - name: PGADMIN_CONFIG_ENABLE_SERVER_PASS_EXEC_CMD
+    value: "True"
+
+extraVolumes:
+  - name: pgadmin-servers
+    emptyDir: {}
+  - name: cnpg-app-secrets
+    projected:
+      sources:
+        - secret:
+            name: keycloak-db-app
+            optional: true
+            items:
+              - key: uri
+                path: keycloak-db-app/uri
+              - key: password
+                path: keycloak-db-app/password
+        - secret:
+            name: coder-cluster-app
+            optional: true
+            items:
+              - key: uri
+                path: coder-cluster-app/uri
+              - key: password
+                path: coder-cluster-app/password
+        - secret:
+            name: convex-db-app
+            optional: true
+            items:
+              - key: uri
+                path: convex-db-app/uri
+              - key: password
+                path: convex-db-app/password
+        - secret:
+            name: cms-db-app
+            optional: true
+            items:
+              - key: uri
+                path: cms-db-app/uri
+              - key: password
+                path: cms-db-app/password
+        - secret:
+            name: app-db-app
+            optional: true
+            items:
+              - key: uri
+                path: app-db-app/uri
+              - key: password
+                path: app-db-app/password
+        - secret:
+            name: jangar-db-app
+            optional: true
+            items:
+              - key: uri
+                path: jangar-db-app/uri
+              - key: password
+                path: jangar-db-app/password
+        - secret:
+            name: golink-db-app
+            optional: true
+            items:
+              - key: uri
+                path: golink-db-app/uri
+              - key: password
+                path: golink-db-app/password
+        - secret:
+            name: facteur-vector-cluster-app
+            optional: true
+            items:
+              - key: uri
+                path: facteur-vector-cluster-app/uri
+              - key: password
+                path: facteur-vector-cluster-app/password
+        - secret:
+            name: dernier-db-app
+            optional: true
+            items:
+              - key: uri
+                path: dernier-db-app/uri
+              - key: password
+                path: dernier-db-app/password
+        - secret:
+            name: torghut-db-app
+            optional: true
+            items:
+              - key: uri
+                path: torghut-db-app/uri
+              - key: password
+                path: torghut-db-app/password
+
+extraVolumeMounts:
+  - name: pgadmin-servers
+    mountPath: /var/lib/pgadmin/servers
+  - name: cnpg-app-secrets
+    mountPath: /etc/pgadmin/secrets
+    readOnly: true
+
+extraInitContainers: |
+  - name: pgadmin-servers
+    image: python:3.12-alpine
+    env:
+      - name: PGADMIN_USER_EMAIL
+        value: {{ .Values.env.email | quote }}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        python - <<'PY'
+        import json
+        import os
+        from pathlib import Path
+        from urllib.parse import parse_qs, unquote, urlparse
+
+        def preprocess_username(value: str) -> str:
+            if not value:
+                return value
+            if value[0].isdigit():
+                value = f'pga_user_{value}'
+            return value.replace('@', '_').replace('/', 'slash').replace('\\', 'slash')
+
+        def normalize_name(secret_name: str) -> str:
+            if secret_name.endswith('-app'):
+                return secret_name[:-4]
+            return secret_name
+
+        def discover_clusters(secrets_root: Path) -> list[dict[str, str]]:
+            clusters = []
+            if not secrets_root.exists():
+                return clusters
+
+            for secret_dir in sorted((p for p in secrets_root.iterdir() if p.is_dir()), key=lambda p: p.name):
+                uri_path = secret_dir / 'uri'
+                if not uri_path.exists():
+                    continue
+                clusters.append({'secret': secret_dir.name, 'name': normalize_name(secret_dir.name)})
+            return clusters
+
+        clusters = discover_clusters(Path('/etc/pgadmin/secrets'))
+
+        servers = {}
+        index = 1
+        passfile_entries = []
+        passfile_name = 'pgpass'
+        user_email = os.environ.get('PGADMIN_USER_EMAIL', 'pgadmin@proompteng.ai')
+        storage_dir = Path('/var/lib/pgadmin/storage') / preprocess_username(user_email)
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        passfile_path = storage_dir / passfile_name
+        for cluster in clusters:
+            secret_dir = Path('/etc/pgadmin/secrets') / cluster['secret']
+            uri_path = secret_dir / 'uri'
+            if not uri_path.exists():
+                continue
+            uri = uri_path.read_text().strip()
+            if not uri:
+                continue
+            parsed = urlparse(uri)
+            host = parsed.hostname or ''
+            if not host:
+                continue
+            port = parsed.port or 5432
+            dbname = (parsed.path or '').lstrip('/') or 'postgres'
+            username = unquote(parsed.username or '')
+            sslmode = parse_qs(parsed.query).get('sslmode', ['require'])[0]
+            password_path = secret_dir / 'password'
+            if password_path.exists():
+                password = password_path.read_text().strip()
+                if password:
+                    passfile_entries.append(f'{host}:{port}:{dbname}:{username}:{password}')
+
+            servers[str(index)] = {
+                'Name': cluster['name'],
+                'Group': 'CNPG',
+                'Host': host,
+                'Port': port,
+                'MaintenanceDB': dbname,
+                'Username': username,
+                'SSLMode': sslmode,
+                'PasswordExecCommand': f'cat {secret_dir}/password',
+                'PasswordExecExpiration': 300,
+                'ConnectionParameters': {
+                    'passfile': passfile_name,
+                },
+            }
+            index += 1
+
+        if passfile_entries:
+            passfile_path.write_text('\n'.join(passfile_entries) + '\n')
+            passfile_path.chmod(0o600)
+
+        db_path = Path('/var/lib/pgadmin/pgadmin4.db')
+        if db_path.exists():
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute(
+                'update server set connection_params = ?',
+                (json.dumps({'passfile': passfile_name}),),
+            )
+            conn.commit()
+            conn.close()
+
+        output_dir = Path('/var/lib/pgadmin/servers')
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / 'servers.json', 'w', encoding='utf-8') as handle:
+            json.dump({'Servers': servers}, handle, indent=2)
+        PY
+    volumeMounts:
+      - name: pgadmin-servers
+        mountPath: /var/lib/pgadmin/servers
+      - name: pgadmin-data
+        mountPath: /var/lib/pgadmin
+      - name: cnpg-app-secrets
+        mountPath: /etc/pgadmin/secrets
+        readOnly: true

@@ -1,0 +1,34 @@
+{
+  "name": "reviseur",
+  "version": "1.0.0",
+  "private": true,
+  "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "lint": "bun run lint:oxlint && bunx oxfmt --check .",
+    "format": "bunx oxfmt",
+    "typecheck": "tsc --noEmit",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "format:check": "bunx oxfmt --check ."
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.74",
+    "@mastra/core": "1.32.1",
+    "mastra": "1.8.1",
+    "octokit": "^5.0.5",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  }
+}

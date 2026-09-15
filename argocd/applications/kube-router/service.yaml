@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-router-metrics
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    app.kubernetes.io/name: kube-router
+    app.kubernetes.io/component: network-policy
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: kube-router
+    app.kubernetes.io/component: network-policy
+  ports:
+    - name: metrics
+      port: 20241
+      targetPort: metrics
+    - name: health
+      port: 20244
+      targetPort: health

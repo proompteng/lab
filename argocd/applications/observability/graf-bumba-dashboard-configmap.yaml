@@ -1,0 +1,407 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graf-bumba-dashboard
+  namespace: observability
+data:
+  graf-bumba-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "iteration": 1,
+      "links": [],
+      "panels": [
+        {
+          "datasource": null,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "options": {
+            "content": "### Quick links\n- [Bumba traces](/explore?left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22query%22%3A%22%7Bservice.name%3D%5C%22bumba%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)\n- [Bumba logs](/explore?left=%7B%22datasource%22%3A%22loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bjob%3D%5C%22bumba%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)\n- [Bumba metrics](/explore?left=%7B%22datasource%22%3A%22prom%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22sum%28rate%28temporal_worker_poll_latency_ms_count%7Bjob%3D%5C%22jangar/bumba%5C%22%7D%5B5m%5D%29%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)",
+            "mode": "markdown"
+          },
+          "title": "Quick Links",
+          "type": "text"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 5
+          },
+          "id": 2,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(temporal_worker_poll_latency_ms_bucket{job=\"$job\"}[5m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "A"
+            }
+          ],
+          "title": "Workflow Task Poll Latency (p95)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 5
+          },
+          "id": 3,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(temporal_worker_activity_poll_latency_ms_bucket{job=\"$job\"}[5m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "A"
+            }
+          ],
+          "title": "Activity Task Poll Latency (p95)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 13
+          },
+          "id": 4,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(temporal_worker_workflow_tasks_started_total{job=\"$job\"}[5m]))",
+              "legendFormat": "started",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_workflow_tasks_completed_total{job=\"$job\"}[5m]))",
+              "legendFormat": "completed",
+              "refId": "B"
+            }
+          ],
+          "title": "Workflow Tasks (rate)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 13
+          },
+          "id": 5,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(temporal_worker_activity_tasks_started_total{job=\"$job\"}[5m]))",
+              "legendFormat": "started",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_activity_tasks_completed_total{job=\"$job\"}[5m]))",
+              "legendFormat": "completed",
+              "refId": "B"
+            }
+          ],
+          "title": "Activity Tasks (rate)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 21
+          },
+          "id": 6,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(temporal_worker_poll_errors_total{job=\"$job\"}[5m]))",
+              "legendFormat": "workflow poll errors",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_activity_poll_errors_total{job=\"$job\"}[5m]))",
+              "legendFormat": "activity poll errors",
+              "refId": "B"
+            }
+          ],
+          "title": "Poll Errors (rate)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 21
+          },
+          "id": 7,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(temporal_worker_workflow_failures_total{job=\"$job\"}[5m]))",
+              "legendFormat": "workflow failures",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_activity_failures_total{job=\"$job\"}[5m]))",
+              "legendFormat": "activity failures",
+              "refId": "B"
+            }
+          ],
+          "title": "Task Failures (rate)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 29
+          },
+          "id": 8,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(temporal_worker_sticky_cache_hits_total{job=\"$job\"}[5m]))",
+              "legendFormat": "hits",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_sticky_cache_misses_total{job=\"$job\"}[5m]))",
+              "legendFormat": "misses",
+              "refId": "B"
+            }
+          ],
+          "title": "Sticky Cache (rate)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 29
+          },
+          "id": 9,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(temporal_worker_heartbeat_retries_total{job=\"$job\"}[5m]))",
+              "legendFormat": "heartbeat retries",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_heartbeat_failures_total{job=\"$job\"}[5m]))",
+              "legendFormat": "heartbeat failures",
+              "refId": "B"
+            }
+          ],
+          "title": "Heartbeat Retries/Failures (rate)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 37
+          },
+          "id": 10,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(temporal_worker_query_latency_ms_bucket{job=\"$job\"}[5m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "A"
+            }
+          ],
+          "title": "Query Latency (p95)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 37
+          },
+          "id": 11,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(temporal_worker_query_started_total{job=\"$job\"}[5m]))",
+              "legendFormat": "started",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_query_completed_total{job=\"$job\"}[5m]))",
+              "legendFormat": "completed",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(rate(temporal_worker_query_failed_total{job=\"$job\"}[5m]))",
+              "legendFormat": "failed",
+              "refId": "C"
+            }
+          ],
+          "title": "Query Load (rate)",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": [
+        "bumba",
+        "temporal",
+        "worker"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {
+              "selected": false,
+              "text": "jangar/bumba",
+              "value": "jangar/bumba"
+            },
+            "definition": "label_values(temporal_worker_poll_latency_ms_count, job)",
+            "hide": 0,
+            "label": "job",
+            "name": "job",
+            "options": [],
+            "query": "label_values(temporal_worker_poll_latency_ms_count, job)",
+            "refresh": 1,
+            "type": "query",
+            "datasource": "prom"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Bumba Temporal Worker",
+      "uid": "bumba-temporal-worker",
+      "version": 1
+    }

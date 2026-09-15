@@ -1,0 +1,10 @@
+apiVersion: artifacts.proompteng.ai/v1alpha1
+kind: Artifact
+metadata:
+  name: agents-primitives-artifact
+  namespace: agents
+spec:
+  storageRef:
+    name: agents-artifacts
+  lifecycle:
+    ttlDays: 7

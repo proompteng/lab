@@ -1,0 +1,20 @@
+{
+  "name": "memories",
+  "private": true,
+  "type": "module",
+  "module": "index.ts",
+  "scripts": {
+    "save-memory": "bun run ./save.ts",
+    "retrieve-memory": "bun run ./retrieve.ts",
+    "createdb": "bun run ./scripts/create-db.ts",
+    "test": "bun test tests",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

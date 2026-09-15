@@ -1,0 +1,27 @@
+{
+  "name": "@proompteng/k8s",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "synth": "bun run src/cli.ts synth",
+    "synth:check": "bun run src/cli.ts check",
+    "test": "bun test",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json src",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json src",
+    "imports:check": "bun run src/cli.ts imports-check",
+    "parity": "bun run src/cli.ts parity",
+    "list": "bun run src/cli.ts list"
+  },
+  "dependencies": {
+    "cdk8s": "2.70.61",
+    "constructs": "10.6.0",
+    "yaml": "2.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "cdk8s-cli": "2.206.10",
+    "typescript": "7.0.2"
+  }
+}

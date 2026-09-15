@@ -1,0 +1,40 @@
+name: miel
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/miel/**'
+      - '.github/workflows/miel-ci.yml'
+  pull_request:
+    paths:
+      - 'services/miel/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: true
+      - name: Download dependencies
+        working-directory: services/miel
+        run: go mod download
+      - name: Build
+        working-directory: services/miel
+        run: go build ./...
+      - name: Vet
+        working-directory: services/miel
+        run: go vet ./...
+      - name: Test
+        working-directory: services/miel
+        run: go test ./...

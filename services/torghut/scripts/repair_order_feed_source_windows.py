@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+"""Repair source-window lineage for persisted order-feed events."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.trading.order_feed import (
+    backfill_order_feed_events_from_executions,
+    backfill_order_feed_source_windows,
+    repair_order_feed_execution_links,
+    repair_order_feed_execution_states,
+    repair_order_feed_fill_deltas,
+)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Attach non-cursor-authoritative source-window rows to existing order-feed events.",
+    )
+    parser.add_argument("--dsn-env", default="DB_DSN")
+    parser.add_argument("--account-label", default=None)
+    parser.add_argument("--canonical-account-label", default=None)
+    parser.add_argument("--window-start", default=None)
+    parser.add_argument("--window-end", default=None)
+    parser.add_argument(
+        "--source-window-only",
+        action="store_true",
+        help="Only attach source-window rows to existing order-feed events.",
+    )
+    parser.add_argument("--batch-size", type=int, default=1000)
+    parser.add_argument("--max-batches", type=int, default=1)
+    parser.add_argument(
+        "--backfill-execution-events",
+        action="store_true",
+        help=(
+            "Create non-cursor-authoritative execution_order_events/source windows "
+            "from durable executions that predate order-feed persistence."
+        ),
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Commit repaired source-window links. Default is dry-run.",
+    )
+    parser.add_argument("--json", action="store_true")
+    return parser.parse_args()
+
+
+def _parse_optional_dt(value: object) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _payload(
+    *,
+    args: argparse.Namespace,
+    started_at: datetime,
+    batches: list[dict[str, int]],
+    execution_event_backfill_enabled: bool,
+    execution_event_backfill_skip_reason: str | None,
+    window_start: datetime | None,
+    window_end: datetime | None,
+) -> dict[str, Any]:
+    totals = {
+        "selected": sum(batch["selected"] for batch in batches),
+        "source_windows_created": sum(
+            batch["source_windows_created"] for batch in batches
+        ),
+        "source_windows_reused": sum(
+            batch["source_windows_reused"] for batch in batches
+        ),
+        "events_linked": sum(batch["events_linked"] for batch in batches),
+        "execution_link_candidates": sum(
+            batch["execution_link_candidates"] for batch in batches
+        ),
+        "execution_link_executions_matched": sum(
+            batch["execution_link_executions_matched"] for batch in batches
+        ),
+        "execution_link_executions_linked": sum(
+            batch["execution_link_executions_linked"] for batch in batches
+        ),
+        "execution_link_decisions_matched": sum(
+            batch["execution_link_decisions_matched"] for batch in batches
+        ),
+        "execution_link_events_linked": sum(
+            batch["execution_link_events_linked"] for batch in batches
+        ),
+        "execution_link_decision_events_linked": sum(
+            batch["execution_link_decision_events_linked"] for batch in batches
+        ),
+        "execution_link_events_without_execution": sum(
+            batch["execution_link_events_without_execution"] for batch in batches
+        ),
+        "execution_link_events_without_decision": sum(
+            batch["execution_link_events_without_decision"] for batch in batches
+        ),
+        "execution_link_account_alias_events_linked": sum(
+            batch["execution_link_account_alias_events_linked"] for batch in batches
+        ),
+        "execution_state_candidates": sum(
+            batch["execution_state_candidates"] for batch in batches
+        ),
+        "execution_state_latest_event_found": sum(
+            batch["execution_state_latest_event_found"] for batch in batches
+        ),
+        "execution_state_executions_updated": sum(
+            batch["execution_state_executions_updated"] for batch in batches
+        ),
+        "execution_state_out_of_order_events_skipped": sum(
+            batch["execution_state_out_of_order_events_skipped"] for batch in batches
+        ),
+        "execution_event_backfill_candidates": sum(
+            batch["execution_event_backfill_candidates"] for batch in batches
+        ),
+        "execution_event_backfill_events_created": sum(
+            batch["execution_event_backfill_events_created"] for batch in batches
+        ),
+        "execution_event_backfill_source_windows_created": sum(
+            batch["execution_event_backfill_source_windows_created"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_existing_event": sum(
+            batch["execution_event_backfill_skipped_existing_event"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_missing_trade_decision": sum(
+            batch["execution_event_backfill_skipped_missing_trade_decision"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_missing_order_identity": sum(
+            batch["execution_event_backfill_skipped_missing_order_identity"]
+            for batch in batches
+        ),
+        "execution_event_backfill_skipped_source_offset_collision": sum(
+            batch["execution_event_backfill_skipped_source_offset_collision"]
+            for batch in batches
+        ),
+        "fill_delta_candidates": sum(
+            batch["fill_delta_candidates"] for batch in batches
+        ),
+        "fill_delta_events_repaired": sum(
+            batch["fill_delta_events_repaired"] for batch in batches
+        ),
+        "fill_delta_non_increasing_events_marked": sum(
+            batch["fill_delta_non_increasing_events_marked"] for batch in batches
+        ),
+        "fill_delta_missing_identity_events_marked": sum(
+            batch["fill_delta_missing_identity_events_marked"] for batch in batches
+        ),
+    }
+    return {
+        "status": "ok",
+        "apply": bool(args.apply),
+        "dsn_env": args.dsn_env,
+        "account_label": args.account_label,
+        "canonical_account_label": args.canonical_account_label,
+        "window_start": window_start.isoformat() if window_start is not None else None,
+        "window_end": window_end.isoformat() if window_end is not None else None,
+        "source_window_only": bool(args.source_window_only),
+        "backfill_execution_events": bool(args.backfill_execution_events),
+        "execution_event_backfill_enabled": execution_event_backfill_enabled,
+        "execution_event_backfill_skip_reason": execution_event_backfill_skip_reason,
+        "batch_size": max(1, min(int(args.batch_size), 5000)),
+        "max_batches": max(1, int(args.max_batches)),
+        "started_at": started_at.isoformat(),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        **totals,
+        "batches": batches,
+    }
+
+
+def _sqlalchemy_dsn(dsn: str) -> str:
+    text = dsn.strip()
+    if text.startswith("postgresql+psycopg://"):
+        return text
+    if text.startswith("postgres://"):
+        return text.replace("postgres://", "postgresql+psycopg://", 1)
+    if text.startswith("postgresql://"):
+        return text.replace("postgresql://", "postgresql+psycopg://", 1)
+    return text
+
+
+def _reset_session_identity_map(session: Any) -> None:
+    expunge_all = getattr(session, "expunge_all", None)
+    if callable(expunge_all):
+        expunge_all()
+
+
+def _empty_execution_event_backfill_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "events_created": 0,
+        "source_windows_created": 0,
+        "skipped_existing_event": 0,
+        "skipped_missing_trade_decision": 0,
+        "skipped_missing_order_identity": 0,
+        "skipped_source_offset_collision": 0,
+    }
+
+
+def _empty_execution_link_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "executions_matched": 0,
+        "executions_linked": 0,
+        "decisions_matched": 0,
+        "events_linked": 0,
+        "decision_events_linked": 0,
+        "events_without_execution": 0,
+        "events_without_decision": 0,
+        "account_alias_events_linked": 0,
+    }
+
+
+def _empty_execution_state_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "latest_event_found": 0,
+        "executions_updated": 0,
+        "out_of_order_events_skipped": 0,
+    }
+
+
+def _empty_fill_delta_batch() -> dict[str, int]:
+    return {
+        "selected": 0,
+        "delta_events_repaired": 0,
+        "non_increasing_events_marked": 0,
+        "missing_identity_events_marked": 0,
+    }
+
+
+def _execution_event_backfill_config(
+    args: argparse.Namespace,
+) -> tuple[bool, str | None]:
+    if bool(args.source_window_only) and bool(args.backfill_execution_events):
+        return False, "source_window_only"
+    if not bool(args.backfill_execution_events):
+        return False, None
+
+    account_label = str(args.account_label or "").strip()
+    canonical_account_label = str(args.canonical_account_label or "").strip()
+    if (
+        account_label
+        and canonical_account_label
+        and account_label != canonical_account_label
+    ):
+        return False, "account_alias_repair"
+
+    return True, None
+
+
+def main() -> int:
+    args = _parse_args()
+    dsn = os.environ.get(str(args.dsn_env).strip())
+    if not dsn:
+        raise SystemExit(f"missing DSN env var: {args.dsn_env}")
+
+    started_at = datetime.now(timezone.utc)
+    batch_size = max(1, min(int(args.batch_size), 5000))
+    max_batches = max(1, int(args.max_batches))
+    engine = create_engine(_sqlalchemy_dsn(dsn), pool_pre_ping=True, future=True)
+    session_factory = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    (
+        execution_event_backfill_enabled,
+        execution_event_backfill_skip_reason,
+    ) = _execution_event_backfill_config(args)
+    window_start = _parse_optional_dt(args.window_start)
+    window_end = _parse_optional_dt(args.window_end)
+    if (
+        window_start is not None
+        and window_end is not None
+        and window_end <= window_start
+    ):
+        raise SystemExit("window_end_must_be_after_window_start")
+    batches: list[dict[str, int]] = []
+    with session_factory() as session:
+        for _ in range(max_batches):
+            source_window_batch = backfill_order_feed_source_windows(
+                session,
+                account_label=args.account_label,
+                window_start=window_start,
+                window_end=window_end,
+                limit=batch_size,
+            )
+            execution_link_batch = (
+                _empty_execution_link_batch()
+                if args.source_window_only
+                else repair_order_feed_execution_links(
+                    session,
+                    account_label=args.account_label,
+                    canonical_account_label=args.canonical_account_label,
+                    window_start=window_start,
+                    window_end=window_end,
+                    limit=batch_size,
+                )
+            )
+            execution_state_account_label = (
+                args.canonical_account_label or args.account_label
+            )
+            execution_state_batch = (
+                _empty_execution_state_batch()
+                if args.source_window_only
+                else repair_order_feed_execution_states(
+                    session,
+                    account_label=execution_state_account_label,
+                    window_start=window_start,
+                    window_end=window_end,
+                    limit=batch_size,
+                )
+            )
+            execution_event_backfill_batch = (
+                backfill_order_feed_events_from_executions(
+                    session,
+                    account_label=args.account_label,
+                    window_start=window_start,
+                    window_end=window_end,
+                    limit=batch_size,
+                )
+                if execution_event_backfill_enabled and not args.source_window_only
+                else _empty_execution_event_backfill_batch()
+            )
+            fill_delta_batch = (
+                _empty_fill_delta_batch()
+                if args.source_window_only
+                else repair_order_feed_fill_deltas(
+                    session,
+                    account_label=args.account_label,
+                    window_start=window_start,
+                    window_end=window_end,
+                    limit=batch_size,
+                )
+            )
+            batch = {
+                **source_window_batch,
+                "execution_link_candidates": execution_link_batch["selected"],
+                "execution_link_executions_matched": execution_link_batch[
+                    "executions_matched"
+                ],
+                "execution_link_executions_linked": execution_link_batch[
+                    "executions_linked"
+                ],
+                "execution_link_decisions_matched": execution_link_batch.get(
+                    "decisions_matched", 0
+                ),
+                "execution_link_events_linked": execution_link_batch["events_linked"],
+                "execution_link_decision_events_linked": execution_link_batch.get(
+                    "decision_events_linked", 0
+                ),
+                "execution_link_events_without_execution": execution_link_batch[
+                    "events_without_execution"
+                ],
+                "execution_link_events_without_decision": execution_link_batch.get(
+                    "events_without_decision", 0
+                ),
+                "execution_link_account_alias_events_linked": execution_link_batch.get(
+                    "account_alias_events_linked", 0
+                ),
+                "execution_state_candidates": execution_state_batch["selected"],
+                "execution_state_latest_event_found": execution_state_batch[
+                    "latest_event_found"
+                ],
+                "execution_state_executions_updated": execution_state_batch[
+                    "executions_updated"
+                ],
+                "execution_state_out_of_order_events_skipped": execution_state_batch[
+                    "out_of_order_events_skipped"
+                ],
+                "execution_event_backfill_candidates": execution_event_backfill_batch[
+                    "selected"
+                ],
+                "execution_event_backfill_events_created": execution_event_backfill_batch[
+                    "events_created"
+                ],
+                "execution_event_backfill_source_windows_created": (
+                    execution_event_backfill_batch["source_windows_created"]
+                ),
+                "execution_event_backfill_skipped_existing_event": (
+                    execution_event_backfill_batch["skipped_existing_event"]
+                ),
+                "execution_event_backfill_skipped_missing_trade_decision": (
+                    execution_event_backfill_batch["skipped_missing_trade_decision"]
+                ),
+                "execution_event_backfill_skipped_missing_order_identity": (
+                    execution_event_backfill_batch["skipped_missing_order_identity"]
+                ),
+                "execution_event_backfill_skipped_source_offset_collision": (
+                    execution_event_backfill_batch["skipped_source_offset_collision"]
+                ),
+                "fill_delta_candidates": fill_delta_batch["selected"],
+                "fill_delta_events_repaired": fill_delta_batch["delta_events_repaired"],
+                "fill_delta_non_increasing_events_marked": fill_delta_batch[
+                    "non_increasing_events_marked"
+                ],
+                "fill_delta_missing_identity_events_marked": fill_delta_batch[
+                    "missing_identity_events_marked"
+                ],
+            }
+            batches.append(batch)
+            if args.apply:
+                session.commit()
+                _reset_session_identity_map(session)
+            else:
+                session.rollback()
+                _reset_session_identity_map(session)
+                break
+            if (
+                int(source_window_batch.get("selected") or 0) < batch_size
+                and int(execution_link_batch.get("selected") or 0) < batch_size
+                and int(execution_state_batch.get("selected") or 0) < batch_size
+                and int(execution_event_backfill_batch.get("selected") or 0)
+                < batch_size
+                and int(fill_delta_batch.get("selected") or 0) < batch_size
+            ):
+                break
+
+    payload = _payload(
+        args=args,
+        started_at=started_at,
+        batches=batches,
+        execution_event_backfill_enabled=execution_event_backfill_enabled,
+        execution_event_backfill_skip_reason=execution_event_backfill_skip_reason,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    print(
+        json.dumps(payload, separators=(",", ":"))
+        if args.json
+        else json.dumps(payload, indent=2, default=str)
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

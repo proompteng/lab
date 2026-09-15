@@ -1,0 +1,100 @@
+{
+  "name": "@proompteng/otel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "api": [
+        "dist/api.d.ts"
+      ],
+      "auto-instrumentations-node": [
+        "dist/auto-instrumentations-node.d.ts"
+      ],
+      "core": [
+        "dist/core.d.ts"
+      ],
+      "exporter-metrics-otlp-http": [
+        "dist/exporter-metrics-otlp-http.d.ts"
+      ],
+      "exporter-trace-otlp-http": [
+        "dist/exporter-trace-otlp-http.d.ts"
+      ],
+      "resources": [
+        "dist/resources.d.ts"
+      ],
+      "sdk-metrics": [
+        "dist/sdk-metrics.d.ts"
+      ],
+      "sdk-node": [
+        "dist/sdk-node.d.ts"
+      ],
+      "sdk-trace": [
+        "dist/sdk-trace.d.ts"
+      ],
+      "semantic-conventions": [
+        "dist/semantic-conventions.d.ts"
+      ],
+      "*": [
+        "dist/*"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "default": "./dist/api.js"
+    },
+    "./auto-instrumentations-node": {
+      "types": "./dist/auto-instrumentations-node.d.ts",
+      "default": "./dist/auto-instrumentations-node.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "default": "./dist/core.js"
+    },
+    "./exporter-metrics-otlp-http": {
+      "types": "./dist/exporter-metrics-otlp-http.d.ts",
+      "default": "./dist/exporter-metrics-otlp-http.js"
+    },
+    "./exporter-trace-otlp-http": {
+      "types": "./dist/exporter-trace-otlp-http.d.ts",
+      "default": "./dist/exporter-trace-otlp-http.js"
+    },
+    "./resources": {
+      "types": "./dist/resources.d.ts",
+      "default": "./dist/resources.js"
+    },
+    "./sdk-metrics": {
+      "types": "./dist/sdk-metrics.d.ts",
+      "default": "./dist/sdk-metrics.js"
+    },
+    "./sdk-node": {
+      "types": "./dist/sdk-node.d.ts",
+      "default": "./dist/sdk-node.js"
+    },
+    "./sdk-trace": {
+      "types": "./dist/sdk-trace.d.ts",
+      "default": "./dist/sdk-trace.js"
+    },
+    "./semantic-conventions": {
+      "types": "./dist/semantic-conventions.d.ts",
+      "default": "./dist/semantic-conventions.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json --pretty false",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "bun-types": "1.4.0",
+    "typescript": "7.0.2"
+  }
+}

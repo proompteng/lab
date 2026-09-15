@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: bilig-wildcard-tls
+  namespace: bilig
+spec:
+  secretName: bilig-wildcard-tls
+  dnsNames:
+    - bilig.proompteng.ai
+    - '*.bilig.proompteng.ai'
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io

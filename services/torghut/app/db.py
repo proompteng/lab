@@ -1,0 +1,541 @@
+"""Database utilities for torghut."""
+
+import ast
+from functools import lru_cache
+from collections.abc import Generator
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Optional, Protocol, cast
+
+from alembic.config import Config as AlembicConfig
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import (
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    create_engine,
+    inspect,
+    text,
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from .config import settings
+from .models import Base
+
+_APP_ROOT = Path(__file__).resolve().parent.parent
+_ALEMBIC_INI_PATH = _APP_ROOT / "alembic.ini"
+_ALEMBIC_MIGRATIONS_PATH = _APP_ROOT / "migrations"
+
+engine: Engine = create_engine(
+    settings.sqlalchemy_dsn,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=5,
+    future=True,
+)
+SessionLocal = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    future=True,
+)
+
+
+class _PingSession(Protocol):
+    def execute(self, statement: Any) -> Any: ...
+
+
+class _SchemaCheckSession(_PingSession, Protocol):
+    def connection(self) -> Any: ...
+
+
+# Simple metadata table to confirm connectivity and seed future migrations.
+metadata = MetaData()
+torghut_meta = Table(
+    "torghut_meta",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("key", String(length=64), nullable=False, unique=True),
+    Column("value", String(length=255), nullable=False),
+)
+
+
+def get_session() -> Generator[Session, None, None]:
+    """Provide a SQLAlchemy session for FastAPI dependencies."""
+
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def _normalize_name(value: object) -> str:
+    return str(value).strip().lower()
+
+
+def _column_set(inspector: Any, table: str) -> set[str]:
+    return {_normalize_name(column["name"]) for column in inspector.get_columns(table)}
+
+
+def _index_names(inspector: Any, table: str) -> set[str]:
+    return {
+        _normalize_name(index["name"])
+        for index in inspector.get_indexes(table)
+        if index.get("name") is not None
+    }
+
+
+def _has_columns(inspector: Any, table: str, columns: list[str]) -> bool:
+    columns_present = _column_set(inspector, table)
+    return all(_normalize_name(column) in columns_present for column in columns)
+
+
+def _has_unique_index(inspector: Any, table: str, columns: list[str]) -> bool:
+    expected = {_normalize_name(col) for col in columns}
+    indexes = inspector.get_indexes(table)
+    for index in indexes:
+        if not index.get("unique"):
+            continue
+        index_columns = [_normalize_name(col) for col in index.get("column_names", [])]
+        if set(index_columns) == expected:
+            return True
+
+    constraints = inspector.get_unique_constraints(table)
+    for constraint in constraints:
+        constraint_columns = [
+            _normalize_name(column) for column in constraint.get("column_names", [])
+        ]
+        if set(constraint_columns) == expected:
+            return True
+    return False
+
+
+def _named_unique_constraint_present(
+    inspector: Any, table: str, names: set[str]
+) -> bool:
+    constraint_names = {
+        _normalize_name(constraint.get("name"))
+        for constraint in inspector.get_unique_constraints(table)
+    }
+    return any(name in constraint_names for name in names)
+
+
+def check_account_scope_invariants(session: Session) -> dict[str, object]:
+    """Validate schema constraints required for account-scoped trading isolation."""
+
+    inspector = inspect(session.connection())
+    checks: dict[str, object] = {}
+    errors: list[str] = []
+
+    required_checks = {
+        "executions_have_account_label": (
+            "executions",
+            ["alpaca_account_label"],
+        ),
+        "trade_decisions_have_account_label": (
+            "trade_decisions",
+            ["alpaca_account_label"],
+        ),
+        "trade_cursor_has_account_label": ("trade_cursor", ["account_label"]),
+        "execution_order_events_have_account_label": (
+            "execution_order_events",
+            ["alpaca_account_label"],
+        ),
+    }
+
+    for key, (table, required_columns) in required_checks.items():
+        ok = _has_columns(inspector, table, required_columns)
+        checks[key] = ok
+        if not ok:
+            errors.append(f"{table} missing required columns: {required_columns}")
+
+    checks["execution_has_account_scoped_unique_order_id"] = _has_unique_index(
+        inspector,
+        "executions",
+        ["alpaca_account_label", "alpaca_order_id"],
+    )
+    if not checks["execution_has_account_scoped_unique_order_id"]:
+        errors.append(
+            "executions missing unique index on (alpaca_account_label, alpaca_order_id)"
+        )
+
+    checks["execution_has_account_scoped_unique_client_order_id"] = _has_unique_index(
+        inspector,
+        "executions",
+        ["alpaca_account_label", "client_order_id"],
+    )
+    if not checks["execution_has_account_scoped_unique_client_order_id"]:
+        errors.append(
+            "executions missing unique index on (alpaca_account_label, client_order_id)"
+        )
+
+    checks["trade_decision_has_account_scoped_unique_decision_hash"] = (
+        _has_unique_index(
+            inspector,
+            "trade_decisions",
+            ["alpaca_account_label", "decision_hash"],
+        )
+    )
+    if not checks["trade_decision_has_account_scoped_unique_decision_hash"]:
+        errors.append(
+            "trade_decisions missing unique index on "
+            "(alpaca_account_label, decision_hash)"
+        )
+
+    checks["trade_cursor_has_account_scoped_source_index"] = _has_unique_index(
+        inspector,
+        "trade_cursor",
+        ["source", "account_label"],
+    )
+    if not checks["trade_cursor_has_account_scoped_source_index"]:
+        errors.append("trade_cursor missing unique index on (source, account_label)")
+
+    checks["legacy_executions_single_account_order_id_index_detected"] = (
+        _has_unique_index(
+            inspector,
+            "executions",
+            ["alpaca_order_id"],
+        )
+        or _named_unique_constraint_present(
+            inspector,
+            "executions",
+            {"executions_alpaca_order_id_key"},
+        )
+    )
+    if checks["legacy_executions_single_account_order_id_index_detected"]:
+        errors.append(
+            "legacy unique constraint/index detected for executions.alpaca_order_id"
+        )
+
+    checks["legacy_executions_single_account_client_order_id_index_detected"] = (
+        _has_unique_index(inspector, "executions", ["client_order_id"])
+        or _named_unique_constraint_present(
+            inspector,
+            "executions",
+            {"executions_client_order_id_key"},
+        )
+    )
+    if checks["legacy_executions_single_account_client_order_id_index_detected"]:
+        errors.append(
+            "legacy unique constraint/index detected for executions.client_order_id"
+        )
+
+    checks["legacy_trade_cursor_source_only_source_index_detected"] = _has_unique_index(
+        inspector, "trade_cursor", ["source"]
+    ) or _named_unique_constraint_present(
+        inspector,
+        "trade_cursor",
+        {"trade_cursor_source_key"},
+    )
+    if checks["legacy_trade_cursor_source_only_source_index_detected"]:
+        errors.append("legacy unique constraint/index detected for trade_cursor.source")
+
+    checks["legacy_executions_single_account_indexes_present"] = (
+        checks["legacy_executions_single_account_order_id_index_detected"]
+        or checks["legacy_executions_single_account_client_order_id_index_detected"]
+    )
+    checks["legacy_trade_cursor_source_only_index_present"] = checks[
+        "legacy_trade_cursor_source_only_source_index_detected"
+    ]
+    checks["account_scope_ready"] = not errors
+    checks["account_scope_index_names"] = {
+        "execution_indexes": sorted(_index_names(inspector, "executions")),
+        "trade_decision_indexes": sorted(_index_names(inspector, "trade_decisions")),
+        "trade_cursor_indexes": sorted(_index_names(inspector, "trade_cursor")),
+    }
+    checks["account_scope_errors"] = errors
+
+    if errors and not settings.trading_multi_account_enabled:
+        checks["account_scope_ready"] = True
+        checks["account_scope_errors"] = []
+    return checks
+
+
+def ensure_schema() -> None:
+    """Create minimal schema if the database is reachable."""
+
+    metadata.create_all(bind=engine, checkfirst=True)
+    Base.metadata.create_all(bind=engine, checkfirst=True)
+
+
+def ping(session: _PingSession) -> Optional[int]:
+    """Run a lightweight SELECT 1 for health checks."""
+
+    result = session.execute(text("SELECT 1"))
+    first = result.scalar_one()
+    return int(first) if first is not None else None
+
+
+def _alembic_config() -> AlembicConfig:
+    if not _ALEMBIC_INI_PATH.exists():
+        raise RuntimeError(f"Alembic config not found at {_ALEMBIC_INI_PATH}")
+    if not _ALEMBIC_MIGRATIONS_PATH.exists():
+        raise RuntimeError(
+            f"Alembic migrations directory not found at {_ALEMBIC_MIGRATIONS_PATH}"
+        )
+    config = AlembicConfig(str(_ALEMBIC_INI_PATH))
+    config.set_main_option("script_location", str(_ALEMBIC_MIGRATIONS_PATH))
+    config.set_main_option("sqlalchemy.url", settings.sqlalchemy_dsn)
+    return config
+
+
+def _extract_assignment_literal(tree: ast.Module, *, name: str, path: Path) -> object:
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in node.targets
+            ):
+                try:
+                    return ast.literal_eval(node.value)
+                except (ValueError, SyntaxError) as exc:
+                    raise RuntimeError(
+                        f"failed to parse '{name}' literal from migration file {path.name}"
+                    ) from exc
+        if isinstance(node, ast.AnnAssign):
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == name
+                and node.value is not None
+            ):
+                try:
+                    return ast.literal_eval(node.value)
+                except (ValueError, SyntaxError) as exc:
+                    raise RuntimeError(
+                        f"failed to parse '{name}' literal from migration file {path.name}"
+                    ) from exc
+    return None
+
+
+def _normalize_down_revisions(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized or normalized.lower() in {"none", "null", "n/a"}:
+            return ()
+        return (normalized,)
+    if isinstance(value, tuple | list | set):
+        iterable = cast(tuple[object, ...] | list[object] | set[object], value)
+        revisions: list[str] = []
+        for item in iterable:
+            revisions.extend(_normalize_down_revisions(item))
+        return tuple(sorted(set(revisions)))
+    raise RuntimeError(
+        f"unsupported down_revision value type: {type(value).__name__}; expected string/list/tuple/None"
+    )
+
+
+def _parse_migration_revision(path: Path) -> tuple[str, tuple[str, ...]]:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"failed reading migration file {path}") from exc
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except SyntaxError as exc:
+        raise RuntimeError(f"failed parsing migration file {path}") from exc
+
+    revision_raw = _extract_assignment_literal(tree, name="revision", path=path)
+    if not isinstance(revision_raw, str):
+        raise RuntimeError(
+            f"migration file {path.name} missing string revision identifier"
+        )
+    revision = revision_raw.strip()
+    if not revision:
+        raise RuntimeError(
+            f"migration file {path.name} has an empty revision identifier"
+        )
+
+    down_revision_raw = _extract_assignment_literal(
+        tree, name="down_revision", path=path
+    )
+    down_revisions = _normalize_down_revisions(down_revision_raw)
+    return revision, down_revisions
+
+
+def _schema_graph_signature(
+    revisions: set[str],
+    roots: list[str],
+    heads: list[str],
+    edges: list[tuple[str, str]],
+    duplicate_revisions: dict[str, list[str]],
+    orphan_parents: list[str],
+) -> str:
+    payload = {
+        "revisions": sorted(revisions),
+        "roots": roots,
+        "heads": heads,
+        "edges": [f"{parent}->{child}" for parent, child in sorted(edges)],
+        "duplicates": duplicate_revisions,
+        "orphan_parents": orphan_parents,
+    }
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _parse_migration_graph(versions_dir: Path) -> dict[str, object]:
+    if not versions_dir.exists():
+        raise RuntimeError(f"migration versions directory not found at {versions_dir}")
+    if not versions_dir.is_dir():
+        raise RuntimeError(
+            f"migration versions path is not a directory: {versions_dir}"
+        )
+
+    revision_to_files: dict[str, list[str]] = {}
+    revision_to_parents: dict[str, tuple[str, ...]] = {}
+    parsed_revisions: list[tuple[str, tuple[str, ...]]] = []
+
+    migration_files = sorted(
+        path for path in versions_dir.glob("*.py") if path.is_file()
+    )
+    if not migration_files:
+        raise RuntimeError(f"no migration files found in {versions_dir}")
+
+    for migration_file in migration_files:
+        revision, down_revisions = _parse_migration_revision(migration_file)
+        parsed_revisions.append((revision, down_revisions))
+        file_list = revision_to_files.setdefault(revision, [])
+        file_list.append(migration_file.name)
+        # Keep first parse for topology, but still track duplicates in revision_to_files.
+        revision_to_parents.setdefault(revision, down_revisions)
+
+    revisions = set(revision_to_parents)
+    parent_to_children: dict[str, set[str]] = {}
+    edges: list[tuple[str, str]] = []
+    for child, parents in parsed_revisions:
+        for parent in parents:
+            parent_to_children.setdefault(parent, set()).add(child)
+            edges.append((parent, child))
+
+    roots = sorted(
+        revision for revision, parents in revision_to_parents.items() if not parents
+    )
+    heads = sorted(
+        revision for revision in revisions if revision not in parent_to_children
+    )
+    orphan_parents = sorted(
+        parent for parent in parent_to_children if parent not in revisions
+    )
+    duplicate_revisions = {
+        revision: sorted(files)
+        for revision, files in revision_to_files.items()
+        if len(files) > 1
+    }
+    parent_forks = {
+        parent: sorted(children)
+        for parent, children in parent_to_children.items()
+        if len(children) > 1
+    }
+
+    signature = _schema_graph_signature(
+        revisions,
+        roots,
+        heads,
+        edges,
+        duplicate_revisions,
+        orphan_parents,
+    )
+
+    return {
+        "expected_migration_heads": heads,
+        "expected_migration_roots": roots,
+        "expected_migration_branch_count": len(heads),
+        "expected_migration_parent_forks": parent_forks,
+        "expected_migration_duplicate_revisions": duplicate_revisions,
+        "expected_migration_orphan_parents": orphan_parents,
+        "expected_schema_graph_signature": signature,
+    }
+
+
+@lru_cache(maxsize=1)
+def _get_expected_schema_graph() -> dict[str, object]:
+    versions_dir = _ALEMBIC_MIGRATIONS_PATH / "versions"
+    return _parse_migration_graph(versions_dir)
+
+
+@lru_cache(maxsize=1)
+def _get_expected_schema_heads() -> tuple[str, ...]:
+    """Return deterministic Alembic heads for schema-contract comparisons."""
+    heads = set(ScriptDirectory.from_config(_alembic_config()).get_heads())
+    return tuple(sorted(heads))
+
+
+def _schema_heads_signature(heads: tuple[str, ...]) -> str:
+    """Return a stable fingerprint for schema head sets."""
+    return hashlib.sha256(",".join(heads).encode("utf-8")).hexdigest()
+
+
+_POSTGRES_SCHEMA_HEAD_STATEMENT_TIMEOUT_MS = 750
+
+
+def _current_schema_heads(session: _SchemaCheckSession) -> list[str]:
+    connection = session.connection()
+    dialect_name = str(
+        getattr(getattr(connection, "dialect", None), "name", "")
+    ).lower()
+    if dialect_name == "postgresql":
+        connection.execute(
+            text(
+                f"SET LOCAL statement_timeout = {_POSTGRES_SCHEMA_HEAD_STATEMENT_TIMEOUT_MS}"
+            )
+        )
+        version_table = connection.execute(
+            text("SELECT to_regclass('alembic_version')")
+        ).scalar()
+        if version_table is None:
+            return []
+        raw_heads = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalars()
+        return sorted(str(head).strip() for head in raw_heads if str(head).strip())
+
+    context = MigrationContext.configure(connection=connection)
+    return sorted(str(head) for head in context.get_current_heads())
+
+
+def check_schema_current(session: _SchemaCheckSession) -> dict[str, object]:
+    """Report Alembic head alignment for readiness and diagnostics."""
+
+    ping(session)
+    expected_heads = _get_expected_schema_heads()
+    expected_graph = _get_expected_schema_graph()
+    current_heads = _current_schema_heads(session)
+    expected_heads_set = set(expected_heads)
+    current_heads_set = set(current_heads)
+    return {
+        "schema_current": current_heads_set == expected_heads_set,
+        "current_heads": current_heads,
+        "expected_heads": list(expected_heads),
+        "expected_heads_signature": _schema_heads_signature(expected_heads),
+        "schema_missing_heads": sorted(expected_heads_set - current_heads_set),
+        "schema_unexpected_heads": sorted(current_heads_set - expected_heads_set),
+        "schema_head_count_expected": len(expected_heads),
+        "schema_head_count_current": len(current_heads),
+        "schema_head_delta_count": len(expected_heads_set - current_heads_set)
+        + len(current_heads_set - expected_heads_set),
+        "schema_graph_signature": expected_graph.get("expected_schema_graph_signature"),
+        "schema_graph_roots": expected_graph.get("expected_migration_roots", []),
+        "schema_graph_branch_count": expected_graph.get(
+            "expected_migration_branch_count"
+        ),
+        "schema_graph_parent_forks": expected_graph.get(
+            "expected_migration_parent_forks",
+            {},
+        ),
+        "schema_graph_duplicate_revisions": expected_graph.get(
+            "expected_migration_duplicate_revisions",
+            {},
+        ),
+        "schema_graph_orphan_parents": expected_graph.get(
+            "expected_migration_orphan_parents",
+            [],
+        ),
+    }

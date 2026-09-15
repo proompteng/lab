@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: metallb-system
+resources:
+  - github.com/metallb/metallb//config/native?ref=v0.16.1
+  - ipaddresspool.yaml
+  - l2advertisement.yaml
+images:
+  - name: quay.io/metallb/controller
+    newName: quay.io/metallb/controller
+    newTag: v0.16.1
+    digest: sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420
+  - name: quay.io/metallb/speaker
+    newName: quay.io/metallb/speaker
+    newTag: v0.16.1
+    digest: sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc
+patches:
+  - target:
+      kind: Namespace
+      name: metallb-system
+    patch: |-
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: metallb-system
+      $patch: delete
+  - target:
+      group: apps
+      version: v1
+      kind: DaemonSet
+      name: speaker
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --ignore-exclude-lb

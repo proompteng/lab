@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": true,
+        "includeSuggestionsInTsc": true,
+        "ignoreEffectSuggestionsInTscExitCode": false,
+        "ignoreEffectErrorsInTscExitCode": false,
+        "ignoreEffectWarningsInTscExitCode": false,
+        "diagnosticSeverity": {
+          "anyUnknownInErrorContext": "error",
+          "globalDateInEffect": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "multipleEffectProvide": "error",
+          "schemaNumber": "error",
+          "scopeInLayerEffect": "error",
+          "strictBooleanExpressions": "error",
+          "strictEffectProvide": "error",
+          "unsafeEffectTypeAssertion": "error",
+          "unknownInEffectCatch": "error"
+        }
+      }
+    ]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.integration.test.ts", "src/**/*test-support.ts", "src/test-fixtures.ts"]
+}

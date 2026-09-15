@@ -1,0 +1,289 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: torghut-clickhouse-ta-replicated-table-migration
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse-ta-replicated-table-migration
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut-clickhouse-ta-replicated-table-migration
+        app.kubernetes.io/part-of: torghut
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      restartPolicy: Never
+      serviceAccountName: torghut-runtime
+      containers:
+        - name: migrate
+          image: altinity/clickhouse-server:25.3.6.10034.altinitystable
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+
+              CLICKHOUSE_CLIENT=(
+                clickhouse-client
+                --port 9000
+                --user "${CLICKHOUSE_USERNAME}"
+                --password "${CLICKHOUSE_PASSWORD}"
+                --connect_timeout 5
+                --send_timeout 120
+                --receive_timeout 600
+              )
+              PRIMARY_HOST=torghut-clickhouse.torghut.svc.cluster.local
+              CLUSTER=default
+              DATABASE=torghut
+              EXPECTED_ENGINE=ReplicatedReplacingMergeTree
+
+              query() {
+                local host="$1"
+                local sql="$2"
+                "${CLICKHOUSE_CLIENT[@]}" --host "${host}" --query "${sql}"
+              }
+
+              cluster_query() {
+                query "${PRIMARY_HOST}" "$1"
+              }
+
+              wait_for_host() {
+                local host="$1"
+                local deadline=$((SECONDS + 180))
+                until query "${host}" "SELECT 1" >/dev/null; do
+                  if [ "${SECONDS}" -ge "${deadline}" ]; then
+                    echo "ClickHouse host ${host} did not become ready in time" >&2
+                    exit 1
+                  fi
+                  sleep 5
+                done
+              }
+
+              table_engine() {
+                local host="$1"
+                local table="$2"
+                query "${host}" \
+                  "SELECT engine FROM system.tables WHERE database='${DATABASE}' AND name='${table}' FORMAT TSVRaw"
+              }
+
+              require_replicated_on_all_hosts() {
+                local table="$1"
+                local host engine
+                for host in "${HOSTS[@]}"; do
+                  engine="$(table_engine "${host}" "${table}")"
+                  if [ "${engine}" != "${EXPECTED_ENGINE}" ]; then
+                    echo "${DATABASE}.${table} on ${host} has engine ${engine:-missing}; expected ${EXPECTED_ENGINE}" >&2
+                    exit 1
+                  fi
+                done
+              }
+
+              table_is_replicated_on_all_hosts() {
+                local table="$1"
+                local host engine
+                for host in "${HOSTS[@]}"; do
+                  engine="$(table_engine "${host}" "${table}")"
+                  if [ "${engine}" != "${EXPECTED_ENGINE}" ]; then
+                    return 1
+                  fi
+                done
+                return 0
+              }
+
+              table_exists_on_any_host() {
+                local table="$1"
+                local host
+                for host in "${HOSTS[@]}"; do
+                  if [ -n "$(table_engine "${host}" "${table}")" ]; then
+                    return 0
+                  fi
+                done
+                return 1
+              }
+
+              sql_string() {
+                local value="$1"
+                printf "'%s'" "$(printf '%s' "${value}" | sed "s/'/''/g")"
+              }
+
+              sync_replicas() {
+                local table="$1"
+                local host
+                for host in "${HOSTS[@]}"; do
+                  query "${host}" "SYSTEM SYNC REPLICA ${DATABASE}.${table}"
+                done
+              }
+
+              create_replicated_microbars_shadow() {
+                local table="$1"
+                local keeper_table="$2"
+                cluster_query "
+                  CREATE TABLE ${DATABASE}.${table} ON CLUSTER ${CLUSTER}
+                  (
+                    symbol LowCardinality(String),
+                    event_ts DateTime64(3, 'UTC'),
+                    seq UInt64,
+                    ingest_ts DateTime64(3, 'UTC'),
+                    is_final UInt8,
+                    source LowCardinality(String),
+                    window_size LowCardinality(String),
+                    window_step Nullable(String),
+                    window_start Nullable(DateTime64(3, 'UTC')),
+                    window_end Nullable(DateTime64(3, 'UTC')),
+                    version UInt32,
+                    o Float64,
+                    h Float64,
+                    l Float64,
+                    c Float64,
+                    v Float64,
+                    vwap Nullable(Float64),
+                    count UInt64
+                  )
+                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${keeper_table}', '{replica}', ingest_ts)
+                  PARTITION BY toDate(event_ts)
+                  ORDER BY (symbol, event_ts, seq)
+                  TTL toDateTime(event_ts) + INTERVAL 35 DAY
+                  SETTINGS index_granularity = 8192"
+              }
+
+              create_replicated_signals_shadow() {
+                local table="$1"
+                local keeper_table="$2"
+                cluster_query "
+                  CREATE TABLE ${DATABASE}.${table} ON CLUSTER ${CLUSTER}
+                  (
+                    symbol LowCardinality(String),
+                    event_ts DateTime64(3, 'UTC'),
+                    seq UInt64,
+                    ingest_ts DateTime64(3, 'UTC'),
+                    is_final UInt8,
+                    source LowCardinality(String),
+                    window_size LowCardinality(String),
+                    window_step Nullable(String),
+                    window_start Nullable(DateTime64(3, 'UTC')),
+                    window_end Nullable(DateTime64(3, 'UTC')),
+                    version UInt32,
+                    macd Nullable(Float64),
+                    macd_signal Nullable(Float64),
+                    macd_hist Nullable(Float64),
+                    ema12 Nullable(Float64),
+                    ema26 Nullable(Float64),
+                    rsi14 Nullable(Float64),
+                    boll_mid Nullable(Float64),
+                    boll_upper Nullable(Float64),
+                    boll_lower Nullable(Float64),
+                    vwap_session Nullable(Float64),
+                    vwap_w5m Nullable(Float64),
+                    imbalance_spread Nullable(Float64),
+                    imbalance_bid_px Nullable(Float64),
+                    imbalance_ask_px Nullable(Float64),
+                    imbalance_bid_sz Nullable(UInt64),
+                    imbalance_ask_sz Nullable(UInt64),
+                    vol_realized_w60s Nullable(Float64),
+                    microstructure_signal_v1 Nullable(String)
+                  )
+                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${keeper_table}', '{replica}', ingest_ts)
+                  PARTITION BY toDate(event_ts)
+                  ORDER BY (symbol, event_ts, seq)
+                  TTL toDateTime(event_ts) + INTERVAL 35 DAY
+                  SETTINGS index_granularity = 8192"
+              }
+
+              migrate_table() {
+                local table="$1"
+                local shadow="${table}__replicated_migration_v2"
+                local host
+
+                if table_is_replicated_on_all_hosts "${table}"; then
+                  if table_exists_on_any_host "${shadow}"; then
+                    echo "${DATABASE}.${table} is replicated but ${shadow} remains; copying shadow rows before cleanup."
+                    for host in "${HOSTS[@]}"; do
+                      query "${host}" "INSERT INTO ${DATABASE}.${table} SELECT * FROM ${DATABASE}.${shadow}"
+                    done
+                    sync_replicas "${table}"
+                    cluster_query "DROP TABLE IF EXISTS ${DATABASE}.${shadow} ON CLUSTER ${CLUSTER} SYNC"
+                  fi
+                  echo "${DATABASE}.${table} is already replicated on every host; skipping."
+                  return
+                fi
+
+                for host in "${HOSTS[@]}"; do
+                  engine="$(table_engine "${host}" "${table}")"
+                  if [ "${engine}" != "ReplacingMergeTree" ]; then
+                    echo "${DATABASE}.${table} on ${host} has unsupported engine ${engine:-missing}; refusing migration" >&2
+                    exit 1
+                  fi
+                done
+
+                cluster_query "DROP TABLE IF EXISTS ${DATABASE}.${shadow} ON CLUSTER ${CLUSTER} SYNC"
+                if [ "${table}" = "ta_microbars" ]; then
+                  create_replicated_microbars_shadow "${shadow}" "${table}"
+                elif [ "${table}" = "ta_signals" ]; then
+                  create_replicated_signals_shadow "${shadow}" "${table}"
+                else
+                  echo "unsupported table ${table}" >&2
+                  exit 1
+                fi
+
+                for host in "${HOSTS[@]}"; do
+                  echo "Backfilling ${DATABASE}.${table} from ${host} into replicated shadow ${shadow}"
+                  query "${host}" "INSERT INTO ${DATABASE}.${shadow} SELECT * FROM ${DATABASE}.${table}"
+                done
+                sync_replicas "${shadow}"
+
+                echo "Exchanging ${DATABASE}.${table} with replicated shadow ${shadow}"
+                cluster_query "EXCHANGE TABLES ${DATABASE}.${table} AND ${DATABASE}.${shadow} ON CLUSTER ${CLUSTER}"
+
+                for host in "${HOSTS[@]}"; do
+                  echo "Catching up ${DATABASE}.${table} from ${host} missing or newer replacement rows"
+                  query "${host}" \
+                    "INSERT INTO ${DATABASE}.${table} SELECT src.* FROM ${DATABASE}.${shadow} AS src LEFT JOIN (SELECT symbol, event_ts, seq, max(ingest_ts) AS max_ingest_ts FROM ${DATABASE}.${table} GROUP BY symbol, event_ts, seq) AS target USING (symbol, event_ts, seq) WHERE target.max_ingest_ts IS NULL OR src.ingest_ts > target.max_ingest_ts"
+                done
+                sync_replicas "${table}"
+                require_replicated_on_all_hosts "${table}"
+                cluster_query "DROP TABLE IF EXISTS ${DATABASE}.${shadow} ON CLUSTER ${CLUSTER} SYNC"
+              }
+
+              wait_for_host "${PRIMARY_HOST}"
+              mapfile -t HOSTS < <(
+                query "${PRIMARY_HOST}" \
+                  "SELECT DISTINCT host_name FROM system.clusters WHERE cluster='${CLUSTER}' ORDER BY host_name"
+              )
+              if [ "${#HOSTS[@]}" -eq 0 ]; then
+                HOSTS=("${PRIMARY_HOST}")
+              fi
+              for host in "${HOSTS[@]}"; do
+                wait_for_host "${host}"
+              done
+
+              migrate_table ta_microbars
+              migrate_table ta_signals
+
+              require_replicated_on_all_hosts ta_microbars
+              require_replicated_on_all_hosts ta_signals
+              echo "Torghut TA ClickHouse tables are replicated on every host."
+          env:
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

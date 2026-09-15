@@ -1,0 +1,76 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: dernier
+  annotations:
+    networking.knative.dev/disable-external-domain-tls: "true"
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "3"
+        autoscaling.knative.dev/maxScale: "5"
+        autoscaling.knative.dev/targetBurstCapacity: "0"
+    spec:
+      containers:
+        - name: api
+          image: registry.ide-newton.ts.net/lab/dernier@sha256:4531dafb601e381a2a315b4ec59b6e2fc4babde55cbeb3c3d8f51e7efb029008
+          imagePullPolicy: Always
+          env:
+            - name: RAILS_ENV
+              value: production
+            - name: RAILS_LOG_TO_STDOUT
+              value: "1"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dernier-db-app
+                  key: uri
+            - name: REDIS_URL
+              value: redis://dernier-redis-leader:6379/1
+            - name: RAILS_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dernier-secrets
+                  key: RAILS_MASTER_KEY
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: dernier-secrets
+                  key: SECRET_KEY_BASE
+            - name: PGSSLROOTCERT
+              value: /etc/postgres-ca/ca.crt
+          ports:
+            - containerPort: 3000
+              name: http1
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: database-ca
+              mountPath: /etc/postgres-ca
+              readOnly: true
+      volumes:
+        - name: database-ca
+          secret:
+            secretName: dernier-db-ca

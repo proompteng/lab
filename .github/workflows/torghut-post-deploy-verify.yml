@@ -1,0 +1,353 @@
+name: torghut-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - kargo/torghut
+    paths:
+      - 'argocd/applications/torghut/**'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
+
+concurrency:
+  group: torghut-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+            echo "Service account token is missing"
+            exit 1
+          fi
+          if [ ! -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt ]; then
+            echo "Service account CA cert is missing"
+            exit 1
+          fi
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=torghut \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Validate kubectl context
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+
+      - name: Verify Argo convergence, retirement, and retained pipelines
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+
+          EXPECTED_REVISION=''
+          if [ "${EVENT_NAME}" = "push" ]; then
+            EXPECTED_REVISION="${GITHUB_SHA}"
+          elif [ -n "${EXPECTED_REVISION_INPUT}" ]; then
+            EXPECTED_REVISION="${EXPECTED_REVISION_INPUT}"
+          fi
+          if [ -n "${EXPECTED_REVISION}" ]; then
+            git fetch --no-tags --depth=200 origin main
+          fi
+
+          ensure_revision_known() {
+            local revision="$1"
+            if [ -z "${revision}" ]; then
+              return 1
+            fi
+            if git cat-file -e "${revision}^{commit}" >/dev/null 2>&1; then
+              return 0
+            fi
+            git fetch --no-tags --depth=200 origin kargo/torghut >/dev/null 2>&1 || true
+            git cat-file -e "${revision}^{commit}" >/dev/null 2>&1
+          }
+
+          dump_argocd_app_diagnostics() {
+            local app="$1"
+
+            echo "Argo application ${app} status:"
+            kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.message}{"\n"}' || true
+            echo "Argo application ${app} OutOfSync resources:"
+            kubectl get application "${app}" -n argocd -o jsonpath='{range .status.resources[?(@.status=="OutOfSync")]}{.kind}{"/"}{.namespace}{"/"}{.name}{"\t"}{.status}{"\t"}{.health.status}{"\n"}{end}' || true
+          }
+
+          # Kargo's argocd-update step owns the sync; this workflow only observes its result.
+          ARGO_SYNC_TIMEOUT_SECONDS=1800
+          ARGO_SYNC_POLL_INTERVAL_SECONDS=2
+          ARGO_SYNC_POLL_ATTEMPTS=$((ARGO_SYNC_TIMEOUT_SECONDS / ARGO_SYNC_POLL_INTERVAL_SECONDS))
+
+          for app in torghut; do
+            for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do
+              STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
+              SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
+              HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
+              DESIRED_REVISION="$(echo "${STATUS}" | awk '{print $3}')"
+              OPERATION_PHASE="$(echo "${STATUS}" | awk '{print $4}')"
+              SYNC_RESULT_REVISION="$(echo "${STATUS}" | awk '{print $5}')"
+              HISTORY_REVISION="$(echo "${STATUS}" | awk '{print $6}')"
+              REVISION="${DESIRED_REVISION}"
+              REVISION_OK='true'
+
+              if [ -n "${EXPECTED_REVISION}" ]; then
+                REVISION_OK='false'
+                for candidate in "${DESIRED_REVISION}" "${SYNC_RESULT_REVISION}" "${HISTORY_REVISION}"; do
+                  if [ -z "${candidate}" ]; then
+                    continue
+                  fi
+                  if [ "${candidate}" = "${EXPECTED_REVISION}" ]; then
+                    REVISION="${candidate}"
+                    REVISION_OK='true'
+                    break
+                  fi
+                  if ensure_revision_known "${candidate}" &&
+                    git merge-base --is-ancestor "${EXPECTED_REVISION}" "${candidate}" >/dev/null 2>&1; then
+                    REVISION="${candidate}"
+                    REVISION_OK='true'
+                    break
+                  fi
+                done
+                if [ "${REVISION_OK}" != 'true' ]; then
+                  if [ -n "${SYNC_RESULT_REVISION}" ]; then
+                    REVISION="${SYNC_RESULT_REVISION}"
+                  elif [ -n "${HISTORY_REVISION}" ]; then
+                    REVISION="${HISTORY_REVISION}"
+                  fi
+                fi
+              elif [ "${OPERATION_PHASE}" = 'Succeeded' ] && [ -n "${SYNC_RESULT_REVISION}" ]; then
+                REVISION="${SYNC_RESULT_REVISION}"
+              elif [ -z "${REVISION}" ] && [ -n "${HISTORY_REVISION}" ]; then
+                REVISION="${HISTORY_REVISION}"
+              fi
+
+              if [ "${SYNC_STATUS}" = 'Synced' ] && [ "${REVISION_OK}" = 'true' ]; then
+                if [ "${HEALTH_STATUS}" = 'Healthy' ]; then
+                  break
+                fi
+                if [ "${HEALTH_STATUS}" = 'Progressing' ] && [ "${OPERATION_PHASE}" = 'Succeeded' ]; then
+                  echo "Argo application ${app} sync operation succeeded while health is Progressing; runtime checks will verify readiness"
+                  break
+                fi
+              fi
+
+              if [ "${attempt}" -eq "${ARGO_SYNC_POLL_ATTEMPTS}" ]; then
+                echo "Argo application ${app} did not become Synced/Healthy with expected revision"
+                dump_argocd_app_diagnostics "${app}"
+                exit 1
+              fi
+              echo "Attempt ${attempt}: ${app} sync=${SYNC_STATUS} health=${HEALTH_STATUS} revision=${REVISION} desired=${DESIRED_REVISION} operation=${OPERATION_PHASE} syncResult=${SYNC_RESULT_REVISION} history=${HISTORY_REVISION}"
+              sleep "${ARGO_SYNC_POLL_INTERVAL_SECONDS}"
+            done
+          done
+
+          EVIDENCE_DIR="${RUNNER_TEMP}/torghut-post-deploy"
+          mkdir -p "${EVIDENCE_DIR}"
+          if ! ensure_revision_known "${REVISION}"; then
+            echo "The verified Argo revision ${REVISION} is unavailable in Git"
+            exit 1
+          fi
+
+          for removal_attempt in $(seq 1 30); do
+            RETIRED_DEPLOYMENTS="$(
+              kubectl get deployment torghut-scheduler torghut-ta-sim torghut-llm-guardrails-exporter \
+                -n torghut --ignore-not-found -o name
+            )"
+            RETIRED_APIS="$(kubectl get ksvc torghut torghut-sim -n torghut --ignore-not-found -o name)"
+            kubectl get application torghut -n argocd -o json > "${EVIDENCE_DIR}/application.json"
+            RETIRED_MANAGED_RESOURCES="$(
+              jq -r '
+                .status.resources
+                | if type != "array" then error("Argo resource inventory is unavailable")
+                  else .[]
+                    | select(.namespace == "torghut")
+                    | select(.kind | IN("Deployment", "StatefulSet", "Service", "Cluster",
+                        "TigerBeetleCluster", "FlinkDeployment", "CronJob", "ScheduledBackup"))
+                    | select(.name | test("^(torghut|torghut-sim|torghut-scheduler|torghut-ta-sim|torghut-tigerbeetle|torghut-db|torghut-db-daily|torghut-llm-guardrails-exporter|torghut-generated-resource-retention|torghut-broker-economic-ledger-reconciliation|torghut-order-lineage-reconciliation)$"))
+                    | .kind + "/" + .name
+                  end
+              ' "${EVIDENCE_DIR}/application.json"
+            )"
+            kubectl get pods -n torghut -o json > "${EVIDENCE_DIR}/pods.json"
+            RETIRED_PODS="$(
+              jq -r '.items[]
+                | select(.metadata.name | test("^torghut-([0-9]+|sim-[0-9]+|scheduler|ta-sim|tigerbeetle|db-[0-9]+|llm-guardrails-exporter|generated-resource-retention|broker-economic-ledger-reconciliation|order-lineage-reconciliation)(-|$)"))
+                | .metadata.name' "${EVIDENCE_DIR}/pods.json"
+            )"
+            if [ -z "${RETIRED_DEPLOYMENTS}" ] && [ -z "${RETIRED_APIS}" ] &&
+              [ -z "${RETIRED_MANAGED_RESOURCES}" ] && [ -z "${RETIRED_PODS}" ]; then
+              break
+            fi
+            if [ "${removal_attempt}" -eq 30 ]; then
+              echo "Torghut runtime retirement is incomplete: ${RETIRED_DEPLOYMENTS} ${RETIRED_APIS} ${RETIRED_MANAGED_RESOURCES} ${RETIRED_PODS}"
+              exit 1
+            fi
+            echo "Waiting for retired Torghut resources and pods to finish terminating"
+            sleep 10
+          done
+          echo "Retired Torghut workloads and pods are absent"
+
+          for deployment in \
+            torghut-ta \
+            market-data-archive \
+            torghut-ws; do
+            kubectl rollout status "deployment/${deployment}" -n torghut --timeout=10m
+          done
+
+          pull_failures="$(
+            kubectl get pods -n torghut -o json |
+              jq -r '
+                .items[] as $pod
+                | (($pod.status.initContainerStatuses // []) + ($pod.status.containerStatuses // []))[]?
+                | select(((.state.waiting.reason // "") == "ImagePullBackOff") or ((.state.waiting.reason // "") == "ErrImagePull"))
+                | select(.image | startswith("registry.ide-newton.ts.net/lab/torghut"))
+                | [$pod.metadata.name, .name, .image, .state.waiting.reason] | @tsv
+              '
+          )"
+          if [ -n "${pull_failures}" ]; then
+            echo "Torghut-managed image pull failures remain after deploy:"
+            printf '%s\n' "${pull_failures}"
+            exit 1
+          fi
+
+          for pipeline in torghut-ta market-data-archive; do
+            pipeline_path="${pipeline}"
+            if [ "${pipeline}" = torghut-ta ]; then pipeline_path=ta; fi
+            git show "${REVISION}:argocd/applications/torghut/${pipeline_path}/flinkdeployment.yaml" \
+              > "${EVIDENCE_DIR}/${pipeline}-promoted.yaml"
+            expected_image="$(bun -e '
+              const manifest = Bun.YAML.parse(await Bun.file(process.argv[1]).text());
+              const image = manifest.spec?.image;
+              if (typeof image !== "string" || !/@sha256:[0-9a-f]{64}$/.test(image)) {
+                throw new Error("Promoted Flink manifest is missing an immutable image digest");
+              }
+              console.log(image);
+            ' "${EVIDENCE_DIR}/${pipeline}-promoted.yaml")"
+            for pipeline_attempt in $(seq 1 60); do
+              if kubectl get pods -n torghut -l "app=${pipeline}" -o json \
+                  > "${EVIDENCE_DIR}/${pipeline}-pods.json" &&
+                jq -e --arg image "${expected_image}" '
+                  [.items[] | select(.metadata.deletionTimestamp == null)] as $pods
+                  | any($pods[]; .metadata.labels.component == "jobmanager")
+                    and any($pods[]; .metadata.labels.component == "taskmanager")
+                    and all($pods[];
+                      .status.phase == "Running"
+                      and any(.status.conditions[]?; .type == "Ready" and .status == "True")
+                      and any(.spec.containers[]; .name == "flink-main-container" and .image == $image)
+                      and any(.status.containerStatuses[]?;
+                        .name == "flink-main-container" and .ready == true
+                        and .state.running != null and ((.imageID // "") | length) > 0))
+                ' "${EVIDENCE_DIR}/${pipeline}-pods.json" >/dev/null &&
+                curl -fsS --connect-timeout 5 --max-time 15 \
+                  "http://${pipeline}-rest.torghut.svc.cluster.local:8081/jobs/overview" \
+                  -o "${EVIDENCE_DIR}/${pipeline}-jobs.json" &&
+                jq -e '.jobs | length == 1 and all(.[];
+                    .state == "RUNNING" and .tasks.running > 0 and
+                    (.tasks.running + .tasks.finished) == .tasks.total and .tasks.failed == 0)' \
+                  "${EVIDENCE_DIR}/${pipeline}-jobs.json" >/dev/null; then
+                JOB_ID="$(jq -r '.jobs[0].jid' "${EVIDENCE_DIR}/${pipeline}-jobs.json")"
+                if curl -fsS --connect-timeout 5 --max-time 15 \
+                    "http://${pipeline}-rest.torghut.svc.cluster.local:8081/jobs/${JOB_ID}/checkpoints" \
+                    -o "${EVIDENCE_DIR}/${pipeline}-checkpoints.json" &&
+                  jq -e '.latest.completed.status == "COMPLETED" and .latest.completed.id >= 0' \
+                    "${EVIDENCE_DIR}/${pipeline}-checkpoints.json" >/dev/null; then
+                  break
+                fi
+              fi
+              if [ "${pipeline_attempt}" -eq 60 ]; then
+                echo "${pipeline} did not converge on the promoted image with ready workers, a RUNNING job, and a completed checkpoint"
+                exit 1
+              fi
+              sleep 10
+            done
+            echo "${pipeline}: job RUNNING, tasks running or finished, checkpoint completed"
+          done
+
+      - name: Verify market-data freshness
+        shell: bash
+        env:
+          MARKET_DATA_FRESHNESS_MODE: auto
+          TORGHUT_SCHEDULER_EXPECTED: 'false'
+          MARKET_DATA_MAX_LAG_SECONDS: '300'
+          MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'
+          MARKET_DATA_HOLIDAYS: '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25,2027-01-01,2027-01-18,2027-02-15,2027-03-26,2027-05-31,2027-06-18,2027-07-05,2027-09-06,2027-11-25,2027-12-24,2027-12-31,2028-01-17,2028-02-21,2028-04-14,2028-05-29,2028-06-19,2028-07-04,2028-09-04,2028-11-23,2028-12-25'
+          MARKET_DATA_PRINT_SUMMARIES: 'false'
+        run: |
+          set -euo pipefail
+          TA_FRESHNESS_ATTEMPTS=4
+          TA_FRESHNESS_INTERVAL_SECONDS=30
+          for ta_attempt in $(seq 1 "${TA_FRESHNESS_ATTEMPTS}"); do
+            if bun run smoke:torghut-market-data; then
+              echo "Torghut market-data freshness converged on attempt ${ta_attempt}."
+              exit 0
+            fi
+            if [ "${ta_attempt}" -eq "${TA_FRESHNESS_ATTEMPTS}" ]; then
+              echo "Torghut market-data freshness did not converge after ${TA_FRESHNESS_ATTEMPTS} attempts."
+              exit 1
+            fi
+            echo "Torghut market-data freshness is not converged on attempt ${ta_attempt}; waiting for the next TA heartbeat."
+            sleep "${TA_FRESHNESS_INTERVAL_SECONDS}"
+          done
+
+      - name: Upload retained pipeline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: torghut-retained-pipeline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/torghut-post-deploy/*.json
+          if-no-files-found: ignore

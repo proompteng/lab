@@ -1,0 +1,113 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-broker-economic-ledger-reconciliation
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: broker-economic-ledger-reconciliation
+    app.kubernetes.io/part-of: lab
+spec:
+  schedule: "47 * * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 900
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      activeDeadlineSeconds: 1200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: torghut
+            app.kubernetes.io/component: broker-economic-ledger-reconciliation
+            app.kubernetes.io/part-of: lab
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reconcile
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                seccompProfile:
+                  type: Unconfined
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 64Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+                  ephemeral-storage: 256Mi
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: APP_ENV
+                  value: prod
+                - name: TORGHUT_TIGERBEETLE_ENABLED
+                  value: "true"
+                - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+                  value: "2001"
+                - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
+                  value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+                - name: TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS
+                  value: "30"
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: APCA_API_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_KEY_ID
+                - name: APCA_API_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_SECRET_KEY
+                - name: APCA_API_BASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-alpaca
+                      key: APCA_API_BASE_URL
+                - name: TRADING_MODE
+                  value: live
+                - name: TRADING_ACCOUNT_LABEL
+                  value: PA3SX7FYNUTF
+                - name: TORGHUT_VERSION
+                  value: v0.596.0-3458-g7dc8fd76e
+                - name: TORGHUT_COMMIT
+                  value: 7dc8fd76efd5cb3fda027a8558195c2be7060202
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:b359cd2368e89b492f7ff6925f975b72bb2ca3aa0261478552fc6094688e3bb4
+                - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
+                  value: linux/amd64,linux/arm64
+                - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
+                  value: linux/amd64,linux/arm64
+              command:
+                - python
+                - scripts/replay_broker_economic_ledger.py
+              args:
+                - --observe
+                - --tigerbeetle-parity
+                - --max-source-age-seconds
+                - "300"
+                - --source-consistency-timeout-seconds
+                - "180"

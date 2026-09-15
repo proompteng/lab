@@ -1,0 +1,95 @@
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+@import '@proompteng/design/globals.css';
+
+@theme inline {
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
+  --breakpoint-2xl: 96rem;
+}
+
+@layer utilities {
+  @media (min-width: 48rem) {
+    .olden-md-flex-row {
+      flex-direction: row;
+    }
+
+    .olden-md-items-start {
+      align-items: flex-start;
+    }
+
+    .olden-md-justify-between {
+      justify-content: space-between;
+    }
+
+    .olden-md-grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .olden-md-grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .olden-md-col-span-2 {
+      grid-column: span 2 / span 2;
+    }
+
+    .olden-md-border-r {
+      border-right-width: 1px;
+    }
+
+    .olden-md-border-t-0 {
+      border-top-width: 0;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .olden-lg-grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .olden-lg-grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .olden-lg-grid-artifact-set {
+      grid-template-columns: 1fr 1.15fr;
+    }
+
+    .olden-lg-grid-town {
+      grid-template-columns: 1fr 1.4fr;
+    }
+
+    .olden-lg-grid-home {
+      grid-template-columns: 1.05fr 0.95fr;
+    }
+
+    .olden-lg-px-12 {
+      padding-left: 3rem;
+      padding-right: 3rem;
+    }
+
+    .olden-lg-text-6xl {
+      font-size: 3.75rem;
+      line-height: 1;
+    }
+  }
+
+  @media (min-width: 80rem) {
+    .olden-xl-grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .olden-xl-grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+}
+
+@source "./**/*.{js,jsx,ts,tsx,mdx}";
+@source "../content/**/*.{md,mdx}";
+@source not "../../node_modules";
+@source not "../../.next";
+@source not "../../../../.pnpm-store";
+@source not "../../../../.bun";

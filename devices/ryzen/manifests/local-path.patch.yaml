@@ -1,0 +1,9 @@
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: local-path-provisioner
+provisioning:
+  diskSelector:
+    match: disk.transport == 'nvme'
+  # Omit maxSize to consume the remaining free space on the selected disk.
+  minSize: 100GB
+  grow: true

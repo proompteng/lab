@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cert-manager
+resources:
+  - cluster-issuer.yaml
+  - cloudflare-api-token-sealedsecret.yaml
+helmCharts:
+  - name: cert-manager
+    repo: https://charts.jetstack.io
+    version: v1.21.1
+    releaseName: cert-manager
+    namespace: cert-manager
+    includeCRDs: true
+    valuesInline:
+      installCRDs: true
+      startupapicheck:
+        enabled: false
+      crds:
+        enabled: true
+        keep: false
+      global:
+        leaderElection:
+          namespace: cert-manager
