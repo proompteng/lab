@@ -76,7 +76,7 @@ test.each(['authority', 'cycle', 'settlement'] as const)(
         const driver = yield* Deferred.await(published)
         const attempt = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(entered)
-        yield* TestClock.adjust(100)
+        yield* TestClock.adjust(stage === 'authority' ? 16 : 100)
         const result = yield* Fiber.await(attempt)
         yield* Fiber.interrupt(owner)
         return result

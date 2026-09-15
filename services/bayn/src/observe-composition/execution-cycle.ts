@@ -852,11 +852,14 @@ const mutationBound = (cycle: AutonomousCycle): boolean =>
 export const decideUnboundExecutionCycleTerminalization = (input: {
   readonly capability: ExecutionCapability['_tag']
   readonly observedAt: string
-  readonly submissionOpenAt: string
-}): CycleTerminalReason.Authority | undefined =>
-  input.capability !== 'Mutation' && input.observedAt >= input.submissionOpenAt
-    ? CycleTerminalReason.Authority
-    : undefined
+  readonly cycle: AutonomousCycle
+}): CycleTerminalReason.Authority | undefined => {
+  const deadline =
+    input.cycle.bindings.snapshotId === undefined
+      ? input.cycle.window.submissionCutoffAt
+      : input.cycle.window.submissionOpenAt
+  return input.capability !== 'Mutation' && input.observedAt >= deadline ? CycleTerminalReason.Authority : undefined
+}
 
 const terminalizeUnboundMutationCycle = (
   cycle: AutonomousCycle,
@@ -1058,7 +1061,7 @@ export const runRecoveryFirstCyclePass = (
             const terminalReason = decideUnboundExecutionCycleTerminalization({
               capability: capability._tag,
               observedAt,
-              submissionOpenAt: unfinished.window.submissionOpenAt,
+              cycle: unfinished,
             })
             if (terminalReason !== undefined) {
               return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)

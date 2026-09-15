@@ -210,7 +210,6 @@ export const makeKafkaMarketProjection = (
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
     const owner = yield* Effect.scope
-    let restartAfterMs: number | undefined
     let projection = emptyStreamingProjection('starting', universe.topics.technicalFeatures)
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
@@ -416,23 +415,15 @@ export const makeKafkaMarketProjection = (
         Effect.gen(function* () {
           if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)
           ready = false
-          restartAfterMs = clock.currentTimeMillisUnsafe() + 30_000
           lastFailure ??= failure('consume', 'Kafka market projection stopped', cause)
           yield* Effect.logError('Kafka market projection stopped', cause)
+          yield* Effect.sleep('30 seconds')
         }),
       ),
     )
-    const start = Effect.gen(function* () {
-      restartAfterMs = undefined
-      yield* supervision.pipe(Effect.forkIn(owner))
-    })
-    yield* start
+    yield* supervision.pipe(Effect.forever, Effect.forkIn(owner))
     return {
       read: Effect.suspend(() => {
-        if (restartAfterMs !== undefined && clock.currentTimeMillisUnsafe() >= restartAfterMs)
-          return start.pipe(
-            Effect.andThen(Effect.fail(failure('read', 'Kafka projection is rebuilding after connection recovery'))),
-          )
         return ready && bootstrap !== undefined
           ? Effect.succeed({
               projection,

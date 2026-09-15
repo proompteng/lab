@@ -337,7 +337,29 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
             Effect.map((observation) => ({ observation })),
           ),
-        onSuccess: () => advanceCycle,
+        onSuccess: () =>
+          advanceCycle.pipe(
+            Effect.flatMap((advanced) =>
+              capability._tag !== 'Mutation' ||
+              input.intradayMarketData === undefined ||
+              advanced.observation.result === 'FAILURE'
+                ? Effect.succeed(advanced)
+                : input.intradayMarketData.check.pipe(
+                    Effect.matchEffect({
+                      onFailure: (cause) =>
+                        observeCycleFailure(
+                          new CycleRunnerError({
+                            operation: 'build-decision',
+                            failure: 'market-data',
+                            message: 'Execution worker market projection is unavailable',
+                            cause,
+                          }),
+                        ).pipe(Effect.map((failed) => ({ ...advanced, ...failed }))),
+                      onSuccess: () => Effect.succeed(advanced),
+                    }),
+                  ),
+            ),
+          ),
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(

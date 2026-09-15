@@ -305,7 +305,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
-  test('a later read can rebuild after bounded connection failure and cooldown, without overlapping clients', async () => {
+  test('rebuilds after bounded connection failure and cooldown without a read', async () => {
     let attempts = 0
     let recovered = false
     const transport = new FakeTransport()
@@ -319,16 +319,61 @@ describe('Kafka bootstrap and scoped consumption', () => {
         yield* TestClock.adjust('5 seconds')
         expect(attempts).toBe(3)
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
-        yield* TestClock.adjust('31 seconds')
-        expect(attempts).toBe(3)
         recovered = true
-        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
-        yield* TestClock.adjust('2 seconds')
+        yield* TestClock.adjust('31 seconds')
         expect(attempts).toBe(4)
+        expect((yield* projection.status).ready).toBe(true)
         expect((yield* projection.read).projection.sequence).toBe(0)
       }),
     )
     expect(transport.closeCount).toBe(1)
+  })
+
+  test('closes a failed consumer before replacing it even when cleanup reports an error', async () => {
+    const first = new FakeTransport()
+    const second = new FakeTransport()
+    let attempts = 0
+    const closeFirst = first.close
+    first.close = async () => {
+      await closeFirst()
+      throw new Error('leave group failed after transport closed')
+    }
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+          attempts += 1
+          if (attempts === 1) return first
+          expect(first.closed).toBe(true)
+          return second
+        })
+        yield* TestClock.adjust('2 seconds')
+        first.invalidated?.(new Error('connection lost'))
+        yield* TestClock.adjust('2 seconds')
+        expect((yield* projection.status).ready).toBe(false)
+        expect(attempts).toBe(1)
+        yield* TestClock.adjust('32 seconds')
+        expect(attempts).toBe(2)
+        expect((yield* projection.status).ready).toBe(true)
+        yield* Effect.all([projection.read, projection.read], { concurrency: 'unbounded' })
+        expect(attempts).toBe(2)
+      }),
+    )
+    expect(second.closeCount).toBe(1)
+  })
+
+  test('scope closure cancels a scheduled reconnect', async () => {
+    let attempts = 0
+    await program(
+      Effect.gen(function* () {
+        yield* makeKafkaMarketProjection(config, universe, () => {
+          attempts += 1
+          throw new Error('offline')
+        })
+        yield* TestClock.adjust('5 seconds')
+        expect(attempts).toBe(3)
+      }),
+    )
+    expect(attempts).toBe(3)
   })
 
   test('startup timeout cancels the client and retries only within the configured bound', async () => {
