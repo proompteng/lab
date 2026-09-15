@@ -83,6 +83,43 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
     expect(rows).toEqual([{ id: 2 }])
   }, 15_000)
 
+  test('canceling a writer waiting for a pool connection does not wait for unrelated borrowers', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        const occupied = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const borrowers = yield* Effect.gen(function* () {
+          yield* sql.reserve
+          yield* sql.reserve
+          yield* Deferred.succeed(occupied, undefined)
+          yield* Deferred.await(release)
+        }).pipe(Effect.scoped, Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(occupied)
+        let mutated = false
+        const attempt = yield* fence
+          .transaction(
+            Effect.sync(() => {
+              mutated = true
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Effect.sleep('100 millis')
+        const interruption = yield* Fiber.interrupt(attempt).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Effect.sleep('100 millis')
+        const completedBeforeBorrowers = attempt.pollUnsafe() !== undefined
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(borrowers)
+        yield* Fiber.join(interruption)
+        expect(completedBeforeBorrowers).toBe(true)
+        expect(mutated).toBe(false)
+        yield* fence.transaction(sql`INSERT INTO writer_fence_test VALUES (3)`)
+        expect(yield* sql`SELECT id FROM writer_fence_test`).toEqual([{ id: 3 }])
+      }),
+    )
+  }, 10000)
+
   test('a disconnected transaction fails once and the same fence can commit the next transaction', async () => {
     const started = await Effect.runPromise(Deferred.make<number>())
     const disconnected = await Effect.runPromise(Deferred.make<void>())
@@ -148,7 +185,10 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
         return { exit, rows: yield* sql`SELECT id FROM writer_fence_test ORDER BY id` }
       }),
     )
-    expect(result.exit).toEqual(Exit.fail('rollback marker'))
+    expect(result.exit).toMatchObject({
+      _tag: 'Failure',
+      cause: { reasons: [{ _tag: 'Fail', error: 'rollback marker' }] },
+    })
     expect(result.rows).toEqual([{ id: 3 }])
   })
 
@@ -238,7 +278,11 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
         return { exit, rows: yield* sql`SELECT id FROM writer_fence_test` }
       }),
     )
-    expect(result.exit).toEqual(Exit.die(defect))
+    expect(result.exit).toMatchObject({ _tag: 'Failure', cause: { reasons: [{ _tag: 'Die', defect }] } })
+    if (Exit.isFailure(result.exit)) {
+      const [reason] = result.exit.cause.reasons
+      expect(reason !== undefined && Cause.isDieReason(reason) && reason.defect === defect).toBe(true)
+    }
     expect(result.rows).toEqual([])
   })
 })

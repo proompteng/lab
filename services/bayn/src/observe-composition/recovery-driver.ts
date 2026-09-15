@@ -1,5 +1,5 @@
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
-import { withObservedStage } from '../telemetry'
+import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
@@ -147,9 +147,29 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   Effect.gen(function* () {
     const startedAt = yield* operationCurrentTimeMillis
+    const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
+    let interruptionRequestedAt = startedAt
     return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
+      withObservedStage('bayn.execution.advance'),
+      Effect.provideService(ActiveExecutionStages, activeStages),
       operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
+        onDeadline: operationCurrentTimeMillis.pipe(
+          Effect.flatMap((requestedAt) => {
+            interruptionRequestedAt = requestedAt
+            return Effect.logWarning('Bayn execution pass interruption requested').pipe(
+              Effect.annotateLogs({
+                service: 'bayn',
+                timeoutMs,
+                executionElapsedMs: Math.max(0, requestedAt - startedAt),
+                activeStages: [...activeStages.values()].map(({ startedAt: stageStartedAt, ...stage }) => ({
+                  ...stage,
+                  elapsedMs: Math.max(0, requestedAt - stageStartedAt),
+                })),
+              }),
+            )
+          }),
+        ),
         orElse: () =>
           operationCurrentTimeMillis.pipe(
             Effect.flatMap((finishedAt) =>
@@ -159,8 +179,17 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
                   timeoutMs,
                   elapsedMs: Math.max(0, finishedAt - startedAt),
                   deadlineOverrunMs: Math.max(0, finishedAt - startedAt - timeoutMs),
+                  executionElapsedMs: Math.max(0, interruptionRequestedAt - startedAt),
+                  cancellationElapsedMs: Math.max(0, finishedAt - interruptionRequestedAt),
                 }),
-                Effect.andThen(onTimeout(mutationCyclePassTimeoutError(timeoutMs))),
+                Effect.andThen(
+                  onTimeout(mutationCyclePassTimeoutError(timeoutMs)).pipe(
+                    withObservedStage('bayn.execution.timeout-recovery', {
+                      slowAfterMs: 1_000,
+                      recordCompletion: true,
+                    }),
+                  ),
+                ),
               ),
             ),
           ),
@@ -240,7 +269,13 @@ const makeRecoveryFirstCycleDriverEffect = (
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
-        ? restrictMutationLoopFailure(error)
+        ? restrictMutationLoopFailure(error).pipe(
+            withObservedStage('bayn.execution.restriction-persistence', {
+              dependency: 'postgresql',
+              slowAfterMs: 1_000,
+              recordCompletion: true,
+            }),
+          )
         : Effect.void
       ).pipe(
         Effect.catch((restrictionError: CycleRunnerError) =>

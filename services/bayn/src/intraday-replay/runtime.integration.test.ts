@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, Redacted, Ref, Result, Schema } from 'effect'
+import { Clock, Context, Deferred, Effect, Fiber, Layer, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
@@ -12,9 +12,14 @@ import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema } 
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
-import { WriterFenceLive } from '../execution/writer-fence'
-import { IntentStoreLive, BlockedCycleIntentStoreLive } from '../execution/intents'
-import { MutationStoreLive } from '../execution/mutations'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
+import {
+  IntentStore,
+  IntentStoreLive,
+  BlockedCycleIntentStore,
+  BlockedCycleIntentStoreLive,
+} from '../execution/intents'
+import { MutationStore, MutationStoreLive } from '../execution/mutations'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
@@ -27,12 +32,35 @@ import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
+import { BrokerRead } from '../broker/alpaca'
+import {
+  AuthorityGenerationStore,
+  AuthorityRestrictionStore,
+  BrokerEventStore,
+  FillAccountingStore,
+  ReconciliationStore,
+  ValuationStore,
+} from '../db/execution-store'
+import { CycleStore } from '../cycle/store'
+import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
+import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
+import { readFinalExecutionRiskContext } from '../db/reconciliation'
+import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
+import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
+import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
+import { makeTradingEngine } from '../composition/trading-engine'
+import { ownGenerationCycleDriver } from '../composition/generation-cycle'
+import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
+import { operationalError } from '../errors'
+import type { RecoveryFirstCycleDriver, RecoveryFirstRuntime } from '../observe-composition'
+import { makeStrategyProtocolHashResult } from '../contracts'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
-durableTest(
-  'production cycle creates and fills a risk-approved intent against isolated durable stores',
-  async () => {
+durableTest.each(['fill', 'recovery'] as const)(
+  'production cycle and durable accounting: %s',
+  async (scenario) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -108,7 +136,12 @@ durableTest(
           sourceManifestHash: fixture.source.sourceManifestHash,
           openingCashMicros: '100000000000',
           protocol: fixture.protocol,
-          assumptions: { latencyMs: 10, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+          assumptions: {
+            latencyMs: 10,
+            slippageBps: 0,
+            availableLiquidityPpm: scenario === 'recovery' ? 1 : 1000000,
+            feeMultiplierPpm: 1000000,
+          },
           fractionalTrading: false,
           calendar: Result.getOrThrow(Schema.decodeUnknownResult(MarketCalendarResponseSchema)(fixture.input.calendar)),
           assets: fixture.protocol.universe.map((symbol, index) =>
@@ -164,6 +197,219 @@ durableTest(
           reconciliationPassTimeoutMs: 1000,
         }
         const runtime = yield* makeReplayExecutionRuntime(runtimeInput)
+        if (scenario === 'recovery') {
+          const advanceBy = (ms: number) =>
+            Effect.gen(function* () {
+              const next = (yield* Clock.currentTimeMillis) + ms
+              yield* clock.advanceTo(utcInstantFromEpochMillis(next))
+              yield* TestClock.setTime(next)
+            })
+          const store = runtime.store
+          const fence = yield* WriterFence
+          const intents = yield* IntentStore
+          const mutations = yield* MutationStore
+          const blockedIntents = yield* BlockedCycleIntentStore
+          const closures = yield* ExecutionCycleClosureStore
+          const grants = yield* PersistedCapitalGrantStore
+          const readAuthority = store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing durable authority reader')
+          const resources = Context.make(BrokerRead, broker.read).pipe(
+            Context.add(CycleStore, runtime.cycleStore),
+            Context.add(BrokerEventStore, store.events),
+            Context.add(FillAccountingStore, store.accounting),
+            Context.add(ValuationStore, store.valuation),
+            Context.add(ReconciliationStore, store.reconciliation),
+            Context.add(AuthorityGenerationStore, store.authorityGeneration),
+            Context.add(AuthorityRestrictionStore, store.authorityRestriction),
+            Context.add(WriterFence, fence),
+            Context.add(IntentStore, intents),
+            Context.add(MutationStore, mutations),
+          )
+          const asOperational = (cause: unknown) =>
+            operationalError({
+              component: 'strategy',
+              operation: 'recovery-proof',
+              message: 'Recovery proof operation failed',
+              cause,
+            })
+          const reconcile = advanceBy(1).pipe(
+            Effect.andThen(runtime.reconcile),
+            Effect.andThen(advanceBy(1)),
+            Effect.asVoid,
+            Effect.mapError(asOperational),
+          )
+          const settle = recoverTerminalGenerationToObserve({
+            accountId,
+            blockedIntents,
+            authorityStore: store.authorityGeneration,
+            writerFence: fence,
+            reconcileAfterSettlement: reconcile,
+          })
+          let lostResponses = 0
+          const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
+            Effect.gen(function* () {
+              const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(generationHash)
+              if (generation === undefined || config.execution.brokerIdentity === undefined)
+                throw new Error('Missing recovery generation')
+              const authority = yield* Effect.fromResult(
+                makeExecutionAuthority({
+                  observedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                  brokerIdentity: config.execution.brokerIdentity,
+                  brokerAccess: BrokerAccess.Mutation,
+                  capitalAuthority: grantedCapitalAuthority(generationHash),
+                  strategy: fixtureRuntime.provenance.strategy,
+                }),
+              )
+              const engine = yield* makeTradingEngine({
+                authority,
+                executionMode: mode,
+                cycle: {
+                  accountId,
+                  authorityGenerationHash: generationHash,
+                  strategy: fixtureRuntime,
+                  intradayMarketData: runtime.marketData,
+                  executionCycleClosureStore: closures,
+                  blockedCycleIntentStore: blockedIntents,
+                  pollIntervalMs: 1000,
+                  reconciliationIntervalMs: 1000,
+                  reconciliationPassTimeoutMs: 1000,
+                },
+                execution: {
+                  brokerRead: broker.read,
+                  brokerMutation: loseResponse
+                    ? {
+                        ...broker.mutation,
+                        submit: (...args) =>
+                          broker.mutation.submit(...args).pipe(
+                            Effect.andThen(
+                              Effect.sync(() => {
+                                lostResponses += 1
+                              }),
+                            ),
+                            Effect.andThen(Effect.never),
+                          ),
+                      }
+                    : broker.mutation,
+                  intentStore: intents,
+                  mutationStore: mutations,
+                  writerFence: fence,
+                  persistedCapitalGrants: grants,
+                  readFinalExecutionRiskContext: (at) => readFinalExecutionRiskContext(sql, accountId, at),
+                },
+              })
+              const startup = yield* engine.startCycle({
+                cycleBindingId: capitalGrantKey(capitalGrantFromLegacyGeneration(generation)),
+                recordPass: runtimeInput.recordPass,
+              })
+              const driver = yield* startup.pipe(Effect.provideContext(resources))
+              const published = yield* Deferred.make<RecoveryFirstCycleDriver>()
+              const owner = yield* ownGenerationCycleDriver<RecoveryFirstRuntime>({
+                generationHash,
+                mode,
+                readAuthority: readAuthority.pipe(Effect.mapError(asOperational)),
+                reconcileWhenHeld: reconcile,
+                settle,
+                owner: (value) => Deferred.succeed(published, value).pipe(Effect.andThen(Effect.never)),
+              })(driver).pipe(Effect.provideContext(resources), Effect.forkChild({ startImmediately: true }))
+              const owned = yield* Deferred.await(published)
+              return { owner, advance: owned.advance.pipe(Effect.provideContext(resources)) }
+            })
+          const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+          const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation', true)
+          for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
+            yield* advanceBy(1000)
+            yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+          }
+          expect(lostResponses).toBe(1)
+          yield* advanceBy(1000)
+          yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+          expect(healthy.owner.pollUnsafe()).toBeDefined()
+          yield* Fiber.join(healthy.owner)
+          const restricted = yield* readAuthority
+          expect(restricted).toMatchObject({
+            maximum: Authority.Execution,
+            effective: Authority.Observe,
+            kill: KillState.Active,
+          })
+          const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
+          const concurrentRecovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
+          let lastRecovery
+          for (let attempt = 0; attempt < 20 && recovery.owner.pollUnsafe() === undefined; attempt++) {
+            // This fixture's IOC expires unfilled. Its cycle remains open until the captured session close.
+            yield* advanceBy(
+              attempt === 3 ? Date.parse('2026-09-04T19:59:00Z') - (yield* Clock.currentTimeMillis) : 1000,
+            )
+            lastRecovery = yield* Effect.all([recovery.advance, concurrentRecovery.advance], { concurrency: 2 }).pipe(
+              Effect.provideService(OperationDeadlineClock, liveClock),
+            )
+          }
+          expect(recovery.owner.pollUnsafe(), JSON.stringify(lastRecovery)).toBeDefined()
+          yield* Fiber.join(recovery.owner)
+          yield* concurrentRecovery.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+          yield* Fiber.join(concurrentRecovery.owner)
+          const observed = yield* readAuthority
+          expect(observed).toMatchObject({
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+          })
+          const repeated = yield* Effect.all([settle, settle], { concurrency: 2 })
+          expect(repeated).toEqual([{ _tag: 'NotRequired' }, { _tag: 'NotRequired' }])
+          const previous = yield* store.authorityGeneration.readResearchAuthorityGeneration(
+            runtime.authorityGenerationHash,
+          )
+          if (previous === undefined || config.execution.brokerIdentity === undefined)
+            throw new Error('Missing prior research grant')
+          const request = yield* Effect.fromResult(
+            makeResearchCapitalActivationRequest({
+              schemaVersion: 'bayn.research-execution-mandate.v1',
+              grant: previous.grant,
+              activation: {
+                sourceRevision: config.build.sourceRevision,
+                imageRepository: config.build.imageRepository,
+                imageDigest: config.build.imageDigest,
+              },
+              strategy: {
+                ...fixtureRuntime.provenance.strategy,
+                protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
+              },
+              broker: {
+                environment: BrokerEnvironment.Sandbox,
+                accountId,
+                identityHash: config.execution.brokerIdentity.identityHash,
+              },
+              riskPolicyHash: previous.riskPolicyHash,
+              limits: { maxOpenOrders: 0, maxPositions: 0 },
+            }),
+          )
+          yield* reconcile
+          const activated = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+            researchCapitalGrantProof(request),
+            observed.generationHash,
+          )
+          expect(activated.generationHash).not.toBe(runtime.authorityGenerationHash)
+          yield* advanceBy(1)
+          yield* store.authorityRestriction.restrictAuthority(
+            'operator kill switch active',
+            utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+          )
+          const heldBefore = yield* readAuthority
+          const held = yield* openOwner(activated.generationHash, 'Mutation')
+          const holds = yield* Effect.all([held.advance, held.advance], { concurrency: 2 })
+          expect(holds.every((item) => item.observation.result === 'FAILURE')).toBe(true)
+          expect(yield* readAuthority).toEqual(heldBefore)
+          yield* Fiber.interrupt(held.owner)
+          const final = yield* runtime.reconcile
+          expect(final.report.metrics.accountingExact).toBe(true)
+          expect(final.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          expect(final.riskContext.unknownMutationCount).toBe(0)
+          expect(final.brokerState.positions).toHaveLength(0)
+          const counts = yield* sql<
+            Record<string, unknown>
+          >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
+          expect(counts).toEqual([{ intents: 1, fills: 0, transactions: 0 }])
+          return { _tag: 'Recovery' as const }
+        }
         yield* clock.advanceTo(utcInstantFromEpochMillis(initialMs + 1))
         yield* TestClock.setTime(initialMs + 1)
         for (let pass = 0; pass < 20; pass++) {
@@ -210,7 +456,7 @@ durableTest(
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
       (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,
       (SELECT count(*)::int FROM accounting_transactions WHERE account_id = ${accountId}) AS transactions`
-        return { brokerState, reconciliation, rows, passes: yield* Ref.get(passes) }
+        return { _tag: 'Fill' as const, brokerState, reconciliation, rows, passes: yield* Ref.get(passes) }
       }).pipe(
         Effect.scoped,
         Effect.provide(stores),
@@ -218,6 +464,7 @@ durableTest(
         Effect.provide(NodeServices.layer),
       ),
     )
+    if (outcome._tag === 'Recovery') return
     expect(outcome.brokerState.fills.length, JSON.stringify(outcome.passes)).toBeGreaterThan(0)
     expect(outcome.rows[0]?.['intents']).toBeGreaterThan(0)
     expect(outcome.rows[0]?.['fills']).toBe(outcome.brokerState.fills.length)

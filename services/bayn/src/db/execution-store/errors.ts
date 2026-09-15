@@ -6,6 +6,7 @@ import { ReconciliationStoreError } from '../reconciliation'
 import { ExecutionStoreError } from './contract'
 import type { ExecutionStoreDecisionFailure } from './decisions'
 import { Pipeable } from '../../pipeable'
+import { withObservedStage } from '../../telemetry'
 
 const messageOf = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause))
 
@@ -79,6 +80,8 @@ const runExecutionOperationDataFirst = <A, E, R>(
         cause,
       })
     }),
+    withObservedStage('bayn.execution-store.operation'),
+    Effect.annotateLogs({ operation }),
   )
 
 export const runExecutionOperation = Pipeable.generic<

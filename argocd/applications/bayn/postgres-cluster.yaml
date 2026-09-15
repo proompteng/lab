@@ -51,6 +51,11 @@ spec:
     parameters:
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
+      log_lock_waits: "on"
+      deadlock_timeout: 1s
+      log_min_duration_statement: 1000ms
+      log_parameter_max_length: "0"
+      log_parameter_max_length_on_error: "0"
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
