@@ -298,13 +298,14 @@ try {
   record({ phase: 'process-paused', durationMs: 38_000, node: initial.node })
   await sleep(38_000)
   docker('unpause', initial.node)
-  await until('same quorum after pause', () => {
+  await until('same quorum and distributed SQL after pause', () => {
     const members = metadata(observer)
     assert.deepEqual(leader(members), initial)
-    return members.length === 3
+    if (members.length !== 3) return false
+    query(observer)
+    return true
   })
   assertNoFalseDeaths(sincePause)
-  query(observer)
   record({ phase: 'pause-recovered', ...leader(metadata(observer)) })
   const failedAt = Date.now()
   docker('kill', initial.node)
