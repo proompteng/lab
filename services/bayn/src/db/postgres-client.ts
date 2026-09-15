@@ -1,3 +1,5 @@
+import { Socket } from 'node:net'
+
 import { PgClient } from '@effect/sql-pg'
 import { Effect, FileSystem, Layer, Redacted } from 'effect'
 
@@ -13,6 +15,7 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
   )
   // The SQL adapter can spend five seconds canceling a query. Let the server abort first and leave rollback time.
   const statementTimeoutMs = Math.max(1, Math.floor(passBudgetMs - Math.min(5_000, passBudgetMs / 2)))
+  const socketTimeoutMs = Math.max(1, Math.floor((statementTimeoutMs + passBudgetMs) / 2))
   const sessionUrl = Effect.try({
     try: () => {
       const url = new URL(Redacted.value(config.postgres.url))
@@ -50,6 +53,13 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
                 ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
                 applicationName: 'bayn',
                 connectTimeout: statementTimeoutMs,
+                stream: () => {
+                  const socket = new Socket()
+                  socket.setTimeout(socketTimeoutMs, () => {
+                    socket.destroy(new Error('PostgreSQL connection exceeded its inactivity deadline'))
+                  })
+                  return socket
+                },
                 idleTimeout: '30 seconds',
                 maxConnections: 2,
                 minConnections: 0,

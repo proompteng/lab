@@ -55,6 +55,13 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   expect(cluster.spec.imageName).toBe(
     'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )
+  expect(cluster.spec.postgresql.parameters).toMatchObject({
+    log_lock_waits: 'on',
+    deadlock_timeout: '1s',
+    log_min_duration_statement: '1000ms',
+    log_parameter_max_length: '0',
+    log_parameter_max_length_on_error: '0',
+  })
 })
 
 test('Bayn compares CNPG resources after admission defaulting', () => {

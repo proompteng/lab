@@ -374,56 +374,66 @@ describe('Bayn resource lifecycle', () => {
     expect(maximumConcurrency).toBe(2)
   })
 
-  test('invalidates an interrupted TigerBeetle client and defers replacement to the next request', async () => {
-    const closeCounts = [0, 0]
-    const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
-    const interruptedClient = makeTigerBeetleClient({
-      lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
-      destroy: () => {
-        closeCounts[0] += 1
-        Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
-      },
-    })
-    const recoveredClient = makeTigerBeetleClient({
-      lookupAccounts: async () => [],
-      destroy: () => void (closeCounts[1] += 1),
-    })
-    let clientAcquisitions = 0
-    const createClient = (): TigerBeetleClient => {
-      clientAcquisitions += 1
-      if (clientAcquisitions === 1) return interruptedClient
-      if (clientAcquisitions === 2) throw new Error('replacement unavailable')
-      if (clientAcquisitions === 3) return recoveredClient
-      throw new Error('unexpected TigerBeetle client acquisition')
-    }
-    let acquisitionsAfterInterrupt = 0
-    let acquisitionsAfterReplacementFailure = 0
+  test.each(['caller', 'transport'] as const)(
+    'invalidates a TigerBeetle client after a %s deadline and defers replacement to the next request',
+    async (deadline) => {
+      const closeCounts = [0, 0]
+      const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
+      const interruptedClient = makeTigerBeetleClient({
+        lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
+        destroy: () => {
+          closeCounts[0] += 1
+          Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))
+        },
+      })
+      const recoveredClient = makeTigerBeetleClient({
+        lookupAccounts: async () => [],
+        destroy: () => void (closeCounts[1] += 1),
+      })
+      let clientAcquisitions = 0
+      const createClient = (): TigerBeetleClient => {
+        clientAcquisitions += 1
+        if (clientAcquisitions === 1) return interruptedClient
+        if (clientAcquisitions === 2) throw new Error('replacement unavailable')
+        if (clientAcquisitions === 3) return recoveredClient
+        throw new Error('unexpected TigerBeetle client acquisition')
+      }
+      let acquisitionsAfterInterrupt = 0
+      let acquisitionsAfterReplacementFailure = 0
 
-    const replacementError = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const journal = yield* Journal
-          yield* journal.check.pipe(Effect.timeout(5), Effect.ignore)
-          acquisitionsAfterInterrupt = clientAcquisitions
-          const error = yield* Effect.flip(journal.check)
-          acquisitionsAfterReplacementFailure = clientAcquisitions
-          yield* journal.check
-          return error
-        }).pipe(
-          Effect.provide(
-            JournalLive(config, {
-              createClient,
-              resolveReplicaAddresses: () => Effect.succeed(['3000']),
-            }),
+      const replacementError = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const journal = yield* Journal
+            const timeout = yield* Effect.flip(
+              deadline === 'caller' ? journal.check.pipe(Effect.timeout(5)) : journal.check,
+            )
+            if (deadline === 'transport')
+              expect(timeout.message).toContain('TigerBeetle connectivity-check timed out after 5ms')
+            acquisitionsAfterInterrupt = clientAcquisitions
+            const error = yield* Effect.flip(journal.check)
+            acquisitionsAfterReplacementFailure = clientAcquisitions
+            yield* journal.check
+            return error
+          }).pipe(
+            Effect.provide(
+              JournalLive(
+                { ...config, operationTimeoutMs: deadline === 'transport' ? 5 : config.operationTimeoutMs },
+                {
+                  createClient,
+                  resolveReplicaAddresses: () => Effect.succeed(['3000']),
+                },
+              ),
+            ),
           ),
         ),
-      ),
-    )
+      )
 
-    expect(acquisitionsAfterInterrupt).toBe(1)
-    expect(acquisitionsAfterReplacementFailure).toBe(2)
-    expect(clientAcquisitions).toBe(3)
-    expect(closeCounts).toEqual([1, 1])
-    expect(replacementError.message).toContain('replacement unavailable')
-  })
+      expect(acquisitionsAfterInterrupt).toBe(1)
+      expect(acquisitionsAfterReplacementFailure).toBe(2)
+      expect(clientAcquisitions).toBe(3)
+      expect(closeCounts).toEqual([1, 1])
+      expect(replacementError.message).toContain('replacement unavailable')
+    },
+  )
 })

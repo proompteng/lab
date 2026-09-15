@@ -122,11 +122,27 @@ Flat accounts and marks observed at the same instant also require exact equity a
   kill remains restricted.
 - PostgreSQL statements use a session limit below the smaller operation and reconciliation budget. The current
   30-second budget gives statements 25 seconds, reserving five seconds for cancellation and rollback. Smaller budgets
-  reserve half their time. The aggregate execution deadline remains unchanged, and an uncertain mutation still
-  requires durable lookup and reconciliation.
-- Interrupted intent commits, reconciliation, intent reads, mutation reads and generation recovery record a named
-  stage, elapsed time and trace identity. Pass timeouts also record elapsed time and deadline overrun. Overrun includes
-  timer scheduling and cleanup time; it does not by itself identify the stalled dependency.
+  reserve half their time. The client closes a connection with no network activity halfway through that remaining
+  allowance (27.5 seconds for the current budget), so a lost response cannot leave transaction cleanup waiting forever.
+  The aggregate execution deadline remains unchanged, and an uncertain mutation still requires durable lookup and reconciliation.
+- Connection acquisition and transaction startup are cancellable, including when both pool connections are occupied
+  or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
+  and writer permit. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
+  cancellation invalidates the transport and the next request creates its replacement without replaying a mutation.
+- Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
+  dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
+  rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
+- A pass deadline records interruption request time and every active stage/dependency with elapsed time before joining
+  cancellation. Nested deadlines share the pass's active-stage map; independent passes have separate maps. Its final warning separates
+  `executionElapsedMs` from `cancellationElapsedMs`; `bayn.execution.timeout-recovery` and
+  `bayn.execution.restriction-persistence` record their own completion durations. A timer that itself ran late remains
+  visible in execution elapsed time. These measurements do not claim that an earlier uninstrumented stall had the same cause.
+- The dedicated Bayn PostgreSQL cluster logs statements exceeding one second and lock waits exceeding one second.
+  `log_parameter_max_length=0` and `log_parameter_max_length_on_error=0` suppress parameter values. SQL statement text is
+  still present in database logs. For a lock wait, correlate the PostgreSQL process ID, blocker ID, application name,
+  and timestamp with Bayn's operation/trace interval; database process IDs are not trace IDs. A current read of
+  `pg_stat_activity` with `pg_blocking_pids(pid)` distinguishes a lock from a running query. These diagnostic settings do
+  not change replication, durability, volumes, or storage placement.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash
