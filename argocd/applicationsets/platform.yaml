@@ -554,8 +554,10 @@ spec:
               - name: restate
                 path: argocd/applications/restate
                 namespace: restate
+                targetRevision: kargo/restate
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
+                  kargo.akuity.io/authorized-stage: lab-delivery:restate
                 automation: auto
                 enabled: "true"
                 ignoreDifferences:

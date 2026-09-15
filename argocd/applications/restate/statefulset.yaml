@@ -152,7 +152,7 @@ spec:
               memory: 256Mi
       containers:
         - name: restate
-          image: docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595
+          image: restate-runtime
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -206,7 +206,23 @@ spec:
             - name: RESTATE_METADATA_CLIENT__ADDRESSES
               value: '["http://restate-0.restate-cluster:5122","http://restate-1.restate-cluster:5122","http://restate-2.restate-cluster:5122"]'
             - name: RESTATE_METADATA_SERVER__RAFT_ELECTION_TICK
-              value: "100"
+              value: "450"
+            - name: RESTATE_GOSSIP_FAILURE_THRESHOLD
+              value: "450"
+            - name: RESTATE_GOSSIP_LONELINESS_THRESHOLD
+              value: "600"
+            - name: RESTATE_GOSSIP_TIME_SKEW_THRESHOLD
+              value: 5s
+            - name: RESTATE_NETWORKING__CONNECT_TIMEOUT
+              value: 10s
+            - name: RESTATE_NETWORKING__HANDSHAKE_TIMEOUT
+              value: 10s
+            - name: RESTATE_NETWORKING__HTTP2_KEEP_ALIVE_TIMEOUT
+              value: 10s
+            - name: RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND
+              value: "true"
+            - name: RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND
+              value: "true"
             - name: RESTATE_DEFAULT_REPLICATION
               value: "1"
             - name: RESTATE_SHUTDOWN_TIMEOUT
