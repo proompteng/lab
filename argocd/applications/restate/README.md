@@ -78,29 +78,55 @@ processors per partition. `default-replication` is initial-provisioning only.
 
 Official contracts: [HA](https://docs.restate.dev/server/deploy/ha), [metadata](https://docs.restate.dev/server/deploy/metadata), and [snapshots](https://docs.restate.dev/server/deploy/snapshots).
 
-### Metadata election timing
+### Software responsiveness and failure detection
 
-The metadata Raft election timeout is 100 ticks at the existing 100ms tick interval: 10 seconds. Heartbeats remain
-two ticks apart (200ms). Restate 1.7.9 defaults to a one-second election timeout, but the retained RBD volumes have
-shown metadata WAL sync p99 of 1.5–2 seconds. The Raft event loop awaits durable storage before processing its next
-event, so those delays can cause false elections, partition leadership changes, and repeated Bayn tick interruptions.
-See the pinned [Raft loop](https://github.com/restatedev/restate/blob/v1.7.9/crates/metadata-server/src/raft/server/member.rs)
-and [timing options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/metadata_server.rs).
+The runtime retains upstream Restate 1.7.9 and its storage format. The [runtime build](../../../services/restate/README.md)
+changes one metadata write-dispatch argument to `IoMode::AlwaysBackground`. Log-server and partition writes use their
+existing `always-commit-in-background` options. Each write still awaits completion with the original WAL and fsync
+requirements. Slow successful writes therefore use the existing background I/O executor instead of occupying an async
+worker. This corrects a scheduling hazard; it does not establish how much of the historical 38-second pause it caused.
 
-This setting tolerates the observed routine latency; it does not repair the underlying disk latency or cover every
-outlier. A genuinely lost metadata leader takes longer to replace. WAL durability, replication, Bayn reconciliation
-deadlines, and alert thresholds retain their existing settings.
+The liveness settings are coordinated:
 
-Argo rolls the StatefulSet one retained member at a time. Before rollout, verify the three members agree on their
-Raft membership and have caught up, with replication two and positive archived LSNs for all 24 partitions. Verify all
-replacement members rejoin that same quorum. Do not change PVCs, node
-identities, PDB, or Bayn activation to apply this timing correction. Recovery is a reviewed revert of the environment
-setting through GitOps; it restores the previous election timing without changing stored state.
+| Setting | Value | Purpose |
+| --- | --- | --- |
+| Metadata election | 450 ticks at 100ms | Base election deadline 45s; Raft randomizes each election attempt over 45–90s |
+| Gossip failure | 450 ticks at 100ms | Avoid declaring a peer dead during the tested 38s interruption |
+| Gossip loneliness | 600 ticks at 100ms | Allow 60s before a node considers itself isolated |
+| Gossip message age | 5s | Accept the tested 3s one-way message delay |
+| Peer connect, handshake and HTTP/2 keep-alive timeout | 10s each | Keep transport deadlines above the tested 6s round trip |
+| Metadata-client connect and keep-alive timeout | 10s each | Apply the same envelope to the separate metadata-client transport |
 
-Acceptance requires stable metadata leadership, two caught-up processors per partition, several consecutive completed
-Bayn controller ticks with fresh exact reconciliation, both status replicas ready, and the existing alerts resolved.
-If elections continue, correlate `restate_rocksdb_wal_file_sync_seconds` with metadata terms and investigate storage
-latency; increasing the timeout again without that evidence is not acceptance.
+Metadata heartbeats remain two ticks apart. A lost leader takes longer to replace; Bayn may restrict itself at its
+existing 30s pass deadline and must use its normal settlement/recovery process. Disk latency, volumes, replication,
+durability, placement, PDB, broker authority and alert thresholds retain their settings. Delays beyond this tested
+envelope can still cause failover. See the pinned [Raft loop](https://github.com/restatedev/restate/blob/v1.7.9/crates/metadata-server/src/raft/server/member.rs),
+[gossip options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/gossip.rs) and
+[networking options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/networking.rs).
+
+`bun packages/scripts/src/restate/verify-resilience.ts <image> <evidence-directory>` creates an isolated three-node Docker
+cluster with the manifest's settings and two active partition processors. It tests distributed SQL, 3s delays in both
+directions, a 38s whole-process pause, and actual leader loss. Delays must preserve metadata leadership, avoid metadata
+transport timeouts, and avoid false gossip death transitions. The fixture restarts its isolated proxy to clear latency
+without waiting for Toxiproxy's live-stream removal to drain. Actual loss must elect a replacement within 100s, produce
+a gossip death observation for the lost peer, and restore queries. Status requests use a 1s deadline after node loss so
+waiting for the dead member does not delay the surviving members' observations. Artifacts retain Raft logs and metadata
+samples with request start and end times. Observation can continue to 200s to record a late election, which still fails
+the 100s acceptance check. Containers and their disposable volumes are removed afterward.
+Never point this fixture at production or run its fault injection against a live member.
+
+The `Restate images` workflow tests the metadata regression and runtime on both native architectures. PR runs publish
+no images. After a reviewed `main` merge, the workflow uploads proof, publishes both tested platform images, validates
+and signs the final index, uploads its receipt, then exposes its immutable run-qualified Kargo alias. Warehouse and
+Stage `lab-delivery/restate` write the selected digest to the `restate-runtime` Kustomize input on `kargo/restate`.
+The ApplicationSet follows that branch under the [release contract](../../../docs/release-automation.md).
+
+Before rollout, verify three caught-up members in the same Raft set, replication two and positive archived LSNs for all
+24 partitions. Argo replaces one retained StatefulSet member at a time. Verify the promoted digest, each replacement's
+membership, distributed dashboard queries, consecutive Bayn ticks with fresh exact reconciliation, both Bayn status
+replicas, and resolution of the existing alerts. An empty query, a healthy Application or a build alone is insufficient.
+Use the prior verified Kargo Freight for a targeted image rollback. Configuration recovery is a reviewed Git revert
+and a normal new image promotion; preserve node identities and all retained data.
 
 The singleton layer includes a fail-closed PreSync rollback guard. If a later HA layer is reverted after replication
 was raised, it performs Restate's documented shrink sequence while all three pods still exist and only permits the
@@ -186,7 +212,7 @@ fully qualified `ts.net` URL for TLS validation; the certificate is provisioned 
 
 ## Post-sync verification
 
-After Argo reconciles this app from `main`, verify the core application and generated Tailscale resources:
+After Argo reconciles this app from `kargo/restate`, verify the core application and generated Tailscale resources:
 
 ```sh
 kubectl get application -n argocd restate -o wide

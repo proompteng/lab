@@ -70,3 +70,6 @@ spec:
     - stageSelector:
         name: bayn
       autoPromotionEnabled: true
+    - stageSelector:
+        name: restate
+      autoPromotionEnabled: true
