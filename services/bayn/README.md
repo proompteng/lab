@@ -86,8 +86,11 @@ Once durable completion evidence is verified, the cycle may settle its restricte
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
 The existing activation path then verifies the grant before publishing the next execution driver. This transition
-does not require a worker restart. An untouched, unbound future cycle can retain its plan even if an older worker
-created it after the restriction; its decision and intent history must still be empty.
+does not require a worker restart. An untouched, unbound cycle retains its plan until the session's entry cutoff,
+including restrictions after market open. Its snapshot, decision and intent history must remain empty. Partially
+bound cycles retain settlement handling. Migration 0071 repairs an already authority-blocked, untouched cycle only
+before its cutoff, under the writer fence, with clear matching authority, exact reconciliation, flat positions and
+no unresolved mutations or open orders. Manual restrictions and financial history remain protected.
 
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
@@ -137,12 +140,19 @@ Flat accounts and marks observed at the same instant also require exact equity a
   `executionElapsedMs` from `cancellationElapsedMs`; `bayn.execution.timeout-recovery` and
   `bayn.execution.restriction-persistence` record their own completion durations. A timer that itself ran late remains
   visible in execution elapsed time. These measurements do not claim that an earlier uninstrumented stall had the same cause.
+- A generation authority read gets at most one-sixth of the pass budget, capped at five seconds. Authority reads
+  separately trace pool acquisition and query execution, and reuse the current transaction when one exists.
+  Each reconciliation broker read gets at most one-third of the reconciliation budget, or ten seconds with the
+  current configuration. The aggregate pass budget still bounds the full operation. Startup preflight keeps its own
+  request and retry deadlines. Both broker-history captures remain mandatory.
 - The dedicated Bayn PostgreSQL cluster logs statements exceeding one second and lock waits exceeding one second.
   `log_parameter_max_length=0` and `log_parameter_max_length_on_error=0` suppress parameter values. SQL statement text is
   still present in database logs. For a lock wait, correlate the PostgreSQL process ID, blocker ID, application name,
   and timestamp with Bayn's operation/trace interval; database process IDs are not trace IDs. A current read of
   `pg_stat_activity` with `pg_blocking_pids(pid)` distinguishes a lock from a running query. These diagnostic settings do
   not change replication, durability, volumes, or storage placement.
+- The Bayn namespace log collector includes the CNPG postgres containers. Database pods do not inherit the
+  application's part-of label, so discovery uses the namespace and explicit container names.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash

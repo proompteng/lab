@@ -62,7 +62,22 @@ export const ownGenerationCycleDriver =
     Effect.gen(function* () {
       const rebind = yield* Deferred.make<void>()
       const permit = yield* Semaphore.make(1)
-      const readAuthority = input.readAuthority.pipe(withObservedStage('bayn.execution.generation.read'))
+      const authorityReadBudgetMs = Math.max(1, Math.min(5_000, Math.floor(driver.timeoutMs / 6)))
+      const readAuthority = input.readAuthority.pipe(
+        Effect.timeoutOrElse({
+          duration: authorityReadBudgetMs,
+          orElse: () =>
+            Effect.fail(
+              new OperationalError({
+                component: 'database',
+                operation: 'read-authority',
+                retryable: true,
+                message: `Execution authority read exceeded its ${authorityReadBudgetMs}ms budget`,
+              }),
+            ),
+        }),
+        withObservedStage('bayn.execution.generation.read', { dependency: 'postgresql' }),
+      )
       const disposition = (authority: AuthorityState): 'Continue' | 'Rebind' | 'Hold' => {
         if (authority.generationHash !== input.generationHash) return 'Rebind'
         if (executionGenerationNeedsRecovery(authority)) return input.mode === 'CloseOnly' ? 'Continue' : 'Rebind'
