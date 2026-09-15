@@ -1,4 +1,5 @@
-import { operationTimeoutOrElse } from '../operation-timeout'
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
+import { withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
@@ -144,12 +145,28 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   timeoutMs: number,
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  operationPermit.withPermit(lifecycleAdvance).pipe(
-    operationTimeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* operationCurrentTimeMillis
+    return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
+      operationTimeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        orElse: () =>
+          operationCurrentTimeMillis.pipe(
+            Effect.flatMap((finishedAt) =>
+              Effect.logError('Bayn execution pass deadline exceeded').pipe(
+                Effect.annotateLogs({
+                  service: 'bayn',
+                  timeoutMs,
+                  elapsedMs: Math.max(0, finishedAt - startedAt),
+                  deadlineOverrunMs: Math.max(0, finishedAt - startedAt - timeoutMs),
+                }),
+                Effect.andThen(onTimeout(mutationCyclePassTimeoutError(timeoutMs))),
+              ),
+            ),
+          ),
+      }),
+    )
+  })
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -290,12 +307,14 @@ const makeRecoveryFirstCycleDriverEffect = (
     )
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
-      runCycleAdvance,
+      runCycleAdvance.pipe(withObservedStage('bayn.execution.cycle-pass')),
       cyclePassTimeoutMs,
       observeCycleFailure,
     )
     return {
       advance,
+      timeoutMs: cyclePassTimeoutMs,
+      onTimeout: observeCycleFailure,
       nextDelayMs,
     }
   })

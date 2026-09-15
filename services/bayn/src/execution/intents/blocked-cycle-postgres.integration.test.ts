@@ -238,17 +238,23 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
-  test('settles a restricted generation without destroying its untouched same-plan cycle', async () => {
-    const fixture = makeFixture()
-    const result = await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const cycles = yield* CycleStore
-        const blockedCycles = yield* BlockedCycleIntentStore
-        yield* seedExecutionAuthority(sql, fixture)
-        yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
-        yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
-        yield* sql`
+  test.each(['before', 'after'] as const)(
+    'preserves an untouched same-plan cycle created %s the restriction',
+    async (timing) => {
+      const fixture = makeFixture()
+      if (timing === 'after') {
+        fixture.acquiredAt = instant(Date.parse(fixture.restrictedAt) + 1_000)
+        fixture.cycleActivatedAt = instant(Date.parse(fixture.restrictedAt) + 2_000)
+      }
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const cycles = yield* CycleStore
+          const blockedCycles = yield* BlockedCycleIntentStore
+          yield* seedExecutionAuthority(sql, fixture)
+          yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+          yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+          yield* sql`
           UPDATE authority_state
           SET
             effective = 'OBSERVE',
@@ -258,28 +264,29 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
             updated_at = ${fixture.restrictedAt}
           WHERE singleton
         `
-        const settlement = yield* blockedCycles.settleCurrentTerminalGeneration({
-          accountId,
-          observedAt: fixture.reconciledAt,
-        })
-        return { settlement, cycle: yield* cycles.read(fixture.cycle.identity.cycleId) }
-      }),
-    )
+          const settlement = yield* blockedCycles.settleCurrentTerminalGeneration({
+            accountId,
+            observedAt: fixture.reconciledAt,
+          })
+          return { settlement, cycle: yield* cycles.read(fixture.cycle.identity.cycleId) }
+        }),
+      )
 
-    expect(result.settlement).toEqual({
-      _tag: 'TerminalGenerationSettled',
-      authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
-      preserveCyclePlanHash: planHash,
-      blockedCycleCount: 0,
-      blockedIntentCount: 0,
-      expiredIntentCount: 0,
-      intentCount: 0,
-      terminalIntentCount: 0,
-    })
-    const preserved = Option.getOrThrow(result.cycle)
-    expect(preserved.state).toBe(CycleState.Active)
-    expect(preserved.terminalReason).toBeUndefined()
-  })
+      expect(result.settlement).toEqual({
+        _tag: 'TerminalGenerationSettled',
+        authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+        preserveCyclePlanHash: planHash,
+        blockedCycleCount: 0,
+        blockedIntentCount: 0,
+        expiredIntentCount: 0,
+        intentCount: 0,
+        terminalIntentCount: 0,
+      })
+      const preserved = Option.getOrThrow(result.cycle)
+      expect(preserved.state).toBe(CycleState.Active)
+      expect(preserved.terminalReason).toBeUndefined()
+    },
+  )
 
   test('repairs one clear, flat, reconciled cycle that was blocked by authority before its window', async () => {
     const fixture = makeFixture()
