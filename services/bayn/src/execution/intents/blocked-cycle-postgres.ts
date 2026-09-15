@@ -265,7 +265,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND cycle.state IN ('PENDING', 'ACTIVE')
             AND cycle.snapshot_id IS NULL
             AND cycle.decision_hash IS NULL
-            AND cycle.updated_at <= generation.restricted_at
+            AND cycle.updated_at <= ${input.observedAt}::timestamptz
             AND ${input.observedAt}::timestamptz < cycle.submission_open_at
             AND NOT EXISTS (
               SELECT 1

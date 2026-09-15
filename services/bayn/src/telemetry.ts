@@ -1,6 +1,7 @@
 import { NodeHttpClient } from '@effect/platform-node'
-import { Config, Effect, Layer, Logger, Option } from 'effect'
+import { Cause, Config, Effect, Exit, Layer, Logger, Option } from 'effect'
 import { OtlpSerialization, OtlpTracer } from 'effect/unstable/observability'
+import { operationCurrentTimeMillis } from './operation-timeout'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -133,3 +134,28 @@ export const withObservedSpan =
       name,
       attributes === undefined ? undefined : { attributes },
     )
+
+export const withObservedStage =
+  (stage: string) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.gen(function* () {
+      const startedAt = yield* operationCurrentTimeMillis
+      return yield* effect.pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : operationCurrentTimeMillis.pipe(
+                Effect.flatMap((finishedAt) =>
+                  Effect.logWarning('Bayn execution stage did not complete').pipe(
+                    Effect.annotateLogs({
+                      service: 'bayn',
+                      stage,
+                      elapsedMs: Math.max(0, finishedAt - startedAt),
+                      outcome: exit.cause.reasons.some(Cause.isInterruptReason) ? 'interrupted' : 'failed',
+                    }),
+                  ),
+                ),
+              ),
+        ),
+      )
+    }).pipe(withObservedSpan(stage))
