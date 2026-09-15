@@ -29,6 +29,15 @@ import { canonicalHashV1 } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
+import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
+import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
+import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import {
+  advanceHistoricalMarketCursor,
+  compareArrivalPositions,
+  arrivalPosition,
+  type HistoricalMarketCursor,
+} from '../market-data/streaming/historical'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
@@ -58,7 +67,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
-durableTest.each(['fill', 'recovery'] as const)(
+durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
   'production cycle and durable accounting: %s',
   async (scenario) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
@@ -71,7 +80,36 @@ durableTest.each(['fill', 'recovery'] as const)(
     )
       throw new Error('Replay acceptance requires isolated local test databases')
     const fixture = simulationFixture()
+    const closeAtMs = Date.parse('2026-09-04T19:59:02Z')
+    const closeQuery = {
+      ...fixture.query,
+      purpose: IntradaySnapshotPurpose.Liquidation,
+      rangeStartAt: '2026-09-04T19:58:00.000Z',
+      rangeEndAt: '2026-09-04T19:59:00.000Z',
+      observedAt: utcInstantFromEpochMillis(closeAtMs),
+    }
+    const closeArrivals = historicalRawArrivals(
+      makeIntradayMomentumTestSnapshot(
+        fixture.protocol,
+        { ...closeQuery, archiveWatermarks: [] },
+        { AAPL: 0.02, AMZN: 0.01 },
+      ),
+      closeAtMs,
+    )
+      .map((arrival) => ({
+        ...arrival,
+        record: { ...arrival.record, offset: String(BigInt(arrival.record.offset) + 10000n) },
+      }))
+      .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
     const runId = canonicalHashV1({ attempt: randomUUID() })
+    const source = {
+      ...fixture.source,
+      runId,
+      sourceManifestHash: canonicalHashV1({
+        ...fixture.input,
+        arrivals: { ...fixture.input.arrivals, events: [...fixture.input.arrivals.events, ...closeArrivals] },
+      }),
+    }
     const accountId = `replay-${runId}`
     const config: RuntimeConfig = {
       ...baseConfig,
@@ -110,9 +148,9 @@ durableTest.each(['fill', 'recovery'] as const)(
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
-        const clock = yield* makeSimulatedExecutionClock(runId, fixture.source.sourceManifestHash)
+        const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash)
         const wrongAccount = yield* Effect.exit(
-          sql`INSERT INTO simulated_execution_clocks VALUES ('paper-account-1', ${fixture.source.sourceManifestHash}, clock_timestamp())`,
+          sql`INSERT INTO simulated_execution_clocks VALUES ('paper-account-1', ${source.sourceManifestHash}, clock_timestamp())`,
         )
         const missingClock = yield* Effect.exit(sql`SELECT execution_account_now(${'replay-' + '0'.repeat(64)})`)
         const rewind = yield* Effect.exit(clock.advanceTo(utcInstantFromEpochMillis(initialMs - 1)))
@@ -125,15 +163,15 @@ durableTest.each(['fill', 'recovery'] as const)(
         for (const rejected of [wrongAccount, missingClock, rewind, wrongSource, deletedClock, truncatedClock])
           expect(rejected._tag).toBe('Failure')
         expect(wallClock[0]?.['current']).toBe(true)
-        const cursor = {
+        let cursor: HistoricalMarketCursor = {
           ...fixture.cursor,
-          source: { ...fixture.source, runId },
+          source,
           runId,
           projection: { ...fixture.cursor.projection, epoch: `historical-${runId}` },
         }
         const broker = yield* makeReplayBroker({
           runId,
-          sourceManifestHash: fixture.source.sourceManifestHash,
+          sourceManifestHash: source.sourceManifestHash,
           openingCashMicros: '100000000000',
           protocol: fixture.protocol,
           assumptions: {
@@ -187,8 +225,8 @@ durableTest.each(['fill', 'recovery'] as const)(
               ),
             },
           },
-          source: { ...fixture.source, runId },
-          cursor: Effect.succeed(cursor),
+          source,
+          cursor: Effect.sync(() => cursor),
           clock,
           recordPass: (pass: Parameters<import('../app').RecordAutonomousCyclePass>[0]) =>
             Ref.update(passes, (values) => [...values, pass]),
@@ -197,7 +235,7 @@ durableTest.each(['fill', 'recovery'] as const)(
           reconciliationPassTimeoutMs: 1000,
         }
         const runtime = yield* makeReplayExecutionRuntime(runtimeInput)
-        if (scenario === 'recovery') {
+        if (scenario !== 'fill') {
           const advanceBy = (ms: number) =>
             Effect.gen(function* () {
               const next = (yield* Clock.currentTimeMillis) + ms
@@ -331,14 +369,15 @@ durableTest.each(['fill', 'recovery'] as const)(
             effective: Authority.Observe,
             kill: KillState.Active,
           })
+          expect((yield* broker.snapshot).fills).toHaveLength(scenario === 'recovery-filled' ? 1 : 0)
           const recovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
           const concurrentRecovery = yield* openOwner(runtime.authorityGenerationHash, 'CloseOnly')
           let lastRecovery
           for (let attempt = 0; attempt < 20 && recovery.owner.pollUnsafe() === undefined; attempt++) {
-            // This fixture's IOC expires unfilled. Its cycle remains open until the captured session close.
-            yield* advanceBy(
-              attempt === 3 ? Date.parse('2026-09-04T19:59:00Z') - (yield* Clock.currentTimeMillis) : 1000,
-            )
+            yield* advanceBy(attempt === 3 ? closeAtMs - (yield* Clock.currentTimeMillis) : 1000)
+            if (attempt === 3)
+              for (const arrival of closeArrivals)
+                cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
             lastRecovery = yield* Effect.all([recovery.advance, concurrentRecovery.advance], { concurrency: 2 }).pipe(
               Effect.provideService(OperationDeadlineClock, liveClock),
             )
@@ -407,7 +446,12 @@ durableTest.each(['fill', 'recovery'] as const)(
           const counts = yield* sql<
             Record<string, unknown>
           >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
-          expect(counts).toEqual([{ intents: 1, fills: 0, transactions: 0 }])
+          expect(counts).toEqual([
+            scenario === 'recovery-filled'
+              ? { intents: 2, fills: 2, transactions: 2 }
+              : { intents: 1, fills: 0, transactions: 0 },
+          ])
+          expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
           return { _tag: 'Recovery' as const }
         }
         yield* clock.advanceTo(utcInstantFromEpochMillis(initialMs + 1))
