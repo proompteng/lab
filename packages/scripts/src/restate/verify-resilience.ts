@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 
@@ -79,8 +79,8 @@ const ctl = (node: string, ...args: string[]) =>
     'http://127.0.0.1:5122',
     ...args,
   )
-const metadata = (node: string) =>
-  ctl(node, 'metadata-server', 'list-servers')
+const metadata = (node: string) => {
+  const rows = ctl(node, 'metadata-server', 'list-servers')
     .split('\n')
     .map((line) =>
       line
@@ -89,6 +89,12 @@ const metadata = (node: string) =>
         .split(/\s+/),
     )
     .filter((row) => /^N[123]$/.test(row[0] ?? '') && row[1] === 'Member')
+  appendFileSync(
+    `${directory}/metadata-samples.jsonl`,
+    JSON.stringify({ at: new Date().toISOString(), node, rows }) + '\n',
+  )
+  return rows
+}
 const leader = (rows: string[][]) => {
   assert(rows.length >= 2)
   const selected = rows[0]?.[3]
@@ -200,6 +206,8 @@ try {
       '2g',
       ...env,
       '--env',
+      'RUST_LOG=info,restate_metadata_server=debug',
+      '--env',
       'RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE=256 MiB',
       '--env',
       'RESTATE_WORKER__INVOKER__MEMORY_LIMIT=128 MiB',
@@ -306,9 +314,10 @@ try {
       elected = leader(metadata(observer))
       return elected.id !== initial.id && elected.term > initial.term
     },
-    100_000,
+    200_000,
   )
   const detectionMs = Date.now() - failedAt
+  record({ phase: 'replacement-observed', detectionMs, elected })
   assert(detectionMs < 100_000)
   await until(
     'gossip confirmation of the failed peer',
