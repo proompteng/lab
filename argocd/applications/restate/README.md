@@ -90,7 +90,7 @@ The liveness settings are coordinated:
 
 | Setting | Value | Purpose |
 | --- | --- | --- |
-| Metadata election | 450 ticks at 100ms | Base election deadline 45s; Raft randomizes elections over 45–90s |
+| Metadata election | 450 ticks at 100ms | Base election deadline 45s; Raft randomizes each election attempt over 45–90s |
 | Gossip failure | 450 ticks at 100ms | Avoid declaring a peer dead during the tested 38s interruption |
 | Gossip loneliness | 600 ticks at 100ms | Allow 60s before a node considers itself isolated |
 | Gossip message age | 5s | Accept the tested 3s one-way message delay |
@@ -109,7 +109,10 @@ cluster with the manifest's settings and two active partition processors. It tes
 directions, a 38s whole-process pause, and actual leader loss. Delays must preserve metadata leadership, avoid metadata
 transport timeouts, and avoid false gossip death transitions. The fixture restarts its isolated proxy to clear latency
 without waiting for Toxiproxy's live-stream removal to drain. Actual loss must elect a replacement within 100s, produce
-a gossip death observation for the lost peer, and restore queries. Containers and their disposable volumes are removed afterward.
+a gossip death observation for the lost peer, and restore queries. Status requests use a 1s deadline after node loss so
+waiting for the dead member does not delay the surviving members' observations. Artifacts retain Raft logs and metadata
+samples with request start and end times. Observation can continue to 200s to record a late election, which still fails
+the 100s acceptance check. Containers and their disposable volumes are removed afterward.
 Never point this fixture at production or run its fault injection against a live member.
 
 The `Restate images` workflow tests the metadata regression and runtime on both native architectures. PR runs publish

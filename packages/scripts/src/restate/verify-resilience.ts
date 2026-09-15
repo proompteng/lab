@@ -65,7 +65,7 @@ const settings = manifest.spec.template.spec.containers[0].env.filter((entry: { 
 ) as { name: string; value: string }[]
 assert.equal(settings.length, selectedSettings.size)
 const env = settings.flatMap(({ name, value }) => ['--env', `${name}=${value}`])
-const ctl = (node: string, ...args: string[]) =>
+const ctlRequest = (node: string, requestTimeoutMs: number, ...args: string[]) =>
   docker(
     'exec',
     node,
@@ -74,13 +74,15 @@ const ctl = (node: string, ...args: string[]) =>
     '--connect-timeout',
     '1000',
     '--request-timeout',
-    '12000',
+    String(requestTimeoutMs),
     '--address',
     'http://127.0.0.1:5122',
     ...args,
   )
-const metadata = (node: string) => {
-  const rows = ctl(node, 'metadata-server', 'list-servers')
+const ctl = (node: string, ...args: string[]) => ctlRequest(node, 12_000, ...args)
+const metadata = (node: string, requestTimeoutMs = 12_000) => {
+  const startedAt = new Date().toISOString()
+  const rows = ctlRequest(node, requestTimeoutMs, 'metadata-server', 'list-servers')
     .split('\n')
     .map((line) =>
       line
@@ -91,7 +93,7 @@ const metadata = (node: string) => {
     .filter((row) => /^N[123]$/.test(row[0] ?? '') && row[1] === 'Member')
   appendFileSync(
     `${directory}/metadata-samples.jsonl`,
-    JSON.stringify({ at: new Date().toISOString(), node, rows }) + '\n',
+    JSON.stringify({ startedAt, at: new Date().toISOString(), requestTimeoutMs, node, rows }) + '\n',
   )
   return rows
 }
@@ -311,7 +313,7 @@ try {
   await until(
     'replacement leader after actual node loss',
     () => {
-      elected = leader(metadata(observer))
+      elected = leader(metadata(observer, 1000))
       return elected.id !== initial.id && elected.term > initial.term
     },
     200_000,
