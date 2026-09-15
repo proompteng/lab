@@ -232,7 +232,7 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
             Ref.update(passes, (values) => [...values, pass]),
           pollIntervalMs: 1000,
           reconciliationIntervalMs: 1000,
-          reconciliationPassTimeoutMs: 1000,
+          reconciliationPassTimeoutMs: scenario === 'fill' ? 1000 : config.operationTimeoutMs,
         }
         const runtime = yield* makeReplayExecutionRuntime(runtimeInput)
         if (scenario !== 'fill') {
@@ -309,8 +309,8 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
                   pollIntervalMs: 1000,
-                  reconciliationIntervalMs: 1000,
-                  reconciliationPassTimeoutMs: 1000,
+                  reconciliationIntervalMs: loseResponse ? 1000 : config.operationTimeoutMs,
+                  reconciliationPassTimeoutMs: loseResponse ? 1000 : config.operationTimeoutMs,
                 },
                 execution: {
                   brokerRead: broker.read,
