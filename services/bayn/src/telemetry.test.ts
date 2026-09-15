@@ -2,12 +2,49 @@ import { describe, expect, test } from 'bun:test'
 import { createServer } from 'node:http'
 
 import { NodeHttpClient } from '@effect/platform-node'
-import { ConfigProvider, Effect, Layer, Logger, References } from 'effect'
+import { ConfigProvider, Deferred, Effect, Exit, Fiber, Layer, Logger, References } from 'effect'
+import { TestClock } from 'effect/testing'
 import { OtlpSerialization, OtlpTracer } from 'effect/unstable/observability'
 
-import { decodeOtlpTraceEndpoint, telemetryRuntimeConfig, withObservedSpan } from './telemetry'
+import { decodeOtlpTraceEndpoint, telemetryRuntimeConfig, withObservedSpan, withObservedStage } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test('records the interrupted stage and elapsed time while preserving cancellation and finalization', async () => {
+    const annotations: Readonly<Record<string, unknown>>[] = []
+    let finalized = false
+    const logger = Logger.make(({ fiber }) => {
+      annotations.push(fiber.getRef(References.CurrentLogAnnotations))
+    })
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const operation = yield* Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              finalized = true
+            }),
+          ),
+          withObservedStage('bayn.execution.intent.read'),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(250)
+        yield* Fiber.interrupt(operation)
+        return yield* Fiber.await(operation)
+      }).pipe(Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([logger]))),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(finalized).toBe(true)
+    expect(annotations).toHaveLength(1)
+    expect(annotations[0]).toMatchObject({
+      stage: 'bayn.execution.intent.read',
+      elapsedMs: 250,
+      outcome: 'interrupted',
+    })
+    expect(annotations[0]?.['trace_id']).toMatch(/^[0-9a-f]{32}$/)
+  })
+
   test('loads bounded resource attributes through Effect Config', async () => {
     const options = await Effect.runPromise(
       telemetryRuntimeConfig('bayn-test').pipe(

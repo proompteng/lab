@@ -77,13 +77,17 @@ Durable completion additionally requires the recorded partial fills to match the
 position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
 
 When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
-recovery. It cannot discover new cycles or submit entries. During the existing close window it can cancel outstanding
+recovery. A running worker also checks durable authority before and after each pass and replaces its driver when a
+system restriction appears. It cannot discover new cycles or submit entries while restricted. During the existing close window it can cancel outstanding
 orders belonging to the bound cycle and submit the existing position-reducing close after fresh exact reconciliation.
 The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
 checks still apply. Operator restrictions do not enter this recovery path.
 Once durable completion evidence is verified, the cycle may settle its restricted generation even when it had fills.
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
+The existing activation path then verifies the grant before publishing the next execution driver. This transition
+does not require a worker restart. An untouched, unbound future cycle can retain its plan even if an older worker
+created it after the restriction; its decision and intent history must still be empty.
 
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
@@ -113,9 +117,16 @@ Flat accounts and marks observed at the same instant also require exact equity a
 - Each writer transaction reserves its own PostgreSQL connection and holds the advisory fence through commit or
   rollback. A disconnected transaction fails without replaying its writes; the next pass obtains a usable connection
   and reconciles durable state. Nested fence calls stay in their owning transaction.
-- Recovery recognizes a cycle that completes with verified zero fills after a system failure restricts authority.
+- Recovery recognizes a cycle that completes with verified terminal fills after a system failure restricts authority.
   It still requires fresh exact, flat reconciliation and the normal OBSERVE successor before reactivation. An operator
   kill remains restricted.
+- PostgreSQL statements use a session limit below the smaller operation and reconciliation budget. The current
+  30-second budget gives statements 25 seconds, reserving five seconds for cancellation and rollback. Smaller budgets
+  reserve half their time. The aggregate execution deadline remains unchanged, and an uncertain mutation still
+  requires durable lookup and reconciliation.
+- Interrupted intent commits, reconciliation, intent reads, mutation reads and generation recovery record a named
+  stage, elapsed time and trace identity. Pass timeouts also record elapsed time and deadline overrun. Overrun includes
+  timer scheduling and cleanup time; it does not by itself identify the stalled dependency.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash

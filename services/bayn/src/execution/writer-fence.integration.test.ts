@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Schema } from 'effect'
+import { isSqlError } from 'effect/unstable/sql/SqlError'
 
 import { PostgresClientLive } from '../db/postgres-client'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -47,6 +48,40 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
     await runtime?.dispose()
     await contender?.dispose()
   })
+
+  test('the server cancels stalled SQL before the pass deadline and rolls back its writer transaction', async () => {
+    const exit = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        return yield* Effect.exit(
+          fence
+            .transaction(
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO writer_fence_test VALUES (1)`
+                yield* sql`SELECT pg_sleep(8)`
+              }),
+            )
+            .pipe(Effect.timeout(config.operationTimeoutMs)),
+        )
+      }),
+    )
+    const reasons = Exit.isFailure(exit)
+      ? exit.cause.reasons.flatMap((reason) =>
+          Cause.isFailReason(reason) && isSqlError(reason.error) ? [reason.error.reason._tag] : [],
+        )
+      : []
+    expect(reasons).toEqual(['StatementTimeoutError'])
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        yield* fence.transaction(sql`INSERT INTO writer_fence_test VALUES (2)`)
+        return yield* sql`SELECT id FROM writer_fence_test ORDER BY id`
+      }),
+    )
+    expect(rows).toEqual([{ id: 2 }])
+  }, 15_000)
 
   test('a disconnected transaction fails once and the same fence can commit the next transaction', async () => {
     const started = await Effect.runPromise(Deferred.make<number>())
