@@ -240,12 +240,13 @@ test('close-only recovery allows only close submissions strictly before the dead
   ).toBe(false)
 })
 
-test('preserves a restricted unbound cycle until its submission window opens', () => {
+test('preserves a restricted unbound cycle through its submission window', () => {
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'RecoveryOnly',
       observedAt: '2020-05-01T09:59:59.000Z',
       submissionOpenAt: '2020-05-01T10:00:00.000Z',
+      submissionCutoffAt: '2020-05-01T20:00:00.000Z',
     }),
   ).toBeUndefined()
   expect(
@@ -253,19 +254,29 @@ test('preserves a restricted unbound cycle until its submission window opens', (
       capability: 'RecoveryOnly',
       observedAt: '2020-05-01T10:00:00.000Z',
       submissionOpenAt: '2020-05-01T10:00:00.000Z',
+      submissionCutoffAt: '2020-05-01T20:00:00.000Z',
     }),
-  ).toBe(CycleTerminalReason.Authority)
+  ).toBeUndefined()
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'Mutation',
       observedAt: '2020-05-01T10:00:00.000Z',
       submissionOpenAt: '2020-05-01T10:00:00.000Z',
+      submissionCutoffAt: '2020-05-01T20:00:00.000Z',
     }),
   ).toBeUndefined()
+  expect(
+    decideUnboundExecutionCycleTerminalization({
+      capability: 'RecoveryOnly',
+      observedAt: '2020-05-01T20:00:00.000Z',
+      submissionOpenAt: '2020-05-01T10:00:00.000Z',
+      submissionCutoffAt: '2020-05-01T20:00:00.000Z',
+    }),
+  ).toBe(CycleTerminalReason.Authority)
 })
 
 test.each(['RecoveryOnly', 'CloseOnly'] as const)(
-  '%s startup terminalizes its unbound cycle without discovering a replacement',
+  '%s startup preserves its open unbound cycle without discovering a replacement',
   async (executionMode) => {
     const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
     const terminalCycle = Effect.runSync(
@@ -342,13 +353,9 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
       ),
     )
 
-    expect(advances.blocked.result).toMatchObject({
-      outcome: 'RECOVERED',
-      action: 'BLOCKED',
-      cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.Authority },
-    })
+    expect(advances.blocked.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
     expect(advances.waiting.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
-    expect(blockCount).toBe(1)
+    expect(blockCount).toBe(0)
   },
 )
 

@@ -305,7 +305,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
-  test('a later read can rebuild after bounded connection failure and cooldown, without overlapping clients', async () => {
+  test('rebuilds after bounded connection failure and cooldown without a read', async () => {
     let attempts = 0
     let recovered = false
     const transport = new FakeTransport()
@@ -319,12 +319,10 @@ describe('Kafka bootstrap and scoped consumption', () => {
         yield* TestClock.adjust('5 seconds')
         expect(attempts).toBe(3)
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
-        yield* TestClock.adjust('31 seconds')
-        expect(attempts).toBe(3)
         recovered = true
-        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
-        yield* TestClock.adjust('2 seconds')
+        yield* TestClock.adjust('31 seconds')
         expect(attempts).toBe(4)
+        expect((yield* projection.status).ready).toBe(true)
         expect((yield* projection.read).projection.sequence).toBe(0)
       }),
     )
