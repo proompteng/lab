@@ -122,10 +122,12 @@ Flat accounts and marks observed at the same instant also require exact equity a
   kill remains restricted.
 - PostgreSQL statements use a session limit below the smaller operation and reconciliation budget. The current
   30-second budget gives statements 25 seconds, reserving five seconds for cancellation and rollback. Smaller budgets
-  reserve half their time. The aggregate execution deadline remains unchanged, and an uncertain mutation still
-  requires durable lookup and reconciliation.
-- Connection acquisition is cancellable before a writer transaction starts, including when both pool connections are
-  occupied. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
+  reserve half their time. The client closes a connection with no network activity halfway through that remaining
+  allowance (27.5 seconds for the current budget), so a lost response cannot leave transaction cleanup waiting forever.
+  The aggregate execution deadline remains unchanged, and an uncertain mutation still requires durable lookup and reconciliation.
+- Connection acquisition and transaction startup are cancellable, including when both pool connections are occupied
+  or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
+  and writer permit. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
   cancellation invalidates the transport and the next request creates its replacement without replaying a mutation.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/

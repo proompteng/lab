@@ -120,17 +120,19 @@ const acquire = Effect.gen(function* () {
                 ),
               )
               activeConnection = connection
-              yield* connection.executeUnprepared('BEGIN', [], undefined).pipe(
-                Effect.mapError((cause) => unavailable('transaction', cause)),
-                withObservedStage('bayn.postgres.begin', { dependency: 'postgresql' }),
-              )
               const exit = yield* Effect.exit(
-                acquireTransactionLease(connection, operation).pipe(
-                  Effect.andThen(checkHeld(connection, operation)),
-                  Effect.andThen(restore(effect)),
-                  Effect.provideService(sql.transactionService, [connection, 0]),
+                restore(
+                  connection.executeUnprepared('BEGIN', [], undefined).pipe(
+                    Effect.mapError((cause) => unavailable('transaction', cause)),
+                    withObservedStage('bayn.postgres.begin', { dependency: 'postgresql' }),
+                    Effect.andThen(acquireTransactionLease(connection, operation)),
+                    Effect.andThen(checkHeld(connection, operation)),
+                    Effect.andThen(effect),
+                    Effect.provideService(sql.transactionService, [connection, 0]),
+                  ),
                 ),
               )
+              // BEGIN can succeed before its acknowledgment is lost. Roll back interrupted startup too.
               const finalized = yield* Effect.exit(
                 connection.executeUnprepared(Exit.isSuccess(exit) ? 'COMMIT' : 'ROLLBACK', [], undefined).pipe(
                   Effect.mapError((cause) => unavailable('transaction', cause)),
