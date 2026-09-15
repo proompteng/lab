@@ -71,6 +71,7 @@ jobs:
           target: test
           platforms: linux/${{ matrix.architecture }}
           load: true
+          provenance: false
           tags: restate-proof:${{ github.sha }}
           cache-from: type=gha,scope=restate-test-${{ matrix.architecture }}
           cache-to: type=gha,mode=max,scope=restate-test-${{ matrix.architecture }}
@@ -88,6 +89,7 @@ jobs:
           context: services/restate
           platforms: linux/${{ matrix.architecture }}
           load: true
+          provenance: false
           tags: ${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -137,7 +139,7 @@ jobs:
           source_timestamp="$(git show -s --format=%cI HEAD)"
           for architecture in amd64 arm64; do
             reference="${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${architecture}"
-            crane config "$reference" | jq -e --arg sha "$GITHUB_SHA" --arg time "$source_timestamp" \
+            crane config --platform "linux/${architecture}" "$reference" | jq -e --arg sha "$GITHUB_SHA" --arg time "$source_timestamp" \
               --arg arch "$architecture" \
               '.architecture == $arch and .config.Labels["org.opencontainers.image.revision"] == $sha and
                .config.Labels["org.opencontainers.image.created"] == $time' >/dev/null
