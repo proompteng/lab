@@ -95,6 +95,7 @@ The liveness settings are coordinated:
 | Gossip loneliness | 600 ticks at 100ms | Allow 60s before a node considers itself isolated |
 | Gossip message age | 5s | Accept the tested 3s one-way message delay |
 | Peer connect, handshake and HTTP/2 keep-alive timeout | 10s each | Keep transport deadlines above the tested 6s round trip |
+| Metadata-client connect and keep-alive timeout | 10s each | Apply the same envelope to the separate metadata-client transport |
 
 Metadata heartbeats remain two ticks apart. A lost leader takes longer to replace; Bayn may restrict itself at its
 existing 30s pass deadline and must use its normal settlement/recovery process. Disk latency, volumes, replication,
@@ -104,9 +105,11 @@ envelope can still cause failover. See the pinned [Raft loop](https://github.com
 [networking options](https://github.com/restatedev/restate/blob/v1.7.9/crates/types/src/config/networking.rs).
 
 `bun packages/scripts/src/restate/verify-resilience.ts <image> <evidence-directory>` creates an isolated three-node Docker
-cluster with the manifest's settings. It tests distributed SQL, 3s delays in both directions, a 38s whole-process pause,
-and actual leader loss. Delays must preserve metadata leadership and avoid false peer-death declarations; actual loss
-must elect a replacement within 100s and restore queries. Containers and their disposable volumes are removed afterward.
+cluster with the manifest's settings and two active partition processors. It tests distributed SQL, 3s delays in both
+directions, a 38s whole-process pause, and actual leader loss. Delays must preserve metadata leadership, avoid metadata
+transport timeouts, and avoid false gossip death transitions. The fixture restarts its isolated proxy to clear latency
+without waiting for Toxiproxy's live-stream removal to drain. Actual loss must elect a replacement within 100s, produce
+a gossip death observation for the lost peer, and restore queries. Containers and their disposable volumes are removed afterward.
 Never point this fixture at production or run its fault injection against a live member.
 
 The `Restate images` workflow tests the metadata regression and runtime on both native architectures. PR runs publish

@@ -55,6 +55,8 @@ const selectedSettings = new Set([
   'RESTATE_NETWORKING__CONNECT_TIMEOUT',
   'RESTATE_NETWORKING__HANDSHAKE_TIMEOUT',
   'RESTATE_NETWORKING__HTTP2_KEEP_ALIVE_TIMEOUT',
+  'RESTATE_METADATA_CLIENT__CONNECT_TIMEOUT',
+  'RESTATE_METADATA_CLIENT__KEEP_ALIVE_TIMEOUT',
   'RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND',
   'RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND',
 ])
@@ -115,6 +117,8 @@ const query = (node: string) => {
   assert(!result.includes('No such scanner'))
   const decoded = JSON.parse(result)
   assert(Array.isArray(decoded.rows), `Unexpected query response: ${result}`)
+  assert.equal(decoded.rows.length, 1)
+  assert(Number.isSafeInteger(decoded.rows[0]?.invocations) && decoded.rows[0].invocations >= 0)
 }
 const toxic = (node: string, method: string, path: string, body?: unknown) =>
   docker(
@@ -133,10 +137,12 @@ const toxic = (node: string, method: string, path: string, body?: unknown) =>
     ...(body === undefined ? [] : ['--data', JSON.stringify(body)]),
     `http://${proxy}:8474${path}`,
   )
+const gossipDeaths = (logs: string) =>
+  [...logs.matchAll(/(N\d+):\d+ transitioned from .*? to Dead \(gossip-age=\d+\)/g)].map((match) => match[1])
 const assertNoFalseDeaths = (since: string) => {
   for (const node of nodes) {
     const logs = readLogs(node, since)
-    assert(!/declaring.*dead|peer.*declared.*dead/i.test(logs), `False peer death in ${node}`)
+    assert.deepEqual(gossipDeaths(logs), [], `False peer death in ${node}`)
   }
 }
 
@@ -151,6 +157,7 @@ try {
   assert.deepEqual(effective['metadata-server']['raft-election-tick'], 450)
   for (const key of ['connect-timeout', 'handshake-timeout', 'http2-keep-alive-timeout'])
     assert.equal(effective.networking[key], '10s')
+  for (const key of ['connect-timeout', 'keep-alive-timeout']) assert.equal(effective['metadata-client'][key], '10s')
   assert.equal(effective['log-server']['always-commit-in-background'], true)
   assert.equal(effective.worker.storage['always-commit-in-background'], true)
   docker('network', 'create', '--label', 'lab.restate-proof=true', prefix)
@@ -230,6 +237,18 @@ try {
     return rows.length === 3 && rows.every((row) => row[4] === '[N1,N2,N3]')
   })
   ctl(first, 'config', 'set', '--replication', '2')
+  await until('two active partition processors', () => {
+    const rows = ctl(first, 'partitions', 'list')
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/))
+      .filter((row) => row[0] === '0')
+    return (
+      rows.length === 2 &&
+      rows.every((row) => row[3] === 'Active' && row[8] === '0') &&
+      rows.filter((row) => row[2] === 'Leader').length === 1 &&
+      rows[0]?.[4] === rows[1]?.[4]
+    )
+  })
   await until('distributed SQL', () => {
     query(first)
     return true
@@ -249,8 +268,18 @@ try {
   await sleep(15_000)
   assert.deepEqual(leader(metadata(observer)), initial)
   query(observer)
-  for (const stream of ['upstream', 'downstream'])
-    toxic(observer, 'DELETE', `/proxies/${initial.node}/toxics/${stream}`)
+  assertNoFalseDeaths(sinceDelay)
+  for (const node of nodes)
+    assert(
+      !/http2 error|keep[- ]alive.*timed out/i.test(readLogs(node, sinceDelay)),
+      `Metadata transport timed out in ${node}`,
+    )
+  // Toxiproxy removal can block draining a live HTTP/2 stream. Restart only this fixture's proxy to clear the fault.
+  docker('restart', '--time', '1', proxy)
+  const cleared = JSON.parse(toxic(observer, 'GET', `/proxies/${initial.node}`))
+  assert.equal(cleared.enabled, true)
+  assert.deepEqual(cleared.toxics, [])
+  record({ phase: 'delay-cleared', method: 'restart-isolated-proxy' })
   await sleep(3000)
   assertNoFalseDeaths(sinceDelay)
   record({ phase: 'messages-recovered', ...leader(metadata(observer)) })
@@ -281,11 +310,22 @@ try {
   )
   const detectionMs = Date.now() - failedAt
   assert(detectionMs < 100_000)
+  await until(
+    'gossip confirmation of the failed peer',
+    () =>
+      nodes
+        .filter((node) => node !== initial.node)
+        .some((node) => gossipDeaths(readLogs(node, new Date(failedAt).toISOString())).includes(initial.id)),
+    Math.max(1, 100_000 - (Date.now() - failedAt)),
+  )
   await until('SQL after node loss', () => {
     query(observer)
     return true
   })
   record({ phase: 'passed', detectionMs, elected })
+} catch (error) {
+  record({ phase: 'failed', message: error instanceof Error ? error.message : String(error) })
+  throw error
 } finally {
   for (const node of created) {
     try {

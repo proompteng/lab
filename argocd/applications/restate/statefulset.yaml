@@ -219,6 +219,10 @@ spec:
               value: 10s
             - name: RESTATE_NETWORKING__HTTP2_KEEP_ALIVE_TIMEOUT
               value: 10s
+            - name: RESTATE_METADATA_CLIENT__CONNECT_TIMEOUT
+              value: 10s
+            - name: RESTATE_METADATA_CLIENT__KEEP_ALIVE_TIMEOUT
+              value: 10s
             - name: RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND
               value: "true"
             - name: RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND

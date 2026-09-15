@@ -77,6 +77,8 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(env.get('RESTATE_NETWORKING__CONNECT_TIMEOUT')).toBe('10s')
   expect(env.get('RESTATE_NETWORKING__HANDSHAKE_TIMEOUT')).toBe('10s')
   expect(env.get('RESTATE_NETWORKING__HTTP2_KEEP_ALIVE_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_METADATA_CLIENT__CONNECT_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_METADATA_CLIENT__KEEP_ALIVE_TIMEOUT')).toBe('10s')
   expect(env.get('RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(env.get('RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
