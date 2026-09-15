@@ -54,6 +54,8 @@ export type RecoveryFirstCycleAdvance = {
 
 export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
+  readonly timeoutMs: number
+  readonly onTimeout: (error: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
   /** Restate must schedule the next production command no later than either the cycle or reconciliation cadence. */
   readonly nextDelayMs: number
 }

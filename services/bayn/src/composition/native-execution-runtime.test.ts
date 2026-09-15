@@ -32,6 +32,7 @@ import {
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { RecoveryFirstRuntime } from '../observe-composition'
+import type { CycleRunnerError } from '../cycle/runner'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
@@ -111,6 +112,8 @@ const command: AdvanceExecutionCommand = {
 }
 
 const driver = {
+  timeoutMs: 30_000,
+  onTimeout: (error: CycleRunnerError) => Effect.fail(error),
   advance: Effect.succeed({
     observation: {
       result: 'SUCCESS' as const,
@@ -128,6 +131,8 @@ const windowClosedObservation = {
 }
 
 const windowClosedDriver = {
+  timeoutMs: 30_000,
+  onTimeout: (error: CycleRunnerError) => Effect.fail(error),
   advance: Effect.succeed({ observation: windowClosedObservation }),
   nextDelayMs: 30_000,
 }
@@ -494,6 +499,7 @@ describe('native execution runtime', () => {
       }),
     )
     const capturedDriver = {
+      ...driver,
       ...driver,
       advance: Effect.sync(() => {
         advances += 1

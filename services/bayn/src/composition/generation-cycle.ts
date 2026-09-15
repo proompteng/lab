@@ -12,6 +12,7 @@ import { OperationalError } from '../errors'
 import type { RecoveryFirstCycleAdvance, RecoveryFirstCycleDriverOwner } from '../observe-composition'
 import { currentUtcInstant } from '../time'
 import { withObservedStage } from '../telemetry'
+import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'
 
 export const executionGenerationNeedsRecovery = (authority: AuthorityState): boolean =>
   authority.maximum === Authority.Execution &&
@@ -73,8 +74,10 @@ export const ownGenerationCycleDriver =
           return input.mode === 'Mutation' ? 'Continue' : 'Rebind'
         return 'Hold'
       }
-      const advance = permit
-        .withPermit(
+      const advance = Effect.gen(function* () {
+        let cycleInProgress = false
+        return yield* runRestateAdvanceWithinTimeout(
+          permit,
           Effect.gen(function* () {
             const before = disposition(yield* readAuthority)
             if (before !== 'Continue') {
@@ -93,7 +96,9 @@ export const ownGenerationCycleDriver =
                 },
               } satisfies RecoveryFirstCycleAdvance
             }
+            cycleInProgress = true
             const advanced = yield* driver.advance
+            cycleInProgress = false
             const after = disposition(yield* readAuthority)
             if (after === 'Rebind') yield* Deferred.succeed(rebind, undefined)
             if (after !== 'Continue' || input.mode !== 'CloseOnly') return advanced
@@ -101,13 +106,19 @@ export const ownGenerationCycleDriver =
               Effect.succeed(advanced),
               input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
             )
+            if (recovery._tag === 'RolledOver') {
+              yield* Deferred.succeed(rebind, undefined)
+              return advanced
+            }
             const current = yield* readAuthority
             const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, current.generationHash)
             if (step._tag !== 'Waiting') yield* Deferred.succeed(rebind, undefined)
             return advanced
           }),
+          driver.timeoutMs,
+          (error) => (cycleInProgress ? driver.onTimeout(error) : Effect.fail(error)),
         )
-        .pipe(Effect.catch((cause) => (cause instanceof OperationalError ? Effect.die(cause) : Effect.fail(cause))))
+      }).pipe(Effect.catch((cause) => (cause instanceof OperationalError ? Effect.die(cause) : Effect.fail(cause))))
       yield* Effect.raceFirst(
         input.owner({ ...driver, advance }).pipe(Effect.andThen(Effect.never)),
         Deferred.await(rebind),

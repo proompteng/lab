@@ -1,13 +1,16 @@
 import { expect, test } from 'bun:test'
 import { Deferred, Effect, Exit, Fiber, Ref } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
 import type { RecoveryFirstCycleDriver } from '../observe-composition'
 import type { TerminalGenerationRolloverReceipt } from '../blocked-generation-recovery'
+import { CycleRunnerError } from '../cycle/runner'
 import type { AutonomousRuntime } from '../app'
 import { ownGenerationCycleDriver, withGenerationRebinding } from './generation-cycle'
 
 const generationHash = 'a'.repeat(64)
+const deadline = { timeoutMs: 30_000, onTimeout: (error: CycleRunnerError) => Effect.fail(error) }
 const authority: AuthorityState = {
   schemaVersion: 'bayn.paper-authority.v1',
   generationHash,
@@ -35,6 +38,56 @@ const advanced = {
   },
 }
 
+test.each(['authority', 'cycle', 'settlement'] as const)(
+  'the pass deadline includes a stalled %s stage',
+  async (stage) => {
+    let cycleTimeouts = 0
+    let finalized = false
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const published = yield* Deferred.make<RecoveryFirstCycleDriver<never>>()
+        const stalled = Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              finalized = true
+            }),
+          ),
+        )
+        const owner = yield* ownGenerationCycleDriver<never>({
+          generationHash,
+          mode: stage === 'settlement' ? 'CloseOnly' : 'Mutation',
+          readAuthority:
+            stage === 'authority' ? stalled : Effect.succeed(stage === 'settlement' ? restriction : authority),
+          reconcileWhenHeld: Effect.die('not held'),
+          settle: stage === 'settlement' ? stalled : Effect.die('not settling'),
+          owner: (driver) => Deferred.succeed(published, driver).pipe(Effect.andThen(Effect.never)),
+        })({
+          timeoutMs: 100,
+          nextDelayMs: 100,
+          onTimeout: () =>
+            Effect.sync(() => {
+              cycleTimeouts += 1
+              return advanced
+            }),
+          advance: stage === 'cycle' ? stalled : Effect.succeed(advanced),
+        }).pipe(Effect.forkChild({ startImmediately: true }))
+        const driver = yield* Deferred.await(published)
+        const attempt = yield* driver.advance.pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(100)
+        const result = yield* Fiber.await(attempt)
+        yield* Fiber.interrupt(owner)
+        return result
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(Exit.isSuccess(exit)).toBe(stage === 'cycle')
+    expect(cycleTimeouts).toBe(stage === 'cycle' ? 1 : 0)
+    expect(finalized).toBe(true)
+  },
+)
+
 test('a healthy driver hands off when its pass restricts the generation', async () => {
   const completed = await Effect.runPromise(
     Effect.gen(function* () {
@@ -49,6 +102,7 @@ test('a healthy driver hands off when its pass restricts the generation', async 
         owner: (driver) => Deferred.succeed(published, driver).pipe(Effect.andThen(Effect.never)),
       })({
         advance: Ref.set(state, restriction).pipe(Effect.as(advanced)),
+        ...deadline,
         nextDelayMs: 30_000,
       }).pipe(Effect.forkChild({ startImmediately: true }))
       const driver = yield* Deferred.await(published)
@@ -96,7 +150,7 @@ test.each([
         }),
         settle: Effect.die('must not settle changed or operator-restricted authority'),
         owner: (driver) => Deferred.succeed(published, driver).pipe(Effect.andThen(Effect.never)),
-      })({ advance: Effect.die('must not advance the stale driver'), nextDelayMs: 30_000 }).pipe(
+      })({ advance: Effect.die('must not advance the stale driver'), ...deadline, nextDelayMs: 30_000 }).pipe(
         Effect.forkChild({ startImmediately: true }),
       )
       const driver = yield* Deferred.await(published)
@@ -147,6 +201,7 @@ test('close-only recovery waits for settlement and hands off once, including que
           closePasses += 1
           return advanced
         }),
+        ...deadline,
         nextDelayMs: 30_000,
       }).pipe(Effect.forkChild({ startImmediately: true }))
       const driver = yield* Deferred.await(published)
@@ -181,7 +236,7 @@ test('interrupting recovery finalizes the published driver without settling auth
               }),
             ),
           ),
-      })({ advance: Effect.never, nextDelayMs: 30_000 }).pipe(Effect.forkChild({ startImmediately: true }))
+      })({ advance: Effect.never, ...deadline, nextDelayMs: 30_000 }).pipe(Effect.forkChild({ startImmediately: true }))
       yield* Deferred.await(published)
       yield* Fiber.interrupt(owner)
     }),
@@ -247,6 +302,7 @@ test('one runtime runs healthy, restricted, OBSERVE rollover and reactivation dr
             () =>
               Effect.succeed(
                 owner({
+                  ...deadline,
                   nextDelayMs: 30_000,
                   advance: Effect.gen(function* () {
                     transitions.push(mode)

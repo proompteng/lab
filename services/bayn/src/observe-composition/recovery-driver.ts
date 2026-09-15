@@ -313,6 +313,8 @@ const makeRecoveryFirstCycleDriverEffect = (
     )
     return {
       advance,
+      timeoutMs: cyclePassTimeoutMs,
+      onTimeout: observeCycleFailure,
       nextDelayMs,
     }
   })
