@@ -12,3 +12,8 @@ It also runs the upstream metadata storage tests. The injector must report an ac
 
 `docker build services/restate` builds the production server. Release and cluster verification instructions belong in
 the [application runbook](../../argocd/applications/restate/README.md). Never run fault injection against the live cluster.
+
+CI uploads each tested platform image through `packages/scripts/src/shared/docker.ts push`. Transient registry errors,
+including response-header timeouts, get up to three attempts with 15-second and 30-second backoffs. Each attempt uses
+the same preparation tag. Authentication errors and exhausted retries fail the job, so the release index and Kargo
+tag remain gated on both successful platform uploads.
