@@ -210,7 +210,13 @@ class SerializationSchemasTest {
   fun `clickhouse insert batch size is capped to safe ceiling`() {
     assertEquals(1, normalizeClickhouseInsertBatchSize(0))
     assertEquals(64, normalizeClickhouseInsertBatchSize(64))
-    assertEquals(MAX_SAFE_CLICKHOUSE_INSERT_BATCH_SIZE, normalizeClickhouseInsertBatchSize(500))
+    assertEquals(MAX_SAFE_CLICKHOUSE_INSERT_BATCH_SIZE, normalizeClickhouseInsertBatchSize(5_000))
+  }
+
+  @Test
+  fun `equity clickhouse sink honors the deployed thousand-row batch request`() {
+    assertEquals(1_000, normalizeClickhouseInsertBatchSize(1_000))
+    assertEquals(500, normalizeClickhouseInsertBatchSize(500))
   }
 
   @Test

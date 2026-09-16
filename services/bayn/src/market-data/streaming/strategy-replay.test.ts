@@ -1,10 +1,9 @@
-import { compareStreamingShadowSnapshots } from '../../observe-composition/streaming-shadow'
 import { describe, expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 import { IsoDateSchema } from '../../contracts'
 import { canonicalHashV1 } from '../../hash'
 import { makeExecutionCalendarObservation } from '../../cycle/construction'
-import { streamingFixture } from '../../testing/streaming-market-fixture'
+import { streamingFixture, fixtureStreamingReference } from '../../testing/streaming-market-fixture'
 import {
   decideIntradayMomentum,
   verifyIntradayMomentumDecisionEnvelope,
@@ -17,8 +16,8 @@ import { loadIntradaySnapshot, executionMarketDataBinding } from '../../observe-
 import { reconstructBoundIntradaySnapshot } from '../../shadow-decision-contract'
 
 describe('streaming strategy and recorded decision replay', () => {
-  test('uses all seven decision symbols, matches archive signals, and reproduces the exact streaming decision', () => {
-    const { snapshot, rows, archive, protocol } = streamingFixture()
+  test('uses all seven decision symbols and reproduces the exact streaming decision', () => {
+    const { snapshot, rows, protocol } = streamingFixture()
     const session = snapshot.manifest.calendar.sessions[0]
     if (session === undefined) throw new Error('missing fixture session')
     const calendar = Result.getOrThrow(
@@ -35,10 +34,6 @@ describe('streaming strategy and recorded decision replay', () => {
       calendarHash: calendar.executionCalendarHash,
     }
     const streamed = Result.getOrThrow(decideIntradayMomentum({ snapshot, session: boundSession }, protocol))
-    const historical = Result.getOrThrow(decideIntradayMomentum({ snapshot: archive, session: boundSession }, protocol))
-    expect(compareStreamingShadowSnapshots(archive, snapshot).outcome).toBe('decision-match')
-    expect(streamed.signals).toEqual(historical.signals)
-    expect(streamed.benchmark).toEqual(historical.benchmark)
     expect(streamed.selectedSymbols).toEqual(['AAPL'])
     expect(streamed.signals).toHaveLength(6)
     const live = Result.getOrThrow(decideIntradayMomentum({ snapshot, session: boundSession }, protocol))
@@ -58,42 +53,14 @@ describe('streaming strategy and recorded decision replay', () => {
     expect(reconstructBoundIntradaySnapshot(binding, rows)?.manifest).toEqual(snapshot.manifest)
   })
 
-  test('only explicit shadow mode continues archive execution when streaming is unavailable', async () => {
-    const { snapshot, archive, query } = streamingFixture()
-    let archiveLoads = 0
+  test('an unavailable canonical market adapter blocks observation', async () => {
+    const { query } = streamingFixture()
     const market: IntradayMarketDataService = {
       check: Effect.void,
-      captureVersion: () => Effect.succeed(archive.manifest.archiveWatermarks),
-      loadSnapshot: () =>
-        Effect.sync(() => {
-          archiveLoads++
-          return archive
-        }),
-      verifyArchiveSnapshot: () => Effect.succeed(archive),
-      streaming: {
-        shadowOnly: true,
-        loadSnapshot: () => operationalError({ component: 'market-data', operation: 'load', message: 'rebuilding' }),
-        verifyReference: () => Effect.die('unused'),
-      },
+      loadSnapshot: () => operationalError({ component: 'market-data', operation: 'load', message: 'rebuilding' }),
+      verifyReference: fixtureStreamingReference,
     }
-    expect(await Effect.runPromise(loadIntradaySnapshot(market, query))).toBe(archive)
-    expect(archiveLoads).toBe(1)
-    const executing: IntradayMarketDataService = {
-      ...market,
-      streaming: {
-        shadowOnly: false,
-        loadSnapshot: () => operationalError({ component: 'market-data', operation: 'load', message: 'rebuilding' }),
-        verifyReference: () => Effect.die('unused'),
-      },
-    }
-    expect(Result.isFailure(await Effect.runPromise(Effect.result(loadIntradaySnapshot(executing, query))))).toBe(true)
-    expect(archiveLoads).toBe(1)
-    expect(
-      compareStreamingShadowSnapshots(archive, {
-        ...snapshot,
-        manifest: { ...snapshot.manifest, barsContentHash: '0'.repeat(64) },
-      }).outcome,
-    ).toBe('different-input-cut')
+    expect(Result.isFailure(await Effect.runPromise(Effect.result(loadIntradaySnapshot(market, query))))).toBe(true)
   })
 
   test('excludes an unavailable candidate but does not emit a valid observation when every candidate is unavailable', () => {

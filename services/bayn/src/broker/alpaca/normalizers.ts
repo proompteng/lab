@@ -246,6 +246,7 @@ const normalizePositionResultDataFirst = (
   return Result.gen(function* () {
     const quantityMicros = yield* positionMicrosResult(raw.qty, raw.side, 'position quantity')
     const averageEntryPriceMicros = yield* positiveMicrosResult(raw.avg_entry_price, 'average entry price')
+    const costBasisMicros = yield* positionMicrosResult(raw.cost_basis, raw.side, 'position cost basis')
     const marketPriceMicros = yield* positiveMicrosResult(raw.current_price, 'current price')
     const marketValueMicros = yield* positionMicrosResult(raw.market_value, raw.side, 'market value')
     const unrealizedPnlMicros = yield* decimalToMicrosResult(raw.unrealized_pl, true, 'unrealized PnL')
@@ -258,6 +259,7 @@ const normalizePositionResultDataFirst = (
       side: raw.side,
       quantityMicros,
       averageEntryPriceMicros,
+      costBasisMicros,
       marketPriceMicros,
       marketValueMicros,
       unrealizedPnlMicros,

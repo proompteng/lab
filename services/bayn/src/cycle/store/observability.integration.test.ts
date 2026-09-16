@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result, Schema } from 'effect'
+import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
 
 import {
   isIntradayCycleDraft,
@@ -13,6 +14,7 @@ import {
   makeIntradayCycleWindow,
 } from '../index'
 import { PostgresClientLive } from '../../db/postgres-client'
+import { runDatabase } from '../../db/database-error'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
 import { canonicalHashV1 } from '../../hash'
@@ -39,6 +41,90 @@ const config = {
   operationTimeoutMs: 5_000,
   postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
 }
+
+describePostgres('PostgreSQL operation diagnostics', () => {
+  test('identifies a real lock wait and emits its named operation without parameters', async () => {
+    const logs: Readonly<Record<string, unknown>>[] = []
+    const diagnosticUrl = new URL(testUrl)
+    diagnosticUrl.searchParams.set(
+      'options',
+      '-c log_lock_waits=on -c deadlock_timeout=1s -c log_min_duration_statement=1000ms -c log_parameter_max_length=0 -c log_parameter_max_length_on_error=0 -c statement_timeout=5000',
+    )
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const blocker = yield* PgClient.make({
+          url: Redacted.make(diagnosticUrl.toString()),
+          applicationName: 'bayn-diagnostics-holder',
+          maxConnections: 1,
+        })
+        const waiter = yield* PgClient.make({
+          url: Redacted.make(diagnosticUrl.toString()),
+          applicationName: 'bayn-diagnostics-waiter',
+          maxConnections: 1,
+        })
+        const observer = yield* PgClient.make({
+          url: Redacted.make(testUrl),
+          applicationName: 'bayn-diagnostics-observer',
+          maxConnections: 1,
+        })
+        const settings = yield* waiter<
+          Record<string, string>
+        >`SELECT current_setting('log_lock_waits') AS locks, current_setting('log_parameter_max_length') AS parameters, current_setting('log_parameter_max_length_on_error') AS error_parameters`
+        expect(settings[0]).toEqual({ locks: 'on', parameters: '0', error_parameters: '0' })
+        const [{ pid: waiterPid }] = yield* waiter<{ pid: number }>`SELECT pg_backend_pid() AS pid`
+        const acquired = yield* Deferred.make<number>()
+        const release = yield* Deferred.make<void>()
+        const lock = 1643955326
+        const holding = yield* blocker
+          .withTransaction(
+            Effect.gen(function* () {
+              const [{ pid }] = yield* blocker<{
+                pid: number
+              }>`SELECT pg_backend_pid() AS pid, pg_advisory_xact_lock(${lock})`
+              yield* Deferred.succeed(acquired, pid)
+              yield* Deferred.await(release)
+            }),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }))
+        const blockerPid = yield* Deferred.await(acquired)
+        const privateParameter = 'diagnostic-private-parameter'
+        const waiting = yield* runDatabase(
+          'diagnostic-lock-wait',
+          waiter.withTransaction(waiter`SELECT pg_advisory_xact_lock(${lock}), ${privateParameter}::text AS marker`),
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        let observed = false
+        for (let attempt = 0; attempt < 100 && !observed; attempt++) {
+          const rows = yield* observer<{
+            event: string | null
+            blockers: number[]
+          }>`SELECT wait_event_type AS event, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE pid=${waiterPid}`
+          observed = rows[0]?.event === 'Lock' && rows[0].blockers.includes(blockerPid)
+          if (!observed) yield* Effect.sleep('10 millis')
+        }
+        expect(observed).toBe(true)
+        yield* Effect.sleep('1100 millis')
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(holding)
+        yield* Fiber.join(waiting)
+        expect(logs).toContainEqual(
+          expect.objectContaining({
+            operation: 'diagnostic-lock-wait',
+            dependency: 'postgresql',
+            outcome: 'succeeded',
+          }),
+        )
+        expect(JSON.stringify(logs)).not.toContain(privateParameter)
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Logger.layer([Logger.make(({ fiber }) => logs.push(fiber.getRef(References.CurrentLogAnnotations)))]),
+        ),
+        Effect.provide(Reactivity.layer),
+        Effect.timeout('10 seconds'),
+      ),
+    )
+  }, 15000)
+})
 
 const value = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure

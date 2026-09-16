@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
+import { postgresWallClock, type DatabaseClock } from '../clock'
 
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
 import { Journal } from '../../ledger'
@@ -31,16 +32,17 @@ const fenceAuthorityMutation = <A>(
     ),
   )
 
-export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig) =>
+export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig, clock?: DatabaseClock) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
+    const time = clock ?? postgresWallClock(sql)
     const journal = yield* Journal
     const writerFence = yield* WriterFence
     const events = makeBrokerEventInterpreter(sql)
     const accounting = makeAccountingInterpreter(sql, journal, config, events)
     const valuation = makeValuationInterpreter(sql)
-    const reconciliation = makeReconciliation(sql, journal, config)
-    const authorityPostgres = makeAuthorityPostgres(sql)
+    const reconciliation = makeReconciliation(sql, journal, config, time)
+    const authorityPostgres = makeAuthorityPostgres(sql, time)
     const observeAuthority = makeObserveAuthorityInterpreter(sql, authorityPostgres, config.execution.brokerIdentity)
     const capitalGrant = makeCapitalGrantInterpreter(sql, authorityPostgres, config, writerFence)
 
