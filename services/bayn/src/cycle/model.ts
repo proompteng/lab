@@ -218,7 +218,9 @@ const IntradayMomentumCycleIdentityV3MaterialSchema = Schema.Struct({
   executionPolicy: CycleExecutionPolicyV3Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),
 })
 
-export const IntradayCycleEntryAttemptOrdinalSchema = Schema.Literals([1, 2])
+export const IntradayCycleEntryAttemptOrdinalSchema = PositiveIntegerSchema.check(
+  Schema.isLessThanOrEqualTo(2_147_483_647),
+)
 export type IntradayCycleEntryAttemptOrdinal = typeof IntradayCycleEntryAttemptOrdinalSchema.Type
 
 const IntradayMomentumCycleIdentityV4MaterialSchema = Schema.Struct({

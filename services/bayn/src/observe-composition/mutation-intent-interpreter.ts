@@ -188,6 +188,7 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
 
 const validateCurrentMutationExecutionTerms = (
   preparation: MutationPreparation,
+  entryLimitSlippageBps: number,
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
@@ -199,6 +200,7 @@ const validateCurrentMutationExecutionTerms = (
     quantityMicros: BigInt(targetIntent.quantityMicros),
     referencePriceMicros: BigInt(target.referencePriceMicros),
     executionModel: preparation.executionModel,
+    limitSlippageBps: BigInt(entryLimitSlippageBps),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -466,6 +468,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         yield* Effect.fromResult(
           validateCurrentMutationExecutionTerms(
             preparation,
+            document.entryLimitSlippageBps ?? 0,
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
