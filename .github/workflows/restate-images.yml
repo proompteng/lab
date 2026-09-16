@@ -5,6 +5,8 @@ on:
     paths:
       - 'services/restate/**'
       - 'packages/scripts/src/restate/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts'
       - '.github/workflows/restate-images.yml'
       - 'argocd/applications/restate/**'
@@ -16,6 +18,8 @@ on:
     paths:
       - 'services/restate/**'
       - 'packages/scripts/src/restate/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts'
       - '.github/workflows/restate-images.yml'
       - 'argocd/applications/restate/**'
@@ -116,7 +120,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
-        run: docker push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"
+        run: bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

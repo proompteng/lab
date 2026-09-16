@@ -1,14 +1,6 @@
 name: Convex Deploy
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/convex-deploy.yml'
-      - 'packages/backend/convex/**'
-      - 'packages/backend/package.json'
-      - 'bun.lock'
   workflow_dispatch:
 
 permissions:
