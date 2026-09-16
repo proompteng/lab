@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Ref, Result, Scope } from 'effect'
+import { Effect, Layer, Ref, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
@@ -9,16 +9,12 @@ import {
   type AutonomousRuntime,
   type AutonomousRuntimeResolver,
 } from '../app'
-import {
-  advanceRestrictedGenerationRecovery,
-  recognizeRestrictedGenerationRebind,
-  recoverTerminalGenerationToObserve,
-} from '../blocked-generation-recovery'
+import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
 import { readFinalExecutionRiskContext } from '../db/reconciliation'
 import { BrokerAccess } from '../execution/authority'
-import { Authority, KillState, type ResearchCapitalGrantGeneration } from '../execution/contracts'
+import { Authority, type ResearchCapitalGrantGeneration } from '../execution/contracts'
 import {
   type ResearchCapitalActivationRequest,
   type ResearchCapitalBuildContinuation,
@@ -26,17 +22,14 @@ import {
 } from '../execution/configuration'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { OperationalError } from '../errors'
-import {
-  capitalGrantFromLegacyGeneration,
-  capitalGrantKey,
-  isExecutionMandateRecoveryRestriction,
-} from '../execution/mandate'
+import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
 import { runOnce } from '../reconciler'
+import { boundedReconciliationPass } from '../observe-composition/decision-builder'
 import { currentUtcInstant } from '../time'
 import type { RuntimeState } from '../runtime-state'
 import { scopedAcquisition } from '../resource-boundary'
@@ -44,6 +37,7 @@ import { autonomousRuntimeServices, makeAutonomousCycleResources } from './auton
 import { AutonomousRuntimeResourcesLive, applicationDependencies } from './resources'
 import { executionProgramError, observeCycle, observeCycleGenerationHash, runtimeBroker } from './lifecycle'
 import { makeTradingEngine } from './trading-engine'
+import { executionGenerationNeedsRecovery, ownGenerationCycleDriver, withGenerationRebinding } from './generation-cycle'
 import {
   capitalActivationOperationalError,
   decodeConfiguredCapitalActivation,
@@ -267,14 +261,15 @@ export const makeAutonomousServiceRuntime = (
                         const resolvePrepared = (
                           generation: ResearchCapitalGrantGeneration,
                         ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
-                          if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
+                          const readAuthority = runtimeServices.authorityGenerationStore.readAuthorityState
+                          if (readAuthority === undefined) {
                             return Effect.fail(
                               capitalActivationOperationalError(
                                 'capital startup recovery requires durable authority state reads',
                               ),
                             )
                           }
-                          return runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
+                          return readAuthority.pipe(
                             Effect.mapError((cause) =>
                               capitalActivationOperationalError(
                                 'capital startup recovery authority read failed',
@@ -284,10 +279,7 @@ export const makeAutonomousServiceRuntime = (
                             Effect.flatMap((authorityState) => {
                               const restricted =
                                 authorityState.generationHash === generation.generationHash &&
-                                authorityState.maximum === Authority.Execution &&
-                                authorityState.effective === Authority.Observe &&
-                                authorityState.kill === KillState.Active &&
-                                isExecutionMandateRecoveryRestriction(authorityState.reason)
+                                executionGenerationNeedsRecovery(authorityState)
                               const realizedPolicy = resolvePreparedExecutionPolicy({
                                 configured: plan.config.execution,
                                 brokerIdentity: plan.config.alpaca.identity,
@@ -365,13 +357,37 @@ export const makeAutonomousServiceRuntime = (
                                       }),
                                     ),
                                     Effect.flatMap((engine) => {
-                                      const startCycle = (
-                                        startup: AutonomousCycleStartupInput,
-                                        owner: RecoveryFirstCycleDriverOwner = options.ownCycleDriver,
-                                      ) =>
+                                      const recover = ownGenerationCycleDriver({
+                                        generationHash: generation.generationHash,
+                                        mode: restricted ? 'CloseOnly' : 'Mutation',
+                                        readAuthority: readAuthority.pipe(
+                                          Effect.mapError((cause) =>
+                                            capitalActivationOperationalError(
+                                              'generation recovery authority read failed',
+                                              cause,
+                                            ),
+                                          ),
+                                        ),
+                                        reconcileWhenHeld: boundedReconciliationPass(
+                                          plan.config.operationTimeoutMs,
+                                        ).pipe(
+                                          // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
+                                          Effect.provide(cycleResources),
+                                          Effect.asVoid,
+                                          Effect.mapError((cause) =>
+                                            capitalActivationOperationalError(
+                                              'restricted authority reconciliation failed',
+                                              cause,
+                                            ),
+                                          ),
+                                        ),
+                                        settle: recoverBlockedGeneration,
+                                        owner: options.ownCycleDriver,
+                                      })
+                                      const startCycle = (startup: AutonomousCycleStartupInput) =>
                                         ownCycleDriverStartup(
                                           engine.startCycle,
-                                          owner,
+                                          recover,
                                         )(startup).pipe(
                                           // @effect-diagnostics-next-line strictEffectProvide:off -- value-only cycle services have no resource lifetime
                                           Effect.provide(cycleResources),
@@ -382,12 +398,15 @@ export const makeAutonomousServiceRuntime = (
                                             ),
                                           ),
                                         )
-                                      const runtime = {
+                                      const runtime: AutonomousRuntime<never, never> = {
                                         _tag: 'AutonomousMutation' as const,
                                         broker: runtimeBroker(realizedPlan, runtimeServices.session.read, true),
                                         cycleBindingId,
                                         executionProgram: engine.executionProgram,
-                                        startCycle,
+                                        startCycle: withGenerationRebinding(
+                                          startCycle,
+                                          prepareOrRecover.pipe(Effect.flatMap(resolvePrepared)),
+                                        ),
                                       }
                                       const activate = realizedCapitalActivation(
                                         state,
@@ -395,72 +414,10 @@ export const makeAutonomousServiceRuntime = (
                                         generation.generationHash,
                                       ).pipe(Effect.as(runtime))
                                       if (!restricted) return activate
-
-                                      const recover: RecoveryFirstCycleDriverOwner = (driver) =>
-                                        Deferred.make<void>().pipe(
-                                          Effect.flatMap((rolledOver) => {
-                                            const externallyOwnedDriver = {
-                                              ...driver,
-                                              advance: advanceRestrictedGenerationRecovery(
-                                                driver.advance,
-                                                recoverBlockedGeneration,
-                                              ).pipe(
-                                                Effect.flatMap((step) => {
-                                                  if (step._tag !== 'Waiting') return Effect.succeed(step)
-                                                  if (
-                                                    runtimeServices.authorityGenerationStore.readAuthorityState ===
-                                                    undefined
-                                                  ) {
-                                                    return Effect.fail(
-                                                      capitalActivationOperationalError(
-                                                        'restricted generation rebind requires durable authority state reads',
-                                                      ),
-                                                    )
-                                                  }
-                                                  return runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
-                                                    Effect.mapError((cause) =>
-                                                      capitalActivationOperationalError(
-                                                        'restricted generation rebind authority read failed',
-                                                        cause,
-                                                      ),
-                                                    ),
-                                                    Effect.map((authority) =>
-                                                      recognizeRestrictedGenerationRebind(
-                                                        step,
-                                                        generation.generationHash,
-                                                        authority.generationHash,
-                                                      ),
-                                                    ),
-                                                  )
-                                                }),
-                                                Effect.catch((cause) =>
-                                                  cause instanceof OperationalError
-                                                    ? Effect.die(cause)
-                                                    : Effect.fail(cause),
-                                                ),
-                                                Effect.tap((step) =>
-                                                  step._tag !== 'Waiting'
-                                                    ? Deferred.succeed(rolledOver, undefined)
-                                                    : Effect.void,
-                                                ),
-                                                Effect.map((step) => step.advance),
-                                              ),
-                                            }
-                                            return Effect.raceFirst(
-                                              options
-                                                .ownCycleDriver(externallyOwnedDriver)
-                                                .pipe(Effect.andThen(Effect.never)),
-                                              Deferred.await(rolledOver),
-                                            )
-                                          }),
-                                        )
-                                      return startCycle(
-                                        {
-                                          cycleBindingId,
-                                          recordPass: (observation) => recordAutonomousCyclePass(state, observation),
-                                        },
-                                        recover,
-                                      ).pipe(
+                                      return startCycle({
+                                        cycleBindingId,
+                                        recordPass: (observation) => recordAutonomousCyclePass(state, observation),
+                                      }).pipe(
                                         Effect.flatMap((loop) => loop),
                                         Effect.andThen(prepareOrRecover),
                                         Effect.flatMap(resolvePrepared),

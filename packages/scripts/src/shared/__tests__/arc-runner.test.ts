@@ -95,9 +95,9 @@ describe('ARC Nix runner toolchain', () => {
             volumeClaimTemplate: expect.objectContaining({
               spec: {
                 accessModes: ['ReadWriteOnce'],
-                storageClassName: 'local-path-turin-nvme-intel',
+                storageClassName: 'local-path-turin-nvme-transcend',
                 volumeMode: 'Filesystem',
-                resources: { requests: { storage: '80Gi' } },
+                resources: { requests: { storage: '45Gi' } },
               },
             }),
           },
@@ -109,8 +109,8 @@ describe('ARC Nix runner toolchain', () => {
   it('keeps lab ARC runner concurrency capped', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 0')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })

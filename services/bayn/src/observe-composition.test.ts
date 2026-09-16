@@ -7,6 +7,11 @@ import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
 import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
+import type { CycleDecisionDocument } from './shadow-decision-contract'
+import { CycleDecisionBuildError, runAutonomousCyclePass } from './cycle/runner'
+import type { ObserveDecisionRuntime } from './observe-composition/model'
+import { mutationDecisionBuilder } from './observe-composition/recovery-driver'
+import { boundedReconciliationPass } from './observe-composition/decision-builder'
 import {
   AccountStatus as BrokerAccountStatus,
   BrokerRead,
@@ -240,32 +245,33 @@ test('close-only recovery allows only close submissions strictly before the dead
   ).toBe(false)
 })
 
-test('preserves a restricted unbound cycle until its submission window opens', () => {
+test.each(['RecoveryOnly', 'CloseOnly', 'Mutation'] as const)(
+  '%s preserves an untouched cycle through its entry window',
+  (capability) => {
+    for (const observedAt of [
+      cycle.window.submissionOpenAt,
+      utcInstantFromEpochMillis(Date.parse(cycle.window.submissionCutoffAt) - 1),
+    ]) {
+      expect(decideUnboundExecutionCycleTerminalization({ capability, observedAt, cycle })).toBeUndefined()
+    }
+    expect(
+      decideUnboundExecutionCycleTerminalization({ capability, observedAt: cycle.window.submissionCutoffAt, cycle }),
+    ).toBe(capability === 'Mutation' ? undefined : CycleTerminalReason.Authority)
+  },
+)
+
+test('preservation does not include a partially bound snapshot', () => {
   expect(
     decideUnboundExecutionCycleTerminalization({
       capability: 'RecoveryOnly',
-      observedAt: '2020-05-01T09:59:59.000Z',
-      submissionOpenAt: '2020-05-01T10:00:00.000Z',
-    }),
-  ).toBeUndefined()
-  expect(
-    decideUnboundExecutionCycleTerminalization({
-      capability: 'RecoveryOnly',
-      observedAt: '2020-05-01T10:00:00.000Z',
-      submissionOpenAt: '2020-05-01T10:00:00.000Z',
+      observedAt: cycle.window.submissionOpenAt,
+      cycle: { ...cycle, bindings: { snapshotId: 'a'.repeat(64) } },
     }),
   ).toBe(CycleTerminalReason.Authority)
-  expect(
-    decideUnboundExecutionCycleTerminalization({
-      capability: 'Mutation',
-      observedAt: '2020-05-01T10:00:00.000Z',
-      submissionOpenAt: '2020-05-01T10:00:00.000Z',
-    }),
-  ).toBeUndefined()
 })
 
 test.each(['RecoveryOnly', 'CloseOnly'] as const)(
-  '%s startup terminalizes its unbound cycle without discovering a replacement',
+  '%s startup preserves its open unbound cycle without discovering a replacement',
   async (executionMode) => {
     const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
     const terminalCycle = Effect.runSync(
@@ -342,13 +348,9 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
       ),
     )
 
-    expect(advances.blocked.result).toMatchObject({
-      outcome: 'RECOVERED',
-      action: 'BLOCKED',
-      cycle: { state: CycleState.Blocked, terminalReason: CycleTerminalReason.Authority },
-    })
+    expect(advances.blocked.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
     expect(advances.waiting.result).toEqual({ outcome: 'WINDOW_CLOSED', observedAt })
-    expect(blockCount).toBe(1)
+    expect(blockCount).toBe(0)
   },
 )
 
@@ -752,8 +754,8 @@ const provideDecisionServices = <A, E>(
     Effect.provideService(MarketData, marketDataService),
   )
 
-const makeExactReconciliationServices = () => {
-  const exact = reconciliationResult()
+const makeExactReconciliationServices = (maximum: Authority = Authority.Observe) => {
+  const exact = reconciliationResult(generationHash, maximum)
   const authority = exact.riskContext.authority
   if (authority === null) throw new Error('exact reconciliation fixture requires durable authority')
   const evidence = (identity: string): ReadEvidence => ({
@@ -4865,4 +4867,195 @@ test('persists the pricing quote event and its shorter approval deadline for eve
     expect(risk.evaluation.decision.expiresAt).toBe('2020-05-01T12:45:09.000Z')
     expect(risk.evaluation.input.freshUntil).toBe(risk.evaluation.decision.expiresAt)
   }
+})
+
+test('recovery preserves the open session for a real next strategy decision', async () => {
+  const fixture = await executionLifecycleFixture()
+  let stored = cycle
+  let bound: CycleDecisionDocument | undefined
+  let snapshotLoads = 0
+  let projectionReady = false
+  const snapshots: Parameters<typeof fixtureStreamingReference>[0][] = []
+  const unavailable = (name: string) => Effect.die(new Error(`unexpected recovery operation: ${name}`))
+  const store: CycleStoreShape = {
+    acquire: () => unavailable('acquire'),
+    read: () => Effect.succeed(Option.some(stored)),
+    readAuthoritySlot: () => Effect.succeed(Option.some(stored)),
+    readOldestUnfinished: () =>
+      Effect.sync(() => (stored.state === CycleState.Active ? Option.some(stored) : Option.none())),
+    readDecisionDocument: () => Effect.sync(() => Option.fromUndefinedOr(bound)),
+    bindSnapshot: () => unavailable('bind snapshot separately'),
+    activate: () => unavailable('activate'),
+    bindDecision: (cycleId, document, observedAt, evidence) =>
+      Effect.sync(() => {
+        expect(cycleId).toBe(cycle.identity.cycleId)
+        expect(document.targetPlan.status).toBe(TargetPlanStatus.Planned)
+        expect(evidence?.streamingSnapshotReferences?.length).toBeGreaterThan(0)
+        bound = document
+        stored = Effect.runSync(
+          decodeAutonomousCycle({
+            ...stored,
+            bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
+            stateVersion: stored.stateVersion + 1,
+            updatedAt: observedAt,
+          }),
+        )
+        return { cycle: stored, changed: true }
+      }),
+    finish: (_cycleId, state, observedAt) =>
+      Effect.sync(() => {
+        stored = Effect.runSync(
+          decodeAutonomousCycle({
+            ...stored,
+            state,
+            stateVersion: stored.stateVersion + 1,
+            updatedAt: observedAt,
+            terminalAt: observedAt,
+          }),
+        )
+        return { cycle: stored, changed: true }
+      }),
+    block: () => unavailable('block'),
+  }
+  const intradayMarketData: IntradayMarketDataService = {
+    check: Effect.suspend(() =>
+      projectionReady
+        ? Effect.void
+        : Effect.fail(
+            operationalError({
+              component: 'market-data',
+              operation: 'check',
+              message: 'projection disconnected',
+            }),
+          ),
+    ),
+    loadSnapshot: (query) =>
+      Effect.sync(() => {
+        snapshotLoads += 1
+        const snapshot = streamingFixtureFromRaw(
+          makeIntradayMomentumTestSnapshot(
+            currentIntradayProtocol,
+            { ...query, archiveWatermarks: [] },
+            { NVDA: 0.02 },
+            10,
+          ),
+          query,
+        ).snapshot
+        snapshots.push(snapshot)
+        return snapshot
+      }),
+    verifyReference: fixtureStreamingReference,
+  }
+  const services = makeExactReconciliationServices(Authority.Execution)
+  const executionStore = services.executionStore
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(cycle.window.submissionOpenAt) + 1_000)
+      const input = { ...fixture.input, intradayMarketData }
+      const startup = { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void }
+      const restricted = yield* yield* makeMutationAutonomousCycleStartupProduction(input, 'RecoveryOnly')(startup)
+      const held = yield* restricted.advance
+      expect(held.result).toMatchObject({ outcome: 'WINDOW_CLOSED' })
+      expect(stored.state).toBe(CycleState.Active)
+      expect(snapshotLoads).toBe(0)
+      const active = yield* yield* makeMutationAutonomousCycleStartupProduction(input, 'Mutation')(startup)
+      const unhealthy = yield* active.advance
+      expect(unhealthy.observation).toMatchObject({ result: 'FAILURE', failure: 'market-data' })
+      expect(snapshotLoads).toBe(0)
+      projectionReady = true
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      const evaluated = yield* runAutonomousCyclePass<ObserveDecisionRuntime>({
+        cycleBindingId: cycle.identity.qualificationRunId,
+        accountId,
+        strategyName: 'intraday-momentum',
+        strategyProtocolHash: fixture.preparation.strategyProtocolHash,
+        executionPolicy: fixture.preparation.executionPolicy,
+        buildDecision: (subject) =>
+          mutationDecisionBuilder(
+            input,
+            fixture.preparation,
+            fixture.policy,
+          )(subject, Effect.succeed(reconciliationResultAt(evaluatedAt))),
+        buildDecisionEvidence: () =>
+          Effect.forEach(snapshots, fixtureStreamingReference).pipe(
+            Effect.map((references) => ({
+              streamingSnapshotReferences: references.filter(
+                (reference) => reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1',
+              ),
+            })),
+            Effect.mapError(
+              (cause) =>
+                new CycleDecisionBuildError({
+                  failure: 'market-data',
+                  message: 'Fixture reference verification failed',
+                  cause,
+                }),
+            ),
+          ),
+      })
+      expect(evaluated).toMatchObject({ outcome: 'RECOVERED', action: 'BOUND_DECISION' })
+      return { evaluated, document: bound, cycle: stored }
+    }).pipe(
+      Effect.provideService(BrokerRead, { ...services.brokerRead, marketCalendar: calendarRead([]) }),
+      Effect.provideService(CycleStore, store),
+      Effect.provideService(BrokerEventStore, executionStore),
+      Effect.provideService(FillAccountingStore, executionStore),
+      Effect.provideService(ValuationStore, executionStore),
+      Effect.provideService(ReconciliationStore, executionStore),
+      Effect.provideService(AuthorityGenerationStore, executionStore),
+      Effect.provideService(AuthorityRestrictionStore, executionStore),
+      Effect.provideService(IntentStore, {} as IntentStoreService),
+      Effect.provideService(MutationStore, {} as MutationStoreShape),
+      Effect.provideService(WriterFence, services.writerFence),
+      Effect.provideService(MarketData, marketData([])),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(snapshotLoads).toBeGreaterThan(0)
+  expect(result.document?.targetPlan.status).toBe(TargetPlanStatus.Planned)
+  expect(result.cycle.bindings.decisionHash).toBe(result.document?.contentHash)
+})
+
+test('reconciliation cancels a slow broker read before the aggregate pass deadline', async () => {
+  const services = makeExactReconciliationServices(Authority.Execution)
+  const store = services.executionStore
+  let cancelled = false
+  const error = await Effect.runPromise(
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const account = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(
+          Effect.sync(() => {
+            cancelled = true
+          }),
+        ),
+      )
+      const attempt = yield* Effect.flip(boundedReconciliationPass(3_000)).pipe(
+        Effect.provideService(BrokerRead, { ...services.brokerRead, account }),
+        Effect.forkChild({ startImmediately: true }),
+      )
+      yield* Deferred.await(entered)
+      yield* TestClock.adjust(999)
+      expect(attempt.pollUnsafe()).toBeUndefined()
+      yield* TestClock.adjust(1)
+      return yield* Fiber.join(attempt)
+    }).pipe(
+      Effect.provideService(BrokerEventStore, store),
+      Effect.provideService(FillAccountingStore, store),
+      Effect.provideService(ValuationStore, store),
+      Effect.provideService(ReconciliationStore, store),
+      Effect.provideService(AuthorityGenerationStore, store),
+      Effect.provideService(AuthorityRestrictionStore, store),
+      Effect.provideService(WriterFence, services.writerFence),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(cancelled).toBe(true)
+  expect(error).toMatchObject({
+    _tag: 'BrokerReadError',
+    kind: BrokerReadErrorKind.Timeout,
+    operation: 'account',
+    retryable: true,
+  })
 })

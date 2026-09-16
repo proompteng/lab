@@ -77,13 +77,20 @@ Durable completion additionally requires the recorded partial fills to match the
 position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
 
 When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
-recovery. It cannot discover new cycles or submit entries. During the existing close window it can cancel outstanding
+recovery. A running worker also checks durable authority before and after each pass and replaces its driver when a
+system restriction appears. It cannot discover new cycles or submit entries while restricted. During the existing close window it can cancel outstanding
 orders belonging to the bound cycle and submit the existing position-reducing close after fresh exact reconciliation.
 The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
 checks still apply. Operator restrictions do not enter this recovery path.
 Once durable completion evidence is verified, the cycle may settle its restricted generation even when it had fills.
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
+The existing activation path then verifies the grant before publishing the next execution driver. This transition
+does not require a worker restart. An untouched, unbound cycle retains its plan until the session's entry cutoff,
+including restrictions after market open. Its snapshot, decision and intent history must remain empty. Partially
+bound cycles retain settlement handling. Migration 0071 repairs an already authority-blocked, untouched cycle only
+before its cutoff, under the writer fence, with clear matching authority, exact reconciliation, flat positions and
+no unresolved mutations or open orders. Manual restrictions and financial history remain protected.
 
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
@@ -113,9 +120,42 @@ Flat accounts and marks observed at the same instant also require exact equity a
 - Each writer transaction reserves its own PostgreSQL connection and holds the advisory fence through commit or
   rollback. A disconnected transaction fails without replaying its writes; the next pass obtains a usable connection
   and reconciles durable state. Nested fence calls stay in their owning transaction.
-- Recovery recognizes a cycle that completes with verified zero fills after a system failure restricts authority.
+- Recovery recognizes a cycle that completes with verified terminal fills after a system failure restricts authority.
   It still requires fresh exact, flat reconciliation and the normal OBSERVE successor before reactivation. An operator
   kill remains restricted.
+- PostgreSQL statements use a session limit below the smaller operation and reconciliation budget. The current
+  30-second budget gives statements 25 seconds, reserving five seconds for cancellation and rollback. Smaller budgets
+  reserve half their time. The client closes a connection with no network activity halfway through that remaining
+  allowance (27.5 seconds for the current budget), so a lost response cannot leave transaction cleanup waiting forever.
+  The aggregate execution deadline remains unchanged, and an uncertain mutation still requires durable lookup and reconciliation.
+- Connection acquisition and transaction startup are cancellable, including when both pool connections are occupied
+  or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
+  and writer permit. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
+  cancellation invalidates the transport and the next request creates its replacement without replaying a mutation.
+- The pinned Effect PostgreSQL adapter has a package patch for interrupted reservations. It registers release ownership
+  before requesting a pool slot and returns connections delivered after cancellation. The integration regression cancels
+  two queued writers and verifies that both pool slots remain usable; proving only one subsequent query misses a one-slot leak.
+- Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
+  dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
+  rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
+- A pass deadline records interruption request time and every active stage/dependency with elapsed time before joining
+  cancellation. Nested deadlines share the pass's active-stage map; independent passes have separate maps. Its final warning separates
+  `executionElapsedMs` from `cancellationElapsedMs`; `bayn.execution.timeout-recovery` and
+  `bayn.execution.restriction-persistence` record their own completion durations. A timer that itself ran late remains
+  visible in execution elapsed time. These measurements do not claim that an earlier uninstrumented stall had the same cause.
+- A generation authority read gets at most one-sixth of the pass budget, capped at five seconds. Authority reads
+  separately trace pool acquisition and query execution, and reuse the current transaction when one exists.
+  Each reconciliation broker read gets at most one-third of the reconciliation budget, or ten seconds with the
+  current configuration. The aggregate pass budget still bounds the full operation. Startup preflight keeps its own
+  request and retry deadlines. Both broker-history captures remain mandatory.
+- The dedicated Bayn PostgreSQL cluster logs statements exceeding one second and lock waits exceeding one second.
+  `log_parameter_max_length=0` and `log_parameter_max_length_on_error=0` suppress parameter values. SQL statement text is
+  still present in database logs. For a lock wait, correlate the PostgreSQL process ID, blocker ID, application name,
+  and timestamp with Bayn's operation/trace interval; database process IDs are not trace IDs. A current read of
+  `pg_stat_activity` with `pg_blocking_pids(pid)` distinguishes a lock from a running query. These diagnostic settings do
+  not change replication, durability, volumes, or storage placement.
+- The Bayn namespace log collector includes the CNPG postgres containers. Database pods do not inherit the
+  application's part-of label, so discovery uses the namespace and explicit container names.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash
@@ -278,8 +318,10 @@ read-only ClickHouse access. See `tools/history.ts` for the strict job schema.
 2. **Publish:** provide `operation: "publish"`, `datasetDirectory`, pinned `datasetId`, and `receiptPath`.
    Configure `BAYN_HISTORY_CLICKHOUSE_URL`, `BAYN_HISTORY_CLICKHOUSE_USERNAME`, and
    `BAYN_HISTORY_CLICKHOUSE_PASSWORD` for the existing offline data administrator. The GitOps schema hook must have
-   created the historical tables first. The tool inserts only missing records, verifies complete row readback, then
-   publishes the manifest. Conflicting records stop publication. It never creates tables or changes permissions.
+   created the historical tables first. Publication and restoration read records in batches of up to 50,000 rows.
+   The publisher inserts only missing records, verifies complete row readback, then publishes the manifest. Restarting
+   the same job rechecks existing rows and resumes missing inserts, including an interrupted batch. Conflicting
+   records stop publication. It never creates tables or changes permissions.
 3. **Restore:** provide `operation: "restore"`, pinned `datasetId`, and `outputDirectory`, using the same explicit
    ClickHouse configuration. Restoration reconstructs identical normalized chunks, calendar, coverage, and manifest;
    every checksum must match. Original HTTP page bodies remain at the acquisition destination. Preserve that archive
