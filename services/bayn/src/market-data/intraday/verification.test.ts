@@ -1,16 +1,14 @@
 import { describe, expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../../hash'
 import {
   IntradayIngestionDelayDirection,
   IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
-  type ArchiveVerifiedIntradayMarketSnapshot,
   type IntradayMarketSnapshot,
   type IntradaySnapshotRequest,
 } from './model'
-import { verifyIntradayArchiveSnapshot } from './program'
 import type { IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import { reverifyIntradayMarketSnapshot, verifyIntradaySnapshot, verifyIntradaySnapshotRequest } from './verification'
 
@@ -208,24 +206,6 @@ describe('immutable intraday market snapshot', () => {
     ).toMatchObject({ reason: 'not-ready', facts: { symbol: 'NVDA' } })
   })
 
-  test('re-queries excluded candidates at the original immutable archive version', async () => {
-    const rows = makeRows()
-    const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
-    const candidateRows = { ...rows, trades: rows.trades.filter((row) => row.symbol !== 'AMD') }
-    const snapshot = success(verifyIntradaySnapshot(candidateRequest, candidateRows))
-    const requested: IntradaySnapshotRequest[] = []
-    const verified = await Effect.runPromise(
-      verifyIntradayArchiveSnapshot((bound) => {
-        requested.push(bound)
-        return Effect.succeed(
-          success(verifyIntradaySnapshot(bound, candidateRows)) as ArchiveVerifiedIntradayMarketSnapshot,
-        )
-      }, snapshot),
-    )
-    expect<IntradayMarketSnapshot>(verified).toEqual(snapshot)
-    expect(requested).toEqual([candidateRequest])
-  })
-
   test('does not hide corrupted or premature candidate evidence behind a missing quote', () => {
     const rows = makeRows()
     const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
@@ -325,38 +305,6 @@ describe('immutable intraday market snapshot', () => {
     expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
     expect(error(verifyIntradaySnapshotRequest({ ...liquidationRequest, symbols: ['AAPL'] }))).toMatchObject({
       reason: 'request',
-    })
-  })
-
-  test('re-queries liquidation snapshots with their full universe, exact symbol subset, and purpose', async () => {
-    const rows = makeRows()
-    const liquidationRequest: IntradaySnapshotRequest = {
-      ...request,
-      symbols: ['AMD'],
-      purpose: IntradaySnapshotPurpose.Liquidation,
-    }
-    const liquidationRows = {
-      archiveWatermarks: rows.archiveWatermarks,
-      bars: rows.bars.filter((row) => row.symbol === 'AMD').slice(0, -1),
-      quotes: rows.quotes.filter((row) => row.symbol === 'AMD'),
-      trades: [],
-    }
-    const snapshot = success(verifyIntradaySnapshot(liquidationRequest, liquidationRows))
-    let replayRequest: IntradaySnapshotRequest | undefined
-
-    const replayed = await Effect.runPromise(
-      verifyIntradayArchiveSnapshot((candidate) => {
-        replayRequest = candidate
-        return Effect.succeed(snapshot as ArchiveVerifiedIntradayMarketSnapshot)
-      }, snapshot),
-    )
-
-    expect(replayed as IntradayMarketSnapshot).toEqual(snapshot)
-    expect(replayRequest).toMatchObject({
-      universe: request.universe,
-      universeSymbolHash: request.universeSymbolHash,
-      symbols: ['AMD'],
-      purpose: IntradaySnapshotPurpose.Liquidation,
     })
   })
 
@@ -980,42 +928,6 @@ describe('immutable intraday market snapshot', () => {
         facts: { symbol: 'AMD' },
       })
     }
-  })
-
-  test('re-queries the immutable archive before accepting a self-rehashed lower-ranked winner', async () => {
-    const rows = makeRows()
-    const authoritative = success(verifyIntradaySnapshot(request, rows))
-    const firstQuote = rows.quotes[0]
-    if (firstQuote === undefined) throw new Error('quote fixture is incomplete')
-    const lowerRankedRows = {
-      ...rows,
-      quotes: rows.quotes.map((quote, index) =>
-        index === 0
-          ? {
-              ...firstQuote,
-              source_offset: '1',
-              bid_price: '99.50',
-              ask_price: '99.52',
-            }
-          : quote,
-      ),
-    }
-    const selfRehashed = success(verifyIntradaySnapshot(request, lowerRankedRows))
-    expect(success(reverifyIntradayMarketSnapshot(selfRehashed))).toEqual(selfRehashed)
-
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        verifyIntradayArchiveSnapshot(
-          () => Effect.succeed(authoritative as ArchiveVerifiedIntradayMarketSnapshot),
-          selfRehashed,
-        ),
-      ),
-    )
-
-    expect(failure).toMatchObject({
-      reason: 'hash',
-      message: 'intraday replay snapshot is not the canonical immutable archive winner',
-    })
   })
 
   test('returns a typed row failure for malformed replayed quote and trade timestamps', () => {

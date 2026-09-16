@@ -14,12 +14,17 @@ export const reproduceRecordedStreamingDecision = (input: unknown) =>
       epoch: string
       sequence: number
       featureIds: string[]
+      simulation?: { readonly runId: string; readonly sourceManifestHash: string }
     }[] = []
     for (const [binding, rows] of [
       [decisions, document.decisionMarketDataRows],
       [document.bindings.executionMarketData, document.executionMarketDataRows ?? document.decisionMarketDataRows],
     ] as const) {
-      if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3') continue
+      if (
+        binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+        binding?.schemaVersion !== 'bayn.execution-market-data-binding.v4'
+      )
+        continue
       const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(binding, rows)
       if (snapshot === undefined)
         return yield* Result.fail(
@@ -29,7 +34,18 @@ export const reproduceRecordedStreamingDecision = (input: unknown) =>
         snapshots.push({
           snapshotId: binding.snapshotId,
           contentHash: binding.contentHash,
-          epoch: binding.streaming.bootstrap.epoch,
+          epoch:
+            'bootstrap' in binding.streaming
+              ? binding.streaming.bootstrap.epoch
+              : `historical-${binding.streaming.runId}`,
+          ...('runId' in binding.streaming
+            ? {
+                simulation: {
+                  runId: binding.streaming.runId,
+                  sourceManifestHash: binding.streaming.sourceManifestHash,
+                },
+              }
+            : {}),
           sequence: binding.streaming.sequence,
           featureIds: binding.streaming.features.map((feature) => feature.value.featureId),
         })
@@ -39,8 +55,12 @@ export const reproduceRecordedStreamingDecision = (input: unknown) =>
         new IntradaySnapshotFailure({ reason: 'request', message: 'Decision contains no streaming evidence' }),
       )
     const material = {
-      schemaVersion: 'bayn.recorded-streaming-reproduction.v1' as const,
-      evidenceMode: 'recorded-decision' as const,
+      schemaVersion: snapshots.some((snapshot) => snapshot.simulation !== undefined)
+        ? ('bayn.recorded-streaming-reproduction.v2' as const)
+        : ('bayn.recorded-streaming-reproduction.v1' as const),
+      evidenceMode: snapshots.some((snapshot) => snapshot.simulation !== undefined)
+        ? ('recorded-simulated-decision' as const)
+        : ('recorded-decision' as const),
       decisionContentHash: document.contentHash,
       strategyDecisionHash: document.bindings.strategyDecisionHash,
       createdAt: document.createdAt,

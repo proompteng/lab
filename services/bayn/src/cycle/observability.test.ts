@@ -62,14 +62,35 @@ const thresholds = {
   unknownMutationThresholdMs: 60_000,
 }
 
-test('treats a recovered terminal cycle as waiting while current execution authority is clear', () => {
+test('reports a blocked current session after authority recovers', () => {
   const status = deriveCycleOperationsStatus(projection, Date.parse(checkedAt), Authority.Execution, thresholds)
 
   expect(status).toMatchObject({
-    condition: CycleOperationsCondition.Waiting,
+    condition: CycleOperationsCondition.Failed,
     reason: CycleOperationsReason.LastCycleBlocked,
-    alerts: { cycleFailed: false, killActive: false },
+    alerts: { cycleFailed: true, killActive: false },
   })
+})
+
+test('does not carry a historical authority-blocked cycle into the next session health', () => {
+  const now = Date.parse('2026-09-01T13:00:00.000Z')
+  const status = deriveCycleOperationsStatus(
+    {
+      ...projection,
+      reconciliation:
+        projection.reconciliation === null
+          ? null
+          : {
+              ...projection.reconciliation,
+              reconciledAt: new Date(now).toISOString(),
+            },
+    },
+    now,
+    Authority.Execution,
+    thresholds,
+  )
+  expect(status.condition).toBe(CycleOperationsCondition.Waiting)
+  expect(status.alerts.cycleFailed).toBe(false)
 })
 
 test('keeps a non-authority terminal cycle failed while execution authority is configured', () => {

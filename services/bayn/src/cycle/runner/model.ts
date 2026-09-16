@@ -28,6 +28,18 @@ export interface CycleRunContext<R = never> {
   ) => Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError, R>
 }
 
+export type CycleWaitReason =
+  | 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE'
+  | 'POST_MUTATION_RECONCILIATION'
+  | 'accounting-inexact'
+  | 'intent-nonterminal'
+  | 'intent-unsuccessful'
+  | 'reconciliation-not-later'
+  | 'reconciliation-not-exact'
+  | 'unknown-mutation'
+  | 'unknown-order'
+  | 'open-position'
+
 export type CycleRunResult =
   | {
       readonly outcome: 'WINDOW_CLOSED'
@@ -41,6 +53,7 @@ export type CycleRunResult =
   | {
       readonly outcome: 'RECOVERED'
       readonly action: 'ACTIVATED' | 'BLOCKED' | 'BOUND_DECISION' | 'COMPLETED' | 'NO_TRADE' | 'WAITING'
+      readonly waitReason?: CycleWaitReason
       readonly observedAt: string
       readonly cycle: AutonomousCycle
     }

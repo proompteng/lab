@@ -4,6 +4,7 @@ metadata:
   name: market-data-archive-config
   namespace: torghut
 data:
+  ARCHIVE_TECHNICAL_FEATURES_TOPIC: "torghut.technical-features.v1"
   ARCHIVE_FEATURES_TOPIC: "torghut.market-features.v1"
   ARCHIVE_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
   ARCHIVE_KAFKA_SECURITY: "SASL_PLAINTEXT"

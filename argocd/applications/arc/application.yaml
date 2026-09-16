@@ -160,10 +160,8 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          # Maintenance throttle: keep no idle AMD64 runners and allow one active job so
-          # the normal ARC image/Kargo path remains recoverable during node-local I/O work.
-          minRunners: 0
-          maxRunners: 1
+          minRunners: 1
+          maxRunners: 5
           listenerTemplate:
             spec:
               nodeSelector:
@@ -218,10 +216,10 @@ spec:
                       [[ "$scratch_available_kib" =~ ^[0-9]+$ ]] ||
                         fail "scratch volume has no readable capacity"
 
-                      # This local-path class has no project quota. Keep at least 80GiB free after
+                      # This local-path class has no project quota. Keep at least 45GiB free after
                       # the image/cache copy so a runner cannot start on a nearly full NVMe volume.
                       mkdir -p /home/runner/.cache
-                      reserve_bytes=$((80 * 1024 * 1024 * 1024))
+                      reserve_bytes=$((45 * 1024 * 1024 * 1024))
                       nix_file_bytes="$(find /nix -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
                       nix_files="$(find /nix -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
                       nix_links="$(find /nix -xdev -type l -printf '1\n' | wc -l | tr -d ' ')"
@@ -247,7 +245,7 @@ spec:
                         fail "scratch volume capacity cannot be read after copy"
                       post_copy_available_bytes=$((post_copy_available_kib * 1024))
                       (( post_copy_available_bytes >= reserve_bytes )) ||
-                        fail "scratch free space ${post_copy_available_bytes} is below 80GiB after copy"
+                        fail "scratch free space ${post_copy_available_bytes} is below 45GiB after copy"
 
                       staged_nix_file_bytes="$(find "$stage/nix" -xdev -type f -printf '%s\n' | awk '{sum += $1} END {printf "%.0f\n", sum}')"
                       staged_nix_files="$(find "$stage/nix" -xdev -type f -printf '1\n' | wc -l | tr -d ' ')"
@@ -413,11 +411,11 @@ spec:
                       spec:
                         accessModes:
                           - ReadWriteOnce
-                        storageClassName: local-path-turin-nvme-intel
+                        storageClassName: local-path-turin-nvme-transcend
                         volumeMode: Filesystem
                         resources:
                           requests:
-                            storage: 80Gi
+                            storage: 45Gi
                 - name: dind-sock
                   emptyDir: {}
                 - name: dind-externals
