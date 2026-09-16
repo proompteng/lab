@@ -2501,17 +2501,22 @@ test('magnifies the Dock without relayout and minimizes with native transform an
   const chrome = page.getByRole('region', { name: 'Chrome window', includeHidden: true })
   const wrapper = chrome.locator('..')
   const normalBounds = await chrome.boundingBox()
+  const nativeTransforms = await wrapper.evaluateHandle((element) => {
+    const transforms: ComputedKeyframe[][] = []
+    const animate = element.animate.bind(element)
+    element.animate = (...args: Parameters<Element['animate']>) => {
+      const animation = animate(...args)
+      if (animation.effect instanceof KeyframeEffect) {
+        const frames = animation.effect.getKeyframes().filter((frame) => 'transform' in frame)
+        if (frames.length > 0) transforms.push(frames)
+      }
+      return animation
+    }
+    return transforms
+  })
   await chrome.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
   await expect(wrapper).toHaveCSS('visibility', 'hidden')
-  const nativeTransform = await wrapper.evaluate((element) =>
-    element
-      .getAnimations()
-      .flatMap((animation) =>
-        animation.effect instanceof KeyframeEffect
-          ? animation.effect.getKeyframes().filter((frame) => 'transform' in frame)
-          : [],
-      ),
-  )
+  const nativeTransform = await nativeTransforms.evaluate((transforms) => transforms.flat())
   expect(nativeTransform.length).toBeGreaterThanOrEqual(2)
   expect(nativeTransform[0]?.transform).toBe('translate(0px, 0px) scale(1)')
   expect(nativeTransform.at(-1)?.transform).toMatch(/scale\(0\./)
@@ -2519,6 +2524,7 @@ test('magnifies the Dock without relayout and minimizes with native transform an
   await expect(wrapper).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
   await expect.poll(() => chrome.boundingBox()).toEqual(normalBounds)
   await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await nativeTransforms.dispose()
   await client.detach()
 })
 
