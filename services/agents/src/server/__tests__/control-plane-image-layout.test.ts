@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const dockerfile = () => readFileSync(new URL('../../../Dockerfile', import.meta.url), 'utf8')
 const agentsShellEntrypoint = () =>
   readFileSync(new URL('../../../scripts/agents-shell-entrypoint.sh', import.meta.url), 'utf8')
+const agentsNixImage = () => readFileSync(new URL('../../../../../nix/images/agents.nix', import.meta.url), 'utf8')
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url))
 
 const listProductionSources = (dir: string): string[] =>
@@ -86,6 +87,18 @@ describe('Agents control-plane image layout', () => {
     )
     expect(shellTarget).toContain('chmod +x ./scripts/install-agents-shell-pstack.sh')
     expect(agentsShellEntrypoint()).toContain('./scripts/install-agents-shell-pstack.sh')
+  })
+
+  it('bundles the same pinned pstack tree in the production Nix agents-shell image', () => {
+    const content = agentsNixImage()
+
+    expect(content).toContain('pstackVersion = "0.9.30"')
+    expect(content).toContain('pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1"')
+    expect(content).toContain('hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0="')
+    expect(content).toContain('pname = "agents-shell-pstack"')
+    expect(content).toContain('cp -R plugins/pstack "$out/opt/agents-shell/pstack"')
+    expect(content).toContain('"$out/app/services/agents/scripts/install-agents-shell-pstack.sh"')
+    expect(content).toContain('agentsShellContents = commonContents ++ [\n    applyPatch\n    pstackBundle')
   })
 
   it('runs package builds on the build platform while keeping runtime dependencies target-native', () => {
