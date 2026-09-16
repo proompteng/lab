@@ -5,7 +5,11 @@ import { OrderSide } from '../execution/contracts'
 import { MICROS, notionalMicros } from '../execution-model'
 import { PositiveMicrosSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
-import type { IntradayReplayIocAssumptions } from './execution'
+
+export interface IntradayReplayIocAssumptions {
+  readonly slippageBps: number
+  readonly availableLiquidityPpm: number
+}
 
 const BPS = 10_000n
 const PPM = 1_000_000n
@@ -43,6 +47,7 @@ export type IntradayReplayIocCoreOutcome =
     }
   | {
       readonly status: 'canceled'
+      readonly adversePriceMicros: bigint
       readonly requestedQuantityMicros: bigint
       readonly filledQuantityMicros: bigint
       readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
@@ -123,6 +128,7 @@ export const simulateIntradayReplayIocCore = (
   ): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> =>
     Result.succeed({
       status: 'canceled',
+      adversePriceMicros: adversePrice,
       requestedQuantityMicros: order.quantityMicros,
       filledQuantityMicros: 0n,
       reason,

@@ -53,6 +53,51 @@ describe('Dorvud rolling feature wire contract', () => {
     expect(Result.getOrThrow(featureMatchesBars(value, bars()))).toBe(true)
   })
 
+  test('retains canonical identities regardless of wire property order and changing input revisions', () => {
+    const value = feature()
+    const reverseKeys = (entry: unknown): unknown =>
+      Array.isArray(entry)
+        ? entry.map(reverseKeys)
+        : entry !== null && typeof entry === 'object'
+          ? Object.fromEntries(
+              Object.entries(entry)
+                .reverse()
+                .map(([key, nested]) => [key, reverseKeys(nested)]),
+            )
+          : entry
+    for (let revision = 0; revision < 40; revision++) {
+      const changed = rehash({
+        ...value,
+        material: {
+          ...value.material,
+          inputs: value.material.inputs.map((input) => ({
+            ...input,
+            sourceOffset: String(BigInt(input.sourceOffset) + BigInt(revision) * 100n),
+          })),
+          values: { ...value.material.values, totalVolumeMicros: String(revision * 1_000_000) },
+        },
+      })
+      expect(Result.getOrThrow(decodeRollingMarketFeature(reverseKeys(changed)))).toEqual(changed)
+    }
+  })
+
+  test('rejects unknown properties before hashing decoded material', () => {
+    const value = feature()
+    const invalid = [
+      { ...value, unknown: 1 },
+      { ...value, material: { ...value.material, unknown: 1 } },
+      { ...value, material: { ...value.material, values: { ...value.material.values, unknown: 1 } } },
+      {
+        ...value,
+        material: {
+          ...value.material,
+          inputs: value.material.inputs.map((input) => ({ ...input, unknown: 1 })),
+        },
+      },
+    ]
+    for (const input of invalid) expect(Result.isFailure(decodeRollingMarketFeature(input))).toBe(true)
+  })
+
   test('bounds source offsets and partitions to the Kafka wire integer domains', () => {
     const value = feature()
     for (const [offset, accepted] of [
