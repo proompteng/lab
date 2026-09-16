@@ -132,6 +132,9 @@ Flat accounts and marks observed at the same instant also require exact equity a
   or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
   and writer permit. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
   cancellation invalidates the transport and the next request creates its replacement without replaying a mutation.
+- The pinned Effect PostgreSQL adapter has a package patch for interrupted reservations. It registers release ownership
+  before requesting a pool slot and returns connections delivered after cancellation. The integration regression cancels
+  two queued writers and verifies that both pool slots remain usable; proving only one subsequent query misses a one-slot leak.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.

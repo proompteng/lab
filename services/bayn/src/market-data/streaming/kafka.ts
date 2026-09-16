@@ -115,19 +115,47 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
         if (joined) invalidated(new Error('Kafka partitions reassigned'))
       })
       consumer.on('consumer:heartbeat:stalled', () => invalidated(new Error('Kafka heartbeat stalled')))
-      const source = await consumer.consume({
-        topics: [...new Set(positions.map((position) => position.topic))],
-        mode: MessagesStreamModes.MANUAL,
-        fallbackMode: MessagesStreamFallbackModes.FAIL,
-        offsets: positions.map((position) => ({ ...position, offset: BigInt(position.offset) })),
-        autocommit: false,
-        isolationLevel: 1,
-        highWaterMark: 256,
-        maxBytes: 1_048_576,
-        maxBytesPerPartition: 262_144,
-        maxWaitTime: 250,
+      const source = await new Promise<MessagesStream<string, string, string, string>>((resolve, reject) => {
+        if (closePromise !== undefined) {
+          reject(new Error('Kafka consumer is closed'))
+          return
+        }
+        consumer.consume(
+          {
+            topics: [...new Set(positions.map((position) => position.topic))],
+            mode: MessagesStreamModes.MANUAL,
+            fallbackMode: MessagesStreamFallbackModes.FAIL,
+            offsets: positions.map((position) => ({ ...position, offset: BigInt(position.offset) })),
+            autocommit: false,
+            isolationLevel: 1,
+            highWaterMark: 256,
+            maxBytes: 1_048_576,
+            maxBytesPerPartition: 262_144,
+            maxWaitTime: 250,
+          },
+          (error, stream) => {
+            if (error !== null && error !== undefined) {
+              reject(error)
+              return
+            }
+            if (stream === undefined) {
+              reject(new Error('Kafka consumer returned no stream'))
+              return
+            }
+            // Node can run _construct and emit an error before a Promise continuation attaches the iterator.
+            stream.on('error', (cause) => {
+              if (closePromise === undefined) invalidated(cause)
+            })
+            if (closePromise !== undefined) {
+              stream.destroy()
+              reject(new Error('Kafka consumer closed during stream acquisition'))
+              return
+            }
+            active = stream
+            resolve(stream)
+          },
+        )
       })
-      active = source
       let pending = false
       return {
         queuedRecords: () => source.readableLength,
