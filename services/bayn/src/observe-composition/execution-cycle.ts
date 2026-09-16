@@ -751,7 +751,7 @@ const executeBoundExecutionCycle = (
       })
       switch (terminalization._tag) {
         case 'WaitForClose':
-          return { _tag: 'Wait', observedAt: step.observedAt }
+          return { _tag: 'Wait', observedAt: step.observedAt, waitReason: 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE' }
         case 'Block':
           return { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt: step.observedAt }
         case 'Complete':
@@ -820,6 +820,7 @@ const executeBoundExecutionCycle = (
 export const deferPostMutationReconciliation = (pending: PostMutationReconciliation): CycleRunResult => ({
   outcome: 'RECOVERED' as const,
   action: 'WAITING' as const,
+  waitReason: 'POST_MUTATION_RECONCILIATION',
   observedAt: pending.observedAt,
   cycle: pending.cycle,
 })
@@ -851,11 +852,14 @@ const mutationBound = (cycle: AutonomousCycle): boolean =>
 export const decideUnboundExecutionCycleTerminalization = (input: {
   readonly capability: ExecutionCapability['_tag']
   readonly observedAt: string
-  readonly submissionOpenAt: string
-}): CycleTerminalReason.Authority | undefined =>
-  input.capability !== 'Mutation' && input.observedAt >= input.submissionOpenAt
-    ? CycleTerminalReason.Authority
-    : undefined
+  readonly cycle: AutonomousCycle
+}): CycleTerminalReason.Authority | undefined => {
+  const deadline =
+    input.cycle.bindings.snapshotId === undefined
+      ? input.cycle.window.submissionCutoffAt
+      : input.cycle.window.submissionOpenAt
+  return input.capability !== 'Mutation' && input.observedAt >= deadline ? CycleTerminalReason.Authority : undefined
+}
 
 const terminalizeUnboundMutationCycle = (
   cycle: AutonomousCycle,
@@ -966,6 +970,7 @@ const interpretBoundMutationCycleOutcome = (
         action: 'WAITING',
         observedAt: outcome.observedAt,
         cycle,
+        ...(outcome.waitReason === undefined ? {} : { waitReason: outcome.waitReason }),
       })
     case 'Block':
       return input.blockedCycleIntentStore === undefined
@@ -1056,7 +1061,7 @@ export const runRecoveryFirstCyclePass = (
             const terminalReason = decideUnboundExecutionCycleTerminalization({
               capability: capability._tag,
               observedAt,
-              submissionOpenAt: unfinished.window.submissionOpenAt,
+              cycle: unfinished,
             })
             if (terminalReason !== undefined) {
               return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)

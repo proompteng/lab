@@ -39,7 +39,7 @@ export interface ExecutionControllerProbe {
 }
 
 export interface HealthDependencies {
-  readonly marketData: IntradayMarketDataService
+  readonly marketData: Pick<IntradayMarketDataService, 'check'>
   readonly journal: JournalService
   readonly postgresql: Effect.Effect<void, DatabaseError>
   readonly cycleObservability: CycleObservabilityShape

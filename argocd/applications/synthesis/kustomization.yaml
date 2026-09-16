@@ -12,4 +12,4 @@ resources:
 - agents-domain
 images:
 - name: registry.ide-newton.ts.net/lab/synthesis
-  digest: sha256:0db17435736cdd39c2275230d5d969d28e71383d07c84fbae6638c9f50e31770
+  digest: sha256:9b4d5a112dc6c968daec271711456d0e04c4368313f38a15117322c1d69b538c

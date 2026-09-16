@@ -4,6 +4,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
+import { withObservedStage } from '../../telemetry'
 import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
 import {
   BrokerReadContractFailure,
@@ -307,6 +308,8 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
+        withObservedStage('bayn.alpaca.read', { dependency: 'alpaca' }),
+        Effect.annotateLogs({ operation }),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
 

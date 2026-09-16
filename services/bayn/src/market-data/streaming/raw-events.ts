@@ -33,6 +33,7 @@ export interface StreamingUniverse {
     readonly quotes: string
     readonly trades: string
     readonly features: string
+    readonly technicalFeatures?: string
   }
 }
 

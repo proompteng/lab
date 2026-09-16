@@ -334,7 +334,7 @@ export const compileIntradayMomentumDecision = (
       return {
         decision,
         decisionMarketDataRows,
-        ...(usesDedicatedPricing && executionBinding.schemaVersion === 'bayn.execution-market-data-binding.v3'
+        ...(usesDedicatedPricing && 'streaming' in executionBinding
           ? { executionMarketDataRows: yield* persistIntradayRecordRows(pricingSnapshot) }
           : {}),
         entryQuotes,

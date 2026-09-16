@@ -44,6 +44,9 @@ dependencies {
   implementation("ch.qos.logback:logback-classic:$logbackVersion")
 
   testImplementation(kotlin("test"))
+  testImplementation("org.apache.flink:flink-streaming-java:$flinkVersion:tests")
+  testImplementation("org.apache.flink:flink-runtime:$flinkVersion:tests")
+  testImplementation("org.apache.flink:flink-test-utils-junit:$flinkVersion")
 }
 
 tasks.withType<Jar> { archiveBaseName.set("technical-analysis-flink") }

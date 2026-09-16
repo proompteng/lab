@@ -1,5 +1,17 @@
 # Bayn GitOps rollout notes
 
+## Streaming protocol activation
+
+The streaming implementation uses `bayn.intraday-momentum.protocol.v3`. Its reviewed behavior, parameter, and protocol
+hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
+The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
+subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+
+The worker requires Kafka and consumes verified raw-feature joins through the common market-data adapter. Its versioned bootstrap budget is five minutes: the initial 905,542-record
+catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's
+content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
+progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
+
 ## Regular-session trading boundaries
 
 Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
@@ -16,18 +28,11 @@ activation identity, stored cycle boundaries, natural controller progress, and u
 After zero-offset cycles exist, rollback must retain a runtime that can decode them. Do not restore the old positive-only
 constraints or delete cycles to make an incompatible binary start.
 
-## Archive reader availability evidence
+## Historical evidence after the hard migration
 
-Migration 58 adds the append-only `intraday_archive_availability` evidence table. The execution worker records the
-first retained completed observation of each exact source record; historical replay only reads it. This rollout does
-not alter strategy parameters, behavior identity, broker access, or the standing research mandate. Deliver it through
-the existing Bayn build/release/GitOps path. Startup migrations must finish before the new execution worker runs.
-
-Verify the exact worker source/image, successful migration, fresh controller progress, and unchanged reconciliation
-and authority. Natural read receipts require an actual eligible session/read and must not be inferred from pod health.
-Replay without historical receipts must remain incomplete in default recorded-reader mode. A compatible source rollback
-may stop new collection but must retain the additive table and all receipts; never backfill receipt timestamps, delete
-evidence, or submit a broker order as rollout proof.
+The worker no longer collects archive-reader receipts or falls back to ClickHouse for trading input. Historical
+receipts and financial records remain append-only in PostgreSQL. The backtest command consumes frozen datasets
+through the common market-data interface and binds each run to its source manifest, clock, and simulated broker.
 
 ## Native Restate execution cutover
 

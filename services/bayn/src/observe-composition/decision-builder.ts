@@ -1,9 +1,12 @@
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import {
   BrokerRead,
+  BrokerReadError,
+  BrokerReadErrorKind,
   type BrokerReadShape,
   type MarketCalendarObservation,
   type MarketCalendarQuery,
@@ -172,8 +175,36 @@ export type ReconciliationPassError = Effect.Error<typeof runOnce> | Reconciliat
 export const boundedReconciliationPass = (
   timeoutMs: number,
 ): Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime> =>
-  runOnce.pipe(
-    Effect.timeoutOrElse({
+  Effect.gen(function* () {
+    const read = yield* BrokerRead
+    const readBudgetMs = Math.max(1, Math.floor(timeoutMs / 3))
+    const bounded = <A>(operation: BrokerReadError['operation'], request: Effect.Effect<A, BrokerReadError>) =>
+      request.pipe(
+        Effect.timeoutOrElse({
+          duration: readBudgetMs,
+          orElse: () =>
+            Effect.fail(
+              new BrokerReadError({
+                operation,
+                kind: BrokerReadErrorKind.Timeout,
+                retryable: true,
+                message: `Reconciliation ${operation} read exceeded its ${readBudgetMs}ms budget`,
+              }),
+            ),
+        }),
+      )
+    return yield* runOnce.pipe(
+      Effect.provideService(BrokerRead, {
+        ...read,
+        account: bounded('account', read.account),
+        positions: bounded('positions', read.positions),
+        orders: (query) => bounded('orders', read.orders(query)),
+        fillActivities: (query) => bounded('fill-activities', read.fillActivities(query)),
+        feeActivities: (query) => bounded('fee-activities', read.feeActivities(query)),
+      }),
+    )
+  }).pipe(
+    operationTimeoutOrElse({
       duration: timeoutMs,
       orElse: () =>
         Effect.fail(
@@ -202,14 +233,14 @@ export const runMutationPassWithinTimeout = <A, E, R>(
   timeoutMs: number,
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
   Effect.gen(function* () {
-    const startedAt = yield* Clock.currentTimeMillis
+    const startedAt = yield* operationCurrentTimeMillis
     const parentBudget = yield* mutationPassBudget
     return yield* effect.pipe(
       Effect.provideService(mutationPassBudget, {
         startedAt: parentBudget?.startedAt ?? startedAt,
         deadlineAt: Math.min(parentBudget?.deadlineAt ?? Infinity, startedAt + timeoutMs),
       }),
-      Effect.timeoutOrElse({
+      operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
         orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
       }),
@@ -1485,19 +1516,20 @@ const buildClosingExecutionCycleDecisionWithSource = (
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
-      const archiveStartedAt = yield* Clock.currentTimeMillis
+      const archiveMarketAt = yield* Clock.currentTimeMillis
+      const archiveStartedAt = yield* operationCurrentTimeMillis
       const passBudget = yield* mutationPassBudget
       const remainingMs = Math.min(
         input.reconciliationPassTimeoutMs,
         input.reconciliationIntervalMs,
-        Date.parse(closeExpiresAt) - archiveStartedAt,
+        Date.parse(closeExpiresAt) - archiveMarketAt,
         (passBudget?.deadlineAt ?? Infinity) - archiveStartedAt,
       )
       // Reserve twice the observed preparatory work for a fresh reconciliation and close construction.
       const fallbackReserveMs =
         passBudget === undefined ? remainingMs / 2 : 2 * (archiveStartedAt - passBudget.startedAt)
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
-        Effect.timeoutOrElse({
+        operationTimeoutOrElse({
           duration: Duration.millis(
             Math.max(1, Math.floor(Math.min(remainingMs / 2, remainingMs - fallbackReserveMs))),
           ),
