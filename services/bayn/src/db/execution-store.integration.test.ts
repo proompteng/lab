@@ -541,12 +541,20 @@ describePostgres('PostgreSQL execution persistence', () => {
         const rows = yield* sql<{ status: string }>`
           SELECT status FROM reconciliations ORDER BY reconciled_at, reconciliation_id COLLATE "C"
         `
+        const readAuthority = authority.readAuthorityState
+        const transactionalAuthority = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* sql.reserve
+            return yield* sql.withTransaction(readAuthority)
+          }),
+        )
         return {
           exact,
           discrepant,
           resolved,
           bindings: yield* reconciliation.bindings(accountId),
           authority: yield* authority.readAuthorityState,
+          transactionalAuthority,
           rows,
         }
       }),
@@ -560,6 +568,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.discrepant.reconciliation.status).toBe(ReconciliationStatus.Discrepancy)
     expect(result.discrepant.reconciliation.discrepancies).toHaveLength(1)
     expect(result.resolved.reconciliation).toMatchObject({ status: ReconciliationStatus.Exact, discrepancies: [] })
+    expect(result.transactionalAuthority).toEqual(result.authority)
     expect(result.bindings).toEqual([])
     expect(result.authority).toMatchObject({
       generationHash,

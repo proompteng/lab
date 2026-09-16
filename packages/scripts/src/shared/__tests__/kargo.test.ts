@@ -148,6 +148,23 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  restate: {
+    creationCriteria: 'single',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('restate')],
+    apps: ['restate'],
+    includePaths: [
+      'services/restate',
+      'packages/scripts/src/restate',
+      'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
+      '.github/workflows/restate-images.yml',
+      'argocd/applications/restate',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/platform.yaml',
+      'bun.lock',
+    ],
+  },
   bayn: {
     creationCriteria: 'single',
     images: [imageRepo('bayn')],

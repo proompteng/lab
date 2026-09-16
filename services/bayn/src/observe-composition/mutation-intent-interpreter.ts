@@ -1,4 +1,5 @@
 import { Effect, Option, Result } from 'effect'
+import { withObservedStage } from '../telemetry'
 
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
@@ -491,11 +492,14 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           Effect.mapError((cause) =>
             mutationRunnerError({ message: 'durable execution intent-set commit failed', cause, failure: 'store' }),
           ),
+          withObservedStage('bayn.execution.intent.commit'),
         ),
       { concurrency: 1, discard: true },
     )
 
-    const facts = yield* dependencies.readFacts({ input, preparation, policy, cycle, document, reconcile })
+    const facts = yield* dependencies
+      .readFacts({ input, preparation, policy, cycle, document, reconcile })
+      .pipe(withObservedStage('bayn.execution.intent.reconcile'))
     if (
       document.bindings.snapshotContentHash !== facts.snapshot.contentHash ||
       document.bindings.snapshotFinalizedAt !== facts.snapshot.finalizedAt
@@ -545,13 +549,12 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     })
     const hasOpenPosition = countOpenPositions(facts.reconciliation.brokerState.positions) > 0
     for (const prepared of preparedIntentsToInspect) {
-      const stored = yield* intentStore
-        .read(prepared.intent.intentId)
-        .pipe(
-          Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'committed execution intent readback failed', cause, failure: 'store' }),
-          ),
-        )
+      const stored = yield* intentStore.read(prepared.intent.intentId).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'committed execution intent readback failed', cause, failure: 'store' }),
+        ),
+        withObservedStage('bayn.execution.intent.read'),
+      )
       const record = Option.getOrUndefined(stored)
       if (record === undefined) {
         return yield* mutationRunnerError({
@@ -560,13 +563,12 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           failure: 'contract',
         })
       }
-      const latest = yield* mutationStore
-        .latest(prepared.intent.intentId, MutationOperation.Submit)
-        .pipe(
-          Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'durable submit state refresh failed', cause, failure: 'store' }),
-          ),
-        )
+      const latest = yield* mutationStore.latest(prepared.intent.intentId, MutationOperation.Submit).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'durable submit state refresh failed', cause, failure: 'store' }),
+        ),
+        withObservedStage('bayn.execution.mutation.latest'),
+      )
       const decision = yield* Effect.fromResult(decidePreparedMutationIntent(record.intent, latest)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )

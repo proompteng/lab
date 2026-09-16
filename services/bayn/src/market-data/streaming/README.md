@@ -15,8 +15,17 @@ A replacement consumer captures partition bounds and rebuilds the required 30-mi
 Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Windows that need
 discarded rejection history fail verification. An observation older than retained history fails.
-Reassignment discards the old projection. Connection attempts are bounded; after exhaustion, a later read can
-request a fresh rebuild after a 30-second cooldown. Scope closure cancels consumption and closes the client.
+Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
+after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
+cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+The transport owns each SDK stream in the consume callback, before Node can run stream construction. It installs an
+error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
+the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption
+after close, and normal shutdown using the real Kafka SDK streams.
+The execution worker checks projection availability on successful mutation-capable passes, including waiting
+before the first strategy window. The persisted pass reports an unavailable projection to public readiness.
+This check preserves reconciliation and close recovery. A blocked current session also reports failed readiness
+until its close instead of being classified as historical waiting.
 
 Snapshots bind the consumer epoch, local receipt sequence, transport positions, raw rows and selected feature
 payloads. Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
