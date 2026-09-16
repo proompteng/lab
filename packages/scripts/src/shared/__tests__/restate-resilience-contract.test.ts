@@ -17,7 +17,12 @@ test('Restate image promotion requires both native fault proofs and uploaded rel
     'amd64',
     'arm64',
   ])
-  expect(build.steps.find((step: { name?: string }) => step.name === 'Publish tested platform image').if).toBe(mainOnly)
+  const platformPush = build.steps.find((step: { name?: string }) => step.name === 'Publish tested platform image')
+  expect(platformPush.if).toBe(mainOnly)
+  expect(platformPush.run).toBe(
+    'bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"',
+  )
+  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toBe(mainOnly)
   expect(publish.needs).toEqual(['build'])
   const releaseSteps = publish.steps as { name?: string; uses?: string }[]

@@ -157,6 +157,7 @@ const expected = {
     includePaths: [
       'services/restate',
       'packages/scripts/src/restate',
+      'packages/scripts/src/shared/docker.ts',
       'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
       '.github/workflows/restate-images.yml',
       'argocd/applications/restate',
