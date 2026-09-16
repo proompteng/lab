@@ -1,3 +1,5 @@
+import type { SimulatedMarketSnapshot, SimulatedVerifiedMarketSnapshot } from '../streaming/snapshot'
+import type { SimulatedSnapshotReference } from '../streaming/simulation-service'
 import type { StreamingMarketSnapshot, StreamingVerifiedMarketSnapshot } from '../streaming/snapshot'
 import type { StreamingVerifiedSnapshotReference } from '../streaming/reference'
 import { Context, Data, Effect } from 'effect'
@@ -145,64 +147,20 @@ export interface IntradayMarketSnapshot {
   readonly manifest: IntradaySnapshotManifest
 }
 
-declare const ArchiveVerifiedIntradayMarketSnapshotTypeId: unique symbol
+export type VerifiedMarketSnapshot = StreamingVerifiedMarketSnapshot | SimulatedVerifiedMarketSnapshot
+export type MarketSnapshotReference = StreamingVerifiedSnapshotReference | SimulatedSnapshotReference
 
-/**
- * Opaque snapshot produced only after the immutable ClickHouse archive query
- * has selected each canonical quote and trade winner at the bound watermarks.
- * Persisted or caller-constructed snapshot documents must be reloaded through
- * IntradayMarketData before they can cross this boundary.
- */
-export type ArchiveVerifiedIntradayMarketSnapshot = IntradayMarketSnapshot & {
-  readonly [ArchiveVerifiedIntradayMarketSnapshotTypeId]: true
-}
-
-declare const ArchiveVerifiedIntradaySnapshotReferenceTypeId: unique symbol
-
-/** Compact durable identity derived only from a snapshot reverified against the immutable archive. */
-export type ArchiveVerifiedIntradaySnapshotReference = {
-  readonly schemaVersion: 'bayn.intraday-snapshot-reference.v1'
-  readonly manifest: IntradaySnapshotManifest
-  readonly [ArchiveVerifiedIntradaySnapshotReferenceTypeId]: true
-}
-
-export const archiveVerifiedIntradaySnapshotReference = (
-  snapshot: ArchiveVerifiedIntradayMarketSnapshot,
-): ArchiveVerifiedIntradaySnapshotReference =>
-  Object.freeze({
-    schemaVersion: 'bayn.intraday-snapshot-reference.v1',
-    manifest: snapshot.manifest,
-  }) as ArchiveVerifiedIntradaySnapshotReference
-
-/**
- * Verified intraday market-data boundary. This service is introduced with the
- * verifier and its ClickHouse implementation so callers can never obtain a
- * materialized snapshot without the immutable-row checks in this layer.
- */
 export interface IntradayMarketDataService {
-  /** Kafka source capability. Explicit shadow mode keeps archive execution and records a parallel comparison. */
-  readonly streaming?: {
-    readonly shadowOnly?: boolean
-    readonly loadSnapshot: (
-      query: IntradaySnapshotQuery,
-    ) => Effect.Effect<StreamingVerifiedMarketSnapshot, OperationalError>
-    readonly verifyReference: (
-      snapshot: StreamingMarketSnapshot,
-    ) => Effect.Effect<StreamingVerifiedSnapshotReference, OperationalError>
-  }
-  /** Verifies that the three tables required by the active strategy are queryable. */
   readonly check: Effect.Effect<void, OperationalError>
-  readonly captureVersion: (
-    query: IntradaySnapshotQuery,
-  ) => Effect.Effect<readonly IntradayArchiveWatermark[], OperationalError>
-  readonly loadSnapshot: (
-    request: IntradaySnapshotRequest,
-  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
-  /** Re-query the bound immutable archive and reject a caller-provided snapshot that is not the canonical result. */
-  readonly verifyArchiveSnapshot: (
-    snapshot: IntradayMarketSnapshot,
-  ) => Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError>
+  readonly loadSnapshot: (query: IntradaySnapshotQuery) => Effect.Effect<VerifiedMarketSnapshot, OperationalError>
+  readonly verifyReference: (
+    snapshot: StreamingMarketSnapshot | SimulatedMarketSnapshot,
+  ) => Effect.Effect<MarketSnapshotReference, OperationalError>
 }
+
+export class MarketDataHealth extends Context.Service<MarketDataHealth, Pick<IntradayMarketDataService, 'check'>>()(
+  'bayn/MarketDataHealth',
+) {}
 
 export class IntradayMarketData extends Context.Service<IntradayMarketData, IntradayMarketDataService>()(
   '@proompteng/bayn/market-data/intraday/IntradayMarketData',

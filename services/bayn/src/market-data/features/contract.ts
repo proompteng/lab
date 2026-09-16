@@ -1,6 +1,6 @@
 import { Data, Result, Schema } from 'effect'
 
-import { canonicalHashV1Result } from '../../hash'
+import { canonicalHashV1Result, sha256 } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
 import { intradayInstantNanos } from '../intraday/time'
 import { strictParseOptions } from '../../schemas'
@@ -100,16 +100,34 @@ const newYorkDate = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 })
 
+const canonicalMaterialKeys = [
+  ...new Set([
+    ...Object.keys(RollingMarketFeatureMaterialSchema.fields),
+    ...Object.keys(MarketFeatureInputSchema.fields),
+    ...Object.keys(RollingMarketValuesSchema.fields),
+  ]),
+].sort()
+
+// Strict decoding below produces plain JSON with ASCII strings and finite integers.
+// Native serialization with sorted schema keys preserves canonical v1 without revalidating every property.
+const hashDecodedMaterial = (material: RollingMarketFeature['material']) =>
+  Result.try({
+    try: () => sha256(JSON.stringify(material, canonicalMaterialKeys)),
+    catch: (cause) => failure('hash', 'decoded feature content could not be hashed', cause),
+  })
+
+const expectedDefinitionHash = marketFeatureHash(rollingFeatureDefinitionMaterial)
+
 export const decodeRollingMarketFeature = (value: unknown): Result.Result<RollingMarketFeature, MarketFeatureFailure> =>
   Result.gen(function* () {
     const feature = yield* Schema.decodeUnknownResult(RollingMarketFeatureSchema)(value, strictParseOptions).pipe(
       Result.mapError((cause) => failure('schema', 'invalid rolling feature message', cause)),
     )
     const { material } = feature
-    const expectedDefinition = yield* marketFeatureHash(rollingFeatureDefinitionMaterial)
+    const expectedDefinition = yield* expectedDefinitionHash
     if (material.definitionHash !== expectedDefinition)
       return yield* Result.fail(failure('identity', 'unknown rolling feature definition'))
-    if (feature.featureId !== (yield* marketFeatureHash(material)))
+    if (feature.featureId !== (yield* hashDecodedMaterial(material)))
       return yield* Result.fail(failure('hash', 'feature identity does not match its content'))
     if (
       material.windowStartMs % 60_000 !== 0 ||

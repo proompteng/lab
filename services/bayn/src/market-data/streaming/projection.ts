@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { Result } from 'effect'
 import type { RawMarketEvent } from './raw-events'
+import type { TechnicalMarketFeature } from '../features/technical-contract'
+import { incorporateTechnicalRecord, type TechnicalInputRejection } from './technical-projection'
 
 import { compareIntradayInstants, intradayInstantNanos } from '../intraday/time'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
@@ -19,7 +21,7 @@ export interface ObservedMarketValue<A> {
   readonly sequence: number
   readonly recordHash: string
 }
-export interface ObservedFeature extends ObservedMarketValue<RollingMarketFeature> {
+export interface ObservedFeature<A = RollingMarketFeature> extends ObservedMarketValue<A> {
   readonly topic: string
   readonly partition: number
   readonly offset: string
@@ -36,13 +38,20 @@ export interface StreamingProjection {
   readonly tradeHistory: ReadonlyMap<string, readonly ObservedMarketValue<IntradayTrade>[]>
   readonly minimumObservationMs: number
   readonly features: ReadonlyMap<string, readonly ObservedFeature[]>
+  /** The accepted feature for this disposition, including one too old for retained join history. */
+  readonly featureArrival: ObservedFeature | null
+  readonly technicalTopic?: string
+  readonly technicalFeatures: ReadonlyMap<string, readonly ObservedFeature<TechnicalMarketFeature>[]>
+  readonly technicalFeatureArrival: ObservedFeature<TechnicalMarketFeature> | null
+  readonly technicalRejections: readonly TechnicalInputRejection[]
+  readonly technicalRejectionsDiscardedThrough: Pick<TechnicalInputRejection, 'availableAtMs' | 'sequence'> | null
   readonly discardedRejectionsThroughMs: number
   readonly rejections: ReadonlyMap<
     string,
     readonly { readonly availableAtMs: number; readonly offset: string; readonly reason: string }[]
   >
 }
-export const emptyStreamingProjection = (epoch: string): StreamingProjection => ({
+export const emptyStreamingProjection = (epoch: string, technicalTopic?: string): StreamingProjection => ({
   availabilityMode: 'observed',
   epoch,
   sequence: 0,
@@ -54,6 +63,12 @@ export const emptyStreamingProjection = (epoch: string): StreamingProjection => 
   tradeHistory: new Map(),
   minimumObservationMs: 0,
   features: new Map(),
+  featureArrival: null,
+  ...(technicalTopic === undefined ? {} : { technicalTopic }),
+  technicalFeatures: new Map(),
+  technicalFeatureArrival: null,
+  technicalRejections: [],
+  technicalRejectionsDiscardedThrough: null,
   discardedRejectionsThroughMs: -1,
   rejections: new Map(),
 })
@@ -93,9 +108,12 @@ const incorporateDecodedRecord = (
   decodedEvent?: RawMarketEvent,
   featureRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
+  if (universe.topics.technicalFeatures !== undefined && record.topic === universe.topics.technicalFeatures)
+    return incorporateTechnicalRecord(previous, record, universe, availableAtMs)
   if (
     !Number.isSafeInteger(record.partition) ||
     record.partition < 0 ||
+    record.partition > 2_147_483_647 ||
     !/^(0|[1-9][0-9]*)$/.test(record.offset) ||
     BigInt(record.offset) > 9_223_372_036_854_775_807n ||
     !Number.isSafeInteger(availableAtMs) ||
@@ -129,7 +147,13 @@ const incorporateDecodedRecord = (
       : previous
   }
   const sequence = previous.sequence + 1
-  const state = { ...previous, sequence, offsets: new Map(previous.offsets).set(key, record.offset) }
+  const state = {
+    ...previous,
+    sequence,
+    featureArrival: null,
+    technicalFeatureArrival: null,
+    offsets: new Map(previous.offsets).set(key, record.offset),
+  }
   if (record.topic === universe.topics.features) {
     const parsed = Result.try({
       try: (): unknown => JSON.parse(record.value),
@@ -162,17 +186,16 @@ const incorporateDecodedRecord = (
     const features = [...existing, incoming]
       .toSorted((a, b) => b.value.material.windowEndMs - a.value.material.windowEndMs || b.sequence - a.sequence)
       .slice(0, 64)
-    return { ...state, features: new Map(state.features).set(material.symbol, features) }
+    return { ...state, featureArrival: incoming, features: new Map(state.features).set(material.symbol, features) }
   }
   const parsed = decodedEvent === undefined ? decodeRawMarketRecord(record, universe) : Result.succeed(decodedEvent)
   if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)
   const event = parsed.success
   if (event.kind === RawMarketEventKind.Ignored) return state
+  const ingestedAtNanos = intradayInstantNanos(event.value.ingestedAt)
   if (
-    intradayInstantNanos(event.value.ingestedAt) >
-      (BigInt(availableAtMs + marketFeatureClockSkewAllowanceMs) + 1n) * 1_000_000n - 1n ||
-    intradayInstantNanos(event.value.ingestedAt) + BigInt(marketFeatureClockSkewAllowanceMs) * 1_000_000n <
-      intradayInstantNanos(event.value.eventAt)
+    ingestedAtNanos > (BigInt(availableAtMs + marketFeatureClockSkewAllowanceMs) + 1n) * 1_000_000n - 1n ||
+    ingestedAtNanos + BigInt(marketFeatureClockSkewAllowanceMs) * 1_000_000n < intradayInstantNanos(event.value.eventAt)
   )
     return reject(state, record, availableAtMs, 'availability')
   switch (event.kind) {
@@ -184,17 +207,20 @@ const incorporateDecodedRecord = (
       const revisions = [...existing, { value: bar, availableAtMs, sequence, recordHash }].toSorted(
         (a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt) || compareBarRevisions(b.value, a.value),
       )
-      const minuteCounts = new Map<bigint, number>()
+      const minuteCounts = new Map<string, number>()
       const bars: ObservedMarketValue<IntradayBar>[] = []
       let minimumObservationMs = state.minimumObservationMs
       for (const entry of revisions) {
-        const minute = intradayInstantNanos(entry.value.eventAt)
+        // Raw timestamps have nine fractional digits; recorded rows may have three.
+        const minute = entry.value.eventAt.slice(0, -1).padEnd(29, '0')
         const count = minuteCounts.get(minute) ?? 0
         if (count === 0 && minuteCounts.size === 61) continue
         minuteCounts.set(minute, count + 1)
         if (count < 4) bars.push(entry)
         else {
-          const earliestRetained = bars.findLast((retained) => intradayInstantNanos(retained.value.eventAt) === minute)
+          const earliestRetained = bars.findLast(
+            (retained) => compareIntradayInstants(retained.value.eventAt, entry.value.eventAt) === 0,
+          )
           minimumObservationMs = Math.max(minimumObservationMs, earliestRetained?.availableAtMs ?? availableAtMs)
         }
       }
