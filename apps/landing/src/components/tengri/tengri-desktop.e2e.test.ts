@@ -2502,6 +2502,7 @@ test('magnifies the Dock without relayout and minimizes with native transform an
   const wrapper = chrome.locator('..')
   const normalBounds = await chrome.boundingBox()
   await chrome.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
+  await expect(wrapper).toHaveCSS('visibility', 'hidden')
   const nativeTransform = await wrapper.evaluate((element) =>
     element
       .getAnimations()
@@ -2514,7 +2515,6 @@ test('magnifies the Dock without relayout and minimizes with native transform an
   expect(nativeTransform.length).toBeGreaterThanOrEqual(2)
   expect(nativeTransform[0]?.transform).toBe('translate(0px, 0px) scale(1)')
   expect(nativeTransform.at(-1)?.transform).toMatch(/scale\(0\./)
-  await expect(wrapper).toHaveCSS('visibility', 'hidden')
   await dock.getByRole('button', { name: 'Open Chrome' }).click()
   await expect(wrapper).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
   await expect.poll(() => chrome.boundingBox()).toEqual(normalBounds)
