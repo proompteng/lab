@@ -18,6 +18,10 @@ discarded rejection history fail verification. An observation older than retaine
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+The transport owns each SDK stream in the consume callback, before Node can run stream construction. It installs an
+error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
+the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption
+after close, and normal shutdown using the real Kafka SDK streams.
 The execution worker checks projection availability on successful mutation-capable passes, including waiting
 before the first strategy window. The persisted pass reports an unavailable projection to public readiness.
 This check preserves reconciliation and close recovery. A blocked current session also reports failed readiness

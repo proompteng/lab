@@ -85,7 +85,7 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
     expect(rows).toEqual([{ id: 2 }])
   }, 15_000)
 
-  test('canceling a writer waiting for a pool connection does not wait for unrelated borrowers', async () => {
+  test('canceling queued writers returns every late connection without waiting for unrelated borrowers', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -100,22 +100,26 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
         }).pipe(Effect.scoped, Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(occupied)
         let mutated = false
-        const attempt = yield* fence
-          .transaction(
-            Effect.sync(() => {
-              mutated = true
-            }),
-          )
-          .pipe(Effect.forkChild({ startImmediately: true }))
-        yield* Effect.sleep('100 millis')
-        const interruption = yield* Fiber.interrupt(attempt).pipe(Effect.forkChild({ startImmediately: true }))
-        yield* Effect.sleep('100 millis')
-        const completedBeforeBorrowers = attempt.pollUnsafe() !== undefined
+        for (let index = 0; index < 2; index += 1) {
+          const attempt = yield* fence
+            .transaction(
+              Effect.sync(() => {
+                mutated = true
+              }),
+            )
+            .pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Effect.sleep('100 millis')
+          yield* Fiber.interrupt(attempt).pipe(Effect.timeout('500 millis'))
+          expect(attempt.pollUnsafe()).toBeDefined()
+        }
         yield* Deferred.succeed(release, undefined)
         yield* Fiber.join(borrowers)
-        yield* Fiber.join(interruption)
-        expect(completedBeforeBorrowers).toBe(true)
         expect(mutated).toBe(false)
+        const reacquired = yield* Effect.gen(function* () {
+          yield* sql.reserve
+          yield* sql.reserve
+        }).pipe(Effect.scoped, Effect.timeoutOption('500 millis'))
+        expect(Option.isSome(reacquired)).toBe(true)
         yield* fence.transaction(sql`INSERT INTO writer_fence_test VALUES (3)`)
         expect(yield* sql`SELECT id FROM writer_fence_test`).toEqual([{ id: 3 }])
       }),
