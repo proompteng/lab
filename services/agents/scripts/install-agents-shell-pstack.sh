@@ -18,6 +18,33 @@ fi
 
 mkdir -p "${skills_target}" "${prompts_target}"
 
+remove_stale_managed_links() {
+  local source_dir="$1"
+  local target_dir="$2"
+  local kind="$3"
+  local target
+  local current
+  local source
+
+  for target in "${target_dir}"/*; do
+    [[ -L "${target}" ]] || continue
+    current="$(readlink "${target}")"
+    [[ "${current}" == "${pstack_root}"/* ]] || continue
+
+    source="${source_dir}/$(basename "${target}")"
+    if [[ "${kind}" == "skill" ]]; then
+      [[ -d "${source}" && -f "${source}/SKILL.md" ]] && continue
+    elif [[ -f "${source}" ]]; then
+      continue
+    fi
+
+    rm -f "${target}"
+  done
+}
+
+remove_stale_managed_links "${skills_source}" "${skills_target}" skill
+remove_stale_managed_links "${prompts_source}" "${prompts_target}" prompt
+
 install_link() {
   local source="$1"
   local target="$2"

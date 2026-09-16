@@ -55,14 +55,21 @@ describe('agents-shell pstack installer', () => {
   it('is idempotent and preserves user-managed collisions', () => {
     const fixture = makeFixture()
     const userSkill = join(fixture.home, 'custom-poteto-mode')
+    const removedSkill = join(fixture.pstack, 'skills', 'removed-skill')
+    const removedPrompt = join(fixture.pstack, '.codex-plugin', 'prompts', 'removed.md')
     mkdirSync(userSkill, { recursive: true })
     mkdirSync(join(fixture.home, '.agents', 'skills'), { recursive: true })
+    mkdirSync(join(fixture.home, '.codex', 'prompts'), { recursive: true })
     symlinkSync(userSkill, join(fixture.home, '.agents', 'skills', 'poteto-mode'))
+    symlinkSync(removedSkill, join(fixture.home, '.agents', 'skills', 'removed-skill'))
+    symlinkSync(removedPrompt, join(fixture.home, '.codex', 'prompts', 'removed.md'))
 
     runInstaller(fixture.home, fixture.pstack)
     runInstaller(fixture.home, fixture.pstack)
 
     expect(readlinkSync(join(fixture.home, '.agents', 'skills', 'poteto-mode'))).toBe(userSkill)
     expect(readlinkSync(join(fixture.home, '.agents', 'skills', 'tdd'))).toBe(join(fixture.skills, 'tdd'))
+    expect(() => readlinkSync(join(fixture.home, '.agents', 'skills', 'removed-skill'))).toThrow()
+    expect(() => readlinkSync(join(fixture.home, '.codex', 'prompts', 'removed.md'))).toThrow()
   })
 })
