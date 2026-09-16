@@ -22,6 +22,7 @@ test('Restate image promotion requires both native fault proofs and uploaded rel
   expect(platformPush.run).toBe(
     'bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"',
   )
+  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/cli.ts')
   expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
   expect(publish.if).toBe(mainOnly)
   expect(publish.needs).toEqual(['build'])
