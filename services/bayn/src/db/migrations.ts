@@ -1,4 +1,5 @@
 import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
+import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
 import simulatedBrokerCheckpoints from '../../migrations/0070_simulated_broker_checkpoints'
 import simulatedExecutionClock from '../../migrations/0069_simulated_execution_clock'
 import simulatedSnapshotReferences from '../../migrations/0068_simulated_snapshot_references'
@@ -144,4 +145,5 @@ export const migrationLoader = PgMigrator.fromRecord({
   '70_simulated_broker_checkpoints': simulatedBrokerCheckpoints,
   '66_streaming_authority_protocol': streamingAuthorityProtocol,
   '71_recover_intraday_authority_cycle': recoverIntradayAuthorityCycle,
+  '72_intraday_zero_fill_rearm': intradayZeroFillRearm,
 })

@@ -51,6 +51,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 const draft = (
   strategyProtocolHash = canonicalHashV1({ strategy: 'intraday-momentum', version: 1 }),
   executionModel = intradayMomentumExecutionModel,
+  entryAttemptOrdinal = 1,
 ) => {
   const calendar = value(
     makeExecutionCalendarObservation({
@@ -64,11 +65,12 @@ const draft = (
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(executionModel))
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
       strategyName: 'intraday-momentum',
       qualificationRunId,
       strategyProtocolHash,
       accountId,
+      entryAttemptOrdinal,
       executionSessionDate: sessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
       executionCalendarSource: calendar.executionCalendarSource,
@@ -140,6 +142,38 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     ])
     expect(Option.getOrThrow(result.stored)).toMatchObject({ state: CycleState.Pending, stateVersion: 1 })
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
+  })
+
+  test('stores two immutable attempts in one session and returns the latest authority slot', async () => {
+    const first = draft(undefined, undefined, 1)
+    const second = draft(undefined, undefined, 2)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const firstReceipt = yield* store.acquire(first, acquiredAt)
+        const secondReceipt = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
+        const secondReplay = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
+        return {
+          firstReceipt,
+          secondReceipt,
+          secondReplay,
+          first: yield* store.read(first.identity.cycleId),
+          second: yield* store.read(second.identity.cycleId),
+          slot: yield* store.readAuthoritySlot({ qualificationRunId, accountId, executionSessionDate: sessionDate }),
+        }
+      }),
+    )
+
+    expect(first.identity.cycleId).not.toBe(second.identity.cycleId)
+    expect(result.firstReceipt.created).toBeTrue()
+    expect(result.secondReceipt.created).toBeTrue()
+    expect(result.secondReplay.created).toBeFalse()
+    expect(Option.getOrThrow(result.first).identity).toMatchObject({ entryAttemptOrdinal: 1 })
+    expect(Option.getOrThrow(result.second).identity).toMatchObject({ entryAttemptOrdinal: 2 })
+    expect(Option.getOrThrow(result.slot).identity).toMatchObject({
+      cycleId: second.identity.cycleId,
+      entryAttemptOrdinal: 2,
+    })
   })
 
   test('persists and reloads an exact full-session cycle with zero boundary offsets', async () => {
