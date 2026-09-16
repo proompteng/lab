@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const dockerfile = () => readFileSync(new URL('../../../Dockerfile', import.meta.url), 'utf8')
+const agentsShellEntrypoint = () =>
+  readFileSync(new URL('../../../scripts/agents-shell-entrypoint.sh', import.meta.url), 'utf8')
 const sourceRoot = fileURLToPath(new URL('../../', import.meta.url))
 
 const listProductionSources = (dir: string): string[] =>
@@ -67,6 +69,23 @@ describe('Agents control-plane image layout', () => {
     expect(content).toContain('python3-venv')
     expect(content).toContain('python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}"')
     expect(content).toContain('command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch')
+  })
+
+  it('bundles the pinned Poteto pstack skills for agents-shell startup', () => {
+    const content = dockerfile()
+    const shellTarget = dockerfileTarget('agents-shell')
+
+    expect(content).toContain('ARG PSTACK_REPOSITORY=https://github.com/michael-denyer/pstack-claude.git')
+    expect(content).toContain('ARG PSTACK_COMMIT=0986f344496c9c8468003465261711f6bb2c5ec1')
+    expect(content).toContain('FROM agents-tools AS pstack-bundle')
+    expect(content).toContain('git -C /opt/agents-shell/pstack-source fetch -q --depth=1 origin "${PSTACK_COMMIT}"')
+    expect(content).toContain('plugins/pstack/skills/poteto-mode/SKILL.md')
+    expect(content).toContain('plugins/pstack/skills/poteto-mode/references/codex-tools.md')
+    expect(shellTarget).toContain(
+      'COPY --from=pstack-bundle /opt/agents-shell/pstack-source/plugins/pstack /opt/agents-shell/pstack',
+    )
+    expect(shellTarget).toContain('chmod +x ./scripts/install-agents-shell-pstack.sh')
+    expect(agentsShellEntrypoint()).toContain('./scripts/install-agents-shell-pstack.sh')
   })
 
   it('runs package builds on the build platform while keeping runtime dependencies target-native', () => {
