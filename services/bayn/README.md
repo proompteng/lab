@@ -76,6 +76,14 @@ scheduled close. Rejected, mismatched, overfilled, and non-IOC canceled orders r
 Durable completion additionally requires the recorded partial fills to match the accepted order, a later trusted flat
 position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
 
+An exact zero-fill LIMIT/IOC cancellation is the only terminal entry outcome that can release an intraday attempt
+before the close. Bayn first requires a later exact flat reconciliation with no unknown mutations or open orders. The
+attempt then completes without inventing a fill. After at least one minute, while the entry cutoff remains open, the
+standing mandate may create one new rolling observation as entry attempt 2. Attempts use distinct immutable v4 cycle
+identities and PostgreSQL authority slots; the database caps the session at two attempts. A filled or partially filled
+attempt never rearms and remains bound through its scheduled close. Failed or ambiguous outcomes retain their existing
+fail-closed handling.
+
 When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
 recovery. A running worker also checks durable authority before and after each pass and replaces its driver when a
 system restriction appears. It cannot discover new cycles or submit entries while restricted. During the existing close window it can cancel outstanding

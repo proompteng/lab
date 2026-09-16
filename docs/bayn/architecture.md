@@ -45,9 +45,13 @@ records require them; they are not runtime fallbacks and cannot start new cycles
    committed before broker I/O.
 6. The mutation interpreter submits only committed, unexpired intents. Ambiguous outcomes remain unresolved until
    deterministic client-order-ID lookup and reconciliation recover them.
-7. The controller schedules exactly one successor tick. Restate delivery does not replace database idempotency or the
+7. A filled or partially filled entry stays bound to its immutable cycle through the close. An exact zero-fill IOC may
+   complete early only after later exact flat reconciliation. After at least one minute, and only before the entry
+   cutoff, the standing mandate may create one distinct second attempt. The v4 cycle identity and PostgreSQL authority
+   slot bind the attempt ordinal and cap a session at two attempts.
+8. The controller schedules exactly one successor tick. Restate delivery does not replace database idempotency or the
    persisted broker-mutation state machine.
-8. Before the close, the same cycle enters close-only operation. Completion requires a flat account, no open orders or
+9. Before the close, the same filled cycle enters close-only operation. Completion requires a flat account, no open orders or
    unresolved mutations, exact PostgreSQL/TigerBeetle reconciliation, and a persisted net-of-cost performance receipt.
 
 ## Active strategy

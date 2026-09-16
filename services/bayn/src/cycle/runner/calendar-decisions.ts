@@ -9,10 +9,19 @@ import {
   makeIntradayCycleWindow,
   type CycleConstructionFailure,
 } from '../construction'
-import type { CycleDraft, CycleExecutionPolicy } from '../model'
+import {
+  CycleState,
+  intradayCycleEntryAttemptOrdinal,
+  type AutonomousCycle,
+  type CycleDraft,
+  type CycleExecutionPolicy,
+  type IntradayCycleEntryAttemptOrdinal,
+} from '../model'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
+export const maximumIntradayEntryAttempts: IntradayCycleEntryAttemptOrdinal = 2
+export const intradayEntryRearmDelayMs = 60_000
 
 export type IsoDateShiftCause =
   | { readonly _tag: 'IsoDateInputInvalid'; readonly date: string; readonly epochMillis: number }
@@ -120,6 +129,7 @@ export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,
   observation: MarketCalendarObservation,
   executionSession: MarketCalendarSession,
+  entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinal = 1,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
   Result.gen(function* () {
     const executionCalendar = yield* makeExecutionCalendarObservation({
@@ -128,11 +138,12 @@ export const makeIntradayCycleDraft = (
       ...executionSession,
     })
     const identity = yield* makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
       strategyName: candidate.strategyName,
       qualificationRunId: candidate.cycleBindingId,
       strategyProtocolHash: candidate.strategyProtocolHash,
       accountId: candidate.accountId,
+      entryAttemptOrdinal,
       executionSessionDate: executionCalendar.executionSessionDate,
       executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
       executionCalendarSource: executionCalendar.executionCalendarSource,
@@ -142,3 +153,24 @@ export const makeIntradayCycleDraft = (
     const window = yield* makeIntradayCycleWindow(executionCalendar, candidate.executionPolicy)
     return yield* makeCycleDraft(identity, window)
   })
+
+export const nextIntradayEntryAttemptOrdinal = (
+  cycle: AutonomousCycle,
+  observedAt: string,
+): IntradayCycleEntryAttemptOrdinal | undefined => {
+  if (
+    cycle.identity.strategyName !== 'intraday-momentum' ||
+    cycle.state !== CycleState.Completed ||
+    cycle.terminalAt === undefined ||
+    cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
+    observedAt >= cycle.window.submissionCutoffAt
+  )
+    return undefined
+  const currentAttempt =
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' ||
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
+      ? intradayCycleEntryAttemptOrdinal(cycle.identity)
+      : maximumIntradayEntryAttempts
+  const rearmAt = Date.parse(cycle.terminalAt) + intradayEntryRearmDelayMs
+  return currentAttempt === 1 && Number.isFinite(rearmAt) && Date.parse(observedAt) >= rearmAt ? 2 : undefined
+}

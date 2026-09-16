@@ -330,7 +330,8 @@ export const decideReconciledExecutionCycleTerminalization = (
     }
   | undefined => {
   const completion = decideReconciledExecutionCycleCompletion(facts)
-  if (completion === undefined || entryIntentEvidence === 'COMPLETE') return completion
+  if (completion === undefined || entryIntentEvidence === 'COMPLETE' || entryIntentEvidence === 'BENIGN_ZERO_FILL')
+    return completion
   return {
     _tag: 'Block',
     reason: entryIntentEvidence === 'MISSING' ? CycleTerminalReason.MissedSubmission : CycleTerminalReason.Risk,
@@ -338,7 +339,7 @@ export const decideReconciledExecutionCycleTerminalization = (
   }
 }
 
-type EntryExecutionCycleIntentEvidence = 'COMPLETE' | 'MISSING' | 'UNSUCCESSFUL'
+type EntryExecutionCycleIntentEvidence = 'BENIGN_ZERO_FILL' | 'COMPLETE' | 'MISSING' | 'UNSUCCESSFUL'
 
 const entryExecutionCycleIntentEvidence = (
   document: ExecutionDecisionDocument,
@@ -361,19 +362,25 @@ const entryExecutionCycleIntentEvidence = (
       { concurrency: 1 },
     )
     if (records.some(({ intent }) => Option.isNone(intent))) return 'MISSING'
-    const unsuccessful = records.some(({ intent: maybeIntent, latestSubmit }) => {
+    const dispositions = records.flatMap(({ intent: maybeIntent, latestSubmit }) => {
       const record = Option.getOrUndefined(maybeIntent)
-      return (
-        record !== undefined &&
-        decideExecutionIntentTerminalDisposition({
-          phase: 'ENTRY',
-          intent: record.intent,
-          ...(latestSubmit?.brokerOrderId === undefined ? {} : { acceptedBrokerOrderId: latestSubmit.brokerOrderId }),
-          orders,
-        }) === 'UNSUCCESSFUL'
-      )
+      return record === undefined
+        ? []
+        : [
+            decideExecutionIntentTerminalDisposition({
+              phase: 'ENTRY',
+              intent: record.intent,
+              ...(latestSubmit?.brokerOrderId === undefined
+                ? {}
+                : { acceptedBrokerOrderId: latestSubmit.brokerOrderId }),
+              orders,
+            }),
+          ]
     })
-    return unsuccessful ? 'UNSUCCESSFUL' : 'COMPLETE'
+    if (dispositions.some((disposition) => disposition === 'UNSUCCESSFUL')) return 'UNSUCCESSFUL'
+    return dispositions.length > 0 && dispositions.every((disposition) => disposition === 'BENIGN_ZERO_FILL_IOC')
+      ? 'BENIGN_ZERO_FILL'
+      : 'COMPLETE'
   })
 
 type ExecutionCycleClosureResult =
@@ -731,15 +738,10 @@ const executeBoundExecutionCycle = (
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
       const entryCutoffAt = closeWindow.startAt
-      const entryIntentEvidence: EntryExecutionCycleIntentEvidence =
-        closeOnly || observedAt >= entryCutoffAt
-          ? yield* reconcile.pipe(
-              Effect.mapError((cause) =>
-                reconciliationRunnerError(cause, 'entry execution terminal reconciliation failed'),
-              ),
-              Effect.flatMap((facts) => entryExecutionCycleIntentEvidence(document, facts.brokerState.orders)),
-            )
-          : 'COMPLETE'
+      const entryIntentEvidence = yield* reconcile.pipe(
+        Effect.mapError((cause) => reconciliationRunnerError(cause, 'entry execution terminal reconciliation failed')),
+        Effect.flatMap((facts) => entryExecutionCycleIntentEvidence(document, facts.brokerState.orders)),
+      )
       if (entryIntentEvidence === 'MISSING') {
         return { _tag: 'Block', reason: CycleTerminalReason.MissedSubmission, observedAt: step.observedAt }
       }
@@ -748,6 +750,7 @@ const executeBoundExecutionCycle = (
         observedAt,
         entryCutoffAt,
         entryHasUnsuccessfulIntent: entryIntentEvidence === 'UNSUCCESSFUL',
+        entrySettledWithoutFill: entryIntentEvidence === 'BENIGN_ZERO_FILL',
       })
       switch (terminalization._tag) {
         case 'WaitForClose':
