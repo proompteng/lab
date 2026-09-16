@@ -43,6 +43,7 @@ export interface OrderRead {
 export interface BrokerHistory {
   readonly orders: OrderRead
   readonly fills: readonly Observed<FillActivity>[]
+  readonly fees: readonly Observed<import('../broker/alpaca').FeeActivity>[]
 }
 
 export interface StableBrokerSnapshot {
@@ -59,6 +60,7 @@ export interface NormalizedBrokerSnapshot {
   readonly positions: PositionSnapshotInput
   readonly orderEvents: readonly OrderEventInput[]
   readonly fillEvents: readonly FillEventInput[]
+  readonly fees: readonly Observed<import('../broker/alpaca').FeeActivity>[]
 }
 
 export interface ReconciliationWriteDecision {
@@ -86,8 +88,9 @@ export type PaginationFailureReason =
   | 'DuplicateFill'
   | 'FillHistoryTooLarge'
   | 'FillCursorDidNotAdvance'
+  | 'InvalidFeeHistory'
 
-export type SnapshotFailureReason = 'HistoryChanged' | 'AccountBaselineMissing'
+export type SnapshotFailureReason = 'HistoryChanged' | 'FillActivitiesPending' | 'AccountBaselineMissing'
 export type HistorySnapshotSide = 'before' | 'after'
 export type HistoryHashFailure =
   | { readonly _tag: 'HistoryMaterializationFailed'; readonly cause: unknown }

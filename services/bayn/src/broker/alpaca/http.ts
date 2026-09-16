@@ -4,6 +4,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
+import { withObservedStage } from '../../telemetry'
 import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
 import {
   BrokerReadContractFailure,
@@ -27,6 +28,7 @@ import {
   decodeErrorResponse,
   decodeExternalClientOrderId,
   decodeFillActivities,
+  decodeFeeActivities,
   decodeFillActivitiesQuery,
   decodeMarketCalendar,
   decodeMarketCalendarQuery,
@@ -51,6 +53,7 @@ import {
   normalizeAccountResult,
   normalizeAssetResult,
   normalizeFillActivitiesResult,
+  normalizeFeeActivitiesResult,
   normalizeMarketCalendarResult,
   normalizeOrderResult,
   normalizeOrdersResult,
@@ -61,6 +64,7 @@ import {
   accountUrl,
   assetBySymbolUrl,
   fillActivitiesRequest,
+  feeActivitiesRequest,
   marketCalendarUrl,
   orderByClientIdUrl,
   orderByIdUrl,
@@ -304,6 +308,8 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
+        withObservedStage('bayn.alpaca.read', { dependency: 'alpaca' }),
+        Effect.annotateLogs({ operation }),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
 
@@ -462,6 +468,40 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         ),
       )
 
+    const feeActivities = (query: FillActivitiesQuery = {}) =>
+      decodeInput('fee-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fee activities query').pipe(
+        Effect.flatMap((decoded) => {
+          const request = feeActivitiesRequest(connection, decoded)
+          return readJson('fee-activities', request.url, decodeFeeActivities).pipe(
+            Effect.map((result) => ({ result, pageSize: request.pageSize })),
+          )
+        }),
+        Effect.flatMap(({ pageSize, result }) =>
+          Effect.fromResult(normalizeFeeActivitiesResult(result.value, connection.expectedAccountId)).pipe(
+            Effect.map((items) => {
+              const lastItem = items.at(-1)
+              return {
+                value: {
+                  items,
+                  ...(items.length === pageSize && lastItem !== undefined
+                    ? { nextPageToken: lastItem.activityId }
+                    : {}),
+                },
+                evidence: result.evidence,
+              }
+            }),
+            Effect.mapError((cause) =>
+              invalidResponse({
+                operation: 'fee-activities',
+                message: 'Alpaca fee-activities response violates the Bayn read contract',
+                evidence: result.evidence,
+                cause,
+              }),
+            ),
+          ),
+        ),
+      )
+
     return {
       account,
       accountConfiguration,
@@ -471,6 +511,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
       orderById,
       orderByClientId,
       fillActivities,
+      feeActivities,
       marketCalendar,
     }
   })

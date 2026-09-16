@@ -71,6 +71,9 @@
   candidates may proceed. Required benchmark and execution-pricing evidence still fail the whole observation;
   malformed, premature, mixed-contract, ordering, and watermark failures always remain global. Preserve the raw
   excluded rows and reproduce exclusions when verifying immutable snapshot evidence.
+- During the configured close window, retryable archive unavailability may use the existing reconciled-position
+  liquidation binding after fresh reconciliation. Preserve exact identity, quantity bounds, unresolved-order and
+  mutation checks, and the close deadline. This exception never supplies evidence for an entry.
 - Inspect finalized manifest and calendar before candidate bars, then acquire the immutable qualification lock. Commit
   the evaluation graph and terminal result together; never retry or bypass an opened-incomplete lock.
 - TigerBeetle writes remain deterministic and idempotent. Existing IDs must be verified against the complete expected

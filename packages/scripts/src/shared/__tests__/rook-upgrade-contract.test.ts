@@ -134,9 +134,13 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     cephImage: { repository: string; tag: string }
     monitoring: { enabled: boolean; createPrometheusRules: boolean }
     cephClusterSpec: {
-      cephConfig: { rgw: { rgw_s3_auth_use_sts: string } }
+      cephConfig: {
+        mon: { mon_auth_allow_insecure_key: string }
+        rgw: { rgw_s3_auth_use_sts: string }
+      }
       security: {
         cephx: {
+          allowedCiphers: string[]
           daemon: { keyRotationPolicy: string; keyGeneration: number }
           csi: {
             keyRotationPolicy: string
@@ -173,6 +177,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   }>('argocd/applications/rook-ceph/csi-driver-values.yaml')
 
   expect(operatorValues.image).toMatchObject({ repository: 'docker.io/rook/ceph', tag: 'v1.20.7' })
+  expect(clusterValues.cephClusterSpec.security.cephx.allowedCiphers).toEqual(['aes256k'])
   expect(operatorValues.csi).toMatchObject({
     installCsiOperator: true,
     snapshotter: { tag: 'v8.6.0' },
@@ -184,6 +189,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
     tag: 'v20.2.4-20260818',
   })
   expect(clusterValues.cephClusterSpec.cephConfig.rgw.rgw_s3_auth_use_sts).toBe('false')
+  expect(clusterValues.cephClusterSpec.cephConfig.mon.mon_auth_allow_insecure_key).toBe('false')
   expect(clusterValues.cephClusterSpec.security.cephx.daemon).toEqual({
     keyRotationPolicy: 'KeyGeneration',
     keyGeneration: 2,
@@ -191,7 +197,7 @@ test('preserves the Ceph data plane and live CSI behavior after the v1.20 migrat
   expect(clusterValues.cephClusterSpec.security.cephx.csi).toEqual({
     keyRotationPolicy: 'KeyGeneration',
     keyGeneration: 3,
-    keepPriorKeyCountMax: 2,
+    keepPriorKeyCountMax: 0,
     keyType: 'aes256k',
   })
   expect(clusterValues.cephClusterSpec.security.cephx.rbdMirrorPeer).toEqual({
@@ -262,6 +268,7 @@ test('runs retained storage acceptance PVCs through ordered Argo PostSync hooks'
     apiVersion: 'kustomize.config.k8s.io/v1beta1',
     kind: 'Kustomization',
     namespace: 'rook-ceph',
+    commonAnnotations: { 'storage.proompteng.ai/acceptance-generation': 'aes256k-only-v1' },
     resources: ['storage-canary.yaml'],
   })
   expect(existsSync(new URL('argocd/applications/rook-ceph/storage-canary.yaml', repoRoot))).toBe(false)

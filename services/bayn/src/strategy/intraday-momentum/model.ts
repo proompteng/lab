@@ -1,9 +1,7 @@
 import { Data, Schema } from 'effect'
+import type { VerifiedStrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 
-import type {
-  ArchiveVerifiedIntradayMarketSnapshot,
-  IntradayCandidateExclusion,
-} from '../../market-data/intraday/model'
+import type { IntradayCandidateExclusion } from '../../market-data/intraday/model'
 import { intradayAgeNanos, millisecondsAsNanos } from '../../market-data/intraday/time'
 import {
   IsoDateSchema,
@@ -227,19 +225,6 @@ const IntradayMomentumTargetPortfolioV3Base = Schema.Struct({
   excludedCandidates: Schema.Array(IntradayMomentumCandidateExclusionSchema),
 })
 
-const IntradayMomentumTargetPortfolioV2Base = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-momentum.target.v2'),
-  strategy: Schema.Literal('intraday-momentum'),
-  sessionDate: IsoDateSchema,
-  snapshotId: Sha256Schema,
-  observedAt: UtcInstantSchema,
-  calendarHash: Sha256Schema,
-  benchmark: IntradayMomentumBenchmarkSchema,
-  selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
-  targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
-  signals: Schema.Array(IntradayMomentumSignalSchema).check(Schema.isMinLength(1)),
-})
-
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
 
@@ -248,16 +233,13 @@ type TargetValidationInput = {
   readonly selectedSymbols: readonly string[]
   readonly targetWeights: Readonly<Record<string, number>>
   readonly signals: readonly IntradayMomentumSignal[]
-  readonly excludedCandidates?: readonly IntradayMomentumCandidateExclusion[]
+  readonly excludedCandidates: readonly IntradayMomentumCandidateExclusion[]
 }
 
-const targetIssues = (
-  target: TargetValidationInput,
-  requireIndependentCandidateUniverse: boolean,
-): readonly Schema.FilterIssue[] => {
+const targetIssues = (target: TargetValidationInput): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const signalSymbols = target.signals.map(({ symbol }) => symbol)
-  const excludedCandidates = target.excludedCandidates ?? []
+  const excludedCandidates = target.excludedCandidates
   const excludedSymbols = excludedCandidates.map(({ symbol }) => symbol)
   const declaredSymbols = [...signalSymbols, ...excludedSymbols]
   if (new Set(signalSymbols).size !== signalSymbols.length) {
@@ -279,10 +261,7 @@ const targetIssues = (
   if (!sameStrings(Object.keys(target.targetWeights).sort(), declaredSymbols.toSorted())) {
     issues.push({ path: ['targetWeights'], issue: 'keys must exactly match measured and excluded candidate symbols' })
   }
-  if (
-    requireIndependentCandidateUniverse &&
-    !sameStrings(declaredSymbols.toSorted(), [...intradayMomentumCandidateSymbols].toSorted())
-  ) {
+  if (!sameStrings(declaredSymbols.toSorted(), [...intradayMomentumCandidateSymbols].toSorted())) {
     issues.push({ path: ['excludedCandidates'], issue: 'must account for the exact independent candidate universe' })
   }
 
@@ -343,12 +322,7 @@ const targetIssues = (
 }
 
 export const IntradayMomentumTargetPortfolioSchema = IntradayMomentumTargetPortfolioV3Base.check(
-  Schema.makeFilter((target) => targetIssues(target, true)),
-)
-
-/** Decoder-only compatibility for immutable v2 decision rows; v2 is never accepted by active runtime planning. */
-export const IntradayMomentumLegacyTargetPortfolioV2Schema = IntradayMomentumTargetPortfolioV2Base.check(
-  Schema.makeFilter((target) => targetIssues(target, false)),
+  Schema.makeFilter(targetIssues),
 )
 
 export interface IntradayMomentumSessionBinding {
@@ -359,7 +333,7 @@ export interface IntradayMomentumSessionBinding {
 }
 
 export interface IntradayMomentumMarketContext {
-  readonly snapshot: ArchiveVerifiedIntradayMarketSnapshot
+  readonly snapshot: VerifiedStrategyMarketSnapshot
   readonly session: IntradayMomentumSessionBinding
 }
 

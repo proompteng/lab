@@ -10,6 +10,8 @@ ARG NODE24_VERSION=24.11.1
 ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
 ARG UV_VERSION=0.11.14
+ARG PSTACK_REPOSITORY=https://github.com/michael-denyer/pstack-claude.git
+ARG PSTACK_COMMIT=0986f344496c9c8468003465261711f6bb2c5ec1
 
 FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools
 ARG BUILDARCH
@@ -140,6 +142,22 @@ RUN set -eux; \
   install -o root -g root -m 0755 "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}/nats" /usr/local/bin/nats; \
   rm -rf "${NATS_ARCHIVE}" "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}"; \
   nats --version
+
+FROM agents-tools AS pstack-bundle
+ARG PSTACK_REPOSITORY
+ARG PSTACK_COMMIT
+
+RUN set -eux; \
+  install -d /opt/agents-shell/pstack-source; \
+  git -C /opt/agents-shell/pstack-source init -q; \
+  git -C /opt/agents-shell/pstack-source remote add origin "${PSTACK_REPOSITORY}"; \
+  git -C /opt/agents-shell/pstack-source fetch -q --depth=1 origin "${PSTACK_COMMIT}"; \
+  git -C /opt/agents-shell/pstack-source checkout -q --detach FETCH_HEAD; \
+  test "$(git -C /opt/agents-shell/pstack-source rev-parse HEAD)" = "${PSTACK_COMMIT}"; \
+  test -f /opt/agents-shell/pstack-source/plugins/pstack/skills/poteto-mode/SKILL.md; \
+  test -f /opt/agents-shell/pstack-source/plugins/pstack/skills/poteto-mode/references/codex-tools.md; \
+  test "$(find /opt/agents-shell/pstack-source/plugins/pstack/skills -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54; \
+  test "$(find /opt/agents-shell/pstack-source/plugins/pstack/.codex-plugin/prompts -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
 
 FROM agents-build-tools AS agents-workspace-deps
 WORKDIR /app
@@ -305,6 +323,8 @@ CMD ["bun", "run", "src/server/controller-entrypoint.ts"]
 FROM controller AS agents-shell
 ARG UV_VERSION
 
+COPY --from=pstack-bundle /opt/agents-shell/pstack-source/plugins/pstack /opt/agents-shell/pstack
+
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
   set -eux; \
@@ -336,6 +356,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERS
 WORKDIR /app/services/agents
 RUN install -o root -g root -m 0755 ./scripts/apply_patch.py /usr/local/bin/apply_patch \
   && chmod +x ./scripts/agents-shell-entrypoint.sh \
+  && chmod +x ./scripts/install-agents-shell-pstack.sh \
   && mkdir -p /workspace /workspace/.agents-shell \
   && command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch \
   && tmp="$(mktemp -d)" \

@@ -165,14 +165,14 @@ describe('Torghut manifest scheduling', () => {
     expect(resources).not.toContain('whitepaper-autoresearch-replay-materialization-cronworkflow.yaml')
   })
 
-  it('protects the CNPG-managed Torghut CA secret from Argo prune without creating it', () => {
+  it('retains inactive CNPG recovery guards without deploying the retired database hooks', () => {
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources
     expect(Array.isArray(resources)).toBe(true)
-    expect(resources).toContain('torghut-db-ca-prune-tombstone.yaml')
-    expect(resources).toContain('torghut-db-ca-reflector-rbac.yaml')
-    expect(resources).toContain('torghut-db-ca-prune-guard-job.yaml')
-    expect(resources).toContain('torghut-db-ca-reflector-job.yaml')
+    expect(resources).not.toContain('torghut-db-ca-prune-tombstone.yaml')
+    expect(resources).not.toContain('torghut-db-ca-reflector-rbac.yaml')
+    expect(resources).not.toContain('torghut-db-ca-prune-guard-job.yaml')
+    expect(resources).not.toContain('torghut-db-ca-reflector-job.yaml')
     expect(resources).not.toContain('torghut-db-ca-reflector-source.yaml')
 
     const tombstone = parseManifest('argocd/applications/torghut/torghut-db-ca-prune-tombstone.yaml')

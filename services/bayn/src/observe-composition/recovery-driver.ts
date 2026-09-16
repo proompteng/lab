@@ -1,3 +1,5 @@
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
+import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
@@ -16,7 +18,7 @@ import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
-import { archiveVerifiedIntradaySnapshotReference, type IntradayMarketDataService } from '../market-data'
+import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import { currentUtcInstant } from '../time'
@@ -60,39 +62,65 @@ const verifyDecisionBindingEvidence = (
   document: CycleDecisionDocument,
 ): Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError> => {
   const binding = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
-  if (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v2') return Effect.succeed({})
+  if (binding === undefined || binding.schemaVersion === 'bayn.reconciled-position-liquidation-binding.v1')
+    return Effect.succeed({})
   if (
     marketData === undefined ||
     !('decisionMarketDataRows' in document) ||
-    document.decisionMarketDataRows === undefined
-  ) {
+    (binding.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+      binding.schemaVersion !== 'bayn.execution-market-data-binding.v4')
+  )
     return Effect.fail(
       new CycleDecisionBuildError({
         failure: 'contract',
-        message: 'intraday decision has no archive reader or persisted rows for external verification',
+        message: 'Decision requires canonical market data and persisted input rows',
       }),
     )
-  }
-  const snapshot = reconstructBoundIntradaySnapshot(binding, document.decisionMarketDataRows)
-  if (snapshot === undefined) {
-    return Effect.fail(
-      new CycleDecisionBuildError({
-        failure: 'contract',
-        message: 'intraday decision rows do not reconstruct their bound archive snapshot',
-      }),
+  const inputs = [{ binding, rows: document.decisionMarketDataRows }]
+  const pricing = document.bindings.executionMarketData
+  if (pricing !== undefined && pricing.snapshotId !== binding.snapshotId) {
+    if (
+      (pricing.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+        pricing.schemaVersion !== 'bayn.execution-market-data-binding.v4') ||
+      document.executionMarketDataRows === undefined
     )
-  }
-  return marketData.verifyArchiveSnapshot(snapshot).pipe(
-    Effect.map((verified) => ({
-      intradaySnapshotReferences: [archiveVerifiedIntradaySnapshotReference(verified)],
-    })),
-    Effect.mapError(
-      (cause) =>
+      return Effect.fail(
         new CycleDecisionBuildError({
-          failure: 'market-data',
-          message: 'intraday decision does not match the immutable archive at its bound watermarks',
-          cause,
+          failure: 'contract',
+          message: 'Pricing requires canonical market data and persisted input rows',
         }),
+      )
+    inputs.push({ binding: pricing, rows: document.executionMarketDataRows })
+  }
+  return Effect.forEach(inputs, ({ binding: source, rows }) => {
+    const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(source, rows)
+    if (snapshot === undefined)
+      return Effect.fail(
+        new CycleDecisionBuildError({
+          failure: 'contract',
+          message: 'Decision or pricing input cut does not reproduce',
+        }),
+      )
+    return marketData.verifyReference(snapshot).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CycleDecisionBuildError({
+            failure: 'market-data',
+            message: 'Decision source evidence is unavailable',
+            cause,
+          }),
+      ),
+    )
+  }).pipe(
+    Effect.map(
+      (references): CycleDecisionBindingEvidence => ({
+        simulatedSnapshotReferences: references.filter(
+          (reference) => reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1',
+        ),
+        streamingSnapshotReferences: references.filter(
+          (reference) => reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1',
+        ),
+      }),
     ),
   )
 }
@@ -117,12 +145,57 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   timeoutMs: number,
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  operationPermit.withPermit(lifecycleAdvance).pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* operationCurrentTimeMillis
+    const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
+    let interruptionRequestedAt = startedAt
+    return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
+      withObservedStage('bayn.execution.advance'),
+      Effect.provideService(ActiveExecutionStages, activeStages),
+      operationTimeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        onDeadline: operationCurrentTimeMillis.pipe(
+          Effect.flatMap((requestedAt) => {
+            interruptionRequestedAt = requestedAt
+            return Effect.logWarning('Bayn execution pass interruption requested').pipe(
+              Effect.annotateLogs({
+                service: 'bayn',
+                timeoutMs,
+                executionElapsedMs: Math.max(0, requestedAt - startedAt),
+                activeStages: [...activeStages.values()].map(({ startedAt: stageStartedAt, ...stage }) => ({
+                  ...stage,
+                  elapsedMs: Math.max(0, requestedAt - stageStartedAt),
+                })),
+              }),
+            )
+          }),
+        ),
+        orElse: () =>
+          operationCurrentTimeMillis.pipe(
+            Effect.flatMap((finishedAt) =>
+              Effect.logError('Bayn execution pass deadline exceeded').pipe(
+                Effect.annotateLogs({
+                  service: 'bayn',
+                  timeoutMs,
+                  elapsedMs: Math.max(0, finishedAt - startedAt),
+                  deadlineOverrunMs: Math.max(0, finishedAt - startedAt - timeoutMs),
+                  executionElapsedMs: Math.max(0, interruptionRequestedAt - startedAt),
+                  cancellationElapsedMs: Math.max(0, finishedAt - interruptionRequestedAt),
+                }),
+                Effect.andThen(
+                  onTimeout(mutationCyclePassTimeoutError(timeoutMs)).pipe(
+                    withObservedStage('bayn.execution.timeout-recovery', {
+                      slowAfterMs: 1_000,
+                      recordCompletion: true,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      }),
+    )
+  })
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -195,8 +268,14 @@ const makeRecoveryFirstCycleDriverEffect = (
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
-      (capability._tag === 'Mutation' && shouldRestrictMutationLoopFailure(error)
-        ? restrictMutationLoopFailure(error)
+      (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
+        ? restrictMutationLoopFailure(error).pipe(
+            withObservedStage('bayn.execution.restriction-persistence', {
+              dependency: 'postgresql',
+              slowAfterMs: 1_000,
+              recordCompletion: true,
+            }),
+          )
         : Effect.void
       ).pipe(
         Effect.catch((restrictionError: CycleRunnerError) =>
@@ -258,17 +337,41 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
             Effect.map((observation) => ({ observation })),
           ),
-        onSuccess: () => advanceCycle,
+        onSuccess: () =>
+          advanceCycle.pipe(
+            Effect.flatMap((advanced) =>
+              capability._tag !== 'Mutation' ||
+              input.intradayMarketData === undefined ||
+              advanced.observation.result === 'FAILURE'
+                ? Effect.succeed(advanced)
+                : input.intradayMarketData.check.pipe(
+                    Effect.matchEffect({
+                      onFailure: (cause) =>
+                        observeCycleFailure(
+                          new CycleRunnerError({
+                            operation: 'build-decision',
+                            failure: 'market-data',
+                            message: 'Execution worker market projection is unavailable',
+                            cause,
+                          }),
+                        ).pipe(Effect.map((failed) => ({ ...advanced, ...failed }))),
+                      onSuccess: () => Effect.succeed(advanced),
+                    }),
+                  ),
+            ),
+          ),
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
-      runCycleAdvance,
+      runCycleAdvance.pipe(withObservedStage('bayn.execution.cycle-pass')),
       cyclePassTimeoutMs,
       observeCycleFailure,
     )
     return {
       advance,
+      timeoutMs: cyclePassTimeoutMs,
+      onTimeout: observeCycleFailure,
       nextDelayMs,
     }
   })

@@ -4,6 +4,7 @@ namespace: traefik
 
 resources:
   - k8s-proompteng-ai-certificate.yaml
+  - rgw-service.yaml
 helmCharts:
   - name: traefik
     repo: https://traefik.github.io/charts

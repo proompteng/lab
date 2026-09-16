@@ -276,11 +276,9 @@ export function DesktopDock({
     >
       <motion.span
         aria-hidden="true"
-        className="absolute -inset-px rounded-[24px] border border-white/25 bg-[rgba(31,35,49,0.46)] shadow-[0_12px_30px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-2xl backdrop-saturate-150"
+        className="absolute -inset-px rounded-[24px] border border-white/25 bg-[rgba(31,35,49,0.46)] shadow-[0_12px_30px_rgba(0,0,0,0.34)] backdrop-blur-2xl backdrop-saturate-150"
         style={{ scaleX: plateScale }}
-      >
-        <span className="pointer-events-none absolute inset-x-5 top-px h-px rounded-full bg-gradient-to-r from-transparent via-white/35 to-transparent" />
-      </motion.span>
+      />
       {items.map(({ app, ref }) => (
         <DockItem
           key={app}

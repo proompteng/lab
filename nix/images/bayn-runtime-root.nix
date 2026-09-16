@@ -27,7 +27,6 @@ let
   isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
   sourcePaths = [
     "services/bayn"
-    "packages/scripts/src/bayn/update-manifests.ts"
   ];
   runtimeSource = lib.cleanSourceWith {
     src = repoRoot;

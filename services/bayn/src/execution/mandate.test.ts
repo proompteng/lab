@@ -108,6 +108,9 @@ describe('executionMandateAllocationCapitalMicros', () => {
 
 describe('execution mandate decisions', () => {
   test('recognizes only canonical and exact legacy system failure restrictions', () => {
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy ' + 'a'.repeat(64))).toBe(true)
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy unknown')).toBe(false)
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy ' + 'a'.repeat(64) + ' extra')).toBe(false)
     const cycleId = 'a'.repeat(64)
     const intentId = 'b'.repeat(64)
 
@@ -187,15 +190,26 @@ describe('execution mandate decisions', () => {
         closeOnly: false,
         observedAt: '2026-08-31T20:00:00.000Z',
         entryCutoffAt: cutoff,
-        entryHasUnsuccessfulIntent: false,
+        entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'WaitForClose' })
+    expect(
+      decideExecutionMandateCycleTerminalization({
+        closeOnly: false,
+        observedAt: '2026-08-31T20:00:00.000Z',
+        entryCutoffAt: cutoff,
+        entryHasUnsuccessfulIntent: false,
+        entrySettledWithoutFill: true,
+      }),
+    ).toEqual({ _tag: 'Complete' })
     expect(
       decideExecutionMandateCycleTerminalization({
         closeOnly: true,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
         entryHasUnsuccessfulIntent: false,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'Complete' })
     expect(
@@ -204,6 +218,7 @@ describe('execution mandate decisions', () => {
         observedAt: cutoff,
         entryCutoffAt: cutoff,
         entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'Block' })
     expect(
@@ -212,6 +227,7 @@ describe('execution mandate decisions', () => {
         observedAt: cutoff,
         entryCutoffAt: cutoff,
         entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'Block' })
   })
@@ -251,6 +267,7 @@ describe('execution mandate decisions', () => {
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
     for (const reason of [
+      'reconciliation discrepancy ' + 'a'.repeat(64),
       executionActivationExpiredRestrictionReason,
       executionMandateCompletedRestrictionReason,
       legacyExecutionActivationExpiredRestrictionReason,
@@ -275,7 +292,7 @@ describe('execution mandate decisions', () => {
         effective: 'OBSERVE',
         kill: 'ACTIVE',
         currentGenerationMatchesRequest: true,
-        reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+        reason: 'reconciliation discrepancy ' + 'a'.repeat(64),
       }),
     ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
     expect(

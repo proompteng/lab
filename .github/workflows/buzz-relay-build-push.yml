@@ -9,6 +9,7 @@ on:
       - 'third_party/buzz/**'
       - '.github/workflows/buzz-relay-build-push.yml'
       - 'argocd/applications/buzz/**'
+      - 'argocd/bootstrap/buzz/**'
   push:
     branches:
       - main
@@ -16,6 +17,7 @@ on:
       - 'third_party/buzz/**'
       - '.github/workflows/buzz-relay-build-push.yml'
       - 'argocd/applications/buzz/**'
+      - 'argocd/bootstrap/buzz/**'
   workflow_dispatch:
 
 env:

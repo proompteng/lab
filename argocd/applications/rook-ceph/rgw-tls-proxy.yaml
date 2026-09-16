@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rook-ceph-rgw-tls
+  namespace: rook-ceph
+spec:
+  type: ExternalName
+  externalName: traefik-rgw.traefik.svc.cluster.local
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ceph-rgw-tls
+  namespace: rook-ceph
+spec:
+  entryPoints:
+    - rgws3
+  routes:
+    - kind: Rule
+      match: Host(`rook-ceph-rgw-tls.rook-ceph.svc`)
+      services:
+        - name: rook-ceph-rgw-objectstore
+          port: 80
+          passHostHeader: true
+  tls:
+    secretName: wildcard-k8s-proompteng-ai-tls

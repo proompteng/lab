@@ -109,6 +109,7 @@ function guestActionAgentId(action: TengriAction) {
     case 'create-agent':
     case 'delete-agent':
     case 'resume-agent':
+    case 'revoke-editor-sessions':
     case 'revoke-preview-session':
     case 'sleep-agent':
       return null

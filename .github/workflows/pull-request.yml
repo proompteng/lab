@@ -116,6 +116,23 @@ jobs:
           extra-nix-config: |
             experimental-features = nix-command flakes
 
+      - name: Set up editor acceptance Go
+        if: ${{ matrix.target == 'landing' }}
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
+      - name: Set up editor acceptance Rust
+        if: ${{ matrix.target == 'landing' }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Install editor acceptance protobuf compiler
+        if: ${{ matrix.target == 'landing' }}
+        run: sudo apt-get install --yes --no-install-recommends protobuf-compiler
+
       - name: Run landing validation
         if: ${{ matrix.target == 'landing' }}
         shell: bash
@@ -132,6 +149,7 @@ jobs:
           bun run --cwd apps/landing lint:oxlint
           bun run --cwd apps/landing lint:oxlint:type
           bun run --filter landing build
+          TENGRI_EDITOR_NEXT_MODE=start bash services/nanoagent/test-vscode-browser.sh
 
       - name: Upload landing browser artifacts
         if: ${{ always() && matrix.target == 'landing' }}
@@ -141,6 +159,11 @@ jobs:
           path: |
             apps/landing/playwright-report
             apps/landing/test-results
+            /tmp/tengri-vscode.*/guest.log
+            /tmp/tengri-vscode.*/gateway.log
+            /tmp/tengri-vscode.*/desktop.log
+            /tmp/tengri-vscode.*/proxy.log
+            /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
           if-no-files-found: ignore
           retention-days: 7
 
@@ -228,6 +251,12 @@ jobs:
               bunx oxlint --config .oxlintrc.json scripts/cluster-upgrades/*.test.ts
               bunx oxfmt --check scripts/cluster-upgrades/*.test.ts
               bun test scripts/cluster-upgrades/*.test.ts
+              python3 -m unittest discover -s scripts/cluster-upgrades -p 'ceph*_test.py'
+              python3 scripts/cluster-upgrades/temporal_cassandra_gate_test.py
+              python3 scripts/cluster-upgrades/temporal_cassandra_verifier_test.py
+              python3 scripts/cluster-upgrades/temporal_elasticsearch_snapshot_test.py
+              python3 scripts/cluster-upgrades/postgres_upgrade_gate_test.py
+              python3 -m unittest discover -s scripts/forgejo -p '*_test.py'
               bunx oxlint --config .oxlintrc.json scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bunx oxfmt --check scripts/seal-tengri-runtime.ts scripts/seal-tengri-runtime.test.ts
               bun test scripts/seal-tengri-runtime.test.ts
@@ -255,6 +284,11 @@ jobs:
                 nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
               else
                 nix develop -c scripts/kubeconform.sh argocd
+              fi
+              if jq -e 'any(.[]; startswith("argocd/applications/temporal/") or startswith("scripts/cluster-upgrades/temporal_"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix develop -c kustomize build --enable-helm argocd/applications/temporal >"${RUNNER_TEMP}/temporal-render.yaml"
+                nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/temporal-render.yaml" |
+                  python3 scripts/cluster-upgrades/temporal_manifest_check.py
               fi
               ;;
             cdk8s)

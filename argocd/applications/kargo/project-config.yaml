@@ -64,3 +64,12 @@ spec:
     - stageSelector:
         name: buzz
       autoPromotionEnabled: true
+    - stageSelector:
+        name: forgejo
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: bayn
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: restate
+      autoPromotionEnabled: true

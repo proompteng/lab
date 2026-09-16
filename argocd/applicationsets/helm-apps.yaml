@@ -106,7 +106,7 @@ spec:
                   namespace: restate-operator
                   repoUrl: ghcr.io/restatedev
                   chart: restate-operator-crds
-                  version: 3.0.0
+                  version: 3.0.1
                   releaseName: restate-operator-crds
                   enabled: "true"
                   managedNamespaceMetadata:
@@ -127,12 +127,12 @@ spec:
                   namespace: restate-operator
                   repoUrl: ghcr.io/restatedev
                   chart: restate-operator-helm
-                  version: 3.0.0
+                  version: 3.0.1
                   releaseName: restate-operator
                   enabled: "true"
                   valuesObject:
                     installCrds: false
-                    version: 3.0.0
+                    version: 3.0.1
                     podSecurityContext:
                       seccompProfile:
                         type: RuntimeDefault

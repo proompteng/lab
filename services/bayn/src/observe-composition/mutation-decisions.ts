@@ -7,6 +7,7 @@ import {
   orderRequestNotionalMicros,
 } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
+import type { CycleWaitReason } from '../cycle/runner/model'
 import {
   Authority,
   IntentState,
@@ -48,7 +49,7 @@ export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): b
   )
 }
 
-export type ExecutionIntentTerminalDisposition = 'FILLED' | 'BENIGN_ZERO_FILL_IOC' | 'UNSUCCESSFUL'
+export type ExecutionIntentTerminalDisposition = 'FILLED' | 'BENIGN_ZERO_FILL_IOC' | 'PARTIAL_FILL_IOC' | 'UNSUCCESSFUL'
 
 export interface ExecutionIntentTerminalDispositionInput {
   readonly phase: 'ENTRY' | 'CLOSE'
@@ -109,8 +110,11 @@ export const decideExecutionIntentTerminalDisposition = (
       order.quantityMicros === input.intent.quantityMicros,
   )
   const order = matchingOrders.length === 1 ? matchingOrders[0] : undefined
-  return order?.status === OrderStatus.Canceled && order.filledQuantityMicros === '0'
-    ? 'BENIGN_ZERO_FILL_IOC'
+  if (order?.status !== OrderStatus.Canceled) return 'UNSUCCESSFUL'
+  const filledQuantity = BigInt(order.filledQuantityMicros)
+  if (filledQuantity === 0n) return 'BENIGN_ZERO_FILL_IOC'
+  return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityMicros)
+    ? 'PARTIAL_FILL_IOC'
     : 'UNSUCCESSFUL'
 }
 
@@ -494,15 +498,7 @@ export type ExecutionCycleCompletionDecision =
   | { readonly _tag: 'Complete' }
   | {
       readonly _tag: 'Wait'
-      readonly reason:
-        | 'accounting-inexact'
-        | 'intent-nonterminal'
-        | 'intent-unsuccessful'
-        | 'reconciliation-not-later'
-        | 'reconciliation-not-exact'
-        | 'unknown-mutation'
-        | 'unknown-order'
-        | 'open-position'
+      readonly reason: Exclude<CycleWaitReason, 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE' | 'POST_MUTATION_RECONCILIATION'>
     }
 
 const decideExecutionCycleCompletionDataFirst = (
@@ -639,7 +635,7 @@ export type PreparedMutationCycleStep =
         | CycleTerminalReason.Risk
       readonly observedAt: string
     }
-  | { readonly _tag: 'Wait'; readonly observedAt: string }
+  | { readonly _tag: 'Wait'; readonly observedAt: string; readonly waitReason?: CycleWaitReason }
   | { readonly _tag: 'Complete'; readonly observedAt: string }
 
 export type BoundMutationCycleOutcome = Exclude<PreparedMutationCycleStep, { readonly _tag: 'Execute' }>

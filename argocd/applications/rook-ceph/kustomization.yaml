@@ -6,6 +6,7 @@ resources:
   - storageclasses.yaml
   - tailscale-service-dashboard.yaml
   - ingressroute-ceph-k8s-private.yaml
+  - rgw-tls-proxy.yaml
   - rook-ceph-objectstore-loki-user.yaml
   - rook-ceph-object-user-objectstore-loki-reflector-source.yaml
 

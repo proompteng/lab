@@ -57,6 +57,10 @@ describe('Nix rollout report', () => {
     expect(report.missingBuildContracts).toEqual([])
     expect(hermes?.deferredReason).toContain('NousResearch/hermes-agent')
     expect(tigresse?.deferredReason).toContain('proompteng/tigresse')
+    const bayn = report.nixImages.find((candidate) => candidate.name === 'bayn')
+    expect(bayn?.nixImageAttr).toBe('bayn-image')
+    expect(bayn?.deployScriptPath).toBeUndefined()
+    expect(bayn?.workflowPaths).toContain('argocd/applications/kargo')
   })
 
   it('reports missing build contract pieces for Nix image apps', () => {

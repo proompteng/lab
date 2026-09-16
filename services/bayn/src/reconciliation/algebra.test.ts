@@ -250,6 +250,38 @@ const emptyRiskRow = (): RiskContextRow => ({
 })
 
 describe('PostgreSQL reconciliation algebra', () => {
+  test('includes separate broker fee activities in exact cash and the accounting identity', () => {
+    const input = comparisonInput()
+    const cash = (BigInt(input.snapshot.account.cashMicros) - 230000n).toString()
+    const snapshot = {
+      ...input.snapshot,
+      account: { ...input.snapshot.account, cashMicros: cash },
+      valuation: { ...input.snapshot.valuation, cashMicros: cash },
+    }
+    const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
+      accountId,
+      activityId: `fee-${index}`,
+      date: '2026-07-22',
+      netAmountMicros,
+    }))
+    const missing = successOf(compareOpeningCash({ ...input, snapshot }))
+    const exact = successOf(compareOpeningCash({ ...input, snapshot, fees }))
+    expect(missing.comparison.discrepancies.some((item) => item.kind === 'CASH')).toBe(true)
+    expect(exact.comparison.discrepancies).toEqual([])
+    expect(exact.accountingHash).not.toBe(missing.accountingHash)
+  })
+
+  test('rejects fee history that predates the opening cash baseline', () => {
+    const input = comparisonInput()
+    const result = compareOpeningCash({
+      ...input,
+      fees: [{ accountId, activityId: 'old-fee', date: '2026-07-01', netAmountMicros: '-230000' }],
+    })
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result))
+      expect(result.failure).toMatchObject({ _tag: 'BrokerFeePredatesOpeningCash', activityId: 'old-fee' })
+  })
+
   test('projects intent uncertainty without Effects', () => {
     const projection = successOf(
       projectIntentExpectations([

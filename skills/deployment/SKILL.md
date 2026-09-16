@@ -56,8 +56,9 @@ and pushes the deployment branch; Argo reconciles it. Do not edit a live Deploym
 or make a deployment PR. A direct deployment is permitted only with explicit break-glass authorization recorded in the
 incident; restore Kargo control afterward.
 
-The Bayn exception remains in force: Bayn is not enrolled in a Kargo Warehouse or Stage. `bayn-release` activation and
-source-lineage state govern strategy activation.
+Bayn uses `lab-delivery/bayn` and `kargo/bayn`. Its Stage updates all three runtime image bindings and the activation
+build lineage while preserving the authored research request. The native activation hook and trading runtime retain
+account, strategy, capital grant, reconciliation, and order-risk enforcement. Recover image delivery through Kargo.
 
 ## Development-only helpers
 

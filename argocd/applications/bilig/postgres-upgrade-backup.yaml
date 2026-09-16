@@ -1,6 +1,24 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
+  name: bilig-db-pg18-final-20260909
+  namespace: bilig
+  labels:
+    app.kubernetes.io/name: bilig-db
+    app.kubernetes.io/component: postgres-upgrade-backup
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: bilig-db
+  method: volumeSnapshot
+  online: false
+  target: primary
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
   name: bilig-db-major-upgrade
   namespace: bilig
   labels:

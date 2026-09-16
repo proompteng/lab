@@ -1568,6 +1568,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     orders: unexpectedRead,
     orderById: unexpectedRead,
     orderByClientId,
+    feeActivities: unexpectedRead,
     fillActivities: unexpectedRead,
     marketCalendar: unexpectedRead,
   }

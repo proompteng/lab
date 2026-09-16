@@ -18,6 +18,7 @@ resources:
   - execution-controller-pdb.yaml
   - execution-controller-networkpolicy.yaml
   - execution-activation.yaml
+  - execution-activation-networkpolicy.yaml
   - service.yaml
   - status-pdb.yaml
   - networkpolicy.yaml

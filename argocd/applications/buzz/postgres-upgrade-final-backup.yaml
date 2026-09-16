@@ -1,0 +1,12 @@
+{
+  'apiVersion': 'postgresql.cnpg.io/v1',
+  'kind': 'Backup',
+  'metadata':
+    {
+      'name': 'buzz-db-pg18-final-20260910',
+      'namespace': 'buzz',
+      'annotations':
+        { 'argocd.argoproj.io/sync-wave': '-10', 'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false' },
+    },
+  'spec': { 'cluster': { 'name': 'buzz-db' }, 'method': 'volumeSnapshot', 'online': false, 'target': 'primary' },
+}

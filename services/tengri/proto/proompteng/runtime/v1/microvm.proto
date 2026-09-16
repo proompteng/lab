@@ -37,10 +37,13 @@ service MicroVMControlPlane {
   rpc WatchCodexEvents(WatchCodexEventsRequest) returns (stream CodexEvent);
 
   rpc IssuePreviewSession(IssuePreviewSessionRequest) returns (PreviewSession);
+  rpc IssueEditorSession(IssueEditorSessionRequest) returns (PreviewSession);
+  rpc RevokeEditorSessions(Empty) returns (Empty);
   rpc RevokePreviewSession(RevokePreviewSessionRequest) returns (Empty);
 }
 
 message Empty {}
+message IssueEditorSessionRequest { string agent_id = 1; string window_id = 2; }
 
 enum Architecture {
   ARCHITECTURE_UNSPECIFIED = 0;
@@ -269,4 +272,4 @@ message PreviewSession {
   string expires_at = 3;
   string preview_origin = 4;
 }
-message RevokePreviewSessionRequest { string agent_id = 1; string session_id = 2; }
+message RevokePreviewSessionRequest { string agent_id = 1; string session_id = 2; string revocation_token = 3; }

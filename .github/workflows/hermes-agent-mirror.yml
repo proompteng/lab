@@ -33,6 +33,9 @@ jobs:
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
 
+      - name: Verify preinstalled OCI copy tool
+        run: skopeo --version
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
@@ -92,7 +95,22 @@ jobs:
           fi
 
       - name: Copy complete immutable OCI index
-        run: docker buildx imagetools create --tag "$TARGET_REF" "$SOURCE_REF"
+        shell: bash
+        run: |
+          set -euo pipefail
+          hermes_copy_policy="$(mktemp)"
+          trap 'rm -f "$hermes_copy_policy"' EXIT
+          # The exact upstream digest and SLSA attachment were checked above.
+          # Require that source repository and reject every other repository.
+          cat > "$hermes_copy_policy" <<'JSON'
+          {"default":[{"type":"reject"}],"transports":{"docker":{"docker.io/nousresearch/hermes-agent":[{"type":"insecureAcceptAnything"}]}}}
+          JSON
+          # The registry admits one blob writer. Concurrent Buildx copies wait
+          # behind that writer until their request bodies time out.
+          skopeo --policy "$hermes_copy_policy" copy \
+            --all --preserve-digests --image-parallel-copies 1 \
+            --src-tls-verify=true --dest-tls-verify=false \
+            "docker://$SOURCE_REF" "docker://$TARGET_REF"
 
       - name: Verify mirrored release and provenance attachment
         shell: bash

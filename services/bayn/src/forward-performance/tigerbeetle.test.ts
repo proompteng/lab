@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
-import { prepareAccounting } from '../accounting/domain'
+import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import type { RuntimeConfig } from '../config'
 import { OrderSide, type Fill } from '../execution/contracts'
 import { stableU128 } from '../hash'
@@ -225,6 +225,32 @@ describe('forward performance TigerBeetle read', () => {
       cashYieldMicros: '0',
     })
     expect(evidence.openPositionCount).toBe(0)
+  })
+
+  test('verifies delayed fees and refunds in the stable account and selected generation', async () => {
+    const currentPlans = [
+      ...plans(),
+      brokerFeeLedgerPlan(accountId, 'fee', '-230000', ledger),
+      brokerFeeLedgerPlan(accountId, 'refund', '10000', ledger),
+    ]
+    const priorPlans = secondGenerationPlans()
+    const allPlans = [...priorPlans, ...currentPlans]
+    const accountPlan = success(assembleAccountPlan(accountId, allPlans))
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          allPlans,
+          undefined,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+          currentPlans,
+        ),
+      ),
+    )
+    expect(evidence.ledgerExact).toBe(true)
+    expect(evidence.totals.brokerExecutionFeesMicros).toBe('220300')
+    expect(evidence.totals.realizedGainMicros).toBe('10000000')
   })
 
   test('reconciles authoritative account balances and transfer events exactly', async () => {

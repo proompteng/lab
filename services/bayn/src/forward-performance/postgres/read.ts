@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect } from 'effect'
+import { Effect, Schema } from 'effect'
+import { StoredFeeSchema } from '../../accounting/broker-fees'
 import { decodeAccountingReceipt } from '../../execution/contracts'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db/accounting-rows'
 import type {
@@ -30,7 +31,7 @@ import {
 } from './model'
 import { closingSnapshotBoundary, generationScope, openingSnapshotBoundary, reconciliationExactness } from './scope'
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
-import { executionEvidenceFromRows, marketVolumeRequestsFromRows } from './projection'
+import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
 
 export const readForwardPerformanceUnclosedCycleCountDataFirst = (
   sql: PgClient.PgClient,
@@ -72,6 +73,41 @@ export const readForwardPerformanceUnclosedCycleCountDataFirst = (
     Effect.flatMap(decodeCount),
     Effect.map(([row]) => row.count),
   )
+
+export const readForwardPerformanceMarketVolumeBindings = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash?: string,
+) =>
+  sql<Record<string, unknown>>`
+    WITH latest_reconciliation AS (
+      SELECT reconciliation.reconciled_at
+      FROM reconciliations AS reconciliation
+      WHERE reconciliation.account_id = ${accountId}
+        AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+      ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+      LIMIT 1
+    )
+    SELECT
+      cycle.cycle_id,
+      cycle.snapshot_id,
+      cycle.execution_session_date::text AS execution_session_date,
+      cycle.execution_open_at,
+      cycle.execution_close_at,
+      reference.manifest
+    FROM autonomous_cycles AS cycle
+    JOIN LATERAL (
+      SELECT daily.manifest FROM snapshot_references AS daily WHERE daily.snapshot_id = cycle.snapshot_id
+      UNION ALL
+      SELECT intraday.manifest FROM intraday_snapshot_references AS intraday WHERE intraday.snapshot_id = cycle.snapshot_id
+    ) AS reference ON true
+    CROSS JOIN latest_reconciliation
+    WHERE cycle.account_id = ${accountId}
+      AND cycle.state = 'COMPLETED'
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+      AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
+  `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
 
 export const readForwardPerformancePostgresDataFirst = (
   sql: PgClient.PgClient,
@@ -269,7 +305,13 @@ export const readForwardPerformancePostgresDataFirst = (
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), accounted_cash AS (
-            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) AS cash_delta_micros
+            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) + COALESCE((
+              SELECT sum(fee.net_amount_micros) FROM broker_fee_accounting AS fee
+              CROSS JOIN closing_snapshot
+              WHERE fee.account_id = ${accountId} AND fee.posted_at IS NOT NULL
+                AND fee.first_observed_at >= (SELECT observed_at FROM opening_snapshot)
+                AND fee.first_observed_at <= closing_snapshot.observed_at
+            ), 0) AS cash_delta_micros
             FROM accounting_transactions AS transaction
             CROSS JOIN latest_reconciliation
             CROSS JOIN opening_snapshot
@@ -313,6 +355,37 @@ export const readForwardPerformancePostgresDataFirst = (
 
         const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
+        )
+        const brokerFeeRows = yield* sql<Record<string, unknown>>`
+          SELECT fee.data, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
+            fee.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+            fee.tigerbeetle_ledger::integer AS tigerbeetle_ledger, fee.posted_at IS NOT NULL AS posted,
+            (${authorityGenerationHash === undefined} OR EXISTS (
+              SELECT 1 FROM accounting_transactions AS transaction
+              WHERE transaction.account_id = fee.account_id
+                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = fee.fee_date
+                AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
+            )) AS includes_generation,
+            EXISTS (
+              SELECT 1 FROM accounting_transactions AS transaction
+              WHERE transaction.account_id = fee.account_id
+                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = fee.fee_date
+                AND NOT (${generationScope(sql, accountId, authorityGenerationHash, 'transaction')})
+            ) AS includes_other_generation
+          FROM broker_fee_accounting AS fee WHERE fee.account_id = ${accountId}
+          ORDER BY fee.activity_id COLLATE "C"
+        `.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  ...StoredFeeSchema.fields,
+                  includes_generation: Schema.Boolean,
+                  includes_other_generation: Schema.Boolean,
+                }),
+              ),
+            ),
+          ),
         )
         const ledgerTransactionRows = yield* ledgerTransactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
@@ -377,31 +450,11 @@ export const readForwardPerformancePostgresDataFirst = (
             AND cycle.terminal_at <= latest_reconciliation.reconciled_at
           ORDER BY decision_rows.cycle_id COLLATE "C", decision_rows.created_at, decision_rows.decision_hash COLLATE "C"
         `.pipe(Effect.flatMap(decodeCycleDecisions))
-        const marketVolumeBindingRows = yield* sql<Record<string, unknown>>`
-          WITH latest_reconciliation AS (
-            SELECT reconciliation.reconciled_at
-            FROM reconciliations AS reconciliation
-            WHERE reconciliation.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-            LIMIT 1
-          )
-          SELECT
-            cycle.cycle_id,
-            cycle.snapshot_id,
-            cycle.execution_session_date::text AS execution_session_date,
-            cycle.execution_open_at,
-            cycle.execution_close_at,
-            reference.manifest
-          FROM autonomous_cycles AS cycle
-          JOIN snapshot_references AS reference ON reference.snapshot_id = cycle.snapshot_id
-          CROSS JOIN latest_reconciliation
-          WHERE cycle.account_id = ${accountId}
-            AND cycle.state = 'COMPLETED'
-            AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-            AND cycle.terminal_at <= latest_reconciliation.reconciled_at
-          ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-        `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
+        const marketVolumeBindingRows = yield* readForwardPerformanceMarketVolumeBindings(
+          sql,
+          accountId,
+          authorityGenerationHash,
+        )
         const executionIntentRows = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
@@ -792,14 +845,15 @@ export const readForwardPerformancePostgresDataFirst = (
             occurredAt: row.occurred_at.toISOString(),
           }),
         )
+        const { verifiedRows, unverifiedDecisionHashes } = verifyPerformanceDecisions(cycleDecisionRows)
         const executionEvidence = executionEvidenceFromRows(
-          cycleDecisionRows,
+          verifiedRows,
           executionIntentRows,
           executionOrderRows,
           executionFillRows,
         )
         const marketVolumeRequests = marketVolumeRequestsFromRows(
-          executionEvidence,
+          [...executionEvidence, ...executionIntentRows.map((row) => ({ cycleId: row.cycle_id, symbol: row.symbol }))],
           marketVolumeBindingRows,
           reconciliation?.reconciledAt,
         )
@@ -814,8 +868,22 @@ export const readForwardPerformancePostgresDataFirst = (
           ...(cashYieldEvidence === undefined ? {} : { cashYieldEvidence }),
           transactions,
           ledgerTransactions,
+          brokerFeeRecords: brokerFeeRows.map(
+            ({ includes_generation: _owned, includes_other_generation: _other, ...record }) => record,
+          ),
+          generationBrokerFeeIds: brokerFeeRows
+            .filter((row) => row.includes_generation && !row.includes_other_generation)
+            .map((row) => row.data.activityId),
+          ambiguousBrokerFeeCount: brokerFeeRows.filter(
+            (row) =>
+              (row.includes_generation && row.includes_other_generation) ||
+              (!row.includes_generation &&
+                !row.includes_other_generation &&
+                cycles.some((cycle) => cycle.submissionOpenAt.slice(0, 10) === row.data.date)),
+          ).length,
           transactionEvidence,
           executionEvidence,
+          ...(unverifiedDecisionHashes.length === 0 ? {} : { unverifiedDecisionHashes }),
           marketVolumeRequests,
           receipts,
           ledgerReceipts,

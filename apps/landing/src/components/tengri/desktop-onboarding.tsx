@@ -23,6 +23,7 @@ import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
 import { TengriMark } from './tengri-mark'
 import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
+import { WindowControls } from './window-controls'
 
 const RecoveryOwnerContext = createContext<string | undefined>(undefined)
 
@@ -571,12 +572,8 @@ function LifecycleWindow({
       transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
       onKeyDown={interactive ? modalFocus.onKeyDown : undefined}
     >
-      <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-4">
-        <div aria-hidden="true" className="flex gap-2">
-          <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-          <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
-          <span className="h-3 w-3 rounded-full bg-[#28c840]" />
-        </div>
+      <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-2.5">
+        <WindowControls active title={title} />
         <span className="pointer-events-none absolute inset-x-24 truncate text-center text-xs font-semibold text-white/54">
           {title}
         </span>

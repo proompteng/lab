@@ -8,6 +8,17 @@ on:
       - 'services/oirat/**'
       - 'packages/discord/**'
       - 'nix/images/oirat.nix'
+      - '.github/workflows/oirat-ci.yml'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - 'nix/check-bun-dependency-closure.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'bun.lock'
+      - '**/package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
@@ -16,6 +27,17 @@ on:
     paths:
       - 'services/oirat/**'
       - 'nix/images/oirat.nix'
+      - '.github/workflows/oirat-ci.yml'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - 'nix/check-bun-dependency-closure.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'bun.lock'
+      - '**/package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
@@ -40,7 +62,14 @@ jobs:
       test-command: bun run --filter @proompteng/oirat test
     secrets: inherit
 
+  dependency-closure:
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: oirat
+    secrets: inherit
+
   nix-image:
+    needs: dependency-closure
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
