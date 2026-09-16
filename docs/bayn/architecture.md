@@ -41,14 +41,16 @@ records require them; they are not runtime fallbacks and cannot start new cycles
    transport positions, and snapshot hashes before execution. Archive and shadow modes retain their separate
    archive-availability evidence contracts; changing the deployed data mode requires reviewed GitOps.
 5. The target planner derives whole-share deltas from the reconciled account and verified execution prices. The
-   strategy decision, exact decision rows, planner input, target plan, risk decisions, and deterministic intent IDs are
-   committed before broker I/O.
+   entry limit allows adverse price movement only within the bound risk policy's slippage allowance. The strategy
+   decision, exact decision rows, planner input, target plan, allowance, risk decisions, and deterministic intent IDs
+   are committed before broker I/O.
 6. The mutation interpreter submits only committed, unexpired intents. Ambiguous outcomes remain unresolved until
    deterministic client-order-ID lookup and reconciliation recover them.
 7. A filled or partially filled entry stays bound to its immutable cycle through the close. An exact zero-fill IOC may
    complete early only after later exact flat reconciliation. After at least one minute, and only before the entry
-   cutoff, the standing mandate may create one distinct second attempt. The v4 cycle identity and PostgreSQL authority
-   slot bind the attempt ordinal and cap a session at two attempts.
+   cutoff, the standing mandate may create the next distinct attempt using fresh signals across all strategy
+   candidates. The v4 cycle identity and unique PostgreSQL authority slot bind an increasing attempt ordinal without
+   imposing a session-wide quota on zero-fill attempts.
 8. The controller schedules exactly one successor tick. Restate delivery does not replace database idempotency or the
    persisted broker-mutation state machine.
 9. Before the close, the same filled cycle enters close-only operation. Completion requires a flat account, no open orders or

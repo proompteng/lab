@@ -74,7 +74,7 @@ describe('intraday calendar decisions', () => {
     expect(monday.identity.cycleId).not.toBe(friday.identity.cycleId)
   })
 
-  test('gives a delayed zero-fill rearm a distinct second immutable cycle', () => {
+  test('rearms successive zero-fill attempts until the session cutoff with distinct immutable cycles', () => {
     const candidate = {
       cycleBindingId: '2'.repeat(64),
       strategyName: 'intraday-momentum' as const,
@@ -119,6 +119,10 @@ describe('intraday calendar decisions', () => {
     )
     expect(
       nextIntradayEntryAttemptOrdinal(second, new Date(Date.parse(atRearm) + intradayEntryRearmDelayMs).toISOString()),
-    ).toBeUndefined()
+    ).toBe(3)
+    const thirdDraft = Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, session, 3))
+    expect(thirdDraft.identity.cycleId).not.toBe(secondDraft.identity.cycleId)
+    expect(nextIntradayEntryAttemptOrdinal(second, second.window.submissionCutoffAt)).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal({ ...second, state: CycleState.Active }, atRearm)).toBeUndefined()
   })
 })

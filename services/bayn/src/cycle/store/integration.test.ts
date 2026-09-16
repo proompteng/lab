@@ -144,19 +144,25 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
   })
 
-  test('stores two immutable attempts in one session and returns the latest authority slot', async () => {
+  test('stores successive immutable attempts in one session and converges retries on the latest authority slot', async () => {
     const first = draft(undefined, undefined, 1)
     const second = draft(undefined, undefined, 2)
+    const third = draft(undefined, undefined, 3)
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
         const firstReceipt = yield* store.acquire(first, acquiredAt)
         const secondReceipt = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
         const secondReplay = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
+        const thirdReceipts = yield* Effect.all(
+          [store.acquire(third, '2026-08-28T15:02:00.000Z'), store.acquire(third, '2026-08-28T15:02:00.000Z')],
+          { concurrency: 'unbounded' },
+        )
         return {
           firstReceipt,
           secondReceipt,
           secondReplay,
+          thirdReceipts,
           first: yield* store.read(first.identity.cycleId),
           second: yield* store.read(second.identity.cycleId),
           slot: yield* store.readAuthoritySlot({ qualificationRunId, accountId, executionSessionDate: sessionDate }),
@@ -168,11 +174,13 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(result.firstReceipt.created).toBeTrue()
     expect(result.secondReceipt.created).toBeTrue()
     expect(result.secondReplay.created).toBeFalse()
+    expect(result.thirdReceipts.filter(({ created }) => created)).toHaveLength(1)
+    expect(result.thirdReceipts.every(({ cycle }) => cycle.identity.cycleId === third.identity.cycleId)).toBeTrue()
     expect(Option.getOrThrow(result.first).identity).toMatchObject({ entryAttemptOrdinal: 1 })
     expect(Option.getOrThrow(result.second).identity).toMatchObject({ entryAttemptOrdinal: 2 })
     expect(Option.getOrThrow(result.slot).identity).toMatchObject({
-      cycleId: second.identity.cycleId,
-      entryAttemptOrdinal: 2,
+      cycleId: third.identity.cycleId,
+      entryAttemptOrdinal: 3,
     })
   })
 

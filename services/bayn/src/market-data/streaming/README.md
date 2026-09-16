@@ -234,10 +234,12 @@ latency, slippage, liquidity and fee assumptions. These receipts survive broker 
 Every pass also retains the production cycle result and broker state. The final report binds the pass file's SHA-256
 and record count. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies a filled or partially filled entry whose immutable
 attempt remains bound through the close. An exact zero-fill IOC cancellation instead completes only after a later exact
-flat reconciliation. The standing mandate may then create one distinct second attempt after at least one minute, while
-the entry cutoff remains open. The v4 cycle identity records the attempt ordinal, the database caps it at two attempts
-per session, and replay uses the same rule through the production engine. No retry reuses an intent, decision, cycle ID,
-or broker order. Retaining these facts does not change the strategy thresholds or modeled execution price.
+flat reconciliation. The standing mandate may then create the next distinct attempt after at least one minute, while
+the entry cutoff remains open. Each attempt evaluates fresh signals across the strategy candidates. The v4 cycle
+identity and unique PostgreSQL authority slot record an increasing attempt ordinal without a session-wide quota;
+replay uses the same rule through the production engine. No retry reuses an intent, decision, cycle ID, or broker order.
+Entry limit prices include the production risk policy's bounded allowance, and the modeled arrival price must still
+satisfy that limit before a fill is possible.
 
 For captured Kafka, the required receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
 `coverageEndMs`, `universe`, and complete `positions` (`topic`, `partition`, `startOffset`, `endOffsetExclusive`).

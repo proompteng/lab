@@ -9,8 +9,8 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.intraday-momentum.behavior.v14, verified by the production executable.
-  strategyBehaviorHash = "5981590560e7760e5525192f45be248b3b60b65b28e8c9c3b7b95d9f8e4d0e51";
+  # SHA-256 identity for bayn.intraday-momentum.behavior.v15, verified by the production executable.
+  strategyBehaviorHash = "3da39b009a0cb2052b007ae9ba51f448c16b69281a37cf5ffe122314f1d801af";
   # Canonical hash of the compiled bayn.intraday-momentum.protocol.v3 document.
   strategyParameterHash = "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f";
   strategyName = "intraday-momentum";
