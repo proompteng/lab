@@ -1,4 +1,5 @@
-import { operationTimeoutOrElse } from '../operation-timeout'
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
+import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
@@ -144,12 +145,57 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   timeoutMs: number,
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  operationPermit.withPermit(lifecycleAdvance).pipe(
-    operationTimeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* operationCurrentTimeMillis
+    const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
+    let interruptionRequestedAt = startedAt
+    return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
+      withObservedStage('bayn.execution.advance'),
+      Effect.provideService(ActiveExecutionStages, activeStages),
+      operationTimeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        onDeadline: operationCurrentTimeMillis.pipe(
+          Effect.flatMap((requestedAt) => {
+            interruptionRequestedAt = requestedAt
+            return Effect.logWarning('Bayn execution pass interruption requested').pipe(
+              Effect.annotateLogs({
+                service: 'bayn',
+                timeoutMs,
+                executionElapsedMs: Math.max(0, requestedAt - startedAt),
+                activeStages: [...activeStages.values()].map(({ startedAt: stageStartedAt, ...stage }) => ({
+                  ...stage,
+                  elapsedMs: Math.max(0, requestedAt - stageStartedAt),
+                })),
+              }),
+            )
+          }),
+        ),
+        orElse: () =>
+          operationCurrentTimeMillis.pipe(
+            Effect.flatMap((finishedAt) =>
+              Effect.logError('Bayn execution pass deadline exceeded').pipe(
+                Effect.annotateLogs({
+                  service: 'bayn',
+                  timeoutMs,
+                  elapsedMs: Math.max(0, finishedAt - startedAt),
+                  deadlineOverrunMs: Math.max(0, finishedAt - startedAt - timeoutMs),
+                  executionElapsedMs: Math.max(0, interruptionRequestedAt - startedAt),
+                  cancellationElapsedMs: Math.max(0, finishedAt - interruptionRequestedAt),
+                }),
+                Effect.andThen(
+                  onTimeout(mutationCyclePassTimeoutError(timeoutMs)).pipe(
+                    withObservedStage('bayn.execution.timeout-recovery', {
+                      slowAfterMs: 1_000,
+                      recordCompletion: true,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      }),
+    )
+  })
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -223,7 +269,13 @@ const makeRecoveryFirstCycleDriverEffect = (
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
-        ? restrictMutationLoopFailure(error)
+        ? restrictMutationLoopFailure(error).pipe(
+            withObservedStage('bayn.execution.restriction-persistence', {
+              dependency: 'postgresql',
+              slowAfterMs: 1_000,
+              recordCompletion: true,
+            }),
+          )
         : Effect.void
       ).pipe(
         Effect.catch((restrictionError: CycleRunnerError) =>
@@ -285,17 +337,41 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
             Effect.map((observation) => ({ observation })),
           ),
-        onSuccess: () => advanceCycle,
+        onSuccess: () =>
+          advanceCycle.pipe(
+            Effect.flatMap((advanced) =>
+              capability._tag !== 'Mutation' ||
+              input.intradayMarketData === undefined ||
+              advanced.observation.result === 'FAILURE'
+                ? Effect.succeed(advanced)
+                : input.intradayMarketData.check.pipe(
+                    Effect.matchEffect({
+                      onFailure: (cause) =>
+                        observeCycleFailure(
+                          new CycleRunnerError({
+                            operation: 'build-decision',
+                            failure: 'market-data',
+                            message: 'Execution worker market projection is unavailable',
+                            cause,
+                          }),
+                        ).pipe(Effect.map((failed) => ({ ...advanced, ...failed }))),
+                      onSuccess: () => Effect.succeed(advanced),
+                    }),
+                  ),
+            ),
+          ),
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
-      runCycleAdvance,
+      runCycleAdvance.pipe(withObservedStage('bayn.execution.cycle-pass')),
       cyclePassTimeoutMs,
       observeCycleFailure,
     )
     return {
       advance,
+      timeoutMs: cyclePassTimeoutMs,
+      onTimeout: observeCycleFailure,
       nextDelayMs,
     }
   })

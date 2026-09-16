@@ -2,6 +2,7 @@ import { Data, Effect, Match, Schema } from 'effect'
 import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
 
 import { Pipeable } from '../pipeable'
+import { withObservedStage } from '../telemetry'
 
 export type DatabaseFailure = 'constraint' | 'decode' | 'invariant' | 'migration' | 'query' | 'unavailable'
 export type PersistenceFailure = 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
@@ -101,7 +102,11 @@ const runDatabaseDataFirst = <A, E, R>(
   operation: string,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, DatabaseError, R> =>
-  effect.pipe(Effect.mapError((cause) => classifyDatabaseError(operation, cause)))
+  effect.pipe(
+    Effect.mapError((cause) => classifyDatabaseError(operation, cause)),
+    withObservedStage('bayn.postgres.operation', { dependency: 'postgresql', slowAfterMs: 1_000 }),
+    Effect.annotateLogs({ operation }),
+  )
 
 export const runDatabase = Pipeable.generic<
   <A, E, R>(effect: Effect.Effect<A, E, R>) => (operation: string) => Effect.Effect<A, DatabaseError, R>,

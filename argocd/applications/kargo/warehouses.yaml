@@ -1019,3 +1019,47 @@ spec:
           - ^kargo-sha-[0-9a-f]{40}$
         platform: linux/amd64
         cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: restate
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/restate').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/restate').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/restate').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/restate').Tag == 'kargo-sha-' +
+      commitFrom('git@github.com:proompteng/lab.git').ID + '-run-' +
+      imageFrom('registry.ide-newton.ts.net/lab/restate').Annotations['ai.proompteng.github-actions-run-id']
+  subscriptions:
+    - git:
+        repoURL: git@github.com:proompteng/lab.git
+        branch: main
+        commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
+        includePaths:
+          - services/restate
+          - packages/scripts/src/restate
+          - packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts
+          - .github/workflows/restate-images.yml
+          - argocd/applications/restate
+          - argocd/applications/kargo
+          - argocd/applicationsets/platform.yaml
+          - bun.lock
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/restate
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
+        platform: linux/amd64
+        cacheByTag: true
