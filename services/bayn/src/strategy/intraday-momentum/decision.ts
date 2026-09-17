@@ -26,7 +26,7 @@ import {
 
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v14' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v15' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)

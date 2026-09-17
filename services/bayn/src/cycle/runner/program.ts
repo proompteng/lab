@@ -11,6 +11,7 @@ import {
   finishRecoveryResult,
   makeIntradayCycleDraft,
   marketCalendarQueryFromSession,
+  nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
   selectCyclePassContinuation,
   type CyclePassProgress,
@@ -66,7 +67,9 @@ const discoverIntradayCyclePass = <R>(
         message: 'broker calendar has no session whose intraday entry cutoff remains open',
       })
     }
-    const draft = yield* Effect.fromResult(makeIntradayCycleDraft(candidate, calendar.value, executionSession)).pipe(
+    const firstAttemptDraft = yield* Effect.fromResult(
+      makeIntradayCycleDraft(candidate, calendar.value, executionSession, 1),
+    ).pipe(
       Effect.mapError((cause) =>
         runnerError({
           operation: 'build-cycle',
@@ -81,7 +84,7 @@ const discoverIntradayCyclePass = <R>(
       .readAuthoritySlot({
         qualificationRunId: context.cycleBindingId,
         accountId: context.accountId,
-        executionSessionDate: draft.identity.executionSessionDate,
+        executionSessionDate: firstAttemptDraft.identity.executionSessionDate,
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -93,11 +96,29 @@ const discoverIntradayCyclePass = <R>(
           }),
         ),
       )
-    if (Option.isSome(existing)) {
+    const entryAttemptOrdinal = Option.isSome(existing)
+      ? nextIntradayEntryAttemptOrdinal(existing.value, observedAt)
+      : 1
+    if (Option.isSome(existing) && entryAttemptOrdinal === undefined) {
       return isTerminalCycleState(existing.value.state)
         ? ({ outcome: 'ALREADY_TERMINAL', observedAt, cycle: existing.value } as const)
         : ({ outcome: 'ALREADY_ACQUIRED', observedAt, cycle: existing.value } as const)
     }
+    const draft =
+      entryAttemptOrdinal === 1
+        ? firstAttemptDraft
+        : yield* Effect.fromResult(
+            makeIntradayCycleDraft(candidate, calendar.value, executionSession, entryAttemptOrdinal),
+          ).pipe(
+            Effect.mapError((cause) =>
+              runnerError({
+                operation: 'build-cycle',
+                failure: 'contract',
+                message: 'intraday autonomous cycle rearm construction failed',
+                cause,
+              }),
+            ),
+          )
     const receipt = yield* store.acquire(draft, observedAt).pipe(
       Effect.mapError((cause) =>
         runnerError({
