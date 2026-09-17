@@ -12,7 +12,7 @@ import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
+import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
 
 export type HttpResponseDecision =
@@ -123,30 +123,46 @@ const publicDependencies = (state: RuntimeState) => ({
   },
 })
 
-const publicAutonomousCycleLoop = (state: RuntimeState) => {
-  const lastPass = state.autonomousCycleLoop.lastPass
+const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined) => {
+  if (pass === null || pass === undefined) return null
+  if (pass.result === 'FAILURE') {
+    return {
+      result: pass.result,
+      observedAt: pass.observedAt,
+      operation: pass.operation,
+      failure: pass.failure,
+      reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
+    } as const
+  }
   return {
-    configured: state.autonomousCycleLoop.configured,
-    owner: state.autonomousCycleLoop.owner ?? 'Process',
-    startedAt: state.autonomousCycleLoop.startedAt,
-    lastPass:
-      lastPass === null
-        ? null
-        : lastPass.result === 'SUCCESS'
-          ? {
-              result: lastPass.result,
-              observedAt: lastPass.observedAt,
-              outcome: lastPass.outcome,
-            }
-          : {
-              result: lastPass.result,
-              observedAt: lastPass.observedAt,
-              operation: lastPass.operation,
-              failure: lastPass.failure,
-              reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
-            },
+    result: pass.result,
+    observedAt: pass.observedAt,
+    outcome: pass.outcome,
+    ...(pass.recoveryAction === undefined ? {} : { recoveryAction: pass.recoveryAction }),
+    ...(pass.waitReason === undefined ? {} : { waitReason: pass.waitReason }),
+    ...(pass.readiness === undefined
+      ? {}
+      : {
+          readiness: {
+            reason: pass.readiness.reason,
+            ...(pass.readiness.availableAt === undefined ? {} : { availableAt: pass.readiness.availableAt }),
+            ...(pass.readiness.symbol === undefined ? {} : { symbol: pass.readiness.symbol }),
+            ...(pass.readiness.eventAt === undefined ? {} : { eventAt: pass.readiness.eventAt }),
+            ...(pass.readiness.requiredFeature === undefined
+              ? {}
+              : { requiredFeature: pass.readiness.requiredFeature }),
+            ...(pass.readiness.snapshotQuery === undefined ? {} : { snapshotQuery: pass.readiness.snapshotQuery }),
+          },
+        }),
   } as const
 }
+
+const publicAutonomousCycleLoop = (state: RuntimeState) => ({
+  configured: state.autonomousCycleLoop.configured,
+  owner: state.autonomousCycleLoop.owner ?? 'Process',
+  startedAt: state.autonomousCycleLoop.startedAt,
+  lastPass: publicCyclePass(state.autonomousCycleLoop.lastPass),
+})
 
 const publicExecutionController = (state: RuntimeState) => {
   const controller = state.executionController
@@ -186,6 +202,7 @@ const publicExecutionController = (state: RuntimeState) => {
               lastReceiptHash: controller.status.lastReceiptHash,
               completedAt: controller.status.completedAt,
               nextDueAt: controller.status.nextDueAt ?? null,
+              lastPass: publicCyclePass(controller.status.lastPass),
             }
           : {
               active: controller.status.active,
@@ -196,6 +213,7 @@ const publicExecutionController = (state: RuntimeState) => {
               lastReceiptHash: null,
               completedAt: null,
               nextDueAt: null,
+              lastPass: null,
             },
     reasonCode,
   } as const

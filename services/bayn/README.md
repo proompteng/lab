@@ -238,8 +238,9 @@ or grant live capital authority.
 
 Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
 and its readiness or lifecycle reason. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies ordinary holding. Snapshot
-waits retain the affected symbol, missing timestamp, required feature definition and window, or first available time when known. Historical
-pass observations without these details remain readable.
+waits retain the affected symbol, missing timestamp, required feature definition and window, or first available time when known.
+Both `autonomousCycleLoop.lastPass` and `executionController.status.lastPass` expose these structured fields. Free-form
+readiness and failure messages stay out of the public response. Historical pass observations without these details remain readable.
 
 Candidate evaluations are stored in the append-only `intraday_candidate_observations` table before the pass proceeds.
 Each content hash binds the cycle, protocol, snapshot manifest, raw rows, and full decision. The corresponding log
