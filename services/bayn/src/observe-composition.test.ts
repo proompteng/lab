@@ -1541,7 +1541,7 @@ describe('OBSERVE runtime composition', () => {
       [{ ...pending.order, observedAt }],
     )
 
-    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(step).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-nonterminal' })
   })
 
   test('uses a settled unsuccessful predecessor instead of an expired untouched remainder as the terminal cause', async () => {
@@ -1801,6 +1801,19 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: 'recovery-only-order',
     }
 
+    const backingOff = await prepareStoredExecutionStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
+      submitUnknown,
+      occurredAt,
+      1,
+      () => undefined,
+      fixture.input,
+      cancelUnknown,
+      false,
+    )
+    expect(backingOff).toEqual({ _tag: 'Wait', observedAt: occurredAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' })
+
     const recovery = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
@@ -1861,7 +1874,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(waiting).toEqual({ _tag: 'Wait', observedAt })
+    expect(waiting).toEqual({ _tag: 'Wait', observedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' })
     expect(commits).toBe(0)
   })
 
@@ -3613,7 +3626,7 @@ describe('OBSERVE runtime composition', () => {
       ],
     )
 
-    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(step).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-unsuccessful' })
     expect(restrictions).toHaveLength(1)
   })
 
@@ -3886,7 +3899,7 @@ describe('OBSERVE runtime composition', () => {
       ]),
     )
 
-    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(step).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-unsuccessful' })
     expect(restrictions).toHaveLength(1)
     expect(restrictions[0]).toContain(`intent ${rejectedIntent.intentId} ended REJECTED`)
   })
@@ -3971,7 +3984,7 @@ describe('OBSERVE runtime composition', () => {
       { ...fixture.document, submissionCutoffAt: closeExpiresAt, expiresAt: closeExpiresAt },
     )
 
-    expect(closeStep).toEqual({ _tag: 'Wait', observedAt })
+    expect(closeStep).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-unsuccessful' })
     expect(closeRestrictions).toHaveLength(1)
   })
 
@@ -4986,6 +4999,24 @@ test('recovery preserves the open session for a real next strategy decision', as
   const executionStore = services.executionStore
   const result = await Effect.runPromise(
     Effect.gen(function* () {
+      const beforeOpenAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) - 1_000)
+      stored = yield* decodeAutonomousCycle({ ...cycle, createdAt: beforeOpenAt, updatedAt: beforeOpenAt })
+      yield* TestClock.setTime(Date.parse(beforeOpenAt))
+      const beforeOpen = yield* runAutonomousCyclePass({
+        cycleBindingId: cycle.identity.qualificationRunId,
+        accountId,
+        strategyName: 'intraday-momentum',
+        strategyProtocolHash: fixture.preparation.strategyProtocolHash,
+        executionPolicy: fixture.preparation.executionPolicy,
+        buildDecision: () => unavailable('build decision before submission opens'),
+      })
+      expect(beforeOpen).toMatchObject({
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        waitReason: 'AWAITING_SUBMISSION_OPEN',
+        observedAt: beforeOpenAt,
+      })
+      stored = cycle
       yield* TestClock.setTime(Date.parse(cycle.window.submissionOpenAt) + 1_000)
       const input = { ...fixture.input, intradayMarketData }
       const startup = { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void }

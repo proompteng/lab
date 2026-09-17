@@ -53,3 +53,20 @@ test('still decodes a retained pass written before readiness details were availa
   const previous = { result: 'SUCCESS', outcome: 'RECOVERED', observedAt: '2026-09-04T14:30:02.000Z' } as const
   expect(Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)(previous)).toEqual(previous)
 })
+
+test('rejects newly tagged waiting observations without exactly one reason', () => {
+  const waiting = {
+    result: 'SUCCESS',
+    outcome: 'RECOVERED',
+    recoveryAction: 'WAITING',
+    observedAt: '2026-09-04T14:30:02.000Z',
+  }
+  expect(Schema.is(RetainedAutonomousCyclePassObservationSchema)(waiting)).toBe(false)
+  expect(
+    Schema.is(RetainedAutonomousCyclePassObservationSchema)({
+      ...waiting,
+      waitReason: 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
+      readiness: { reason: DecisionReadinessReason.DecisionPending, message: 'waiting for a decision' },
+    }),
+  ).toBe(false)
+})

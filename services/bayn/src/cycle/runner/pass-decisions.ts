@@ -12,9 +12,7 @@ const finishRecoveryResultDataFirst = (
   selection: Extract<CycleRecoverySelection, { readonly action: 'FINISH' }>,
   cycle: AutonomousCycle,
 ): Result.Result<CycleRunResult, CycleRunnerError> => {
-  const result = (
-    action: Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['action'],
-  ): Result.Result<CycleRunResult, CycleRunnerError> =>
+  const result = (action: 'BLOCKED' | 'COMPLETED' | 'NO_TRADE'): Result.Result<CycleRunResult, CycleRunnerError> =>
     Result.succeed({ outcome: 'RECOVERED', action, observedAt: selection.observedAt, cycle })
 
   switch (cycle.state) {

@@ -210,6 +210,7 @@ const recoverCycle = <R>(
       return Effect.succeed({
         outcome: 'RECOVERED',
         action: 'WAITING',
+        waitReason: 'AWAITING_SUBMISSION_OPEN',
         observedAt: selection.observedAt,
         cycle: selection.cycle,
       })

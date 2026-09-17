@@ -421,7 +421,11 @@ export const ensureExecutionCycleClosure = (
     const store = input.executionCycleClosureStore
     const observedAt = yield* currentUtcInstant
     if (store === undefined || observedAt < closeWindow.startAt) {
-      return { _tag: 'Wait', observedAt } as const
+      return {
+        _tag: 'Wait',
+        observedAt,
+        waitReason: store === undefined ? 'CLOSE_STORE_UNAVAILABLE' : 'AWAITING_CLOSE_WINDOW',
+      } as const
     }
     const existing = yield* readExecutionCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
@@ -538,7 +542,11 @@ export const ensureExecutionCycleClosure = (
     return { _tag: 'Close', document: stored.document, reconciliation: prepared.reconciliation } as const
   }).pipe(
     Effect.catchTag('ExecutionCloseAwaitingMarketData', ({ observedAt }) =>
-      Effect.succeed<ExecutionCycleClosureResult>({ _tag: 'Wait', observedAt }),
+      Effect.succeed<ExecutionCycleClosureResult>({
+        _tag: 'Wait',
+        observedAt,
+        waitReason: 'CLOSE_MARKET_DATA_UNAVAILABLE',
+      }),
     ),
   )
 
@@ -690,7 +698,7 @@ const executeBoundExecutionCycle = (
     let step: PreparedMutationCycleStep | undefined
 
     if (step === undefined && entryRequiresCloseOnlyContainment && !closeDue) {
-      return { _tag: 'Wait', observedAt }
+      return { _tag: 'Wait', observedAt, waitReason: 'CLOSE_ONLY_UNTIL_CLOSE' }
     }
 
     if (step === undefined && closeDue && !entryRequiresCloseOnlyContainment) {
@@ -834,7 +842,7 @@ const executeBoundExecutionCycle = (
         logContext,
         observedAt: step.observedAt,
       }
-    return { _tag: 'Wait' as const, observedAt: step.observedAt }
+    return { _tag: 'Wait' as const, observedAt: step.observedAt, waitReason: 'MUTATION_NOT_ADVANCED' }
   })
 
 export const deferPostMutationReconciliation = (pending: PostMutationReconciliation): CycleRunResult => ({
@@ -990,7 +998,7 @@ const interpretBoundMutationCycleOutcome = (
         action: 'WAITING',
         observedAt: outcome.observedAt,
         cycle,
-        ...(outcome.waitReason === undefined ? {} : { waitReason: outcome.waitReason }),
+        waitReason: outcome.waitReason,
       })
     case 'Block':
       return input.blockedCycleIntentStore === undefined

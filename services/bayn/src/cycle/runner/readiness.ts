@@ -38,9 +38,7 @@ export const DecisionReadinessSchema = Schema.Struct({
 
 export type DecisionReadiness = typeof DecisionReadinessSchema.Type
 
-export const CycleWaitReasonSchema = Schema.Literals([
-  'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
-  'POST_MUTATION_RECONCILIATION',
+export const CycleCompletionWaitReasonSchema = Schema.Literals([
   'accounting-inexact',
   'intent-nonterminal',
   'intent-unsuccessful',
@@ -51,4 +49,27 @@ export const CycleWaitReasonSchema = Schema.Literals([
   'open-position',
 ])
 
+export type CycleCompletionWaitReason = typeof CycleCompletionWaitReasonSchema.Type
+
+export const CycleWaitReasonSchema = Schema.Union([
+  CycleCompletionWaitReasonSchema,
+  Schema.Literals([
+    'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
+    'POST_MUTATION_RECONCILIATION',
+    'AWAITING_SUBMISSION_OPEN',
+    'AWAITING_CLOSE_WINDOW',
+    'CLOSE_STORE_UNAVAILABLE',
+    'CLOSE_MARKET_DATA_UNAVAILABLE',
+    'CLOSE_ONLY_UNTIL_CLOSE',
+    'MUTATION_NOT_ADVANCED',
+    'MUTATION_RECOVERY_BACKOFF',
+    'MUTATION_EVIDENCE_PENDING',
+    'SUBMISSION_NOT_ALLOWED',
+  ]),
+])
+
 export type CycleWaitReason = typeof CycleWaitReasonSchema.Type
+
+export type CycleWaitingDetails =
+  | { readonly waitReason: CycleWaitReason; readonly readiness?: never }
+  | { readonly readiness: DecisionReadiness; readonly waitReason?: never }

@@ -52,7 +52,13 @@ describe('advanceExecutionOnce', () => {
         command,
         driver(
           { result: 'SUCCESS', outcome: 'RECOVERED', observedAt },
-          { outcome: 'RECOVERED', action: 'WAITING', observedAt, cycle: {} as never },
+          {
+            outcome: 'RECOVERED',
+            action: 'WAITING',
+            waitReason: 'AWAITING_SUBMISSION_OPEN',
+            observedAt,
+            cycle: {} as never,
+          },
         ),
       ),
     )
@@ -77,7 +83,13 @@ describe('advanceExecutionOnce', () => {
       advanceExecutionOnce(command, {
         advance: Effect.succeed({
           observation: { result: 'SUCCESS', outcome: 'RECOVERED', observedAt },
-          result: { outcome: 'RECOVERED', action: 'WAITING', observedAt, cycle: {} as never },
+          result: {
+            outcome: 'RECOVERED',
+            action: 'WAITING',
+            waitReason: 'AWAITING_SUBMISSION_OPEN',
+            observedAt,
+            cycle: {} as never,
+          },
           nextDelayMs: 300_000,
         }),
         nextDelayMs: 30_000,

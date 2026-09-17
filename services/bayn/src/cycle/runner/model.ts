@@ -3,7 +3,7 @@ import { Data, Effect } from 'effect'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { AutonomousCycle, CycleExecutionPolicy } from '../model'
 import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store'
-import type { CycleWaitReason, DecisionReadiness } from './readiness'
+import type { CycleWaitingDetails, DecisionReadiness } from './readiness'
 
 export type { CycleWaitReason } from './readiness'
 
@@ -42,14 +42,18 @@ export type CycleRunResult =
       readonly observedAt: string
       readonly cycle: AutonomousCycle
     }
-  | {
+  | ({
       readonly outcome: 'RECOVERED'
-      readonly action: 'ACTIVATED' | 'BLOCKED' | 'BOUND_DECISION' | 'COMPLETED' | 'NO_TRADE' | 'WAITING'
-      readonly waitReason?: CycleWaitReason
-      readonly readiness?: DecisionReadiness
       readonly observedAt: string
       readonly cycle: AutonomousCycle
-    }
+    } & (
+      | {
+          readonly action: 'ACTIVATED' | 'BLOCKED' | 'BOUND_DECISION' | 'COMPLETED' | 'NO_TRADE'
+          readonly waitReason?: never
+          readonly readiness?: never
+        }
+      | ({ readonly action: 'WAITING' } & CycleWaitingDetails)
+    ))
   | {
       readonly outcome: 'ACQUIRED' | 'REACQUIRED'
       readonly executionSessionDate: string

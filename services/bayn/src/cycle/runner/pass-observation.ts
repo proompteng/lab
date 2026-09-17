@@ -24,10 +24,10 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
     Schema.makeFilter(
       (observation) =>
         (observation.recoveryAction === undefined || observation.outcome === 'RECOVERED') &&
-        ((observation.waitReason === undefined && observation.readiness === undefined) ||
-          (observation.outcome === 'RECOVERED' && observation.recoveryAction === 'WAITING')) &&
-        (observation.waitReason === undefined || observation.readiness === undefined),
-      { expected: 'waiting details only on a recovered waiting pass, with one readiness or lifecycle reason' },
+        (observation.recoveryAction === 'WAITING'
+          ? (observation.waitReason === undefined) !== (observation.readiness === undefined)
+          : observation.waitReason === undefined && observation.readiness === undefined),
+      { expected: 'exactly one readiness or lifecycle reason on each tagged waiting pass and none on other passes' },
     ),
   ),
   Schema.Struct({
