@@ -207,7 +207,8 @@ export const marketVolumeRequestsFromRows = (
     }
     const manifest = binding.manifest
     const request: ForwardPerformanceMarketVolumeRequest =
-      manifest.schemaVersion === 'bayn.intraday-market-snapshot.v1'
+      manifest.schemaVersion === 'bayn.intraday-market-snapshot.v1' ||
+      manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
         ? {
             ...base,
             sourceFeed: 'iex',

@@ -161,8 +161,16 @@ const projectionFailure = (cause: unknown): TransientExecutionFailure =>
     cause,
   })
 
-const controllerOutcome = (outcome: 'Blocked' | 'Completed'): ExecutionControllerOutcome =>
-  outcome === 'Completed' ? ExecutionControllerOutcome.Completed : ExecutionControllerOutcome.Blocked
+const controllerOutcome = (outcome: 'Blocked' | 'Completed' | 'Waiting'): ExecutionControllerOutcome => {
+  switch (outcome) {
+    case 'Completed':
+      return ExecutionControllerOutcome.Completed
+    case 'Blocked':
+      return ExecutionControllerOutcome.Blocked
+    case 'Waiting':
+      return ExecutionControllerOutcome.Waiting
+  }
+}
 
 const legacyUnboundControllerPlanHash = '0'.repeat(64)
 

@@ -17,7 +17,13 @@ import {
   validateSourceTopics,
   verifyIntradaySnapshotQuery,
 } from '../intraday/verification'
-import { featureMatchesBars, marketFeatureClockSkewAllowanceMs } from '../features/contract'
+import {
+  featureMatchesBars,
+  marketFeatureClockSkewAllowanceMs,
+  MarketFeatureDefinition,
+  rollingFeatureDefinitionMaterial,
+} from '../features/contract'
+import { sha256 } from '../../hash'
 import { observedBarsAt, type StreamingProjection, type ObservedMarketValue } from './projection'
 import { technicalFeatureMatchesBars, type TechnicalMarketFeature } from '../features/technical-contract'
 import { technicalReceiptAvailableAt } from './technical-projection'
@@ -26,6 +32,7 @@ import type { StreamingFeatureReceipt } from './snapshot'
 const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })
 const observedWithin = <A>(entry: ObservedMarketValue<A>, observedAtMs: number) => entry.availableAtMs <= observedAtMs
+const rollingFeatureDefinitionHash = sha256(JSON.stringify(rollingFeatureDefinitionMaterial))
 
 /** Shared input policy only. This does not issue live snapshot or broker authority. */
 export const selectStreamingInputs = (state: StreamingProjection, query: IntradaySnapshotQuery) =>
@@ -122,7 +129,23 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
           reason: 'not-ready',
           message: 'matching complete rolling feature is unavailable',
         })
-      else return yield* Result.fail(failure('not-ready', `Required rolling feature is unavailable for ${symbol}`))
+      else
+        return yield* Result.fail(
+          new IntradaySnapshotFailure({
+            reason: 'not-ready',
+            message: `Required rolling feature is unavailable for ${symbol}`,
+            facts: {
+              symbol,
+              eventAt: request.rangeEndAt,
+              requiredFeature: {
+                definitionId: MarketFeatureDefinition.RollingPrice30m,
+                definitionHash: rollingFeatureDefinitionHash,
+                windowStartAt: request.rangeStartAt,
+                windowEndAt: request.rangeEndAt,
+              },
+            },
+          }),
+        )
     }
     const bars = entries
       .map((entry) => entry.value)

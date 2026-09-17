@@ -1,5 +1,6 @@
-import { makeIntradayPerformanceFixture } from './intraday-cycle.test-support'
+import { makeIntradayPerformanceFixture, makeStreamingPerformanceFixture } from './intraday-cycle.test-support'
 import { makeIntradayPerformanceVolumeEvidence } from './intraday-volume'
+import { bindForwardPerformanceTerminalReferencePrices } from './program'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
@@ -1479,6 +1480,77 @@ test('retains measured native execution quality when missing minutes prevent com
     expect(receipt.observedCapacity.observations[0]?.intradaySource?.evidenceHash).toBe(volume.contentHash)
     expect(receipt.observedCapacity.intradaySources).toEqual([volume])
     if (missing) expect(receipt.observedCapacity.boundedObservedReferenceNotionalMicros).toBeNull()
+  }
+})
+
+test('measures a completed streaming partial cancellation and retains missing-minute capacity gaps', () => {
+  const { request, archive, bars } = makeStreamingPerformanceFixture()
+  const baseline = input()
+  const execution = exactExecutionEvidence()[0]
+  if (execution === undefined || baseline.reconciliation === undefined) throw new Error('missing accounting fixture')
+  const at = (value: string) =>
+    value.replaceAll('2026-07-20', request.executionSessionDate).replace('T20:00:', 'T19:55:')
+  const partial: ForwardPerformanceExecutionEvidence = {
+    ...execution,
+    symbol: request.symbol,
+    decisionCreatedAt: request.decisionManifest.observedAt,
+    plannedQuantityMicros: '2000000',
+    intent: {
+      ...execution.intent,
+      symbol: request.symbol,
+      quantityMicros: '2000000',
+      terminalOutcome: 'CANCELED',
+      createdAt: request.decisionManifest.observedAt,
+      updatedAt: at(execution.intent.updatedAt),
+    },
+    terminalOrder: {
+      ...execution.terminalOrder,
+      symbol: request.symbol,
+      quantityMicros: '2000000',
+      status: 'CANCELED',
+      occurredAt: at(execution.terminalOrder.occurredAt),
+      observedAt: at(execution.terminalOrder.observedAt),
+    },
+    fills: execution.fills.map((fill) => ({
+      ...fill,
+      symbol: request.symbol,
+      sourceTimestamp: at(fill.sourceTimestamp),
+      occurredAt: at(fill.occurredAt),
+      observedAt: at(fill.observedAt),
+    })),
+  }
+  for (const missing of [false, true]) {
+    const volume = Result.getOrThrow(
+      makeIntradayPerformanceVolumeEvidence(request, archive, missing ? bars.slice(1) : bars),
+    )
+    if (volume === undefined) throw new Error('expected streaming closing evidence')
+    const receipt = success(
+      makeForwardPerformanceReceipt({
+        ...baseline,
+        cycles: baseline.cycles.map((item) => ({
+          ...item,
+          submissionOpenAt: request.windowOpenedAt,
+          terminalAt: request.windowClosedAt,
+        })),
+        reconciliation: { ...baseline.reconciliation, reconciledAt: request.evidenceCutoffAt },
+        transactions: exactTransactions().map((item) => ({
+          ...item,
+          symbol: request.symbol,
+          occurredAt: at(item.occurredAt),
+        })),
+        executionEvidence: Result.getOrThrow(bindForwardPerformanceTerminalReferencePrices([partial], [volume])),
+        marketVolumeEvidence: [volume],
+      }),
+    )
+    expect(receipt.evidence.status).toBe('SUFFICIENT')
+    expect(receipt.executionQuality).toMatchObject({
+      status: 'MEASURED',
+      reasonCodes: [],
+      implementationShortfall: { filledQuantityMicros: '1000000', unfilledQuantityMicros: '1000000' },
+    })
+    expect(receipt.observedCapacity.status).toBe(missing ? 'UNDETERMINED' : 'MEASURED')
+    expect(receipt.observedCapacity.reasonCodes).toEqual(missing ? ['MARKET_VOLUME_EVIDENCE_GAP'] : [])
+    expect(receipt.observedCapacity.intradaySources).toEqual([volume])
   }
 })
 

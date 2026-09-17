@@ -21,8 +21,11 @@ import type { IntradayMarketDataService } from '../market-data'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
+import { CandidateObservationStore } from './candidate-observation'
+import type { IntradayExitTiming } from '../strategy/intraday-momentum/research'
 
 export type ObserveDecisionRuntime =
+  | CandidateObservationStore
   | BrokerRead
   | BrokerEventStore
   | FillAccountingStore
@@ -71,6 +74,7 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  readonly simulation?: { readonly runId: string; readonly exitTiming: IntradayExitTiming }
   /** Explicit archive dependency; required only for an INTRADAY strategy. */
   readonly intradayMarketData?: IntradayMarketDataService
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
