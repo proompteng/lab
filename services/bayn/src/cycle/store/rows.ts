@@ -21,16 +21,23 @@ import {
 
 const StoredCycleRowSchema = Schema.Struct({
   cycle_id: Sha256Schema,
-  schema_version: Schema.Literals(['bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3']),
+  schema_version: Schema.Literals([
+    'bayn.autonomous-cycle.v1',
+    'bayn.autonomous-cycle.v2',
+    'bayn.autonomous-cycle.v3',
+    'bayn.autonomous-cycle.v4',
+  ]),
   identity_schema_version: Schema.Literals([
     'bayn.autonomous-cycle-identity.v1',
     'bayn.autonomous-cycle-identity.v2',
     'bayn.autonomous-cycle-identity.v3',
+    'bayn.autonomous-cycle-identity.v4',
   ]),
   strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum']),
   qualification_run_id: Sha256Schema,
   strategy_protocol_hash: Sha256Schema,
   account_id: StrictNonEmptyStringSchema,
+  entry_attempt_ordinal: PositiveIntegerSchema,
   signal_session_date: Schema.NullOr(IsoDateSchema),
   signal_calendar_version: Schema.NullOr(StrictNonEmptyStringSchema),
   execution_policy_schema_version: Schema.Literals([
@@ -204,7 +211,11 @@ const rowToCycle = (row: typeof StoredCycleRowSchema.Type) =>
       qualificationRunId: row.qualification_run_id,
       strategyProtocolHash: row.strategy_protocol_hash,
       accountId: row.account_id,
-      ...(row.identity_schema_version !== 'bayn.autonomous-cycle-identity.v3'
+      ...(row.identity_schema_version === 'bayn.autonomous-cycle-identity.v4'
+        ? { entryAttemptOrdinal: row.entry_attempt_ordinal }
+        : {}),
+      ...(row.identity_schema_version !== 'bayn.autonomous-cycle-identity.v3' &&
+      row.identity_schema_version !== 'bayn.autonomous-cycle-identity.v4'
         ? {
             signalSessionDate: row.signal_session_date,
             signalCalendarVersion: row.signal_calendar_version,

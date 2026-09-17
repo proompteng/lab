@@ -21,7 +21,11 @@ five minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH a
 
 The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
 normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
-IOC limit orders at an adverse verified quote boundary. Bayn starts flattening five minutes before the close and
+IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
+verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
+decision retains the original quote, allowance, exact limit notional, and risk evidence; historical decisions without
+an allowance retain their original exact quote limit. Quote freshness and submission deadlines still apply.
+Bayn starts flattening five minutes before the close and
 requires a flat account at the closing bell. Entries stop when flattening starts, and close orders remain eligible
 until the actual close, including early-close sessions. The five-minute exit budget is an operational policy;
 unfilled exits or unresolved reconciliation remain incomplete and visible.
@@ -34,7 +38,7 @@ elapsed preparatory work for a fresh reconciliation and close planning; a slow i
 leaves less time for archive reads. The overall pass and close deadlines still apply.
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
-is retained in behavior v14; entry decisions retain their existing evidence and LIMIT/IOC requirements.
+is retained in behavior v15; entry decisions retain their existing evidence and LIMIT/IOC requirements.
 
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
@@ -75,6 +79,16 @@ entry exposure, without restricting authority or submitting the unfilled remaind
 scheduled close. Rejected, mismatched, overfilled, and non-IOC canceled orders retain their failure handling.
 Durable completion additionally requires the recorded partial fills to match the accepted order, a later trusted flat
 position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
+
+An exact zero-fill LIMIT/IOC cancellation is the only terminal entry outcome that can release an intraday attempt
+before the close. Bayn first requires a later exact flat reconciliation with no unknown mutations or open orders. The
+attempt then completes without inventing a fill. After at least one minute, while the entry cutoff remains open, the
+standing mandate may create the next rolling observation across all strategy candidates. Zero-fill attempts do not
+exhaust a session-wide quota. Each new attempt requires fresh signals and pricing, exact flat reconciliation, no
+unresolved mutations or open orders, and the existing risk limits. Attempts use increasing ordinals, distinct immutable
+v4 cycle identities, and unique PostgreSQL authority slots. A filled or partially filled
+attempt never rearms and remains bound through its scheduled close. Failed or ambiguous outcomes retain their existing
+fail-closed handling.
 
 When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
 recovery. A running worker also checks durable authority before and after each pass and replaces its driver when a

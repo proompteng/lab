@@ -295,9 +295,10 @@ export const decideExecutionMandateCycleTerminalization = (input: {
   readonly observedAt: string
   readonly entryCutoffAt?: string
   readonly entryHasUnsuccessfulIntent: boolean
+  readonly entrySettledWithoutFill: boolean
 }): ExecutionMandateCycleTerminalizationDecision => {
   if (!input.closeOnly && input.entryCutoffAt !== undefined && input.observedAt < input.entryCutoffAt) {
-    return { _tag: 'WaitForClose' }
+    return input.entrySettledWithoutFill ? { _tag: 'Complete' } : { _tag: 'WaitForClose' }
   }
   if (input.entryHasUnsuccessfulIntent) {
     return { _tag: 'Block' }
