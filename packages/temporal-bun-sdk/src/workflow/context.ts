@@ -165,7 +165,7 @@ export interface WorkflowActivities {
     activityType: string,
     args?: unknown[],
     options?: ScheduleActivityOptions,
-  ): Effect.Effect<unknown, never, never>
+  ): Effect.Effect<unknown, Error, never>
 
   cancel(
     activityId: string,
@@ -180,7 +180,7 @@ export interface WorkflowNexusOperations {
     operation: string,
     input?: unknown,
     options?: ScheduleNexusOperationOptions,
-  ): Effect.Effect<unknown, never, never>
+  ): Effect.Effect<unknown, Error, never>
 
   cancel(
     operationId: string,
@@ -283,6 +283,7 @@ export interface CreateWorkflowContextParams<I> {
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly timerResults?: ReadonlySet<string>
   readonly updates?: WorkflowUpdateDefinitions
+  readonly localActivityDeadline?: AbortSignal
 }
 
 export type ActivityResolution = { status: 'completed'; value: unknown } | { status: 'failed'; error: Error }
@@ -293,6 +294,7 @@ export class WorkflowCommandContext {
   readonly #info: WorkflowInfo
   readonly #guard: DeterminismGuard
   readonly #intents: WorkflowCommandIntent[] = []
+  readonly #localActivities: Promise<unknown>[] = []
   readonly #activityScheduleEventIds?: Map<string, string>
   readonly #nexusScheduleEventIds?: Map<string, string>
   #sequence = 0
@@ -311,6 +313,14 @@ export class WorkflowCommandContext {
 
   get intents(): readonly WorkflowCommandIntent[] {
     return this.#intents
+  }
+
+  trackLocalActivity(result: Promise<unknown>): void {
+    this.#localActivities.push(result.catch(() => undefined))
+  }
+
+  async settleLocalActivities(): Promise<void> {
+    await Promise.all(this.#localActivities)
   }
 
   addIntent(intent: WorkflowCommandIntent): RecordedCommandKind {
@@ -374,20 +384,17 @@ export const createWorkflowContext = <I>(
 
   const activities: WorkflowActivities = {
     schedule(activityType, args = [], options = {}) {
-      return Effect.sync(() => {
+      return Effect.suspend(() => {
         const intent = buildScheduleActivityIntent(commandContext, activityType, args, options)
         commandContext.addIntent(intent)
         const resolution = activityResults.get(intent.activityId)
         if (!resolution) {
-          throw new WorkflowBlockedError(`Activity ${intent.activityId} pending`)
+          return Effect.die(new WorkflowBlockedError(`Activity ${intent.activityId} pending`))
         }
         if (resolution.status === 'failed') {
-          throw resolution.error
+          return Effect.fail(resolution.error)
         }
-        // When the activity result is already available (e.g., during replay/query),
-        // return the resolved value instead of a command reference so workflow code
-        // sees the decoded activity output.
-        return resolution.value
+        return Effect.succeed(resolution.value)
       })
     },
     cancel(activityId, options = {}) {
@@ -401,17 +408,17 @@ export const createWorkflowContext = <I>(
 
   const nexus: WorkflowNexusOperations = {
     schedule(endpoint, service, operation, input, options = {}) {
-      return Effect.sync(() => {
+      return Effect.suspend(() => {
         const intent = buildScheduleNexusOperationIntent(commandContext, endpoint, service, operation, input, options)
         commandContext.addIntent(intent)
         const resolution = nexusResults.get(intent.operationId)
         if (!resolution) {
-          throw new WorkflowBlockedError(`Nexus operation ${intent.operationId} pending`)
+          return Effect.die(new WorkflowBlockedError(`Nexus operation ${intent.operationId} pending`))
         }
         if (resolution.status === 'failed') {
-          throw resolution.error
+          return Effect.fail(resolution.error)
         }
-        return resolution.value
+        return Effect.succeed(resolution.value)
       })
     },
     cancel(operationId, options = {}) {
@@ -535,6 +542,7 @@ export const createWorkflowContext = <I>(
         args,
         handler: options?.handler,
         activityId: options?.activityId,
+        deadline: params.localActivityDeadline,
       }),
   }
 
@@ -980,6 +988,7 @@ const runLocalActivity = <T>(params: {
   args: unknown[]
   handler?: (...args: unknown[]) => unknown
   activityId?: string
+  deadline?: AbortSignal
 }): T => {
   const sequence = params.commandContext.nextSequence()
   const activityId = params.activityId ?? `local-activity-${sequence}`
@@ -991,12 +1000,17 @@ const runLocalActivity = <T>(params: {
       const message = typeof details.errorMessage === 'string' ? details.errorMessage : 'Local activity failed'
       throw new Error(message)
     }
-    return (details.result as T) ?? (details.payload as T)
+    return ('result' in details ? details.result : details.payload) as T
   }
 
   if (previous && previous.kind === 'record-marker' && previous.markerName === MARKER_LOCAL_ACTIVITY) {
     const intent: RecordMarkerCommandIntent = { ...previous, sequence }
     params.commandContext.addIntent(intent)
+    if (intent.details?.async === true) {
+      const result = Promise.resolve().then(() => readPreviousResult(intent))
+      params.commandContext.trackLocalActivity(result)
+      return result as T
+    }
     return readPreviousResult(intent)
   }
 
@@ -1005,7 +1019,43 @@ const runLocalActivity = <T>(params: {
   }
 
   try {
+    const timeoutError = () =>
+      new Error('Local activity exceeded the workflow task budget; use a remote activity for longer work')
+    if (params.deadline?.aborted) throw timeoutError()
     const value = params.handler(...params.args) as T
+    if (value instanceof Promise) {
+      const details: Record<string, unknown> = { activityId, activityType: params.activityType, async: true }
+      params.commandContext.addIntent({
+        id: `local-activity-${sequence}`,
+        kind: 'record-marker',
+        sequence,
+        markerName: MARKER_LOCAL_ACTIVITY,
+        details,
+      })
+      let pending: Promise<unknown> = value
+      const signal = params.deadline
+      if (signal) {
+        const deadline = Promise.withResolvers<never>()
+        const onAbort = () => deadline.reject(timeoutError())
+        signal.addEventListener('abort', onAbort, { once: true })
+        pending = Promise.race([value, deadline.promise]).finally(() => signal.removeEventListener('abort', onAbort))
+        if (signal.aborted) onAbort()
+      }
+      const result = pending.then(
+        (resolved: unknown) => {
+          details.status = 'completed'
+          details.result = resolved
+          return resolved
+        },
+        (error: unknown) => {
+          details.status = 'failed'
+          details.errorMessage = error instanceof Error ? error.message : String(error)
+          throw error
+        },
+      )
+      params.commandContext.trackLocalActivity(result)
+      return result as T
+    }
     const intent: RecordMarkerCommandIntent = {
       id: `local-activity-${sequence}`,
       kind: 'record-marker',

@@ -2,7 +2,13 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 
 import { Pipeable } from '../../pipeable'
-import { CycleState, type AutonomousCycle, type CycleTerminalReason } from '../model'
+import {
+  CycleState,
+  intradayCycleEntryAttemptOrdinal,
+  isIntradayCycleIdentity,
+  type AutonomousCycle,
+  type CycleTerminalReason,
+} from '../model'
 import { decideBlock, validateBlockedDecision, type BlockDecision } from './decisions'
 import {
   exactlyOneCycle,
@@ -104,7 +110,7 @@ const makeCycleMutationPrimitivesDataFirst = (
     sql<Record<string, unknown>>`
       INSERT INTO autonomous_cycles (
         cycle_id, schema_version, identity_schema_version, strategy_name,
-        qualification_run_id, strategy_protocol_hash, account_id,
+        qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
         signal_session_date, signal_calendar_version,
         execution_policy_schema_version, execution_policy_hash,
         strategy_execution_model_hash, submission_window_ms,
@@ -121,13 +127,16 @@ const makeCycleMutationPrimitivesDataFirst = (
         ${candidate.identity.schemaVersion}, ${candidate.identity.strategyName},
         ${candidate.identity.qualificationRunId}, ${candidate.identity.strategyProtocolHash},
         ${candidate.identity.accountId},
+        ${isIntradayCycleIdentity(candidate.identity) ? intradayCycleEntryAttemptOrdinal(candidate.identity) : 1},
         ${
-          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4'
             ? candidate.identity.signalSessionDate
             : null
         },
         ${
-          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+          candidate.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4'
             ? candidate.identity.signalCalendarVersion
             : null
         },
@@ -182,18 +191,18 @@ const makeCycleMutationPrimitivesDataFirst = (
     `.pipe(Effect.flatMap(decodeMutationRows))
 
   const lockAuthoritySlot: CycleMutationPrimitives['lockAuthoritySlot'] = (candidate) => {
-    const query =
-      candidate.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3'
-        ? sql<Record<string, unknown>>`
+    const query = isIntradayCycleIdentity(candidate.identity)
+      ? sql<Record<string, unknown>>`
             SELECT cycle_id
             FROM autonomous_cycles
             WHERE qualification_run_id = ${candidate.identity.qualificationRunId}
               AND account_id = ${candidate.identity.accountId}
-              AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3')
+              AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
               AND execution_session_date = ${candidate.identity.executionSessionDate}
+              AND entry_attempt_ordinal = ${intradayCycleEntryAttemptOrdinal(candidate.identity)}
             FOR UPDATE
           `
-        : sql<Record<string, unknown>>`
+      : sql<Record<string, unknown>>`
       SELECT cycle_id
       FROM autonomous_cycles
       WHERE qualification_run_id = ${candidate.identity.qualificationRunId}

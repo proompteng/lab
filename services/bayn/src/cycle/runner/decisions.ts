@@ -1,6 +1,7 @@
 export {
   makeIntradayCycleDraft,
   marketCalendarQueryFromSession,
+  nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
   type CycleCalendarQueryFailure,
   type IntradayCycleCandidate,
