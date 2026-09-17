@@ -20,7 +20,6 @@ import {
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
-export const maximumIntradayEntryAttempts: IntradayCycleEntryAttemptOrdinal = 2
 export const intradayEntryRearmDelayMs = 60_000
 
 export type IsoDateShiftCause =
@@ -170,7 +169,12 @@ export const nextIntradayEntryAttemptOrdinal = (
     cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' ||
     cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
       ? intradayCycleEntryAttemptOrdinal(cycle.identity)
-      : maximumIntradayEntryAttempts
+      : undefined
   const rearmAt = Date.parse(cycle.terminalAt) + intradayEntryRearmDelayMs
-  return currentAttempt === 1 && Number.isFinite(rearmAt) && Date.parse(observedAt) >= rearmAt ? 2 : undefined
+  return currentAttempt !== undefined &&
+    currentAttempt < 2_147_483_647 &&
+    Number.isFinite(rearmAt) &&
+    Date.parse(observedAt) >= rearmAt
+    ? currentAttempt + 1
+    : undefined
 }

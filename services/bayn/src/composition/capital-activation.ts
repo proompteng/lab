@@ -141,6 +141,22 @@ export const researchCapitalRecoveryRequestIsCompatible = (
   return Result.isFailure(identity) ? identity : researchCapitalBrokerBindingIsCurrent(request, plan)
 }
 
+export const configuredCapitalActivation = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+): Result.Result<ConfiguredCapitalActivation | null, string> => {
+  const serialized = plan.config.capitalActivationRequestJson
+  if (serialized === undefined) {
+    return plan.config.execution.brokerAccess === BrokerAccess.Mutation
+      ? Result.fail('configured granted capital requires an immutable execution mandate request')
+      : Result.succeed(null)
+  }
+  return decodeConfiguredCapitalActivation(serialized, plan.config.researchCapitalBuildLineageJson).pipe(
+    Result.flatMap((configured) =>
+      researchCapitalRecoveryRequestIsCompatible(configured.request, plan).pipe(Result.map(() => configured)),
+    ),
+  )
+}
+
 export const researchCapitalActivationRequestIsCurrent = (
   request: ResearchCapitalActivationRequest,
   plan: ApplicationPlanFor<'AutonomousService'>,
