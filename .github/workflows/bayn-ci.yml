@@ -46,6 +46,7 @@ jobs:
               nix/images/bun-workspace-service.nix | \
               nix/images/bun-workspace-deps-source.nix | \
               nix/images/bun-workspace-deps-source.test.sh | \
+              nix/images/prune-bun-dependency-metadata.sh | \
               nix/packages.nix | \
               nix/cache-push.sh | \
               nix/ci-nix-oci-summary.sh | \
@@ -71,6 +72,7 @@ jobs:
               nix/images/bun-workspace-service.nix | \
               nix/images/bun-workspace-deps-source.nix | \
               nix/packages.nix | \
+              nix/images/prune-bun-dependency-metadata.sh | \
               nix/cache-push.sh | \
               nix/ci-nix-oci-summary.sh | \
               nix/ci-run-timed.sh | \

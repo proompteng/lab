@@ -283,6 +283,7 @@ export interface CreateWorkflowContextParams<I> {
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly timerResults?: ReadonlySet<string>
   readonly updates?: WorkflowUpdateDefinitions
+  readonly localActivityDeadline?: AbortSignal
 }
 
 export type ActivityResolution = { status: 'completed'; value: unknown } | { status: 'failed'; error: Error }
@@ -541,6 +542,7 @@ export const createWorkflowContext = <I>(
         args,
         handler: options?.handler,
         activityId: options?.activityId,
+        deadline: params.localActivityDeadline,
       }),
   }
 
@@ -986,6 +988,7 @@ const runLocalActivity = <T>(params: {
   args: unknown[]
   handler?: (...args: unknown[]) => unknown
   activityId?: string
+  deadline?: AbortSignal
 }): T => {
   const sequence = params.commandContext.nextSequence()
   const activityId = params.activityId ?? `local-activity-${sequence}`
@@ -1004,7 +1007,9 @@ const runLocalActivity = <T>(params: {
     const intent: RecordMarkerCommandIntent = { ...previous, sequence }
     params.commandContext.addIntent(intent)
     if (intent.details?.async === true) {
-      return Promise.resolve().then(() => readPreviousResult(intent)) as T
+      const result = Promise.resolve().then(() => readPreviousResult(intent))
+      params.commandContext.trackLocalActivity(result)
+      return result as T
     }
     return readPreviousResult(intent)
   }
@@ -1014,6 +1019,9 @@ const runLocalActivity = <T>(params: {
   }
 
   try {
+    const timeoutError = () =>
+      new Error('Local activity exceeded the workflow task budget; use a remote activity for longer work')
+    if (params.deadline?.aborted) throw timeoutError()
     const value = params.handler(...params.args) as T
     if (value instanceof Promise) {
       const details: Record<string, unknown> = { activityId, activityType: params.activityType, async: true }
@@ -1024,7 +1032,16 @@ const runLocalActivity = <T>(params: {
         markerName: MARKER_LOCAL_ACTIVITY,
         details,
       })
-      const result = value.then(
+      let pending: Promise<unknown> = value
+      const signal = params.deadline
+      if (signal) {
+        const deadline = Promise.withResolvers<never>()
+        const onAbort = () => deadline.reject(timeoutError())
+        signal.addEventListener('abort', onAbort, { once: true })
+        pending = Promise.race([value, deadline.promise]).finally(() => signal.removeEventListener('abort', onAbort))
+        if (signal.aborted) onAbort()
+      }
+      const result = pending.then(
         (resolved: unknown) => {
           details.status = 'completed'
           details.result = resolved

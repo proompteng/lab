@@ -66,6 +66,11 @@ configure worker versioning and build IDs.
 
 ## Production readiness
 
+Async local activities must finish within the current workflow task budget. The
+worker reserves time to record their result or timeout failure before the task
+expires. Use a remote activity for longer work. A local timeout does not cancel
+I/O that the handler already started.
+
 This package is a Bun-native Temporal worker/client SDK, not a wrapper around the
 official Node.js worker runtime. The worker path does not depend on
 `@temporalio/worker`, Node-API native modules, `process.dlopen()`, or

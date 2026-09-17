@@ -1342,6 +1342,7 @@ export class WorkerRuntime {
     executionOverride?: { workflowId: string; runId: string },
   ): Promise<void> {
     const execution = executionOverride ?? this.#resolveWorkflowExecution(response)
+    const taskReceivedAt = Date.now()
     const workflowTaskAttempt = Number(response.attempt ?? 1)
     const isLegacyQueryTask = Boolean(response.query)
     const queryStartTime = isLegacyQueryTask ? Date.now() : null
@@ -1518,6 +1519,17 @@ export class WorkerRuntime {
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
+      const workflowStart = this.#findWorkflowStartedEvent(historyEvents)?.attributes
+      const taskTimeoutMs =
+        (workflowStart?.case === 'workflowExecutionStartedEventAttributes'
+          ? durationToMillis(workflowStart.value.workflowTaskTimeout)
+          : undefined) ?? 10_000
+      const taskStartedAt = timestampToDate(response.startedTime)?.getTime() ?? taskReceivedAt
+      const localActivityBudgetMs = Math.floor(
+        taskStartedAt + taskTimeoutMs - Math.min(1_000, taskTimeoutMs / 2) - Date.now(),
+      )
+      const localActivityDeadline =
+        localActivityBudgetMs > 0 ? AbortSignal.timeout(localActivityBudgetMs) : AbortSignal.abort()
       const output = await this.#executor.execute({
         workflowType,
         workflowId: execution.workflowId,
@@ -1536,6 +1548,7 @@ export class WorkerRuntime {
         queryRequests,
         updates: mergedUpdates,
         mode: isLegacyQueryTask ? 'query' : 'workflow',
+        localActivityDeadline,
       })
       this.#log('debug', 'workflow query evaluation summary', {
         ...baseLogFields,

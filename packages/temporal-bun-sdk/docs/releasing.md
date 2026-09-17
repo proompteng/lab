@@ -25,6 +25,11 @@ validate the proposed version, and publication still requires the existing repla
 fuzz, load, package, and provenance gates for the merged commit. Ordinary source
 pushes cannot republish an unchanged version.
 
+Service dependency caches contain installed dependencies. Image builds restore
+the current workspace manifests separately, so a version or release-command
+change does not require refreshing dependency hashes. Dependency and lockfile
+changes still go through the dependency closure checks.
+
 ## Preview the version PR
 
 ```bash

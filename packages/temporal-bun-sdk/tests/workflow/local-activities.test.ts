@@ -114,3 +114,57 @@ test('Nexus failures enter the recoverable Effect error channel', async () => {
   )
   expect(result).toBe('service unavailable')
 })
+
+test('async local activities record deadline failures and ignore late results during replay', async () => {
+  const controller = new AbortController()
+  const guard = new DeterminismGuard()
+  const initial = createWorkflowContext({
+    info,
+    input: [],
+    determinismGuard: guard,
+    localActivityDeadline: controller.signal,
+  })
+  const pending = Promise.withResolvers<number>()
+  let invocations = 0
+  const options = {
+    handler: () => {
+      invocations += 1
+      return pending.promise
+    },
+  }
+  const result = initial.context.determinism.localActivity<Promise<number>>('slow', [], options)
+  controller.abort()
+  pending.resolve(42)
+  await expect(result).rejects.toThrow('workflow task budget')
+  await initial.commandContext.settleLocalActivities()
+  const marker = initial.commandContext.intents[0]
+  expect(marker?.kind === 'record-marker' ? marker.details?.status : undefined).toBe('failed')
+  expect(marker?.kind === 'record-marker' ? marker.details?.result : undefined).toBeUndefined()
+  const replay = createWorkflowContext({
+    info,
+    input: [],
+    determinismGuard: new DeterminismGuard({ previousState: guard.snapshot }),
+  })
+  await expect(replay.context.determinism.localActivity<Promise<number>>('slow', [], options)).rejects.toThrow(
+    'workflow task budget',
+  )
+  expect(invocations).toBe(1)
+})
+
+test('an expired workflow task budget prevents new local activity invocations', () => {
+  const initial = createWorkflowContext({
+    info,
+    input: [],
+    determinismGuard: new DeterminismGuard(),
+    localActivityDeadline: AbortSignal.abort(),
+  })
+  let invocations = 0
+  expect(() =>
+    initial.context.determinism.localActivity('slow', [], {
+      handler: () => {
+        invocations += 1
+      },
+    }),
+  ).toThrow('workflow task budget')
+  expect(invocations).toBe(0)
+})
