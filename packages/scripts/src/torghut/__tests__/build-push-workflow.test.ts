@@ -79,6 +79,7 @@ const torghutCoBuildPaths = [
   'nix/images/bun-workspace-service.nix',
   'nix/images/bun-workspace-deps-source.nix',
   'nix/images/bun-workspace-deps-source.test.sh',
+  'nix/images/prune-bun-dependency-metadata.sh',
   'nix/check-bun-dependency-closure.sh',
   '.github/workflows/nix-bun-dependency-closure.yml',
   'services/torghut/uv.lock',

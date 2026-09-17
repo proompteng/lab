@@ -213,7 +213,11 @@ const decideActivationDataFirst = (
   if (!isCycleStateTransitionAllowed(cycle.state, CycleState.Active)) {
     return fail('conflict', 'only a pending cycle may become active')
   }
-  if (cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' && cycle.bindings.snapshotId === undefined) {
+  if (
+    cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' &&
+    cycle.schemaVersion !== 'bayn.autonomous-cycle.v4' &&
+    cycle.bindings.snapshotId === undefined
+  ) {
     return fail('invariant', 'cycle activation requires a bound snapshot')
   }
   if (observedAt >= cycle.window.submissionCutoffAt) {

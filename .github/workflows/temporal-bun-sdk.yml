@@ -9,12 +9,16 @@ on:
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
       - '.github/workflows/temporal-bun-sdk.yml'
+      - '.release-please-manifest.json'
+      - 'release-please-config.json'
   pull_request:
     paths:
       - 'packages/temporal-bun-sdk/**'
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
       - '.github/workflows/temporal-bun-sdk.yml'
+      - '.release-please-manifest.json'
+      - 'release-please-config.json'
   workflow_dispatch:
     inputs:
       npm_tag:
@@ -36,11 +40,32 @@ on:
           - publish
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  release-plan:
+    if: github.event_name != 'workflow_dispatch' || inputs.release_mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      version: ${{ steps.plan.outputs.version }}
+      npm_tag: ${{ steps.plan.outputs.npm_tag }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Plan publication
+        id: plan
+        run: bun packages/temporal-bun-sdk/scripts/release-plan.ts
+
   test:
+    if: github.event_name != 'workflow_dispatch' || inputs.release_mode == 'publish'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -96,8 +121,13 @@ jobs:
     if: github.event_name != 'pull_request'
     needs:
       - test
+      - release-plan
     runs-on: arc-arm64
     timeout-minutes: 60
+    concurrency:
+      group: temporal-bun-sdk-shared-cluster
+      cancel-in-progress: false
+      queue: max
     env:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '30000'
@@ -109,9 +139,9 @@ jobs:
       TEMPORAL_LOAD_TEST_WORKFLOW_POLL_P95_MS: '12000'
       TEMPORAL_LOAD_TEST_ACTIVITY_POLL_P95_MS: '12000'
       TEMPORAL_LOAD_TEST_DESCRIBE_CONCURRENCY: '32'
-      TEMPORAL_BUN_EVIDENCE_PURPOSE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && 'publish' || 'ci' }}
-      TEMPORAL_BUN_NPM_TAG: ${{ github.event.inputs.npm_tag || 'latest' }}
-      TEMPORAL_BUN_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      TEMPORAL_BUN_EVIDENCE_PURPOSE: ${{ needs.release-plan.outputs.publish == 'true' && 'publish' || 'ci' }}
+      TEMPORAL_BUN_NPM_TAG: ${{ needs.release-plan.outputs.npm_tag }}
+      TEMPORAL_BUN_DRY_RUN: ${{ needs.release-plan.outputs.dry_run }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout repository
@@ -197,35 +227,22 @@ jobs:
             packages/temporal-bun-sdk/.artifacts/worker-load/report.json
 
   prepare-release:
-    name: Prepare Temporal Bun SDK Release
-    runs-on: arc-arm64
+    name: Prepare or finalize Temporal Bun SDK release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs:
-      - test
-      - integration
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'prepare'
+      - release-plan
+      - publish-release
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.release_mode == 'prepare') ||
+       (needs.publish-release.result == 'success' && needs.release-plan.outputs.dry_run == 'false'))
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js 24
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24.11.1'
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/temporal-bun-sdk --filter temporal-bun-sdk-example
-
       - name: Run release-please (manifest)
+        if: github.event_name == 'workflow_dispatch' && inputs.release_mode == 'prepare'
         id: release_please
         uses: googleapis/release-please-action@v4
         with:
@@ -235,23 +252,45 @@ jobs:
           skip-github-release: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fetch release branch
-        id: release_branch
+      - name: Tag the verified npm release and update its PR
+        if: needs.publish-release.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: proompteng/lab
+          RELEASE_VERSION: ${{ needs.release-plan.outputs.version }}
+          PUBLISHED_SHA: ${{ needs.publish-release.outputs.published_sha }}
         run: |
-          branch="release-please--branches--main--components--temporal-bun-sdk"
-          if git ls-remote --exit-code origin "$branch" >/dev/null 2>&1; then
-            git fetch origin "$branch":"$branch"
-            git checkout "$branch"
-            echo "branch=$branch" >> "$GITHUB_OUTPUT"
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "release-please branch $branch not found; nothing to build yet"
-            echo "found=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [[ ! "$PUBLISHED_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo 'Verified npm provenance must identify the published commit.' >&2
+            exit 1
           fi
+          tag="temporal-bun-sdk-v$RELEASE_VERSION"
+          release_flags=(--latest=false)
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          notes="$RUNNER_TEMP/temporal-sdk-release-notes.md"
+          cat > "$notes" <<EOF
+          Published [@proompteng/temporal-bun-sdk@$RELEASE_VERSION](https://www.npmjs.com/package/@proompteng/temporal-bun-sdk/v/$RELEASE_VERSION).
 
-      - name: Build Temporal Bun SDK
-        if: steps.release_branch.outputs.found == 'true'
-        run: bun run --filter @proompteng/temporal-bun-sdk build
+          Source commit: $PUBLISHED_SHA
+
+          [Publication and package verification](https://github.com/$GH_REPO/actions/runs/$GITHUB_RUN_ID).
+          EOF
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$PUBLISHED_SHA" --title "Temporal Bun SDK $RELEASE_VERSION" --notes-file "$notes" "${release_flags[@]}" || gh release view "$tag"
+          fi
+          tagged_sha=$(gh api "repos/$GH_REPO/commits/$tag" --jq '.sha')
+          if [[ "$tagged_sha" != "$PUBLISHED_SHA" ]]; then
+            echo 'The release tag does not match the published npm provenance.' >&2
+            exit 1
+          fi
+          branch="release-please--branches--main--components--temporal-bun-sdk"
+          pr_number=$(gh pr list --head "$branch" --state merged --limit 20 --json number,mergeCommit --jq ".[] | select(.mergeCommit.oid == \"$PUBLISHED_SHA\") | .number")
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+          fi
 
   publish-release:
     name: Publish Temporal Bun SDK
@@ -259,7 +298,14 @@ jobs:
     needs:
       - test
       - integration
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main'
+      - release-plan
+    if: needs.release-plan.outputs.publish == 'true' && github.ref == 'refs/heads/main'
+    outputs:
+      published_sha: ${{ steps.published.outputs.published_sha }}
+    concurrency:
+      group: temporal-bun-sdk-publish
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       id-token: write
@@ -292,25 +338,16 @@ jobs:
 
       - name: Derive release metadata
         id: release_meta
+        env:
+          RELEASE_VERSION: ${{ needs.release-plan.outputs.version }}
+          NPM_DIST_TAG: ${{ needs.release-plan.outputs.npm_tag }}
+          DRY_RUN: ${{ needs.release-plan.outputs.dry_run }}
         run: |
           set -euo pipefail
-          version_value=$(node -p "require('./packages/temporal-bun-sdk/package.json').version")
-          npm_tag_input="${{ github.event.inputs.npm_tag || 'latest' }}"
-          dry_run_input="${{ github.event.inputs.dry_run || 'false' }}"
-
-          case "$dry_run_input" in
-            true|True|TRUE) dry_run_value=true ;;
-            false|False|FALSE|"" ) dry_run_value=false ;;
-            *)
-              echo 'dry_run input must be true or false' >&2
-              exit 1
-              ;;
-          esac
-
           {
-            echo "version=$version_value"
-            echo "npm_tag=$npm_tag_input"
-            echo "dry_run=$dry_run_value"
+            echo "version=$RELEASE_VERSION"
+            echo "npm_tag=$NPM_DIST_TAG"
+            echo "dry_run=$DRY_RUN"
           } >> "$GITHUB_OUTPUT"
 
       - name: Confirm package version
@@ -360,6 +397,8 @@ jobs:
           TEMPORAL_REQUIRE_DEFAULT_CHOICE: '1'
           NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+          DIST_TAGS_PATH: ${{ runner.temp }}/temporal-sdk-dist-tags.json
         run: |
           set -euo pipefail
           spec="@proompteng/temporal-bun-sdk@${{ steps.release_meta.outputs.version }}"
@@ -367,6 +406,13 @@ jobs:
             echo "$spec is already published; skipping npm publish and verifying the published artifact next."
             exit 0
           fi
+
+          npm view @proompteng/temporal-bun-sdk dist-tags --json > "$DIST_TAGS_PATH"
+          bun -e '
+            import { assertPublishTag } from "./scripts/release-plan.ts"
+            const tags = await Bun.file(process.env.DIST_TAGS_PATH).json()
+            assertPublishTag(process.env.RELEASE_VERSION, tags[process.env.NPM_DIST_TAG])
+          '
 
           if [[ "${DRY_RUN}" == "true" ]]; then
             echo 'Running npm publish in dry-run mode'
@@ -376,6 +422,7 @@ jobs:
           fi
 
       - name: Verify published readiness artifacts
+        id: published
         if: steps.release_meta.outputs.dry_run == 'false'
         working-directory: packages/temporal-bun-sdk
         run: |
@@ -389,21 +436,3 @@ jobs:
             sleep 15
           done
           bun run verify:packed-readiness --npm "$spec"
-
-      - name: Update release PR label
-        if: ${{ github.event.inputs.release_mode == 'publish' && github.ref == 'refs/heads/main' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          branch="release-please--branches--main--components--temporal-bun-sdk"
-          pr_number=$(gh pr list --head "$branch" --state merged --limit 1 --json number --jq '.[0].number // empty')
-          if [[ -n "$pr_number" ]]; then
-            if gh pr edit "$pr_number" --remove-label "autorelease: pending" --add-label "autorelease: tagged"; then
-              echo "Updated labels on release PR #$pr_number"
-            else
-              echo "::warning::Failed to update labels on release PR #$pr_number"
-            fi
-          else
-            echo "No merged release PR found for $branch; skipping label update"
-          fi
