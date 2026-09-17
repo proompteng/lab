@@ -24,6 +24,7 @@ import {
   activeStrategyBehaviorHash,
   activeStrategyName,
   loadActiveStrategyProtocol,
+  decodeIntradayMomentumProtocol,
   makeActiveStrategyRuntime,
 } from '../strategy'
 import {
@@ -84,7 +85,7 @@ export const assessBacktestSession = (input: {
   return { completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const), issues }
 }
 
-export const BacktestInputSchema = Schema.Struct({
+const BaselineBacktestInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest.v1'),
   replicate: StrictNonEmptyStringSchema,
   sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(1)),
@@ -109,6 +110,33 @@ export const BacktestInputSchema = Schema.Struct({
     reconciliationStaleThresholdMs: PositiveIntegerSchema,
   }),
 })
+
+export enum BacktestExitTiming {
+  Current = 'CURRENT',
+  FifteenMinutes = 'CLOSE_15_MINUTES_BEFORE_BELL',
+  ThirtyMinutes = 'CLOSE_30_MINUTES_BEFORE_BELL',
+}
+
+export const BacktestInputSchema = Schema.Union([
+  BaselineBacktestInputSchema,
+  Schema.Struct({
+    ...BaselineBacktestInputSchema.fields,
+    schemaVersion: Schema.Literal('bayn.backtest.v2'),
+    exitTiming: Schema.Enum(BacktestExitTiming),
+  }),
+])
+
+const exitLeadMinutes = (variant: BacktestExitTiming, current: number): number => {
+  switch (variant) {
+    case BacktestExitTiming.Current:
+      return current
+    case BacktestExitTiming.FifteenMinutes:
+      return 15
+    case BacktestExitTiming.ThirtyMinutes:
+      return 30
+  }
+}
+
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
@@ -120,11 +148,11 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     }
     yield* validateBacktestSourceManifest(decoded.source)
     yield* validateBacktestSourceCuts(decoded.source, sourceReceipt)
-    const protocol = yield* loadActiveStrategyProtocol()
-    const parameterHash = yield* canonicalHashV1Result(protocol)
+    const baselineProtocol = yield* loadActiveStrategyProtocol()
+    const baselineParameterHash = yield* canonicalHashV1Result(baselineProtocol)
     if (
       decoded.build.strategyBehaviorHash !== activeStrategyBehaviorHash ||
-      decoded.build.strategyParameterHash !== parameterHash
+      decoded.build.strategyParameterHash !== baselineParameterHash
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay must use the unchanged source-controlled strategy' }),
@@ -142,6 +170,41 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),
       )
+    const flattenBeforeCloseMinutes =
+      decoded.schemaVersion === 'bayn.backtest.v1'
+        ? baselineProtocol.flattenBeforeCloseMinutes
+        : exitLeadMinutes(decoded.exitTiming, baselineProtocol.flattenBeforeCloseMinutes)
+    const entryCutoffMinutesBeforeClose = Math.max(
+      baselineProtocol.entryCutoffMinutesBeforeClose,
+      flattenBeforeCloseMinutes,
+    )
+    const protocol =
+      decoded.schemaVersion === 'bayn.backtest.v1'
+        ? baselineProtocol
+        : yield* decodeIntradayMomentumProtocol({
+            ...baselineProtocol,
+            flattenBeforeCloseMinutes,
+            entryCutoffMinutesBeforeClose,
+            executionModel: {
+              ...baselineProtocol.executionModel,
+              order: {
+                ...baselineProtocol.executionModel.order,
+                submissionCutoffBeforeCloseMs: entryCutoffMinutesBeforeClose * 60_000,
+              },
+            },
+          })
+    const parameterHash = yield* canonicalHashV1Result(protocol)
+    const research =
+      decoded.schemaVersion === 'bayn.backtest.v1'
+        ? undefined
+        : {
+            schemaVersion: 'bayn.exit-timing-research.v1' as const,
+            variant: decoded.exitTiming,
+            baselineParameterHash,
+            effectiveParameterHash: parameterHash,
+            flattenBeforeCloseMinutes: protocol.flattenBeforeCloseMinutes,
+            entryCutoffMinutesBeforeClose: protocol.entryCutoffMinutesBeforeClose,
+          }
     const universe = {
       universeId: protocol.universeId,
       universeSymbolHash: protocol.universeSymbolHash,
@@ -243,6 +306,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     })
     return {
       input: decoded,
+      research,
       sourceReceipt,
       runId,
       protocol,
@@ -477,6 +541,7 @@ export const runBacktest = (
       sessionDates: prepared.input.sessionDates,
       sourceReceiptHash: prepared.sourceReceipt.contentHash,
       build: prepared.buildEvidence,
+      ...(prepared.research === undefined ? {} : { research: prepared.research }),
       assumptions: prepared.input.assumptions,
       sessions,
       schedule: {

@@ -3,7 +3,12 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { prepareBacktest as prepareWithCapture, assessBacktestSession, BacktestIssue } from './backtest'
+import {
+  prepareBacktest as prepareWithCapture,
+  assessBacktestSession,
+  BacktestIssue,
+  BacktestExitTiming,
+} from './backtest'
 import { validateBacktestSourceReceipt } from './source'
 import { sha256 } from '../hash'
 const fixture = () => {
@@ -52,6 +57,54 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.identity.accountId).toBe(`replay-${first.runId}`)
   expect(first.runId).toBe(Result.getOrThrow(prepareBacktest(input)).runId)
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
+})
+
+test('explicit exit-timing research binds both close boundaries while preserving signal rules and build identity', () => {
+  const input = fixture()
+  const baseline = Result.getOrThrow(prepareBacktest(input))
+  const identities = new Set<string>()
+  for (const [exitTiming, minutes] of [
+    [BacktestExitTiming.Current, baseline.protocol.flattenBeforeCloseMinutes],
+    [BacktestExitTiming.FifteenMinutes, 15],
+    [BacktestExitTiming.ThirtyMinutes, 30],
+  ] as const) {
+    const research = Result.getOrThrow(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v2', exitTiming }))
+    if (research.research === undefined) throw new Error('Research identity is required for v2 inputs')
+    const entryCutoff = Math.max(minutes, baseline.protocol.entryCutoffMinutesBeforeClose)
+    expect(research.protocol).toEqual({
+      ...baseline.protocol,
+      flattenBeforeCloseMinutes: minutes,
+      entryCutoffMinutesBeforeClose: entryCutoff,
+      executionModel: {
+        ...baseline.protocol.executionModel,
+        order: { ...baseline.protocol.executionModel.order, submissionCutoffBeforeCloseMs: entryCutoff * 60_000 },
+      },
+    })
+    expect(research.strategy.provenance.strategy.parameterHash).toBe(research.research.effectiveParameterHash)
+    expect(research.research).toMatchObject({
+      variant: exitTiming,
+      baselineParameterHash: baseline.input.build.strategyParameterHash,
+    })
+    expect(research.build).toEqual(baseline.build)
+    expect(research.input.assumptions).toEqual(baseline.input.assumptions)
+    expect(research.runId).not.toBe(baseline.runId)
+    identities.add(research.runId)
+  }
+  expect(identities.size).toBe(3)
+  expect(Result.getOrThrow(prepareBacktest(input)).protocol).toEqual(baseline.protocol)
+})
+
+test('research cannot override source identity, arbitrary parameters, or an undeclared v1 exit policy', () => {
+  const input = fixture()
+  const research = { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: BacktestExitTiming.FifteenMinutes }
+  for (const invalid of [
+    { ...input, exitTiming: BacktestExitTiming.FifteenMinutes },
+    { ...research, exitTiming: 'CLOSE_AT_LOOKAHEAD_BEST_PRICE' },
+    { ...research, protocol: { minimumLookbackReturnBps: 0 } },
+    { ...research, build: { ...input.build, strategyParameterHash: '0'.repeat(64) } },
+    { ...research, build: { ...input.build, strategyBehaviorHash: '0'.repeat(64) } },
+  ])
+    expect(Result.isFailure(prepareBacktest(invalid))).toBe(true)
 })
 
 test('calendar must include a successor session before a backtest can start', () => {

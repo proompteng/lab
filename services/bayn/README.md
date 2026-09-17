@@ -322,10 +322,19 @@ node services/bayn/dist/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-The canonical input is `bayn.backtest.v1` in `src/intraday-replay/backtest.ts`. It binds `sessionDates`, the full
+The baseline input is `bayn.backtest.v1` in `src/intraday-replay/backtest.ts`. It binds `sessionDates`, the full
 calendar, source manifest, build and strategy identities, opening cash, asset metadata and its observation policy,
-execution assumptions, and controller/reconciliation cadence. The command accepts only this contract. The older
+execution assumptions, and controller/reconciliation cadence. The older
 archive and vendor replay commands and their input contracts have been removed.
+
+`bayn.backtest.v2` adds a required `exitTiming` research choice: `CURRENT`, `CLOSE_15_MINUTES_BEFORE_BELL`, or
+`CLOSE_30_MINUTES_BEFORE_BELL`. These runs move `flattenBeforeCloseMinutes` and clamp the entry/submission cutoff
+to that boundary so the strategy cannot reopen after flattening. They use the same native close planner, risk
+checks, simulated broker, and accounting path. Signal rules, ranking, sizing, and costs remain those in the frozen
+input; entry eligibility in the last minutes of the session can differ. Compare actual entries before attributing
+economic differences to exits alone. The report binds both timing boundaries and the baseline build and parameter
+hash separately from the effective research parameter hash. Each choice has a distinct run identity and requires fresh local persistence. These inputs do not
+change the production protocol or supply a deployable strategy recommendation.
 
 The broker calendar must include the next trading session after the final replay date. The production scheduler
 selects that successor after finishing its last position; omitting it is an input error even when all requested market
