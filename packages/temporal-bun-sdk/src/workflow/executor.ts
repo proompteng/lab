@@ -268,6 +268,7 @@ export class WorkflowExecutor {
       }
     }
 
+    await lastCommandContext?.settleLocalActivities()
     const executionError = Exit.isFailure(exit) ? this.#resolveError(exit.cause) : undefined
     const nondeterminismError = executionError
       ? unwrapWorkflowError(executionError, WorkflowNondeterminismError)

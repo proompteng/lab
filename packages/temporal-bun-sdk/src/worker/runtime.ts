@@ -9,7 +9,6 @@ import { Cause, Duration, Effect, Exit, Fiber, Schedule } from 'effect'
 import {
   type ActivityHeartbeatRegistration,
   type ActivityLifecycle,
-  type ActivityRetryState,
   makeActivityLifecycle,
 } from '../activities/lifecycle'
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
@@ -40,12 +39,7 @@ import {
   CommandSchema,
   RecordMarkerCommandAttributesSchema,
 } from '../proto/temporal/api/command/v1/message_pb'
-import {
-  type Payloads,
-  PayloadsSchema,
-  type RetryPolicy,
-  WorkflowExecutionSchema,
-} from '../proto/temporal/api/common/v1/message_pb'
+import { type Payloads, PayloadsSchema, WorkflowExecutionSchema } from '../proto/temporal/api/common/v1/message_pb'
 import {
   type WorkerDeploymentOptions,
   WorkerDeploymentOptionsSchema,
@@ -105,7 +99,6 @@ import type {
   WorkflowDeterminismQueryRecord,
   WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
-  WorkflowRetryPolicyInput,
   WorkflowUpdateDeterminismEntry,
 } from '../workflow/determinism'
 import { intentsEqual, stableStringify } from '../workflow/determinism'
@@ -3240,57 +3233,24 @@ export class WorkerRuntime {
       }
     }
 
-    const retryPolicy = this.#convertRetryPolicy(response.retryPolicy)
-    const retryDeadlineMs = this.#computeRetryDeadline(response)
-    let retryState: ActivityRetryState = {
-      attempt: context.info.attempt,
-      retryCount: 0,
-      nextDelayMs: 0,
-    }
-
     try {
-      while (true) {
-        let result: unknown
-        try {
-          result = await runWithActivityContext(context, async () => await handler(...args))
-        } catch (error) {
-          if (isAbortError(error)) {
-            await this.#cancelActivityTask(response, context)
-            return
-          }
-          if (!retryPolicy || this.#isNonRetryableActivityError(error, retryPolicy)) {
-            await this.#failActivityTask(response, error, context)
-            return
-          }
-          const nextRetry = await Effect.runPromise(this.#activityLifecycle.nextRetryDelay(retryPolicy, retryState))
-          if (!nextRetry) {
-            markErrorNonRetryable(error)
-            await this.#failActivityTask(response, error, context)
-            return
-          }
-          if (retryDeadlineMs !== undefined && Date.now() + nextRetry.nextDelayMs > retryDeadlineMs) {
-            markErrorNonRetryable(error)
-            await this.#failActivityTask(response, error, context)
-            return
-          }
-          await sleep(nextRetry.nextDelayMs)
-          context.throwIfCancelled()
-          context.info.attempt = nextRetry.attempt
-          retryState = nextRetry
-          continue
-        }
-
-        try {
-          const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
-          const completed = await this.#completeActivityTask(response, payloads)
-          if (!completed) {
-            return
-          }
-          break
-        } catch (error) {
+      let result: unknown
+      try {
+        result = await runWithActivityContext(context, async () => await handler(...args))
+      } catch (error) {
+        if (isAbortError(error)) {
+          await this.#cancelActivityTask(response, context)
+        } else {
           await this.#failActivityTask(response, error, context)
-          return
         }
+        return
+      }
+
+      try {
+        const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
+        await this.#completeActivityTask(response, payloads)
+      } catch (error) {
+        await this.#failActivityTask(response, error, context)
       }
     } finally {
       if (heartbeatRegistration) {
@@ -3469,59 +3429,6 @@ export class WorkerRuntime {
     return { context, abortController }
   }
 
-  #convertRetryPolicy(policy: RetryPolicy | undefined | null): WorkflowRetryPolicyInput | undefined {
-    if (!policy) {
-      return undefined
-    }
-    const initialIntervalMs = durationToMillis(policy.initialInterval)
-    const maximumIntervalMs = durationToMillis(policy.maximumInterval)
-    const backoffCoefficient = policy.backoffCoefficient !== 0 ? policy.backoffCoefficient : undefined
-    const maximumAttempts = policy.maximumAttempts > 0 ? policy.maximumAttempts : undefined
-    const nonRetryable = policy.nonRetryableErrorTypes.length > 0 ? [...policy.nonRetryableErrorTypes] : undefined
-
-    if (
-      initialIntervalMs === undefined &&
-      maximumIntervalMs === undefined &&
-      backoffCoefficient === undefined &&
-      maximumAttempts === undefined &&
-      (nonRetryable === undefined || nonRetryable.length === 0)
-    ) {
-      return undefined
-    }
-
-    return {
-      ...(initialIntervalMs !== undefined ? { initialIntervalMs } : {}),
-      ...(backoffCoefficient !== undefined ? { backoffCoefficient } : {}),
-      ...(maximumIntervalMs !== undefined ? { maximumIntervalMs } : {}),
-      ...(maximumAttempts !== undefined ? { maximumAttempts } : {}),
-      ...(nonRetryable !== undefined ? { nonRetryableErrorTypes: nonRetryable } : {}),
-    }
-  }
-
-  #isNonRetryableActivityError(error: unknown, retry: WorkflowRetryPolicyInput): boolean {
-    if (error && typeof error === 'object' && (error as { nonRetryable?: boolean }).nonRetryable === true) {
-      return true
-    }
-    const errorName = error instanceof Error ? error.name : undefined
-    if (!errorName) {
-      return false
-    }
-    return Boolean(retry.nonRetryableErrorTypes?.includes(errorName))
-  }
-
-  #computeRetryDeadline(response: PollActivityTaskQueueResponse): number | undefined {
-    const scheduleToClose = durationToMillis(response.scheduleToCloseTimeout)
-    const startToClose = durationToMillis(response.startToCloseTimeout)
-    const scheduledTime = timestampToDate(response.scheduledTime)
-    const startedTime = timestampToDate(response.startedTime) ?? scheduledTime
-    const scheduleDeadline = scheduleToClose && scheduledTime ? scheduledTime.getTime() + scheduleToClose : undefined
-    const startDeadline = startToClose && startedTime ? startedTime.getTime() + startToClose : undefined
-    if (scheduleDeadline && startDeadline) {
-      return Math.min(scheduleDeadline, startDeadline)
-    }
-    return scheduleDeadline ?? startDeadline ?? undefined
-  }
-
   async #flushMetrics(): Promise<void> {
     if (this.#metricsFlushInFlight) {
       return
@@ -3672,12 +3579,6 @@ const createActivityAbortError = (message: string): Error => {
   const error = new Error(message)
   error.name = 'AbortError'
   return error
-}
-
-const markErrorNonRetryable = (error: unknown): void => {
-  if (error && typeof error === 'object') {
-    ;(error as { nonRetryable?: boolean }).nonRetryable = true
-  }
 }
 
 const isActivityCancelRequested = (response: PollActivityTaskQueueResponse): boolean =>

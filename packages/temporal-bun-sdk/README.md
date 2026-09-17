@@ -113,6 +113,7 @@ on Node.js.
 
 ## Docs
 
+- Maintainer releases: [one-command version PR and automatic publication](docs/releasing.md)
 - Main guide: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 - Temporal Cloud and TLS: <https://docs.proompteng.ai/docs/temporal-bun-sdk-cloud-tls>
 - Bun SDK vs official TypeScript SDK: <https://docs.proompteng.ai/docs/temporal-bun-sdk-comparison>
