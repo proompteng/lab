@@ -66,6 +66,14 @@ configure worker versioning and build IDs.
 
 ## Production readiness
 
+Async local activities must finish within the current workflow task budget. The
+worker reserves half the task window for recording their result or timeout
+failure, and bounds response RPCs and retry delays by the remaining task budget.
+Use a remote activity for longer work. A local timeout does not cancel I/O that
+the handler already started. Local activities have at-least-once execution:
+a worker crash or failed task commit can cause replay to invoke them again.
+Make external side effects idempotent.
+
 This package is a Bun-native Temporal worker/client SDK, not a wrapper around the
 official Node.js worker runtime. The worker path does not depend on
 `@temporalio/worker`, Node-API native modules, `process.dlopen()`, or
@@ -113,6 +121,7 @@ on Node.js.
 
 ## Docs
 
+- Maintainer releases: [one-command version PR and automatic publication](docs/releasing.md)
 - Main guide: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 - Temporal Cloud and TLS: <https://docs.proompteng.ai/docs/temporal-bun-sdk-cloud-tls>
 - Bun SDK vs official TypeScript SDK: <https://docs.proompteng.ai/docs/temporal-bun-sdk-comparison>
