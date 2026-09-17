@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import YAML from 'yaml'
 
 import { repoRoot } from '../cli'
 
@@ -17,8 +18,24 @@ test('Temporal static library workflow preserves artifact permissions', () => {
 test('Temporal package release skips label updates when no release PR is found', () => {
   const workflow = readFileSync(join(repoRoot, '.github/workflows/temporal-bun-sdk.yml'), 'utf8')
 
-  expect(workflow).toContain("--jq '.[0].number // empty'")
+  expect(workflow).toContain('select(.mergeCommit.oid == \\"$PUBLISHED_SHA\\") | .number')
   expect(workflow).toContain('if [[ -n "$pr_number" ]]; then')
+})
+
+test('Temporal release jobs queue without cancelling pending publications or overlapping cluster cleanup', () => {
+  const workflow = YAML.parse(readFileSync(join(repoRoot, '.github/workflows/temporal-bun-sdk.yml'), 'utf8'))
+  expect(workflow.concurrency['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}")
+  expect(workflow.concurrency.group).toContain('github.run_id')
+  expect(workflow.jobs.integration.concurrency).toEqual({
+    group: 'temporal-bun-sdk-shared-cluster',
+    'cancel-in-progress': false,
+    queue: 'max',
+  })
+  expect(workflow.jobs['publish-release'].concurrency).toEqual({
+    group: 'temporal-bun-sdk-publish-${{ needs.release-plan.outputs.version }}',
+    'cancel-in-progress': false,
+    queue: 'max',
+  })
 })
 
 test('Temporal Bun SDK keeps PR validation fast and reserves remote load gates for main and releases', () => {

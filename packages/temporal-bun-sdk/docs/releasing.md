@@ -25,6 +25,10 @@ validate the proposed version, and publication still requires the existing repla
 fuzz, load, package, and provenance gates for the merged commit. Ordinary source
 pushes cannot republish an unchanged version.
 
+Shared-cluster checks run one at a time so cleanup cannot interrupt another
+release's tests. GitHub's [concurrency queue](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
+keeps later runs waiting instead of replacing a pending release.
+
 Service dependency caches contain installed dependencies. Image builds restore
 the current workspace manifests separately, so a version or release-command
 change does not require refreshing dependency hashes. Dependency and lockfile

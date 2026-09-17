@@ -124,6 +124,10 @@ jobs:
       - release-plan
     runs-on: arc-arm64
     timeout-minutes: 60
+    concurrency:
+      group: temporal-bun-sdk-shared-cluster
+      cancel-in-progress: false
+      queue: max
     env:
       TEMPORAL_TEST_SERVER: '1'
       TEMPORAL_TEST_TIMEOUT: '30000'
@@ -301,6 +305,7 @@ jobs:
     concurrency:
       group: temporal-bun-sdk-publish-${{ needs.release-plan.outputs.version }}
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       id-token: write
