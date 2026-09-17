@@ -66,8 +66,8 @@ describe('advanceExecutionOnce', () => {
       ),
     )
 
-    expect(windowClosed).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'WindowClosed' } })
-    expect(waiting).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'RecoveryWaiting' } })
+    expect(windowClosed).toMatchObject({ _tag: 'Waiting', reason: { _tag: 'WindowClosed' } })
+    expect(waiting).toMatchObject({ _tag: 'Waiting', reason: { _tag: 'RecoveryWaiting' } })
     expect(blocked).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } })
   })
 
@@ -84,7 +84,29 @@ describe('advanceExecutionOnce', () => {
       }),
     )
 
-    expect(outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 300_000 })
+    expect(outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 300_000 })
+  })
+
+  test('retains holding status without a transient cycle result and binds its reason into the receipt', async () => {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'RECOVERED',
+      recoveryAction: 'WAITING',
+      observedAt: '2026-08-13T17:00:01.000Z',
+      waitReason: 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
+    } as const
+    const holding = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    const settling = await Effect.runPromise(
+      advanceExecutionOnce(
+        command,
+        driver({
+          ...observation,
+          waitReason: 'POST_MUTATION_RECONCILIATION',
+        }),
+      ),
+    )
+    expect(holding).toMatchObject({ _tag: 'Waiting', observation })
+    expect(settling.receiptHash).not.toBe(holding.receiptHash)
   })
 
   test('hashes only bounded failure facts and maps interpreter errors for Restate retry', async () => {

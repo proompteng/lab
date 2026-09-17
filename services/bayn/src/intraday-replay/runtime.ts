@@ -1,3 +1,5 @@
+import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { PgClient } from '@effect/sql-pg'
 import { Context, Effect } from 'effect'
 import { operationTimeoutOrElse } from '../operation-timeout'
@@ -94,6 +96,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     )
     const cycleStore = withWriterFenceCycleStore(yield* makeCycleStore(input.clock), fence)
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
+    const candidateObservationStore = yield* makeCandidateObservationStore
     const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
     const plan = {
       schemaVersion: 'bayn.research-execution-plan.v1' as const,
@@ -180,6 +183,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       },
     })
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
+      Context.add(CandidateObservationStore, candidateObservationStore),
       Context.add(CycleStore, cycleStore),
       Context.add(BrokerEventStore, store.events),
       Context.add(FillAccountingStore, store.accounting),

@@ -236,6 +236,34 @@ or grant live capital authority.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
+and its readiness or lifecycle reason. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies ordinary holding. Snapshot
+waits retain the affected symbol, missing timestamp, query window, or first available time when known. Historical
+pass observations without these details remain readable.
+
+Candidate evaluations are stored in the append-only `intraday_candidate_observations` table before the pass proceeds.
+Each content hash binds the cycle, protocol, snapshot manifest, raw rows, and full decision. The corresponding log
+contains that hash, selected symbols, and rejection or exclusion reasons. A failed audit write fails the pass.
+
+Execution latency metrics use separate clocks:
+
+| Metric suffix (`bayn_cycle_…_latency_seconds`) | Start                        | End                           |
+| ---------------------------------------------- | ---------------------------- | ----------------------------- |
+| `intent_to_submit`                             | Intent creation              | `SUBMIT_STARTED`              |
+| `order_acknowledgement`                        | `SUBMIT_STARTED`             | `SUBMIT_ACCEPTED`             |
+| `order_observation`                            | Intent creation              | First local order observation |
+| `intent_to_broker_fill`                        | Intent creation              | Broker fill source timestamp  |
+| `fill`                                         | Intent creation              | Local fill observation        |
+| `fill_ingestion`                               | Broker fill source timestamp | Local fill observation        |
+
+Acknowledgement includes local pretransmission work after `SUBMIT_STARTED`; it is not the HTTP request duration.
+It replaces the previous acknowledgement metric's intent-to-order-observation calculation. Recovery that finds an
+order without a recorded acceptance does not invent an acknowledgement sample. Missing samples are omitted;
+negative differences are excluded and counted in `bayn_cycle_latency_clock_regressions`.
+
+Decision building can reuse a reconciliation completed by the same pass's preflight. The result does not survive
+that pass, and submission preparation retains its separate reconciliation and final mutation-authority checks.
+
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
 configured runtime:
@@ -252,7 +280,10 @@ Historical decisions that the current runtime cannot validate are listed by hash
 Their accounting remains reportable, but any such decision leaves execution quality and capacity `UNDETERMINED`.
 Native archive requests use durable intent symbols independently of decision validation; reporting cannot authorize an order.
 
-Completed native intraday cycles bind performance evidence to `intraday_snapshot_references`. The reader uses the
+Completed native intraday cycles bind performance evidence to `streaming_snapshot_references` or older
+`intraday_snapshot_references`. Streaming receipts preserve the original input cut and content hash. Their retrospective
+archive request retains every decision lineage offset and verifies that each precedes its consumed partition position.
+The reader uses the
 same universe, IEX feed and exchange calendar as the decision, with the complete regular-session window, a fixed
 reconciliation cutoff, and captured Kafka partition offsets. Legacy daily SIP publications remain supported.
 Native receipts retain the archive request, source hashes, recorded volume and missing minute timestamps. IEX

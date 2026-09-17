@@ -1,3 +1,4 @@
+import { CandidateObservationStore } from './observe-composition/candidate-observation'
 import { operationalError as marketFixtureError } from './errors'
 import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
@@ -10,7 +11,8 @@ import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import type { CycleDecisionDocument } from './shadow-decision-contract'
 import { CycleDecisionBuildError, runAutonomousCyclePass } from './cycle/runner'
 import type { ObserveDecisionRuntime } from './observe-composition/model'
-import { mutationDecisionBuilder } from './observe-composition/recovery-driver'
+import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder } from './observe-composition/recovery-driver'
+import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { boundedReconciliationPass } from './observe-composition/decision-builder'
 import {
   AccountStatus as BrokerAccountStatus,
@@ -344,6 +346,7 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
         Effect.provideService(IntentStore, {} as IntentStoreService),
         Effect.provideService(MutationStore, {} as MutationStoreShape),
         Effect.provideService(WriterFence, reconciliationServices.writerFence),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -431,6 +434,7 @@ test('preserves execution authority after a transient reconciliation read inside
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(WriterFence, reconciliationServices.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -745,12 +749,13 @@ const decisionBrokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): 
 }
 
 const provideDecisionServices = <A, E>(
-  program: Effect.Effect<A, E, BrokerRead | MarketData>,
+  program: Effect.Effect<A, E, BrokerRead | MarketData | CandidateObservationStore>,
   marketDataService: MarketDataService,
   marketCalendar: BrokerReadShape['marketCalendar'],
 ): Effect.Effect<A, E> =>
   program.pipe(
     Effect.provideService(BrokerRead, decisionBrokerRead(marketCalendar)),
+    Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
     Effect.provideService(MarketData, marketDataService),
   )
 
@@ -1144,6 +1149,7 @@ const prepareStoredExecutionStep = async (
       Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
       Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
       Effect.provideService(WriterFence, writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -1851,6 +1857,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -2523,6 +2530,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(CycleStore, cycleStore),
           Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
           Effect.provideService(WriterFence, writerFence),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         ),
       ),
     )
@@ -2611,6 +2619,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
         Effect.provideService(WriterFence, writerFence),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -2673,6 +2682,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -2931,6 +2941,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -3069,6 +3080,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
           Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
           Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
           Effect.provide(TestClock.layer()),
         ),
       )
@@ -3142,6 +3154,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -3192,6 +3205,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -3289,6 +3303,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
           Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
           Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
           Effect.provide(TestClock.layer()),
         ),
       )
@@ -3525,6 +3540,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
           Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
           Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
           Effect.provide(TestClock.layer()),
         ),
       )
@@ -3647,6 +3663,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -4195,12 +4212,11 @@ describe('OBSERVE runtime composition', () => {
 
     expect(candidateObservations).toContainEqual(
       expect.objectContaining({
-        event: 'bayn.intraday-candidate-observation.v1',
+        event: 'bayn.intraday-candidate-observation.v2',
         cycleId: activeCycle.identity.cycleId,
-        decision: expect.objectContaining({
-          selectedSymbols: ['NVDA'],
-          excludedCandidates: [expect.objectContaining({ symbol: 'AAPL', reason: 'not-ready' })],
-        }),
+        contentHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        selectedSymbols: ['NVDA'],
+        excludedCandidates: [expect.objectContaining({ symbol: 'AAPL', reason: 'not-ready' })],
       }),
     )
     expect(archiveRequests).toHaveLength(2)
@@ -4450,6 +4466,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -4581,6 +4598,7 @@ describe('OBSERVE runtime composition', () => {
               | IntentStore
               | MutationStore
               | WriterFence
+              | CandidateObservationStore
             >,
             OperationalError,
             AuthorityGenerationStore
@@ -4602,6 +4620,7 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(IntentStore, {} as IntentStoreService),
             Effect.provideService(MutationStore, {} as MutationStoreShape),
             Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
             Effect.forkScoped,
           )
           const driver = yield* Deferred.await(capturedDriver).pipe(Effect.timeout('1 second'))
@@ -4786,6 +4805,7 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(IntentStore, {} as IntentStoreService),
             Effect.provideService(MutationStore, {} as MutationStoreShape),
             Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(persistenceStarted)
@@ -5023,6 +5043,7 @@ test('recovery preserves the open session for a real next strategy decision', as
       Effect.provideService(IntentStore, {} as IntentStoreService),
       Effect.provideService(MutationStore, {} as MutationStoreShape),
       Effect.provideService(WriterFence, services.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provideService(MarketData, marketData([])),
       Effect.provide(TestClock.layer()),
     ),
@@ -5064,6 +5085,7 @@ test('reconciliation cancels a slow broker read before the aggregate pass deadli
       Effect.provideService(AuthorityGenerationStore, store),
       Effect.provideService(AuthorityRestrictionStore, store),
       Effect.provideService(WriterFence, services.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -5074,4 +5096,98 @@ test('reconciliation cancels a slow broker read before the aggregate pass deadli
     operation: 'account',
     retryable: true,
   })
+})
+
+test('reuses only the current pass preflight for an entry decision and retains its waiting evidence', async () => {
+  const fixture = await executionLifecycleFixture()
+  const services = makeExactReconciliationServices(Authority.Execution)
+  let reconciliationWrites = 0
+  const executionStore = {
+    ...services.executionStore,
+    reconcile: () =>
+      Effect.sync(() => {
+        reconciliationWrites += 1
+      }).pipe(Effect.andThen(services.executionStore.reconcile())),
+  }
+  const forbidden = () => Effect.die(new Error('waiting entry must not mutate or bind a cycle'))
+  const store: CycleStoreShape = {
+    readOldestUnfinished: () => Effect.succeed(Option.some(cycle)),
+    acquire: forbidden,
+    read: forbidden,
+    readAuthoritySlot: forbidden,
+    readDecisionDocument: forbidden,
+    bindSnapshot: forbidden,
+    activate: forbidden,
+    bindDecision: forbidden,
+    finish: forbidden,
+    block: forbidden,
+  }
+  const readiness = {
+    reason: DecisionReadinessReason.SnapshotCoverage,
+    message: 'intraday symbol lacks the complete rolling lookback baseline',
+    symbol: 'IWM',
+  }
+  const counts = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      const driver = yield* Effect.fromResult(
+        makeRecoveryFirstCycleDriver(
+          fixture.input,
+          { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void },
+          fixture.preparation,
+          fixture.policy,
+          { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+          (_subject, reconcile) =>
+            reconcile.pipe(
+              Effect.mapError(
+                (cause) => new CycleDecisionBuildError({ failure: 'operational', message: cause.message, cause }),
+              ),
+              Effect.andThen(
+                Effect.fail(
+                  new CycleDecisionBuildError({ failure: 'not-ready', message: readiness.message, readiness }),
+                ),
+              ),
+            ),
+          'mutation autonomous cycle loop',
+        ),
+      ).pipe(Effect.flatten)
+      const first = yield* driver.advance
+      expect(first.observation).toMatchObject({ result: 'SUCCESS', recoveryAction: 'WAITING', readiness })
+      const firstCount = reconciliationWrites
+      yield* driver.advance
+      const secondCount = reconciliationWrites
+      yield* TestClock.adjust(30_000)
+      yield* driver.advance
+      return [firstCount, secondCount, reconciliationWrites]
+    }).pipe(
+      Effect.provideService(BrokerRead, services.brokerRead),
+      Effect.provideService(CycleStore, store),
+      Effect.provideService(BrokerEventStore, executionStore),
+      Effect.provideService(FillAccountingStore, executionStore),
+      Effect.provideService(ValuationStore, executionStore),
+      Effect.provideService(ReconciliationStore, executionStore),
+      Effect.provideService(AuthorityGenerationStore, executionStore),
+      Effect.provideService(AuthorityRestrictionStore, executionStore),
+      Effect.provideService(IntentStore, { commit: forbidden, read: forbidden }),
+      Effect.provideService(MutationStore, {
+        authorizeSubmit: forbidden,
+        beginSubmit: forbidden,
+        submitAccepted: forbidden,
+        submitRejected: forbidden,
+        submitDenied: forbidden,
+        submitUnknown: forbidden,
+        beginCancel: forbidden,
+        cancelAccepted: forbidden,
+        cancelUnknown: forbidden,
+        recoveryFound: forbidden,
+        recoveryNotFound: forbidden,
+        recoveryUnknown: forbidden,
+        latest: forbidden,
+      }),
+      Effect.provideService(WriterFence, services.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(counts).toEqual([1, 2, 3])
 })

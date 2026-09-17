@@ -60,6 +60,13 @@ export const retainAutonomousCyclePassObservation = (
     result: 'SUCCESS',
     observedAt: observation.observedAt,
     outcome: observation.result.outcome,
+    ...(observation.result.outcome === 'RECOVERED'
+      ? {
+          recoveryAction: observation.result.action,
+          ...(observation.result.waitReason === undefined ? {} : { waitReason: observation.result.waitReason }),
+          ...(observation.result.readiness === undefined ? {} : { readiness: observation.result.readiness }),
+        }
+      : {}),
   }
 }
 
@@ -123,6 +130,8 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           recoveryAction: result.action,
+          ...(result.waitReason === undefined ? {} : { waitReason: result.waitReason }),
+          ...(result.readiness === undefined ? {} : { readiness: JSON.stringify(result.readiness) }),
           observedAt: result.observedAt,
           ...cycleAnnotations(result.cycle),
         },

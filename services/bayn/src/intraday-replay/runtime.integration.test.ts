@@ -1,3 +1,4 @@
+import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
 import type { RuntimeConfig } from '../config'
 import { randomUUID } from 'node:crypto'
@@ -134,6 +135,7 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
       Layer.provide(NodeServices.layer),
     )
     const stores = Layer.mergeAll(
+      CandidateObservationStoreLive,
       IntentStoreLive,
       BlockedCycleIntentStoreLive,
       MutationStoreLive,

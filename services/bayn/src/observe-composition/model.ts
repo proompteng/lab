@@ -21,8 +21,10 @@ import type { IntradayMarketDataService } from '../market-data'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
+import { CandidateObservationStore } from './candidate-observation'
 
 export type ObserveDecisionRuntime =
+  | CandidateObservationStore
   | BrokerRead
   | BrokerEventStore
   | FillAccountingStore

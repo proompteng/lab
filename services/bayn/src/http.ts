@@ -862,17 +862,48 @@ const renderPrometheusMetricsDataFirst = (
                 '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
                 `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
               ]),
+          ...(executionFunnel.maximumIntentToSubmitLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_intent_to_submit_latency_seconds Maximum current-cycle intent creation to SUBMIT_STARTED latency.',
+                '# TYPE bayn_cycle_intent_to_submit_latency_seconds gauge',
+                `bayn_cycle_intent_to_submit_latency_seconds ${prometheusNumber(executionFunnel.maximumIntentToSubmitLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumOrderObservationLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_order_observation_latency_seconds Maximum current-cycle intent creation to first local order observation latency.',
+                '# TYPE bayn_cycle_order_observation_latency_seconds gauge',
+                `bayn_cycle_order_observation_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderObservationLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumIntentToBrokerFillLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_intent_to_broker_fill_latency_seconds Maximum current-cycle intent creation to broker fill source timestamp latency.',
+                '# TYPE bayn_cycle_intent_to_broker_fill_latency_seconds gauge',
+                `bayn_cycle_intent_to_broker_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumIntentToBrokerFillLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumFillIngestionLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_fill_ingestion_latency_seconds Maximum current-cycle broker fill source timestamp to local fill observation latency.',
+                '# TYPE bayn_cycle_fill_ingestion_latency_seconds gauge',
+                `bayn_cycle_fill_ingestion_latency_seconds ${prometheusNumber(executionFunnel.maximumFillIngestionLatencyMs / 1_000)}`,
+              ]),
+          '# HELP bayn_cycle_latency_clock_regressions Number of negative clock differences excluded from current-cycle latency samples.',
+          '# TYPE bayn_cycle_latency_clock_regressions gauge',
+          `bayn_cycle_latency_clock_regressions ${executionFunnel.latencyClockRegressionCount}`,
           ...(executionFunnel.maximumOrderAcknowledgementLatencyMs === null
             ? []
             : [
-                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle intent-to-order acknowledgement latency.',
+                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle SUBMIT_STARTED-to-SUBMIT_ACCEPTED latency, including local pretransmission work.',
                 '# TYPE bayn_cycle_order_acknowledgement_latency_seconds gauge',
                 `bayn_cycle_order_acknowledgement_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderAcknowledgementLatencyMs / 1_000)}`,
               ]),
           ...(executionFunnel.maximumFillLatencyMs === null
             ? []
             : [
-                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
+                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent creation to local fill observation latency.',
                 '# TYPE bayn_cycle_fill_latency_seconds gauge',
                 `bayn_cycle_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumFillLatencyMs / 1_000)}`,
               ]),

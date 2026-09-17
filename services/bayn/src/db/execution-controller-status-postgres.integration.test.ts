@@ -10,6 +10,7 @@ import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import { ExecutionControllerStatusStoreLive } from './execution-controller-status-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -66,14 +67,20 @@ describePostgres('PostgreSQL execution controller status', () => {
       ...activation,
       nextSequence: 9,
       lastSequence: 8,
-      lastOutcome: ExecutionControllerOutcome.Blocked,
+      lastOutcome: ExecutionControllerOutcome.Waiting,
       lastReceiptHash: 'a'.repeat(64),
       completedAt: '2026-08-13T17:00:00.000Z',
       nextDueAt: '2026-08-13T17:00:30.000Z',
       lastPass: {
         result: 'SUCCESS' as const,
         observedAt: '2026-08-13T17:00:00.000Z',
-        outcome: 'WINDOW_CLOSED' as const,
+        outcome: 'RECOVERED' as const,
+        recoveryAction: 'WAITING' as const,
+        readiness: {
+          reason: DecisionReadinessReason.SnapshotUnavailable,
+          message: 'missing range-completion bar',
+          symbol: 'IWM',
+        },
       },
     }
 
@@ -84,8 +91,14 @@ describePostgres('PostgreSQL execution controller status', () => {
         const replayed = yield* store.project(activation)
         const conflict = yield* store.project({ ...activation, planHash: 'e'.repeat(64) }).pipe(Effect.flip)
         const completed = yield* store.project(completion)
+        const altered = yield* store
+          .project({
+            ...completion,
+            lastPass: { ...completion.lastPass, readiness: { ...completion.lastPass.readiness, symbol: 'SMH' } },
+          })
+          .pipe(Effect.flip)
         const stale = yield* store.project(activation)
-        return { applied, replayed, conflict, completed, stale, stored: yield* store.read('primary') }
+        return { applied, replayed, conflict, completed, altered, stale, stored: yield* store.read('primary') }
       }),
     )
 
@@ -93,6 +106,7 @@ describePostgres('PostgreSQL execution controller status', () => {
     expect(result.replayed).toEqual({ _tag: 'Replayed', status: activation })
     expect(result.conflict).toMatchObject({ operation: 'project', failure: 'conflict' })
     expect(result.completed).toEqual({ _tag: 'Applied', status: completion })
+    expect(result.altered).toMatchObject({ failure: 'conflict' })
     expect(result.stale).toEqual({ _tag: 'Stale', status: completion })
     expect(result.stored).toEqual(completion)
   })
