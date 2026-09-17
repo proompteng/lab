@@ -325,8 +325,9 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         sourceAndStrategyVerification:
           embeddedBuildMetadata === undefined ? ('configured' as const) : ('embedded' as const),
       },
-      build: {
+      runtimeBuild: {
         ...decoded.build,
+        strategyParameterHash: parameterHash,
         verification: embeddedBuildMetadata === undefined ? ('development-configured' as const) : ('embedded' as const),
       },
       strategy: makeActiveStrategyRuntime(protocol, provenance),
@@ -402,7 +403,7 @@ export const runBacktest = (
     const runtime = yield* makeReplayExecutionRuntime({
       config: {
         ...databases,
-        build: prepared.build,
+        build: prepared.runtimeBuild,
         reconciliationStaleThresholdMs: prepared.input.cadence.reconciliationStaleThresholdMs,
         execution: {
           brokerIdentity: prepared.identity,

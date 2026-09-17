@@ -11,6 +11,8 @@ import {
 } from './backtest'
 import { validateBacktestSourceReceipt } from './source'
 import { sha256 } from '../hash'
+import { validateResearchCapitalGrantProof } from '../execution/capital-grant-algebra'
+import { makeStrategyProtocolHashResult } from '../contracts'
 const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
@@ -85,7 +87,38 @@ test('explicit exit-timing research binds both close boundaries while preserving
       variant: exitTiming,
       baselineParameterHash: baseline.input.build.strategyParameterHash,
     })
-    expect(research.build).toEqual(baseline.build)
+    expect(research.buildEvidence).toEqual(baseline.buildEvidence)
+    expect(research.runtimeBuild).toEqual({
+      ...baseline.runtimeBuild,
+      strategyParameterHash: research.research.effectiveParameterHash,
+    })
+    const strategy = research.strategy.provenance.strategy
+    const proof = {
+      schemaVersion: 'bayn.research-paper-grant-proof.v1' as const,
+      grant: { _tag: 'Research' as const, planHash: '0'.repeat(64) },
+      activationSourceRevision: input.build.sourceRevision,
+      activationImageRepository: input.build.imageRepository,
+      activationImageDigest: input.build.imageDigest,
+      strategyName: strategy.name,
+      strategyBehaviorHash: strategy.behaviorHash,
+      strategyParameterHash: strategy.parameterHash,
+      strategyParameterSchemaVersion: strategy.parameterSchemaVersion,
+      strategyProtocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(strategy)),
+      accountId: research.identity.accountId,
+      brokerIdentityHash: research.identity.identityHash,
+      riskPolicyHash: '0'.repeat(64),
+      proofPlanHash: '0'.repeat(64),
+    }
+    const binding = {
+      proof,
+      sourceGenerationHash: '0'.repeat(64),
+      accountId: research.identity.accountId,
+      brokerIdentityHash: research.identity.identityHash,
+    }
+    expect(Result.isSuccess(validateResearchCapitalGrantProof({ ...binding, build: research.runtimeBuild }))).toBe(true)
+    expect(Result.isSuccess(validateResearchCapitalGrantProof({ ...binding, build: baseline.runtimeBuild }))).toBe(
+      exitTiming === BacktestExitTiming.Current,
+    )
     expect(research.input.assumptions).toEqual(baseline.input.assumptions)
     expect(research.runId).not.toBe(baseline.runId)
     identities.add(research.runId)
