@@ -4,6 +4,7 @@ import { intradayPerformanceDecisionRequest, intradayPerformanceSessionQuery } f
 import type { ForwardPerformanceIntradayMarketVolumeRequest } from './model'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { IsoDateSchema } from '../schemas'
+import { canonicalHashV1 } from '../hash'
 
 export const completedIntradayCycles = [
   {
@@ -704,6 +705,54 @@ export const makeStreamingPerformanceFixture = () => {
     sourceFeed: 'iex',
     decisionManifest: snapshot.manifest,
   })
+}
+
+export const makeStreamingPartitionPerformanceFixture = () => {
+  const { request, archive, bars } = makeStreamingPerformanceFixture()
+  const manifest = request.decisionManifest
+  if (manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1') throw new Error('expected streaming fixture')
+  const { contentHash: _contentHash, snapshotId: _snapshotId, ...original } = manifest
+  const position = { topic: manifest.sourceTopics.bars, partition: 1, offset: '0' }
+  const material = {
+    ...original,
+    streaming: {
+      ...manifest.streaming,
+      positions: [...manifest.streaming.positions, position].toSorted(
+        (left, right) => left.topic.localeCompare(right.topic) || left.partition - right.partition,
+      ),
+      bootstrap: {
+        ...manifest.streaming.bootstrap,
+        partitions: [
+          ...manifest.streaming.bootstrap.partitions,
+          {
+            topic: position.topic,
+            partition: position.partition,
+            logStartOffset: '0',
+            startOffset: '0',
+            endOffset: '0',
+          },
+        ].toSorted((left, right) => left.topic.localeCompare(right.topic) || left.partition - right.partition),
+      },
+    },
+  }
+  const hashed = { ...material, contentHash: canonicalHashV1(material) }
+  const decisionManifest = { ...hashed, snapshotId: canonicalHashV1(hashed) }
+  return {
+    request: { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId },
+    archive: {
+      ...archive,
+      archiveWatermarks: [
+        ...archive.archiveWatermarks,
+        { sourceTopic: position.topic, sourcePartition: position.partition, inclusiveLastOffset: '390' },
+      ].toSorted(
+        (left, right) =>
+          left.sourceTopic.localeCompare(right.sourceTopic) || left.sourcePartition - right.sourcePartition,
+      ),
+    },
+    bars: bars.map((bar, index) =>
+      index % 2 === 0 ? bar : { ...bar, source_partition: '1', source_offset: String(index) },
+    ),
+  }
 }
 
 const performanceSessionFixture = (request: ForwardPerformanceIntradayMarketVolumeRequest) => {

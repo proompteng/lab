@@ -2,7 +2,11 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
-import { makeIntradayPerformanceFixture, makeStreamingPerformanceFixture } from './intraday-cycle.test-support'
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
 import {
   intradayPerformanceDecisionRequest,
   makeIntradayPerformanceVolumeEvidence,
@@ -114,6 +118,24 @@ test('binds a streaming partial fill to a verified session close without changin
   expect(Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(0, -1)))).toBeUndefined()
   const missing = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(1)))
   expect(missing?.missingMinutes).toEqual([request.windowOpenedAt])
+})
+
+test('retains session archive partitions that supplied no decision-window records', () => {
+  const { request, archive, bars } = makeStreamingPartitionPerformanceFixture()
+  expect(request.decisionManifest.lineage.some((source) => source.sourcePartition === 1)).toBe(false)
+  const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
+  if (evidence === undefined) throw new Error('expected a complete session across both bar partitions')
+  expect(evidence).toMatchObject({ archiveRequest: archive, barCount: 390, quantityMicros: '39000000000' })
+  expect(validIntradayPerformanceVolumeEvidence(evidence)).toBe(true)
+  expect(
+    Result.isFailure(
+      makeIntradayPerformanceVolumeEvidence(
+        request,
+        { ...archive, archiveWatermarks: archive.archiveWatermarks.filter((item) => item.sourcePartition !== 1) },
+        bars,
+      ),
+    ),
+  ).toBe(true)
 })
 
 test('rejects streaming cut tampering and an archive that has not retained the consumed decision rows', () => {

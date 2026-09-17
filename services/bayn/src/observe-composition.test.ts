@@ -357,9 +357,9 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
   },
 )
 
-test('preserves execution authority after a transient reconciliation read inside a bound cycle', async () => {
+test('preserves execution authority after the next bound-cycle reconciliation fails transiently', async () => {
   const fixture = await executionLifecycleFixture()
-  const reconciliationServices = makeExactReconciliationServices()
+  const reconciliationServices = makeExactReconciliationServices(Authority.Execution)
   const transientRead = new BrokerReadError({
     operation: 'account',
     kind: BrokerReadErrorKind.Transport,
@@ -397,7 +397,10 @@ test('preserves execution authority after a transient reconciliation read inside
     block: () => unusedCycleMutation,
   }
   const storedIntents = new Map(
-    fixture.intents.map((intent) => [intent.intentId, storedIntent(intent, IntentState.Planned, intent.createdAt)]),
+    fixture.intents.map((intent) => [
+      intent.intentId,
+      storedIntent(intent, IntentState.Terminal, intent.createdAt, TerminalOutcome.Filled),
+    ]),
   )
   const intentStore: IntentStoreService = {
     commit: (intent) =>
@@ -420,6 +423,12 @@ test('preserves execution authority after a transient reconciliation read inside
         recordPass: () => Effect.void,
       })
       const driver = yield* driverEffect
+      const first = yield* driver.advance
+      expect(first.observation).toMatchObject({
+        result: 'SUCCESS',
+        recoveryAction: 'WAITING',
+        waitReason: 'reconciliation-not-later',
+      })
       return yield* driver.advance
     }).pipe(
       Effect.provideService(BrokerRead, brokerRead),
@@ -5129,96 +5138,120 @@ test('reconciliation cancels a slow broker read before the aggregate pass deadli
   })
 })
 
-test('reuses only the current pass preflight for an entry decision and retains its waiting evidence', async () => {
-  const fixture = await executionLifecycleFixture()
-  const services = makeExactReconciliationServices(Authority.Execution)
-  let reconciliationWrites = 0
-  const executionStore = {
-    ...services.executionStore,
-    reconcile: () =>
-      Effect.sync(() => {
-        reconciliationWrites += 1
-      }).pipe(Effect.andThen(services.executionStore.reconcile())),
-  }
-  const forbidden = () => Effect.die(new Error('waiting entry must not mutate or bind a cycle'))
-  const store: CycleStoreShape = {
-    readOldestUnfinished: () => Effect.succeed(Option.some(cycle)),
-    acquire: forbidden,
-    read: forbidden,
-    readAuthoritySlot: forbidden,
-    readDecisionDocument: forbidden,
-    bindSnapshot: forbidden,
-    activate: forbidden,
-    bindDecision: forbidden,
-    finish: forbidden,
-    block: forbidden,
-  }
-  const readiness = {
-    reason: DecisionReadinessReason.SnapshotCoverage,
-    message: 'intraday symbol lacks the complete rolling lookback baseline',
-    symbol: 'IWM',
-  }
-  const counts = await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* TestClock.setTime(Date.parse(evaluatedAt))
-      const driver = yield* Effect.fromResult(
-        makeRecoveryFirstCycleDriver(
-          fixture.input,
-          { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void },
-          fixture.preparation,
-          fixture.policy,
-          { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
-          (_subject, reconcile) =>
-            reconcile.pipe(
-              Effect.mapError(
-                (cause) => new CycleDecisionBuildError({ failure: 'operational', message: cause.message, cause }),
-              ),
-              Effect.andThen(
-                Effect.fail(
-                  new CycleDecisionBuildError({ failure: 'not-ready', message: readiness.message, readiness }),
+test.each([false, true])(
+  'reuses the current pass preflight and retains waiting evidence for bound=%s',
+  async (bound) => {
+    const fixture = await executionLifecycleFixture()
+    const services = makeExactReconciliationServices(Authority.Execution)
+    let reconciliationWrites = 0
+    const executionStore = {
+      ...services.executionStore,
+      reconcile: () =>
+        Effect.sync(() => {
+          reconciliationWrites += 1
+        }).pipe(Effect.andThen(services.executionStore.reconcile())),
+    }
+    const forbidden = () => Effect.die(new Error('waiting entry must not mutate or bind a cycle'))
+    const store: CycleStoreShape = {
+      readOldestUnfinished: () => Effect.succeed(Option.some(bound ? fixture.boundCycle : cycle)),
+      acquire: forbidden,
+      read: forbidden,
+      readAuthoritySlot: forbidden,
+      readDecisionDocument: () => (bound ? Effect.succeed(Option.some(fixture.document)) : forbidden()),
+      bindSnapshot: forbidden,
+      activate: forbidden,
+      bindDecision: forbidden,
+      finish: forbidden,
+      block: forbidden,
+    }
+    const readiness = {
+      reason: DecisionReadinessReason.SnapshotCoverage,
+      message: 'intraday symbol lacks the complete rolling lookback baseline',
+      symbol: 'IWM',
+    }
+    const counts = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        const driver = yield* Effect.fromResult(
+          makeRecoveryFirstCycleDriver(
+            fixture.input,
+            { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void },
+            fixture.preparation,
+            fixture.policy,
+            { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+            (_subject, reconcile) =>
+              reconcile.pipe(
+                Effect.mapError(
+                  (cause) => new CycleDecisionBuildError({ failure: 'operational', message: cause.message, cause }),
+                ),
+                Effect.andThen(
+                  Effect.fail(
+                    new CycleDecisionBuildError({ failure: 'not-ready', message: readiness.message, readiness }),
+                  ),
                 ),
               ),
-            ),
-          'mutation autonomous cycle loop',
-        ),
-      ).pipe(Effect.flatten)
-      const first = yield* driver.advance
-      expect(first.observation).toMatchObject({ result: 'SUCCESS', recoveryAction: 'WAITING', readiness })
-      const firstCount = reconciliationWrites
-      yield* driver.advance
-      const secondCount = reconciliationWrites
-      yield* TestClock.adjust(30_000)
-      yield* driver.advance
-      return [firstCount, secondCount, reconciliationWrites]
-    }).pipe(
-      Effect.provideService(BrokerRead, services.brokerRead),
-      Effect.provideService(CycleStore, store),
-      Effect.provideService(BrokerEventStore, executionStore),
-      Effect.provideService(FillAccountingStore, executionStore),
-      Effect.provideService(ValuationStore, executionStore),
-      Effect.provideService(ReconciliationStore, executionStore),
-      Effect.provideService(AuthorityGenerationStore, executionStore),
-      Effect.provideService(AuthorityRestrictionStore, executionStore),
-      Effect.provideService(IntentStore, { commit: forbidden, read: forbidden }),
-      Effect.provideService(MutationStore, {
-        authorizeSubmit: forbidden,
-        beginSubmit: forbidden,
-        submitAccepted: forbidden,
-        submitRejected: forbidden,
-        submitDenied: forbidden,
-        submitUnknown: forbidden,
-        beginCancel: forbidden,
-        cancelAccepted: forbidden,
-        cancelUnknown: forbidden,
-        recoveryFound: forbidden,
-        recoveryNotFound: forbidden,
-        recoveryUnknown: forbidden,
-        latest: forbidden,
-      }),
-      Effect.provideService(WriterFence, services.writerFence),
-      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
-      Effect.provide(TestClock.layer()),
-    ),
-  )
-  expect(counts).toEqual([1, 2, 3])
-})
+            'mutation autonomous cycle loop',
+          ),
+        ).pipe(Effect.flatten)
+        const first = yield* driver.advance
+        expect(first.observation).toMatchObject({
+          result: 'SUCCESS',
+          recoveryAction: 'WAITING',
+          ...(bound ? { waitReason: 'reconciliation-not-later' } : { readiness }),
+        })
+        const firstCount = reconciliationWrites
+        yield* driver.advance
+        const secondCount = reconciliationWrites
+        yield* TestClock.adjust(30_000)
+        yield* driver.advance
+        return [firstCount, secondCount, reconciliationWrites]
+      }).pipe(
+        Effect.provideService(BrokerRead, services.brokerRead),
+        Effect.provideService(CycleStore, store),
+        Effect.provideService(BrokerEventStore, executionStore),
+        Effect.provideService(FillAccountingStore, executionStore),
+        Effect.provideService(ValuationStore, executionStore),
+        Effect.provideService(ReconciliationStore, executionStore),
+        Effect.provideService(AuthorityGenerationStore, executionStore),
+        Effect.provideService(AuthorityRestrictionStore, executionStore),
+        Effect.provideService(IntentStore, {
+          commit: (intent) =>
+            bound
+              ? Effect.succeed({
+                  record: storedIntent(intent, IntentState.Terminal, evaluatedAt, TerminalOutcome.Filled),
+                  deduplicated: true,
+                })
+              : forbidden(),
+          read: (intentId) => {
+            if (!bound) return forbidden()
+            const intent = fixture.intents.find((item) => item.intentId === intentId)
+            return Effect.succeed(
+              intent === undefined
+                ? Option.none()
+                : Option.some(storedIntent(intent, IntentState.Terminal, evaluatedAt, TerminalOutcome.Filled)),
+            )
+          },
+        }),
+        Effect.provideService(MutationStore, {
+          authorizeSubmit: forbidden,
+          beginSubmit: forbidden,
+          submitAccepted: forbidden,
+          submitRejected: forbidden,
+          submitDenied: forbidden,
+          submitUnknown: forbidden,
+          beginCancel: forbidden,
+          cancelAccepted: forbidden,
+          cancelUnknown: forbidden,
+          recoveryFound: forbidden,
+          recoveryNotFound: forbidden,
+          recoveryUnknown: forbidden,
+          latest: () => (bound ? Effect.as(Effect.void, undefined) : forbidden()),
+        }),
+        Effect.provideService(WriterFence, services.writerFence),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(counts).toEqual([1, 2, 3])
+  },
+)

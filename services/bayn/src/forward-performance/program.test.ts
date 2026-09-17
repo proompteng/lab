@@ -1,4 +1,8 @@
-import { makeIntradayPerformanceFixture, makeStreamingPerformanceFixture } from './intraday-cycle.test-support'
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
 import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -1026,7 +1030,7 @@ describe('forward performance read program', () => {
   })
 })
 
-test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture])(
+test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture])(
   'routes native completed cycles to the bounded archive and preserves their evidence: %p',
   async (makeFixture) => {
     const { request, archive, bars } = makeFixture()

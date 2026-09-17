@@ -292,18 +292,21 @@ const makeRecoveryFirstCycleDriverEffect = (
       )
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
+        const pendingPreflight = yield* Ref.make(preflight)
+        const reconcileForAdvance = Ref.getAndSet(pendingPreflight, undefined).pipe(
+          Effect.flatMap((available) => (available === undefined ? reconcile : Effect.succeed(available))),
+        )
         const context: CycleRunContext<ObserveDecisionRuntime> = {
           cycleBindingId: startup.cycleBindingId,
           strategyName: 'intraday-momentum',
           strategyProtocolHash: preparation.strategyProtocolHash,
           accountId: input.accountId,
           executionPolicy: preparation.executionPolicy,
-          buildDecision: (cycle) =>
-            buildDecision(cycle, preflight === undefined ? reconcile : Effect.succeed(preflight)),
+          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
         const result = yield* runMutationPassWithinTimeout(
-          runRecoveryFirstCyclePass(input, policy, context, reconcile, capability),
+          runRecoveryFirstCyclePass(input, policy, context, reconcileForAdvance, capability),
           cyclePassTimeoutMs,
         )
         if (isPostMutationReconciliation(result)) {
