@@ -169,6 +169,8 @@ let
         rm -rf "$out"
         mkdir -p "$out"
         cp -R "$BUN_INSTALL_CACHE_DIR/." "$out/"
+      else
+        bash ${./prune-bun-dependency-metadata.sh} "$out"
       fi
 
       runHook postInstall
@@ -209,6 +211,8 @@ let
         else
           ''
             cp -R ${deps}/. "$TMPDIR/work/"
+            chmod -R u+w "$TMPDIR/work"
+            cp -R ${depsSource}/. "$TMPDIR/work/"
             chmod -R u+w "$TMPDIR/work"
             cp -R . "$TMPDIR/work/"
           ''

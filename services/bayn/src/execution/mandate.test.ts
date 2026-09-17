@@ -190,15 +190,26 @@ describe('execution mandate decisions', () => {
         closeOnly: false,
         observedAt: '2026-08-31T20:00:00.000Z',
         entryCutoffAt: cutoff,
-        entryHasUnsuccessfulIntent: false,
+        entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'WaitForClose' })
+    expect(
+      decideExecutionMandateCycleTerminalization({
+        closeOnly: false,
+        observedAt: '2026-08-31T20:00:00.000Z',
+        entryCutoffAt: cutoff,
+        entryHasUnsuccessfulIntent: false,
+        entrySettledWithoutFill: true,
+      }),
+    ).toEqual({ _tag: 'Complete' })
     expect(
       decideExecutionMandateCycleTerminalization({
         closeOnly: true,
         observedAt: cutoff,
         entryCutoffAt: cutoff,
         entryHasUnsuccessfulIntent: false,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'Complete' })
     expect(
@@ -207,6 +218,7 @@ describe('execution mandate decisions', () => {
         observedAt: cutoff,
         entryCutoffAt: cutoff,
         entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'Block' })
     expect(
@@ -215,6 +227,7 @@ describe('execution mandate decisions', () => {
         observedAt: cutoff,
         entryCutoffAt: cutoff,
         entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
       }),
     ).toEqual({ _tag: 'Block' })
   })

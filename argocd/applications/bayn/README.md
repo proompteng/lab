@@ -113,6 +113,12 @@ change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`
 wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status rollout
 and a drained Restate worker revision; the activation hook itself cannot reach the broker.
 
+The SealedSecret's `proompteng.ai/bayn.mandate-identity` annotation records the request hash, strategy identity, authored
+build, and ciphertext hash without exposing the broker account. The manifest check compares it with the compiled
+strategy and all three runtime lineages. Regenerate this annotation from the validated request when sealing it;
+changing an annotation does not authorize a different encrypted request. Runtime validation remains authoritative.
+Invalid static mandate configuration fails preparation with its specific reason before authority recovery begins.
+
 After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
 sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation
 to remain exact with zero unresolved mutations. While the market is closed, also require zero new broker orders or
