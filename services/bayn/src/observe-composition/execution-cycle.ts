@@ -28,6 +28,7 @@ import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow
 import { currentUtcInstant } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { decodeIntradayMomentumProtocol, intradayMomentumExecutionModel, strategyDefinition } from '../strategy'
+import { replayIntradayProtocol } from '../strategy/intraday-momentum/research'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import {
@@ -81,9 +82,25 @@ export const recoverBoundExecutionContext = (
   currentPolicy: Policy,
   cycle: AutonomousCycle,
   document: ExecutionDecisionDocument,
+  simulation?: ObserveAutonomousCycleInput['simulation'],
 ): Effect.Effect<RecoveredExecutionContext, CycleRunnerError> =>
   Effect.gen(function* () {
-    const executionModelHash = canonicalHashV1Result(intradayMomentumExecutionModel)
+    const model =
+      simulation === undefined
+        ? Result.succeed(intradayMomentumExecutionModel)
+        : replayIntradayProtocol({ accountId: cycle.identity.accountId, ...simulation }).pipe(
+            Result.map((protocol) => protocol.executionModel),
+          )
+    const executionModel = yield* Effect.fromResult(model).pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({
+          message: 'bound execution cycle has an invalid simulated protocol binding',
+          failure: 'contract',
+          cause,
+        }),
+      ),
+    )
+    const executionModelHash = canonicalHashV1Result(executionModel)
     if (
       cycle.identity.strategyName !== 'intraday-momentum' ||
       cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3' ||
@@ -106,7 +123,7 @@ export const recoverBoundExecutionContext = (
     }
     return {
       preparation: {
-        executionModel: intradayMomentumExecutionModel,
+        executionModel,
         executionPolicy: cycle.identity.executionPolicy,
         strategyProtocolHash: cycle.identity.strategyProtocolHash,
       },
@@ -1029,7 +1046,7 @@ const recoverBoundMutationCycle = (
               failure: 'contract',
             }),
           )
-        : recoverBoundExecutionContext(policy, cycle, document).pipe(
+        : recoverBoundExecutionContext(policy, cycle, document, input.simulation).pipe(
             Effect.flatMap((recovered) =>
               executeBoundExecutionCycle(
                 input,

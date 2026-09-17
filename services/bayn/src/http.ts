@@ -573,7 +573,7 @@ const renderPrometheusMetricsDataFirst = (
       ? undefined
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
   const executionController = state.executionController
-  const executionControllerOutcomes = ['unknown', 'completed', 'blocked'] as const
+  const executionControllerOutcomes = ['unknown', 'completed', 'blocked', 'waiting'] as const
   const executionControllerStatus = executionController?.status
   const executionControllerCompletion =
     executionControllerStatus !== null &&

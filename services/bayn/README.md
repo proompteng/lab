@@ -238,7 +238,7 @@ or grant live capital authority.
 
 Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
 and its readiness or lifecycle reason. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies ordinary holding. Snapshot
-waits retain the affected symbol, missing timestamp, query window, or first available time when known. Historical
+waits retain the affected symbol, missing timestamp, required feature definition and window, or first available time when known. Historical
 pass observations without these details remain readable.
 
 Candidate evaluations are stored in the append-only `intraday_candidate_observations` table before the pass proceeds.
@@ -335,6 +335,10 @@ input; entry eligibility in the last minutes of the session can differ. Compare 
 economic differences to exits alone. The report binds both timing boundaries and the baseline build and parameter
 hash separately from the effective research parameter hash. Each choice has a distinct run identity and requires fresh local persistence. These inputs do not
 change the production protocol or supply a deployable strategy recommendation.
+
+Native startup and recovery admit these presets only when explicitly bound to their synthetic `replay-<runId>`
+account. Ordinary accounts still require the baseline protocol. The isolated runtime and grant use the effective
+research parameter hash; the report keeps the baseline build evidence separately.
 
 The broker calendar must include the next trading session after the final replay date. The production scheduler
 selects that successor after finishing its last position; omitting it is an input error even when all requested market

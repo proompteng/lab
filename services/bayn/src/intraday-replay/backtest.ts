@@ -24,9 +24,9 @@ import {
   activeStrategyBehaviorHash,
   activeStrategyName,
   loadActiveStrategyProtocol,
-  decodeIntradayMomentumProtocol,
   makeActiveStrategyRuntime,
 } from '../strategy'
+import { IntradayExitTiming, intradayExitTimingProtocol } from '../strategy/intraday-momentum/research'
 import {
   BacktestSourceManifestSchema,
   openBacktestSource,
@@ -111,31 +111,14 @@ const BaselineBacktestInputSchema = Schema.Struct({
   }),
 })
 
-export enum BacktestExitTiming {
-  Current = 'CURRENT',
-  FifteenMinutes = 'CLOSE_15_MINUTES_BEFORE_BELL',
-  ThirtyMinutes = 'CLOSE_30_MINUTES_BEFORE_BELL',
-}
-
 export const BacktestInputSchema = Schema.Union([
   BaselineBacktestInputSchema,
   Schema.Struct({
     ...BaselineBacktestInputSchema.fields,
     schemaVersion: Schema.Literal('bayn.backtest.v2'),
-    exitTiming: Schema.Enum(BacktestExitTiming),
+    exitTiming: Schema.Enum(IntradayExitTiming),
   }),
 ])
-
-const exitLeadMinutes = (variant: BacktestExitTiming, current: number): number => {
-  switch (variant) {
-    case BacktestExitTiming.Current:
-      return current
-    case BacktestExitTiming.FifteenMinutes:
-      return 15
-    case BacktestExitTiming.ThirtyMinutes:
-      return 30
-  }
-}
 
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
@@ -170,29 +153,10 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),
       )
-    const flattenBeforeCloseMinutes =
-      decoded.schemaVersion === 'bayn.backtest.v1'
-        ? baselineProtocol.flattenBeforeCloseMinutes
-        : exitLeadMinutes(decoded.exitTiming, baselineProtocol.flattenBeforeCloseMinutes)
-    const entryCutoffMinutesBeforeClose = Math.max(
-      baselineProtocol.entryCutoffMinutesBeforeClose,
-      flattenBeforeCloseMinutes,
-    )
     const protocol =
       decoded.schemaVersion === 'bayn.backtest.v1'
         ? baselineProtocol
-        : yield* decodeIntradayMomentumProtocol({
-            ...baselineProtocol,
-            flattenBeforeCloseMinutes,
-            entryCutoffMinutesBeforeClose,
-            executionModel: {
-              ...baselineProtocol.executionModel,
-              order: {
-                ...baselineProtocol.executionModel.order,
-                submissionCutoffBeforeCloseMs: entryCutoffMinutesBeforeClose * 60_000,
-              },
-            },
-          })
+        : yield* intradayExitTimingProtocol(decoded.exitTiming)
     const parameterHash = yield* canonicalHashV1Result(protocol)
     const research =
       decoded.schemaVersion === 'bayn.backtest.v1'
@@ -401,6 +365,7 @@ export const runBacktest = (
       quoteAt: (symbol) => source.cursor.pipe(Effect.map((cursor) => cursor.projection.quotes.get(symbol))),
     })
     const runtime = yield* makeReplayExecutionRuntime({
+      ...(prepared.research === undefined ? {} : { exitTiming: prepared.research.variant }),
       config: {
         ...databases,
         build: prepared.runtimeBuild,

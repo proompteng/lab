@@ -3,12 +3,9 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import {
-  prepareBacktest as prepareWithCapture,
-  assessBacktestSession,
-  BacktestIssue,
-  BacktestExitTiming,
-} from './backtest'
+import { prepareBacktest as prepareWithCapture, assessBacktestSession, BacktestIssue } from './backtest'
+import { IntradayExitTiming } from '../strategy/intraday-momentum/research'
+import { prepareObserveStartup } from '../observe-composition/startup'
 import { validateBacktestSourceReceipt } from './source'
 import { sha256 } from '../hash'
 import { validateResearchCapitalGrantProof } from '../execution/capital-grant-algebra'
@@ -66,9 +63,9 @@ test('explicit exit-timing research binds both close boundaries while preserving
   const baseline = Result.getOrThrow(prepareBacktest(input))
   const identities = new Set<string>()
   for (const [exitTiming, minutes] of [
-    [BacktestExitTiming.Current, baseline.protocol.flattenBeforeCloseMinutes],
-    [BacktestExitTiming.FifteenMinutes, 15],
-    [BacktestExitTiming.ThirtyMinutes, 30],
+    [IntradayExitTiming.Current, baseline.protocol.flattenBeforeCloseMinutes],
+    [IntradayExitTiming.FifteenMinutes, 15],
+    [IntradayExitTiming.ThirtyMinutes, 30],
   ] as const) {
     const research = Result.getOrThrow(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v2', exitTiming }))
     if (research.research === undefined) throw new Error('Research identity is required for v2 inputs')
@@ -117,8 +114,31 @@ test('explicit exit-timing research binds both close boundaries while preserving
     }
     expect(Result.isSuccess(validateResearchCapitalGrantProof({ ...binding, build: research.runtimeBuild }))).toBe(true)
     expect(Result.isSuccess(validateResearchCapitalGrantProof({ ...binding, build: baseline.runtimeBuild }))).toBe(
-      exitTiming === BacktestExitTiming.Current,
+      exitTiming === IntradayExitTiming.Current,
     )
+    const startup = {
+      accountId: research.identity.accountId,
+      authorityGenerationHash: '0'.repeat(64),
+      strategy: research.strategy,
+      ...input.cadence,
+    }
+    expect(Result.isSuccess(prepareObserveStartup(startup))).toBe(exitTiming === IntradayExitTiming.Current)
+    const simulation = { runId: research.runId, exitTiming }
+    expect(Result.isSuccess(prepareObserveStartup({ ...startup, simulation }))).toBe(true)
+    expect(Result.isFailure(prepareObserveStartup({ ...startup, accountId: 'ordinary-account', simulation }))).toBe(
+      true,
+    )
+    expect(
+      Result.isFailure(prepareObserveStartup({ ...startup, simulation: { ...simulation, runId: 'invalid' } })),
+    ).toBe(true)
+    expect(
+      Result.isSuccess(
+        prepareObserveStartup({
+          ...startup,
+          simulation: { ...simulation, exitTiming: IntradayExitTiming.Current },
+        }),
+      ),
+    ).toBe(exitTiming === IntradayExitTiming.Current)
     expect(research.input.assumptions).toEqual(baseline.input.assumptions)
     expect(research.runId).not.toBe(baseline.runId)
     identities.add(research.runId)
@@ -129,9 +149,9 @@ test('explicit exit-timing research binds both close boundaries while preserving
 
 test('research cannot override source identity, arbitrary parameters, or an undeclared v1 exit policy', () => {
   const input = fixture()
-  const research = { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: BacktestExitTiming.FifteenMinutes }
+  const research = { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: IntradayExitTiming.FifteenMinutes }
   for (const invalid of [
-    { ...input, exitTiming: BacktestExitTiming.FifteenMinutes },
+    { ...input, exitTiming: IntradayExitTiming.FifteenMinutes },
     { ...research, exitTiming: 'CLOSE_AT_LOOKAHEAD_BEST_PRICE' },
     { ...research, protocol: { minimumLookbackReturnBps: 0 } },
     { ...research, build: { ...input.build, strategyParameterHash: '0'.repeat(64) } },

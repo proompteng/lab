@@ -9,7 +9,7 @@ import { Clock, Context, Deferred, Effect, Fiber, Layer, Redacted, Ref, Result, 
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
-import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema } from '../broker/alpaca/model'
+import { AssetClass, AssetExchange, AssetStatus, MarketCalendarResponseSchema, OrderSide } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
@@ -29,6 +29,8 @@ import { JournalLive } from '../ledger'
 import { canonicalHashV1 } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
+import { makeActiveStrategyRuntime } from '../strategy'
+import { IntradayExitTiming, intradayExitTimingProtocol } from '../strategy/intraday-momentum/research'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
@@ -68,9 +70,15 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
-durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
-  'production cycle and durable accounting: %s',
-  async (scenario) => {
+durableTest.each([
+  ['fill', IntradayExitTiming.Current],
+  ['recovery', IntradayExitTiming.Current],
+  ['recovery-filled', IntradayExitTiming.Current],
+  ['fill', IntradayExitTiming.FifteenMinutes],
+  ['fill', IntradayExitTiming.ThirtyMinutes],
+] as const)(
+  'production cycle and durable accounting: %s / %s',
+  async (scenario, exitTiming) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -80,13 +88,21 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
       !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
     )
       throw new Error('Replay acceptance requires isolated local test databases')
-    const fixture = simulationFixture()
-    const closeAtMs = Date.parse('2026-09-04T19:59:02Z')
+    const protocol = Result.getOrThrow(intradayExitTimingProtocol(exitTiming))
+    const fixture = { ...simulationFixture(), protocol }
+    const strategyRuntime = makeActiveStrategyRuntime(protocol, {
+      ...fixtureRuntime.provenance,
+      strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
+    })
+    const closeAtMs =
+      scenario === 'fill'
+        ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
+        : Date.parse('2026-09-04T19:59:02Z')
     const closeQuery = {
       ...fixture.query,
       purpose: IntradaySnapshotPurpose.Liquidation,
-      rangeStartAt: '2026-09-04T19:58:00.000Z',
-      rangeEndAt: '2026-09-04T19:59:00.000Z',
+      rangeStartAt: utcInstantFromEpochMillis(closeAtMs - 62_000),
+      rangeEndAt: utcInstantFromEpochMillis(closeAtMs - 2_000),
       observedAt: utcInstantFromEpochMillis(closeAtMs),
     }
     const closeArrivals = historicalRawArrivals(
@@ -114,6 +130,7 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
     const accountId = `replay-${runId}`
     const config: RuntimeConfig = {
       ...baseConfig,
+      build: { ...baseConfig.build, strategyParameterHash: strategyRuntime.provenance.strategy.parameterHash },
       operationTimeoutMs: 10000,
       execution: {
         brokerIdentity: Result.getOrThrow(
@@ -215,7 +232,8 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
         const interrupted = yield* Ref.make(false)
         const runtimeInput = {
           config,
-          strategy: fixtureRuntime,
+          strategy: strategyRuntime,
+          exitTiming,
           broker: {
             ...broker,
             read: {
@@ -297,7 +315,7 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
                   brokerIdentity: config.execution.brokerIdentity,
                   brokerAccess: BrokerAccess.Mutation,
                   capitalAuthority: grantedCapitalAuthority(generationHash),
-                  strategy: fixtureRuntime.provenance.strategy,
+                  strategy: strategyRuntime.provenance.strategy,
                 }),
               )
               const engine = yield* makeTradingEngine({
@@ -306,7 +324,7 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
                 cycle: {
                   accountId,
                   authorityGenerationHash: generationHash,
-                  strategy: fixtureRuntime,
+                  strategy: strategyRuntime,
                   intradayMarketData: runtime.marketData,
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
@@ -411,8 +429,8 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
                 imageDigest: config.build.imageDigest,
               },
               strategy: {
-                ...fixtureRuntime.provenance.strategy,
-                protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
+                ...strategyRuntime.provenance.strategy,
+                protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(strategyRuntime.provenance.strategy)),
               },
               broker: {
                 environment: BrokerEnvironment.Sandbox,
@@ -468,8 +486,7 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
         const settledMs = (yield* Clock.currentTimeMillis) + 1
         yield* clock.advanceTo(utcInstantFromEpochMillis(settledMs))
         yield* TestClock.setTime(settledMs)
-        const brokerState = yield* broker.snapshot
-        const reconciliation = yield* runtime.reconcile
+        yield* runtime.reconcile
         let waiting = yield* runtime.advance
         for (
           let attempt = 0;
@@ -498,6 +515,21 @@ durableTest.each(['fill', 'recovery', 'recovery-filled'] as const)(
         expect(JSON.stringify(stalledFinal)).toContain('Replay reconciliation exceeded 1000ms')
         expect(yield* Ref.get(interrupted)).toBe(true)
         expect(yield* Clock.currentTimeMillis).toBe(frozenAt)
+        yield* Ref.set(stallReconciliation, false)
+        for (const arrival of closeArrivals)
+          cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+        yield* clock.advanceTo(utcInstantFromEpochMillis(closeAtMs))
+        yield* TestClock.setTime(closeAtMs)
+        for (let attempt = 0; attempt < 20 && (yield* broker.snapshot).ledger.positions.length > 0; attempt++) {
+          yield* runtime.advance
+          const nextMs = (yield* Clock.currentTimeMillis) + 1000
+          yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
+          yield* TestClock.setTime(nextMs)
+        }
+        const brokerState = yield* broker.snapshot
+        const reconciliation = yield* runtime.reconcile
+        expect(brokerState.ledger.positions).toHaveLength(0)
+        expect(brokerState.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
         const rows = yield* sql<Record<string, unknown>>`SELECT
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
       (SELECT count(*)::int FROM fills WHERE account_id = ${accountId}) AS fills,

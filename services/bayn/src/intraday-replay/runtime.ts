@@ -42,12 +42,14 @@ import type { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evi
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
 import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
 import type { StrategyRuntime } from '../strategy'
+import type { IntradayExitTiming } from '../strategy/intraday-momentum/research'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { operationalError, type OperationalError } from '../errors'
 import { currentUtcInstant } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
 
 export interface ReplayExecutionRuntimeInput {
+  readonly exitTiming?: IntradayExitTiming
   readonly config: ExecutionStoreRuntimeConfig
   readonly strategy: StrategyRuntime
   readonly broker: Effect.Success<ReturnType<typeof makeReplayBroker>>
@@ -160,6 +162,9 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const engine = yield* makeTradingEngine({
       authority,
       cycle: {
+        ...(input.exitTiming === undefined
+          ? {}
+          : { simulation: { runId: input.source.runId, exitTiming: input.exitTiming } }),
         accountId: identity.accountId,
         authorityGenerationHash: activated.generationHash,
         strategy: input.strategy,
