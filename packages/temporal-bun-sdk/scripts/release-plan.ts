@@ -5,6 +5,12 @@ const packagePath = 'packages/temporal-bun-sdk/package.json'
 const component = 'packages/temporal-bun-sdk'
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
+export const assertPublishTag = (version: string, currentVersion?: string) => {
+  if (currentVersion && Bun.semver.order(version, currentVersion) < 0) {
+    throw new Error(`Refusing to move an npm dist-tag backward from ${currentVersion} to ${version}`)
+  }
+}
+
 export const planRelease = (input: {
   eventName: string
   ref: string

@@ -32,10 +32,14 @@ test('Temporal release jobs queue without cancelling pending publications or ove
     queue: 'max',
   })
   expect(workflow.jobs['publish-release'].concurrency).toEqual({
-    group: 'temporal-bun-sdk-publish-${{ needs.release-plan.outputs.version }}',
+    group: 'temporal-bun-sdk-publish',
     'cancel-in-progress': false,
     queue: 'max',
   })
+  const publish = workflow.jobs['publish-release'].steps.find(
+    (step: { name: string }) => step.name === 'Publish package to npm',
+  ).run
+  expect(publish.indexOf('assertPublishTag(')).toBeLessThan(publish.indexOf('npm publish --tag'))
 })
 
 test('Temporal Bun SDK keeps PR validation fast and reserves remote load gates for main and releases', () => {

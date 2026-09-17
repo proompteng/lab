@@ -303,7 +303,7 @@ jobs:
     outputs:
       published_sha: ${{ steps.published.outputs.published_sha }}
     concurrency:
-      group: temporal-bun-sdk-publish-${{ needs.release-plan.outputs.version }}
+      group: temporal-bun-sdk-publish
       cancel-in-progress: false
       queue: max
     permissions:
@@ -397,6 +397,8 @@ jobs:
           TEMPORAL_REQUIRE_DEFAULT_CHOICE: '1'
           NPM_DIST_TAG: ${{ steps.release_meta.outputs.npm_tag }}
           DRY_RUN: ${{ steps.release_meta.outputs.dry_run }}
+          RELEASE_VERSION: ${{ steps.release_meta.outputs.version }}
+          DIST_TAGS_PATH: ${{ runner.temp }}/temporal-sdk-dist-tags.json
         run: |
           set -euo pipefail
           spec="@proompteng/temporal-bun-sdk@${{ steps.release_meta.outputs.version }}"
@@ -404,6 +406,13 @@ jobs:
             echo "$spec is already published; skipping npm publish and verifying the published artifact next."
             exit 0
           fi
+
+          npm view @proompteng/temporal-bun-sdk dist-tags --json > "$DIST_TAGS_PATH"
+          bun -e '
+            import { assertPublishTag } from "./scripts/release-plan.ts"
+            const tags = await Bun.file(process.env.DIST_TAGS_PATH).json()
+            assertPublishTag(process.env.RELEASE_VERSION, tags[process.env.NPM_DIST_TAG])
+          '
 
           if [[ "${DRY_RUN}" == "true" ]]; then
             echo 'Running npm publish in dry-run mode'

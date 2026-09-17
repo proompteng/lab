@@ -1195,15 +1195,29 @@ export class WorkerRuntime {
     return isAbortError(error) || (error instanceof ConnectError && error.code === Code.Canceled)
   }
 
-  async #runWorkerResponseRpc<T>(operation: () => Promise<T>): Promise<T> {
+  async #runWorkerResponseRpc<T>(
+    operation: (options: { signal: AbortSignal; timeoutMs: number }) => Promise<T>,
+    deadlineMs?: number,
+  ): Promise<T> {
+    const remaining = deadlineMs === undefined ? undefined : deadlineMs - Date.now()
+    const timeoutError = () => new ConnectError('Workflow task response budget exhausted', Code.DeadlineExceeded)
+    if (remaining !== undefined && remaining <= 0) throw timeoutError()
+    const response = withTemporalRetry(
+      Effect.tryPromise({
+        try: (signal) => {
+          const timeoutMs =
+            deadlineMs === undefined ? RESPOND_TIMEOUT_MS : Math.min(RESPOND_TIMEOUT_MS, deadlineMs - Date.now())
+          if (timeoutMs <= 0) throw timeoutError()
+          return operation({ signal, timeoutMs })
+        },
+        catch: (error) => error,
+      }),
+      this.#config.rpcRetryPolicy,
+    )
     const exit = await Effect.runPromiseExit(
-      withTemporalRetry(
-        Effect.tryPromise({
-          try: operation,
-          catch: (error) => error,
-        }),
-        this.#config.rpcRetryPolicy,
-      ),
+      remaining === undefined
+        ? response
+        : Effect.timeoutFail(response, { duration: Duration.millis(remaining), onTimeout: timeoutError }),
     )
     if (Exit.isSuccess(exit)) {
       return exit.value
@@ -1363,6 +1377,13 @@ export class WorkerRuntime {
       forceFullHistory: (hasQueryPayloads && !isLegacyQueryOnly) || nondeterminismRetry > 0,
       skipFetchOnMissingStart: isLegacyQueryOnly,
     })
+    const workflowStart = this.#findWorkflowStartedEvent(historyEvents)?.attributes
+    const taskTimeoutMs =
+      (workflowStart?.case === 'workflowExecutionStartedEventAttributes'
+        ? durationToMillis(workflowStart.value.workflowTaskTimeout)
+        : undefined) ?? 10_000
+    const taskStartedAt = timestampToDate(response.startedTime)?.getTime() ?? taskReceivedAt
+    const responseDeadlineMs = taskStartedAt + taskTimeoutMs - Math.min(100, taskTimeoutMs / 10)
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const collectedUpdates = await collectWorkflowUpdates({
@@ -1519,15 +1540,7 @@ export class WorkerRuntime {
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
-      const workflowStart = this.#findWorkflowStartedEvent(historyEvents)?.attributes
-      const taskTimeoutMs =
-        (workflowStart?.case === 'workflowExecutionStartedEventAttributes'
-          ? durationToMillis(workflowStart.value.workflowTaskTimeout)
-          : undefined) ?? 10_000
-      const taskStartedAt = timestampToDate(response.startedTime)?.getTime() ?? taskReceivedAt
-      const localActivityBudgetMs = Math.floor(
-        taskStartedAt + taskTimeoutMs - Math.min(1_000, taskTimeoutMs / 2) - Date.now(),
-      )
+      const localActivityBudgetMs = Math.floor(taskStartedAt + taskTimeoutMs / 2 - Date.now())
       const localActivityDeadline =
         localActivityBudgetMs > 0 ? AbortSignal.timeout(localActivityBudgetMs) : AbortSignal.abort()
       const output = await this.#executor.execute({
@@ -1785,8 +1798,9 @@ export class WorkerRuntime {
           ...(updateProtocolMessages.length > 0 ? { messages: updateProtocolMessages } : {}),
         })
         try {
-          await this.#runWorkerResponseRpc(() =>
-            this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS }),
+          await this.#runWorkerResponseRpc(
+            (options) => this.#workflowService.respondWorkflowTaskCompleted(completion, options),
+            responseDeadlineMs,
           )
           workflowTaskCommitted = true
         } catch (rpcError) {
@@ -1884,13 +1898,19 @@ export class WorkerRuntime {
           historyLastEventId: historyReplay?.lastEventId ?? null,
           workflowTaskAttempt,
         })
-        await this.#failWorkflowTask(response, execution, enriched, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
+        await this.#failWorkflowTask(
+          response,
+          execution,
+          enriched,
+          WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR,
+          responseDeadlineMs,
+        )
         return
       }
       if (stickyEntryCleared && this.#stickySchedulingEnabled) {
         this.#log('debug', 'sticky cache entry cleared after workflow failure', baseLogFields)
       }
-      await this.#failWorkflowTask(response, execution, error)
+      await this.#failWorkflowTask(response, execution, error, WorkflowTaskFailedCause.UNSPECIFIED, responseDeadlineMs)
     }
   }
 
@@ -3136,7 +3156,17 @@ export class WorkerRuntime {
     execution: { workflowId: string; runId: string },
     error: unknown,
     cause: WorkflowTaskFailedCause = WorkflowTaskFailedCause.UNSPECIFIED,
+    deadlineMs?: number,
   ): Promise<void> {
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+      this.#log(
+        'warn',
+        'workflow task response budget exhausted; awaiting server redelivery',
+        this.#runtimeLogFields(execution),
+      )
+      this.#incrementCounter(this.#metrics.workflowFailures)
+      return
+    }
     const failure = await encodeErrorToFailure(this.#dataConverter, error)
     const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
 
@@ -3150,8 +3180,9 @@ export class WorkerRuntime {
     })
 
     try {
-      await this.#runWorkerResponseRpc(() =>
-        this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      await this.#runWorkerResponseRpc(
+        (options) => this.#workflowService.respondWorkflowTaskFailed(failed, options),
+        deadlineMs,
       )
       this.#incrementCounter(this.#metrics.workflowFailures)
     } catch (rpcError) {

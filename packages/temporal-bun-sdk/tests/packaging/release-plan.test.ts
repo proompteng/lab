@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { planRelease } from '../../scripts/release-plan'
+import { assertPublishTag, planRelease } from '../../scripts/release-plan'
 
 const release = {
   eventName: 'push',
@@ -9,6 +9,17 @@ const release = {
   manifestVersion: '0.11.4',
   previousVersion: '0.11.3',
 }
+
+test('publication allows new tags, newer versions, and verification retries', () => {
+  expect(() => assertPublishTag('0.11.4')).not.toThrow()
+  expect(() => assertPublishTag('0.11.4', '0.11.3')).not.toThrow()
+  expect(() => assertPublishTag('0.11.4', '0.11.4')).not.toThrow()
+})
+
+test('out-of-order publication cannot move a dist-tag backward', () => {
+  expect(() => assertPublishTag('0.11.4', '0.11.5')).toThrow('backward')
+  expect(() => assertPublishTag('0.12.0-beta.1', '0.12.0-beta.2')).toThrow('backward')
+})
 
 test('publishes a merged version increase with matching metadata', () => {
   expect(planRelease(release)).toEqual({ publish: true, version: '0.11.4', npm_tag: 'latest', dry_run: 'false' })

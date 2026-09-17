@@ -28,6 +28,9 @@ pushes cannot republish an unchanged version.
 Shared-cluster checks run one at a time so cleanup cannot interrupt another
 release's tests. GitHub's [concurrency queue](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
 keeps later runs waiting instead of replacing a pending release.
+Publications share one package-wide queue across versions. Before uploading a
+new version, the workflow checks its npm dist-tag and refuses to move it backward
+if a newer version has already reached that tag.
 
 Service dependency caches contain installed dependencies. Image builds restore
 the current workspace manifests separately, so a version or release-command
