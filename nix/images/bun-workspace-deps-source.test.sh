@@ -126,3 +126,50 @@ printf 'included dependency files:\n'
 printf '  %s\n' "${included_files}"
 printf 'source-only additions and directory-shape changes preserved the dependency source identity\n'
 printf 'manifest and lockfile changes changed the dependency source identity\n'
+
+metadata_fixture="${fixture}/metadata"
+mkdir -p "${metadata_fixture}/source/packages/sdk" "${metadata_fixture}/before" "${metadata_fixture}/after"
+cat > "${metadata_fixture}/source/package.json" <<'EOF'
+{"name":"metadata-fixture","private":true,"workspaces":["packages/*"],"dependencies":{"@fixture/sdk":"workspace:*"}}
+EOF
+cat > "${metadata_fixture}/source/packages/sdk/package.json" <<'EOF'
+{"name":"@fixture/sdk","version":"0.11.3","type":"module","exports":"./index.js"}
+EOF
+(
+  cd "${metadata_fixture}/source"
+  bun install --lockfile-only --ignore-scripts
+)
+
+build_metadata_fixture() {
+  local destination="$1"
+  cp -R "${metadata_fixture}/source/." "${destination}/"
+  (
+    cd "${destination}"
+    bun install --frozen-lockfile --ignore-scripts --backend=copyfile --linker=isolated
+  )
+  mkdir -p "${destination}/node_modules/external-fixture/empty"
+  printf '{"name":"external-fixture","version":"1.0.0"}\n' > "${destination}/node_modules/external-fixture/package.json"
+  bash "${repo_root}/nix/images/prune-bun-dependency-metadata.sh" "${destination}"
+  test ! -f "${destination}/package.json"
+  test ! -f "${destination}/packages/sdk/package.json"
+  test -f "${destination}/node_modules/external-fixture/package.json"
+  test -d "${destination}/node_modules/external-fixture/empty"
+}
+
+build_metadata_fixture "${metadata_fixture}/before"
+cat > "${metadata_fixture}/source/packages/sdk/package.json" <<'EOF'
+{"name":"@fixture/sdk","version":"0.11.4","type":"module","exports":"./index.js","scripts":{"release":"bun release.ts"}}
+EOF
+build_metadata_fixture "${metadata_fixture}/after"
+expect_same "SDK version and release script change" \
+  "$(nix hash path "${metadata_fixture}/before")" \
+  "$(nix hash path "${metadata_fixture}/after")"
+
+cp -R "${metadata_fixture}/source/." "${metadata_fixture}/after/"
+printf 'export const version = "0.11.4"\n' > "${metadata_fixture}/after/packages/sdk/index.js"
+(
+  cd "${metadata_fixture}/after"
+  bun -e 'import { version } from "@fixture/sdk"; if (version !== "0.11.4") throw new Error("Stale workspace source")'
+  bun -e 'const pkg = await Bun.file("packages/sdk/package.json").json(); if (pkg.version !== "0.11.4" || !pkg.scripts.release) throw new Error("Stale workspace manifest")'
+)
+printf 'release metadata preserved the dependency closure hash and current workspace resolution\n'

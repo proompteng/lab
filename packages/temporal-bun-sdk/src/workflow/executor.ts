@@ -138,6 +138,7 @@ export interface ExecuteWorkflowInput {
   readonly queryRequests?: readonly WorkflowQueryRequest[]
   readonly updates?: readonly WorkflowUpdateInvocation[]
   readonly mode?: 'workflow' | 'query'
+  readonly localActivityDeadline?: AbortSignal
 }
 
 export type WorkflowCompletionStatus = 'completed' | 'failed' | 'continued-as-new' | 'pending'
@@ -223,6 +224,7 @@ export class WorkflowExecutor {
         signalDeliveries: input.signalDeliveries,
         timerResults: input.timerResults,
         updates: definition.updates,
+        localActivityDeadline: input.localActivityDeadline,
       })
       lastCommandContext = created.commandContext
       lastQueryRegistry = created.queryRegistry
@@ -268,6 +270,7 @@ export class WorkflowExecutor {
       }
     }
 
+    await lastCommandContext?.settleLocalActivities()
     const executionError = Exit.isFailure(exit) ? this.#resolveError(exit.cause) : undefined
     const nondeterminismError = executionError
       ? unwrapWorkflowError(executionError, WorkflowNondeterminismError)

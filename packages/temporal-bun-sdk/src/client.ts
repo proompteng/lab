@@ -1486,7 +1486,7 @@ class TemporalClientImpl implements TemporalClient {
             case 'workflowExecutionCompletedEventAttributes': {
               const payloads = attributes.value.result?.payloads ?? []
               const decoded = await this.dataConverter.fromPayloads(payloads)
-              return (decoded.length <= 1 ? (decoded[0] as T) : (decoded as unknown as T)) ?? (undefined as T)
+              return decoded.length <= 1 ? (decoded[0] as T) : (decoded as unknown as T)
             }
             case 'workflowExecutionFailedEventAttributes': {
               const failure = await this.dataConverter.decodeFailurePayloads(attributes.value.failure)
