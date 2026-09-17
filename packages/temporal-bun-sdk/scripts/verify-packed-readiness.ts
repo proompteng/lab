@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm, mkdtemp } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -43,6 +43,7 @@ type ReleaseProvenance = {
     readonly version?: string
   }
   readonly passed?: boolean
+  readonly git?: { readonly githubSha?: string }
   readonly releaseProvenanceManifest?: string
   readonly readinessArtifacts?: readonly {
     readonly path?: string
@@ -191,6 +192,13 @@ const verifyPublishedPack = async (packageJson: PackageJson, spec: string) => {
       join(extractedPackageRoot, 'dist', 'release-provenance.json'),
     )
     assertReadiness(productionReadiness, releaseProvenance, packageJson, true)
+    const publishedSha = releaseProvenance.git?.githubSha
+    if (!publishedSha || !/^[a-f0-9]{40}$/.test(publishedSha)) {
+      throw new Error('Published release provenance must identify its GitHub commit')
+    }
+    if (process.env.GITHUB_OUTPUT) {
+      await appendFile(process.env.GITHUB_OUTPUT, `published_sha=${publishedSha}\n`)
+    }
     console.log(
       `[temporal-bun-sdk] published readiness verified for ${pack.id ?? spec} (${pack.filename}; ${pack.integrity})`,
     )
