@@ -100,7 +100,7 @@ export const intradayMomentumEntryQuery = (
     ) * minuteMs
   const availableAt = utcInstantFromEpochMillis(firstEligibleRangeEndEpoch + decisionDelayMs)
   if (
-    cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' ||
+    (cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' && cycle.schemaVersion !== 'bayn.autonomous-cycle.v4') ||
     cycle.identity.strategyName !== 'intraday-momentum' ||
     cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3' ||
     observedAt < cycle.window.submissionOpenAt ||

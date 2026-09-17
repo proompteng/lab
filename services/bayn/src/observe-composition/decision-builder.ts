@@ -1019,6 +1019,7 @@ export const prepareObservePlanner = <R>(
   )
 
 type RiskInputPreparation = {
+  readonly limitSlippageBps: number
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
@@ -1069,6 +1070,7 @@ const reduceRiskInputs = (
             quantityMicros: BigInt(target.quantityMicros),
             referencePriceMicros: referencePrice,
             executionModel: input.executionModel,
+            limitSlippageBps: BigInt(input.limitSlippageBps),
           }),
           (pricing): ShadowDeltaRiskInput => {
             const state: State = {
@@ -1130,6 +1132,10 @@ const reduceObserveRiskInputs = <R>(
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
+    limitSlippageBps:
+      closeOnlyExpiresAt === undefined && authorityObservation.authority.effective === Authority.Execution
+        ? input.policy.maxAdverseSlippageBps
+        : 0,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
@@ -1286,6 +1292,7 @@ function buildCycleDecision<R>(
       ? yield* buildObserveShadowDecision(decisionInput)
       : yield* buildExecutionDecision({
           ...decisionInput,
+          entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
         })
@@ -1644,6 +1651,7 @@ const buildClosingExecutionCycleDecisionWithSource = (
     )
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
+        limitSlippageBps: 0,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,

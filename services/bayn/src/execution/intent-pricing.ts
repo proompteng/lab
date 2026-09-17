@@ -1,5 +1,6 @@
 import { Result } from 'effect'
 
+import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
 import type { ExecutionModel } from '../execution-model-contract'
 import { makeFillTerms, MICROS, notionalMicros, type ExecutionModelFailure } from '../execution-model'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
@@ -11,6 +12,7 @@ export interface ExecutionIntentPricingInput {
   readonly quantityMicros: bigint
   readonly referencePriceMicros: bigint
   readonly executionModel: ExecutionModel
+  readonly limitSlippageBps: bigint
 }
 
 export interface ExecutionIntentPricing {
@@ -27,7 +29,7 @@ export type ExecutionIntentPricingFailure =
     }
   | {
       readonly _tag: 'InvalidQuoteBoundIntent'
-      readonly reason: 'invalid-quantity-or-price' | 'fractional-quantity'
+      readonly reason: 'invalid-quantity-or-price' | 'fractional-quantity' | 'invalid-slippage'
       readonly quantityMicros: bigint
       readonly referencePriceMicros: bigint
     }
@@ -74,8 +76,22 @@ export const deriveExecutionIntentPricing = (
       referencePriceMicros: input.referencePriceMicros,
     })
   }
-  return Result.map(notionalMicros(input.quantityMicros, input.referencePriceMicros), (notionalLimitMicros) => ({
-    expectedExecutionPriceMicros: input.referencePriceMicros,
+  if (input.limitSlippageBps < 0n || input.limitSlippageBps >= 10_000n) {
+    return Result.fail({
+      _tag: 'InvalidQuoteBoundIntent',
+      reason: 'invalid-slippage',
+      quantityMicros: input.quantityMicros,
+      referencePriceMicros: input.referencePriceMicros,
+    })
+  }
+  const buy = input.side === OrderSide.Buy
+  const boundary = input.referencePriceMicros * (10_000n + (buy ? input.limitSlippageBps : -input.limitSlippageBps))
+  const price =
+    input.limitSlippageBps === 0n
+      ? input.referencePriceMicros
+      : quantizeAlpacaLimitPriceMicros((boundary + (buy ? 0n : 9_999n)) / 10_000n, buy ? 'DOWN' : 'UP')
+  return Result.map(notionalMicros(input.quantityMicros, price), (notionalLimitMicros) => ({
+    expectedExecutionPriceMicros: price,
     notionalLimitMicros,
   }))
 }

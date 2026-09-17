@@ -42,7 +42,7 @@ export const makeCycleQueries = (
       ? sql<Record<string, unknown>>`
           SELECT
             cycle_id, schema_version, identity_schema_version, strategy_name,
-            qualification_run_id, strategy_protocol_hash, account_id,
+            qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -60,7 +60,7 @@ export const makeCycleQueries = (
       : sql<Record<string, unknown>>`
           SELECT
             cycle_id, schema_version, identity_schema_version, strategy_name,
-            qualification_run_id, strategy_protocol_hash, account_id,
+            qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -83,7 +83,7 @@ export const makeCycleQueries = (
         ? sql<Record<string, unknown>>`
           SELECT
             cycle_id, schema_version, identity_schema_version, strategy_name,
-            qualification_run_id, strategy_protocol_hash, account_id,
+            qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -97,13 +97,15 @@ export const makeCycleQueries = (
           FROM autonomous_cycles
           WHERE qualification_run_id = ${slot.qualificationRunId}
             AND account_id = ${slot.accountId}
-            AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3')
+            AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
             AND execution_session_date = ${slot.executionSessionDate}
+          ORDER BY entry_attempt_ordinal DESC
+          LIMIT 1
         `
         : sql<Record<string, unknown>>`
       SELECT
         cycle_id, schema_version, identity_schema_version, strategy_name,
-        qualification_run_id, strategy_protocol_hash, account_id,
+        qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
         signal_session_date::text AS signal_session_date, signal_calendar_version,
         execution_policy_schema_version, execution_policy_hash,
         strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -238,7 +240,7 @@ export const makeCycleQueries = (
       )
       SELECT
         cycle.cycle_id, cycle.schema_version, cycle.identity_schema_version, cycle.strategy_name,
-        cycle.qualification_run_id, cycle.strategy_protocol_hash, cycle.account_id,
+        cycle.qualification_run_id, cycle.strategy_protocol_hash, cycle.account_id, cycle.entry_attempt_ordinal,
         cycle.signal_session_date::text AS signal_session_date, cycle.signal_calendar_version,
         cycle.execution_policy_schema_version, cycle.execution_policy_hash,
         cycle.strategy_execution_model_hash, cycle.submission_window_ms, cycle.submission_cutoff_before_open_ms,
