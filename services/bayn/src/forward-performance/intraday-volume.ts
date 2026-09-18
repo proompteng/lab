@@ -5,7 +5,7 @@ import { IntradaySnapshotFailure, type IntradaySnapshotRequest } from '../market
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { verifyIntradayArchiveWatermarks, verifyIntradaySnapshotRequest } from '../market-data/intraday/verification'
-import { IntradayPerformanceManifestSchema, IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
+import { IntradayPerformanceDecisionManifestSchema, IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
 import type {
   ForwardPerformanceIntradayMarketVolumeEvidence,
   ForwardPerformanceIntradayMarketVolumeRequest,
@@ -32,7 +32,7 @@ export const intradayPerformanceDecisionRequest = (
   request: ForwardPerformanceIntradayMarketVolumeRequest,
 ): Result.Result<IntradaySnapshotRequest, IntradaySnapshotFailure> =>
   Result.gen(function* () {
-    const manifest = yield* Schema.decodeUnknownResult(IntradayPerformanceManifestSchema)(
+    const manifest = yield* Schema.decodeUnknownResult(IntradayPerformanceDecisionManifestSchema)(
       request.decisionManifest,
     ).pipe(Result.mapError((cause) => failure('intraday performance decision manifest is invalid', cause)))
     const { snapshotId, contentHash, ...material } = manifest
@@ -42,6 +42,28 @@ export const intradayPerformanceDecisionRequest = (
       snapshotId !== request.decisionSnapshotId
     ) {
       return yield* Result.fail(failure('intraday performance decision snapshot identity differs'))
+    }
+    const archiveWatermarks =
+      manifest.schemaVersion === 'bayn.intraday-market-snapshot.v1'
+        ? manifest.archiveWatermarks
+        : manifest.lineage.map((source) => ({
+            sourceTopic: source.sourceTopic,
+            sourcePartition: source.sourcePartition,
+            inclusiveLastOffset: source.lastOffset,
+          }))
+    if (manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1') {
+      for (const watermark of archiveWatermarks) {
+        const position = manifest.streaming.positions.find(
+          (item) => item.topic === watermark.sourceTopic && item.partition === watermark.sourcePartition,
+        )
+        if (
+          !canonicalOffset(watermark.inclusiveLastOffset) ||
+          position === undefined ||
+          !canonicalOffset(position.offset) ||
+          BigInt(watermark.inclusiveLastOffset) >= BigInt(position.offset)
+        )
+          return yield* Result.fail(failure('streaming performance lineage is outside its consumed input cut'))
+      }
     }
     const original = yield* verifyIntradaySnapshotRequest({
       sessionDate: manifest.sessionDate,
@@ -60,7 +82,7 @@ export const intradayPerformanceDecisionRequest = (
       sourceTopics: manifest.sourceTopics,
       maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
       minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
-      archiveWatermarks: manifest.archiveWatermarks,
+      archiveWatermarks,
     })
     const session = original.calendar.sessions.find((item) => item.date === request.executionSessionDate)
     if (

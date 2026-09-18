@@ -242,6 +242,7 @@ describe('intraday-momentum runtime decision boundary', () => {
     ).toEqual(
       new IntradayMomentumEntryAwaitingSnapshot({
         message: 'intraday symbol lacks the complete rolling lookback baseline',
+        symbol: 'AMD',
       }),
     )
   })

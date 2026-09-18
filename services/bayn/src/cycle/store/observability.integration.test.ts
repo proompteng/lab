@@ -206,7 +206,7 @@ const seedSafetyState = Effect.gen(function* () {
   `
 })
 
-const seedUnresolvedMutation = (cycleId: string) =>
+const seedUnresolvedMutation = (cycleId: string, startedAt = '2026-08-28T14:32:00.000Z') =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     const intentId = '6'.repeat(64)
@@ -230,7 +230,7 @@ const seedUnresolvedMutation = (cycleId: string) =>
       ) VALUES (
         ${'9'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'a'.repeat(64)}, ${intentId}, 1,
         'SUBMIT', 'SUBMIT_STARTED', ${'b'.repeat(64)}, 1000, NULL, NULL, NULL, NULL,
-        '2026-08-28T14:32:00.000Z'
+        ${startedAt}
       )
     `
   })
@@ -354,6 +354,96 @@ describePostgres('PostgreSQL intraday observability projection', () => {
       netRealizedPnlAfterExecutionFeesMicros: '0',
     })
   })
+
+  test.each([
+    {
+      accepted: true,
+      fillAt: '2026-08-28T14:32:00.800000000Z',
+      brokerFillLatency: 800,
+      ingestionLatency: 1200,
+      regressions: 0,
+    },
+    {
+      accepted: false,
+      fillAt: '2026-08-28T14:32:00.800000000Z',
+      brokerFillLatency: 800,
+      ingestionLatency: 1200,
+      regressions: 0,
+    },
+    {
+      accepted: true,
+      fillAt: '2026-08-28T14:32:02.500000000Z',
+      brokerFillLatency: 2500,
+      ingestionLatency: null,
+      regressions: 1,
+    },
+  ])(
+    'separates submit acceptance, broker-fill time, ingestion, and clock regressions (%j)',
+    async ({ accepted, fillAt, brokerFillLatency, ingestionLatency, regressions }) => {
+      const candidate = draft()
+      const projection = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const store = yield* CycleStore
+          yield* store.acquire(candidate, acquiredAt)
+          yield* store.activate(candidate.identity.cycleId, activatedAt)
+          yield* seedSafetyState
+          yield* seedUnresolvedMutation(candidate.identity.cycleId, '2026-08-28T14:32:00.100Z')
+          if (accepted)
+            yield* sql`
+        INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+          request_hash, consistency_delay_ms, broker_order_id, request_id, response_status,
+          response_content_hash, occurred_at
+        ) VALUES (
+          ${'d'.repeat(64)}, 'bayn.paper-mutation-event.v1', ${'a'.repeat(64)}, ${'6'.repeat(64)}, 2,
+          'SUBMIT', 'SUBMIT_ACCEPTED', ${'b'.repeat(64)}, 1000, 'latency-order', 'latency-request', 200,
+          ${'c'.repeat(64)}, '2026-08-28T14:32:00.350Z'
+        )`
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          ) VALUES
+            (${'e'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'e'.repeat(64)}, 'ORDER', 'ALPACA', ${accountId},
+              'latency-order-observed', 1, '2026-08-28T14:32:00.350Z', '2026-08-28T14:32:01.500Z'),
+            (${'f'.repeat(64)}, 'bayn.paper-broker-event.v1', ${'f'.repeat(64)}, 'FILL', 'ALPACA', ${accountId},
+              'latency-fill-observed', 2, '2026-08-28T14:32:00.800Z', '2026-08-28T14:32:02.000Z')`
+              yield* sql`
+          INSERT INTO orders (
+            event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
+            side, order_type, time_in_force, quantity_micros, filled_quantity_micros, limit_price_micros, status
+          ) VALUES (
+            ${'e'.repeat(64)}, ${accountId}, 'bayn.paper-order.v1', 'latency-order', 'bayn-observability-unresolved',
+            ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED'
+          )`
+              yield* sql`
+          INSERT INTO fills (
+            event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
+            symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
+          ) VALUES (
+            ${'f'.repeat(64)}, ${accountId}, 'bayn.paper-fill.v1', 'latency-fill', 'latency-order',
+            'bayn-observability-unresolved', ${'6'.repeat(64)}, 'SPY', 'BUY', 500000, 1000000, 0,
+            ${fillAt}
+          )`
+            }),
+          )
+          return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+        }),
+      )
+      expect(projection.execution).toMatchObject({
+        maximumIntentToSubmitLatencyMs: 100,
+        maximumOrderAcknowledgementLatencyMs: accepted ? 250 : null,
+        maximumOrderObservationLatencyMs: 1500,
+        maximumIntentToBrokerFillLatencyMs: brokerFillLatency,
+        maximumFillLatencyMs: 2000,
+        maximumFillIngestionLatencyMs: ingestionLatency,
+        latencyClockRegressionCount: regressions,
+      })
+    },
+  )
 
   test('includes posted broker fees and refunds in account economics without mixing accounts or future posts', async () => {
     const projection = await runtime.runPromise(

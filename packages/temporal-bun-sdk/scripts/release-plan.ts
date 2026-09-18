@@ -5,6 +5,16 @@ const packagePath = 'packages/temporal-bun-sdk/package.json'
 const component = 'packages/temporal-bun-sdk'
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
+export const matchesRecordedReleaseBase = (message: string, parents: readonly string[], requireRecord = false) => {
+  const prefix = 'Temporal-Bun-Release-Base:'
+  const [recordedBase, ...otherBases] = message.split('\n').filter((line) => line.startsWith(prefix))
+  if (!recordedBase) return !requireRecord
+  if (otherBases.length > 0 || !/^Temporal-Bun-Release-Base: [a-f0-9]{40}$/.test(recordedBase)) {
+    throw new Error('The release commit has an invalid base record')
+  }
+  return parents.length === 1 && parents[0] === recordedBase.slice(prefix.length).trim()
+}
+
 export const assertPublishTag = (version: string, currentVersion?: string) => {
   if (currentVersion && Bun.semver.order(version, currentVersion) < 0) {
     throw new Error(`Refusing to move an npm dist-tag backward from ${currentVersion} to ${version}`)
@@ -75,6 +85,24 @@ if (import.meta.main) {
     npmTag: event.inputs?.npm_tag,
     dryRun: event.inputs?.dry_run,
   })
+  if (plan.publish) {
+    const sha = process.env.GITHUB_SHA
+    if (!sha || !/^[a-f0-9]{40}$/.test(sha)) throw new Error('Missing publication commit')
+    const message = Bun.spawnSync(['git', 'show', '-s', '--format=%B', sha])
+    const parents = Bun.spawnSync(['git', 'show', '-s', '--format=%P', sha])
+    if (message.exitCode !== 0 || parents.exitCode !== 0) throw new Error('Cannot read the publication commit')
+    if (
+      !matchesRecordedReleaseBase(
+        message.stdout.toString(),
+        parents.stdout.toString().trim().split(/\s+/),
+        process.env.GITHUB_EVENT_NAME === 'push',
+      )
+    ) {
+      throw new Error(
+        'Refusing publication: the recorded base is missing or main changed during the release merge. Run bun run release:temporal patch to prepare a replacement.',
+      )
+    }
+  }
   console.log(JSON.stringify(plan))
   if (process.env.GITHUB_OUTPUT) {
     await appendFile(
