@@ -104,7 +104,12 @@ export interface CycleExecutionFunnelObservation {
   readonly latestIntentAt: string | null
   readonly latestOrderAt: string | null
   readonly latestFillAt: string | null
+  readonly maximumIntentToSubmitLatencyMs: number | null
   readonly maximumOrderAcknowledgementLatencyMs: number | null
+  readonly maximumOrderObservationLatencyMs: number | null
+  readonly maximumIntentToBrokerFillLatencyMs: number | null
+  readonly maximumFillIngestionLatencyMs: number | null
+  readonly latencyClockRegressionCount: number
   readonly maximumFillLatencyMs: number | null
   /** Null means no complete broker position snapshot has been observed. */
   readonly positionSnapshotObservedAt: string | null

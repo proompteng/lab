@@ -100,6 +100,8 @@ export const readForwardPerformanceMarketVolumeBindings = (
       SELECT daily.manifest FROM snapshot_references AS daily WHERE daily.snapshot_id = cycle.snapshot_id
       UNION ALL
       SELECT intraday.manifest FROM intraday_snapshot_references AS intraday WHERE intraday.snapshot_id = cycle.snapshot_id
+      UNION ALL
+      SELECT streaming.manifest FROM streaming_snapshot_references AS streaming WHERE streaming.snapshot_id = cycle.snapshot_id
     ) AS reference ON true
     CROSS JOIN latest_reconciliation
     WHERE cycle.account_id = ${accountId}

@@ -2,12 +2,13 @@ import { describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Schema } from 'effect'
+import { StreamingPerformanceManifestSchema } from '../intraday-schema'
 
 import { PostgresClientLive } from '../../db/postgres-client'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceUnclosedCycleCountDataFirst } from './read'
-import { completedIntradayCycles } from '../intraday-cycle.test-support'
+import { completedIntradayCycles, makeStreamingPerformanceFixture } from '../intraday-cycle.test-support'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -24,6 +25,7 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
       throw new Error('BAYN_TEST_POSTGRES_URL must target a local test database')
     const runtime = ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provideMerge(NodeServices.layer)))
+    const streaming = makeStreamingPerformanceFixture().request
     try {
       const rows = await runtime.runPromise(
         Effect.gen(function* () {
@@ -34,11 +36,14 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
               yield* sql`CREATE TEMP TABLE autonomous_cycles (cycle_id text, snapshot_id text, account_id text, state text, execution_session_date date, execution_open_at timestamptz, execution_close_at timestamptz, terminal_at timestamptz, submission_open_at timestamptz) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE snapshot_references (snapshot_id text, manifest jsonb) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE intraday_snapshot_references (snapshot_id text, manifest jsonb) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE streaming_snapshot_references (snapshot_id text, manifest jsonb) ON COMMIT DROP`
               yield* sql`INSERT INTO reconciliations VALUES ('receipt', 'test-account', '2026-09-11T21:00:00Z')`
               for (const cycle of completedIntradayCycles) {
                 yield* sql`INSERT INTO autonomous_cycles VALUES (${cycle.cycleId}, ${cycle.manifest.snapshotId}, 'test-account', 'COMPLETED', ${cycle.session}::date, ${cycle.windowOpenedAt}::timestamptz, ${cycle.windowClosedAt}::timestamptz, ${cycle.windowClosedAt}::timestamptz, ${cycle.windowOpenedAt}::timestamptz)`
                 yield* sql`INSERT INTO intraday_snapshot_references VALUES (${cycle.manifest.snapshotId}, ${JSON.stringify(cycle.manifest)}::jsonb)`
               }
+              yield* sql`INSERT INTO autonomous_cycles VALUES (${streaming.cycleId}, ${streaming.decisionSnapshotId}, 'test-account', 'COMPLETED', ${streaming.executionSessionDate}::date, ${streaming.windowOpenedAt}::timestamptz, ${streaming.windowClosedAt}::timestamptz, ${streaming.windowClosedAt}::timestamptz, ${streaming.windowOpenedAt}::timestamptz)`
+              yield* sql`INSERT INTO streaming_snapshot_references VALUES (${streaming.decisionSnapshotId}, ${JSON.stringify(streaming.decisionManifest)}::jsonb)`
               const included = yield* readForwardPerformanceMarketVolumeBindings(sql, 'test-account')
               const otherAccount = yield* readForwardPerformanceMarketVolumeBindings(sql, 'another-account')
               yield* sql`UPDATE reconciliations SET reconciled_at = '2026-09-10T21:00:00Z'`
@@ -50,10 +55,23 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
           )
         }),
       )
-      expect(rows.included.map((row) => row.cycle_id)).toEqual(completedIntradayCycles.map((cycle) => cycle.cycleId))
-      expect(rows.included.every((row) => row.manifest.schemaVersion === 'bayn.intraday-market-snapshot.v1')).toBe(true)
+      expect(rows.included.map((row) => row.cycle_id)).toEqual([
+        streaming.cycleId,
+        ...completedIntradayCycles.map((cycle) => cycle.cycleId),
+      ])
+      expect(rows.included.map((row) => row.manifest.schemaVersion)).toEqual([
+        'bayn.streaming-market-snapshot.v1',
+        'bayn.intraday-market-snapshot.v1',
+        'bayn.intraday-market-snapshot.v1',
+      ])
+      expect(rows.included[0]?.manifest).toEqual(
+        Schema.decodeUnknownSync(StreamingPerformanceManifestSchema)(streaming.decisionManifest),
+      )
       expect(rows.otherAccount).toHaveLength(0)
-      expect(rows.beforeSecondClose.map((row) => row.cycle_id)).toEqual([completedIntradayCycles[0].cycleId])
+      expect(rows.beforeSecondClose.map((row) => row.cycle_id)).toEqual([
+        streaming.cycleId,
+        completedIntradayCycles[0].cycleId,
+      ])
       expect(rows.open).toHaveLength(0)
     } finally {
       await runtime.dispose()
