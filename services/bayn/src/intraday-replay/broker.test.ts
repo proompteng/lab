@@ -824,3 +824,36 @@ test('delivery failures and session closes retain their terminal state before pu
     }),
   )
 })
+
+test('production MARKET/DAY close liquidates at the adverse arrival price and survives restore', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        advanceToArrival: (at) => TestClock.setTime(at),
+        assumptions: { ...config.assumptions, slippageBps: 1 },
+      })
+      yield* broker.mutation.submit(intent())
+      const close = intent({
+        clientOrderId: 'market-close',
+        side: OrderSide.Sell,
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+        notionalLimitMicros: '1',
+      })
+      const result = yield* broker.mutation.submit(close, true)
+      expect(result.order.orderType).toBe('market')
+      expect(result.order.timeInForce).toBe('day')
+      expect(result.order.limitPriceMicros).toBeUndefined()
+      expect(result.order.status).toBe(OrderStatus.Filled)
+      expect(result.order.filledAveragePriceMicros).toBe('99990000')
+      expect((yield* broker.snapshot).ledger.positions).toEqual([])
+      const checkpoint = yield* broker.checkpoint
+      const restored = yield* makeReplayBroker({
+        ...config,
+        assumptions: { ...config.assumptions, slippageBps: 1 },
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.contentHash },
+      })
+      expect((yield* restored.snapshot).ledger.positions).toEqual([])
+    }),
+  )
+})

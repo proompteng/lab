@@ -84,3 +84,35 @@ test('source advancement failure cannot advance SQL or Effect clocks', async () 
   expect(result.now).toBe(100)
   expect(wroteSql).toBe(false)
 })
+
+test('unavailable decision evidence is counted separately from lifecycle waits and valid no-trade', async () => {
+  const { DecisionReadinessReason } = await import('../cycle/runner/readiness')
+  const outcome = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(0)
+      return yield* driveReplaySession(
+        {
+          nextDelayMs: 1,
+          advance: Clock.currentTimeMillis.pipe(
+            Effect.map((at) => ({
+              observation: {
+                result: 'SUCCESS' as const,
+                outcome: 'RECOVERED' as const,
+                recoveryAction: 'WAITING' as const,
+                observedAt: utcInstantFromEpochMillis(at),
+                readiness: {
+                  reason: DecisionReadinessReason.SnapshotUnavailable,
+                  message: 'Required benchmark input is missing',
+                },
+              },
+            })),
+          ),
+        },
+        (at) => TestClock.setTime(at),
+        0,
+        2,
+      )
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(outcome).toMatchObject({ passCount: 3, failedPassCount: 0, unavailableDecisionPassCount: 3 })
+})
