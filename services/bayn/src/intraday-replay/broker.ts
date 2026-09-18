@@ -43,7 +43,11 @@ import type { IntradayQuote } from '../market-data/intraday/model'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
-import { simulateIntradayReplayIocCore, type IntradayReplayIocCoreOutcome } from './execution-core'
+import {
+  simulateIntradayReplayMarketCloseCore,
+  simulateIntradayReplayIocCore,
+  type IntradayReplayIocCoreOutcome,
+} from './execution-core'
 import {
   makeReplayOrderExecution,
   replayQuoteRejection,
@@ -242,14 +246,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       const rejection = replayQuoteRejection(quote, symbol, nowMs, config.protocol)
       return rejection === null || rejection === ReplayQuoteRejection.Stale
     }
-    const executeQuote = (side: OrderSide, quantity: string, limit: string, quote: IntradayQuote) =>
+    const executeQuote = (side: OrderSide, quantity: string, limit: string | undefined, quote: IntradayQuote) =>
       Result.gen(function* () {
-        return yield* simulateIntradayReplayIocCore({
-          order: {
-            side: side === OrderSide.Buy ? IntentSide.Buy : IntentSide.Sell,
-            quantityMicros: BigInt(quantity),
-            limitPriceMicros: BigInt(limit),
-          },
+        const input = {
           quote: {
             priceMicros: yield* numberToMicros(side === OrderSide.Buy ? quote.askPrice : quote.bidPrice, 'quote.price'),
             displayedQuantityMicros: yield* numberToMicros(
@@ -259,7 +258,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           },
           executionModel: config.protocol.executionModel,
           assumptions: config.assumptions,
-        })
+        }
+        return yield* limit === undefined
+          ? simulateIntradayReplayMarketCloseCore({ ...input, quantityMicros: BigInt(quantity) })
+          : simulateIntradayReplayIocCore({
+              ...input,
+              order: {
+                side: side === OrderSide.Buy ? IntentSide.Buy : IntentSide.Sell,
+                quantityMicros: BigInt(quantity),
+                limitPriceMicros: BigInt(limit),
+              },
+            })
       })
     if (restored !== undefined) {
       for (const fill of restored.state.ledger.fills) {
@@ -277,7 +286,12 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         )
           return yield* new ReplayBrokerFailure({ message: 'Restored fill has no matching retained arrival quote' })
         const outcome = yield* Effect.fromResult(
-          executeQuote(order.side, order.quantityMicros, order.limitPriceMicros, quote.value),
+          executeQuote(
+            order.side,
+            order.quantityMicros,
+            order.orderType === OrderType.Limit ? order.limitPriceMicros : undefined,
+            quote.value,
+          ),
         )
         if (
           outcome.status !== 'filled' ||
@@ -565,13 +579,27 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           yield* readState
           const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId, closeOnly))
           const request = prepared.request
-          if (request.type !== OrderType.Limit || request.time_in_force !== TimeInForce.ImmediateOrCancel)
-            return yield* mutationFailure(MutationOperation.Submit, 'Replay requires the production LIMIT/IOC request')
+          const marketClose =
+            closeOnly &&
+            request.type === OrderType.Market &&
+            request.time_in_force === TimeInForce.Day &&
+            request.side === OrderSide.Sell
+          if (
+            !marketClose &&
+            (request.type !== OrderType.Limit || request.time_in_force !== TimeInForce.ImmediateOrCancel)
+          )
+            return yield* mutationFailure(
+              MutationOperation.Submit,
+              'Replay requires LIMIT/IOC or close-only MARKET/DAY sell',
+            )
           const observedAt = yield* now
           const metadata = asset(intent.symbol)
           if (metadata === undefined || !metadata.tradable)
             return yield* mutationFailure(MutationOperation.Submit, 'Captured asset is not tradable')
-          const limit = yield* Effect.fromResult(decimalToMicrosResult(request.limit_price, false, 'limit price'))
+          const limit =
+            request.type === OrderType.Limit
+              ? yield* Effect.fromResult(decimalToMicrosResult(request.limit_price, false, 'limit price'))
+              : undefined
           const brokerOrderId = simulatedUuid(
             yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId: intent.clientOrderId })),
           )
@@ -588,10 +616,10 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             quantityMicros: intent.quantityMicros,
             filledQuantityMicros: '0',
             orderClass: OrderClass.Simple,
-            orderType: OrderType.Limit,
+            orderType: request.type,
             side: request.side,
-            timeInForce: TimeInForce.ImmediateOrCancel,
-            limitPriceMicros: limit,
+            timeInForce: request.time_in_force,
+            ...(limit === undefined ? {} : { limitPriceMicros: limit }),
             status: OrderStatus.New,
             extendedHours: false,
             observedAt,
@@ -646,6 +674,10 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               }
               let outcome: IntradayReplayIocCoreOutcome | null = null
               let execution: ReplayOrderExecution
+              if (marketClose && unavailableReason !== null)
+                return yield* new ReplayBrokerFailure({
+                  message: `Market close simulation requires a fresh executable quote: ${unavailableReason}`,
+                })
               if (unavailableReason !== null) {
                 execution = makeReplayOrderExecution({
                   ...arrival,
@@ -886,6 +918,10 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             message: 'Session equity must be captured at the recorded market close',
           })
         const current = yield* readState
+        if (current.orders.some((record) => record.deliveryFailure !== undefined))
+          return yield* new ReplayBrokerFailure({
+            message: 'Cannot complete simulation after a broker delivery failure',
+          })
         if (current.orders.some((record) => isOpen(record.order)))
           return yield* new ReplayBrokerFailure({ message: 'Cannot complete session with unresolved broker orders' })
         const account = yield* read.account

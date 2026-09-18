@@ -25,9 +25,9 @@ import { makeReplayBroker } from './broker'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
-durableTest(
-  'production accounting survives client restart against PostgreSQL and real TigerBeetle',
-  async () => {
+durableTest.each(['ioc', 'fractional'] as const)(
+  'production %s accounting survives client restart against PostgreSQL and real TigerBeetle',
+  async (scenario) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Both isolated database endpoints are required')
     const url = new URL(baynTestPostgresUrl)
@@ -166,8 +166,23 @@ durableTest(
           state: IntentState.IoStarted,
           createdAt: '2026-09-04T14:31:00.000Z',
         })
-        for (const side of [OrderSide.Buy, OrderSide.Sell]) {
-          const request = yield* broker.mutation.submit(order(side)).pipe(Effect.forkChild({ startImmediately: true }))
+        const orders =
+          scenario === 'ioc'
+            ? [order(OrderSide.Buy), order(OrderSide.Sell)]
+            : [
+                order(OrderSide.Buy),
+                ...['500000', '2500000'].map((quantityMicros, index) => ({
+                  ...order(OrderSide.Sell),
+                  clientOrderId: `fractional-${index}`,
+                  quantityMicros,
+                  orderType: OrderType.Market,
+                  timeInForce: TimeInForce.Day,
+                })),
+              ]
+        for (const requestIntent of orders) {
+          const request = yield* broker.mutation
+            .submit(requestIntent, requestIntent.side === OrderSide.Sell)
+            .pipe(Effect.forkChild({ startImmediately: true }))
           yield* TestClock.adjust(100)
           yield* Fiber.join(request)
         }
@@ -186,11 +201,11 @@ durableTest(
     )
     expect(result.first.report.metrics.accountingExact).toBe(true)
     expect(result.restarted.report.metrics.accountingExact).toBe(true)
-    expect(result.rows[0]).toEqual({ fills: 2, transactions: 2 })
+    expect(result.rows[0]).toEqual({ fills: scenario === 'ioc' ? 2 : 3, transactions: scenario === 'ioc' ? 2 : 3 })
     expect(result.restarted.brokerState.account.cashMicros).toBe(result.broker.ledger.cashMicros)
     expect(result.restarted.brokerState.positions).toEqual([])
     // These externally supplied broker orders deliberately have no production intent bindings.
-    expect(result.restarted.brokerState.unknownOrderCount).toBe(2)
+    expect(result.restarted.brokerState.unknownOrderCount).toBe(scenario === 'ioc' ? 2 : 3)
   },
   60_000,
 )

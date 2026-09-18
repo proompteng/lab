@@ -275,3 +275,34 @@ publication or the coordinator response. It
 removes the exported checkpoint file before the kill and recovers from PostgreSQL in a new PID, proving one intent,
 one fill, one accounting transaction, and exact reconciliation with real TigerBeetle. Export files are not recovery
 authority. The full-session command still requires a fresh database; it does not expose a command-line resume mode.
+
+## Bar publication timing
+
+New live and simulated cuts bind `barPublicationPolicy: timely-equivalent-revision.v1`. Original minute bars allow
+60 seconds to finalize plus 10 seconds for publication; `updatedBars` allow the provider's following half-minute
+correction, or 90 seconds plus 10 seconds. Both include the existing five-second clock allowance. This follows
+[Alpaca's updated-bar timing](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data). These limits are
+independent of `maximumQuoteAgeMs`; executable quote freshness is unchanged.
+
+The latest bar revision still has to match the exact rolling feature's coordinates and content hash. If consecutive
+revisions have identical market values and identity, the projection retains the first publication as a timing witness,
+including after normal revision-history eviction. The snapshot binds its row, receipt, availability and source cut.
+A changed price, volume, VWAP or trade count starts a new publication history and must meet its own timing limit.
+Reconstruction verifies both deliveries and rejects altered, future or out-of-cut witnesses. The additional retained
+witness is bounded to one per bar revision. Cuts without the policy marker retain the legacy quote-linked timing
+rule and omit publication witnesses; archived snapshot contracts are unchanged.
+
+## Replay close and coverage acceptance
+
+The broker also accepts production close-only `MARKET/DAY` sells, including fractional quantities. It uses the fresh
+arrival bid, adverse slippage, configured liquidity fraction and the existing fee model. The observed displayed
+liquidity must cover the entire close. Missing, stale, future or insufficient liquidity fails the simulation and
+prevents session acceptance; this model does not estimate how a DAY remainder would fill later. No partial fill or
+IOC cancellation is invented for that unsupported case. Market orders have no limit price, and checkpoint restoration
+reconstructs their request hash, fills, fees and remaining quantity.
+
+Session schedules retain readiness counts and `unavailableDecisionPassCount`. Missing, stale or incomplete required
+decision evidence, archive-watermark waits and unexplained decision-pending states produce `missing-decision-data`
+and `INCOMPLETE`, even with zero failed passes and exact flat accounting. Lookback warmup, valid no-candidate signals
+and expected order/reconciliation lifecycle waits do not count as missing decision evidence. These counters measure
+scheduled observations; they do not establish profitability or replace a complete retained source capture.

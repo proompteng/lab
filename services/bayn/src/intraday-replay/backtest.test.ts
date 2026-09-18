@@ -330,6 +330,7 @@ test('run identity binds the independent capture receipt as well as the session 
 test('a completed schedule only qualifies economics with exact accounting and no unresolved exposure', () => {
   const exact = {
     failedPassCount: 0,
+    unavailableDecisionPassCount: 0,
     valuationFailureCount: 0,
     remainingPositionCount: 0,
     reconciliation: {
@@ -348,6 +349,10 @@ test('a completed schedule only qualifies economics with exact accounting and no
     },
   }
   expect(assessBacktestSession(exact)).toEqual({ completion: 'COMPLETE', issues: [] })
+  expect(assessBacktestSession({ ...exact, unavailableDecisionPassCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.MissingDecisionData],
+  })
   expect(assessBacktestSession({ ...exact, valuationFailureCount: 1 })).toEqual({
     completion: 'INCOMPLETE',
     issues: [BacktestIssue.MissingValuation],
