@@ -96,7 +96,12 @@ const CycleExecutionFunnelObservationRowSchema = Schema.Struct({
   latestIntentAt: Schema.NullOr(UtcInstantSchema),
   latestOrderAt: Schema.NullOr(UtcInstantSchema),
   latestFillAt: Schema.NullOr(UtcInstantSchema),
+  maximumIntentToSubmitLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
   maximumOrderAcknowledgementLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
+  maximumOrderObservationLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
+  maximumIntentToBrokerFillLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
+  maximumFillIngestionLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
+  latencyClockRegressionCount: NonNegativeIntegerSchema,
   maximumFillLatencyMs: Schema.NullOr(NonNegativeIntegerSchema),
   positionSnapshotObservedAt: Schema.NullOr(UtcInstantSchema),
   positionCount: Schema.NullOr(NonNegativeIntegerSchema),
@@ -517,6 +522,33 @@ const makeCycleObservability = Effect.gen(function* () {
               ON intents.intent_id = fills.intent_id
               AND intents.account_id = fills.account_id
           ),
+          cycle_submit_timings AS (
+            SELECT intent.intent_id, intent.created_at,
+              min(event.occurred_at) FILTER (WHERE event.event_type = 'SUBMIT_STARTED') AS started_at,
+              min(event.occurred_at) FILTER (WHERE event.event_type = 'SUBMIT_ACCEPTED') AS accepted_at
+            FROM cycle_intents AS intent
+            JOIN mutation_events AS event ON event.intent_id = intent.intent_id AND event.operation = 'SUBMIT'
+            GROUP BY intent.intent_id, intent.created_at
+          ),
+          cycle_latency_samples AS (
+            SELECT sample.name, extract(epoch FROM sample.duration) * 1000 AS milliseconds
+            FROM cycle_submit_timings AS timing
+            CROSS JOIN LATERAL (VALUES
+              ('intentToSubmit', timing.started_at - timing.created_at),
+              ('acknowledgement', timing.accepted_at - timing.started_at)
+            ) AS sample(name, duration)
+            UNION ALL
+            SELECT 'orderObservation', extract(epoch FROM (observed_at - intent_created_at)) * 1000
+            FROM first_cycle_orders
+            UNION ALL
+            SELECT sample.name, extract(epoch FROM sample.duration) * 1000
+            FROM cycle_fills AS fill
+            CROSS JOIN LATERAL (VALUES
+              ('intentToBrokerFill', fill.source_timestamp::timestamptz - fill.intent_created_at),
+              ('fillObservation', fill.observed_at - fill.intent_created_at),
+              ('fillIngestion', fill.observed_at - fill.source_timestamp::timestamptz)
+            ) AS sample(name, duration)
+          ),
           latest_account_snapshot_candidate AS (
             SELECT snapshot.*, events.observed_at, events.source_sequence
             FROM account_snapshots AS snapshot
@@ -855,13 +887,32 @@ const makeCycleObservability = Effect.gen(function* () {
                 SELECT to_char(max(observed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                 FROM cycle_fills
               ),
+              'maximumIntentToSubmitLatencyMs', (
+                SELECT round(max(milliseconds))::bigint FROM cycle_latency_samples
+                WHERE name = 'intentToSubmit' AND milliseconds >= 0
+              ),
               'maximumOrderAcknowledgementLatencyMs', (
-                SELECT round(max(extract(epoch FROM (observed_at - intent_created_at))) * 1000)::bigint
-                FROM first_cycle_orders
+                SELECT round(max(milliseconds))::bigint FROM cycle_latency_samples
+                WHERE name = 'acknowledgement' AND milliseconds >= 0
+              ),
+              'maximumOrderObservationLatencyMs', (
+                SELECT round(max(milliseconds))::bigint FROM cycle_latency_samples
+                WHERE name = 'orderObservation' AND milliseconds >= 0
+              ),
+              'maximumIntentToBrokerFillLatencyMs', (
+                SELECT round(max(milliseconds))::bigint FROM cycle_latency_samples
+                WHERE name = 'intentToBrokerFill' AND milliseconds >= 0
               ),
               'maximumFillLatencyMs', (
-                SELECT round(max(extract(epoch FROM (observed_at - intent_created_at))) * 1000)::bigint
-                FROM cycle_fills
+                SELECT round(max(milliseconds))::bigint FROM cycle_latency_samples
+                WHERE name = 'fillObservation' AND milliseconds >= 0
+              ),
+              'maximumFillIngestionLatencyMs', (
+                SELECT round(max(milliseconds))::bigint FROM cycle_latency_samples
+                WHERE name = 'fillIngestion' AND milliseconds >= 0
+              ),
+              'latencyClockRegressionCount', (
+                SELECT count(*)::integer FROM cycle_latency_samples WHERE milliseconds < 0
               ),
               'positionSnapshotObservedAt', (
                 SELECT to_char(observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
