@@ -121,7 +121,7 @@ Status                         WorkflowId                                 Type  
           alreadyResolvedWorkflowIds: [workflowId],
           terminatedWorkflowIds: [],
         }),
-        waitForNoRunningCount: async () => 1,
+        countRunning: async () => 1,
         listRunning: async () => output,
       },
     )
@@ -142,6 +142,36 @@ Status                         WorkflowId                                 Type  
       },
     )
 
+    expect(result).toBe(false)
+  })
+
+  test('terminal workflows are verified with one count instead of waiting for stale visibility', async () => {
+    let countCalls = 0
+    const result = await verifyOnlyStaleVisibility(
+      'WorkflowType="workerLoadUpdateWorkflow"',
+      'workerLoadUpdateWorkflow',
+      'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
+      {
+        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
+        countRunning: async () => { countCalls += 1; return 1 },
+        listRunning: async () => 'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
+      },
+    )
+    expect(result).toBe(true)
+    expect(countCalls).toBe(1)
+  })
+
+  test('stale visibility does not hide an additional workflow appearing during verification', async () => {
+    const result = await verifyOnlyStaleVisibility(
+      'WorkflowType="workerLoadUpdateWorkflow"',
+      'workerLoadUpdateWorkflow',
+      'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
+      {
+        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
+        countRunning: async () => 2,
+        listRunning: async () => 'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago\nRunning newly-running workerLoadUpdateWorkflow 1 second ago',
+      },
+    )
     expect(result).toBe(false)
   })
 })

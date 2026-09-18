@@ -190,7 +190,7 @@ async function terminateIndividually(
 }
 
 async function terminateRemainingWorkflows(query: string, workflowType: string): Promise<boolean> {
-  const after = await waitForNoRunningWorkflowCount(query)
+  const after = await count(query)
   if (after === 0) {
     return false
   }
@@ -208,7 +208,7 @@ async function terminateRemainingWorkflows(query: string, workflowType: string):
     return false
   }
 
-  const remainingAfterIndividual = await waitForNoRunningWorkflowCount(query)
+  const remainingAfterIndividual = await count(query)
   if (remainingAfterIndividual === 0) {
     return false
   }
@@ -235,7 +235,7 @@ type VerifyOnlyStaleVisibilityOptions = {
     listOutput: string,
     context: string,
   ) => Promise<IndividualTerminationResult>
-  readonly waitForNoRunningCount?: (query: string) => Promise<number>
+  readonly countRunning?: (query: string) => Promise<number>
   readonly listRunning?: (query: string, limit?: number) => Promise<string>
 }
 
@@ -246,7 +246,7 @@ export async function verifyOnlyStaleVisibility(
   options: VerifyOnlyStaleVisibilityOptions = {},
 ): Promise<boolean> {
   const terminateVisibleWorkflows = options.terminateVisibleWorkflows ?? terminateIndividually
-  const waitForNoRunningCount = options.waitForNoRunningCount ?? waitForNoRunningWorkflowCount
+  const countRunning = options.countRunning ?? count
   const listRunning = options.listRunning ?? list
 
   const result = await terminateVisibleWorkflows(
@@ -265,7 +265,7 @@ export async function verifyOnlyStaleVisibility(
     return false
   }
 
-  const remaining = await waitForNoRunningCount(query)
+  const remaining = await countRunning(query)
   if (remaining === 0) {
     return true
   }

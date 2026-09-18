@@ -1,24 +1,35 @@
 # Release the Temporal Bun SDK
 
-From the repository root, run:
+To publish the next patch version from `main`, run this command from the repository root:
 
 ```bash
-bun run release:temporal
+bun run release:temporal patch
 ```
 
-The command uses your existing `gh` login to open or update the SDK version PR
-from commits on `main`. Release Please chooses the version from Conventional
-Commits and updates `package.json`, `CHANGELOG.md`, and
-`.release-please-manifest.json`. Your login lets the PR trigger normal GitHub
-Actions checks without adding a repository secret.
+The command uses your existing `gh` login. It opens or updates the version PR,
+waits for CI and review, and merges the exact checked commit. It then follows the
+publication workflow and downloads the package from npm. Before reporting
+success, it verifies the package version, readiness artifacts, source commit, and
+GitHub release tag. The final output includes the install command and release links.
 
-Review and merge that PR after its checks pass. The main-branch workflow detects
-the version increase, runs the integration and load suites on the shared Temporal
-cluster, and publishes to npm with trusted publishing and provenance. It then
-downloads the published package and verifies its readiness artifacts. It creates
-the GitHub release and tag at the commit recorded in that package, then marks the
-version PR released so the next release can proceed. No second publish dispatch
-is needed.
+This command merges and publishes. To inspect the proposed release first, add
+`--dry-run`. To open the PR for a manual merge, add `--prepare-only`.
+
+Use `minor`, `major`, or an exact stable version instead of `patch` when needed.
+Omit the version argument to let Release Please select it from Conventional
+Commits. Only commits already on `main` enter the release. The command does not
+switch your checkout or include local changes. You can also run `bun run release`
+from `packages/temporal-bun-sdk`.
+
+If a check fails or a review needs attention, the command stops with the PR link.
+Resolve the failure and run the same command again. An interrupted command can
+resume a merged release whose publication is still pending. Resuming a failed
+publication reruns its failed jobs instead of opening another version PR.
+
+The main-branch workflow runs the integration and load suites on the shared
+Temporal cluster, then publishes with npm trusted publishing and provenance.
+The workflow creates the GitHub release and tag after it verifies the uploaded
+package. No local npm token or second publish dispatch is needed.
 
 Preparing a version PR does not run the build or integration suite. PR checks
 validate the proposed version, and publication still requires the existing replay,
@@ -28,6 +39,8 @@ pushes cannot republish an unchanged version.
 Shared-cluster checks run one at a time so cleanup cannot interrupt another
 release's tests. GitHub's [concurrency queue](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
 keeps later runs waiting instead of replacing a pending release.
+Cleanup verifies stale visibility records immediately after Temporal confirms
+their workflows have completed. Actual running workflows still fail verification.
 Publications share one package-wide queue across versions. Before uploading a
 new version, the workflow checks its npm dist-tag and refuses to move it backward
 if a newer version has already reached that tag.
@@ -40,12 +53,17 @@ changes still go through the dependency closure checks.
 ## Preview the version PR
 
 ```bash
-bun run release:temporal --dry-run
+bun run release:temporal patch --dry-run
 ```
 
 This reads GitHub and prints the proposed release without opening or updating a
-PR. Only commits already on `main` enter the release. You can also run
-`bun run release` from `packages/temporal-bun-sdk`.
+PR. For example, `patch` proposes `0.11.4` when `main` contains `0.11.3`.
+
+To stop after preparing that PR:
+
+```bash
+bun run release:temporal patch --prepare-only
+```
 
 ## Retry or dry-run publication
 
