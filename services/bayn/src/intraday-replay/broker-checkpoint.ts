@@ -9,7 +9,7 @@ import {
   TradeActivityType,
 } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
-import { limitIocOrderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { historicalMarketOrderRequestBody, limitIocOrderRequestBody } from '../broker/alpaca-mutations/decisions'
 import {
   OrderSide as DomainSide,
   OrderType as DomainOrderType,
@@ -32,7 +32,7 @@ import { applyReplayFill, createReplayLedger } from './ledger'
 import { ReplayOrderExecutionSchema } from './broker-execution-evidence'
 import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState } from './broker'
 
-const OrderSchema = Schema.Struct({
+const OrderFields = {
   accountId: StrictNonEmptyStringSchema,
   brokerOrderId: StrictNonEmptyStringSchema,
   clientOrderId: StrictNonEmptyStringSchema,
@@ -49,14 +49,25 @@ const OrderSchema = Schema.Struct({
   filledQuantityMicros: UnsignedMicrosSchema,
   filledAveragePriceMicros: Schema.optionalKey(PositiveMicrosSchema),
   orderClass: Schema.Literal(OrderClass.Simple),
-  orderType: Schema.Literal(OrderType.Limit),
-  side: Schema.Enum(OrderSide),
-  timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
-  limitPriceMicros: PositiveMicrosSchema,
   status: Schema.Literals([OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Rejected]),
   extendedHours: Schema.Literal(false),
   observedAt: UtcInstantSchema,
-})
+}
+const OrderSchema = Schema.Union([
+  Schema.Struct({
+    ...OrderFields,
+    side: Schema.Enum(OrderSide),
+    orderType: Schema.Literal(OrderType.Limit),
+    timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
+    limitPriceMicros: PositiveMicrosSchema,
+  }),
+  Schema.Struct({
+    ...OrderFields,
+    side: Schema.Literal(OrderSide.Sell),
+    orderType: Schema.Literal(OrderType.Market),
+    timeInForce: Schema.Literal(TimeInForce.Day),
+  }),
+])
 const EconomicFillSchema = Schema.Struct({
   symbol: SymbolSchema,
   side: Schema.Enum(OrderSide),
@@ -180,15 +191,28 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         BigInt(order.filledQuantityMicros) > BigInt(order.quantityMicros)
       )
         return yield* fail('Broker checkpoint order identity, time or quantity is invalid')
-      const body = yield* limitIocOrderRequestBody({
+      const common = {
         clientOrderId: order.clientOrderId,
         symbol: order.symbol,
         side: order.side === OrderSide.Buy ? DomainSide.Buy : DomainSide.Sell,
-        orderType: DomainOrderType.Limit,
-        timeInForce: DomainTimeInForce.ImmediateOrCancel,
         quantityMicros: order.quantityMicros,
-        notionalLimitMicros: ((BigInt(order.limitPriceMicros) * BigInt(order.quantityMicros)) / 1000000n).toString(),
-      })
+      }
+      const body = yield* order.orderType === OrderType.Market
+        ? historicalMarketOrderRequestBody({
+            ...common,
+            orderType: DomainOrderType.Market,
+            timeInForce: DomainTimeInForce.Day,
+            notionalLimitMicros: '1',
+          })
+        : limitIocOrderRequestBody({
+            ...common,
+            orderType: DomainOrderType.Limit,
+            timeInForce: DomainTimeInForce.ImmediateOrCancel,
+            notionalLimitMicros: (
+              (BigInt(order.limitPriceMicros) * BigInt(order.quantityMicros)) /
+              1000000n
+            ).toString(),
+          })
       if (
         requestHash !== (yield* canonicalHashV1Result(body)) ||
         (order.status === OrderStatus.Filled && order.filledQuantityMicros !== order.quantityMicros) ||
