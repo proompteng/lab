@@ -27,7 +27,11 @@ import {
   normalizeAccountConfigurationResult,
   normalizeMarketCalendarResult,
 } from '../broker/alpaca/normalizers'
-import { prepareCancel, prepareSubmit } from '../broker/alpaca-mutations/decisions'
+import {
+  orderRequestRequiresFractionalTrading,
+  prepareCancel,
+  prepareSubmit,
+} from '../broker/alpaca-mutations/decisions'
 import {
   BrokerMutationError,
   MutationFailure,
@@ -579,6 +583,11 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           yield* readState
           const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId, closeOnly))
           const request = prepared.request
+          if (!config.fractionalTrading && orderRequestRequiresFractionalTrading(request))
+            return yield* mutationFailure(
+              MutationOperation.Submit,
+              'Replay account configuration disables fractional trading',
+            )
           const marketClose =
             closeOnly &&
             request.type === OrderType.Market &&

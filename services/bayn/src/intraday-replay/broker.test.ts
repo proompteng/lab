@@ -864,7 +864,7 @@ test('production MARKET/DAY close liquidates at the adverse arrival price and su
 test('fractional market closes preserve residual inventory, fees, and restart evidence', async () => {
   await run(
     Effect.gen(function* () {
-      const broker = yield* setup({ advanceToArrival: (at) => TestClock.setTime(at) })
+      const broker = yield* setup({ fractionalTrading: true, advanceToArrival: (at) => TestClock.setTime(at) })
       yield* broker.mutation.submit(intent())
       for (const [index, quantityMicros] of ['500000', '4500000'].entries()) {
         const closed = yield* broker.mutation.submit(
@@ -882,6 +882,7 @@ test('fractional market closes preserve residual inventory, fees, and restart ev
         const checkpoint = yield* broker.checkpoint
         const restored = yield* makeReplayBroker({
           ...config,
+          fractionalTrading: true,
           restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
         })
         expect(yield* restored.snapshot).toEqual(yield* broker.snapshot)

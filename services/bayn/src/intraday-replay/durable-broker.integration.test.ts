@@ -81,7 +81,7 @@ durableTest.each(['ioc', 'fractional'] as const)(
             availableLiquidityPpm: 1_000_000,
             feeMultiplierPpm: 1_000_000,
           },
-          fractionalTrading: false,
+          fractionalTrading: scenario === 'fractional',
           calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
           assets: [
             Result.getOrThrow(

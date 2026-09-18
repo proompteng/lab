@@ -294,7 +294,8 @@ rule and omit publication witnesses; archived snapshot contracts are unchanged.
 
 ## Replay close and coverage acceptance
 
-The broker also accepts production close-only `MARKET/DAY` sells, including fractional quantities. It uses the fresh
+The broker also accepts production close-only `MARKET/DAY` sells, including fractional quantities when the captured
+account configuration enables fractional trading. It uses the fresh
 arrival bid, adverse slippage, configured liquidity fraction and the existing fee model. The observed displayed
 liquidity must cover the entire close. Missing, stale, future or insufficient liquidity fails the simulation and
 prevents session acceptance; this model does not estimate how a DAY remainder would fill later. No partial fill or
