@@ -84,7 +84,7 @@ const exerciseCommand = async (scenario: string, args = ['patch']) => {
   const dist = join(directory, 'package', 'dist')
   await mkdir(bin)
   await mkdir(dist, { recursive: true })
-  const packageJson = { name: '@proompteng/temporal-bun-sdk', version: scenario === 'rejected-merge' ? '0.11.5' : '0.11.4' }
+  const packageJson = { name: '@proompteng/temporal-bun-sdk', version: ['rejected-merge', 'missing-base'].includes(scenario) ? '0.11.5' : '0.11.4' }
   const production = { package: packageJson, defaultChoice: { recommended: true, blockers: [] }, gates: { releaseProvenanceEvidence: { passed: true } } }
   const provenance = {
     package: packageJson, passed: true, git: { githubSha: scenario === 'wrong-artifact' ? 'c'.repeat(40) : merged },
@@ -101,10 +101,10 @@ const exerciseCommand = async (scenario: string, args = ['patch']) => {
   const statePath = join(directory, 'state.json')
   const logPath = join(directory, 'calls.jsonl')
   await writeFile(statePath, JSON.stringify({
-    scenario, phase: ['resume', 'verify-tagged', 'verify-with-newer-open', 'rejected-merge'].includes(scenario) ? 'merged' : 'initial', tagged: ['verify-tagged', 'verify-with-newer-open'].includes(scenario), head, merged, checks: passingChecks(), archive,
+    scenario, phase: ['resume', 'verify-tagged', 'verify-with-newer-open', 'rejected-merge', 'missing-base'].includes(scenario) ? 'merged' : 'initial', tagged: ['verify-tagged', 'verify-with-newer-open'].includes(scenario), head, merged, checks: passingChecks(), archive,
     pack: { ...packageJson, id: `${packageJson.name}@${packageJson.version}`, filename: 'sdk.tgz', integrity: 'sha512-fixture', shasum: 'fixture', files },
   }))
-  if (scenario === 'rejected-merge') await writeFile(statePath + '.release', JSON.stringify({ number: 12, version: '0.11.4', request: 'patch' }))
+  if (['rejected-merge', 'missing-base'].includes(scenario)) await writeFile(statePath + '.release', JSON.stringify({ number: 12, version: '0.11.4', request: 'patch' }))
   const stub = `#!${process.execPath}
 import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -117,8 +117,8 @@ const save = () => writeFileSync(statePath, JSON.stringify(state))
 const print = (value) => console.log(JSON.stringify(value))
 const pr = () => ({ number: state.replaced ? 13 : 12, url: 'https://github.com/proompteng/lab/pull/12', state: state.phase === 'merged' ? 'MERGED' : 'OPEN', headRefName: 'release-please--branches--main--components--temporal-bun-sdk', baseRefName: 'main', baseRefOid: (['late-base', 'concurrent-new-base'].includes(state.scenario) && state.checked ? 'e' : 'd').repeat(40), headRefOid: state.head, isCrossRepository: state.scenario === 'fork', headRepositoryOwner: { login: state.scenario === 'fork' ? 'another-owner' : 'proompteng' }, mergeCommit: state.phase === 'merged' ? { oid: state.merged } : null, labels: [{ name: state.tagged ? 'autorelease: tagged' : 'autorelease: pending' }] })
 if (command === 'bunx') {
-  if (state.scenario === 'rejected-merge' && !state.pendingRemoved && !args.includes('--dry-run')) { console.log('There are untagged, merged release PRs outstanding - aborting'); process.exit(0) }
-  if (!args.includes('--dry-run')) { state.phase = 'prepared'; if (state.scenario === 'rejected-merge') { state.replaced = true; state.head = 'f'.repeat(40); state.checks.headRefOid = state.head; state.checks.reviews[0].commit.oid = state.head }; save() }
+  if (['rejected-merge', 'missing-base'].includes(state.scenario) && !state.pendingRemoved && !args.includes('--dry-run')) { console.log('There are untagged, merged release PRs outstanding - aborting'); process.exit(0) }
+  if (!args.includes('--dry-run')) { state.phase = 'prepared'; if (['rejected-merge', 'missing-base'].includes(state.scenario)) { state.replaced = true; state.head = 'f'.repeat(40); state.checks.headRefOid = state.head; state.checks.reviews[0].commit.oid = state.head }; save() }
   console.log('Release Please preview/preparation completed')
 } else if (command === 'git') {
   console.log(statePath + '.release')
@@ -133,7 +133,7 @@ if (command === 'bunx') {
   print(state.phase === 'initial' ? [] : candidates)
 } else if (args[0] === 'api' && args[1].includes('/contents/')) {
   const ref = args[1].split('?ref=')[1]
-  const version = ref === 'main' ? (['verify-with-newer-open', 'rejected-merge'].includes(state.scenario) ? '0.11.4' : '0.11.3') : ref === 'd'.repeat(40) ? (state.scenario === 'base-version-ahead' ? '0.11.5' : '0.11.3') : ref === 'f'.repeat(40) ? '0.11.5' : '0.11.4'
+  const version = ref === 'main' ? (['verify-with-newer-open', 'rejected-merge', 'missing-base'].includes(state.scenario) ? '0.11.4' : '0.11.3') : ref === 'd'.repeat(40) ? (state.scenario === 'base-version-ahead' ? '0.11.5' : '0.11.3') : ref === 'f'.repeat(40) ? '0.11.5' : '0.11.4'
   console.log(Buffer.from(JSON.stringify({ version })).toString('base64'))
 } else if (args[0] === 'pr' && args[1] === 'view') {
   if (state.scenario === 'interrupt-after-merge' && state.phase === 'merged' && !state.interrupted) { state.interrupted = true; save(); process.exit(1) }
@@ -160,7 +160,7 @@ if (command === 'bunx') {
 } else if (args[0] === 'run' && args[1] === 'rerun') {
   state.retried = true; save()
 } else if (args[0] === 'api' && args[1].includes('/git/commits/')) {
-  print({ message: 'Release SDK\\n\\nTemporal-Bun-Release-Base: ' + 'd'.repeat(40), parents: [{ sha: (state.scenario === 'rejected-merge' && !state.replaced ? 'e' : 'd').repeat(40) }] })
+  print({ message: ['missing-base', 'verify-tagged', 'verify-with-newer-open'].includes(state.scenario) ? 'Legacy or manual release' : 'Release SDK\\n\\nTemporal-Bun-Release-Base: ' + 'd'.repeat(40), parents: [{ sha: (state.scenario === 'rejected-merge' && !state.replaced ? 'e' : 'd').repeat(40) }] })
 } else if (args[0] === 'api' && args[1].includes('/commits/')) {
   console.log(state.merged)
 } else {
@@ -295,6 +295,14 @@ describe('release command through CLI boundaries', () => {
     expect(result.state.pendingRemoved).toBeUndefined()
     expect(result.receiptExists).toBe(true)
     expect(result.calls.find((args) => args[0] === 'bunx')).toContain('--release-as=0.11.5')
+  })
+
+  test('replaces an untagged manual merge that omitted the base record', async () => {
+    const result = await exerciseCommand('missing-base')
+    expect(result.code).toBe(0)
+    expect(result.calls.find((args) => args[0] === 'bunx')).toContain('--release-as=0.11.5')
+    expect(result.calls.some((args) => args.includes('rerun'))).toBe(false)
+    expect(result.receiptExists).toBe(false)
   })
 
   test('verifies an exact tagged version from another checkout without opening a new release', async () => {

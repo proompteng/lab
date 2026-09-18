@@ -13,7 +13,8 @@ success, it verifies the package version, readiness artifacts, source commit, an
 GitHub release tag. The final output includes the install command and release links.
 
 This command merges and publishes. To inspect the proposed release first, add
-`--dry-run`. To open the PR for a manual merge, add `--prepare-only`.
+`--dry-run`. To stop with the PR open for review, add `--prepare-only`, then run
+the release command again to finish publication.
 
 Use `minor`, `major`, or an exact stable version instead of `patch` when needed.
 Omit the version argument to let Release Please select it from Conventional
@@ -33,8 +34,10 @@ If `main` changes during validation, rerun the command to regenerate and recheck
 the version PR. The command checks both the PR commit and its base commit before
 merging so the generated changelog matches the selected release.
 The merge commit records the checked base. The publication workflow verifies that
-record against the actual merge parent before allowing an npm upload; a base
-change during GitHub's merge operation stops publication. Rerunning the command
+record against the actual merge parent before allowing an npm upload. Automatic
+publication requires this record, so finish a prepared PR with the release
+command. A missing record or a base change during GitHub's merge operation stops
+publication. Rerunning the command
 prepares a replacement version from current `main`, skipping the rejected version.
 If you selected an exact version, choose a newer version for the replacement.
 
@@ -79,7 +82,7 @@ bun run release:temporal patch --prepare-only
 
 ## Retry or dry-run publication
 
-If publication fails, rerun the failed jobs from the main-branch workflow run.
+For transient publication failures, rerun the failed jobs from the main-branch workflow run.
 An already published version is verified instead of published again. To validate
 the current main version without uploading it:
 

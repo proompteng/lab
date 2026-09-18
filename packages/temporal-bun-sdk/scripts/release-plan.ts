@@ -5,10 +5,10 @@ const packagePath = 'packages/temporal-bun-sdk/package.json'
 const component = 'packages/temporal-bun-sdk'
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
-export const matchesRecordedReleaseBase = (message: string, parents: readonly string[]) => {
+export const matchesRecordedReleaseBase = (message: string, parents: readonly string[], requireRecord = false) => {
   const prefix = 'Temporal-Bun-Release-Base:'
   const [recordedBase, ...otherBases] = message.split('\n').filter((line) => line.startsWith(prefix))
-  if (!recordedBase) return true
+  if (!recordedBase) return !requireRecord
   if (otherBases.length > 0 || !/^Temporal-Bun-Release-Base: [a-f0-9]{40}$/.test(recordedBase)) {
     throw new Error('The release commit has an invalid base record')
   }
@@ -91,9 +91,15 @@ if (import.meta.main) {
     const message = Bun.spawnSync(['git', 'show', '-s', '--format=%B', sha])
     const parents = Bun.spawnSync(['git', 'show', '-s', '--format=%P', sha])
     if (message.exitCode !== 0 || parents.exitCode !== 0) throw new Error('Cannot read the publication commit')
-    if (!matchesRecordedReleaseBase(message.stdout.toString(), parents.stdout.toString().trim().split(/\s+/))) {
+    if (
+      !matchesRecordedReleaseBase(
+        message.stdout.toString(),
+        parents.stdout.toString().trim().split(/\s+/),
+        process.env.GITHUB_EVENT_NAME === 'push',
+      )
+    ) {
       throw new Error(
-        'Refusing publication: main changed during the release merge. Prepare a new release from current main.',
+        'Refusing publication: the recorded base is missing or main changed during the release merge. Run bun run release:temporal patch to prepare a replacement.',
       )
     }
   }

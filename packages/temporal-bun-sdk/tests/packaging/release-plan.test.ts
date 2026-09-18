@@ -69,19 +69,22 @@ test('rejects malformed versions and workflow inputs before emitting outputs', (
   expect(() => planRelease({ ...release, dryRun: 'maybe' })).toThrow('dry_run')
 })
 
-test.each([false, true])('publication checks the recorded merge base before emitting outputs (changed=%s)', async (changed) => {
+test.each(['matching', 'changed', 'missing', 'manual'])('publication checks the recorded merge base before emitting outputs (%s)', async (scenario) => {
   const directory = await mkdtemp(join(tmpdir(), 'temporal-release-base-'))
   try {
     const base = 'd'.repeat(40)
-    const actualBase = (changed ? 'e' : 'd').repeat(40)
+    const actualBase = (scenario === 'changed' ? 'e' : 'd').repeat(40)
+    const rejected = scenario === 'changed' || scenario === 'missing'
+    const eventName = scenario === 'manual' ? 'workflow_dispatch' : 'push'
+    const message = ['missing', 'manual'].includes(scenario) ? 'Release SDK' : `Release SDK\n\nTemporal-Bun-Release-Base: ${base}`
     await Bun.write(join(directory, 'packages/temporal-bun-sdk/package.json'), JSON.stringify({ version: release.version }))
     await writeFile(join(directory, '.release-please-manifest.json'), JSON.stringify({ 'packages/temporal-bun-sdk': release.version }))
-    await writeFile(join(directory, 'event.json'), JSON.stringify({ before: actualBase }))
+    await writeFile(join(directory, 'event.json'), JSON.stringify({ before: actualBase, inputs: { release_mode: 'publish' } }))
     const git = join(directory, 'git')
     await writeFile(git, `#!${process.execPath}
 const args = process.argv.slice(2)
 if (args.at(-1).includes(':packages/')) console.log(JSON.stringify({ version: '0.11.3' }))
-else if (args.includes('--format=%B')) console.log('Release SDK\\n\\nTemporal-Bun-Release-Base: ${base}')
+else if (args.includes('--format=%B')) console.log(${JSON.stringify(message)})
 else if (args.includes('--format=%P')) console.log('${actualBase}')
 else process.exit(2)
 `)
@@ -90,14 +93,14 @@ else process.exit(2)
     await writeFile(output, '')
     const child = Bun.spawn([process.execPath, resolve(import.meta.dir, '../../scripts/release-plan.ts')], {
       cwd: directory,
-      env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, GITHUB_EVENT_PATH: join(directory, 'event.json'), GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: 'a'.repeat(40), GITHUB_OUTPUT: output },
+      env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, GITHUB_EVENT_PATH: join(directory, 'event.json'), GITHUB_EVENT_NAME: eventName, GITHUB_REF: 'refs/heads/main', GITHUB_SHA: 'a'.repeat(40), GITHUB_OUTPUT: output },
       stdout: 'pipe', stderr: 'pipe',
     })
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text(), new Response(child.stdout).text()])
-    expect(code).toBe(changed ? 1 : 0)
+    expect(code).toBe(rejected ? 1 : 0)
     const emitted = await readFile(output, 'utf8')
-    if (changed) {
-      expect(stderr).toContain('main changed during the release merge')
+    if (rejected) {
+      expect(stderr).toContain('Refusing publication')
       expect(emitted).toBe('')
     } else expect(emitted).toContain('publish=true')
   } finally {

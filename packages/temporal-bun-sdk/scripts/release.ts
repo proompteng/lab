@@ -336,10 +336,11 @@ const main = async () => {
       !matchesRecordedReleaseBase(
         commit.message,
         commit.parents.map((parent) => parent.sha),
+        !previous.labels.some((label) => label.name === 'autorelease: tagged'),
       )
     ) {
       console.log(
-        `Release PR #${previous.number} was merged onto a different base and cannot publish. Preparing a replacement from main.`,
+        `Release PR #${previous.number} has a missing or mismatched merge base and cannot publish. Preparing a replacement from main.`,
       )
       rejectedRelease = previous
       receipt = undefined
