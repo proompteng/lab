@@ -132,7 +132,9 @@ if (command === 'bunx') {
   const version = ref === 'main' ? (state.scenario === 'verify-with-newer-open' ? '0.11.4' : '0.11.3') : ref === 'd'.repeat(40) ? (state.scenario === 'base-version-ahead' ? '0.11.5' : '0.11.3') : ref === 'f'.repeat(40) ? '0.11.5' : '0.11.4'
   console.log(Buffer.from(JSON.stringify({ version })).toString('base64'))
 } else if (args[0] === 'pr' && args[1] === 'view') {
+  if (state.scenario === 'interrupt-after-merge' && state.phase === 'merged' && !state.interrupted) { state.interrupted = true; save(); process.exit(1) }
   if (args.at(-1).includes('statusCheckRollup')) {
+    if (state.scenario === 'interrupt-during-checks' && !state.interrupted) { state.interrupted = true; save(); process.exit(1) }
     state.checked = true; save()
     if (state.scenario === 'failed-check') state.checks.statusCheckRollup[0].conclusion = 'FAILURE'
     if (state.scenario === 'base-moved') state.checks.baseRefOid = 'e'.repeat(40)
@@ -142,6 +144,8 @@ if (command === 'bunx') {
 } else if (args[0] === 'api' && args[1] === 'graphql') {
   print({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: state.scenario === 'unresolved-review' ? [{ isResolved: false }] : [] } } } } })
 } else if (args[0] === 'pr' && args[1] === 'merge') {
+  state.mergeBody = await new Response(Bun.stdin.stream()).text(); save()
+  if (state.scenario === 'interrupt-after-merge') { state.phase = 'merged'; state.tagged = true; save(); process.exit(1) }
   state.phase = 'merged'; save()
 } else if (args[0] === 'run' && args[1] === 'list') {
   print([{ databaseId: 34, status: 'completed', conclusion: state.scenario === 'resume' ? 'failure' : 'success', url: 'https://github.com/proompteng/lab/actions/runs/34' }])
@@ -168,7 +172,7 @@ if (command === 'bunx') {
   return { code, stdout, stderr, receiptExists: await Bun.file(statePath + '.release').exists() }
   }
   const first = await execute()
-  const result = scenario === 'resume-tagged' ? await execute() : first
+  const result = ['resume-tagged', 'interrupt-after-merge', 'interrupt-during-checks'].includes(scenario) ? await execute() : first
   return { ...result, first, calls: (await readFile(logPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line)), state: JSON.parse(await readFile(statePath, 'utf8')) }
 }
 
@@ -181,6 +185,7 @@ describe('release command through CLI boundaries', () => {
     expect(result.receiptExists).toBe(false)
     expect(result.calls.find((args) => args[0] === 'bunx')).toContain('--release-as=0.11.4')
     expect(result.calls.find((args) => args[1] === 'pr' && args[2] === 'merge')).toContain(head)
+    expect(result.state.mergeBody).toContain('Temporal-Bun-Release-Base: ' + base)
     expect(JSON.stringify(result.calls) + result.stdout + result.stderr).not.toContain('fixture-token-kept-off-argv')
   })
 
@@ -240,6 +245,28 @@ describe('release command through CLI boundaries', () => {
     expect(result.calls.filter((args) => args[0] === 'bunx')).toHaveLength(1)
     expect(result.calls.filter((args) => args[1] === 'pr' && args[2] === 'merge')).toHaveLength(1)
     expect(result.stdout).toContain('Published and verified')
+  })
+
+  test('resumes the same version when the connection drops immediately after GitHub merges', async () => {
+    const result = await exerciseCommand('interrupt-after-merge')
+    expect(result.first.code).toBe(1)
+    expect(result.first.receiptExists).toBe(true)
+    expect(result.code).toBe(0)
+    expect(result.calls.filter((args) => args[0] === 'bunx')).toHaveLength(1)
+    expect(result.calls.filter((args) => args[1] === 'pr' && args[2] === 'merge')).toHaveLength(1)
+    expect(result.receiptExists).toBe(false)
+  })
+
+  test('resumes the saved open PR and version after a connection failure during checks', async () => {
+    const result = await exerciseCommand('interrupt-during-checks')
+    expect(result.first.code).toBe(1)
+    expect(result.first.receiptExists).toBe(true)
+    expect(result.code).toBe(0)
+    const preparations = result.calls.filter((args) => args[0] === 'bunx')
+    expect(preparations).toHaveLength(2)
+    for (const preparation of preparations) expect(preparation).toContain('--release-as=0.11.4')
+    expect(result.calls.filter((args) => args[1] === 'pr' && args[2] === 'merge')).toHaveLength(1)
+    expect(result.receiptExists).toBe(false)
   })
 
   test('verifies an exact tagged version from another checkout without opening a new release', async () => {

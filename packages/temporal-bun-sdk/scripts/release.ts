@@ -330,11 +330,15 @@ const main = async () => {
     (receipt !== undefined ||
       previous.labels.some((label) => label.name === 'autorelease: pending') ||
       (request.version.kind === 'exact' && (await readVersion(previous.headRefOid)) === request.version.version))
-  if (receipt && !resume) throw new Error(`Saved release PR #${receipt.number} is no longer merged`)
+  if (receipt && previous?.state !== 'OPEN' && !resume)
+    throw new Error(`Saved release PR #${receipt.number} is closed. Reopen it before continuing.`)
   let pr = previous
   let selectedVersion: string | undefined
   if (!resume) {
-    const version = selectReleaseVersion(request.version, currentVersion)
+    const version = selectReleaseVersion(
+      receipt ? { kind: 'exact', version: receipt.version } : request.version,
+      currentVersion,
+    )
     selectedVersion = version
     console.log(
       `Preparing ${version ?? 'the next SDK version'} from main${request.mode === 'preview' ? ' (dry run)' : ''}.`,
@@ -362,6 +366,7 @@ const main = async () => {
       throw new Error('No release PR was prepared. There may be no releasable commits on main.')
   }
   if (!pr) throw new Error('No release PR was found')
+  if (receipt && receipt.number !== pr.number) throw new Error('The saved release PR was replaced during preparation')
   if (!isRepositoryRelease(pr)) throw new Error('The release PR must belong to proompteng/lab')
   if (pr.baseRefName !== 'main') throw new Error('The release PR must target main')
   const version = await readVersion(pr.headRefOid)
@@ -378,6 +383,7 @@ const main = async () => {
   }
   console.log(`Release ${version}: ${pr.url}`)
   if (request.mode !== 'publish') return
+  await saveReceipt(receiptPath, { number: pr.number, version, request: receipt?.request ?? requestKey })
   const deadline = Date.now() + 120 * 60_000
   if (pr.state === 'OPEN') {
     const head = pr.headRefOid
@@ -415,7 +421,22 @@ const main = async () => {
       await ensureResolvedReviews(pr.number)
       console.log(`CI and review passed. Merging release PR #${pr.number}.`)
       try {
-        await run(['gh', 'pr', 'merge', String(pr.number), '-R', repository, '--squash', '--match-head-commit', head])
+        await run(
+          [
+            'gh',
+            'pr',
+            'merge',
+            String(pr.number),
+            '-R',
+            repository,
+            '--squash',
+            '--match-head-commit',
+            head,
+            '--body-file',
+            '-',
+          ],
+          new Blob([`Release ${packageName}@${version}\n\nTemporal-Bun-Release-Base: ${base}\n`]),
+        )
       } catch (error) {
         const concurrent = await readPr(pr.number)
         if (concurrent.state !== 'MERGED' || concurrent.headRefOid !== head || concurrent.baseRefOid !== base)
@@ -431,7 +452,6 @@ const main = async () => {
   }
   if (pr.state !== 'MERGED' || !pr.mergeCommit) throw new Error(`Release PR has not merged: ${pr.url}`)
   const sha = pr.mergeCommit.oid
-  await saveReceipt(receiptPath, { number: pr.number, version, request: requestKey })
   const publicationUrl = await waitForPublication(sha, resume, deadline)
   await verifyPublishedPack({ name: packageName, version }, `${packageName}@${version}`, sha)
   const tag = `temporal-bun-sdk-v${version}`

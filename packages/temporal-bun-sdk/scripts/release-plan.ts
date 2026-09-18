@@ -75,6 +75,28 @@ if (import.meta.main) {
     npmTag: event.inputs?.npm_tag,
     dryRun: event.inputs?.dry_run,
   })
+  if (plan.publish) {
+    const sha = process.env.GITHUB_SHA
+    if (!sha || !/^[a-f0-9]{40}$/.test(sha)) throw new Error('Missing publication commit')
+    const message = Bun.spawnSync(['git', 'show', '-s', '--format=%B', sha])
+    const parents = Bun.spawnSync(['git', 'show', '-s', '--format=%P', sha])
+    if (message.exitCode !== 0 || parents.exitCode !== 0) throw new Error('Cannot read the publication commit')
+    const prefix = 'Temporal-Bun-Release-Base:'
+    const [recordedBase, ...otherBases] = message.stdout
+      .toString()
+      .split('\n')
+      .filter((line) => line.startsWith(prefix))
+    if (
+      recordedBase &&
+      (otherBases.length > 0 ||
+        !/^Temporal-Bun-Release-Base: [a-f0-9]{40}$/.test(recordedBase) ||
+        recordedBase.slice(prefix.length).trim() !== parents.stdout.toString().trim())
+    ) {
+      throw new Error(
+        'Refusing publication: main changed during the release merge. Prepare a new release from current main.',
+      )
+    }
+  }
   console.log(JSON.stringify(plan))
   if (process.env.GITHUB_OUTPUT) {
     await appendFile(
