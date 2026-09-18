@@ -59,7 +59,7 @@ const rawPricingRequest: IntradaySnapshotRequest = {
     })),
 }
 
-export const streamingFixture = () => {
+export const streamingFixture = (returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 }) => {
   const { purpose: _purpose, ...baseRequest } = rawPricingRequest
   const request: IntradaySnapshotRequest = {
     ...baseRequest,
@@ -69,7 +69,7 @@ export const streamingFixture = () => {
     symbols: [...protocol.candidateSymbols, protocol.benchmarkSymbol].sort(),
     candidateSymbols: protocol.candidateSymbols,
   }
-  const raw = makeIntradayMomentumTestSnapshot(protocol, request, { AAPL: 0.02, AMZN: 0.01 })
+  const raw = makeIntradayMomentumTestSnapshot(protocol, request, returns)
   const { cut, query, snapshot, rows } = streamingFixtureFromRaw(raw, request)
   const archive = Result.getOrThrow(
     verifyIntradaySnapshot(request, {
