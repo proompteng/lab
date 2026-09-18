@@ -22,8 +22,6 @@ export interface AdvanceExecutionCommand {
 }
 
 export type ExecutionBlocker =
-  | { readonly _tag: 'WindowClosed' }
-  | { readonly _tag: 'RecoveryWaiting' }
   | { readonly _tag: 'CycleBlocked' }
   | {
       readonly _tag: 'PassFailure'
@@ -34,6 +32,13 @@ export type ExecutionBlocker =
 export type AdvanceOutcome =
   | {
       readonly _tag: 'Completed'
+      readonly receiptHash: string
+      readonly nextDelayMs: number
+      readonly observation: AutonomousCyclePassObservation
+    }
+  | {
+      readonly _tag: 'Waiting'
+      readonly reason: { readonly _tag: 'WindowClosed' | 'RecoveryWaiting' }
       readonly receiptHash: string
       readonly nextDelayMs: number
       readonly observation: AutonomousCyclePassObservation
@@ -54,6 +59,7 @@ export class TransientExecutionFailure extends Data.TaggedError('TransientExecut
 
 type UnhashedAdvanceOutcome =
   | { readonly _tag: 'Completed' }
+  | { readonly _tag: 'Waiting'; readonly reason: { readonly _tag: 'WindowClosed' | 'RecoveryWaiting' } }
   | { readonly _tag: 'Blocked'; readonly reason: ExecutionBlocker }
 
 const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceOutcome => {
@@ -68,12 +74,12 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
     }
   }
   if (observation.outcome === 'WINDOW_CLOSED') {
-    return { _tag: 'Blocked', reason: { _tag: 'WindowClosed' } }
+    return { _tag: 'Waiting', reason: { _tag: 'WindowClosed' } }
   }
-  if (result?.outcome === 'RECOVERED' && result.action === 'WAITING') {
-    return { _tag: 'Blocked', reason: { _tag: 'RecoveryWaiting' } }
+  if ((result?.outcome === 'RECOVERED' && result.action === 'WAITING') || observation.recoveryAction === 'WAITING') {
+    return { _tag: 'Waiting', reason: { _tag: 'RecoveryWaiting' } }
   }
-  if (result?.outcome === 'RECOVERED' && result.action === 'BLOCKED') {
+  if ((result?.outcome === 'RECOVERED' && result.action === 'BLOCKED') || observation.recoveryAction === 'BLOCKED') {
     return { _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } }
   }
   if (result?.outcome === 'ALREADY_TERMINAL' && result.cycle.state === CycleState.Blocked) {
@@ -98,12 +104,16 @@ const hashOutcome = (
     sourceRevision: command.sourceRevision,
     outcome: outcome._tag,
     blocker: outcome._tag === 'Blocked' ? outcome.reason : null,
+    ...(outcome._tag === 'Waiting' ? { waiting: outcome.reason } : {}),
     observation:
       observation.result === 'SUCCESS'
         ? {
             result: observation.result,
             outcome: observation.outcome,
             observedAt: observation.observedAt,
+            ...(observation.recoveryAction === undefined ? {} : { recoveryAction: observation.recoveryAction }),
+            ...(observation.waitReason === undefined ? {} : { waitReason: observation.waitReason }),
+            ...(observation.readiness === undefined ? {} : { readiness: observation.readiness }),
           }
         : {
             result: observation.result,

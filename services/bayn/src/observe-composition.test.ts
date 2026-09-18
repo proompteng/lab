@@ -1,3 +1,4 @@
+import { CandidateObservationStore } from './observe-composition/candidate-observation'
 import { operationalError as marketFixtureError } from './errors'
 import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
@@ -10,7 +11,8 @@ import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import type { CycleDecisionDocument } from './shadow-decision-contract'
 import { CycleDecisionBuildError, runAutonomousCyclePass } from './cycle/runner'
 import type { ObserveDecisionRuntime } from './observe-composition/model'
-import { mutationDecisionBuilder } from './observe-composition/recovery-driver'
+import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder } from './observe-composition/recovery-driver'
+import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { boundedReconciliationPass } from './observe-composition/decision-builder'
 import {
   AccountStatus as BrokerAccountStatus,
@@ -344,6 +346,7 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
         Effect.provideService(IntentStore, {} as IntentStoreService),
         Effect.provideService(MutationStore, {} as MutationStoreShape),
         Effect.provideService(WriterFence, reconciliationServices.writerFence),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -354,9 +357,9 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
   },
 )
 
-test('preserves execution authority after a transient reconciliation read inside a bound cycle', async () => {
+test('preserves execution authority after the next bound-cycle reconciliation fails transiently', async () => {
   const fixture = await executionLifecycleFixture()
-  const reconciliationServices = makeExactReconciliationServices()
+  const reconciliationServices = makeExactReconciliationServices(Authority.Execution)
   const transientRead = new BrokerReadError({
     operation: 'account',
     kind: BrokerReadErrorKind.Transport,
@@ -394,7 +397,10 @@ test('preserves execution authority after a transient reconciliation read inside
     block: () => unusedCycleMutation,
   }
   const storedIntents = new Map(
-    fixture.intents.map((intent) => [intent.intentId, storedIntent(intent, IntentState.Planned, intent.createdAt)]),
+    fixture.intents.map((intent) => [
+      intent.intentId,
+      storedIntent(intent, IntentState.Terminal, intent.createdAt, TerminalOutcome.Filled),
+    ]),
   )
   const intentStore: IntentStoreService = {
     commit: (intent) =>
@@ -417,6 +423,12 @@ test('preserves execution authority after a transient reconciliation read inside
         recordPass: () => Effect.void,
       })
       const driver = yield* driverEffect
+      const first = yield* driver.advance
+      expect(first.observation).toMatchObject({
+        result: 'SUCCESS',
+        recoveryAction: 'WAITING',
+        waitReason: 'reconciliation-not-later',
+      })
       return yield* driver.advance
     }).pipe(
       Effect.provideService(BrokerRead, brokerRead),
@@ -431,6 +443,7 @@ test('preserves execution authority after a transient reconciliation read inside
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(WriterFence, reconciliationServices.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -745,12 +758,13 @@ const decisionBrokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): 
 }
 
 const provideDecisionServices = <A, E>(
-  program: Effect.Effect<A, E, BrokerRead | MarketData>,
+  program: Effect.Effect<A, E, BrokerRead | MarketData | CandidateObservationStore>,
   marketDataService: MarketDataService,
   marketCalendar: BrokerReadShape['marketCalendar'],
 ): Effect.Effect<A, E> =>
   program.pipe(
     Effect.provideService(BrokerRead, decisionBrokerRead(marketCalendar)),
+    Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
     Effect.provideService(MarketData, marketDataService),
   )
 
@@ -1144,6 +1158,7 @@ const prepareStoredExecutionStep = async (
       Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
       Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
       Effect.provideService(WriterFence, writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -1535,7 +1550,7 @@ describe('OBSERVE runtime composition', () => {
       [{ ...pending.order, observedAt }],
     )
 
-    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(step).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-nonterminal' })
   })
 
   test('uses a settled unsuccessful predecessor instead of an expired untouched remainder as the terminal cause', async () => {
@@ -1795,6 +1810,19 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: 'recovery-only-order',
     }
 
+    const backingOff = await prepareStoredExecutionStep(
+      fixture,
+      storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
+      submitUnknown,
+      occurredAt,
+      1,
+      () => undefined,
+      fixture.input,
+      cancelUnknown,
+      false,
+    )
+    expect(backingOff).toEqual({ _tag: 'Wait', observedAt: occurredAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' })
+
     const recovery = await prepareStoredExecutionStep(
       fixture,
       storedIntent(fixture.intent, IntentState.Unknown, occurredAt),
@@ -1851,10 +1879,11 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(waiting).toEqual({ _tag: 'Wait', observedAt })
+    expect(waiting).toEqual({ _tag: 'Wait', observedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' })
     expect(commits).toBe(0)
   })
 
@@ -2523,6 +2552,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(CycleStore, cycleStore),
           Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
           Effect.provideService(WriterFence, writerFence),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         ),
       ),
     )
@@ -2611,6 +2641,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, authorityRestrictionStore),
         Effect.provideService(WriterFence, writerFence),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -2673,6 +2704,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -2931,6 +2963,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -3069,6 +3102,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
           Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
           Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
           Effect.provide(TestClock.layer()),
         ),
       )
@@ -3142,6 +3176,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -3192,6 +3227,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -3289,6 +3325,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
           Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
           Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
           Effect.provide(TestClock.layer()),
         ),
       )
@@ -3525,6 +3562,7 @@ describe('OBSERVE runtime composition', () => {
           Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
           Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
           Effect.provideService(WriterFence, {} as WriterFenceService),
+          Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
           Effect.provide(TestClock.layer()),
         ),
       )
@@ -3597,7 +3635,7 @@ describe('OBSERVE runtime composition', () => {
       ],
     )
 
-    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(step).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-unsuccessful' })
     expect(restrictions).toHaveLength(1)
   })
 
@@ -3647,6 +3685,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -3869,7 +3908,7 @@ describe('OBSERVE runtime composition', () => {
       ]),
     )
 
-    expect(step).toEqual({ _tag: 'Wait', observedAt })
+    expect(step).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-unsuccessful' })
     expect(restrictions).toHaveLength(1)
     expect(restrictions[0]).toContain(`intent ${rejectedIntent.intentId} ended REJECTED`)
   })
@@ -3954,7 +3993,7 @@ describe('OBSERVE runtime composition', () => {
       { ...fixture.document, submissionCutoffAt: closeExpiresAt, expiresAt: closeExpiresAt },
     )
 
-    expect(closeStep).toEqual({ _tag: 'Wait', observedAt })
+    expect(closeStep).toEqual({ _tag: 'Wait', observedAt, waitReason: 'intent-unsuccessful' })
     expect(closeRestrictions).toHaveLength(1)
   })
 
@@ -4195,12 +4234,11 @@ describe('OBSERVE runtime composition', () => {
 
     expect(candidateObservations).toContainEqual(
       expect.objectContaining({
-        event: 'bayn.intraday-candidate-observation.v1',
+        event: 'bayn.intraday-candidate-observation.v2',
         cycleId: activeCycle.identity.cycleId,
-        decision: expect.objectContaining({
-          selectedSymbols: ['NVDA'],
-          excludedCandidates: [expect.objectContaining({ symbol: 'AAPL', reason: 'not-ready' })],
-        }),
+        contentHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+        selectedSymbols: ['NVDA'],
+        excludedCandidates: [expect.objectContaining({ symbol: 'AAPL', reason: 'not-ready' })],
       }),
     )
     expect(archiveRequests).toHaveLength(2)
@@ -4450,6 +4488,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provideService(AuthorityGenerationStore, {} as AuthorityGenerationStoreShape),
         Effect.provideService(AuthorityRestrictionStore, {} as AuthorityRestrictionStoreShape),
         Effect.provideService(WriterFence, {} as WriterFenceService),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -4581,6 +4620,7 @@ describe('OBSERVE runtime composition', () => {
               | IntentStore
               | MutationStore
               | WriterFence
+              | CandidateObservationStore
             >,
             OperationalError,
             AuthorityGenerationStore
@@ -4602,6 +4642,7 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(IntentStore, {} as IntentStoreService),
             Effect.provideService(MutationStore, {} as MutationStoreShape),
             Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
             Effect.forkScoped,
           )
           const driver = yield* Deferred.await(capturedDriver).pipe(Effect.timeout('1 second'))
@@ -4786,6 +4827,7 @@ describe('OBSERVE runtime composition', () => {
             Effect.provideService(IntentStore, {} as IntentStoreService),
             Effect.provideService(MutationStore, {} as MutationStoreShape),
             Effect.provideService(WriterFence, writerFence),
+            Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(persistenceStarted)
@@ -4966,6 +5008,24 @@ test('recovery preserves the open session for a real next strategy decision', as
   const executionStore = services.executionStore
   const result = await Effect.runPromise(
     Effect.gen(function* () {
+      const beforeOpenAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) - 1_000)
+      stored = yield* decodeAutonomousCycle({ ...cycle, createdAt: beforeOpenAt, updatedAt: beforeOpenAt })
+      yield* TestClock.setTime(Date.parse(beforeOpenAt))
+      const beforeOpen = yield* runAutonomousCyclePass({
+        cycleBindingId: cycle.identity.qualificationRunId,
+        accountId,
+        strategyName: 'intraday-momentum',
+        strategyProtocolHash: fixture.preparation.strategyProtocolHash,
+        executionPolicy: fixture.preparation.executionPolicy,
+        buildDecision: () => unavailable('build decision before submission opens'),
+      })
+      expect(beforeOpen).toMatchObject({
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        waitReason: 'AWAITING_SUBMISSION_OPEN',
+        observedAt: beforeOpenAt,
+      })
+      stored = cycle
       yield* TestClock.setTime(Date.parse(cycle.window.submissionOpenAt) + 1_000)
       const input = { ...fixture.input, intradayMarketData }
       const startup = { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void }
@@ -5023,6 +5083,7 @@ test('recovery preserves the open session for a real next strategy decision', as
       Effect.provideService(IntentStore, {} as IntentStoreService),
       Effect.provideService(MutationStore, {} as MutationStoreShape),
       Effect.provideService(WriterFence, services.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provideService(MarketData, marketData([])),
       Effect.provide(TestClock.layer()),
     ),
@@ -5064,6 +5125,7 @@ test('reconciliation cancels a slow broker read before the aggregate pass deadli
       Effect.provideService(AuthorityGenerationStore, store),
       Effect.provideService(AuthorityRestrictionStore, store),
       Effect.provideService(WriterFence, services.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -5075,3 +5137,121 @@ test('reconciliation cancels a slow broker read before the aggregate pass deadli
     retryable: true,
   })
 })
+
+test.each([false, true])(
+  'reuses the current pass preflight and retains waiting evidence for bound=%s',
+  async (bound) => {
+    const fixture = await executionLifecycleFixture()
+    const services = makeExactReconciliationServices(Authority.Execution)
+    let reconciliationWrites = 0
+    const executionStore = {
+      ...services.executionStore,
+      reconcile: () =>
+        Effect.sync(() => {
+          reconciliationWrites += 1
+        }).pipe(Effect.andThen(services.executionStore.reconcile())),
+    }
+    const forbidden = () => Effect.die(new Error('waiting entry must not mutate or bind a cycle'))
+    const store: CycleStoreShape = {
+      readOldestUnfinished: () => Effect.succeed(Option.some(bound ? fixture.boundCycle : cycle)),
+      acquire: forbidden,
+      read: forbidden,
+      readAuthoritySlot: forbidden,
+      readDecisionDocument: () => (bound ? Effect.succeed(Option.some(fixture.document)) : forbidden()),
+      bindSnapshot: forbidden,
+      activate: forbidden,
+      bindDecision: forbidden,
+      finish: forbidden,
+      block: forbidden,
+    }
+    const readiness = {
+      reason: DecisionReadinessReason.SnapshotCoverage,
+      message: 'intraday symbol lacks the complete rolling lookback baseline',
+      symbol: 'IWM',
+    }
+    const counts = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        const driver = yield* Effect.fromResult(
+          makeRecoveryFirstCycleDriver(
+            fixture.input,
+            { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void },
+            fixture.preparation,
+            fixture.policy,
+            { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+            (_subject, reconcile) =>
+              reconcile.pipe(
+                Effect.mapError(
+                  (cause) => new CycleDecisionBuildError({ failure: 'operational', message: cause.message, cause }),
+                ),
+                Effect.andThen(
+                  Effect.fail(
+                    new CycleDecisionBuildError({ failure: 'not-ready', message: readiness.message, readiness }),
+                  ),
+                ),
+              ),
+            'mutation autonomous cycle loop',
+          ),
+        ).pipe(Effect.flatten)
+        const first = yield* driver.advance
+        expect(first.observation).toMatchObject({
+          result: 'SUCCESS',
+          recoveryAction: 'WAITING',
+          ...(bound ? { waitReason: 'reconciliation-not-later' } : { readiness }),
+        })
+        const firstCount = reconciliationWrites
+        yield* driver.advance
+        const secondCount = reconciliationWrites
+        yield* TestClock.adjust(30_000)
+        yield* driver.advance
+        return [firstCount, secondCount, reconciliationWrites]
+      }).pipe(
+        Effect.provideService(BrokerRead, services.brokerRead),
+        Effect.provideService(CycleStore, store),
+        Effect.provideService(BrokerEventStore, executionStore),
+        Effect.provideService(FillAccountingStore, executionStore),
+        Effect.provideService(ValuationStore, executionStore),
+        Effect.provideService(ReconciliationStore, executionStore),
+        Effect.provideService(AuthorityGenerationStore, executionStore),
+        Effect.provideService(AuthorityRestrictionStore, executionStore),
+        Effect.provideService(IntentStore, {
+          commit: (intent) =>
+            bound
+              ? Effect.succeed({
+                  record: storedIntent(intent, IntentState.Terminal, evaluatedAt, TerminalOutcome.Filled),
+                  deduplicated: true,
+                })
+              : forbidden(),
+          read: (intentId) => {
+            if (!bound) return forbidden()
+            const intent = fixture.intents.find((item) => item.intentId === intentId)
+            return Effect.succeed(
+              intent === undefined
+                ? Option.none()
+                : Option.some(storedIntent(intent, IntentState.Terminal, evaluatedAt, TerminalOutcome.Filled)),
+            )
+          },
+        }),
+        Effect.provideService(MutationStore, {
+          authorizeSubmit: forbidden,
+          beginSubmit: forbidden,
+          submitAccepted: forbidden,
+          submitRejected: forbidden,
+          submitDenied: forbidden,
+          submitUnknown: forbidden,
+          beginCancel: forbidden,
+          cancelAccepted: forbidden,
+          cancelUnknown: forbidden,
+          recoveryFound: forbidden,
+          recoveryNotFound: forbidden,
+          recoveryUnknown: forbidden,
+          latest: () => (bound ? Effect.as(Effect.void, undefined) : forbidden()),
+        }),
+        Effect.provideService(WriterFence, services.writerFence),
+        Effect.provideService(CandidateObservationStore, { record: () => Effect.void }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(counts).toEqual([1, 2, 3])
+  },
+)
