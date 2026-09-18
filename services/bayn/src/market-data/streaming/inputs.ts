@@ -1,3 +1,4 @@
+import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result } from 'effect'
 
 import {
@@ -35,7 +36,11 @@ const observedWithin = <A>(entry: ObservedMarketValue<A>, observedAtMs: number) 
 const rollingFeatureDefinitionHash = sha256(JSON.stringify(rollingFeatureDefinitionMaterial))
 
 /** Shared input policy only. This does not issue live snapshot or broker authority. */
-export const selectStreamingInputs = (state: StreamingProjection, query: IntradaySnapshotQuery) =>
+export const selectStreamingInputs = (
+  state: StreamingProjection,
+  query: IntradaySnapshotQuery,
+  publicationPolicy = BarPublicationPolicy.TimelyEquivalentRevision,
+) =>
   Result.gen(function* () {
     const request = yield* verifyIntradaySnapshotQuery(query)
     const observedAtMs = Date.parse(request.observedAt)
@@ -55,6 +60,8 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
     const candidates = new Set(request.candidateSymbols)
     const entries: ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTrade>[] = []
     const featureReceipts: StreamingFeatureReceipt[] = []
+    const barPublications: ObservedMarketValue<IntradayBar>[] = []
+    const publicationBars: IntradayBar[] = []
     const technicalReceipts: StreamingFeatureReceipt<TechnicalMarketFeature>[] = []
     const featureExclusions: IntradayCandidateExclusion[] = []
     for (const [key, history] of state.rejections) {
@@ -70,7 +77,19 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       const bars = observedBarsAt(state, symbol, start, end, observedAtMs)
       const quote = state.quoteHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
       const trade = state.tradeHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
-      if (request.purpose === undefined) entries.push(...bars)
+      if (request.purpose === undefined) {
+        entries.push(...bars)
+        for (const bar of bars) {
+          const publication =
+            publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision ? bar.firstPublication : undefined
+          publicationBars.push((publication ?? bar).value)
+          if (publication !== undefined) {
+            if (publication.availableAtMs > observedAtMs || publication.sequence >= bar.sequence)
+              return yield* Result.fail(failure('not-ready', 'Bar publication witness is outside the observed cut'))
+            barPublications.push(publication)
+          }
+        }
+      }
       if (quote !== undefined) entries.push(quote)
       if (request.purpose === undefined && trade !== undefined) entries.push(trade)
       if (request.purpose !== undefined) continue
@@ -170,7 +189,23 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       marketFeatureClockSkewAllowanceMs,
     )
     yield* validateBarStructure(request, bars, marketFeatureClockSkewAllowanceMs)
-    const availability = yield* candidateAvailability(request, bars, quotes, trades, marketFeatureClockSkewAllowanceMs)
+    yield* validateIdentity(
+      request,
+      barPublications.map((entry) => entry.value),
+      request.rangeEndAt,
+      false,
+      undefined,
+      marketFeatureClockSkewAllowanceMs,
+    )
+    yield* validateBarStructure(request, publicationBars, marketFeatureClockSkewAllowanceMs)
+    const availability = yield* candidateAvailability(
+      request,
+      publicationBars,
+      quotes,
+      trades,
+      marketFeatureClockSkewAllowanceMs,
+      publicationPolicy,
+    )
     const exclusions = new Map(availability.exclusions.map((exclusion) => [exclusion.symbol, exclusion]))
     for (const exclusion of featureExclusions)
       if (!exclusions.has(exclusion.symbol)) exclusions.set(exclusion.symbol, exclusion)
@@ -195,6 +230,7 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
       symbols,
       entries,
       featureReceipts,
+      barPublications,
       technical,
       bars,
       quotes,
