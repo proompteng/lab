@@ -181,8 +181,8 @@ const readVersion = async (ref: string) => {
   ).version
 }
 
-const latestReleasePr = async () =>
-  (
+const latestReleasePr = async (version?: string) => {
+  const candidates = (
     await ghJson(Schema.Array(pullRequestSchema), [
       'pr',
       'list',
@@ -197,7 +197,15 @@ const latestReleasePr = async () =>
       '--json',
       prFields,
     ])
-  ).find(isRepositoryRelease)
+  ).filter(isRepositoryRelease)
+  if (version) {
+    for (const candidate of candidates) {
+      if (candidate.state === 'MERGED' && (await readVersion(candidate.headRefOid)) === version) return candidate
+    }
+    return undefined
+  }
+  return candidates[0]
+}
 
 const readPr = (number: number) =>
   ghJson(pullRequestSchema, ['pr', 'view', String(number), '-R', repository, '--json', prFields])
@@ -311,7 +319,12 @@ const main = async () => {
       `Release ${receipt.version} still needs verification. Run bun run release:temporal ${receipt.version} to finish it first.`,
     )
   }
-  const previous = receipt ? await readPr(receipt.number) : await latestReleasePr()
+  const currentVersion = await readVersion('main')
+  const completedVersion =
+    request.version.kind === 'exact' && Bun.semver.order(request.version.version, currentVersion) <= 0
+      ? request.version.version
+      : undefined
+  const previous = receipt ? await readPr(receipt.number) : await latestReleasePr(completedVersion)
   const resume =
     previous?.state === 'MERGED' &&
     (receipt !== undefined ||
@@ -321,7 +334,7 @@ const main = async () => {
   let pr = previous
   let selectedVersion: string | undefined
   if (!resume) {
-    const version = selectReleaseVersion(request.version, await readVersion('main'))
+    const version = selectReleaseVersion(request.version, currentVersion)
     selectedVersion = version
     console.log(
       `Preparing ${version ?? 'the next SDK version'} from main${request.mode === 'preview' ? ' (dry run)' : ''}.`,
@@ -357,6 +370,9 @@ const main = async () => {
     throw new Error('This command publishes stable versions. Use the documented manual workflow for prereleases.')
   if (selectedVersion && selectedVersion !== version)
     throw new Error(`The release PR contains ${version}, expected ${selectedVersion}`)
+  if (pr.state === 'OPEN' && Bun.semver.order(version, await readVersion(pr.baseRefOid)) !== 1) {
+    throw new Error(`Release ${version} is not newer than its main base. Run the command again for current main.`)
+  }
   if (request.version.kind === 'exact' && request.version.version !== version) {
     throw new Error(`An unfinished ${version} release exists. Finish it before releasing ${request.version.version}.`)
   }
@@ -377,6 +393,8 @@ const main = async () => {
         'headRefOid,baseRefOid,state,reviewDecision,statusCheckRollup,reviews,comments',
       ])
       if (status.state === 'MERGED' && status.headRefOid === head) {
+        if (status.baseRefOid !== base)
+          throw new Error('main changed before the concurrent merge. Inspect the release PR before continuing.')
         pr = await readPr(pr.number)
         break
       }
@@ -400,9 +418,15 @@ const main = async () => {
         await run(['gh', 'pr', 'merge', String(pr.number), '-R', repository, '--squash', '--match-head-commit', head])
       } catch (error) {
         const concurrent = await readPr(pr.number)
-        if (concurrent.state !== 'MERGED' || concurrent.headRefOid !== head) throw error
+        if (concurrent.state !== 'MERGED' || concurrent.headRefOid !== head || concurrent.baseRefOid !== base)
+          throw error
       }
       pr = await readPr(pr.number)
+    }
+    if (pr.headRefOid !== head || pr.baseRefOid !== base) {
+      throw new Error(
+        'The release was merged with a different head or base commit. Inspect the release PR before continuing.',
+      )
     }
   }
   if (pr.state !== 'MERGED' || !pr.mergeCommit) throw new Error(`Release PR has not merged: ${pr.url}`)

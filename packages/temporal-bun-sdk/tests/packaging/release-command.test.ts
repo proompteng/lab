@@ -99,7 +99,7 @@ const exerciseCommand = async (scenario: string, args = ['patch']) => {
   const statePath = join(directory, 'state.json')
   const logPath = join(directory, 'calls.jsonl')
   await writeFile(statePath, JSON.stringify({
-    scenario, phase: ['resume', 'verify-tagged'].includes(scenario) ? 'merged' : 'initial', tagged: scenario === 'verify-tagged', head, merged, checks: passingChecks(), archive,
+    scenario, phase: ['resume', 'verify-tagged', 'verify-with-newer-open'].includes(scenario) ? 'merged' : 'initial', tagged: ['verify-tagged', 'verify-with-newer-open'].includes(scenario), head, merged, checks: passingChecks(), archive,
     pack: { ...packageJson, id: `${packageJson.name}@${packageJson.version}`, filename: 'sdk.tgz', integrity: 'sha512-fixture', shasum: 'fixture', files },
   }))
   const stub = `#!${process.execPath}
@@ -112,7 +112,7 @@ const state = JSON.parse(readFileSync(statePath, 'utf8'))
 appendFileSync(process.env.RELEASE_COMMAND_TEST_LOG, JSON.stringify([command, ...args]) + '\\n')
 const save = () => writeFileSync(statePath, JSON.stringify(state))
 const print = (value) => console.log(JSON.stringify(value))
-const pr = () => ({ number: 12, url: 'https://github.com/proompteng/lab/pull/12', state: state.phase === 'merged' ? 'MERGED' : 'OPEN', headRefName: 'release-please--branches--main--components--temporal-bun-sdk', baseRefName: 'main', baseRefOid: (state.scenario === 'late-base' && state.checked ? 'e' : 'd').repeat(40), headRefOid: state.head, isCrossRepository: state.scenario === 'fork', headRepositoryOwner: { login: state.scenario === 'fork' ? 'another-owner' : 'proompteng' }, mergeCommit: state.phase === 'merged' ? { oid: state.merged } : null, labels: [{ name: state.tagged ? 'autorelease: tagged' : 'autorelease: pending' }] })
+const pr = () => ({ number: 12, url: 'https://github.com/proompteng/lab/pull/12', state: state.phase === 'merged' ? 'MERGED' : 'OPEN', headRefName: 'release-please--branches--main--components--temporal-bun-sdk', baseRefName: 'main', baseRefOid: (['late-base', 'concurrent-new-base'].includes(state.scenario) && state.checked ? 'e' : 'd').repeat(40), headRefOid: state.head, isCrossRepository: state.scenario === 'fork', headRepositoryOwner: { login: state.scenario === 'fork' ? 'another-owner' : 'proompteng' }, mergeCommit: state.phase === 'merged' ? { oid: state.merged } : null, labels: [{ name: state.tagged ? 'autorelease: tagged' : 'autorelease: pending' }] })
 if (command === 'bunx') {
   if (!args.includes('--dry-run')) { state.phase = 'prepared'; save() }
   console.log('Release Please preview/preparation completed')
@@ -125,14 +125,18 @@ if (command === 'bunx') {
   console.log('fixture-token-kept-off-argv')
 } else if (args[0] === 'pr' && args[1] === 'list') {
   const candidates = state.scenario === 'fork-collision' ? [{ ...pr(), number: 99, isCrossRepository: true, headRepositoryOwner: { login: 'another-owner' } }, pr()] : [pr()]
+  if (state.scenario === 'verify-with-newer-open') candidates.unshift({ ...pr(), number: 99, state: 'OPEN', headRefOid: 'f'.repeat(40), mergeCommit: null })
   print(state.phase === 'initial' ? [] : candidates)
 } else if (args[0] === 'api' && args[1].includes('/contents/')) {
-  console.log(Buffer.from(JSON.stringify({ version: args[1].endsWith('=main') ? '0.11.3' : '0.11.4' })).toString('base64'))
+  const ref = args[1].split('?ref=')[1]
+  const version = ref === 'main' ? (state.scenario === 'verify-with-newer-open' ? '0.11.4' : '0.11.3') : ref === 'd'.repeat(40) ? (state.scenario === 'base-version-ahead' ? '0.11.5' : '0.11.3') : ref === 'f'.repeat(40) ? '0.11.5' : '0.11.4'
+  console.log(Buffer.from(JSON.stringify({ version })).toString('base64'))
 } else if (args[0] === 'pr' && args[1] === 'view') {
   if (args.at(-1).includes('statusCheckRollup')) {
     state.checked = true; save()
     if (state.scenario === 'failed-check') state.checks.statusCheckRollup[0].conclusion = 'FAILURE'
     if (state.scenario === 'base-moved') state.checks.baseRefOid = 'e'.repeat(40)
+    if (state.scenario.startsWith('concurrent-')) { state.phase = 'merged'; state.checks.state = 'MERGED'; state.checks.baseRefOid = pr().baseRefOid; save() }
     print(state.checks)
   } else print(pr())
 } else if (args[0] === 'api' && args[1] === 'graphql') {
@@ -243,6 +247,30 @@ describe('release command through CLI boundaries', () => {
     expect(result.code).toBe(0)
     expect(result.calls.some((args) => args[0] === 'bunx' || args.includes('merge'))).toBe(false)
     expect(result.receiptExists).toBe(false)
+  })
+
+  test('finds the completed exact version when a newer version PR is open', async () => {
+    const result = await exerciseCommand('verify-with-newer-open', ['0.11.4'])
+    expect(result.code).toBe(0)
+    expect(result.calls.some((args) => args[0] === 'bunx' || args.includes('merge'))).toBe(false)
+  })
+
+  test('rejects a concurrent merge that used a different base', async () => {
+    const result = await exerciseCommand('concurrent-new-base')
+    expect(result.code).toBe(1)
+    expect(result.calls.some((args) => args.includes('merge') || args[0] === 'npm')).toBe(false)
+  })
+
+  test('accepts a concurrent merge of the selected head and base', async () => {
+    const result = await exerciseCommand('concurrent-same-base')
+    expect(result.code).toBe(0)
+    expect(result.calls.some((args) => args.includes('merge'))).toBe(false)
+  })
+
+  test('rejects a version superseded on main while Release Please was preparing the PR', async () => {
+    const result = await exerciseCommand('base-version-ahead')
+    expect(result.code).toBe(1)
+    expect(result.calls.some((args) => args.includes('merge') || args[0] === 'npm')).toBe(false)
   })
 
   test.each(['failed-publication', 'wrong-artifact'])('does not claim a release for %s', async (scenario) => {
