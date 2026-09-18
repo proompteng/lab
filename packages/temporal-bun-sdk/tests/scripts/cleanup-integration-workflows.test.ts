@@ -174,4 +174,33 @@ Status                         WorkflowId                                 Type  
     )
     expect(result).toBe(false)
   })
+
+  test('accepts a stale record disappearing between the count and list', async () => {
+    const counts = [1, 0]
+    const result = await verifyOnlyStaleVisibility(
+      'WorkflowType="workerLoadUpdateWorkflow"',
+      'workerLoadUpdateWorkflow',
+      'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
+      {
+        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
+        countRunning: async () => counts.shift() ?? 0,
+        listRunning: async () => '',
+      },
+    )
+    expect(result).toBe(true)
+  })
+
+  test('an empty list cannot hide a nonzero follow-up workflow count', async () => {
+    const result = await verifyOnlyStaleVisibility(
+      'WorkflowType="workerLoadUpdateWorkflow"',
+      'workerLoadUpdateWorkflow',
+      'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
+      {
+        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
+        countRunning: async () => 1,
+        listRunning: async () => '',
+      },
+    )
+    expect(result).toBe(false)
+  })
 })

@@ -199,6 +199,9 @@ async function terminateRemainingWorkflows(query: string, workflowType: string):
     `[temporal-bun-sdk] ${workflowType} still has ${after} running workflow(s) after batch cleanup; retrying individually`,
   )
   const listOutput = await list(query, after)
+  if (parseWorkflowIdsFromListOutput(listOutput, workflowType).length === 0 && (await count(query)) === 0) {
+    return false
+  }
   const result = await terminateIndividually(
     workflowType,
     listOutput,
@@ -280,6 +283,9 @@ export async function verifyOnlyStaleVisibility(
     console.warn(
       `[temporal-bun-sdk] ${workflowType} has ${remaining} stale visibility record(s) during verification for workflow(s) already reported terminal or missing`,
     )
+  }
+  if (!onlyStaleVisibilityRemains && parseWorkflowIdsFromListOutput(remainingListOutput, workflowType).length === 0) {
+    return (await countRunning(query)) === 0
   }
   return onlyStaleVisibilityRemains
 }

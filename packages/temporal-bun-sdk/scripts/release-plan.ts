@@ -5,6 +5,16 @@ const packagePath = 'packages/temporal-bun-sdk/package.json'
 const component = 'packages/temporal-bun-sdk'
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
+export const matchesRecordedReleaseBase = (message: string, parents: readonly string[]) => {
+  const prefix = 'Temporal-Bun-Release-Base:'
+  const [recordedBase, ...otherBases] = message.split('\n').filter((line) => line.startsWith(prefix))
+  if (!recordedBase) return true
+  if (otherBases.length > 0 || !/^Temporal-Bun-Release-Base: [a-f0-9]{40}$/.test(recordedBase)) {
+    throw new Error('The release commit has an invalid base record')
+  }
+  return parents.length === 1 && parents[0] === recordedBase.slice(prefix.length).trim()
+}
+
 export const assertPublishTag = (version: string, currentVersion?: string) => {
   if (currentVersion && Bun.semver.order(version, currentVersion) < 0) {
     throw new Error(`Refusing to move an npm dist-tag backward from ${currentVersion} to ${version}`)
@@ -81,17 +91,7 @@ if (import.meta.main) {
     const message = Bun.spawnSync(['git', 'show', '-s', '--format=%B', sha])
     const parents = Bun.spawnSync(['git', 'show', '-s', '--format=%P', sha])
     if (message.exitCode !== 0 || parents.exitCode !== 0) throw new Error('Cannot read the publication commit')
-    const prefix = 'Temporal-Bun-Release-Base:'
-    const [recordedBase, ...otherBases] = message.stdout
-      .toString()
-      .split('\n')
-      .filter((line) => line.startsWith(prefix))
-    if (
-      recordedBase &&
-      (otherBases.length > 0 ||
-        !/^Temporal-Bun-Release-Base: [a-f0-9]{40}$/.test(recordedBase) ||
-        recordedBase.slice(prefix.length).trim() !== parents.stdout.toString().trim())
-    ) {
+    if (!matchesRecordedReleaseBase(message.stdout.toString(), parents.stdout.toString().trim().split(/\s+/))) {
       throw new Error(
         'Refusing publication: main changed during the release merge. Prepare a new release from current main.',
       )

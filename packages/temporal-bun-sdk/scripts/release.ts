@@ -3,6 +3,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { Schema } from 'effect'
 
+import { matchesRecordedReleaseBase } from './release-plan'
 import { verifyPublishedPack } from './verify-packed-readiness'
 
 const repository = 'proompteng/lab'
@@ -313,18 +314,43 @@ const main = async () => {
         ? request.version.version
         : 'automatic'
   const receiptPath = resolve(root, await run(['git', 'rev-parse', '--git-path', 'temporal-bun-sdk-release.json']))
-  const receipt = await readReceipt(receiptPath)
-  if (receipt && requestKey !== receipt.request && requestKey !== receipt.version) {
-    throw new Error(
-      `Release ${receipt.version} still needs verification. Run bun run release:temporal ${receipt.version} to finish it first.`,
-    )
-  }
+  let receipt = await readReceipt(receiptPath)
   const currentVersion = await readVersion('main')
   const completedVersion =
     request.version.kind === 'exact' && Bun.semver.order(request.version.version, currentVersion) <= 0
       ? request.version.version
       : undefined
-  const previous = receipt ? await readPr(receipt.number) : await latestReleasePr(completedVersion)
+  let previous = receipt ? await readPr(receipt.number) : await latestReleasePr(completedVersion)
+  let rejectedRelease: typeof pullRequestSchema.Type | undefined
+  if (
+    previous?.state === 'MERGED' &&
+    previous.mergeCommit &&
+    isRepositoryRelease(previous) &&
+    previous.baseRefName === 'main'
+  ) {
+    const commit = await ghJson(
+      Schema.Struct({ message: Schema.String, parents: Schema.Array(Schema.Struct({ sha: Schema.String })) }),
+      ['api', `repos/${repository}/git/commits/${previous.mergeCommit.oid}`],
+    )
+    if (
+      !matchesRecordedReleaseBase(
+        commit.message,
+        commit.parents.map((parent) => parent.sha),
+      )
+    ) {
+      console.log(
+        `Release PR #${previous.number} was merged onto a different base and cannot publish. Preparing a replacement from main.`,
+      )
+      rejectedRelease = previous
+      receipt = undefined
+      previous = undefined
+    }
+  }
+  if (receipt && requestKey !== receipt.request && requestKey !== receipt.version) {
+    throw new Error(
+      `Release ${receipt.version} still needs verification. Run bun run release:temporal ${receipt.version} to finish it first.`,
+    )
+  }
   const resume =
     previous?.state === 'MERGED' &&
     (receipt !== undefined ||
@@ -336,10 +362,26 @@ const main = async () => {
   let selectedVersion: string | undefined
   if (!resume) {
     const version = selectReleaseVersion(
-      receipt ? { kind: 'exact', version: receipt.version } : request.version,
+      receipt
+        ? { kind: 'exact', version: receipt.version }
+        : rejectedRelease && request.version.kind === 'automatic'
+          ? { kind: 'bump', level: 'patch' }
+          : request.version,
       currentVersion,
     )
     selectedVersion = version
+    if (rejectedRelease?.labels.some((label) => label.name === 'autorelease: pending') && request.mode !== 'preview') {
+      await run([
+        'gh',
+        'pr',
+        'edit',
+        String(rejectedRelease.number),
+        '-R',
+        repository,
+        '--remove-label',
+        'autorelease: pending',
+      ])
+    }
     console.log(
       `Preparing ${version ?? 'the next SDK version'} from main${request.mode === 'preview' ? ' (dry run)' : ''}.`,
     )

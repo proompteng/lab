@@ -71,7 +71,9 @@ describe('release command decisions', () => {
 })
 
 const directories: string[] = []
+const stopProcesses: Array<() => Promise<void>> = []
 afterEach(async () => {
+  await Promise.all(stopProcesses.splice(0).map((stop) => stop()))
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -82,7 +84,7 @@ const exerciseCommand = async (scenario: string, args = ['patch']) => {
   const dist = join(directory, 'package', 'dist')
   await mkdir(bin)
   await mkdir(dist, { recursive: true })
-  const packageJson = { name: '@proompteng/temporal-bun-sdk', version: '0.11.4' }
+  const packageJson = { name: '@proompteng/temporal-bun-sdk', version: scenario === 'rejected-merge' ? '0.11.5' : '0.11.4' }
   const production = { package: packageJson, defaultChoice: { recommended: true, blockers: [] }, gates: { releaseProvenanceEvidence: { passed: true } } }
   const provenance = {
     package: packageJson, passed: true, git: { githubSha: scenario === 'wrong-artifact' ? 'c'.repeat(40) : merged },
@@ -99,9 +101,10 @@ const exerciseCommand = async (scenario: string, args = ['patch']) => {
   const statePath = join(directory, 'state.json')
   const logPath = join(directory, 'calls.jsonl')
   await writeFile(statePath, JSON.stringify({
-    scenario, phase: ['resume', 'verify-tagged', 'verify-with-newer-open'].includes(scenario) ? 'merged' : 'initial', tagged: ['verify-tagged', 'verify-with-newer-open'].includes(scenario), head, merged, checks: passingChecks(), archive,
+    scenario, phase: ['resume', 'verify-tagged', 'verify-with-newer-open', 'rejected-merge'].includes(scenario) ? 'merged' : 'initial', tagged: ['verify-tagged', 'verify-with-newer-open'].includes(scenario), head, merged, checks: passingChecks(), archive,
     pack: { ...packageJson, id: `${packageJson.name}@${packageJson.version}`, filename: 'sdk.tgz', integrity: 'sha512-fixture', shasum: 'fixture', files },
   }))
+  if (scenario === 'rejected-merge') await writeFile(statePath + '.release', JSON.stringify({ number: 12, version: '0.11.4', request: 'patch' }))
   const stub = `#!${process.execPath}
 import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -112,9 +115,10 @@ const state = JSON.parse(readFileSync(statePath, 'utf8'))
 appendFileSync(process.env.RELEASE_COMMAND_TEST_LOG, JSON.stringify([command, ...args]) + '\\n')
 const save = () => writeFileSync(statePath, JSON.stringify(state))
 const print = (value) => console.log(JSON.stringify(value))
-const pr = () => ({ number: 12, url: 'https://github.com/proompteng/lab/pull/12', state: state.phase === 'merged' ? 'MERGED' : 'OPEN', headRefName: 'release-please--branches--main--components--temporal-bun-sdk', baseRefName: 'main', baseRefOid: (['late-base', 'concurrent-new-base'].includes(state.scenario) && state.checked ? 'e' : 'd').repeat(40), headRefOid: state.head, isCrossRepository: state.scenario === 'fork', headRepositoryOwner: { login: state.scenario === 'fork' ? 'another-owner' : 'proompteng' }, mergeCommit: state.phase === 'merged' ? { oid: state.merged } : null, labels: [{ name: state.tagged ? 'autorelease: tagged' : 'autorelease: pending' }] })
+const pr = () => ({ number: state.replaced ? 13 : 12, url: 'https://github.com/proompteng/lab/pull/12', state: state.phase === 'merged' ? 'MERGED' : 'OPEN', headRefName: 'release-please--branches--main--components--temporal-bun-sdk', baseRefName: 'main', baseRefOid: (['late-base', 'concurrent-new-base'].includes(state.scenario) && state.checked ? 'e' : 'd').repeat(40), headRefOid: state.head, isCrossRepository: state.scenario === 'fork', headRepositoryOwner: { login: state.scenario === 'fork' ? 'another-owner' : 'proompteng' }, mergeCommit: state.phase === 'merged' ? { oid: state.merged } : null, labels: [{ name: state.tagged ? 'autorelease: tagged' : 'autorelease: pending' }] })
 if (command === 'bunx') {
-  if (!args.includes('--dry-run')) { state.phase = 'prepared'; save() }
+  if (state.scenario === 'rejected-merge' && !state.pendingRemoved && !args.includes('--dry-run')) { console.log('There are untagged, merged release PRs outstanding - aborting'); process.exit(0) }
+  if (!args.includes('--dry-run')) { state.phase = 'prepared'; if (state.scenario === 'rejected-merge') { state.replaced = true; state.head = 'f'.repeat(40); state.checks.headRefOid = state.head; state.checks.reviews[0].commit.oid = state.head }; save() }
   console.log('Release Please preview/preparation completed')
 } else if (command === 'git') {
   console.log(statePath + '.release')
@@ -129,7 +133,7 @@ if (command === 'bunx') {
   print(state.phase === 'initial' ? [] : candidates)
 } else if (args[0] === 'api' && args[1].includes('/contents/')) {
   const ref = args[1].split('?ref=')[1]
-  const version = ref === 'main' ? (state.scenario === 'verify-with-newer-open' ? '0.11.4' : '0.11.3') : ref === 'd'.repeat(40) ? (state.scenario === 'base-version-ahead' ? '0.11.5' : '0.11.3') : ref === 'f'.repeat(40) ? '0.11.5' : '0.11.4'
+  const version = ref === 'main' ? (['verify-with-newer-open', 'rejected-merge'].includes(state.scenario) ? '0.11.4' : '0.11.3') : ref === 'd'.repeat(40) ? (state.scenario === 'base-version-ahead' ? '0.11.5' : '0.11.3') : ref === 'f'.repeat(40) ? '0.11.5' : '0.11.4'
   console.log(Buffer.from(JSON.stringify({ version })).toString('base64'))
 } else if (args[0] === 'pr' && args[1] === 'view') {
   if (state.scenario === 'interrupt-after-merge' && state.phase === 'merged' && !state.interrupted) { state.interrupted = true; save(); process.exit(1) }
@@ -143,6 +147,8 @@ if (command === 'bunx') {
   } else print(pr())
 } else if (args[0] === 'api' && args[1] === 'graphql') {
   print({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: state.scenario === 'unresolved-review' ? [{ isResolved: false }] : [] } } } } })
+} else if (args[0] === 'pr' && args[1] === 'edit' && args.includes('--remove-label') && args.includes('autorelease: pending')) {
+  state.pendingRemoved = true; save()
 } else if (args[0] === 'pr' && args[1] === 'merge') {
   state.mergeBody = await new Response(Bun.stdin.stream()).text(); save()
   if (state.scenario === 'interrupt-after-merge') { state.phase = 'merged'; state.tagged = true; save(); process.exit(1) }
@@ -153,6 +159,8 @@ if (command === 'bunx') {
   if (state.scenario === 'failed-publication') process.exit(1)
 } else if (args[0] === 'run' && args[1] === 'rerun') {
   state.retried = true; save()
+} else if (args[0] === 'api' && args[1].includes('/git/commits/')) {
+  print({ message: 'Release SDK\\n\\nTemporal-Bun-Release-Base: ' + 'd'.repeat(40), parents: [{ sha: (state.scenario === 'rejected-merge' && !state.replaced ? 'e' : 'd').repeat(40) }] })
 } else if (args[0] === 'api' && args[1].includes('/commits/')) {
   console.log(state.merged)
 } else {
@@ -168,6 +176,7 @@ if (command === 'bunx') {
     env: { ...process.env, GITHUB_OUTPUT: undefined, PATH: `${bin}:${process.env.PATH}`, RELEASE_COMMAND_TEST_STATE: statePath, RELEASE_COMMAND_TEST_LOG: logPath },
     stdout: 'pipe', stderr: 'pipe',
   })
+  stopProcesses.push(async () => { if (child.exitCode === null) child.kill(); await child.exited })
   const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
   return { code, stdout, stderr, receiptExists: await Bun.file(statePath + '.release').exists() }
   }
@@ -267,6 +276,25 @@ describe('release command through CLI boundaries', () => {
     for (const preparation of preparations) expect(preparation).toContain('--release-as=0.11.4')
     expect(result.calls.filter((args) => args[1] === 'pr' && args[2] === 'merge')).toHaveLength(1)
     expect(result.receiptExists).toBe(false)
+  })
+
+  test.each(['patch', '0.11.5', 'automatic'])('replaces a permanently rejected merge when releasing %s', async (version) => {
+    const result = await exerciseCommand('rejected-merge', version === 'automatic' ? [] : [version])
+    expect(result.code).toBe(0)
+    expect(result.calls.find((args) => args[0] === 'bunx')).toContain('--release-as=0.11.5')
+    expect(result.calls.find((args) => args[1] === 'pr' && args[2] === 'merge')?.[3]).toBe('13')
+    expect(result.calls.some((args) => args.includes('rerun'))).toBe(false)
+    expect(result.state.pendingRemoved).toBe(true)
+    expect(result.stdout).toContain('Published and verified @proompteng/temporal-bun-sdk@0.11.5')
+    expect(result.receiptExists).toBe(false)
+  })
+
+  test('previewing a replacement retains the saved receipt and pending label', async () => {
+    const result = await exerciseCommand('rejected-merge', ['patch', '--dry-run'])
+    expect(result.code).toBe(0)
+    expect(result.state.pendingRemoved).toBeUndefined()
+    expect(result.receiptExists).toBe(true)
+    expect(result.calls.find((args) => args[0] === 'bunx')).toContain('--release-as=0.11.5')
   })
 
   test('verifies an exact tagged version from another checkout without opening a new release', async () => {

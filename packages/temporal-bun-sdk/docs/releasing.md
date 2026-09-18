@@ -34,8 +34,9 @@ the version PR. The command checks both the PR commit and its base commit before
 merging so the generated changelog matches the selected release.
 The merge commit records the checked base. The publication workflow verifies that
 record against the actual merge parent before allowing an npm upload; a base
-change during GitHub's merge operation stops publication and requires a new
-release from current `main`.
+change during GitHub's merge operation stops publication. Rerunning the command
+prepares a replacement version from current `main`, skipping the rejected version.
+If you selected an exact version, choose a newer version for the replacement.
 
 The main-branch workflow runs the integration and load suites on the shared
 Temporal cluster, then publishes with npm trusted publishing and provenance.
