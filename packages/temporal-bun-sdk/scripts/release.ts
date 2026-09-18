@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { Schema } from 'effect'
 
@@ -66,18 +67,22 @@ const pullRequestSchema = Schema.Struct({
   url: Schema.String,
   state: Schema.Literal('OPEN', 'MERGED', 'CLOSED'),
   headRefOid: Schema.String,
+  headRefName: Schema.String,
   baseRefName: Schema.String,
+  baseRefOid: Schema.String,
   isCrossRepository: Schema.Boolean,
   headRepositoryOwner: Schema.NullOr(Schema.Struct({ login: Schema.String })),
   mergeCommit: Schema.NullOr(Schema.Struct({ oid: Schema.String })),
   labels: Schema.Array(Schema.Struct({ name: Schema.String })),
 })
-const prFields = 'number,url,state,headRefOid,baseRefName,isCrossRepository,headRepositoryOwner,mergeCommit,labels'
+const prFields =
+  'number,url,state,headRefOid,headRefName,baseRefName,baseRefOid,isCrossRepository,headRepositoryOwner,mergeCommit,labels'
 const isRepositoryRelease = (pr: typeof pullRequestSchema.Type) =>
-  !pr.isCrossRepository && pr.headRepositoryOwner?.login === 'proompteng'
+  !pr.isCrossRepository && pr.headRepositoryOwner?.login === 'proompteng' && pr.headRefName === releaseBranch
 const authorSchema = Schema.NullOr(Schema.Struct({ login: Schema.String }))
 const checksSchema = Schema.Struct({
   headRefOid: Schema.String,
+  baseRefOid: Schema.String,
   state: Schema.Literal('OPEN', 'MERGED', 'CLOSED'),
   reviewDecision: Schema.String,
   statusCheckRollup: Schema.Array(
@@ -98,10 +103,12 @@ const checksSchema = Schema.Struct({
   comments: Schema.Array(Schema.Struct({ author: authorSchema, body: Schema.String })),
 })
 
-export const assessReleaseChecks = (input: unknown, head: string) => {
+export const assessReleaseChecks = (input: unknown, head: string, base: string) => {
   const pr = Schema.decodeUnknownSync(checksSchema)(input)
   if (pr.headRefOid !== head)
     throw new Error('The release PR changed while waiting. Run the command again to recheck it.')
+  if (pr.baseRefOid !== base)
+    throw new Error('main changed while waiting. Run the command again to regenerate and recheck the release PR.')
   if (pr.state === 'CLOSED') throw new Error('The release PR was closed without merging')
   if (pr.reviewDecision === 'CHANGES_REQUESTED')
     throw new Error('The release PR has requested changes. Resolve its review first.')
@@ -195,6 +202,22 @@ const latestReleasePr = async () =>
 const readPr = (number: number) =>
   ghJson(pullRequestSchema, ['pr', 'view', String(number), '-R', repository, '--json', prFields])
 
+const receiptSchema = Schema.Struct({ number: Schema.Number, version: Schema.String, request: Schema.String })
+const readReceipt = async (path: string) => {
+  try {
+    return Schema.decodeUnknownSync(receiptSchema)(JSON.parse(await readFile(path, 'utf8')))
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+const saveReceipt = async (path: string, receipt: typeof receiptSchema.Type) => {
+  const temporary = `${path}.${process.pid}.tmp`
+  await writeFile(temporary, `${JSON.stringify(receipt)}\n`, { mode: 0o600 })
+  await rename(temporary, path)
+}
+
 const ensureResolvedReviews = async (number: number) => {
   const query = `query { repository(owner:"proompteng", name:"lab") { pullRequest(number:${number}) { reviewThreads(first:100) { pageInfo { hasNextPage } nodes { isResolved } } } } }`
   const result = await ghJson(
@@ -275,8 +298,26 @@ const main = async () => {
   const request = parseReleaseArgs(args)
   const token = await run(['gh', 'auth', 'token', '--hostname', 'github.com'])
   if (!token) throw new Error('Run gh auth login before releasing.')
-  const previous = await latestReleasePr()
-  const resume = previous?.state === 'MERGED' && previous.labels.some((label) => label.name === 'autorelease: pending')
+  const requestKey =
+    request.version.kind === 'bump'
+      ? request.version.level
+      : request.version.kind === 'exact'
+        ? request.version.version
+        : 'automatic'
+  const receiptPath = resolve(root, await run(['git', 'rev-parse', '--git-path', 'temporal-bun-sdk-release.json']))
+  const receipt = await readReceipt(receiptPath)
+  if (receipt && requestKey !== receipt.request && requestKey !== receipt.version) {
+    throw new Error(
+      `Release ${receipt.version} still needs verification. Run bun run release:temporal ${receipt.version} to finish it first.`,
+    )
+  }
+  const previous = receipt ? await readPr(receipt.number) : await latestReleasePr()
+  const resume =
+    previous?.state === 'MERGED' &&
+    (receipt !== undefined ||
+      previous.labels.some((label) => label.name === 'autorelease: pending') ||
+      (request.version.kind === 'exact' && (await readVersion(previous.headRefOid)) === request.version.version))
+  if (receipt && !resume) throw new Error(`Saved release PR #${receipt.number} is no longer merged`)
   let pr = previous
   let selectedVersion: string | undefined
   if (!resume) {
@@ -311,6 +352,7 @@ const main = async () => {
   if (!isRepositoryRelease(pr)) throw new Error('The release PR must belong to proompteng/lab')
   if (pr.baseRefName !== 'main') throw new Error('The release PR must target main')
   const version = await readVersion(pr.headRefOid)
+  if (receipt && receipt.version !== version) throw new Error('The saved release version does not match its PR')
   if (!isStableVersion(version))
     throw new Error('This command publishes stable versions. Use the documented manual workflow for prereleases.')
   if (selectedVersion && selectedVersion !== version)
@@ -323,6 +365,7 @@ const main = async () => {
   const deadline = Date.now() + 120 * 60_000
   if (pr.state === 'OPEN') {
     const head = pr.headRefOid
+    const base = pr.baseRefOid
     for (;;) {
       const status = await ghJson(checksSchema, [
         'pr',
@@ -331,19 +374,24 @@ const main = async () => {
         '-R',
         repository,
         '--json',
-        'headRefOid,state,reviewDecision,statusCheckRollup,reviews,comments',
+        'headRefOid,baseRefOid,state,reviewDecision,statusCheckRollup,reviews,comments',
       ])
       if (status.state === 'MERGED' && status.headRefOid === head) {
         pr = await readPr(pr.number)
         break
       }
-      const pending = assessReleaseChecks(status, head)
+      const pending = assessReleaseChecks(status, head, base)
       if (pending.length === 0) break
       await wait(pending.join(', '), deadline)
     }
     if (pr.state === 'OPEN') {
       const current = await readPr(pr.number)
-      if (!isRepositoryRelease(current) || current.baseRefName !== 'main' || current.headRefOid !== head) {
+      if (
+        !isRepositoryRelease(current) ||
+        current.baseRefName !== 'main' ||
+        current.headRefOid !== head ||
+        current.baseRefOid !== base
+      ) {
         throw new Error('The release PR identity changed while waiting. Run the command again to recheck it.')
       }
       await ensureResolvedReviews(pr.number)
@@ -359,6 +407,7 @@ const main = async () => {
   }
   if (pr.state !== 'MERGED' || !pr.mergeCommit) throw new Error(`Release PR has not merged: ${pr.url}`)
   const sha = pr.mergeCommit.oid
+  await saveReceipt(receiptPath, { number: pr.number, version, request: requestKey })
   const publicationUrl = await waitForPublication(sha, resume, deadline)
   await verifyPublishedPack({ name: packageName, version }, `${packageName}@${version}`, sha)
   const tag = `temporal-bun-sdk-v${version}`
@@ -367,6 +416,10 @@ const main = async () => {
   console.log(
     `\nPublished and verified ${packageName}@${version}\n\nbun add ${packageName}@${version}\n\n${publicationUrl}\nhttps://github.com/${repository}/releases/tag/${tag}`,
   )
+  const verifiedReceipt = await readReceipt(receiptPath)
+  if (verifiedReceipt?.number === pr.number && verifiedReceipt.version === version) {
+    await rm(receiptPath, { force: true })
+  }
 }
 
 if (import.meta.main) {

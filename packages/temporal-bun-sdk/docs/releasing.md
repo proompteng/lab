@@ -23,8 +23,15 @@ from `packages/temporal-bun-sdk`.
 
 If a check fails or a review needs attention, the command stops with the PR link.
 Resolve the failure and run the same command again. An interrupted command can
-resume a merged release whose publication is still pending. Resuming a failed
-publication reruns its failed jobs instead of opening another version PR.
+resume its merged release even after GitHub marks the package published. The
+command saves the release PR and version locally until package and tag
+verification succeeds. Resuming a failed publication reruns its failed jobs
+instead of opening another version PR. To resume verification of the latest
+completed release from another checkout, pass its exact version.
+
+If `main` changes during validation, rerun the command to regenerate and recheck
+the version PR. The command checks both the PR commit and its base commit before
+merging so the generated changelog matches the selected release.
 
 The main-branch workflow runs the integration and load suites on the shared
 Temporal cluster, then publishes with npm trusted publishing and provenance.
