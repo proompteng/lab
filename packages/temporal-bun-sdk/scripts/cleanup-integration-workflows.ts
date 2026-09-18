@@ -190,7 +190,7 @@ async function terminateIndividually(
 }
 
 async function terminateRemainingWorkflows(query: string, workflowType: string): Promise<boolean> {
-  const after = await waitForNoRunningWorkflowCount(query)
+  const after = await count(query)
   if (after === 0) {
     return false
   }
@@ -199,6 +199,9 @@ async function terminateRemainingWorkflows(query: string, workflowType: string):
     `[temporal-bun-sdk] ${workflowType} still has ${after} running workflow(s) after batch cleanup; retrying individually`,
   )
   const listOutput = await list(query, after)
+  if (parseWorkflowIdsFromListOutput(listOutput, workflowType).length === 0 && (await count(query)) === 0) {
+    return false
+  }
   const result = await terminateIndividually(
     workflowType,
     listOutput,
@@ -208,7 +211,7 @@ async function terminateRemainingWorkflows(query: string, workflowType: string):
     return false
   }
 
-  const remainingAfterIndividual = await waitForNoRunningWorkflowCount(query)
+  const remainingAfterIndividual = await count(query)
   if (remainingAfterIndividual === 0) {
     return false
   }
@@ -235,7 +238,7 @@ type VerifyOnlyStaleVisibilityOptions = {
     listOutput: string,
     context: string,
   ) => Promise<IndividualTerminationResult>
-  readonly waitForNoRunningCount?: (query: string) => Promise<number>
+  readonly countRunning?: (query: string) => Promise<number>
   readonly listRunning?: (query: string, limit?: number) => Promise<string>
 }
 
@@ -246,7 +249,7 @@ export async function verifyOnlyStaleVisibility(
   options: VerifyOnlyStaleVisibilityOptions = {},
 ): Promise<boolean> {
   const terminateVisibleWorkflows = options.terminateVisibleWorkflows ?? terminateIndividually
-  const waitForNoRunningCount = options.waitForNoRunningCount ?? waitForNoRunningWorkflowCount
+  const countRunning = options.countRunning ?? count
   const listRunning = options.listRunning ?? list
 
   const result = await terminateVisibleWorkflows(
@@ -265,7 +268,7 @@ export async function verifyOnlyStaleVisibility(
     return false
   }
 
-  const remaining = await waitForNoRunningCount(query)
+  const remaining = await countRunning(query)
   if (remaining === 0) {
     return true
   }
@@ -280,6 +283,9 @@ export async function verifyOnlyStaleVisibility(
     console.warn(
       `[temporal-bun-sdk] ${workflowType} has ${remaining} stale visibility record(s) during verification for workflow(s) already reported terminal or missing`,
     )
+  }
+  if (!onlyStaleVisibilityRemains && parseWorkflowIdsFromListOutput(remainingListOutput, workflowType).length === 0) {
+    return (await countRunning(query)) === 0
   }
   return onlyStaleVisibilityRemains
 }
