@@ -948,3 +948,21 @@ for (const scenario of ['missing', 'stale', 'future', 'thin', 'zero'] as const) 
     )
   })
 }
+
+test('fractional market close requires the captured account fractional-trading setting', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ fractionalTrading: false, advanceToArrival: (at) => TestClock.setTime(at) })
+      yield* broker.mutation.submit(intent())
+      const close = intent({
+        clientOrderId: 'disabled-fractional-close',
+        side: OrderSide.Sell,
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+        quantityMicros: '500000',
+      })
+      expect((yield* Effect.exit(broker.mutation.submit(close, true)))._tag).toBe('Failure')
+      expect((yield* broker.snapshot).orders).toHaveLength(1)
+    }),
+  )
+})
