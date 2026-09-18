@@ -110,7 +110,7 @@ const state = JSON.parse(readFileSync(statePath, 'utf8'))
 appendFileSync(process.env.RELEASE_COMMAND_TEST_LOG, JSON.stringify([command, ...args]) + '\\n')
 const save = () => writeFileSync(statePath, JSON.stringify(state))
 const print = (value) => console.log(JSON.stringify(value))
-const pr = () => ({ number: 12, url: 'https://github.com/proompteng/lab/pull/12', state: state.phase === 'merged' ? 'MERGED' : 'OPEN', baseRefName: 'main', headRefOid: state.head, mergeCommit: state.phase === 'merged' ? { oid: state.merged } : null, labels: [{ name: 'autorelease: pending' }] })
+const pr = () => ({ number: 12, url: 'https://github.com/proompteng/lab/pull/12', state: state.phase === 'merged' ? 'MERGED' : 'OPEN', baseRefName: 'main', headRefOid: state.head, isCrossRepository: state.scenario === 'fork', headRepositoryOwner: { login: state.scenario === 'fork' ? 'another-owner' : 'proompteng' }, mergeCommit: state.phase === 'merged' ? { oid: state.merged } : null, labels: [{ name: 'autorelease: pending' }] })
 if (command === 'bunx') {
   if (!args.includes('--dry-run')) { state.phase = 'prepared'; save() }
   console.log('Release Please preview/preparation completed')
@@ -119,7 +119,8 @@ if (command === 'bunx') {
 } else if (args[0] === 'auth') {
   console.log('fixture-token-kept-off-argv')
 } else if (args[0] === 'pr' && args[1] === 'list') {
-  print(state.phase === 'initial' ? [] : [pr()])
+  const candidates = state.scenario === 'fork-collision' ? [{ ...pr(), number: 99, isCrossRepository: true, headRepositoryOwner: { login: 'another-owner' } }, pr()] : [pr()]
+  print(state.phase === 'initial' ? [] : candidates)
 } else if (args[0] === 'api' && args[1].includes('/contents/')) {
   console.log(Buffer.from(JSON.stringify({ version: args[1].endsWith('=main') ? '0.11.3' : '0.11.4' })).toString('base64'))
 } else if (args[0] === 'pr' && args[1] === 'view') {
@@ -178,6 +179,19 @@ describe('release command through CLI boundaries', () => {
     expect(result.code).toBe(0)
     expect(result.state.phase).toBe('prepared')
     expect(result.calls.some((args) => args.includes('merge') || args[0] === 'npm')).toBe(false)
+  })
+
+  test('refuses a same-named release branch from a fork', async () => {
+    const result = await exerciseCommand('fork')
+    expect(result.code).toBe(1)
+    expect(result.calls.some((args) => args.includes('merge') || args[0] === 'npm')).toBe(false)
+  })
+
+  test('selects the repository-owned release PR when a newer fork uses its branch name', async () => {
+    const result = await exerciseCommand('fork-collision')
+    expect(result.code).toBe(0)
+    const merge = result.calls.find((args) => args[1] === 'pr' && args[2] === 'merge')
+    expect(merge?.[3]).toBe('12')
   })
 
   test.each(['failed-check', 'unresolved-review'])('refuses to merge when %s', async (scenario) => {

@@ -67,10 +67,14 @@ const pullRequestSchema = Schema.Struct({
   state: Schema.Literal('OPEN', 'MERGED', 'CLOSED'),
   headRefOid: Schema.String,
   baseRefName: Schema.String,
+  isCrossRepository: Schema.Boolean,
+  headRepositoryOwner: Schema.NullOr(Schema.Struct({ login: Schema.String })),
   mergeCommit: Schema.NullOr(Schema.Struct({ oid: Schema.String })),
   labels: Schema.Array(Schema.Struct({ name: Schema.String })),
 })
-const prFields = 'number,url,state,headRefOid,baseRefName,mergeCommit,labels'
+const prFields = 'number,url,state,headRefOid,baseRefName,isCrossRepository,headRepositoryOwner,mergeCommit,labels'
+const isRepositoryRelease = (pr: typeof pullRequestSchema.Type) =>
+  !pr.isCrossRepository && pr.headRepositoryOwner?.login === 'proompteng'
 const authorSchema = Schema.NullOr(Schema.Struct({ login: Schema.String }))
 const checksSchema = Schema.Struct({
   headRefOid: Schema.String,
@@ -182,11 +186,11 @@ const latestReleasePr = async () =>
       '--state',
       'all',
       '--limit',
-      '1',
+      '100',
       '--json',
       prFields,
     ])
-  )[0]
+  ).find(isRepositoryRelease)
 
 const readPr = (number: number) =>
   ghJson(pullRequestSchema, ['pr', 'view', String(number), '-R', repository, '--json', prFields])
@@ -304,6 +308,7 @@ const main = async () => {
       throw new Error('No release PR was prepared. There may be no releasable commits on main.')
   }
   if (!pr) throw new Error('No release PR was found')
+  if (!isRepositoryRelease(pr)) throw new Error('The release PR must belong to proompteng/lab')
   if (pr.baseRefName !== 'main') throw new Error('The release PR must target main')
   const version = await readVersion(pr.headRefOid)
   if (!isStableVersion(version))
@@ -337,6 +342,10 @@ const main = async () => {
       await wait(pending.join(', '), deadline)
     }
     if (pr.state === 'OPEN') {
+      const current = await readPr(pr.number)
+      if (!isRepositoryRelease(current) || current.baseRefName !== 'main' || current.headRefOid !== head) {
+        throw new Error('The release PR identity changed while waiting. Run the command again to recheck it.')
+      }
       await ensureResolvedReviews(pr.number)
       console.log(`CI and review passed. Merging release PR #${pr.number}.`)
       try {
