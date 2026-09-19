@@ -29,7 +29,13 @@ import {
   decodeTransactions,
   postgresError,
 } from './model'
-import { closingSnapshotBoundary, generationScope, openingSnapshotBoundary, reconciliationExactness } from './scope'
+import {
+  closingSnapshotBoundary,
+  durableCycleGenerationBinding,
+  generationScope,
+  openingSnapshotBoundary,
+  reconciliationExactness,
+} from './scope'
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
 
@@ -118,7 +124,7 @@ export const readForwardPerformanceStrategyRows = (
 ) =>
   sql<Record<string, unknown>>`
   WITH first_cycle AS (
-    SELECT qualification_run_id, strategy_protocol_hash, created_at
+    SELECT cycle_id, account_id, qualification_run_id, strategy_protocol_hash, decision_hash
     FROM autonomous_cycles AS cycle
     WHERE cycle.account_id = ${accountId}
       AND cycle.state IN ('COMPLETED', 'NO_TRADE')
@@ -152,30 +158,24 @@ export const readForwardPerformanceStrategyRows = (
       AND qualification_lock.image_digest = evaluation.image_digest
   ), research_strategy AS (
     SELECT
-      generation.research_plan_hash AS qualification_run_id,
-      generation.strategy_name,
-      generation.strategy_protocol_hash,
-      generation.strategy_behavior_hash,
-      generation.strategy_parameter_hash,
-      generation.strategy_parameter_schema_version,
-      generation.activation_source_revision AS source_revision,
-      generation.activation_image_repository AS image_repository,
-      generation.activation_image_digest AS image_digest
-    FROM first_cycle
-    JOIN authority_generations AS generation
-      ON generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
-      AND generation.maximum = 'PAPER'
-      AND generation.account_id = ${accountId}
-      AND generation.research_plan_hash = first_cycle.qualification_run_id
-      AND generation.strategy_protocol_hash = first_cycle.strategy_protocol_hash
-      AND first_cycle.created_at >= generation.activated_at
-    WHERE ${authorityGenerationHash === undefined ? true : sql`generation.generation_hash = ${authorityGenerationHash}`}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM authority_generations AS next_generation
-        WHERE next_generation.previous_generation_hash = generation.generation_hash
-          AND first_cycle.created_at >= next_generation.activated_at
-      )
+      scope_generation.research_plan_hash AS qualification_run_id,
+      scope_generation.strategy_name,
+      scope_generation.strategy_protocol_hash,
+      scope_generation.strategy_behavior_hash,
+      scope_generation.strategy_parameter_hash,
+      scope_generation.strategy_parameter_schema_version,
+      scope_generation.activation_source_revision AS source_revision,
+      scope_generation.activation_image_repository AS image_repository,
+      scope_generation.activation_image_digest AS image_digest
+    FROM first_cycle AS cycle
+    JOIN authority_generations AS scope_generation
+      ON scope_generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+      AND scope_generation.maximum = 'PAPER'
+      AND scope_generation.account_id = cycle.account_id
+      AND scope_generation.research_plan_hash = cycle.qualification_run_id
+      AND scope_generation.strategy_protocol_hash = cycle.strategy_protocol_hash
+      AND (${durableCycleGenerationBinding(sql)})
+    WHERE ${authorityGenerationHash === undefined ? true : sql`scope_generation.generation_hash = ${authorityGenerationHash}`}
   )
   SELECT * FROM qualified_strategy
   UNION ALL
