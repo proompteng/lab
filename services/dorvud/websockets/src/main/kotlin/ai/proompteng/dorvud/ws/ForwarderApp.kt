@@ -313,6 +313,7 @@ class ForwarderApp(
       encodeDefaults = true
       ignoreUnknownKeys = true
     },
+  httpClient: HttpClient? = null,
 ) {
   private val jsonObjectMapper = ObjectMapper()
   private val msgPackMapper = ObjectMapper(MessagePackFactory())
@@ -332,7 +333,7 @@ class ForwarderApp(
   private val tradeUpdatesEnabled =
     config.enableTradeUpdates && !config.alpacaTradeStreamUrl.isNullOrBlank() && config.topics.tradeUpdates != null
   private val httpClient =
-    HttpClient(CIO) {
+    httpClient ?: HttpClient(CIO) {
       install(WebSockets) { pingInterval = WEBSOCKET_PING_INTERVAL_MS }
       install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }
@@ -759,7 +760,7 @@ class ForwarderApp(
       applySubscribeByChannel(initialSymbolsByChannel)
       if (feed.config.core) {
         maybeBackfillTrades(producer, feed.sequence, initialSymbolsByChannel["trades"].orEmpty())
-        maybeBackfillBars(producer, feed.sequence, initialSymbolsByChannel["bars"].orEmpty())
+        reconcileBars(producer, feed.sequence, initialSymbolsByChannel["bars"].orEmpty())
       }
 
       val poller =
@@ -796,7 +797,7 @@ class ForwarderApp(
               }
               if (feed.config.core) {
                 maybeBackfillTrades(producer, feed.sequence, desired)
-                maybeBackfillBars(producer, feed.sequence, desired)
+                reconcileBars(producer, feed.sequence, desired)
               }
             }
           }
@@ -1198,7 +1199,7 @@ class ForwarderApp(
     }
   }
 
-  private suspend fun maybeBackfillBars(
+  internal suspend fun reconcileBars(
     producer: KafkaProducer<String, String>,
     seq: SeqTracker,
     symbols: List<String>,
