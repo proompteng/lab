@@ -276,6 +276,9 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 ```
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
+Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
+created before its generation activates; its creation timestamp does not override that durable binding. Account,
+research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
 Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.

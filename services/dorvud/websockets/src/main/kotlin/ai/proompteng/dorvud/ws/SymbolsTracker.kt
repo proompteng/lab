@@ -14,7 +14,7 @@ internal class SymbolsTracker(
   initialSymbols: List<String>,
   private val fetcher: (suspend () -> List<String>)?,
 ) {
-  private var lastKnown: List<String> = initialSymbols
+  @Volatile private var lastKnown: List<String> = initialSymbols
   private var lastFailureFingerprint: String? = null
 
   suspend fun refresh(): SymbolsRefreshResult {
