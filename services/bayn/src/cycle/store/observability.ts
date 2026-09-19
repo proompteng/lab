@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { ForwardPerformanceReceiptKind } from '../../forward-performance/model'
 
 import {
   type CycleEconomicsObservation,
@@ -178,6 +179,10 @@ const ProjectionRowSchema = Schema.Struct({
   accounting_execution_fees_micros: SignedMicrosSchema,
   accounting_net_realized_pnl_after_execution_fees_micros: SignedMicrosSchema,
   performance_receipt_created_at: NullableDate,
+  performance_receipt_kind: Schema.optional(Schema.NullOr(Schema.Enum(ForwardPerformanceReceiptKind))),
+  performance_window_id: Schema.optional(NullableSha256),
+  performance_authority_generation_hash: Schema.optional(NullableSha256),
+  performance_evidence_cutoff_at: Schema.optional(NullableDate),
   performance_evidence_status: NullableForwardPerformanceEvidenceStatus,
   performance_profitability: NullableForwardPerformanceProfitability,
   performance_gross_realized_pnl_micros: NullableSignedMicros,
@@ -348,7 +353,20 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
     ) {
       return Result.fail(readError('invariant', 'forward-performance economics projection is incomplete'))
     }
+    if (
+      row.performance_receipt_kind === ForwardPerformanceReceiptKind.ReconciledWindow &&
+      row.performance_window_id == null
+    )
+      return Result.fail(readError('invariant', 'published performance window lacks its immutable identity'))
     forwardPerformance = {
+      ...(row.performance_receipt_kind == null ? {} : { kind: row.performance_receipt_kind }),
+      ...(row.performance_window_id == null ? {} : { windowId: row.performance_window_id }),
+      ...(row.performance_authority_generation_hash == null
+        ? {}
+        : { authorityGenerationHash: row.performance_authority_generation_hash }),
+      ...(row.performance_evidence_cutoff_at == null
+        ? {}
+        : { evidenceCutoffAt: row.performance_evidence_cutoff_at.toISOString() }),
       createdAt: receiptCreatedAt.toISOString(),
       evidenceStatus,
       profitability,
@@ -655,13 +673,23 @@ const makeCycleObservability = Effect.gen(function* () {
             JOIN selected_accounting_transactions AS transaction
               ON transaction.broker_event_id = receipt.broker_event_id
           ),
+          published_performance_receipts AS (
+            SELECT created_at, document -> 'receipt' AS document, authority_generation_hash,
+              'TERMINAL_GENERATION'::text AS kind, NULL::text AS window_id
+            FROM autonomous_forward_performance_receipts
+            UNION ALL
+            SELECT recorded_at AS created_at, document -> 'receipt' AS document, authority_generation_hash,
+              'RECONCILED_WINDOW'::text AS kind, window_id
+            FROM forward_performance_windows
+          ),
           latest_performance_receipt AS (
-            SELECT receipt.created_at, receipt.document -> 'receipt' AS document
-            FROM autonomous_forward_performance_receipts AS receipt
+            SELECT receipt.*, (receipt.document #>> '{window,closedAt}')::timestamptz AS evidence_cutoff_at
+            FROM published_performance_receipts AS receipt
             JOIN authority_generations AS generation
               ON generation.generation_hash = receipt.authority_generation_hash
             WHERE generation.account_id = (SELECT account_id FROM selected_account)
-            ORDER BY receipt.created_at DESC, receipt.authority_generation_hash COLLATE "C" DESC
+            ORDER BY evidence_cutoff_at DESC NULLS LAST, receipt.created_at DESC,
+              receipt.authority_generation_hash COLLATE "C" DESC, receipt.window_id COLLATE "C" DESC NULLS LAST
             LIMIT 1
           ),
           latest_reconciliation AS (
@@ -977,6 +1005,10 @@ const makeCycleObservability = Effect.gen(function* () {
               + (SELECT net_amount_micros FROM selected_broker_fee_cash))::text
               AS accounting_net_realized_pnl_after_execution_fees_micros,
             (SELECT created_at FROM latest_performance_receipt) AS performance_receipt_created_at,
+            (SELECT kind FROM latest_performance_receipt) AS performance_receipt_kind,
+            (SELECT window_id FROM latest_performance_receipt) AS performance_window_id,
+            (SELECT authority_generation_hash FROM latest_performance_receipt) AS performance_authority_generation_hash,
+            (SELECT evidence_cutoff_at FROM latest_performance_receipt) AS performance_evidence_cutoff_at,
             (SELECT document -> 'evidence' ->> 'status' FROM latest_performance_receipt)
               AS performance_evidence_status,
             (SELECT document ->> 'profitability' FROM latest_performance_receipt)

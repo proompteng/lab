@@ -5,6 +5,11 @@ import type { StreamingSnapshotManifest } from '../market-data/streaming/snapsho
 
 export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v3' as const
 
+export enum ForwardPerformanceReceiptKind {
+  TerminalGeneration = 'TERMINAL_GENERATION',
+  ReconciledWindow = 'RECONCILED_WINDOW',
+}
+
 export type ForwardPerformanceEvidenceStatus = 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
 export type ForwardPerformanceProfitability = 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
 export type ForwardPerformanceMeasurementStatus = 'MEASURED' | 'NOT_ELIGIBLE' | 'UNDETERMINED'

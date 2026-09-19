@@ -153,7 +153,7 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
   ),
 )
 
-const ForwardPerformanceReceiptSchema = Schema.Struct({
+export const ForwardPerformanceReceiptSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v3'),
   bindings: Schema.Struct({
     runtime: ForwardPerformanceBuildBindingSchema,
