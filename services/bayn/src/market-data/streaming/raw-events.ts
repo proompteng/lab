@@ -4,6 +4,12 @@ import { MarketFeatureFailure } from '../features/contract'
 import { normalizeBar, normalizeQuote, normalizeTrade } from '../intraday/verification'
 import { decodeIntradayBarRows, decodeIntradayQuoteRows, decodeIntradayTradeRows } from '../intraday/rows'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
+import {
+  AlpacaQuoteWireMetadataSchema,
+  AlpacaTradeWireMetadataSchema,
+  alpacaQuoteMetadata,
+  alpacaTradeMetadata,
+} from '../intraday/alpaca-metadata'
 
 export enum RawMarketEventKind {
   Bar = 'bar',
@@ -65,13 +71,19 @@ const BarPayloadSchema = Schema.Struct({
   t: Schema.String,
 })
 const QuotePayloadSchema = Schema.Struct({
+  ...AlpacaQuoteWireMetadataSchema.fields,
   bp: Schema.Finite,
   bs: Schema.Finite,
   ap: Schema.Finite,
   as: Schema.Finite,
   t: Schema.String,
 })
-const TradePayloadSchema = Schema.Struct({ p: Schema.Finite, s: Schema.Finite, t: Schema.String })
+const TradePayloadSchema = Schema.Struct({
+  ...AlpacaTradeWireMetadataSchema.fields,
+  p: Schema.Finite,
+  s: Schema.Finite,
+  t: Schema.String,
+})
 const fail = (message: string, cause?: unknown) =>
   new MarketFeatureFailure({ reason: 'schema', message, ...(cause === undefined ? {} : { cause }) })
 
@@ -163,8 +175,16 @@ export const decodeRawMarketRecord = (
         if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('quote payload timestamp differs from envelope'))
         if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
+        const metadata = alpacaQuoteMetadata(payload)
         const decoded = yield* decodeIntradayQuoteRows([
-          { ...identity, bid_price: payload.bp, bid_size: payload.bs, ask_price: payload.ap, ask_size: payload.as },
+          {
+            ...identity,
+            bid_price: payload.bp,
+            bid_size: payload.bs,
+            ask_price: payload.ap,
+            ask_size: payload.as,
+            ...(metadata === undefined ? {} : { provider_metadata: metadata }),
+          },
         ]).pipe(Result.mapError((cause) => fail('invalid raw quote row', cause)))
         const row = decoded[0]
         if (row === undefined) return yield* Result.fail(fail('decoded quote is missing'))
@@ -180,9 +200,15 @@ export const decodeRawMarketRecord = (
         if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('trade payload timestamp differs from envelope'))
         if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
-        const decoded = yield* decodeIntradayTradeRows([{ ...identity, price: payload.p, size: payload.s }]).pipe(
-          Result.mapError((cause) => fail('invalid raw trade row', cause)),
-        )
+        const metadata = alpacaTradeMetadata(payload)
+        const decoded = yield* decodeIntradayTradeRows([
+          {
+            ...identity,
+            price: payload.p,
+            size: payload.s,
+            ...(metadata === undefined ? {} : { provider_metadata: metadata }),
+          },
+        ]).pipe(Result.mapError((cause) => fail('invalid raw trade row', cause)))
         const row = decoded[0]
         if (row === undefined) return yield* Result.fail(fail('decoded trade is missing'))
         const value = yield* normalizeTrade(row).pipe(
