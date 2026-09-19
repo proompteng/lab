@@ -275,7 +275,31 @@ configured runtime:
 node dist/forward-performance-command.js --authority-generation <generation-hash>
 ```
 
-Without that option, the command evaluates account history, which may span retired strategies and mandates.
+The command remains read-only unless `--publish-window` is explicitly supplied with an exact authority generation:
+
+```sh
+node dist/forward-performance-command.js --authority-generation <generation-hash> --publish-window
+```
+
+Publication requires completed executions, a closed reconciliation cut, exact accounting and ledger evidence, and no
+unclosed cycles, unresolved mutations or open positions in that cut. It writes one immutable, content-addressed record
+to `forward_performance_windows` through the writer fence. Repeating the same cut returns the original record; changed
+content at the same identity fails instead of overwriting it. A later reconciliation creates another window within the
+same standing generation. The window is cumulative for the selected generation through its recorded reconciliation,
+not a daily return or a terminal-generation certificate. Unavailable or zero-execution evidence stays unpublished.
+
+The status projection exposes these records with `kind: RECONCILED_WINDOW`, `windowId`, `authorityGenerationHash` and
+`evidenceCutoffAt`. Historical terminal-generation receipts retain `kind: TERMINAL_GENERATION`. The latest evidence cut
+wins over publication order, so publishing an old report cannot replace newer evidence in status. Neither the command
+nor the new table changes capital authority or satisfies terminal-generation rollover conditions. Accounting profit
+does not imply measured execution quality, calibrated capacity or statistical strategy qualification.
+
+Migration 0076 must be installed through the normal application migration path before publication. No recurring
+publisher or independent scheduler is added. The integration fixture exercises publication and the actual status
+reader against PostgreSQL with synthetic closed-parent records; it does not generate broker executions or establish
+strategy returns.
+
+Without an authority-generation option, the read-only command evaluates account history, which may span retired strategies and mandates.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.

@@ -1,4 +1,5 @@
 import { Result } from 'effect'
+import type { ForwardPerformanceReceiptKind } from '../forward-performance/model'
 
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { Pipeable } from '../pipeable'
@@ -136,6 +137,10 @@ export interface AccountingEconomicsObservation {
 }
 
 export interface ForwardPerformanceObservation {
+  readonly kind?: ForwardPerformanceReceiptKind
+  readonly windowId?: string
+  readonly authorityGenerationHash?: string
+  readonly evidenceCutoffAt?: string
   readonly createdAt: string
   readonly evidenceStatus: 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
   readonly profitability: 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'

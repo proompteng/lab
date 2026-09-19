@@ -18,6 +18,25 @@ describe('forward-performance command arguments', () => {
     expect(Result.getOrThrow(parseForwardPerformanceCommandArgs([]))).toEqual({ _tag: 'Run', options: {} })
   })
 
+  test('publication is explicit and requires one exact generation in either flag order', () => {
+    const authorityGenerationHash = 'a'.repeat(64)
+    for (const args of [
+      ['--authority-generation', authorityGenerationHash, '--publish-window'],
+      ['--publish-window', '--authority-generation', authorityGenerationHash],
+    ]) {
+      expect(Result.getOrThrow(parseForwardPerformanceCommandArgs(args))).toEqual({
+        _tag: 'PublishWindow',
+        options: { authorityGenerationHash },
+      })
+    }
+    for (const args of [
+      ['--publish-window'],
+      ['--publish-window', '--authority-generation', 'bad'],
+      ['--publish-window', '--publish-window', '--authority-generation', authorityGenerationHash],
+    ])
+      expect(Result.isFailure(parseForwardPerformanceCommandArgs(args))).toBe(true)
+  })
+
   test('the command rejects a malformed generation before loading runtime configuration', () => {
     const result = Bun.spawnSync({
       cmd: [process.execPath, `${import.meta.dir}/forward-performance-command.ts`, '--authority-generation', 'invalid'],

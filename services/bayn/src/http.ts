@@ -1024,13 +1024,13 @@ const renderPrometheusMetricsDataFirst = (
                 '# TYPE bayn_accounting_net_realized_pnl_after_execution_fees_dollars gauge',
                 `bayn_accounting_net_realized_pnl_after_execution_fees_dollars ${microsToPrometheusDollars(accounting.netRealizedPnlAfterExecutionFeesMicros)}`,
               ]),
-          '# HELP bayn_forward_performance_receipt_available Whether an immutable terminal all-cost performance receipt exists.',
+          '# HELP bayn_forward_performance_receipt_available Whether an immutable terminal-generation or reconciled-window performance receipt exists.',
           '# TYPE bayn_forward_performance_receipt_available gauge',
           `bayn_forward_performance_receipt_available ${forwardPerformance === null ? 0 : 1}`,
           ...(forwardPerformance === null
             ? []
             : [
-                '# HELP bayn_forward_performance_evidence Terminal performance evidence status.',
+                '# HELP bayn_forward_performance_evidence Published performance evidence status.',
                 '# TYPE bayn_forward_performance_evidence gauge',
                 ...forwardPerformanceEvidenceStatuses.map(
                   (status) =>
@@ -1051,7 +1051,7 @@ const renderPrometheusMetricsDataFirst = (
                 '# HELP bayn_forward_performance_realized_close_count Realized closes in the terminal performance receipt.',
                 '# TYPE bayn_forward_performance_realized_close_count gauge',
                 `bayn_forward_performance_realized_close_count ${forwardPerformance.realizedCloseCount}`,
-                '# HELP bayn_forward_performance_receipt_timestamp_seconds Terminal performance receipt creation time.',
+                '# HELP bayn_forward_performance_receipt_timestamp_seconds Published performance receipt creation time.',
                 '# TYPE bayn_forward_performance_receipt_timestamp_seconds gauge',
                 `bayn_forward_performance_receipt_timestamp_seconds ${prometheusNumber(epochSeconds(forwardPerformance.createdAt))}`,
                 ...(forwardPerformance.grossRealizedPnlMicros === null
