@@ -111,6 +111,77 @@ export const readForwardPerformanceMarketVolumeBindings = (
     ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
   `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
 
+export const readForwardPerformanceStrategyRows = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  authorityGenerationHash?: string,
+) =>
+  sql<Record<string, unknown>>`
+  WITH first_cycle AS (
+    SELECT qualification_run_id, strategy_protocol_hash, created_at
+    FROM autonomous_cycles AS cycle
+    WHERE cycle.account_id = ${accountId}
+      AND cycle.state IN ('COMPLETED', 'NO_TRADE')
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
+    ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
+    LIMIT 1
+  ), qualified_strategy AS (
+    SELECT
+      evaluation.run_id AS qualification_run_id,
+      evaluation.strategy_name,
+      protocol.protocol_hash AS strategy_protocol_hash,
+      protocol.behavior_hash AS strategy_behavior_hash,
+      protocol.parameter_hash AS strategy_parameter_hash,
+      protocol.schema_version AS strategy_parameter_schema_version,
+      evaluation.source_revision,
+      evaluation.image_repository,
+      evaluation.image_digest
+    FROM first_cycle
+    JOIN qualification_results AS result
+      ON result.run_id = first_cycle.qualification_run_id
+      AND result.verdict = 'QUALIFIED'
+    JOIN qualification_locks AS qualification_lock ON qualification_lock.lock_id = result.lock_id
+    JOIN evaluation_runs AS evaluation ON evaluation.run_id = result.run_id
+    JOIN protocol_locks AS protocol
+      ON protocol.protocol_hash = first_cycle.strategy_protocol_hash
+      AND protocol.protocol_hash = qualification_lock.protocol_hash
+      AND protocol.protocol_hash = evaluation.protocol_hash
+    WHERE evaluation.status = 'COMPLETE'
+      AND qualification_lock.source_revision = evaluation.source_revision
+      AND qualification_lock.image_repository = evaluation.image_repository
+      AND qualification_lock.image_digest = evaluation.image_digest
+  ), research_strategy AS (
+    SELECT
+      generation.research_plan_hash AS qualification_run_id,
+      generation.strategy_name,
+      generation.strategy_protocol_hash,
+      generation.strategy_behavior_hash,
+      generation.strategy_parameter_hash,
+      generation.strategy_parameter_schema_version,
+      generation.activation_source_revision AS source_revision,
+      generation.activation_image_repository AS image_repository,
+      generation.activation_image_digest AS image_digest
+    FROM first_cycle
+    JOIN authority_generations AS generation
+      ON generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+      AND generation.maximum = 'PAPER'
+      AND generation.account_id = ${accountId}
+      AND generation.research_plan_hash = first_cycle.qualification_run_id
+      AND generation.strategy_protocol_hash = first_cycle.strategy_protocol_hash
+      AND first_cycle.created_at >= generation.activated_at
+    WHERE ${authorityGenerationHash === undefined ? true : sql`generation.generation_hash = ${authorityGenerationHash}`}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM authority_generations AS next_generation
+        WHERE next_generation.previous_generation_hash = generation.generation_hash
+          AND first_cycle.created_at >= next_generation.activated_at
+      )
+  )
+  SELECT * FROM qualified_strategy
+  UNION ALL
+  SELECT * FROM research_strategy
+`.pipe(Effect.flatMap(decodeStrategy))
+
 export const readForwardPerformancePostgresDataFirst = (
   sql: PgClient.PgClient,
   accountId: string,
@@ -140,75 +211,7 @@ export const readForwardPerformancePostgresDataFirst = (
           ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeCycles))
 
-        const strategyRows = yield* sql<Record<string, unknown>>`
-          WITH first_cycle AS (
-            SELECT qualification_run_id, strategy_protocol_hash, created_at
-            FROM autonomous_cycles AS cycle
-            WHERE cycle.account_id = ${accountId}
-              AND cycle.state IN ('COMPLETED', 'NO_TRADE')
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
-            ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
-            LIMIT 1
-          ), qualified_strategy AS (
-            SELECT
-              evaluation.run_id AS qualification_run_id,
-              evaluation.strategy_name,
-              protocol.protocol_hash AS strategy_protocol_hash,
-              protocol.behavior_hash AS strategy_behavior_hash,
-              protocol.parameter_hash AS strategy_parameter_hash,
-              protocol.schema_version AS strategy_parameter_schema_version,
-              evaluation.source_revision,
-              evaluation.image_repository,
-              evaluation.image_digest
-            FROM first_cycle
-            JOIN qualification_results AS result
-              ON result.run_id = first_cycle.qualification_run_id
-              AND result.verdict = 'QUALIFIED'
-            JOIN qualification_locks AS qualification_lock ON qualification_lock.lock_id = result.lock_id
-            JOIN evaluation_runs AS evaluation ON evaluation.run_id = result.run_id
-            JOIN protocol_locks AS protocol
-              ON protocol.protocol_hash = first_cycle.strategy_protocol_hash
-              AND protocol.protocol_hash = qualification_lock.protocol_hash
-              AND protocol.protocol_hash = evaluation.protocol_hash
-            WHERE evaluation.status = 'COMPLETE'
-              AND qualification_lock.source_revision = evaluation.source_revision
-              AND qualification_lock.image_repository = evaluation.image_repository
-              AND qualification_lock.image_digest = evaluation.image_digest
-          ), research_strategy AS (
-            SELECT
-              generation.research_plan_hash AS qualification_run_id,
-              generation.strategy_name,
-              generation.strategy_protocol_hash,
-              generation.strategy_behavior_hash,
-              generation.strategy_parameter_hash,
-              generation.strategy_parameter_schema_version,
-              generation.activation_source_revision AS source_revision,
-              generation.activation_image_repository AS image_repository,
-              generation.activation_image_digest AS image_digest
-            FROM first_cycle
-            JOIN authority_generations AS generation
-              ON generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
-              AND generation.maximum = 'PAPER'
-              AND generation.account_id = ${accountId}
-              AND generation.research_plan_hash = first_cycle.qualification_run_id
-              AND generation.strategy_protocol_hash = first_cycle.strategy_protocol_hash
-              AND first_cycle.created_at >= generation.activated_at
-            WHERE ${
-              authorityGenerationHash === undefined
-                ? true
-                : sql`generation.generation_hash = ${authorityGenerationHash}`
-            }
-              AND NOT EXISTS (
-                SELECT 1
-                FROM authority_generations AS next_generation
-                WHERE next_generation.previous_generation_hash = generation.generation_hash
-                  AND first_cycle.created_at >= next_generation.activated_at
-              )
-          )
-          SELECT * FROM qualified_strategy
-          UNION ALL
-          SELECT * FROM research_strategy
-        `.pipe(Effect.flatMap(decodeStrategy))
+        const strategyRows = yield* readForwardPerformanceStrategyRows(sql, accountId, authorityGenerationHash)
 
         const reconciliationRows = yield* sql<Record<string, unknown>>`
           SELECT reconciliation_id, content_hash, status, discrepancies, reconciled_at
