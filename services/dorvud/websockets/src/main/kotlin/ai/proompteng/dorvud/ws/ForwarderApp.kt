@@ -371,22 +371,24 @@ class ForwarderApp(
                     config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let { url ->
                       suspend {
                         runCatching { fetchDesiredSymbols(url) }
-                          .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
-                          .let { symbols -> normalizeSymbols(symbols, feed.config.symbolAllowlist) }
+                          .getOrElse { err ->
+                            if (err is CancellationException) throw err
+                            throw RuntimeException("jangar desired symbols fetch failed url=$url", err)
+                          }.let { symbols -> normalizeSymbols(symbols, feed.config.symbolAllowlist) }
                       }
                     },
                   )
                 if (feed.config.core && config.enableBarsBackfill) {
                   launch {
                     while (isActive) {
-                      val symbols =
-                        normalizeSymbols(
-                          feed.config.desiredSymbolsByChannel(symbolsTracker.current())["bars"].orEmpty(),
-                          feed.config.symbolAllowlist,
-                        )
                       try {
                         val completed =
                           withTimeoutOrNull(60_000) {
+                            val symbols =
+                              normalizeSymbols(
+                                feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
+                                feed.config.symbolAllowlist,
+                              )
                             reconcileBars(producer, feed.sequence, symbols)
                             true
                           }

@@ -194,6 +194,44 @@ class ForwarderBarRecoveryTest {
     }
 
   @Test
+  fun `recovery refreshes requested symbols while the websocket is disconnected`() =
+    runBlocking {
+      val published = CompletableDeferred<Unit>()
+      val records = ConcurrentLinkedQueue<ProducerRecord<String, String>>()
+      val producer =
+        producer(records) {
+          published.complete(Unit)
+          null
+        }
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            if (request.url.encodedPath == "/symbols") {
+              respond("""{"symbols":["AMZN"]}""")
+            } else {
+              respond(response(listOf("19:59")).replace("SPY", requireNotNull(request.url.parameters["symbols"])))
+            }
+          },
+        )
+      val app =
+        ForwarderApp(
+          config.copy(jangarSymbolsUrl = "https://symbols.test/symbols"),
+          producerFactory = { producer },
+          nowMs = { Instant.parse("2026-09-18T20:01:00Z").toEpochMilli() },
+          httpClient = client,
+        )
+      val job = app.start()
+      try {
+        withTimeout(5_000) { published.await() }
+        assertEquals(listOf("AMZN"), records.map { Json.decodeFromString<Envelope<JsonElement>>(it.value()).symbol })
+      } finally {
+        app.stop()
+        withTimeout(5_000) { job.join() }
+        client.close()
+      }
+    }
+
+  @Test
   fun `recovers a closing bar after startup backfill without republishing acknowledged bars`() =
     runBlocking {
       var now = Instant.parse("2026-09-18T19:59:30Z")

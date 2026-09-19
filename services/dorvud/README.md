@@ -15,7 +15,8 @@ Bayn consumes raw Kafka records and the feature topic. It owns strategy selectio
 and reconciliation. Dorvud does not grant trading authority or establish strategy profitability.
 
 With `ENABLE_BARS_BACKFILL=true`, the WebSocket forwarder also reconciles provider bars every minute. This task remains
-active after the market closes and while the WebSocket reconnects. It first checks `BARS_BACKFILL_LOOKBACK_HOURS`,
+active after the market closes and while the WebSocket reconnects, refreshing requested symbols on each pass.
+It first checks `BARS_BACKFILL_LOOKBACK_HOURS`,
 then uses five-minute overlapping windows. It repeats the full lookback hourly and when the requested symbols change.
 Every request page uses the same completed-minute cutoff. Each pass has a 60-second deadline.
 
