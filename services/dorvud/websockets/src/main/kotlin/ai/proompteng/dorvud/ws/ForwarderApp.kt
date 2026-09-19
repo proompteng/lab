@@ -12,6 +12,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -33,6 +34,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -70,6 +72,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.CRC32
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
@@ -178,11 +182,10 @@ internal data class AlpacaBarsBackfillQuery(
 internal fun alpacaBarsBackfillQuery(
   config: ForwarderConfig,
   symbols: List<String>,
-  now: Instant,
+  window: AlpacaBarsBackfillWindow,
   pageToken: String? = null,
-): AlpacaBarsBackfillQuery {
-  val window = alpacaBarsBackfillWindow(now, config.barsBackfillLookbackHours)
-  return AlpacaBarsBackfillQuery(
+): AlpacaBarsBackfillQuery =
+  AlpacaBarsBackfillQuery(
     symbols = symbols.joinToString(","),
     timeframe = "1Min",
     start = window.start.toString(),
@@ -192,7 +195,6 @@ internal fun alpacaBarsBackfillQuery(
     feed = alpacaBarsBackfillFeed(config),
     pageToken = pageToken,
   )
-}
 
 internal data class AlpacaTradesBackfillQuery(
   val symbols: String,
@@ -273,7 +275,6 @@ private class MarketDataFeedRuntimeState(
   val errorClass = AtomicReference<ReadinessErrorClass?>(null)
   val kafkaFailureCount = AtomicInteger(0)
   val envelopeDropLogged = AtomicBoolean(false)
-  val backfillDone = AtomicBoolean(false)
   val tradesBackfillDone = AtomicBoolean(false)
   val reconnectBackoff = ReconnectBackoff(appConfig.reconnectBaseMs, appConfig.reconnectMaxMs)
   val channelFreshness =
@@ -313,6 +314,7 @@ class ForwarderApp(
       encodeDefaults = true
       ignoreUnknownKeys = true
     },
+  httpClient: HttpClient? = null,
 ) {
   private val jsonObjectMapper = ObjectMapper()
   private val msgPackMapper = ObjectMapper(MessagePackFactory())
@@ -332,13 +334,14 @@ class ForwarderApp(
   private val tradeUpdatesEnabled =
     config.enableTradeUpdates && !config.alpacaTradeStreamUrl.isNullOrBlank() && config.topics.tradeUpdates != null
   private val httpClient =
-    HttpClient(CIO) {
+    httpClient ?: HttpClient(CIO) {
       install(WebSockets) { pingInterval = WEBSOCKET_PING_INTERVAL_MS }
       install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }
   private val metrics = ForwarderMetrics(Metrics.registry)
   private val marketDataFeeds = config.marketDataFeedConfigs().map { MarketDataFeedRuntimeState(it, config, nowMs) }
   private val coreMarketDataFeed = marketDataFeeds.single { it.config.core }
+  private val barRecovery = BarRecovery(Duration.ofHours(config.barsBackfillLookbackHours))
   private val tradeUpdatesReconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
 
   fun start(): Job {
@@ -368,11 +371,37 @@ class ForwarderApp(
                     config.jangarSymbolsUrl?.takeIf { feed.config.core }?.let { url ->
                       suspend {
                         runCatching { fetchDesiredSymbols(url) }
-                          .getOrElse { err -> throw RuntimeException("jangar desired symbols fetch failed url=$url", err) }
-                          .let { symbols -> normalizeSymbols(symbols, feed.config.symbolAllowlist) }
+                          .getOrElse { err ->
+                            if (err is CancellationException) throw err
+                            throw RuntimeException("jangar desired symbols fetch failed url=$url", err)
+                          }.let { symbols -> normalizeSymbols(symbols, feed.config.symbolAllowlist) }
                       }
                     },
                   )
+                if (feed.config.core && config.enableBarsBackfill) {
+                  launch {
+                    while (isActive) {
+                      try {
+                        val completed =
+                          withTimeoutOrNull(60_000) {
+                            val symbols =
+                              normalizeSymbols(
+                                feed.config.desiredSymbolsByChannel(symbolsTracker.refresh().symbols)["bars"].orEmpty(),
+                                feed.config.symbolAllowlist,
+                              )
+                            reconcileBars(producer, feed.sequence, symbols)
+                            true
+                          }
+                        if (completed == null) logger.warn { "bar recovery timed out; unacknowledged bars remain pending" }
+                      } catch (error: CancellationException) {
+                        throw error
+                      } catch (error: Exception) {
+                        logger.warn(error) { "bar recovery failed; unacknowledged bars remain pending" }
+                      }
+                      delay(60_000)
+                    }
+                  }
+                }
                 streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
@@ -759,7 +788,6 @@ class ForwarderApp(
       applySubscribeByChannel(initialSymbolsByChannel)
       if (feed.config.core) {
         maybeBackfillTrades(producer, feed.sequence, initialSymbolsByChannel["trades"].orEmpty())
-        maybeBackfillBars(producer, feed.sequence, initialSymbolsByChannel["bars"].orEmpty())
       }
 
       val poller =
@@ -796,7 +824,6 @@ class ForwarderApp(
               }
               if (feed.config.core) {
                 maybeBackfillTrades(producer, feed.sequence, desired)
-                maybeBackfillBars(producer, feed.sequence, desired)
               }
             }
           }
@@ -1198,7 +1225,7 @@ class ForwarderApp(
     }
   }
 
-  private suspend fun maybeBackfillBars(
+  internal suspend fun reconcileBars(
     producer: KafkaProducer<String, String>,
     seq: SeqTracker,
     symbols: List<String>,
@@ -1206,48 +1233,42 @@ class ForwarderApp(
     if (!config.enableBarsBackfill) return
     val barsTopic = config.topics.bars1m ?: return
     if (symbols.isEmpty()) return
-    if (!coreMarketDataFeed.backfillDone.compareAndSet(false, true)) return
-
-    try {
-      val requestNow = Instant.ofEpochMilli(nowMs())
-      val window = alpacaBarsBackfillWindow(requestNow, config.barsBackfillLookbackHours)
-      val bars = fetchBackfillBars(symbols)
-      if (bars.isEmpty()) {
-        logger.warn {
-          "backfill returned 0 bars lookback_hours=${config.barsBackfillLookbackHours} " +
-            "feed=${alpacaBarsBackfillFeed(config) ?: "none"} start=${window.start} end=${window.end}"
-        }
-        return
-      }
-
-      logger.info {
-        "backfill sending ${bars.size} bars lookback_hours=${config.barsBackfillLookbackHours} " +
-          "feed=${alpacaBarsBackfillFeed(config) ?: "none"} start=${window.start} end=${window.end}"
-      }
-      bars.forEach { bar ->
-        val eventTime = Instant.parse(bar.timestamp)
-        val env =
-          Envelope(
-            ingestTs = Instant.now(),
-            eventTs = eventTime,
-            feed = config.alpacaFeed,
-            channel = "bars",
-            symbol = bar.symbol,
-            seq = seq.next("bars:${bar.symbol}"),
-            payload = json.encodeToJsonElement(AlpacaBar.serializer(), bar),
-            provider = "alpaca",
-            marketSession = classifyMarketSession(eventTime).id,
-            delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "bars").id },
-            isFinal = true,
-            source = "rest",
-            version = 2,
-          )
-        recordLag(env, coreMarketDataFeed)
-        sendKafka(producer, barsTopic, env, "bars", coreMarketDataFeed)
-      }
-    } catch (e: Exception) {
-      coreMarketDataFeed.backfillDone.set(false)
-      logger.warn(e) { "backfill failed; will retry when symbols refresh" }
+    val result =
+      barRecovery.reconcile(
+        now = Instant.ofEpochMilli(nowMs()),
+        symbols = symbols.toSet(),
+        fetch = { window -> fetchBackfillBars(symbols, window) },
+        publish = { bar ->
+          val eventTime = Instant.parse(bar.timestamp)
+          val env =
+            Envelope(
+              ingestTs = Instant.ofEpochMilli(nowMs()),
+              eventTs = eventTime,
+              feed = config.alpacaFeed,
+              channel = "bars",
+              symbol = bar.symbol,
+              seq = seq.next("bars:${bar.symbol}"),
+              payload = json.encodeToJsonElement(AlpacaBar.serializer(), bar),
+              provider = "alpaca",
+              marketSession = classifyMarketSession(eventTime).id,
+              delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "bars").id },
+              isFinal = true,
+              source = "rest",
+              version = 2,
+            )
+          recordLag(env, coreMarketDataFeed)
+          suspendCancellableCoroutine<Unit> { continuation ->
+            sendKafka(producer, barsTopic, env, "bars", coreMarketDataFeed, onCompletion = { error ->
+              if (continuation.isActive) {
+                if (error == null) continuation.resume(Unit) else continuation.resumeWithException(error)
+              }
+            })
+          }
+        },
+      )
+    logger.info {
+      "bar recovery checked=${result.observed} published=${result.published} feed=${config.alpacaFeed} " +
+        "start=${result.window.start} end=${result.window.end}"
     }
   }
 
@@ -1363,26 +1384,33 @@ class ForwarderApp(
     return trades
   }
 
-  private suspend fun fetchBackfillBars(symbols: List<String>): List<AlpacaBar> {
+  private suspend fun fetchBackfillBars(
+    symbols: List<String>,
+    window: AlpacaBarsBackfillWindow,
+  ): List<AlpacaBar> {
     if (symbols.isEmpty()) return emptyList()
     return symbols.chunked(config.subscribeBatchSize).flatMap { chunk ->
-      fetchBackfillBarsChunk(chunk)
+      fetchBackfillBarsChunk(chunk, window)
     }
   }
 
-  private suspend fun fetchBackfillBarsChunk(symbols: List<String>): List<AlpacaBar> {
+  private suspend fun fetchBackfillBarsChunk(
+    symbols: List<String>,
+    window: AlpacaBarsBackfillWindow,
+  ): List<AlpacaBar> {
     if (symbols.isEmpty()) return emptyList()
     val url = alpacaBarsBackfillUrl(config)
-    val requestNow = Instant.ofEpochMilli(nowMs())
     val bars = mutableListOf<AlpacaBar>()
     var pageToken: String? = null
+    val pages = mutableSetOf<String>()
 
     do {
-      val query = alpacaBarsBackfillQuery(config, symbols, requestNow, pageToken)
+      val query = alpacaBarsBackfillQuery(config, symbols, window, pageToken)
       val response =
         decodeAlpacaBarsResponse(
           httpClient
             .get(url) {
+              expectSuccess = true
               parameter("symbols", query.symbols)
               parameter("timeframe", query.timeframe)
               parameter("start", query.start)
@@ -1399,17 +1427,18 @@ class ForwarderApp(
 
       val pageBars =
         when (val barsElement = response.bars) {
-          null -> emptyList()
+          null -> error("bar recovery response lacks bars")
           is JsonArray -> decodeBarsArray(barsElement, response.symbol)
           is JsonObject ->
             barsElement.entries.flatMap { (symbol, entry) ->
-              val arr = entry as? JsonArray ?: return@flatMap emptyList()
+              val arr = entry as? JsonArray ?: error("bar recovery response has invalid symbol bars")
               decodeBarsArray(arr, symbol)
             }
-          else -> emptyList()
+          else -> error("bar recovery response has invalid bars")
         }
       bars += pageBars
       pageToken = response.nextPageToken
+      require(pageToken == null || pages.add(pageToken)) { "bar recovery response repeats a page token" }
     } while (pageToken != null)
 
     return bars
@@ -1418,11 +1447,11 @@ class ForwarderApp(
   private fun decodeBarsArray(
     bars: JsonArray,
     symbolFallback: String?,
-  ): List<AlpacaBar> {
-    return bars.mapNotNull { barEl ->
-      val obj = barEl as? JsonObject ?: return@mapNotNull null
+  ): List<AlpacaBar> =
+    bars.map { barEl ->
+      val obj = barEl as? JsonObject ?: error("bar recovery response has an invalid bar")
       val symbol = obj["S"]?.jsonPrimitive?.contentOrNull ?: symbolFallback
-      if (symbol.isNullOrBlank()) return@mapNotNull null
+      require(!symbol.isNullOrBlank()) { "bar recovery response has an unidentified bar" }
 
       val withSymbol =
         if (obj.containsKey("S")) {
@@ -1431,9 +1460,8 @@ class ForwarderApp(
           JsonObject(obj + ("S" to JsonPrimitive(symbol)))
         }
 
-      runCatching { json.decodeFromJsonElement(AlpacaBar.serializer(), withSymbol) }.getOrNull()
+      json.decodeFromJsonElement(AlpacaBar.serializer(), withSymbol)
     }
-  }
 
   private fun decodeTradesArray(
     trades: JsonArray,
@@ -1572,6 +1600,7 @@ class ForwarderApp(
     marketDataChannel: String? = null,
     feed: MarketDataFeedRuntimeState? = null,
     serializedSequence: Long? = null,
+    onCompletion: ((Exception?) -> Unit)? = null,
   ) {
     val delivery = kafkaDeliveryObservation(env, marketDataChannel)
     val payload = json.encodeToString(env)
@@ -1585,6 +1614,9 @@ class ForwarderApp(
           metrics.kafkaSendErrors.increment()
           recordKafkaFailure(exception, topic, feed)
         } else {
+          if (config.enableBarsBackfill && feed === coreMarketDataFeed && env.channel in listOf("bars", "updatedBars")) {
+            barRecovery.recordDelivered(env.symbol, env.eventTs)
+          }
           metrics.recordKafkaProduceSuccess(topic)
           feed?.channelFreshness?.recordKafkaSuccess(
             delivery.channel,
@@ -1593,12 +1625,14 @@ class ForwarderApp(
           )
           recordKafkaSuccess(feed)
         }
+        onCompletion?.invoke(exception)
       }
     } catch (e: Exception) {
       val elapsed = Duration.ofNanos(System.nanoTime() - start)
       metrics.recordKafkaLatency(elapsed)
       metrics.kafkaSendErrors.increment()
       recordKafkaFailure(e, topic, feed)
+      onCompletion?.invoke(e)
     }
   }
 
