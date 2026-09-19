@@ -276,6 +276,9 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 ```
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
+Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
+created before its generation activates; its creation timestamp does not override that durable binding. Account,
+research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
 Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
@@ -361,7 +364,11 @@ the exact input, source receipt, pass log, decoded entry and closing decisions, 
 
 Simulation accounts are isolated from production. The command cannot acquire Alpaca trading credentials, target a
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,
-failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance. Negative
+failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance.
+The session schedule counts unavailable required decision observations separately from successful no-trade and
+expected lifecycle waits. Close-only market sells support fractional liquidation with fresh, sufficient arrival
+liquidity; an unsupported market remainder fails the simulation. See the streaming guide's
+[close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.
 
 ## Historical data workflow

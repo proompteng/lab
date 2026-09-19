@@ -1,3 +1,7 @@
+import { assessBacktestSession, BacktestIssue } from './backtest'
+import { driveReplaySession } from './session'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
+import { OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
 import type { RuntimeConfig } from '../config'
@@ -72,6 +76,9 @@ const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddr
 
 durableTest.each([
   ['fill', IntradayExitTiming.Current],
+  ['fallback', IntradayExitTiming.Current],
+  ['missing-benchmark', IntradayExitTiming.Current],
+  ['no-trade', IntradayExitTiming.Current],
   ['recovery', IntradayExitTiming.Current],
   ['recovery-filled', IntradayExitTiming.Current],
   ['fill', IntradayExitTiming.FifteenMinutes],
@@ -89,13 +96,13 @@ durableTest.each([
     )
       throw new Error('Replay acceptance requires isolated local test databases')
     const protocol = Result.getOrThrow(intradayExitTimingProtocol(exitTiming))
-    const fixture = { ...simulationFixture(), protocol }
+    const fixture = { ...simulationFixture(undefined, undefined, scenario === 'no-trade' ? {} : undefined), protocol }
     const strategyRuntime = makeActiveStrategyRuntime(protocol, {
       ...fixtureRuntime.provenance,
       strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
     })
     const closeAtMs =
-      scenario === 'fill'
+      scenario === 'fill' || scenario === 'fallback'
         ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
         : Date.parse('2026-09-04T19:59:02Z')
     const closeQuery = {
@@ -246,16 +253,67 @@ durableTest.each([
             },
           },
           source,
-          cursor: Effect.sync(() => cursor),
+          cursor: Effect.sync(() =>
+            scenario === 'missing-benchmark'
+              ? {
+                  ...cursor,
+                  projection: {
+                    ...cursor.projection,
+                    bars: new Map(
+                      [...cursor.projection.bars].filter(([symbol]) => symbol !== protocol.benchmarkSymbol),
+                    ),
+                  },
+                }
+              : scenario === 'fallback' && (cursor.lastArrival?.availableAtMs ?? 0) >= closeAtMs
+                ? { ...cursor, projection: { ...cursor.projection, quoteHistory: new Map() } }
+                : cursor,
+          ),
           clock,
           recordPass: (pass: Parameters<import('../app').RecordAutonomousCyclePass>[0]) =>
             Ref.update(passes, (values) => [...values, pass]),
           pollIntervalMs: 1000,
           reconciliationIntervalMs: 1000,
-          reconciliationPassTimeoutMs: scenario === 'fill' ? 1000 : config.operationTimeoutMs,
+          reconciliationPassTimeoutMs:
+            scenario === 'fill' || scenario === 'fallback' ? 1000 : config.operationTimeoutMs,
         }
         const runtime = yield* makeReplayExecutionRuntime(runtimeInput)
-        if (scenario !== 'fill') {
+        if (scenario === 'missing-benchmark' || scenario === 'no-trade') {
+          const schedule = yield* driveReplaySession(
+            runtime,
+            (at) =>
+              clock.advanceTo(utcInstantFromEpochMillis(at)).pipe(
+                Effect.andThen(TestClock.setTime(at)),
+                Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Coverage test clock failed', cause })),
+              ),
+            initialMs + 1,
+            initialMs + 4001,
+          )
+          const reconciliation = yield* runtime.reconcile
+          const state = yield* broker.snapshot
+          expect(schedule.failedPassCount).toBe(0)
+          expect(state.fills).toEqual([])
+          const assessment = assessBacktestSession({
+            ...schedule,
+            valuationFailureCount: 0,
+            remainingPositionCount: state.ledger.positions.length,
+            reconciliation: {
+              status: reconciliation.report.reconciliation.status,
+              metrics: reconciliation.report.metrics,
+              unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
+              unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+            },
+          })
+          if (scenario === 'missing-benchmark') {
+            expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
+            expect(assessment).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
+          } else {
+            expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeGreaterThan(0)
+            expect(schedule.unavailableDecisionPassCount).toBe(0)
+            expect(assessment).toEqual({ completion: 'COMPLETE', issues: [] })
+          }
+          return { _tag: 'Coverage' as const }
+        }
+        if (scenario === 'recovery' || scenario === 'recovery-filled') {
           const advanceBy = (ms: number) =>
             Effect.gen(function* () {
               const next = (yield* Clock.currentTimeMillis) + ms
@@ -528,6 +586,12 @@ durableTest.each([
         }
         const brokerState = yield* broker.snapshot
         const reconciliation = yield* runtime.reconcile
+        if (scenario === 'fallback') {
+          expect(brokerState.orders.at(-1)?.order).toMatchObject({
+            orderType: BrokerOrderType.Market,
+            timeInForce: BrokerTimeInForce.Day,
+          })
+        }
         expect(brokerState.ledger.positions).toHaveLength(0)
         expect(brokerState.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
         const rows = yield* sql<Record<string, unknown>>`SELECT
@@ -542,7 +606,7 @@ durableTest.each([
         Effect.provide(NodeServices.layer),
       ),
     )
-    if (outcome._tag === 'Recovery') return
+    if (outcome._tag !== 'Fill') return
     expect(outcome.brokerState.fills.length, JSON.stringify(outcome.passes)).toBeGreaterThan(0)
     expect(outcome.rows[0]?.['intents']).toBeGreaterThan(0)
     expect(outcome.rows[0]?.['fills']).toBe(outcome.brokerState.fills.length)
