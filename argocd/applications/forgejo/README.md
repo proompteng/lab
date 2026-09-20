@@ -3,8 +3,8 @@
 This app deploys [Forgejo](https://forgejo.org/) using the official OCI Helm chart:
 
 - Chart: `oci://code.forgejo.org/forgejo-helm/forgejo`
-- Chart version: `17.1.4`
-- App version: `15.0.6`
+- Chart version: `17.1.5`
+- App version: selected by Kargo from the verified release publisher
 
 ## Current profile
 
@@ -29,8 +29,14 @@ References:
 
 ## Version 16 rollout
 
-The [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md) records
-the successful snapshot-clone migration to 16.0.3. Production remains on
-15.0.6 while the Kargo image delivery path is prepared. The completed
-maintenance Jobs are retired and the existing Deployment returns to one
-replica with its original PVCs, credentials and HTTP/SSH addresses.
+The Application tracks `kargo/forgejo` and authorizes only `lab-delivery:forgejo`.
+The Warehouse requires a main source commit and its matching immutable
+published image. The Stage updates both Helm-rendered containers and the
+isolated rehearsal through a Kustomize image transformation, writes source
+metadata, and syncs the exact generated commit.
+
+The selected-image rehearsal passed against new snapshots and isolated clones.
+The final promotion restores one production replica and retires the maintenance
+Jobs, ConfigMap, read-only RBAC and isolation policy. Both recovery sets and all
+claims remain retained. Follow the [upgrade runbook](../../../docs/runbooks/forgejo-16-upgrade.md)
+for migration acceptance and coordinated recovery.

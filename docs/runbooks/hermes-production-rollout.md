@@ -3,6 +3,23 @@
 This runbook deploys Hermes as Tuslagch's production runtime, migrates non-secret OpenClaw user data, transfers the Discord
 channel without dual writers, and retains a tested rollback path. All `kubectl` commands use an explicit namespace.
 
+## Steady-state reconciliation
+
+The completed production cutover uses `automation: auto` on the verified
+`kargo/hermes-toolchain` branch. Kargo remains the only image promotion owner.
+Argo prunes obsolete generated ConfigMaps after the new workload is healthy;
+namespace and recovery-resource retention annotations remain authoritative.
+Kargo 1.11.4 does not request pruning in its `argocd-update` sync operation,
+so steady-state reconciliation must remain enabled for this cleanup.
+
+The staged migration and credential-transfer procedures below require manual
+reconciliation while they run. Before repeating one, commit the Hermes
+ApplicationSet entry back to `automation: manual`, reconcile the exact reviewed
+root revision, verify that no Kargo promotion or Argo sync is active, then
+acquire the maintenance Lease. Restore automatic reconciliation through GitOps
+only after the complete maintenance acceptance checks. OpenClaw remains manual.
+Do not race a new image promotion with any maintenance operation.
+
 ## Invariants
 
 - Never run OpenClaw and Hermes with the same Discord token at the same time.

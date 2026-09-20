@@ -1,5 +1,7 @@
 import type { FinalizedSnapshotProvenance } from '../contracts'
 import type { IsoDate } from '../schemas'
+import type { IntradaySnapshotManifest, IntradaySnapshotRequest } from '../market-data/intraday/model'
+import type { StreamingSnapshotManifest } from '../market-data/streaming/snapshot'
 
 export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v3' as const
 
@@ -179,7 +181,7 @@ export interface ForwardPerformanceExecutionEvidence {
   }
 }
 
-export interface ForwardPerformanceMarketVolumeEvidence {
+export interface ForwardPerformanceDailyMarketVolumeEvidence {
   readonly schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1'
   readonly cycleId: string
   readonly decisionSnapshotId: string
@@ -206,7 +208,7 @@ export interface ForwardPerformanceMarketVolumeEvidence {
   readonly contentHash: string
 }
 
-export interface ForwardPerformanceMarketVolumeRequest {
+export interface ForwardPerformanceDailyMarketVolumeRequest {
   readonly cycleId: string
   readonly decisionSnapshotId: string
   readonly decisionSnapshotAsOfSession: IsoDate
@@ -224,6 +226,41 @@ export interface ForwardPerformanceMarketVolumeRequest {
   readonly sourceFeed: 'sip'
   readonly adjustment: 'all'
 }
+
+export interface ForwardPerformanceIntradayMarketVolumeRequest {
+  readonly cycleId: string
+  readonly decisionSnapshotId: string
+  readonly decisionSnapshotAsOfSession: IsoDate
+  readonly symbol: string
+  readonly executionSessionDate: IsoDate
+  readonly windowOpenedAt: string
+  readonly windowClosedAt: string
+  readonly evidenceCutoffAt: string
+  readonly sourceFeed: 'iex'
+  readonly decisionManifest: IntradaySnapshotManifest | StreamingSnapshotManifest
+}
+
+export interface ForwardPerformanceIntradayMarketVolumeEvidence extends ForwardPerformanceIntradayMarketVolumeRequest {
+  readonly schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v1'
+  readonly volumeScope: 'IEX_RECORDED_SESSION_VOLUME'
+  readonly terminalPriceBasis: 'FINAL_MINUTE_BAR_CLOSE'
+  readonly quantityMicros: string
+  readonly closePriceMicros: string
+  readonly finalizedAt: string
+  readonly archiveRequest: IntradaySnapshotRequest
+  readonly barsContentHash: string
+  readonly barCount: number
+  readonly missingMinutes: readonly string[]
+  readonly contentHash: string
+}
+
+export type ForwardPerformanceMarketVolumeRequest =
+  | ForwardPerformanceDailyMarketVolumeRequest
+  | ForwardPerformanceIntradayMarketVolumeRequest
+
+export type ForwardPerformanceMarketVolumeEvidence =
+  | ForwardPerformanceDailyMarketVolumeEvidence
+  | ForwardPerformanceIntradayMarketVolumeEvidence
 
 export interface ForwardPerformanceLedgerTotals {
   readonly realizedGainMicros: string
@@ -296,7 +333,9 @@ export interface ForwardPerformanceEvidenceInput {
   }
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
+  readonly brokerFees?: readonly import('../broker/alpaca').FeeActivity[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
+  readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeEvidence?: readonly ForwardPerformanceMarketVolumeEvidence[]
   readonly ledgerTotals?: ForwardPerformanceLedgerTotals
   readonly cashYieldEvidenceRequired: boolean
@@ -361,6 +400,7 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly openPositionCount: number
   }
   readonly executionQuality: {
+    readonly unverifiedDecisionHashes?: readonly string[]
     readonly status: ForwardPerformanceMeasurementStatus
     readonly reasonCodes: readonly ForwardPerformanceExecutionQualityReasonCode[]
     readonly evidenceHash: string | null
@@ -388,6 +428,7 @@ export interface ForwardPerformanceReceiptMaterial {
     } | null
   }
   readonly observedCapacity: {
+    readonly intradaySources?: readonly ForwardPerformanceIntradayMarketVolumeEvidence[]
     readonly status: ForwardPerformanceMeasurementStatus
     readonly reasonCodes: readonly ForwardPerformanceObservedCapacityReasonCode[]
     readonly evidenceHash: string | null
@@ -398,6 +439,12 @@ export interface ForwardPerformanceReceiptMaterial {
       readonly windowClosedAt: string
       readonly filledQuantityMicros: string
       readonly marketVolumeQuantityMicros: string
+      /** Present for native intraday evidence; legacy daily receipts predate this source binding. */
+      readonly intradaySource?: {
+        readonly feed: 'iex'
+        readonly volumeScope: 'IEX_RECORDED_SESSION_VOLUME'
+        readonly evidenceHash: string
+      }
       readonly participationRate: {
         readonly numeratorQuantityMicros: string
         readonly denominatorQuantityMicros: string

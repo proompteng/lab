@@ -1,7 +1,13 @@
-import { Data, Duration, Effect, Result, Schema } from 'effect'
+import { CandidateObservationStore, recordCandidateObservation } from './candidate-observation'
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
+import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import {
   BrokerRead,
+  BrokerReadError,
+  BrokerReadErrorKind,
   type BrokerReadShape,
   type MarketCalendarObservation,
   type MarketCalendarQuery,
@@ -17,18 +23,20 @@ import {
 } from '../cycle/runner'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
 import {
+  DecisionReadinessReason,
+  RequiredFeatureReadinessSchema,
+  type DecisionReadiness,
+} from '../cycle/runner/readiness'
+import {
   bindCycleExecutionSession,
   type ExecutionSessionBinding,
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import {
-  IntradaySnapshotPurpose,
-  persistIntradaySnapshotRows,
-  type PersistedIntradaySnapshotRows,
-} from '../market-data'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type PersistedIntradaySnapshotRows } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
+import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -39,7 +47,14 @@ import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../executi
 import { legacyRiskPolicySchemaVersion, legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
-import { BrokerMode, decodePolicy, executionRiskPolicySchemaVersion, type Policy, type State } from '../risk'
+import {
+  BrokerMode,
+  decodePolicy,
+  executionRiskPolicySchemaVersion,
+  type Policy,
+  type State,
+  type EntryQuoteFreshness,
+} from '../risk'
 import {
   buildObserveShadowDecision,
   buildExecutionDecision,
@@ -54,7 +69,7 @@ import {
   type ObserveShadowDecisionDocument,
   type ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
-import { strictParseOptions } from '../schemas'
+import { strictParseOptions, UtcInstantSchema } from '../schemas'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import {
@@ -166,8 +181,36 @@ export type ReconciliationPassError = Effect.Error<typeof runOnce> | Reconciliat
 export const boundedReconciliationPass = (
   timeoutMs: number,
 ): Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime> =>
-  runOnce.pipe(
-    Effect.timeoutOrElse({
+  Effect.gen(function* () {
+    const read = yield* BrokerRead
+    const readBudgetMs = Math.max(1, Math.floor(timeoutMs / 3))
+    const bounded = <A>(operation: BrokerReadError['operation'], request: Effect.Effect<A, BrokerReadError>) =>
+      request.pipe(
+        Effect.timeoutOrElse({
+          duration: readBudgetMs,
+          orElse: () =>
+            Effect.fail(
+              new BrokerReadError({
+                operation,
+                kind: BrokerReadErrorKind.Timeout,
+                retryable: true,
+                message: `Reconciliation ${operation} read exceeded its ${readBudgetMs}ms budget`,
+              }),
+            ),
+        }),
+      )
+    return yield* runOnce.pipe(
+      Effect.provideService(BrokerRead, {
+        ...read,
+        account: bounded('account', read.account),
+        positions: bounded('positions', read.positions),
+        orders: (query) => bounded('orders', read.orders(query)),
+        fillActivities: (query) => bounded('fill-activities', read.fillActivities(query)),
+        feeActivities: (query) => bounded('fee-activities', read.feeActivities(query)),
+      }),
+    )
+  }).pipe(
+    operationTimeoutOrElse({
       duration: timeoutMs,
       orElse: () =>
         Effect.fail(
@@ -186,16 +229,29 @@ export const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerErr
     message: `mutation autonomous cycle pass did not complete or reconcile within ${timeoutMs.toString()}ms`,
   })
 
+const mutationPassBudget = Context.Reference<{ readonly startedAt: number; readonly deadlineAt: number } | undefined>(
+  'bayn/MutationPassBudget',
+  { defaultValue: () => undefined },
+)
+
 export const runMutationPassWithinTimeout = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   timeoutMs: number,
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
-  effect.pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* operationCurrentTimeMillis
+    const parentBudget = yield* mutationPassBudget
+    return yield* effect.pipe(
+      Effect.provideService(mutationPassBudget, {
+        startedAt: parentBudget?.startedAt ?? startedAt,
+        deadlineAt: Math.min(parentBudget?.deadlineAt ?? Infinity, startedAt + timeoutMs),
+      }),
+      operationTimeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
+      }),
+    )
+  })
 
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
@@ -211,6 +267,7 @@ export type ObserveDecisionInput<R = never> = {
 
 export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDecisionAwaitingSignal')<{
   readonly message: string
+  readonly readiness: DecisionReadiness
   readonly observedAt: string
   readonly submissionCutoffAt: string
 }> {}
@@ -352,7 +409,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
   switch (cause._tag) {
     case 'OperationalError':
       if (isIntradaySnapshotPending(cause.cause)) {
-        return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
+        return new CycleDecisionBuildError({
+          failure: 'not-ready',
+          message: cause.message,
+          readiness: snapshotReadiness(cause.cause),
+          cause,
+        })
       }
       return new CycleDecisionBuildError({
         failure: operationalDecisionFailure(cause.component),
@@ -368,7 +430,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
     case 'ExecutionSessionBindingFailure':
       return new CycleDecisionBuildError({ failure: 'contract', message: cause.message, cause })
     case 'ObserveDecisionAwaitingSignal':
-      return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
+      return new CycleDecisionBuildError({
+        failure: 'not-ready',
+        message: cause.message,
+        readiness: cause.readiness,
+        cause,
+      })
     case 'ObserveDecisionCompositionFailure':
     case 'ShadowDecisionError':
     case 'TargetPlannerFailure':
@@ -673,8 +740,10 @@ const prepareExecutionSessionBinding = <R>(
 }
 
 type CompiledObserveStrategyDecision = {
+  readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly decision: RuntimeStrategyDecision
   readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
+  readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
   /** Compatibility identity for the existing planner; intraday decisions remain bound separately to execution date. */
   readonly signalDate: SignalSessionReferencePrices['signalDate']
   readonly priceMicros: Readonly<Record<string, string>>
@@ -712,15 +781,49 @@ const intradayMomentumDefinition = (
   )
 }
 
+const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionReadiness => {
+  const symbol = failure.facts?.['symbol']
+  const eventAt = failure.facts?.['eventAt']
+  const requiredFeature = failure.facts?.['requiredFeature']
+  return {
+    reason:
+      failure.reason === 'watermark'
+        ? DecisionReadinessReason.ArchiveWatermark
+        : failure.reason === 'freshness'
+          ? DecisionReadinessReason.SnapshotStale
+          : DecisionReadinessReason.SnapshotUnavailable,
+    message: failure.message,
+    ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
+    ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
+    ...(Schema.is(RequiredFeatureReadinessSchema)(requiredFeature) ? { requiredFeature } : {}),
+  }
+}
+
+const snapshotQueryReadiness = (query: IntradaySnapshotQuery) => ({
+  rangeStartAt: query.rangeStartAt,
+  rangeEndAt: query.rangeEndAt,
+  symbols: query.symbols ?? query.universe,
+})
+
+const awaitingSnapshotReadiness = (cause: IntradayMomentumEntryAwaitingSnapshot): DecisionReadiness => ({
+  reason:
+    cause.availableAt === undefined ? DecisionReadinessReason.SnapshotCoverage : DecisionReadinessReason.LookbackWarmup,
+  message: cause.message,
+  ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
+  ...(cause.symbol === undefined ? {} : { symbol: cause.symbol }),
+})
+
 const classifyIntradayEntrySnapshotFailure = (
   cause: OperationalError,
   observedAt: string,
   submissionCutoffAt: string,
+  query: IntradaySnapshotQuery,
 ): OperationalError | ObserveDecisionAwaitingSignal => {
   const snapshotFailure = cause.cause
   return isIntradaySnapshotPending(snapshotFailure)
     ? new ObserveDecisionAwaitingSignal({
         message: snapshotFailure.message,
+        readiness: { ...snapshotReadiness(snapshotFailure), snapshotQuery: snapshotQueryReadiness(query) },
         observedAt,
         submissionCutoffAt,
       })
@@ -731,7 +834,11 @@ const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
-): Effect.Effect<CompiledObserveStrategyDecision, OperationalError | ObserveDecisionAwaitingSignal> => {
+): Effect.Effect<
+  CompiledObserveStrategyDecision,
+  OperationalError | ObserveDecisionAwaitingSignal,
+  CandidateObservationStore
+> => {
   return Effect.gen(function* () {
     const intradayMarketData = input.intradayMarketData
     if (intradayMarketData === undefined) {
@@ -760,6 +867,7 @@ const compileObserveStrategyDecision = <R>(
         cause instanceof IntradayMomentumEntryAwaitingSnapshot
           ? new ObserveDecisionAwaitingSignal({
               message: cause.message,
+              readiness: awaitingSnapshotReadiness(cause),
               observedAt: facts.evaluatedAt,
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
             })
@@ -773,7 +881,12 @@ const compileObserveStrategyDecision = <R>(
     )
     const decisionSnapshot = yield* loadIntradaySnapshot(intradayMarketData, decisionQuery).pipe(
       Effect.mapError((cause) =>
-        classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+        classifyIntradayEntrySnapshotFailure(
+          cause,
+          facts.evaluatedAt,
+          input.cycle.window.submissionCutoffAt,
+          decisionQuery,
+        ),
       ),
     )
     const decision = yield* Effect.fromResult(
@@ -783,6 +896,7 @@ const compileObserveStrategyDecision = <R>(
         cause instanceof IntradayMomentumEntryAwaitingSnapshot
           ? new ObserveDecisionAwaitingSignal({
               message: cause.message,
+              readiness: { ...awaitingSnapshotReadiness(cause), snapshotQuery: snapshotQueryReadiness(decisionQuery) },
               observedAt: facts.evaluatedAt,
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
             })
@@ -794,17 +908,22 @@ const compileObserveStrategyDecision = <R>(
             }),
       ),
     )
-    yield* Effect.logInfo({
-      event: 'bayn.intraday-candidate-observation.v1',
+    yield* recordCandidateObservation({
       cycleId: input.cycle.identity.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
       observedAt: facts.evaluatedAt,
-      manifest: decisionSnapshot.manifest,
+      protocol: intradayDefinition.parameters,
+      snapshot: decisionSnapshot,
       decision,
     })
     if (decision.signals.length === 0 && heldPositions.length === 0) {
       return yield* new ObserveDecisionAwaitingSignal({
         message: 'intraday entry is waiting for at least one available candidate signal',
+        readiness: {
+          reason: DecisionReadinessReason.NoEligibleCandidate,
+          message: 'intraday entry is waiting for at least one available candidate signal',
+          snapshotQuery: snapshotQueryReadiness(decisionQuery),
+        },
         observedAt: facts.evaluatedAt,
         submissionCutoffAt: input.cycle.window.submissionCutoffAt,
       })
@@ -842,7 +961,12 @@ const compileObserveStrategyDecision = <R>(
             )
             return yield* loadIntradaySnapshot(intradayMarketData, pricingQuery).pipe(
               Effect.mapError((cause) =>
-                classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+                classifyIntradayEntrySnapshotFailure(
+                  cause,
+                  facts.evaluatedAt,
+                  input.cycle.window.submissionCutoffAt,
+                  pricingQuery,
+                ),
               ),
             )
           })
@@ -872,6 +996,11 @@ const compileObserveStrategyDecision = <R>(
     ) {
       return yield* new ObserveDecisionAwaitingSignal({
         message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
+        readiness: {
+          reason: DecisionReadinessReason.NoEligibleCandidate,
+          message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
+          snapshotQuery: snapshotQueryReadiness(decisionQuery),
+        },
         observedAt: facts.evaluatedAt,
         submissionCutoffAt: input.cycle.window.submissionCutoffAt,
       })
@@ -967,6 +1096,8 @@ export const prepareObservePlanner = <R>(
   )
 
 type RiskInputPreparation = {
+  readonly limitSlippageBps: number
+  readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
   readonly authorityObservation: ObserveAuthorityObservation
@@ -987,6 +1118,15 @@ const reduceRiskInputs = (
   Result.mapError(
     Result.all(
       input.targetPlan.intentTargets.map((target) => {
+        const entryQuote = input.closeOnlyExpiresAt === undefined ? input.entryQuotes?.[target.symbol] : undefined
+        if (input.closeOnlyExpiresAt === undefined && entryQuote === undefined) {
+          return Result.fail(
+            compositionFailure(
+              'shadow-risk-inputs',
+              `entry target ${target.symbol} has no bound pricing quote event time`,
+            ),
+          )
+        }
         const referencePriceMicros = input.targetPlan.targets.find(
           (planned) => planned.symbol === target.symbol,
         )?.referencePriceMicros
@@ -1007,6 +1147,7 @@ const reduceRiskInputs = (
             quantityMicros: BigInt(target.quantityMicros),
             referencePriceMicros: referencePrice,
             executionModel: input.executionModel,
+            limitSlippageBps: BigInt(input.limitSlippageBps),
           }),
           (pricing): ShadowDeltaRiskInput => {
             const state: State = {
@@ -1033,6 +1174,7 @@ const reduceRiskInputs = (
               referencePriceMicros: referencePrice.toString(),
               expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
               marketDataObservedAt: input.executionMarketData?.observedAt ?? input.evaluatedAt,
+              ...(entryQuote === undefined ? {} : { entryQuote }),
               executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
               evaluatedAt: input.evaluatedAt,
@@ -1064,8 +1206,14 @@ const reduceObserveRiskInputs = <R>(
     'contentHash' | 'observedAt'
   >,
   closeOnlyExpiresAt?: string,
+  entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
+    limitSlippageBps:
+      closeOnlyExpiresAt === undefined && authorityObservation.authority.effective === Authority.Execution
+        ? input.policy.maxAdverseSlippageBps
+        : 0,
+    ...(entryQuotes === undefined ? {} : { entryQuotes }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
     authorityObservation,
@@ -1079,7 +1227,7 @@ const reduceObserveRiskInputs = <R>(
 
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R> =>
   buildCycleDecision(input, { authorityRequirement: Authority.Observe, documentMode: Authority.Observe })
 
 type CycleDecisionRequirements =
@@ -1089,15 +1237,15 @@ type CycleDecisionRequirements =
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: { readonly authorityRequirement: Authority.Observe; readonly documentMode: Authority.Observe },
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: { readonly authorityRequirement: Authority.Execution; readonly documentMode: Authority.Execution },
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: CycleDecisionRequirements,
-): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | R> {
+): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
     const facts = yield* readObserveDecisionFacts(input, readPreparation)
@@ -1178,6 +1326,8 @@ function buildCycleDecision<R>(
         targetPlan,
         snapshotContentHash,
         compiled.executionMarketData,
+        undefined,
+        compiled.entryQuotes,
       ),
     )
     const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData
@@ -1202,6 +1352,9 @@ function buildCycleDecision<R>(
         finalizedAt: decisionSnapshot.finalizedAt,
       },
       compiledDecision: compiled.decision,
+      ...(compiled.executionMarketDataRows === undefined
+        ? {}
+        : { executionMarketDataRows: compiled.executionMarketDataRows }),
       ...(compiled.decisionMarketDataRows === undefined
         ? {}
         : { decisionMarketDataRows: compiled.decisionMarketDataRows }),
@@ -1216,6 +1369,7 @@ function buildCycleDecision<R>(
       ? yield* buildObserveShadowDecision(decisionInput)
       : yield* buildExecutionDecision({
           ...decisionInput,
+          entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
         })
@@ -1224,7 +1378,7 @@ function buildCycleDecision<R>(
 
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R> =>
   buildCycleDecision(input, { authorityRequirement: Authority.Execution, documentMode: Authority.Execution })
 
 export const makeClosingDecisionPlan = (
@@ -1312,14 +1466,16 @@ export interface BuildClosingExecutionCycleDecisionInput {
   readonly cycle: AutonomousCycle
   readonly entryDocument: ExecutionDecisionDocument
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
+  readonly initialReconciliation?: ReconciliationPassResult
   readonly closeExpiresAt: string
   readonly replanGenerationHash?: string
 }
 
-export const buildClosingExecutionCycleDecision = (
+const buildClosingExecutionCycleDecisionWithSource = (
   request: BuildClosingExecutionCycleDecisionInput,
+  source: 'archive' | 'reconciled-position',
 ): Effect.Effect<
-  ExecutionDecisionDocument,
+  { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
   CycleRunnerError | ExecutionCloseAwaitingMarketData,
   ObserveDecisionRuntime
 > => {
@@ -1332,9 +1488,11 @@ export const buildClosingExecutionCycleDecision = (
         failure: 'contract',
       })
     }
-    const reconciliation = yield* reconcile.pipe(
-      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
-    )
+    const reconciliation = yield* (
+      source === 'archive' && request.initialReconciliation !== undefined
+        ? Effect.succeed(request.initialReconciliation)
+        : reconcile
+    ).pipe(Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')))
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
@@ -1357,9 +1515,24 @@ export const buildClosingExecutionCycleDecision = (
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       Effect.map((definition) => definition.parameters),
     )
+    if (source === 'reconciled-position') {
+      const closeAt = Date.parse(cycle.window.executionCloseAt)
+      const observed = Date.parse(evaluatedAt)
+      if (
+        observed < closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 ||
+        observed >= closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000 ||
+        evaluatedAt >= closeExpiresAt
+      ) {
+        return yield* new ExecutionCloseAwaitingMarketData({
+          message: 'reconciled-position fallback is outside the authorized close window',
+          observedAt: evaluatedAt,
+        })
+      }
+    }
     const entryMarketData = entryDocument.bindings.executionMarketData
-    const persistedUniverse =
-      entryMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' ? entryMarketData.universe : undefined
+    const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
+      ? entryMarketData.universe
+      : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
@@ -1392,7 +1565,7 @@ export const buildClosingExecutionCycleDecision = (
         }),
     )
     const closeExecutionMarketData = yield* Effect.gen(function* () {
-      if (closingPass.kind === 'broker-position') {
+      if (closingPass.kind === 'broker-position' || source === 'reconciled-position') {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
         ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -1427,11 +1600,40 @@ export const buildClosingExecutionCycleDecision = (
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
+      const archiveMarketAt = yield* Clock.currentTimeMillis
+      const archiveStartedAt = yield* operationCurrentTimeMillis
+      const passBudget = yield* mutationPassBudget
+      const remainingMs = Math.min(
+        input.reconciliationPassTimeoutMs,
+        input.reconciliationIntervalMs,
+        Date.parse(closeExpiresAt) - archiveMarketAt,
+        (passBudget?.deadlineAt ?? Infinity) - archiveStartedAt,
+      )
+      // Reserve twice the observed preparatory work for a fresh reconciliation and close construction.
+      const fallbackReserveMs =
+        passBudget === undefined ? remainingMs / 2 : 2 * (archiveStartedAt - passBudget.startedAt)
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
+        operationTimeoutOrElse({
+          duration: Duration.millis(
+            Math.max(1, Math.floor(Math.min(remainingMs / 2, remainingMs - fallbackReserveMs))),
+          ),
+          orElse: () =>
+            Effect.fail(
+              new ExecutionCloseAwaitingMarketData({
+                message: 'closing archive read exhausted its share of the remaining execution pass',
+                observedAt: evaluatedAt,
+              }),
+            ),
+        }),
         Effect.mapError((cause) =>
-          isIntradaySnapshotPending(cause.cause)
-            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
-            : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
+          cause instanceof ExecutionCloseAwaitingMarketData
+            ? cause
+            : isIntradaySnapshotPending(cause.cause) ||
+                (cause.component === 'market-data' &&
+                  cause.retryable &&
+                  !(cause.cause instanceof IntradaySnapshotFailure))
+              ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+              : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
         ),
       )
       const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
@@ -1444,7 +1646,7 @@ export const buildClosingExecutionCycleDecision = (
       const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
-      const decisionMarketDataRows = yield* Effect.fromResult(persistIntradaySnapshotRows(snapshot)).pipe(
+      const decisionMarketDataRows = yield* Effect.fromResult(persistIntradayRecordRows(snapshot)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
       return { binding, ...quotePrices, decisionMarketDataRows }
@@ -1526,6 +1728,7 @@ export const buildClosingExecutionCycleDecision = (
     )
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
+        limitSlippageBps: 0,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,
@@ -1537,7 +1740,7 @@ export const buildClosingExecutionCycleDecision = (
         closeOnlyExpiresAt: closeExpiresAt,
       }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    return yield* buildExecutionDecision({
+    const document = yield* buildExecutionDecision({
       cycle,
       snapshot: {
         snapshotId: entryDocument.bindings.snapshotId,
@@ -1567,8 +1770,25 @@ export const buildClosingExecutionCycleDecision = (
         })
       }),
     )
+    return { document, reconciliation }
   })
 }
+
+export const prepareClosingExecutionCycleDecision = (request: BuildClosingExecutionCycleDecisionInput) =>
+  buildClosingExecutionCycleDecisionWithSource(request, 'archive').pipe(
+    Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
+      buildClosingExecutionCycleDecisionWithSource(request, 'reconciled-position').pipe(
+        Effect.tap(() =>
+          Effect.logWarning('Execution close used reconciled positions after archive evidence was unavailable').pipe(
+            Effect.annotateLogs({ cycleId: request.cycle.identity.cycleId, reason: failure.message }),
+          ),
+        ),
+      ),
+    ),
+  )
+
+export const buildClosingExecutionCycleDecision = (request: BuildClosingExecutionCycleDecisionInput) =>
+  prepareClosingExecutionCycleDecision(request).pipe(Effect.map(({ document }) => document))
 
 export const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],

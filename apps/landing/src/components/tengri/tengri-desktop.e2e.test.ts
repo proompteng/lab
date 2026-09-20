@@ -2501,24 +2501,30 @@ test('magnifies the Dock without relayout and minimizes with native transform an
   const chrome = page.getByRole('region', { name: 'Chrome window', includeHidden: true })
   const wrapper = chrome.locator('..')
   const normalBounds = await chrome.boundingBox()
+  const nativeTransforms = await wrapper.evaluateHandle((element) => {
+    const transforms: ComputedKeyframe[][] = []
+    const animate = element.animate.bind(element)
+    element.animate = (...args: Parameters<Element['animate']>) => {
+      const animation = animate(...args)
+      if (animation.effect instanceof KeyframeEffect) {
+        const frames = animation.effect.getKeyframes().filter((frame) => 'transform' in frame)
+        if (frames.length > 0) transforms.push(frames)
+      }
+      return animation
+    }
+    return transforms
+  })
   await chrome.getByRole('button', { name: 'Minimize Chrome', exact: true }).click()
-  const nativeTransform = await wrapper.evaluate((element) =>
-    element
-      .getAnimations()
-      .flatMap((animation) =>
-        animation.effect instanceof KeyframeEffect
-          ? animation.effect.getKeyframes().filter((frame) => 'transform' in frame)
-          : [],
-      ),
-  )
+  await expect(wrapper).toHaveCSS('visibility', 'hidden')
+  const nativeTransform = await nativeTransforms.evaluate((transforms) => transforms.flat())
   expect(nativeTransform.length).toBeGreaterThanOrEqual(2)
   expect(nativeTransform[0]?.transform).toBe('translate(0px, 0px) scale(1)')
   expect(nativeTransform.at(-1)?.transform).toMatch(/scale\(0\./)
-  await expect(wrapper).toHaveCSS('visibility', 'hidden')
   await dock.getByRole('button', { name: 'Open Chrome' }).click()
   await expect(wrapper).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
   await expect.poll(() => chrome.boundingBox()).toEqual(normalBounds)
   await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await nativeTransforms.dispose()
   await client.detach()
 })
 
@@ -2980,6 +2986,37 @@ test('uses functional close controls and disables unavailable actions in confirm
   await expect(page.getByRole('dialog', { name: 'Create your agent' })).toBeVisible()
 })
 
+test.describe('native traffic-light rendering', () => {
+  test.use({ deviceScaleFactor: 2 })
+
+  test('matches native traffic-light glyphs at Retina scale', async ({ page }) => {
+    await mockTengri(page)
+    await page.goto('/')
+    const chrome = page.getByRole('region', { name: 'Chrome window' })
+    await chrome.focus()
+    await page.mouse.move(0, 0)
+    const controls = chrome.getByRole('group', { name: 'Window controls' })
+    await expect(controls).toHaveScreenshot('tengri-window-controls-idle.png', {
+      maxDiffPixels: 0,
+      threshold: 0.05,
+      scale: 'device',
+    })
+    await controls.getByRole('button', { name: 'Minimize Chrome' }).hover()
+    await expect(controls).toHaveScreenshot('tengri-window-controls-hover.png', {
+      maxDiffPixels: 0,
+      threshold: 0.05,
+      scale: 'device',
+    })
+    await controls.getByRole('button', { name: 'Maximize Chrome' }).click()
+    await controls.getByRole('button', { name: 'Restore Chrome' }).hover()
+    await expect(controls).toHaveScreenshot('tengri-window-controls-restore.png', {
+      maxDiffPixels: 0,
+      threshold: 0.05,
+      scale: 'device',
+    })
+  })
+})
+
 for (const app of ['Finder', 'Chrome', 'Code', 'Terminal', 'Settings']) {
   test(`keeps native window control states and actions correct in ${app}`, async ({ page }, testInfo) => {
     await mockTengri(page)
@@ -2995,19 +3032,26 @@ for (const app of ['Finder', 'Chrome', 'Code', 'Terminal', 'Settings']) {
     await expect(frame).toHaveAttribute('data-active', 'true')
     const bounds = await frame.boundingBox()
     if (!bounds) throw new Error(`${app} window is missing`)
-    const colors = ['rgb(255, 95, 87)', 'rgb(254, 188, 46)', 'rgb(40, 200, 64)']
+    const colors = ['rgb(255, 92, 96)', 'rgb(250, 200, 0)', 'rgb(53, 199, 89)']
     for (const [index, color] of colors.entries()) {
       const button = buttons.nth(index)
       const light = button.locator(':scope > span')
       await expect(light).toHaveCSS('background-color', color)
-      await expect(light).toHaveCSS('width', '12px')
-      await expect(light).toHaveCSS('height', '12px')
+      await expect(light).toHaveCSS('width', '14px')
+      await expect(light).toHaveCSS('height', '14px')
       await expect(light.locator(':scope > span')).toHaveCSS('opacity', '0')
       const target = await button.boundingBox()
       if (!target) throw new Error(`${app} window control is missing`)
       expect(target.width).toBeGreaterThanOrEqual(24)
       expect(target.height).toBeGreaterThanOrEqual(24)
     }
+    const lightCenters = await buttons.locator(':scope > span').evaluateAll((lights) =>
+      lights.map((light) => {
+        const bounds = light.getBoundingClientRect()
+        return bounds.x + bounds.width / 2
+      }),
+    )
+    expect(lightCenters).toEqual([bounds.x + 25, bounds.x + 48, bounds.x + 71])
     await controls.screenshot({ path: testInfo.outputPath(`${app.toLowerCase()}-controls-idle.png`) })
     await controls.getByRole('button', { name: `Minimize ${app}` }).hover()
     for (const button of await buttons.all()) {

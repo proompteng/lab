@@ -107,14 +107,14 @@ const pipeCommandOutput = async (
 
 const isRetryableDockerCommandError = (error: unknown): error is DockerCommandError => {
   if (!(error instanceof DockerCommandError)) return false
-  return /invalid content range|unexpected eof|connection reset by peer|use of closed network connection|i\/o timeout|context deadline exceeded|tls handshake timeout|502 bad gateway|503 service unavailable|504 gateway timeout|blob upload unknown/i.test(
+  return /invalid content range|unexpected eof|connection reset by peer|use of closed network connection|i\/o timeout|timeout awaiting response headers|context deadline exceeded|tls handshake timeout|502 bad gateway|503 service unavailable|504 gateway timeout|blob upload unknown/i.test(
     error.output,
   )
 }
 
 const runDockerCommand = async (
   args: string[],
-  options: { cwd: string; env: Record<string, string> },
+  options: { cwd: string; env: Record<string, string | undefined> },
 ): Promise<void> => {
   console.log(`$ docker ${args.join(' ')}`.trim())
   const subprocess = Bun.spawn(['docker', ...args], {
@@ -137,7 +137,7 @@ const runDockerCommand = async (
 
 const runDockerCommandWithRetry = async (
   args: string[],
-  options: { cwd: string; env: Record<string, string> },
+  options: { cwd: string; env: Record<string, string | undefined> },
 ): Promise<void> => {
   const attempts = parsePositiveInteger(process.env.DOCKER_COMMAND_RETRY_ATTEMPTS, 3)
   const baseDelaySeconds = parsePositiveInteger(process.env.DOCKER_COMMAND_RETRY_DELAY_SECONDS, 15)
@@ -159,6 +159,17 @@ const runDockerCommandWithRetry = async (
       await sleep(delaySeconds * 1000)
     }
   }
+}
+
+export const pushDockerImage = async (
+  image: string,
+  options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+): Promise<void> => {
+  ensureCli('docker')
+  await runDockerCommandWithRetry(['push', image], {
+    cwd: options.cwd ?? repoRoot,
+    env: { ...process.env, ...options.env },
+  })
 }
 
 const normalizeAttestation = (kind: 'provenance' | 'sbom', value: string | undefined): string | undefined => {
@@ -302,7 +313,7 @@ export const buildAndPushDockerImage = async (options: DockerBuildOptions): Prom
     }
     args.push(options.context)
     await runDockerCommandWithRetry(args, { cwd, env: dockerEnv })
-    await runDockerCommandWithRetry(['push', image], { cwd, env: dockerEnv })
+    await pushDockerImage(image, { cwd, env: dockerEnv })
   }
 
   return { ...options, image }
@@ -679,4 +690,12 @@ export const __private = {
   getRepositoryFromReference,
   isRetryableDockerCommandError,
   setSpawnSync,
+}
+
+if (import.meta.main) {
+  const [command, image, ...extra] = Bun.argv.slice(2)
+  if (command !== 'push' || !image || image.startsWith('-') || extra.length > 0) {
+    throw new Error('Usage: docker.ts push <image>')
+  }
+  await pushDockerImage(image)
 }

@@ -1,3 +1,13 @@
+import type {
+  SimulatedMarketSnapshot,
+  StreamingMarketSnapshot,
+  StrategyMarketSnapshot,
+} from './market-data/streaming/snapshot'
+import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from './market-data/streaming/replay'
+import {
+  SimulatedSnapshotEvidenceSchema,
+  StreamingSnapshotEvidenceSchema,
+} from './market-data/streaming/evidence-schema'
 import { Data, Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from './broker/alpaca-price'
@@ -12,7 +22,6 @@ import { ExecutionSessionBindingSchema } from './execution-session'
 import { canonicalHashV1Result, sha256 } from './hash'
 import { intradayAgeNanos, millisecondsAsNanos } from './market-data/intraday/time'
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
-import { verifyIntradaySnapshot } from './market-data/intraday/verification'
 import {
   AuthorityStateSchema,
   OrderSide,
@@ -54,7 +63,7 @@ import {
 } from './target-planner'
 import { verifyIntradayMomentumDecisionEnvelope } from './strategy/intraday-momentum/decision'
 import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision-core'
-import { PersistedStrategyDecisionSchema, RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
+import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
 import {
   intradayMomentumSignalRejectionReasons,
   selectCanonicalIntradayMomentumSignals,
@@ -77,12 +86,6 @@ const ExecutionCalendarObservationSchema = Schema.Struct({
   normalizedResponseHash: Sha256Schema,
 })
 
-const ExecutionArchiveWatermarkSchema = Schema.Struct({
-  sourceTopic: StrictNonEmptyStringSchema,
-  sourcePartition: NonNegativeIntegerSchema,
-  inclusiveLastOffset: UnsignedMicrosSchema,
-})
-
 const ExecutionLineageSchema = Schema.Struct({
   sourceTopic: StrictNonEmptyStringSchema,
   sourcePartition: NonNegativeIntegerSchema,
@@ -98,7 +101,6 @@ const ExecutionCandidateExclusionSchema = Schema.Struct({
 })
 
 const ExecutionMarketDataBindingFields = {
-  snapshotSchemaVersion: Schema.Literal('bayn.intraday-market-snapshot.v1'),
   sessionDate: IsoDateSchema,
   calendar: ExecutionCalendarObservationSchema,
   rangeStartAt: UtcInstantSchema,
@@ -118,7 +120,6 @@ const ExecutionMarketDataBindingFields = {
     quotes: StrictNonEmptyStringSchema,
     trades: StrictNonEmptyStringSchema,
   }),
-  archiveWatermarks: Schema.Array(ExecutionArchiveWatermarkSchema).check(Schema.isMinLength(1)),
   maximumQuoteAgeMs: PositiveIntegerSchema,
   minimumWatermarkLagMs: NonNegativeIntegerSchema,
   barCount: NonNegativeIntegerSchema,
@@ -134,14 +135,18 @@ const ExecutionMarketDataBindingFields = {
 
 const ExecutionMarketDataBindingBase = Schema.Union([
   Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v1'),
     ...ExecutionMarketDataBindingFields,
-    universe: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
+    schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v4'),
+    snapshotSchemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v1'),
+    universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+    streaming: SimulatedSnapshotEvidenceSchema,
   }),
   Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v2'),
     ...ExecutionMarketDataBindingFields,
+    schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v3'),
+    snapshotSchemaVersion: Schema.Literal('bayn.streaming-market-snapshot.v1'),
     universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+    streaming: StreamingSnapshotEvidenceSchema,
   }),
 ])
 
@@ -193,12 +198,6 @@ const marketDataBindingIssues = (
     issues.push({ path: ['sourceTopics'], issue: 'bar, quote, and trade topics must be distinct' })
   }
   const universe = binding.universe
-  if (binding.schemaVersion === 'bayn.execution-market-data-binding.v1' && binding.purpose !== undefined) {
-    issues.push({ path: ['purpose'], issue: 'quote-only evidence requires execution market-data binding v2' })
-  }
-  if (binding.purpose !== undefined && universe === undefined) {
-    issues.push({ path: ['universe'], issue: 'must bind the canonical source universe for quote-only evidence' })
-  }
   const candidateSymbols = binding.candidateSymbols
   const candidateExclusions = binding.candidateExclusions
   if ((candidateSymbols === undefined) !== (candidateExclusions === undefined)) {
@@ -208,12 +207,6 @@ const marketDataBindingIssues = (
     })
   }
   if (candidateSymbols !== undefined || candidateExclusions !== undefined) {
-    if (binding.schemaVersion !== 'bayn.execution-market-data-binding.v2') {
-      issues.push({
-        path: ['schemaVersion'],
-        issue: 'independent candidate evidence requires execution market-data binding v2',
-      })
-    }
     if (binding.purpose !== undefined) {
       issues.push({
         path: ['purpose'],
@@ -272,7 +265,13 @@ const marketDataBindingIssues = (
   if (binding.purpose === undefined && binding.tradeCount === 0) {
     issues.push({ path: ['tradeCount'], issue: 'must be positive for decision evidence' })
   }
-  const watermarks = binding.archiveWatermarks
+  const watermarks = binding.streaming.positions
+    .filter((position) => BigInt(position.offset) > 0n)
+    .map((position) => ({
+      sourceTopic: position.topic,
+      sourcePartition: position.partition,
+      inclusiveLastOffset: String(BigInt(position.offset) - 1n),
+    }))
   const lineage = binding.lineage
   const orderedWatermarks = watermarks.toSorted(compareTopicPartition)
   const orderedLineage = lineage.toSorted(compareTopicPartition)
@@ -360,22 +359,28 @@ const ReconciledPositionLiquidationBindingSchema = ReconciledPositionLiquidation
   }),
 )
 
-const ArchiveExecutionMarketDataBindingSchema = ExecutionMarketDataBindingBase.check(
+const SnapshotExecutionMarketDataBindingSchema = ExecutionMarketDataBindingBase.check(
   Schema.makeFilter(marketDataBindingIssues),
 )
 
 export const ExecutionMarketDataBindingSchema = Schema.Union([
-  ArchiveExecutionMarketDataBindingSchema,
+  SnapshotExecutionMarketDataBindingSchema,
   ReconciledPositionLiquidationBindingSchema,
 ])
 export type ExecutionMarketDataBinding = typeof ExecutionMarketDataBindingSchema.Type
 
+export const isSnapshotExecutionMarketDataBinding = (
+  binding: ExecutionMarketDataBinding | undefined,
+): binding is SnapshotExecutionMarketDataBinding =>
+  binding?.schemaVersion === 'bayn.execution-market-data-binding.v3' ||
+  binding?.schemaVersion === 'bayn.execution-market-data-binding.v4'
+
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
 
-const sameArchiveUniverse = (
-  left: Extract<ExecutionMarketDataBinding, { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }>,
-  right: Extract<ExecutionMarketDataBinding, { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }>,
+const sameSourceUniverse = (
+  left: SnapshotExecutionMarketDataBinding,
+  right: SnapshotExecutionMarketDataBinding,
 ): boolean =>
   left.universeId === right.universeId &&
   left.universeSymbolHash === right.universeSymbolHash &&
@@ -558,14 +563,16 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   bindings: ExecutionDecisionBindingsSchema,
   /** Persist the complete signal/session binding so a close plan can be built after data services expire. */
   executionSession: Schema.optionalKey(ExecutionSessionBindingSchema),
-  /** Persist the pure strategy output that authorized the targets; legacy documents remain decodable without it. */
-  strategyDecision: Schema.optionalKey(PersistedStrategyDecisionSchema),
+  /** Persist the pure strategy output that authorized the targets. */
+  strategyDecision: Schema.optionalKey(RuntimeStrategyDecisionSchema),
   /** Exact archive rows reverified before a durable intraday entry is accepted. */
   decisionMarketDataRows: Schema.optionalKey(PersistedIntradaySnapshotRowsSchema),
+  executionMarketDataRows: Schema.optionalKey(PersistedIntradaySnapshotRowsSchema),
   /** Persist validated planner facts so durable decoding can reproduce every quantity and reference price. */
   plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
   /** Persist the exact risk policy so durable decoding can reproduce every gate and derived metric. */
   riskPolicy: Schema.optionalKey(PolicySchema),
+  entryLimitSlippageBps: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9_999 }))),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
@@ -577,9 +584,7 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   expiresAt: UtcInstantSchema,
 })
 
-const executionBindingMatchesIntradayMomentumProtocol = (
-  binding: Extract<ExecutionMarketDataBinding, { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }>,
-): boolean =>
+const executionBindingMatchesIntradayMomentumProtocol = (binding: SnapshotExecutionMarketDataBinding): boolean =>
   binding.universeId === defaultIntradayMomentumProtocolDocument.universeId &&
   binding.universeSymbolHash === defaultIntradayMomentumProtocolDocument.universeSymbolHash &&
   binding.universe.length === defaultIntradayMomentumProtocolDocument.universe.length &&
@@ -777,7 +782,7 @@ const intradayMomentumAllocationIssues = (
 
 const intradayMomentumSnapshotEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
-  binding: Extract<ExecutionMarketDataBinding, { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }>,
+  binding: SnapshotExecutionMarketDataBinding,
 ): readonly Schema.FilterIssue[] => {
   const rows = document.decisionMarketDataRows
   if (rows === undefined) {
@@ -838,54 +843,48 @@ const intradayMomentumSnapshotEvidenceIssues = (
   return []
 }
 
-type ArchiveExecutionMarketDataBinding = Extract<
+type SnapshotExecutionMarketDataBinding = Extract<
   ExecutionMarketDataBinding,
-  { readonly schemaVersion: 'bayn.execution-market-data-binding.v2' }
+  {
+    readonly schemaVersion: 'bayn.execution-market-data-binding.v3' | 'bayn.execution-market-data-binding.v4'
+  }
 >
 
-export const reconstructBoundIntradaySnapshot = (
-  binding: ArchiveExecutionMarketDataBinding,
+export function reconstructBoundIntradaySnapshot(
+  binding: Extract<
+    SnapshotExecutionMarketDataBinding,
+    { readonly schemaVersion: 'bayn.execution-market-data-binding.v3' }
+  >,
   rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
-) => {
-  const snapshot = verifyIntradaySnapshot(
-    {
-      sessionDate: binding.sessionDate,
-      calendar: binding.calendar,
-      rangeStartAt: binding.rangeStartAt,
-      rangeEndAt: binding.rangeEndAt,
-      observedAt: binding.observedAt,
-      universeId: binding.universeId,
-      universeSymbolHash: binding.universeSymbolHash,
-      universe: binding.universe,
-      symbols: binding.symbols,
-      ...(binding.candidateSymbols === undefined ? {} : { candidateSymbols: binding.candidateSymbols }),
-      ...(binding.purpose === undefined ? {} : { purpose: binding.purpose }),
-      feed: binding.feed,
-      delayClass: binding.delayClass,
-      sourceTopics: binding.sourceTopics,
-      maximumQuoteAgeMs: binding.maximumQuoteAgeMs,
-      minimumWatermarkLagMs: binding.minimumWatermarkLagMs,
-      archiveWatermarks: binding.archiveWatermarks,
-    },
-    {
-      archiveWatermarks: binding.archiveWatermarks.map((watermark) => ({
-        source_topic: watermark.sourceTopic,
-        source_partition: watermark.sourcePartition,
-        inclusive_last_offset: watermark.inclusiveLastOffset,
-      })),
-      ...rows,
-    },
-  )
-  return Result.isSuccess(snapshot) &&
-    snapshot.success.manifest.snapshotId === binding.snapshotId &&
-    snapshot.success.manifest.contentHash === binding.contentHash
-    ? snapshot.success
-    : undefined
+): StreamingMarketSnapshot | undefined
+export function reconstructBoundIntradaySnapshot(
+  binding: Extract<
+    SnapshotExecutionMarketDataBinding,
+    { readonly schemaVersion: 'bayn.execution-market-data-binding.v4' }
+  >,
+  rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
+): SimulatedMarketSnapshot | undefined
+export function reconstructBoundIntradaySnapshot(
+  binding: SnapshotExecutionMarketDataBinding,
+  rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
+): StrategyMarketSnapshot | undefined
+export function reconstructBoundIntradaySnapshot(
+  binding: SnapshotExecutionMarketDataBinding,
+  rows: typeof PersistedIntradaySnapshotRowsSchema.Type,
+): StrategyMarketSnapshot | undefined {
+  if (binding.schemaVersion === 'bayn.execution-market-data-binding.v4') {
+    const { schemaVersion: _bindingVersion, snapshotSchemaVersion, ...material } = binding
+    const replay = reproduceSimulatedSnapshot({ ...material, schemaVersion: snapshotSchemaVersion }, rows)
+    return Result.isSuccess(replay) ? replay.success : undefined
+  }
+  const { schemaVersion: _bindingVersion, snapshotSchemaVersion, ...material } = binding
+  const replay = reproduceStreamingSnapshot({ ...material, schemaVersion: snapshotSchemaVersion }, rows)
+  return Result.isSuccess(replay) ? replay.success : undefined
 }
 
 const quoteBoundLiquidationSnapshotIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
-  binding: ArchiveExecutionMarketDataBinding,
+  binding: SnapshotExecutionMarketDataBinding,
 ): readonly Schema.FilterIssue[] => {
   const executionSession = document.executionSession
   const observedAtEpoch = Date.parse(document.createdAt)
@@ -989,13 +988,78 @@ const quoteBoundLiquidationSnapshotIssues = (
   return timingIssues
 }
 
+const streamingPricingEvidenceIssues = (
+  document: typeof ExecutionDecisionMaterialSchema.Type,
+): readonly Schema.FilterIssue[] => {
+  const binding = document.bindings.executionMarketData
+  if (
+    (binding?.schemaVersion !== 'bayn.execution-market-data-binding.v3' &&
+      binding?.schemaVersion !== 'bayn.execution-market-data-binding.v4') ||
+    binding.purpose !== IntradaySnapshotPurpose.EntryPricing
+  )
+    return []
+  const rows = document.executionMarketDataRows
+  const snapshot = rows === undefined ? undefined : reconstructBoundIntradaySnapshot(binding, rows)
+  if (snapshot === undefined)
+    return [
+      { path: ['executionMarketDataRows'], issue: 'streaming execution prices require their reproducible input cut' },
+    ]
+  const prices = document.plannerInput?.referencePrices
+  const terms =
+    document.plannerInput !== undefined && 'executionTerms' in document.plannerInput
+      ? document.plannerInput.executionTerms
+      : undefined
+  if (prices?.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1' || terms === undefined)
+    return [{ path: ['plannerInput'], issue: 'streaming execution requires quote-bound planner inputs' }]
+  for (const symbol of binding.symbols) {
+    const quote = snapshot.latestQuotes[symbol]
+    if (quote === undefined)
+      return [{ path: ['executionMarketDataRows'], issue: `missing executable quote for ${symbol}` }]
+    const values = Result.all({
+      bid: numberToMicros(quote.bidPrice, 'streaming bid'),
+      ask: numberToMicros(quote.askPrice, 'streaming ask'),
+      bidSize: numberToMicros(quote.bidSize, 'streaming bid size'),
+      askSize: numberToMicros(quote.askSize, 'streaming ask size'),
+    })
+    if (Result.isFailure(values))
+      return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
+    const { bid, ask, bidSize, askSize } = values.success
+    if (
+      prices.bidPriceMicros[symbol] !== quantizeAlpacaLimitPriceMicros(bid, 'DOWN').toString() ||
+      prices.askPriceMicros[symbol] !== quantizeAlpacaLimitPriceMicros(ask, 'UP').toString() ||
+      prices.priceMicros[symbol] !== prices.askPriceMicros[symbol] ||
+      BigInt(terms.maximumBuyQuantityMicros[symbol] ?? '0') > (askSize / 1000000n) * 1000000n ||
+      BigInt(terms.maximumSellQuantityMicros[symbol] ?? '0') > (bidSize / 1000000n) * 1000000n
+    )
+      return [
+        {
+          path: ['plannerInput'],
+          issue: `streaming price or displayed quantity does not match the verified quote for ${symbol}`,
+        },
+      ]
+    for (const delta of document.deltaRisk) {
+      const facts = delta.facts
+      if (
+        facts?.state.marketDataSymbol === symbol &&
+        facts.state.entryQuote !== undefined &&
+        (facts.state.entryQuote.eventAt !== quote.eventAt ||
+          facts.state.entryQuote.maximumAgeMs !== binding.maximumQuoteAgeMs)
+      )
+        return [
+          { path: ['deltaRisk'], issue: `streaming entry deadline does not bind the verified quote for ${symbol}` },
+        ]
+    }
+  }
+  return []
+}
+
 const targetPlannerEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const input = document.plannerInput
   const executionMarketData = document.bindings.executionMarketData
   const requiresQuoteBoundLiquidationEvidence =
-    executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' &&
+    isSnapshotExecutionMarketDataBinding(executionMarketData) &&
     executionMarketData.purpose === 'LIQUIDATION' &&
     document.targetPlan.executionTerms?.priceReference === 'verified-adverse-quote-boundary'
   if (input === undefined) {
@@ -1196,6 +1260,18 @@ const executionMaterialIssues = (
     document.executionSession !== undefined &&
     document.submissionCutoffAt > document.executionSession.submissionCutoffAt
   const isClosePlan = strategyDecision?.schemaVersion === 'bayn.execution-flat-target.v1' || usesExtendedCloseLease
+  if (
+    document.entryLimitSlippageBps !== undefined &&
+    (isClosePlan ||
+      document.bindings.strategyName !== 'intraday-momentum' ||
+      document.riskPolicy === undefined ||
+      document.entryLimitSlippageBps > document.riskPolicy.maxAdverseSlippageBps)
+  ) {
+    issues.push({
+      path: ['entryLimitSlippageBps'],
+      issue: 'entry limit allowance must stay within the bound intraday risk policy',
+    })
+  }
   const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined
   const intentTargetSymbols = document.targetPlan.intentTargets.map(({ symbol }) => symbol).toSorted()
   const plannedTargetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol).toSorted()
@@ -1228,10 +1304,29 @@ const executionMaterialIssues = (
       issue: 'must match the exact market-data snapshot persisted by the target plan',
     })
   }
-  const isLegacyIntradayEntry =
-    strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v1' ||
-    strategyDecision?.schemaVersion === 'bayn.intraday-momentum.target.v2'
-  if (document.bindings.strategyName === 'intraday-momentum' && !isClosePlan && !isLegacyIntradayEntry) {
+  const simulatedBindings = [decisionMarketData, executionMarketData].filter(
+    (binding) => binding?.schemaVersion === 'bayn.execution-market-data-binding.v4',
+  )
+  for (const binding of simulatedBindings) {
+    if (
+      document.bindings.accountId !== `replay-${binding.streaming.runId}` ||
+      [decisionMarketData, executionMarketData].some(
+        (other) =>
+          other !== undefined &&
+          (other.schemaVersion !== 'bayn.execution-market-data-binding.v4' ||
+            other.streaming.runId !== binding.streaming.runId ||
+            other.streaming.sourceManifestHash !== binding.streaming.sourceManifestHash ||
+            other.streaming.regeneratedFeaturesRecordedAtMs !== binding.streaming.regeneratedFeaturesRecordedAtMs ||
+            other.streaming.featureTopic !== binding.streaming.featureTopic ||
+            other.streaming.deliveryModel.description !== binding.streaming.deliveryModel.description),
+      )
+    )
+      issues.push({
+        path: ['bindings'],
+        issue: 'simulated input cuts require one source manifest, replay run, and its synthetic account',
+      })
+  }
+  if (document.bindings.strategyName === 'intraday-momentum' && !isClosePlan) {
     if (document.plannerInput === undefined) {
       issues.push({
         path: ['plannerInput'],
@@ -1247,15 +1342,16 @@ const executionMaterialIssues = (
       issues.push(...intradayMomentumAllocationIssues(document.targetPlan, strategyDecision))
     }
     if (
-      executionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2' ||
-      decisionMarketData?.schemaVersion !== 'bayn.execution-market-data-binding.v2'
+      !isSnapshotExecutionMarketDataBinding(executionMarketData) ||
+      !isSnapshotExecutionMarketDataBinding(decisionMarketData)
     ) {
       issues.push({
         path: ['bindings', 'executionMarketData', 'schemaVersion'],
-        issue: 'intraday-momentum entry requires decision and execution market-data binding v2',
+        issue: 'intraday-momentum entry requires verified decision and execution snapshot bindings',
       })
     } else {
       issues.push(...intradayMomentumSnapshotEvidenceIssues(document, decisionMarketData))
+      issues.push(...streamingPricingEvidenceIssues(document))
       if (
         !executionBindingMatchesIntradayMomentumProtocol(decisionMarketData) ||
         !executionBindingMatchesIntradayMomentumProtocol(executionMarketData)
@@ -1357,7 +1453,7 @@ const executionMaterialIssues = (
             issue: 'dedicated intraday execution pricing must be explicitly quote-only',
           })
         }
-        if (!sameArchiveUniverse(decisionMarketData, executionMarketData)) {
+        if (!sameSourceUniverse(decisionMarketData, executionMarketData)) {
           issues.push({
             path: ['bindings', 'executionMarketData', 'universe'],
             issue: 'intraday decision and execution pricing evidence must share one immutable source universe',
@@ -1375,7 +1471,7 @@ const executionMaterialIssues = (
     }
   }
   if (
-    executionMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' &&
+    isSnapshotExecutionMarketDataBinding(executionMarketData) &&
     executionMarketData.purpose === 'LIQUIDATION' &&
     targetExecutionTerms?.priceReference === 'verified-adverse-quote-boundary'
   ) {
@@ -1516,6 +1612,7 @@ const executionMaterialIssues = (
               quantityMicros: BigInt(target.quantityMicros),
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               executionModel: intradayMomentumExecutionModel,
+              limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? 0),
             })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)
@@ -1593,6 +1690,10 @@ const executionMaterialIssues = (
           facts.state.dayStartEquityMicros !== riskContext.dayStartEquityMicros ||
           facts.state.peakEquityMicros !== riskContext.peakEquityMicros ||
           facts.state.marketDataSymbol !== target.symbol ||
+          (facts.state.entryQuote !== undefined &&
+            (executionMarketData === undefined ||
+              !('maximumQuoteAgeMs' in executionMarketData) ||
+              facts.state.entryQuote.maximumAgeMs !== executionMarketData.maximumQuoteAgeMs)) ||
           facts.state.marketDataHash !== expectedMarketDataHash ||
           facts.state.executionMarketDataHash !== executionMarketData?.contentHash ||
           facts.state.referencePriceMicros !==

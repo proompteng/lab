@@ -7,11 +7,12 @@
 - [ ] Kargo Warehouse discovered the image and created Freight in `lab-delivery`.
 - [ ] The exact automatic policy promoted the intended Stage in `lab-delivery`.
 - [ ] Kargo pushed the exact source commit, digest, and build/provenance metadata to `kargo/<stage>` and Argo
-  Application sync/health completed in `argocd`.
+      Application sync/health completed in `argocd`.
 - [ ] Workload rollout completed and the running image ID matches the promoted digest (or its platform child digest).
 - [ ] Service-specific readiness and live checks passed.
 - [ ] Delivery record distinguishes merged, built, published, Freight, promoted, Argo healthy, rollout, and live proof.
 
 Do not add a SHA/digest manifest PR, release branch, release automerge, Image Updater write-back, manual Argo sync, or
-direct `kubectl` deployment. Re-promote a known-good Freight for a rollback. Bayn is outside Kargo and requires its
-`bayn-release` activation and lineage authority.
+direct `kubectl` deployment. Re-promote a known-good Freight for a rollback. Bayn uses `lab-delivery/bayn` and
+`kargo/bayn`; verify the status service, worker, and activation hook share the promoted source, digest, and build
+lineage, then verify natural controller progress and broker reconciliation.

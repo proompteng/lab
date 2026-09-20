@@ -49,6 +49,8 @@ export {
   type BrokerReadShape,
   type FillActivitiesQuery,
   type FillActivity,
+  type FeeActivity,
+  type FeeActivityPage,
   type FillActivityPage,
   type MarketCalendarObservation,
   type MarketCalendarQuery,

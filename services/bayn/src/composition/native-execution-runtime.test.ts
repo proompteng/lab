@@ -32,6 +32,7 @@ import {
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { RecoveryFirstRuntime } from '../observe-composition'
+import type { CycleRunnerError } from '../cycle/runner'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
@@ -111,6 +112,8 @@ const command: AdvanceExecutionCommand = {
 }
 
 const driver = {
+  timeoutMs: 30_000,
+  onTimeout: (error: CycleRunnerError) => Effect.fail(error),
   advance: Effect.succeed({
     observation: {
       result: 'SUCCESS' as const,
@@ -128,6 +131,8 @@ const windowClosedObservation = {
 }
 
 const windowClosedDriver = {
+  timeoutMs: 30_000,
+  onTimeout: (error: CycleRunnerError) => Effect.fail(error),
   advance: Effect.succeed({ observation: windowClosedObservation }),
   nextDelayMs: 30_000,
 }
@@ -495,6 +500,7 @@ describe('native execution runtime', () => {
     )
     const capturedDriver = {
       ...driver,
+      ...driver,
       advance: Effect.sync(() => {
         advances += 1
         return {
@@ -674,88 +680,108 @@ describe('native execution runtime', () => {
     expect(calls).toEqual(['restricted', 'observe'])
   })
 
-  test('reacquires execution resources after a cold-start initialization failure', async () => {
-    let acquired = 0
-    let released = 0
-    const failure = new Error('transient dependency unavailable')
-    const readySlot = Effect.runSync(
-      Effect.gen(function* () {
-        const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
-        yield* Deferred.succeed(ready, undefined)
-        return {
-          state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
-          ready,
-        } satisfies RecoveryFirstCycleDriverSlot
-      }),
-    )
-    const executionResources = Layer.merge(
-      Layer.effect(
-        PublishedExecutionCycleDriver,
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            acquired += 1
-            return acquired
-          }),
-          () =>
-            Effect.sync(() => {
-              released += 1
-            }),
-        ).pipe(Effect.flatMap((attempt) => (attempt === 1 ? Effect.fail(failure) : Effect.succeed(readySlot)))),
-      ),
-      Layer.succeed(
-        ExecutionControllerStatusStore,
-        statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
-      ),
-    )
-    const hostRunner = {
-      runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) =>
-        Effect.runPromise(effect, options),
-    }
-
-    const result = await Effect.runPromise(
-      Effect.scoped(
+  test.each(['cold-start', 'generation-handoff'] as const)(
+    'reacquires execution resources after a %s initialization failure',
+    async (stage) => {
+      let acquired = 0
+      let released = 0
+      const failure =
+        stage === 'cold-start'
+          ? new Error('transient dependency unavailable')
+          : new NativeExecutionRuntimeError({
+              operation: 'initialize',
+              message: 'generation handoff failed',
+              cause: new Error('transient dependency unavailable'),
+            })
+      const readySlot = Effect.runSync(
         Effect.gen(function* () {
-          const managed = yield* ScopedRef.fromAcquire(
-            Effect.acquireRelease(
-              Effect.succeed(ManagedRuntime.make(executionResources)),
-              (runtime) => runtime.disposeEffect,
+          const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+          yield* Deferred.succeed(ready, undefined)
+          return {
+            state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver }),
+            ready,
+          } satisfies RecoveryFirstCycleDriverSlot
+        }),
+      )
+      const executionResources = Layer.merge(
+        Layer.effect(
+          PublishedExecutionCycleDriver,
+          Effect.acquireRelease(
+            Effect.sync(() => {
+              acquired += 1
+              return acquired
+            }),
+            () =>
+              Effect.sync(() => {
+                released += 1
+              }),
+          ).pipe(
+            Effect.flatMap((attempt) =>
+              attempt === 1 && stage === 'cold-start'
+                ? Effect.fail(failure)
+                : Ref.set(readySlot.state, { _tag: 'Ready', driver }).pipe(Effect.as(readySlot)),
             ),
-          )
-          const projectionManaged = yield* Effect.acquireRelease(
-            Effect.succeed(
-              ManagedRuntime.make(
-                Layer.succeed(
-                  ExecutionControllerStatusStore,
-                  statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+          ),
+        ),
+        Layer.succeed(
+          ExecutionControllerStatusStore,
+          statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+        ),
+      )
+      const hostRunner = {
+        runPromise: <A, E>(effect: Effect.Effect<A, E>, options?: { readonly signal?: AbortSignal }) =>
+          Effect.runPromise(effect, options),
+      }
+
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const managed = yield* ScopedRef.fromAcquire(
+              Effect.acquireRelease(
+                Effect.succeed(ManagedRuntime.make(executionResources)),
+                (runtime) => runtime.disposeEffect,
+              ),
+            )
+            const projectionManaged = yield* Effect.acquireRelease(
+              Effect.succeed(
+                ManagedRuntime.make(
+                  Layer.succeed(
+                    ExecutionControllerStatusStore,
+                    statusStore((candidate) => ({ _tag: 'Applied', status: candidate })),
+                  ),
                 ),
               ),
-            ),
-            (runtime) => runtime.disposeEffect,
-          )
-          const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
-            managed,
-            executionResources,
-            projectionManaged,
-            hostRunner,
-            controllerPlanHash,
-          )
-          const first = yield* Effect.tryPromise({
-            try: () => runtime.advance(command, new AbortController().signal),
-            catch: (cause) => cause,
-          }).pipe(Effect.flip)
-          const second = yield* Effect.promise(() =>
-            runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal),
-          )
-          return { first, second }
-        }),
-      ),
-    )
+              (runtime) => runtime.disposeEffect,
+            )
+            const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+              managed,
+              executionResources,
+              projectionManaged,
+              hostRunner,
+              controllerPlanHash,
+            )
+            if (failure instanceof NativeExecutionRuntimeError) {
+              yield* Effect.promise(() => runtime.advance(command, new AbortController().signal))
+              yield* failRecoveryFirstCycleDriverSlot(readySlot, failure)
+            }
+            const first = yield* Effect.tryPromise({
+              try: () => runtime.advance(command, new AbortController().signal),
+              catch: (cause) => cause,
+            }).pipe(Effect.flip)
+            const second = yield* Effect.promise(() =>
+              runtime.advance({ ...command, sequence: command.sequence + 1 }, new AbortController().signal),
+            )
+            return { first, second }
+          }),
+        ),
+      )
 
-    expect(result.first).toBe(failure)
-    expect(result.second.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
-    expect(acquired).toBe(2)
-    expect(released).toBe(2)
-  })
+      expect(result.first).toBe(failure)
+      expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
+      expect(acquired).toBe(2)
+      expect(released).toBe(2)
+    },
+  )
 
   test('fails initialization deterministically when preparation never publishes a driver', async () => {
     const failure = await Effect.runPromise(
@@ -788,7 +814,7 @@ describe('native execution runtime', () => {
       ),
     )
 
-    expect(result.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
+    expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
     expect(result.observation).toEqual(windowClosedObservation)
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
@@ -796,7 +822,7 @@ describe('native execution runtime', () => {
       epoch: command.epoch,
       nextSequence: command.sequence + 1,
       lastSequence: command.sequence,
-      lastOutcome: 'Blocked',
+      lastOutcome: 'Waiting',
       lastReceiptHash: result.outcome.receiptHash,
       lastPass: windowClosedObservation,
     })
@@ -1132,7 +1158,7 @@ describe('native execution runtime', () => {
     )
 
     expect(advanceCount).toBe(1)
-    expect(result.outcome._tag).toBe(ExecutionControllerOutcome.Blocked)
+    expect(result.outcome._tag).toBe(ExecutionControllerOutcome.Waiting)
     expect(projected).toMatchObject({
       planHash: controllerPlanHash,
       epoch: command.epoch,

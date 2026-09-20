@@ -6,7 +6,57 @@ import YAML from 'yaml'
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 
-test('Restate cluster uses three stable 1.7.9 nodes with hard host separation', () => {
+test('Restate image promotion requires both native fault proofs and uploaded release evidence', () => {
+  const workflow = YAML.parse(readRepoFile('.github/workflows/restate-images.yml'))
+  const build = workflow.jobs.build
+  const publish = workflow.jobs.publish
+  const mainOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+  expect(workflow.on.push.branches).toEqual(['main'])
+  expect(workflow.on.pull_request.paths).toEqual(workflow.on.push.paths)
+  expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
+    'amd64',
+    'arm64',
+  ])
+  const platformPush = build.steps.find((step: { name?: string }) => step.name === 'Publish tested platform image')
+  expect(platformPush.if).toBe(mainOnly)
+  expect(platformPush.run).toBe(
+    'bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"',
+  )
+  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/cli.ts')
+  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
+  expect(publish.if).toBe(mainOnly)
+  expect(publish.needs).toEqual(['build'])
+  const releaseSteps = publish.steps as { name?: string; uses?: string }[]
+  const uploaded = releaseSteps.findIndex((step) => step.uses === 'actions/upload-artifact@v4')
+  expect(uploaded).toBeGreaterThan(0)
+  expect(releaseSteps.findIndex((step) => step.name === 'Expose the validated digest to Kargo')).toBeGreaterThan(
+    uploaded,
+  )
+  expect(publish.steps.at(-1).run).toContain('test "$existing" = "$DIGEST"')
+
+  const warehouses = YAML.parseAllDocuments(readRepoFile('argocd/applications/kargo/warehouses.yaml')).map((document) =>
+    document.toJSON(),
+  )
+  const warehouse = warehouses.find((entry) => entry.metadata.name === 'restate')
+  expect(warehouse.spec.subscriptions[0].git.includePaths).toEqual(
+    workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, '')),
+  )
+  const stages = YAML.parseAllDocuments(readRepoFile('argocd/applications/kargo/stages.yaml')).map((document) =>
+    document.toJSON(),
+  )
+  const stage = stages.find((entry) => entry.metadata.name === 'restate')
+  expect(
+    stage.spec.promotionTemplate.spec.steps.find((step: { uses: string }) => step.uses === 'kustomize-set-image')
+      .config,
+  ).toEqual({
+    path: './out/argocd/applications/restate',
+    images: [
+      { image: 'restate-runtime', newName: '${{ vars.imageRepo }}', digest: '${{ imageFrom(vars.imageRepo).Digest }}' },
+    ],
+  })
+})
+
+test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runtime image selection', () => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const env = new Map(
     statefulSet.spec.template.spec.containers[0].env.map((entry: { name: string; value?: string }) => [
@@ -16,9 +66,27 @@ test('Restate cluster uses three stable 1.7.9 nodes with hard host separation', 
   )
 
   expect(statefulSet.spec.replicas).toBe(3)
-  expect(statefulSet.spec.template.spec.containers[0].image).toBe(
-    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
-  )
+  expect(statefulSet.spec.template.spec.containers[0].image).toBe('restate-runtime')
+  const kustomization = YAML.parse(readRepoFile('argocd/applications/restate/kustomization.yaml'))
+  expect(kustomization.images).toEqual([
+    {
+      name: 'restate-runtime',
+      newName: 'docker.restate.dev/restatedev/restate',
+      newTag: '1.7.9',
+      digest: 'sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+    },
+  ])
+  expect(env.get('RESTATE_METADATA_SERVER__RAFT_ELECTION_TICK')).toBe('450')
+  expect(env.get('RESTATE_GOSSIP_FAILURE_THRESHOLD')).toBe('450')
+  expect(env.get('RESTATE_GOSSIP_LONELINESS_THRESHOLD')).toBe('600')
+  expect(env.get('RESTATE_GOSSIP_TIME_SKEW_THRESHOLD')).toBe('5s')
+  expect(env.get('RESTATE_NETWORKING__CONNECT_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_NETWORKING__HANDSHAKE_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_NETWORKING__HTTP2_KEEP_ALIVE_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_METADATA_CLIENT__CONNECT_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_METADATA_CLIENT__KEEP_ALIVE_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
+  expect(env.get('RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('DoNotSchedule')

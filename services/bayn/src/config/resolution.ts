@@ -216,6 +216,7 @@ const baseConfig = (
   unknownMutationThresholdMs: parsed.unknownMutationThresholdMs,
   cyclePollIntervalMs: parsed.cyclePollIntervalMs,
   alpaca,
+  kafka: parsed.kafka,
   clickhouse: parsed.clickhouse,
   postgres: parsed.postgres,
   tigerBeetle: parsed.tigerBeetle,
@@ -262,6 +263,7 @@ export const resolveRuntimeConfig = (
 
 export const redactedConfigSummary = (config: LoadedRuntimeConfig) => ({
   ...config,
+  ...(config.kafka === undefined ? {} : { kafka: { ...config.kafka, password: Redacted.make('[REDACTED]') } }),
   clickhouse: { ...config.clickhouse, password: Redacted.make('[REDACTED]') },
   postgres: { ...config.postgres, url: Redacted.make('[REDACTED]') },
   alpaca: { ...config.alpaca, key: Redacted.make('[REDACTED]'), secret: Redacted.make('[REDACTED]') },

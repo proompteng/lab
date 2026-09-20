@@ -56,11 +56,13 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
         return sql`
           INSERT INTO positions (
             event_id, account_id, snapshot_id, schema_version, symbol, quantity_micros,
-            average_entry_price_micros, market_price_micros, market_value_micros, unrealized_pnl_micros
+            average_entry_price_micros, market_price_micros, market_value_micros, unrealized_pnl_micros,
+            cost_basis_micros
           ) VALUES (
             ${eventId}, ${input.position.accountId}, ${positionSnapshotId}, ${input.position.schemaVersion},
             ${input.position.symbol}, ${input.position.quantityMicros}, ${input.position.averageEntryPriceMicros},
-            ${input.position.marketPriceMicros}, ${input.position.marketValueMicros}, ${input.position.unrealizedPnlMicros}
+            ${input.position.marketPriceMicros}, ${input.position.marketValueMicros}, ${input.position.unrealizedPnlMicros},
+            ${input.position.schemaVersion === 'bayn.position.v2' ? input.position.costBasisMicros : null}
           )
         `.pipe(Effect.asVoid)
       case 'Order':

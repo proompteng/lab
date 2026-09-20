@@ -222,11 +222,6 @@ discovery.kubernetes "bayn_log_pods" {
 	namespaces {
 		names = ["bayn"]
 	}
-
-	selectors {
-		role  = "pod"
-		label = "app.kubernetes.io/part-of=bayn"
-	}
 }
 
 discovery.relabel "bayn_pod_logs" {
@@ -235,7 +230,7 @@ discovery.relabel "bayn_pod_logs" {
 	rule {
 		action        = "keep"
 		source_labels = ["__meta_kubernetes_pod_container_name"]
-		regex         = "bayn|execution-controller|activate"
+		regex         = "bayn|execution-controller|activate|postgres"
 	}
 
 	rule {
@@ -472,12 +467,6 @@ prometheus.scrape "flink" {
 			"job"         = "torghut",
 			"namespace"   = "torghut",
 			"service"     = "torghut-ta-metrics",
-		},
-		{
-			"__address__" = "torghut-ta-sim-metrics.torghut.svc.cluster.local:9249",
-			"job"         = "torghut-sim",
-			"namespace"   = "torghut",
-			"service"     = "torghut-ta-sim-metrics",
 		},
 	]
 	scrape_interval = "30s"

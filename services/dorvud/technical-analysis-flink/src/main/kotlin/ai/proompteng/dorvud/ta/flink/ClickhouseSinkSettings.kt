@@ -1,7 +1,7 @@
 package ai.proompteng.dorvud.ta.flink
 
 internal const val DEFAULT_CLICKHOUSE_INSERT_BATCH_SIZE: Int = 25
-internal const val MAX_SAFE_CLICKHOUSE_INSERT_BATCH_SIZE: Int = 100
+internal const val MAX_SAFE_CLICKHOUSE_INSERT_BATCH_SIZE: Int = 1_000
 
 // Live options fan-in can reach ClickHouse's minimum production batch
 // without increasing full-day replay buffers.

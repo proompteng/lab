@@ -1,6 +1,6 @@
 {
   "name": "@proompteng/temporal-bun-sdk",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "Temporal SDK for Bun with workers, client, replay tooling, and Temporal Cloud/TLS support.",
   "keywords": [
     "bun",
@@ -80,6 +80,7 @@
     "build": "tsc --project tsconfig.json --pretty false",
     "test": "bun test",
     "test:load": "bun scripts/run-worker-load.ts",
+    "release": "bun scripts/release.ts",
     "evidence:production": "bun scripts/collect-production-evidence.ts",
     "capture:replay-corpus": "bun scripts/capture-replay-corpus.ts",
     "verify:replay-corpus": "bun scripts/verify-replay-corpus.ts",

@@ -1,4 +1,4 @@
-import { Chunk, Effect, HashSet, Result, pipe } from 'effect'
+import { Chunk, Effect, HashSet, Result, Schedule, pipe } from 'effect'
 
 import {
   OrderCollection,
@@ -6,6 +6,7 @@ import {
   type BrokerReadError,
   type BrokerReadShape,
   type FillActivity,
+  type FeeActivity,
   type Order as BrokerOrder,
   type ReadResult,
 } from '../broker/alpaca'
@@ -22,7 +23,7 @@ import {
   type HistoryHashFailure,
   type Observed,
   type OrderRead,
-  type ReconciliationError,
+  ReconciliationError,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
 import { Pipeable } from '../pipeable'
@@ -245,6 +246,37 @@ const readFillPages = (
   )
 }
 
+const readFeePages = (
+  read: BrokerReadShape,
+  until: string,
+): Effect.Effect<readonly Observed<FeeActivity>[], BrokerReadError | ReconciliationError> =>
+  Effect.gen(function* () {
+    const rows: Observed<FeeActivity>[] = []
+    const ids = new Set<string>()
+    let cursor: string | undefined
+    while (true) {
+      const page = yield* read.feeActivities({
+        until,
+        direction: SortDirection.Ascending,
+        pageSize: fillsPageSize,
+        ...(cursor === undefined ? {} : { pageToken: cursor }),
+      })
+      if (page.value.items.length > fillsPageSize || rows.length + page.value.items.length > maximumRows)
+        return yield* paginationFailure('InvalidFeeHistory', 'fee history exceeded its bounded row budget')
+      for (const fee of page.value.items) {
+        if (ids.has(fee.activityId))
+          return yield* paginationFailure('InvalidFeeHistory', 'fee history repeated an activity identity')
+        ids.add(fee.activityId)
+        rows.push({ value: fee, evidence: page.evidence })
+      }
+      const next = page.value.nextPageToken
+      if (next === undefined) return rows
+      if (next === cursor || next !== page.value.items.at(-1)?.activityId)
+        return yield* paginationFailure('InvalidFeeHistory', 'fee history cursor did not advance')
+      cursor = next
+    }
+  })
+
 const readHistory = (
   read: BrokerReadShape,
   until: string,
@@ -253,6 +285,7 @@ const readHistory = (
     {
       orders: readOrderPages(read, until, initialOrderPaginationState()),
       fills: readFillPages(read, until, initialFillPaginationState()),
+      fees: readFeePages(read, until),
     },
     { concurrency: 2 },
   )
@@ -261,7 +294,10 @@ const historyHashResult = (history: BrokerHistory): Result.Result<string, Histor
   pipe(
     Result.try({
       try: () => ({
-        schemaVersion: 'bayn.paper-broker-history.v1',
+        schemaVersion: 'bayn.paper-broker-history.v2',
+        fees: history.fees
+          .map(({ value }) => value)
+          .sort((left, right) => left.activityId.localeCompare(right.activityId)),
         orders: history.orders.rows
           .map(({ value }) => {
             const { observedAt: _observedAt, ...material } = value
@@ -295,9 +331,23 @@ const decideStableHistoryDataFirst = (
       historyHashResult(after),
       Result.mapError((error) => historyHashFailure('after', error)),
     )
-    return beforeHash === afterHash
-      ? after
-      : yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+    if (beforeHash !== afterHash) {
+      return yield* Result.fail(snapshotFailure('HistoryChanged', 'broker history changed during reconciliation'))
+    }
+    const filledByOrder = new Map<string, bigint>()
+    for (const { value: fill } of after.fills) {
+      filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityMicros))
+    }
+    if (
+      after.orders.rows.some(
+        ({ value: order }) => BigInt(order.filledQuantityMicros) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+      )
+    ) {
+      return yield* Result.fail(
+        snapshotFailure('FillActivitiesPending', 'broker order quantities and fill activities have not converged'),
+      )
+    }
+    return after
   })
 
 export const decideStableHistory = Pipeable.dual(2, decideStableHistoryDataFirst)
@@ -314,6 +364,15 @@ const readStableBrokerSnapshotDataFirst = (
     const after = yield* readHistory(read, afterUntil)
     const history = yield* Effect.fromResult(decideStableHistory(before, after))
     return { account, positions, history }
-  })
+  }).pipe(
+    Effect.retry({
+      times: 2,
+      schedule: Schedule.spaced(500),
+      while: (cause) =>
+        cause instanceof ReconciliationError &&
+        cause.failure?._tag === 'Snapshot' &&
+        (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
+    }),
+  )
 
 export const readStableBrokerSnapshot = Pipeable.dual(2, readStableBrokerSnapshotDataFirst)

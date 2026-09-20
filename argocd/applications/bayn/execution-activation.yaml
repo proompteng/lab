@@ -1,51 +1,3 @@
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: bayn-execution-activate
-  labels:
-    app.kubernetes.io/name: bayn-execution-activate
-    app.kubernetes.io/part-of: bayn
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: bayn-execution-activate
-  policyTypes:
-    - Egress
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: restate
-          podSelector:
-            matchLabels:
-              app: restate
-      ports:
-        - port: 8080
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: observability
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: tempo
-              app.kubernetes.io/component: distributor
-      ports:
-        - port: 4318
-          protocol: TCP
----
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -88,9 +40,8 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              # canonicalHashV1(bayn.execution-controller-activation.v3,
-              # plan hash, source revision, image digest, and activation request hash)
-              value: "d39df585e43593019dbc3f33efa264122c4efe22a4c1bee727a1efaa59e17bc9"
+              # Kargo binds bootstrap idempotency to the promoted immutable image.
+              value: "b9c1ac6ce3298142d323a20eec9d5089fd87bde8f382c850b5260af3d689dac7"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_IMAGE_REPOSITORY
@@ -102,9 +53,9 @@ spec:
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
               value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
+              value: "3da39b009a0cb2052b007ae9ba51f448c16b69281a37cf5ffe122314f1d801af"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
+              value: "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -113,7 +64,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\"authoredActivation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"},\"activation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"b9c1ac6ce3298142d323a20eec9d5089fd87bde8f382c850b5260af3d689dac7\",\"authoredActivation\":{\"sourceRevision\":\"ca4d32859b0ffbca3bf2e2d5a61d2f265eb95263\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f42804b5e010a708fa1f27dc623d23977910e4e06c08a71182e1efec98bd20c9\"},\"activation\":{\"sourceRevision\":\"ca4d32859b0ffbca3bf2e2d5a61d2f265eb95263\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f42804b5e010a708fa1f27dc623d23977910e4e06c08a71182e1efec98bd20c9\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

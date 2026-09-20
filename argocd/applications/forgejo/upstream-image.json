@@ -1,0 +1,9 @@
+{
+  "repository": "code.forgejo.org/forgejo/forgejo",
+  "version": "16.0.3",
+  "indexDigest": "sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685",
+  "platforms": {
+    "amd64": "sha256:727608279c44f32a18fdc3dc8050f55367f2708cf9edfee8cc61e05b2a6e034e",
+    "arm64": "sha256:5c774c205f85dea8d1e20678869325140918a99ffd27925446f0dcc1a7246e5e"
+  }
+}

@@ -13,6 +13,30 @@ This instance does not use reverse-proxy authentication or repository mirrors,
 so the corresponding v16 security changes require no compatibility override.
 Do not restore wildcard proxy trust or weaken mirroring restrictions.
 
+Before repeating maintenance from steady state, merge a reviewed change setting
+only Forgejo's ApplicationSet entry to `automation: manual`; preserve
+`targetRevision: kargo/forgejo` and its authorized Stage annotation. Reconcile
+the root Application at that exact merged revision and wait for the generated
+Forgejo Application to reflect the manual policy. Verify the hold before
+flushing queues or changing replicas:
+
+```sh
+kubectl --context galactic-lan -n argocd get application forgejo -o json |
+  jq -e '.spec.source.targetRevision == "kargo/forgejo" and
+    .metadata.annotations["kargo.akuity.io/authorized-stage"] == "lab-delivery:forgejo" and
+    (.spec.syncPolicy.automated == null or .spec.syncPolicy.automated.enabled == false) and
+    .operation == null and .status.operationState.phase != "Running" and
+    .status.operationState.phase != "Terminating"'
+kubectl --context galactic-lan -n lab-delivery get promotions -o json |
+  jq -e '[.items[] | select(.spec.stage == "forgejo") |
+    select(.status.phase != "Succeeded" and .status.phase != "Failed" and
+      .status.phase != "Errored" and .status.phase != "Aborted")] | length == 0'
+```
+
+Do not race another image promotion with the maintenance window. Keep manual
+reconciliation until the fresh snapshot rehearsal passes. The reviewed final
+activation restores automatic reconciliation on the Kargo branch.
+
 Capture the source PVC and Deployment UIDs, PostgreSQL system identifier and
 schema version, user/repository/runner/key/token counts, and every repository
 reference. Run Git `fsck` and Forgejo's diagnostic checks. The v15 baseline
@@ -32,8 +56,13 @@ kubectl --context galactic-lan -n forgejo exec deployment/forgejo -c forgejo -- 
 
 ## Consistent backup and migration rehearsal
 
-Forgejo is a manual GitOps application. Sync the exact merged maintenance
-revision through Argo, preserving the ApplicationSet automation policy.
+During the snapshot rehearsal, Forgejo keeps Argo automatic sync disabled.
+The authorized Kargo Stage invokes Argo with the exact promotion commit.
+After the rehearsal succeeds, the activation change enables automatic
+reconciliation on `kargo/forgejo` so Argo removes retired maintenance resources
+after the production server is healthy. Kargo 1.11.4 does not request pruning
+itself. Retained snapshots and claims keep `Prune=false,Delete=false`.
+Do not manually sync an image or maintenance revision from main.
 
 The maintenance commit sets only the existing Deployment's replica count to
 zero in sync wave -20. The following read-only gate verifies its UID, both
@@ -51,23 +80,35 @@ Forgejo 16.0.3 retains the cloned configuration and credentials while changing
 only its database host to that listener. The Pod has no service-account token
 and denies network ingress and egress. It never starts a Forgejo web server.
 
-Require the native migration, database consistency checks, original identity
-counts, repository reference hashes, Git integrity checks and clean PostgreSQL
-shutdown to pass. Read both containers' logs and verify the Job succeeded.
+Capture identity counts and every repository reference from the fresh clones
+before migration starts. Compare them exactly afterward; do not compare a new
+snapshot against counts or references from an earlier maintenance window.
+The read-only reference capture supports new and empty repositories and rejects
+corrupt Git references. Require the native migration, database consistency,
+current snapshot identity counts, reference comparison, Git integrity checks
+and clean PostgreSQL shutdown to pass. Read both containers' logs and verify the Job succeeded.
 Snapshot readiness alone does not establish recovery or migration success.
 
 ## Production upgrade and acceptance
 
 After the rehearsal passes, retire the completed quiesce and rehearsal
 Jobs, their script ConfigMap, read-only RBAC, and isolation policy. Retain
-both snapshots and every clone PVC. Restore the existing version with one
-replica through a merged maintenance revision. The normal application must
+both snapshots and every clone PVC. The first rehearsal was followed by restoration of version 15.0.6; the new
+Kargo preparation takes fresh snapshots covering writes since that restoration. The normal application must
 not recreate a gate that requires the original server UID or zero replicas.
 
-Image delivery must use a main-only publisher, a Kargo Warehouse, Freight,
-and an automatic Stage promotion. Enroll the Application on its authorized
-Kargo branch before releasing version 16. Kargo must write the selected
-immutable image to the chart values and sync that exact generated revision.
+Image delivery uses the main-only `forgejo-image-publish` workflow, Warehouse
+`forgejo`, and automatic Stage `lab-delivery:forgejo`. The Application tracks
+`kargo/forgejo`. The Stage copies the exact source commit, transforms every
+Forgejo image in the Helm/Kustomize render to the selected immutable image,
+and writes source, upstream, creation and digest annotations into the values.
+It syncs the exact generated revision.
+
+The first promotion takes new `forgejo-kargo-16-0-3` snapshots and migrates
+fresh clones with that same image. Existing recovery snapshots remain retained.
+Only after the selected-image rehearsal succeeds may the final source change
+remove the quiesce patch and retire its Jobs, ConfigMap, RBAC and NetworkPolicy.
+The final main-only image build and automatic promotion then start production.
 Do not manually sync an image upgrade from main. The Deployment remains a
 single replica with `Recreate`.
 
@@ -84,3 +125,11 @@ quiesce patch with the old image to restore service while investigating.
 Do not force-delete Pods or claims. After production migration, do not run the
 old binary against the migrated database: coordinated recovery requires both
 retained snapshots and accounting for any writes accepted after the upgrade.
+
+## Steady state after activation
+
+The maintenance resources are retired after the selected-image rehearsal.
+Both original recovery sets and their clone PVCs remain retained. Every new
+release still requires a matching published image and source commit, and
+Kargo updates the full digest and provenance before invoking Argo. Normal
+reconciliation must not recreate a one-time gate requiring zero replicas.

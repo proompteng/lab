@@ -1,5 +1,17 @@
 # Bayn GitOps rollout notes
 
+## Streaming protocol activation
+
+The streaming implementation uses `bayn.intraday-momentum.protocol.v3`. Its reviewed behavior, parameter, and protocol
+hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
+The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
+subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+
+The worker requires Kafka and consumes verified raw-feature joins through the common market-data adapter. Its versioned bootstrap budget is five minutes: the initial 905,542-record
+catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's
+content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
+progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
+
 ## Regular-session trading boundaries
 
 Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
@@ -11,23 +23,16 @@ The active day-trading policy admits entries until five minutes before the actua
 flattening at that same boundary. Close submissions remain eligible until the closing bell. Verify both regular and
 early-close windows; unresolved exits must stay visible and cannot complete the cycle as flat.
 
-This strategy change requires a reviewed research mandate rotation through `bayn-release`. Verify the exact image,
+This strategy change requires a reviewed research mandate rotation delivered through Kargo. Verify the exact image,
 activation identity, stored cycle boundaries, natural controller progress, and unchanged broker/accounting state.
 After zero-offset cycles exist, rollback must retain a runtime that can decode them. Do not restore the old positive-only
 constraints or delete cycles to make an incompatible binary start.
 
-## Archive reader availability evidence
+## Historical evidence after the hard migration
 
-Migration 58 adds the append-only `intraday_archive_availability` evidence table. The execution worker records the
-first retained completed observation of each exact source record; historical replay only reads it. This rollout does
-not alter strategy parameters, behavior identity, broker access, or the standing research mandate. Deliver it through
-the existing Bayn build/release/GitOps path. Startup migrations must finish before the new execution worker runs.
-
-Verify the exact worker source/image, successful migration, fresh controller progress, and unchanged reconciliation
-and authority. Natural read receipts require an actual eligible session/read and must not be inferred from pod health.
-Replay without historical receipts must remain incomplete in default recorded-reader mode. A compatible source rollback
-may stop new collection but must retain the additive table and all receipts; never backfill receipt timestamps, delete
-evidence, or submit a broker order as rollout proof.
+The worker no longer collects archive-reader receipts or falls back to ClickHouse for trading input. Historical
+receipts and financial records remain append-only in PostgreSQL. The backtest command consumes frozen datasets
+through the common market-data interface and binds each run to its source manifest, clock, and simulated broker.
 
 ## Native Restate execution cutover
 
@@ -108,6 +113,12 @@ change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`
 wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status rollout
 and a drained Restate worker revision; the activation hook itself cannot reach the broker.
 
+The SealedSecret's `proompteng.ai/bayn.mandate-identity` annotation records the request hash, strategy identity, authored
+build, and ciphertext hash without exposing the broker account. The manifest check compares it with the compiled
+strategy and all three runtime lineages. Regenerate this annotation from the validated request when sealing it;
+changing an annotation does not authorize a different encrypted request. Runtime validation remains authoritative.
+Invalid static mandate configuration fails preparation with its specific reason before authority recovery begins.
+
 After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
 sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation
 to remain exact with zero unresolved mutations. While the market is closed, also require zero new broker orders or
@@ -116,12 +127,23 @@ If activation has succeeded, first deactivate the native controller through revi
 exact reconciliation, and no broker-ledger advance before replacing the mandate. Never roll back only the Secret or
 invoke the activation handler manually.
 
-The reviewed `main` build publishes an immutable image, then the release workflow atomically advances the status,
-controller, and activation pins on `codex/bayn-deploy`. Argo watches that generated branch directly, so a second
-promotion pull request is neither required nor permitted. A release is held without advancing the branch when strategy
-or runtime identity changes require new trading evidence. The durable controller plan identifies the orchestration
-protocol rather than a particular worker build; every successful tick records the exact worker source revision, while
-strategy, account, market-data, risk, and authority bindings remain validated by the execution pass.
+The reviewed `main` build publishes the multi-architecture image and immutable `kargo-sha-<source>` alias. The
+`lab-delivery/bayn` Warehouse correlates that tag with its exact main commit; the automatic Stage copies that source,
+updates the status, worker, and activation bindings, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also
+updates the activation endpoint of the existing research build lineage while preserving its authored request and
+build. The native hook still verifies the exact controller binding before the status service rolls out.
+
+The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
+writer of the generated deployment branch. Its bootstrap generation uses the immutable image digest hash; the
+existing runtime idempotency key also binds source revision, account controller key, plan, and previous binding.
+
+For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
+together. Argo may briefly report a missing `kargo/bayn` branch until the first build creates Freight and Kargo pushes
+it; existing workloads remain running. If the root Application uses manual sync, sync only the reviewed `product`
+ApplicationSet from the merged source to install Bayn's branch target and authorized-stage annotation. Workload
+promotion and sync remain owned by Kargo. Verify the selected Freight digest, successful promotion, exact generated
+commit, both workers and status replicas, natural controller progress, and fresh exact reconciliation. Recover a
+failed promotion through Kargo; do not resume the retired workflow or introduce another deployment writer.
 
 Rollback is another serialized native ownership transfer, not pruning an active worker. Through a reviewed GitOps
 change, move the account-keyed binding to a compatible native replacement, or deactivate the native controller so Bayn

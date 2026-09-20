@@ -1,3 +1,6 @@
+import { Result } from 'effect'
+import { makeIntradayPerformanceFixture } from '../forward-performance/intraday-cycle.test-support'
+import { makeIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { describe, expect, test } from 'bun:test'
 
 import { canonicalHashV1 } from '../hash'
@@ -80,6 +83,25 @@ const envelopeMaterial = {
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
 
 describe('forward-performance receipt persistence contract', () => {
+  test('retains unverified decision hashes only with undetermined execution quality', () => {
+    for (const status of ['UNDETERMINED', 'MEASURED'] as const) {
+      const unverifiedDecisionHashes = ['9'.repeat(64)]
+      const material = {
+        ...receiptMaterial,
+        executionQuality: {
+          ...receiptMaterial.executionQuality,
+          status,
+          reasonCodes: ['PLANNED_DECISION_EVIDENCE_GAP'],
+          unverifiedDecisionHashes,
+          evidenceHash: canonicalHashV1({ unverifiedDecisionHashes }),
+        },
+      }
+      const receipt = { ...material, receiptHash: canonicalHashV1(material) }
+      const value = { ...envelopeMaterial, receipt, receiptHash: receipt.receiptHash }
+      const decoded = decodeForwardPerformanceReceiptEnvelopeResult({ ...value, contentHash: canonicalHashV1(value) })
+      expect(decoded._tag).toBe(status === 'UNDETERMINED' ? 'Success' : 'Failure')
+    }
+  })
   test('rejects an envelope whose receipt only exposes a matching hash', () => {
     const decoded = decodeForwardPerformanceReceiptEnvelopeResult({
       schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
@@ -119,4 +141,57 @@ describe('forward-performance receipt persistence contract', () => {
 
     expect(decoded._tag).toBe('Failure')
   })
+})
+
+test('round trips native archive provenance and rejects a rehashed nested source substitution', () => {
+  const { request, archive, bars } = makeIntradayPerformanceFixture()
+  const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
+  if (evidence === undefined) throw new Error('expected native evidence')
+  const material = {
+    ...receiptMaterial,
+    observedCapacity: {
+      ...receiptMaterial.observedCapacity,
+      intradaySources: [evidence],
+      observations: [
+        {
+          cycleId: request.cycleId,
+          symbol: request.symbol,
+          windowOpenedAt: request.windowOpenedAt,
+          windowClosedAt: request.windowClosedAt,
+          filledQuantityMicros: '18000000',
+          marketVolumeQuantityMicros: evidence.quantityMicros,
+          participationRate: {
+            numeratorQuantityMicros: '18000000',
+            denominatorQuantityMicros: evidence.quantityMicros,
+            decimal: '0.000461538461',
+          },
+          intradaySource: {
+            feed: 'iex' as const,
+            volumeScope: evidence.volumeScope,
+            evidenceHash: evidence.contentHash,
+          },
+        },
+      ],
+    },
+  }
+  const nested = { ...material, receiptHash: canonicalHashV1(material) }
+  const outer = { ...envelopeMaterial, receipt: nested, receiptHash: nested.receiptHash }
+  const decoded = Result.getOrThrow(
+    decodeForwardPerformanceReceiptEnvelopeResult({ ...outer, contentHash: canonicalHashV1(outer) }),
+  )
+  expect(decoded.receipt.observedCapacity.intradaySources).toEqual([evidence])
+  const altered = { ...evidence, decisionSnapshotId: '0'.repeat(64) }
+  const { contentHash: _hash, ...alteredMaterial } = altered
+  material.observedCapacity.intradaySources[0] = {
+    ...alteredMaterial,
+    contentHash: canonicalHashV1(alteredMaterial),
+  }
+  const tamperedReceipt = { ...material, receiptHash: canonicalHashV1(material) }
+  const tamperedEnvelope = { ...envelopeMaterial, receipt: tamperedReceipt, receiptHash: tamperedReceipt.receiptHash }
+  expect(
+    decodeForwardPerformanceReceiptEnvelopeResult({
+      ...tamperedEnvelope,
+      contentHash: canonicalHashV1(tamperedEnvelope),
+    })._tag,
+  ).toBe('Failure')
 })

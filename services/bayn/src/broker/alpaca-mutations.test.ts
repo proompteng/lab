@@ -99,8 +99,6 @@ const preflight: ReadPreflight = {
   ordersHash: '4'.repeat(64),
   fillCount: 0,
   fillsHash: '5'.repeat(64),
-  marketCalendarSessionCount: 1,
-  marketCalendarHash: '6'.repeat(64),
   orderById: 'NOT_FOUND',
   orderByClientId: 'NOT_FOUND',
 }
@@ -126,6 +124,7 @@ const verifiedSession = (
     orders: () => unexpectedRead('orders read'),
     orderById: () => unexpectedRead('order-by-id read'),
     orderByClientId: () => unexpectedRead('order-by-client-id read'),
+    feeActivities: () => unexpectedRead('fee activities read'),
     fillActivities: () => unexpectedRead('fill activities read'),
     marketCalendar: unusedMarketCalendar,
     ...options.read,

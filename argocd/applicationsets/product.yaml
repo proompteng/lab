@@ -125,9 +125,11 @@ spec:
               - name: forgejo
                 path: argocd/applications/forgejo
                 namespace: forgejo
+                targetRevision: kargo/forgejo
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                automation: manual
+                  kargo.akuity.io/authorized-stage: lab-delivery:forgejo
+                automation: auto
                 enabled: "true"
               - name: kitty-krew
                 path: argocd/applications/kitty-krew
@@ -414,12 +416,11 @@ spec:
                 enabled: "true"
               - name: bayn
                 path: argocd/applications/bayn
-                # Bayn's reviewed main build writes immutable release pins here.
-                # The branch is generated deployment state, not a second review boundary.
-                targetRevision: codex/bayn-deploy
+                targetRevision: kargo/bayn
                 namespace: bayn
                 renderWithLovely: false
                 annotations:
+                  kargo.akuity.io/authorized-stage: lab-delivery:bayn
                   argocd.argoproj.io/sync-wave: "7"
                   argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
                 managedNamespaceMetadata:

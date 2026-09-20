@@ -6,6 +6,7 @@ import {
   buildAndPushDockerImage,
   inspectImageDigest,
   inspectImagePlatforms,
+  pushDockerImage,
   resolveBuildAttestations,
 } from '../docker'
 
@@ -23,6 +24,51 @@ afterEach(() => {
 })
 
 const streamFromText = (text: string) => new Response(text).body!
+
+describe('pushDockerImage', () => {
+  it.each([
+    {
+      name: 'retries a response-header timeout and publishes the same tested image',
+      errors: ['net/http: timeout awaiting response headers', ''],
+      attempts: 2,
+      succeeds: true,
+    },
+    {
+      name: 'fails when the response-header timeout persists through the retry limit',
+      errors: ['net/http: timeout awaiting response headers'],
+      attempts: 2,
+      succeeds: false,
+    },
+    {
+      name: 'fails immediately on an authentication error',
+      errors: ['unauthorized: authentication required'],
+      attempts: 1,
+      succeeds: false,
+    },
+  ])('$name', async ({ errors, attempts, succeeds }) => {
+    const commands: string[][] = []
+    const image = 'registry.example/lab/restate:prepare-sha-tested-run-123-amd64'
+    process.env.DOCKER_COMMAND_RETRY_ATTEMPTS = '2'
+    process.env.DOCKER_COMMAND_RETRY_DELAY_SECONDS = '1'
+    Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
+    Bun.spawn = ((command: Parameters<typeof Bun.spawn>[0]) => {
+      const error = errors[Math.min(commands.length, errors.length - 1)]
+      commands.push(typeof command === 'string' ? [command] : [...command])
+      return {
+        exited: Promise.resolve(error ? 1 : 0),
+        stdout: streamFromText(''),
+        stderr: streamFromText(error ?? ''),
+      } as ReturnType<typeof Bun.spawn>
+    }) as typeof Bun.spawn
+
+    if (succeeds) {
+      await pushDockerImage(image)
+    } else {
+      await expect(pushDockerImage(image)).rejects.toThrow('Command failed (1): docker push')
+    }
+    expect(commands).toEqual(Array.from({ length: attempts }, () => ['docker', 'push', image]))
+  })
+})
 
 describe('inspectImageDigest', () => {
   it('prefers the remote repo digest when both remote and local digests are available', () => {

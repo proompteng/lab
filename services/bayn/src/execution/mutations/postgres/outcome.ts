@@ -82,7 +82,10 @@ const makeMutationOutcomePostgresDataFirst = (
   const recoverUnknownSubmit = (operation: OutcomeStoreOperation, input: MutationOutcomeInput) =>
     sql<{ intent_id: string }>`
       UPDATE intents
-      SET state = ${IntentState.Recovered}, state_version = state_version + 1, updated_at = ${input.occurredAt}
+      SET
+        state = ${IntentState.Recovered},
+        state_version = state_version + 1,
+        updated_at = GREATEST(${input.occurredAt}::timestamptz, updated_at + interval '1 microsecond')
       WHERE intent_id = ${input.intentId} AND state = ${IntentState.Unknown}
       RETURNING intent_id
     `.pipe(

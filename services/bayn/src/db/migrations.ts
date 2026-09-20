@@ -1,3 +1,14 @@
+import executionWaitingStatus from '../../migrations/0074_execution_waiting_status'
+import candidateObservations from '../../migrations/0075_candidate_observations'
+import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
+import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
+import pacedIntradayEntryAttempts from '../../migrations/0073_paced_intraday_entry_attempts'
+import simulatedBrokerCheckpoints from '../../migrations/0070_simulated_broker_checkpoints'
+import simulatedExecutionClock from '../../migrations/0069_simulated_execution_clock'
+import simulatedSnapshotReferences from '../../migrations/0068_simulated_snapshot_references'
+import positionCostBasis from '../../migrations/0067_position_cost_basis'
+import streamingAuthorityProtocol from '../../migrations/0066_streaming_authority_protocol'
+import streamingSnapshotReferences from '../../migrations/0065_streaming_snapshot_references'
 import { PgMigrator } from '@effect/sql-pg'
 
 import initialSchema from '../../migrations/0001_initial_schema'
@@ -59,8 +70,14 @@ import intradayStrategyCutover from '../../migrations/0056_intraday_strategy_cut
 import recoverPreopenAuthorityCycle from '../../migrations/0057_recover_preopen_authority_cycle'
 import archiveReaderAvailability from '../../migrations/0058_archive_reader_availability'
 import regularSessionBoundaries from '../../migrations/0059_regular_session_boundaries'
+import materializedCompletionCutoff from '../../migrations/0060_materialized_completion_cutoff'
+import latestRearmPosition from '../../migrations/0061_latest_rearm_position'
+import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandate_rotation'
+import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
+import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '67_position_cost_basis': positionCostBasis,
   '1_initial_schema': initialSchema,
   '2_paper_contracts': paperContracts,
   '3_intent_risk_clock': intentRiskClock,
@@ -120,4 +137,19 @@ export const migrationLoader = PgMigrator.fromRecord({
   '57_recover_preopen_authority_cycle': recoverPreopenAuthorityCycle,
   '58_archive_reader_availability': archiveReaderAvailability,
   '59_regular_session_boundaries': regularSessionBoundaries,
+  '60_materialized_completion_cutoff': materializedCompletionCutoff,
+  '61_latest_rearm_position': latestRearmPosition,
+  '62_discrepancy_mandate_rotation': discrepancyMandateRotation,
+  '63_broker_fee_accounting': brokerFeeAccounting,
+  '64_partial_ioc_completion': partialIocCompletion,
+  '65_streaming_snapshot_references': streamingSnapshotReferences,
+  '68_simulated_snapshot_references': simulatedSnapshotReferences,
+  '69_simulated_execution_clock': simulatedExecutionClock,
+  '70_simulated_broker_checkpoints': simulatedBrokerCheckpoints,
+  '66_streaming_authority_protocol': streamingAuthorityProtocol,
+  '71_recover_intraday_authority_cycle': recoverIntradayAuthorityCycle,
+  '72_intraday_zero_fill_rearm': intradayZeroFillRearm,
+  '73_paced_intraday_entry_attempts': pacedIntradayEntryAttempts,
+  '74_execution_waiting_status': executionWaitingStatus,
+  '75_candidate_observations': candidateObservations,
 })

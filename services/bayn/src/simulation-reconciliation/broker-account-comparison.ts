@@ -40,7 +40,9 @@ const comparePosition = (
       observedCost:
         observedPosition === undefined
           ? Result.succeed(0n)
-          : roundMicrosProduct(symbol, observedPosition.quantityMicros, observedPosition.averageEntryPriceMicros),
+          : observedPosition.schemaVersion === 'bayn.position.v2'
+            ? integer('position-cost-basis', symbol, observedPosition.costBasisMicros)
+            : roundMicrosProduct(symbol, observedPosition.quantityMicros, observedPosition.averageEntryPriceMicros),
     }),
     Result.flatMap(({ expectedCost, expectedQuantity, observedCost, observedQuantity }) =>
       pipe(
@@ -148,13 +150,18 @@ export const compareEquity = (snapshot: ReconciliationSnapshot): ReconciliationD
     }),
     Result.flatMap(({ expected, observed }) =>
       pipe(
-        compareValue(
-          snapshot.accountId,
-          DiscrepancyKind.Valuation,
-          snapshot.accountId,
-          expected.toString(),
-          observed.toString(),
-        ),
+        // Separate account and position reads carry independently moving market marks.
+        snapshot.positions.some(
+          (position) => position.quantityMicros !== '0' && position.observedAt !== snapshot.account.observedAt,
+        )
+          ? Result.succeed<readonly DiscrepancyInput[]>([])
+          : compareValue(
+              snapshot.accountId,
+              DiscrepancyKind.Valuation,
+              snapshot.accountId,
+              expected.toString(),
+              observed.toString(),
+            ),
         Result.map((discrepancies) => ({ difference: observed - expected, discrepancies })),
       ),
     ),

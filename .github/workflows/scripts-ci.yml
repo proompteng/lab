@@ -55,6 +55,8 @@ on:
       - 'kubernetes/rook-ceph-rbd-canary/README.md'
       - 'kubernetes/rook-ceph-rwx-benchmarks/README.md'
       - '.github/workflows/scripts-ci.yml'
+      - '.github/workflows/temporal-bun-sdk.yml'
+      - '.github/actionlint.yaml'
       - '.github/workflows/manual-docker-build-push.yaml'
       - '.github/scripts/validate-oci-mirror-inputs.sh'
   pull_request:
@@ -63,6 +65,8 @@ on:
       - 'scripts/jangar/**'
       - '.github/workflows/pull-request.yml'
       - '.github/workflows/scripts-ci.yml'
+      - '.github/workflows/temporal-bun-sdk.yml'
+      - '.github/actionlint.yaml'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
       - 'argocd/applications/observability/**'

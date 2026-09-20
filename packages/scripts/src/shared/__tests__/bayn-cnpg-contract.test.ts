@@ -55,6 +55,13 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   expect(cluster.spec.imageName).toBe(
     'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )
+  expect(cluster.spec.postgresql.parameters).toMatchObject({
+    log_lock_waits: 'on',
+    deadlock_timeout: '1s',
+    log_min_duration_statement: '1000ms',
+    log_parameter_max_length: '0',
+    log_parameter_max_length_on_error: '0',
+  })
 })
 
 test('Bayn compares CNPG resources after admission defaulting', () => {
@@ -321,11 +328,12 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
   const activationSecret = readManifest('argocd/applications/bayn/alpaca-sealedsecret.yaml')
+  const mandateIdentity = JSON.parse(activationSecret.metadata.annotations['proompteng.ai/bayn.mandate-identity'])
   const activationDocuments = YAML.parseAllDocuments(
     readRepoFile('argocd/applications/bayn/execution-activation.yaml'),
   ).map((document) => document.toJSON())
   const activation = activationDocuments.find((manifest) => manifest.kind === 'Job')
-  const activationPolicy = activationDocuments.find((manifest) => manifest.kind === 'NetworkPolicy')
+  const activationPolicy = readManifest('argocd/applications/bayn/execution-activation-networkpolicy.yaml')
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
   const environment = (manifest: Record<string, any>): Map<string, Record<string, any>> =>
     new Map(manifest.spec.template.spec.containers[0].env.map((entry: Record<string, any>) => [entry.name, entry]))
@@ -406,18 +414,11 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
   expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
     schemaVersion: 'bayn.research-capital-build-lineage.v1',
-    requestHash: '423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625',
-    authoredActivation: {
-      sourceRevision,
-      imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
-      imageDigest,
-    },
-    activation: {
-      sourceRevision,
-      imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
-      imageDigest,
-    },
+    requestHash: mandateIdentity.requestHash,
+    authoredActivation: mandateIdentity.authoredActivation,
+    activation: mandateIdentity.authoredActivation,
   })
+  expect(controllerEnvironment.get('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS')?.value).toBe('300000')
   expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
   expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
@@ -438,13 +439,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
     'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
   )
-  expect(activationSecret.metadata.annotations).toMatchObject({
-    'bayn.proompteng.ai/capital-activation-schema': 'bayn.research-execution-mandate.v1',
-    'bayn.proompteng.ai/capital-activation-source-revision': sourceRevision,
-    'bayn.proompteng.ai/capital-activation-image-digest': imageDigest,
-    'bayn.proompteng.ai/capital-activation-content-hash':
-      '423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625',
-  })
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
   const previousBinding = {
@@ -467,9 +461,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
-  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    'd39df585e43593019dbc3f33efa264122c4efe22a4c1bee727a1efaa59e17bc9',
-  )
+  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(mandateIdentity.requestHash)
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
