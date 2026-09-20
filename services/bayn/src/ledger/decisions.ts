@@ -182,37 +182,18 @@ const persistedRunQueriesDataFirst = (
 
 export const persistedRunQueries = Pipeable.dual(2, persistedRunQueriesDataFirst)
 
-const accountReconciliationQueriesDataFirst = (
-  plan: LedgerPlan,
-  ledger: number,
-): Result.Result<LedgerQueries, LedgerValidationError> => {
-  if (plan.accounts.length >= LEDGER_BATCH_MAX || plan.transfers.length >= LEDGER_BATCH_MAX) {
-    return Result.fail(
-      ledgerValidationError({
-        operation: 'verify-account',
-        reason: 'batch-limit',
-        message: 'broker account exceeds the exact reconciliation limit',
-        material: {
-          accountCount: plan.accounts.length,
-          transferCount: plan.transfers.length,
-          limit: LEDGER_BATCH_MAX,
-        },
-      }),
-    )
-  }
-  return Result.succeed({
-    accounts: {
-      ...queryFilter(ledger),
-      user_data_128: plan.runKey,
-      limit: plan.accounts.length + 1,
-    },
-    transfers: {
-      ...queryFilter(ledger),
-      user_data_64: plan.runTag,
-      limit: plan.transfers.length + 1,
-    },
-  })
-}
+const accountReconciliationQueriesDataFirst = (plan: LedgerPlan, ledger: number): LedgerQueries => ({
+  accounts: {
+    ...queryFilter(ledger),
+    user_data_128: plan.runKey,
+    limit: Math.min(LEDGER_BATCH_MAX, plan.accounts.length + 1),
+  },
+  transfers: {
+    ...queryFilter(ledger),
+    user_data_64: plan.runTag,
+    limit: Math.min(LEDGER_BATCH_MAX, plan.transfers.length + 1),
+  },
+})
 
 export const accountReconciliationQueries = Pipeable.dual(2, accountReconciliationQueriesDataFirst)
 
