@@ -1,7 +1,6 @@
 import { jevModel, type JevRequest, type JevResponse } from './contract'
 import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
-import { makeNewsSnapshot } from '../market-data/news/model'
 import { makeJevEvaluationRequest } from './evidence'
 
 export const requestFixture = {
@@ -46,17 +45,6 @@ export const evaluationRequestFixture = () =>
       symbol: 'AAPL',
       observedAt: '1970-01-01T00:00:00.000Z',
       expiresAt: '1970-01-01T00:00:05.000Z',
-      news: Result.getOrThrow(
-        makeNewsSnapshot({
-          schemaVersion: 'bayn.company-news-snapshot.v1',
-          source: 'alpaca-news-v1beta1',
-          query: { symbol: 'AAPL', asOf: '1970-01-01T00:00:00.000Z' },
-          requestedAt: '1970-01-01T00:00:00.000Z',
-          receivedAt: '1970-01-01T00:00:00.000Z',
-          articles: [],
-          pages: [{ requestPageToken: null, response: { news: [], next_page_token: null } }],
-        }),
-      ),
       requestHash: canonicalHashV1(requestFixture),
       request: requestFixture,
     }),

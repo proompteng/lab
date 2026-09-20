@@ -40,7 +40,7 @@ export const evaluateJevOnce = (input: unknown) =>
   Effect.gen(function* () {
     const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
     const started = yield* Clock.currentTimeMillis
-    if (started < Date.parse(request.news.receivedAt) || started >= Date.parse(request.expiresAt)) {
+    if (started < Date.parse(request.observedAt) || started >= Date.parse(request.expiresAt)) {
       return yield* new JevEvidenceError({ message: 'Jev evaluation request is outside its validity window' })
     }
     const store = yield* JevEvaluationStore
