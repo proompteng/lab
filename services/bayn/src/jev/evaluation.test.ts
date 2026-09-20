@@ -4,12 +4,14 @@ import { TestClock } from 'effect/testing'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1 } from '../hash'
+import { makeNewsSnapshot } from '../market-data/news/model'
 import { JevClient, JevError } from './client'
 import { JevFailure } from './contract'
 import {
   decodeJevEvaluationReceipt,
   decodeJevEvaluationRequest,
   JevOutcome,
+  makeJevEvaluationRequest,
   makeJevEvaluationReceipt,
   type JevEvaluationReceipt,
 } from './evidence'
@@ -57,6 +59,58 @@ describe('durable Jev evaluation', () => {
       { ...request, expiresAt: '1970-01-01T00:00:20.000Z' },
     ])
       expect(Result.isFailure(decodeJevEvaluationRequest(invalid))).toBe(true)
+  })
+
+  test('requires exact news identity, source time and versions before claiming an inference', async () => {
+    const { requestId: _, ...material } = request
+    const { contentHash: __, ...newsMaterial } = request.news
+    const changedSymbol = Result.getOrThrow(
+      makeNewsSnapshot({
+        ...newsMaterial,
+        query: { ...newsMaterial.query, symbol: 'MSFT' },
+      }),
+    )
+    const late = Result.getOrThrow(makeNewsSnapshot({ ...newsMaterial, receivedAt: request.expiresAt }))
+    for (const news of [{ ...request.news, contentHash: '0'.repeat(64) }, changedSymbol, late])
+      expect(Result.isFailure(makeJevEvaluationRequest({ ...material, news }))).toBe(true)
+    const receivedAt = '1970-01-01T00:00:01.000Z'
+    const afterNews = Result.getOrThrow(
+      makeJevEvaluationRequest({
+        ...material,
+        news: Result.getOrThrow(makeNewsSnapshot({ ...newsMaterial, receivedAt })),
+      }),
+    )
+    expect(
+      Result.isFailure(
+        makeJevEvaluationReceipt(afterNews, {
+          schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+          requestId: afterNews.requestId,
+          startedAt: request.observedAt,
+          completedAt: receivedAt,
+          outcome: { status: JevOutcome.Received, inference: inferenceFixture() },
+        }),
+      ),
+    ).toBe(true)
+    let claims = 0
+    const memory = memoryStore()
+    const result = await Effect.runPromise(
+      evaluateJevOnce(afterNews).pipe(
+        Effect.result,
+        Effect.provideService(JevEvaluationStore, {
+          ...memory.store,
+          begin: (value) => {
+            claims += 1
+            return memory.store.begin(value)
+          },
+        }),
+        Effect.provideService(JevClient, {
+          evaluate: () => Effect.die('must not call Jev before receiving source evidence'),
+        }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(claims).toBe(0)
   })
 
   test('replays the durable answer and never invokes the provider a second time', async () => {

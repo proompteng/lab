@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { decodeNewsSnapshot, NewsSnapshotSchema } from '../market-data/news/model'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { decodeJevResponse, JevFailure, JevRequestSchema, JevResponseSchema, prepareJevRequest } from './contract'
 
@@ -12,6 +13,7 @@ const RequestMaterialSchema = Schema.Struct({
   symbol: SymbolSchema,
   observedAt: UtcInstantSchema,
   expiresAt: UtcInstantSchema,
+  news: NewsSnapshotSchema,
   requestHash: Sha256Schema,
   request: JevRequestSchema,
 })
@@ -80,6 +82,15 @@ export const makeJevEvaluationRequest = (input: unknown) =>
           if (prepared.requestHash !== material.requestHash || lifetime <= 0 || lifetime > 10_000) {
             return invalid('Jev evaluation request has a mismatched hash or invalid validity window')
           }
+          const news = decodeNewsSnapshot(material.news)
+          if (
+            Result.isFailure(news) ||
+            news.success.query.symbol !== material.symbol ||
+            news.success.query.asOf !== material.observedAt ||
+            news.success.receivedAt >= material.expiresAt
+          ) {
+            return invalid('Jev evaluation request has invalid, late or differently bound news evidence')
+          }
           return canonicalHashV1Result(material).pipe(
             Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation request cannot be hashed' })),
             Result.map((requestId) => ({ ...material, requestId })),
@@ -113,7 +124,7 @@ export const makeJevEvaluationReceipt = (request: JevEvaluationRequest, input: u
     Result.flatMap((material) => {
       if (
         material.requestId !== request.requestId ||
-        material.startedAt < request.observedAt ||
+        material.startedAt < request.news.receivedAt ||
         material.completedAt < material.startedAt
       ) {
         return invalid('Jev evaluation receipt has a mismatched request or regressed clock')
