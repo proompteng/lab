@@ -130,6 +130,7 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   performance_net_realized_pnl_after_costs_micros: null,
   performance_net_realized_return_decimal: null,
   performance_completed_execution_count: null,
+  performance_completed_position_episode_count: null,
   performance_realized_close_count: null,
   performance_accounting_receipts_exact: null,
   performance_ledger_exact: null,
@@ -295,7 +296,7 @@ describe('cycle observability projection', () => {
     }
   })
 
-  test('projects running accounting and immutable all-cost performance separately', () => {
+  test.each([null, 0, 1])('projects accounting and immutable performance with %p episodes', (episodeCount) => {
     const row: CycleObservabilityProjectionRow = {
       ...emptyRow(),
       accounting_fill_count: 4,
@@ -314,6 +315,7 @@ describe('cycle observability projection', () => {
       performance_net_realized_pnl_after_costs_micros: '11750000',
       performance_net_realized_return_decimal: '0.011750',
       performance_completed_execution_count: 4,
+      performance_completed_position_episode_count: episodeCount,
       performance_realized_close_count: 2,
       performance_accounting_receipts_exact: true,
       performance_ledger_exact: true,
@@ -344,6 +346,7 @@ describe('cycle observability projection', () => {
         netRealizedPnlAfterCostsMicros: '11750000',
         netRealizedReturnDecimal: '0.011750',
         completedExecutionCount: 4,
+        completedPositionEpisodeCount: episodeCount,
         realizedCloseCount: 2,
         accountingReceiptsExact: true,
         ledgerExact: true,

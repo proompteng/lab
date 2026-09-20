@@ -1,3 +1,4 @@
+import { PositionEpisodeReason } from './position-episodes'
 import { makeIntradayPerformanceFixture, makeStreamingPerformanceFixture } from './intraday-cycle.test-support'
 import { makeIntradayPerformanceVolumeEvidence } from './intraday-volume'
 import { bindForwardPerformanceTerminalReferencePrices } from './program'
@@ -1361,7 +1362,13 @@ describe('forward performance domain', () => {
 
     expect(first).toEqual(second)
     expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
-    expect(first.receiptHash).toBe('62d38bc64113308d3aba90c29c877cceb9c3c7d390ca382dd26ff1207ab1a6e4')
+    expect(first.receiptHash).toBe('f85f5a687d7f6a3fe9bb7fb5b6e0cec889f78a62c601233b1e2f8058979bae39')
+    expect(first.positionEpisodes).toEqual({
+      schemaVersion: 'bayn.position-episode-evidence.v1',
+      status: 'UNDETERMINED',
+      evidenceHash: null,
+      reason: PositionEpisodeReason.HistoryUnavailable,
+    })
     expect(first.evidence).toEqual({
       status: 'SUFFICIENT',
       reasonCodes: [],

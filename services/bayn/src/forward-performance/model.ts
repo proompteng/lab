@@ -2,6 +2,8 @@ import type { FinalizedSnapshotProvenance } from '../contracts'
 import type { IsoDate } from '../schemas'
 import type { IntradaySnapshotManifest, IntradaySnapshotRequest } from '../market-data/intraday/model'
 import type { StreamingSnapshotManifest } from '../market-data/streaming/snapshot'
+import type { AccountingTransaction } from '../accounting/schema'
+import type { PositionEpisodeEvidence } from './position-episodes'
 
 export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v3' as const
 
@@ -333,6 +335,7 @@ export interface ForwardPerformanceEvidenceInput {
   }
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
+  readonly accountTransactions?: readonly AccountingTransaction[]
   readonly brokerFees?: readonly import('../broker/alpaca').FeeActivity[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
   readonly unverifiedDecisionHashes?: readonly string[]
@@ -350,6 +353,7 @@ export interface ForwardPerformanceEvidenceInput {
 
 export interface ForwardPerformanceReceiptMaterial {
   readonly schemaVersion: typeof FORWARD_PERFORMANCE_SCHEMA_VERSION
+  readonly positionEpisodes?: PositionEpisodeEvidence
   readonly bindings: {
     readonly runtime: ForwardPerformanceBuildBinding
     readonly source: ForwardPerformanceBuildBinding | null

@@ -640,6 +640,11 @@ const runForwardPerformanceDataFirst = (
           ? {}
           : { startingCapitalMicros: postgres.startingCapitalMicros }),
         transactions: postgres.transactionEvidence,
+        ...(Result.isSuccess(ledgerVerification) &&
+        ledgerVerification.success.exactReceipts.size === postgres.ledgerTransactions.length &&
+        [...ledgerVerification.success.exactReceipts.values()].every(Boolean)
+          ? { accountTransactions: postgres.ledgerTransactions }
+          : {}),
         brokerFees: feeRecords
           .filter((record) => generationFeeIds.has(record.data.activityId))
           .map((record) => record.data),

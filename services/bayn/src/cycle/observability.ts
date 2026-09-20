@@ -145,6 +145,7 @@ export interface ForwardPerformanceObservation {
   readonly netRealizedPnlAfterCostsMicros: string | null
   readonly netRealizedReturnDecimal: string | null
   readonly completedExecutionCount: number
+  readonly completedPositionEpisodeCount: number | null
   readonly realizedCloseCount: number
   readonly accountingReceiptsExact: boolean
   readonly ledgerExact: boolean
