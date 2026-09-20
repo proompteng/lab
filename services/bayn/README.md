@@ -171,6 +171,11 @@ Flat accounts and marks observed at the same instant also require exact equity a
 - The Bayn namespace log collector includes the CNPG postgres containers. Database pods do not inherit the
   application's part-of label, so discovery uses the namespace and explicit container names.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
+- Account reconciliation and forward-performance reads paginate the complete expected account history by TigerBeetle
+  timestamp. Each request stays within the batch limit. Reads continue through short pages and request one additional
+  record to detect unexpected history. Exact record identities, metadata, and aggregate balances remain mandatory;
+  a malformed page or transport failure cannot produce an exact result. Individual posting batches and persisted
+  simulation-run limits remain unchanged.
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash
   reconciliation without changing the opening balance or inventing fills; changed or missing activity history fails
@@ -432,5 +437,14 @@ bun run --filter @proompteng/bayn build
 ```
 
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
+
+The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
+ID `2001`. It posts 10,500 synthetic transfers, verifies account and performance evidence, and supports rerunning against
+the same data after restarting the server. Run it from the repository root:
+
+```sh
+BAYN_TEST_TIGERBEETLE_ADDRESS=127.0.0.1:39701 bun test services/bayn/src/ledger/account-history.test.ts
+```
+
 Historical development candidates are terminal, non-executable records summarized in
 [`docs/bayn/candidate-terminal-history.md`](../../docs/bayn/candidate-terminal-history.md).

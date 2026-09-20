@@ -1,10 +1,10 @@
 import { Data, Effect, Result, Scope } from 'effect'
 
 import type { RuntimeConfig } from '../config'
-import { assembleAccountPlan, accountReconciliationQueries } from '../ledger/decisions'
+import { assembleAccountPlan } from '../ledger/decisions'
+import { readAccountLedger } from '../ledger/account-read'
 import {
   AccountCode,
-  LEDGER_BATCH_MAX,
   ledgerValidationError,
   reconcileLedgerPlan,
   type LedgerPlan,
@@ -179,45 +179,11 @@ const readForwardPerformanceLedgerDataFirst = (
   generationPlans: readonly LedgerPlan[] = accountPlans,
 ): Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope> =>
   Effect.gen(function* () {
-    const cashYieldResidual = yield* Effect.fromResult(validateCashYieldEvidence(cashYieldEvidence)).pipe(
-      Effect.mapError(ledgerError),
-    )
-    const accountPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, accountPlans)).pipe(
-      Effect.mapError(ledgerError),
-    )
-    const generationPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, generationPlans)).pipe(
-      Effect.mapError(ledgerError),
-    )
-    const boundedQueries = yield* Effect.fromResult(
-      accountReconciliationQueries(accountPlan, config.tigerBeetle.ledger),
-    ).pipe(Effect.mapError(ledgerError))
-    const queries = {
-      accounts: { ...boundedQueries.accounts, limit: LEDGER_BATCH_MAX },
-      transfers: { ...boundedQueries.transfers, limit: LEDGER_BATCH_MAX },
-    }
-    const client = yield* makeTigerBeetleRequestClient(config, dependencies).pipe(Effect.mapError(ledgerError))
-    const [accounts, transfers] = yield* Effect.all(
-      [
-        client.request('forward-performance-accounts', (active) => active.queryAccounts(queries.accounts)),
-        client.request('forward-performance-transfers', (active) => active.queryTransfers(queries.transfers)),
-      ],
-      { concurrency: 'unbounded' },
-    ).pipe(Effect.mapError(ledgerError))
-
-    if (accounts.length >= LEDGER_BATCH_MAX || transfers.length >= LEDGER_BATCH_MAX) {
-      return yield* ledgerError(
-        ledgerValidationError({
-          operation: 'verify-account',
-          reason: 'batch-limit',
-          message: 'broker account reached the exact TigerBeetle reconciliation limit',
-          material: {
-            accountCount: accounts.length,
-            transferCount: transfers.length,
-            limit: LEDGER_BATCH_MAX,
-          },
-        }),
-      )
-    }
+    const cashYieldResidual = yield* Effect.fromResult(validateCashYieldEvidence(cashYieldEvidence))
+    const accountPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, accountPlans))
+    const generationPlan = yield* Effect.fromResult(assembleAccountPlan(accountId, generationPlans))
+    const client = yield* makeTigerBeetleRequestClient(config, dependencies)
+    const { accounts, transfers } = yield* readAccountLedger(client, accountPlan, config.tigerBeetle.ledger)
 
     const expectedAccountIds = new Set(accountPlan.accounts.map((account) => account.id))
     const actualAccountIds = new Set(accounts.map((account) => account.id))
@@ -233,7 +199,7 @@ const readForwardPerformanceLedgerDataFirst = (
       openPositionCount: openInventoryCount(accounts),
       cashYieldEvidenceRequired: cashYieldResidual > 0n,
     }
-  })
+  }).pipe(Effect.mapError(ledgerError))
 
 export const readForwardPerformanceLedger = Pipeable.by<
   (
