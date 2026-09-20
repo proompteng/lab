@@ -1,10 +1,9 @@
 import { expect, test } from 'bun:test'
-import { Effect } from 'effect'
+import { Effect, Fiber } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { createWorkflowContext } from '../../src/workflow/context'
 import { DeterminismGuard } from '../../src/workflow/determinism'
-import { WorkflowBlockedError } from '../../src/workflow/errors'
 import { defineWorkflowQueries, defineWorkflowSignals } from '../../src/workflow/inbound'
 
 type TestWorkflowInfo = Parameters<typeof createWorkflowContext>[0]['info']
@@ -28,7 +27,7 @@ test('signals waitFor/on/drain decode payloads and record determinism entries', 
     { name: 'finish', args: [{}], metadata: { eventId: '6', workflowTaskCompletedEventId: '10' } },
   ]
 
-  const { context } = createWorkflowContext({
+  const { context, applyActivationJob } = createWorkflowContext({
     input: [],
     info: baseInfo,
     determinismGuard: guard,
@@ -43,14 +42,20 @@ test('signals waitFor/on/drain decode payloads and record determinism entries', 
   expect(drainResult).toHaveLength(1)
   expect(drainResult[0]?.metadata.workflowTaskCompletedEventId).toBe('10')
 
-  await expect(Effect.runPromise(context.signals.waitFor(handles.unblock))).rejects.toThrow(
-    'Signal "unblock" not yet delivered',
-  )
-
   const snapshot = guard.snapshot
   expect(snapshot.signals).toHaveLength(2)
   expect(snapshot.signals[0]?.signalName).toBe('unblock')
   expect(snapshot.signals[1]?.signalName).toBe('finish')
+
+  const waiting = Effect.runFork(context.signals.waitFor(handles.unblock))
+  try {
+    expect(waiting.unsafePoll()).toBeNull()
+    applyActivationJob({ type: 'signal', delivery: { name: 'unblock', args: ['later'] } })
+    const delivered = await Effect.runPromise(Fiber.join(waiting))
+    expect(delivered.payload).toBe('later')
+  } finally {
+    await Effect.runPromise(Fiber.interrupt(waiting))
+  }
 })
 
 test('query registry registers resolvers and records evaluations', async () => {
@@ -70,7 +75,7 @@ test('query registry registers resolvers and records evaluations', async () => {
 
   await Effect.runPromise(
     context.queries.register(queryHandles.state, (input, metadata) =>
-      Effect.sync(() => ({ status: input.includeMeta ? metadata.identity ?? 'unknown' : 'anonymous' })),
+      Effect.sync(() => ({ status: input.includeMeta ? (metadata.identity ?? 'unknown') : 'anonymous' })),
     ),
   )
 
