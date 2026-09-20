@@ -40,8 +40,8 @@ describe('intraday replay ledger', () => {
   })
 
   test.each([
-    ['requestedQuantityMicros', '1500000'],
-    ['quantityMicros', '1500000'],
+    ['requestedQuantityMicros', '1.5'],
+    ['quantityMicros', '1.5'],
     ['priceMicros', '0'],
     ['observedAt', 'invalid-date'],
     ['notionalMicros', '0'],
@@ -225,9 +225,43 @@ describe('intraday replay ledger', () => {
     if (Result.isFailure(malformedNotional))
       expect(malformedNotional.failure).toMatchObject({ reason: 'notional-mismatch' })
     if (Result.isFailure(fractionalQuantity)) {
-      expect(fractionalQuantity.failure).toMatchObject({ reason: 'non-whole-share-quantity' })
+      expect(fractionalQuantity.failure).toMatchObject({ reason: 'notional-mismatch' })
     }
     expect(ledger.fills).toEqual([])
+  })
+
+  test('accounts for fractional closes without changing quantity or rounding away residual shares', () => {
+    const opened = success(
+      apply(
+        freshLedger(),
+        filled({ quantityMicros: '2000000', requestedQuantityMicros: '2000000', notionalMicros: '200000000' }),
+      ),
+    )
+    const partial = success(
+      apply(
+        opened,
+        filled({
+          side: 'sell',
+          quantityMicros: '500000',
+          requestedQuantityMicros: '500000',
+          notionalMicros: '50000000',
+        }),
+      ),
+    )
+    expect(partial.positions[0]?.quantityMicros).toBe('1500000')
+    const closed = success(
+      apply(
+        partial,
+        filled({
+          side: 'sell',
+          quantityMicros: '1500000',
+          requestedQuantityMicros: '1500000',
+          notionalMicros: '150000000',
+        }),
+      ),
+    )
+    expect(closed.positions).toEqual([])
+    expect(BigInt(closed.cashMicros) + BigInt(closed.executionFeesMicros)).toBe(1000000000n)
   })
 
   test('bounds the fee multiplier before accounting', () => {

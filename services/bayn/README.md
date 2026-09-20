@@ -171,6 +171,11 @@ Flat accounts and marks observed at the same instant also require exact equity a
 - The Bayn namespace log collector includes the CNPG postgres containers. Database pods do not inherit the
   application's part-of label, so discovery uses the namespace and explicit container names.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
+- Account reconciliation and forward-performance reads paginate the complete expected account history by TigerBeetle
+  timestamp. Each request stays within the batch limit. Reads continue through short pages and request one additional
+  record to detect unexpected history. Exact record identities, metadata, and aggregate balances remain mandatory;
+  a malformed page or transport failure cannot produce an exact result. Individual posting batches and persisted
+  simulation-run limits remain unchanged.
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash
   reconciliation without changing the opening balance or inventing fills; changed or missing activity history fails
@@ -276,6 +281,9 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 ```
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
+Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
+created before its generation activates; its creation timestamp does not override that durable binding. Account,
+research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
 Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
@@ -361,7 +369,11 @@ the exact input, source receipt, pass log, decoded entry and closing decisions, 
 
 Simulation accounts are isolated from production. The command cannot acquire Alpaca trading credentials, target a
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,
-failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance. Negative
+failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance.
+The session schedule counts unavailable required decision observations separately from successful no-trade and
+expected lifecycle waits. Close-only market sells support fractional liquidation with fresh, sufficient arrival
+liquidity; an unsupported market remainder fails the simulation. See the streaming guide's
+[close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.
 
 ## Historical data workflow
@@ -425,5 +437,14 @@ bun run --filter @proompteng/bayn build
 ```
 
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
+
+The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
+ID `2001`. It posts 10,500 synthetic transfers, verifies account and performance evidence, and supports rerunning against
+the same data after restarting the server. Run it from the repository root:
+
+```sh
+BAYN_TEST_TIGERBEETLE_ADDRESS=127.0.0.1:39701 bun test services/bayn/src/ledger/account-history.test.ts
+```
+
 Historical development candidates are terminal, non-executable records summarized in
 [`docs/bayn/candidate-terminal-history.md`](../../docs/bayn/candidate-terminal-history.md).

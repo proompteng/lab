@@ -54,10 +54,12 @@ export enum BacktestIssue {
   UnresolvedMutation = 'unresolved-mutation',
   UnclosedPosition = 'unclosed-position',
   MissingValuation = 'missing-valuation',
+  MissingDecisionData = 'missing-decision-data',
 }
 
 export const assessBacktestSession = (input: {
   readonly failedPassCount: number
+  readonly unavailableDecisionPassCount: number
   readonly valuationFailureCount: number
   readonly reconciliation: {
     readonly status: ReconciliationStatus
@@ -69,6 +71,7 @@ export const assessBacktestSession = (input: {
 }) => {
   const issues: BacktestIssue[] = []
   const { status, metrics, unknownOrderCount, unknownMutationCount } = input.reconciliation
+  if (input.unavailableDecisionPassCount > 0) issues.push(BacktestIssue.MissingDecisionData)
   if (input.failedPassCount > 0) issues.push(BacktestIssue.CycleFailure)
   if (input.valuationFailureCount > 0) issues.push(BacktestIssue.MissingValuation)
   if (
@@ -433,6 +436,7 @@ export const runBacktest = (
           return {
             ...assessBacktestSession({
               failedPassCount: schedule.failedPassCount,
+              unavailableDecisionPassCount: schedule.unavailableDecisionPassCount,
               valuationFailureCount,
               reconciliation: {
                 status: reconciliation.report.reconciliation.status,
