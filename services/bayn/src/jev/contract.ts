@@ -8,6 +8,14 @@ import {
   strictParseOptions,
 } from '../schemas'
 
+export enum JevFailure {
+  Request = 'REQUEST',
+  Transport = 'TRANSPORT',
+  Status = 'STATUS',
+  Response = 'RESPONSE',
+  Timeout = 'TIMEOUT',
+}
+
 export const jevModel = 'jev-1.13.0' as const
 export const jevEndpoint = 'https://api.typesafe.ai/v1/systemone' as const
 

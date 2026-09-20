@@ -1,4 +1,7 @@
 import { jevModel, type JevRequest, type JevResponse } from './contract'
+import { Result } from 'effect'
+import { canonicalHashV1 } from '../hash'
+import { makeJevEvaluationRequest } from './evidence'
 
 export const requestFixture = {
   model: jevModel,
@@ -31,3 +34,26 @@ export const responseFixture = () =>
     },
     usage: { input_tokens: 250, output_tokens: 80 },
   }) satisfies JevResponse
+
+export const evaluationRequestFixture = () =>
+  Result.getOrThrow(
+    makeJevEvaluationRequest({
+      schemaVersion: 'bayn.jev-evaluation-request.v1',
+      cycleId: 'a'.repeat(64),
+      authorityGenerationHash: 'b'.repeat(64),
+      snapshotId: 'c'.repeat(64),
+      symbol: 'AAPL',
+      observedAt: '1970-01-01T00:00:00.000Z',
+      expiresAt: '1970-01-01T00:00:05.000Z',
+      requestHash: canonicalHashV1(requestFixture),
+      request: requestFixture,
+    }),
+  )
+
+export const inferenceFixture = () => ({
+  requestHash: canonicalHashV1(requestFixture),
+  responseHash: canonicalHashV1(responseFixture()),
+  startedAt: '1970-01-01T00:00:00.000Z',
+  completedAt: '1970-01-01T00:00:00.000Z',
+  response: responseFixture(),
+})

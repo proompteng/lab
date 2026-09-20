@@ -3,15 +3,7 @@ import { Headers, HttpClient, HttpClientRequest } from 'effect/unstable/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
-import { decodeJevResponse, jevEndpoint, prepareJevRequest, type JevResponse } from './contract'
-
-export enum JevFailure {
-  Request = 'REQUEST',
-  Transport = 'TRANSPORT',
-  Status = 'STATUS',
-  Response = 'RESPONSE',
-  Timeout = 'TIMEOUT',
-}
+import { decodeJevResponse, jevEndpoint, prepareJevRequest, JevFailure, type JevResponse } from './contract'
 
 export class JevError extends Data.TaggedError('JevError')<{
   readonly failure: JevFailure
@@ -109,6 +101,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                 message: 'Jev response arrived outside its inference deadline',
                 requestHash,
                 responseHash,
+                rejectedResponse: Redacted.make(raw),
               })
             }
             return {

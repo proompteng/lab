@@ -4,8 +4,8 @@ import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevClient, JevClientLive, JevError, JevFailure } from './client'
-import { jevEndpoint } from './contract'
+import { JevClient, JevClientLive, JevError } from './client'
+import { JevFailure, jevEndpoint } from './contract'
 import { requestFixture, responseFixture } from './test-support'
 
 const key = Redacted.make('test-secret-never-log')
