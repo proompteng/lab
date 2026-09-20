@@ -20,18 +20,18 @@ tool_loop_guardrails:
   warnings_enabled: true
   hard_stop_enabled: true
   warn_after:
-    exact_failure: 2
-    same_tool_failure: 3
-    idempotent_no_progress: 2
+    exact_failure: 3
+    same_tool_failure: 4
+    idempotent_no_progress: 3
   hard_stop_after:
-    exact_failure: 4
-    same_tool_failure: 6
-    idempotent_no_progress: 4
+    exact_failure: 5
+    same_tool_failure: 7
+    idempotent_no_progress: 5
 
 compression:
   enabled: true
-  threshold: 0.65
-  target_ratio: 0.25
+  threshold: 0.72
+  target_ratio: 0.32
   protect_last_n: 20
   protect_first_n: 1
 
@@ -52,10 +52,10 @@ max_concurrent_sessions: 4
 group_sessions_per_user: true
 
 streaming:
-  enabled: false
+  enabled: true
 
 skills:
-  creation_nudge_interval: 0
+  creation_nudge_interval: 14
 
 agent:
   max_turns: 40
