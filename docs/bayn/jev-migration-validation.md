@@ -2,6 +2,10 @@
 
 ## Request recovery
 
+The signal builder accepts the verified streaming or simulated snapshot type and reproduces its retained raw and
+derived source evidence before constructing model input. Technical feature availability, window, source references
+and content must reproduce the snapshot identity. A matching symbol alone is insufficient.
+
 Jev evaluation requests require a persisted candidate observation matching the exact cycle, authority generation,
 snapshot, candidate symbol and observation time. Excluded candidates cannot acquire a request. The store verifies the
 observation's content hash before claiming the request and again on historical readback.

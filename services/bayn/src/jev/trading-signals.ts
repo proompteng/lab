@@ -2,7 +2,10 @@ import { Result } from 'effect'
 
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
-import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from '../market-data/streaming/replay'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import type { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
 
@@ -162,12 +165,22 @@ export const jevTradingQuestions = {
 } satisfies JevRequest['questions']
 
 export const makeJevTradingSignalRequest = (
-  snapshot: StrategyMarketSnapshot,
+  sourceSnapshot: VerifiedStrategyMarketSnapshot,
   symbol: string,
   benchmarkSymbol: string,
 ) =>
   Result.gen(function* () {
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
+    const rows = yield* persistIntradayRecordRows(sourceSnapshot).pipe(
+      Result.mapError((cause) => new JevContractError({ message: 'Jev snapshot rows cannot be retained', cause })),
+    )
+    const reproduction: Result.Result<StrategyMarketSnapshot, IntradaySnapshotFailure> =
+      sourceSnapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+        ? reproduceStreamingSnapshot(sourceSnapshot.manifest, rows)
+        : reproduceSimulatedSnapshot(sourceSnapshot.manifest, rows)
+    const snapshot = yield* reproduction.pipe(
+      Result.mapError((cause) => new JevContractError({ message: 'Jev snapshot evidence does not reproduce', cause })),
+    )
     const candidate = yield* signalFor(snapshot, symbol)
     const benchmark = yield* signalFor(snapshot, benchmarkSymbol)
     const { metrics } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
