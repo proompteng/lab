@@ -34,9 +34,9 @@ import { canonicalHashV1 } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { makeActiveStrategyRuntime } from '../strategy'
-import { JevClient } from '../jev/client'
+import { JevClient, JevError } from '../jev/client'
 import { nativeJevInference } from '../jev/native.test-support'
-import { prepareJevRequest } from '../jev/contract'
+import { JevFailure, prepareJevRequest } from '../jev/contract'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
@@ -89,6 +89,7 @@ durableTest.each([
   'fallback',
   'missing-benchmark',
   'no-trade',
+  'failed-model-response',
   'recovery',
   'recovery-filled',
   'early-exit',
@@ -98,6 +99,8 @@ durableTest.each([
   'measured-zero-fill-reentry',
   'measured-submit-expired-reentry',
   'operator-held-replay',
+  'operator-after-system-replay',
+  'reconciliation-idle-recovery',
 ] as const)(
   'native Jev production cycle and durable accounting: %s',
   async (scenario) => {
@@ -408,6 +411,8 @@ durableTest.each([
           ),
           clock,
           currentUtcInstant: Effect.gen(function* () {
+            if (scenario === 'reconciliation-idle-recovery')
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
             if (scenario === 'measured-submit-expired-reentry') yield* providerClock.adjust(1)
             if (scenario === 'measured-submit-expired-reentry' && !expiredStartedSubmit) {
               const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
@@ -435,9 +440,47 @@ durableTest.each([
               ? engine.advance
               : timing.run(engine.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
         }
-        if (scenario === 'operator-held-replay') {
+        if (scenario === 'reconciliation-idle-recovery') {
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing replay authority reader')
+          expect(yield* sql`SELECT count(*)::int AS cycles FROM autonomous_cycles`).toEqual([{ cycles: 0 }])
           yield* advanceMarketTo(initialMs + 1)
+          yield* runtime.store.authorityRestriction.restrictAuthority(
+            `reconciliation discrepancy ${canonicalHashV1({ transient: true })}`,
+            yield* currentUtcInstant,
+          )
+          yield* advanceMarketTo(initialMs + 1000)
+          const restarted = yield* makeReplayExecutionRuntime(runtimeInput)
+          for (let attempt = 0; attempt < 5; attempt++) {
+            yield* restarted.advance
+            if ((yield* readAuthority).effective === Authority.Execution) break
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          const recovered = yield* readAuthority
+          expect(recovered).toMatchObject({
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+          })
+          expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect(yield* sql`SELECT state, decision_hash FROM autonomous_cycles`).toEqual([
+            { state: 'PENDING', decision_hash: null },
+          ])
+          expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          return { _tag: 'IdleRecovery' as const }
+        }
+        if (scenario === 'operator-held-replay' || scenario === 'operator-after-system-replay') {
+          yield* advanceMarketTo(initialMs + 1)
+          if (scenario === 'operator-after-system-replay') {
+            yield* runtime.store.authorityRestriction.restrictAuthority(
+              `reconciliation discrepancy ${canonicalHashV1({ transient: true })}`,
+              yield* currentUtcInstant,
+            )
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
           yield* runtime.store.authorityRestriction.restrictAuthority('operator hold fixture', yield* currentUtcInstant)
+          expect(yield* sql`SELECT reason FROM authority_state`).toEqual([{ reason: 'operator hold fixture' }])
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
           const restarted = yield* makeReplayExecutionRuntime(runtimeInput)
           for (let attempt = 0; attempt < 3; attempt++) {
@@ -505,7 +548,7 @@ durableTest.each([
           ])
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
-        if (scenario === 'missing-benchmark' || scenario === 'no-trade') {
+        if (scenario === 'missing-benchmark' || scenario === 'no-trade' || scenario === 'failed-model-response') {
           const schedule = yield* driveReplaySession(
             runtime,
             (at) =>
@@ -519,6 +562,7 @@ durableTest.each([
           const reconciliation = yield* runtime.reconcile
           const state = yield* broker.snapshot
           expect(schedule.failedPassCount).toBe(0)
+          expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           const assessment = assessBacktestSession({
             ...schedule,
@@ -531,9 +575,13 @@ durableTest.each([
               unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
             },
           })
-          if (scenario === 'missing-benchmark') {
+          if (scenario !== 'no-trade') {
             expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
             expect(assessment).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
+            if (scenario === 'failed-model-response') {
+              expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
+              expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
+            }
           } else {
             expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeGreaterThan(0)
             expect(schedule.unavailableDecisionPassCount).toBe(0)
@@ -1027,6 +1075,18 @@ durableTest.each([
                 yield* measuredProviderClock.adjust(100)
               }
               const now = yield* Clock.currentTimeMillis
+              if (scenario === 'failed-model-response') {
+                const rejected = {
+                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), 'enter').response,
+                  answers: {},
+                }
+                return yield* new JevError({
+                  failure: JevFailure.Response,
+                  message: 'Response has billed usage but no valid decision answers',
+                  responseHash: canonicalHashV1(rejected),
+                  rejectedResponse: Redacted.make(rejected),
+                })
+              }
               return {
                 ...nativeJevInference(
                   raw,

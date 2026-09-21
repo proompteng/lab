@@ -5,6 +5,7 @@ import { MarketFeatureDefinition } from '../../market-data/features/contract'
 
 export enum DecisionReadinessReason {
   DecisionPending = 'DECISION_PENDING',
+  InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
   LookbackWarmup = 'LOOKBACK_WARMUP',
   SnapshotUnavailable = 'SNAPSHOT_UNAVAILABLE',
   SnapshotCoverage = 'SNAPSHOT_COVERAGE',

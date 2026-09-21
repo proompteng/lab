@@ -1,7 +1,7 @@
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { defaultJevProtocolDocument, jevBehaviorHash } from './jev/protocol'
-import { jevExitCommitDeadline, JevExitReason } from './jev/exit'
+import { JevExitReason } from './jev/exit'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
   SnapshotManifestFields as ExecutionMarketDataBindingFields,
@@ -1284,7 +1284,7 @@ const jevExitEvidenceIssues = (
     target.sessionDate !== document.executionSession?.executionSession.date ||
     evidence.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
     document.createdAt < target.observedAt ||
-    (document.replanGenerationHash === undefined && document.createdAt >= jevExitCommitDeadline(target)) ||
+    (document.replanGenerationHash === undefined && document.createdAt >= target.commitDeadlineAt) ||
     input.brokerState.reconciliation.reconciledAt < evidence.portfolio.brokerState.reconciliation.reconciledAt ||
     input.brokerState.positions.some(
       (held) =>

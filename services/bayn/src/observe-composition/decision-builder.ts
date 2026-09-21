@@ -869,7 +869,10 @@ const compileObserveStrategyDecision = <R>(
       Date.parse(input.cycle.window.submissionCutoffAt) - Date.parse(evidence.decidedAt) >
         (input.decisionFinalizationHeadroomMs ?? 0)
     )
-      return yield* new JevAwaitingEvidence({ message: 'Jev entry remains armed for a qualifying fresh signal' })
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev entry remains armed for a qualifying fresh signal',
+        readiness: DecisionReadinessReason.NoEligibleCandidate,
+      })
     const reconciliation = yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError))
     yield* Effect.fromResult(decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }))
     if (reconciliation.riskContext.unknownMutationCount !== 0)
@@ -902,6 +905,7 @@ const compileObserveStrategyDecision = <R>(
     if (evaluatedAt >= evidence.batchPlan.expiresAt)
       return yield* new JevAwaitingEvidence({
         message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
     return {
@@ -927,11 +931,7 @@ const compileObserveStrategyDecision = <R>(
               observedAt: initialFacts.evaluatedAt,
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
               readiness: {
-                reason:
-                  cause.readiness ??
-                  (cause.availableAt === undefined
-                    ? DecisionReadinessReason.NoEligibleCandidate
-                    : DecisionReadinessReason.LookbackWarmup),
+                reason: cause.readiness,
                 message: cause.message,
                 ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
               },

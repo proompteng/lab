@@ -22,8 +22,10 @@ an economic advantage under the frozen qualification protocol.
 
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
-50-basis-point protective stop. These deterministic exits do not require Jev. A committed close retains its original
-trigger through partial fills and recovery after the inference deadline. New entries use whole-share
+50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
+quote's event time. The immutable exit target binds that deadline. These deterministic exits do not require Jev.
+A committed close retains its original trigger through partial fills and recovery after the inference deadline.
+New entries use whole-share
 IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
 verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
 decision retains the original quote, allowance, exact limit notional, and risk evidence; historical decisions without
@@ -118,10 +120,13 @@ recovery. A running worker also checks durable authority before and after each p
 system restriction appears. It cannot discover new cycles or submit entries while restricted. During the existing close window it can cancel outstanding
 orders belonging to the bound cycle and submit the existing position-reducing close after fresh exact reconciliation.
 The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
-checks still apply. Operator restrictions do not enter this recovery path.
+checks still apply. Operator restrictions do not enter this recovery path. An operator hold replaces an existing
+automatic restriction, and later automatic failures preserve the hold.
 Once durable completion evidence is verified, the cycle may settle its restricted generation even when it had fills.
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
+A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
+accounting and flatness checks.
 The existing activation path then verifies the grant before publishing the next execution driver. This transition
 does not require a worker restart. An untouched, unbound cycle retains its plan until the session's entry cutoff,
 including restrictions after market open. Its snapshot, decision and intent history must remain empty. Partially
@@ -416,7 +421,9 @@ Simulation accounts are isolated from production. The command cannot acquire Alp
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,
 failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance.
 The session schedule counts unavailable required decision observations separately from successful no-trade and
-expected lifecycle waits. Close-only market sells support fractional liquidation with fresh, sufficient arrival
+expected lifecycle waits. Failed or expired entry inference is unavailable decision data even when its token usage
+can be fully priced. Only a complete valid decision can report no eligible candidate. Close-only market sells support
+fractional liquidation with fresh, sufficient arrival
 liquidity; an unsupported market remainder fails the simulation. See the streaming guide's
 [close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.

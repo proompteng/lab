@@ -225,7 +225,7 @@ export const executionActivationExpiredRestrictionReason = `${executionActivatio
 export const legacyExecutionActivationExpiredRestrictionReason =
   'PAPER activation lease restricted effective authority: immutable activation request expired'
 
-const isRetiredOneShotMandateRestriction = (reason: string | undefined): boolean =>
+export const isRetiredOneShotMandateRestriction = (reason: string | undefined): boolean =>
   reason === executionMandateCompletedRestrictionReason ||
   reason === legacyV1CompletedRestrictionReason ||
   reason === executionActivationExpiredRestrictionReason ||

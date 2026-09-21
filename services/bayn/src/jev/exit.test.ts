@@ -6,13 +6,7 @@ import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { decideJevManagement } from './decision'
-import {
-  decideJevExit,
-  jevExitCommitDeadline,
-  jevProtectiveQuoteIsFresh,
-  JevExitReason,
-  JevExitTargetSchema,
-} from './exit'
+import { decideJevExit, jevProtectiveQuoteIsFresh, JevExitReason, JevExitTargetSchema } from './exit'
 import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import { JevPurpose } from './portfolio'
 import { jevPricingQuery } from './runtime'
@@ -35,6 +29,7 @@ describe('native Jev exit targets', () => {
   })
 
   test.each([
+    [9_000, true],
     [10_000, true],
     [10_001, false],
     [31_000, false],
@@ -71,6 +66,10 @@ describe('native Jev exit targets', () => {
       trigger,
     })
     expect(Result.isSuccess(result)).toBe(accepted)
+    if (Result.isSuccess(result))
+      expect(result.success.commitDeadlineAt).toBe(
+        new Date(Date.parse(quoteAt) + held.protocol.maximumQuoteAgeMs).toISOString(),
+      )
   })
 
   test('pricing waits at the exact minute boundary instead of invalidating the position', () => {
@@ -95,13 +94,14 @@ describe('native Jev exit targets', () => {
     }
     const target = Result.getOrThrow(decideJevExit(material))
     expect(target.targetWeights).toEqual({ AAPL: 0 })
-    expect(jevExitCommitDeadline(target)).toBe(decision.evidence.batchPlan.expiresAt)
+    expect(target.commitDeadlineAt).toBe(decision.evidence.batchPlan.expiresAt)
     expect(
       Result.getOrThrow(Schema.decodeUnknownResult(JevExitTargetSchema)(JSON.parse(JSON.stringify(target)))),
     ).toEqual(target)
     for (const altered of [
       { ...target, targetWeights: { AAPL: 0.1 } },
       { ...target, reason: JevExitReason.MaximumHold },
+      { ...target, commitDeadlineAt: '2026-09-04T20:00:00.000Z' },
       { ...target, cycleId: '0'.repeat(64) },
       { ...target, entryDecisionHash: '0'.repeat(64) },
     ])

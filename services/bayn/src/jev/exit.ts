@@ -85,6 +85,7 @@ export const decideJevExit = (input: unknown) =>
       ].some((at) => Date.parse(at) > now || now - Date.parse(at) > protocol.maximumQuoteAgeMs)
     )
       return yield* invalid('Exit requires current position evidence for its strategy session')
+    let commitDeadlineAt = new Date(now + protocol.maximumQuoteAgeMs).toISOString()
     switch (trigger.reason) {
       case JevExitReason.MaximumHold:
         if (now < Date.parse(firstFill.occurredAt) + protocol.maximumHoldingMinutes * 60_000)
@@ -102,6 +103,7 @@ export const decideJevExit = (input: unknown) =>
           !equal(decision.evidence.observation.protocol, protocol)
         )
           return yield* invalid('Exit must reproduce the same position and protocol as the complete model decision')
+        commitDeadlineAt = decision.evidence.batchPlan.expiresAt
         break
       }
       case JevExitReason.ProtectiveStop: {
@@ -148,6 +150,7 @@ export const decideJevExit = (input: unknown) =>
           )
         )
           return yield* invalid('The verified bid has not crossed the protective stop')
+        commitDeadlineAt = new Date(Date.parse(quote.eventAt) + protocol.maximumQuoteAgeMs).toISOString()
         break
       }
     }
@@ -161,6 +164,7 @@ export const decideJevExit = (input: unknown) =>
       targetWeights: { [position.symbol]: 0 as const },
       reason: trigger.reason,
       observedAt: evidence.observedAt,
+      commitDeadlineAt,
       evidence,
     }
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev exit evidence does not reproduce', cause })))
@@ -175,6 +179,7 @@ export const JevExitTargetSchema = Schema.Struct({
   targetWeights: Schema.Record(SymbolSchema, Schema.Literal(0)),
   reason: Schema.Enum(JevExitReason),
   observedAt: UtcInstantSchema,
+  commitDeadlineAt: UtcInstantSchema,
   evidence: JevExitEvidenceSchema,
 }).check(
   Schema.makeFilter((target) => {
@@ -185,8 +190,3 @@ export const JevExitTargetSchema = Schema.Struct({
   }),
 )
 export type JevExitTarget = typeof JevExitTargetSchema.Type
-
-export const jevExitCommitDeadline = (target: JevExitTarget): string =>
-  target.evidence.trigger.reason === JevExitReason.Model
-    ? target.evidence.trigger.decision.evidence.batchPlan.expiresAt
-    : new Date(Date.parse(target.observedAt) + target.evidence.protocol.maximumQuoteAgeMs).toISOString()

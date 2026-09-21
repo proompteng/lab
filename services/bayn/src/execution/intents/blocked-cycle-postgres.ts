@@ -12,6 +12,7 @@ import {
   legacyExecutionMandateFailureRestrictionPattern,
   legacyExecutionMandateFailureRestrictionPrefix,
   legacyV1CompletedRestrictionReason,
+  reconciliationDiscrepancyRestrictionPattern,
 } from '../mandate'
 import {
   BlockedCycleIntentStore,
@@ -199,6 +200,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern}
+              OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR state.reason = ${reconciliationIncompleteRestrictionReason}
               OR (
                 state.reason IN (

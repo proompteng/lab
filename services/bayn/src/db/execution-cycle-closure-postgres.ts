@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Schema } from 'effect'
 
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result } from '../hash'
-import { jevExitCommitDeadline, JevExitReason } from '../jev/exit'
+import { JevExitReason } from '../jev/exit'
 import { currentUtcInstant } from '../time'
 import { verifyJevPortfolioSources } from './jev-position-postgres'
 import {
@@ -163,7 +163,7 @@ const makeStore = Effect.gen(function* () {
       if (
         closure.document.replanGenerationHash !== undefined ||
         now < closure.createdAt ||
-        now >= jevExitCommitDeadline(target)
+        now >= target.commitDeadlineAt
       )
         return yield* storeError('bind', 'invariant', 'The initial Jev exit evidence expired before durable commitment')
       yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)

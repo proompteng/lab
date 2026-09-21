@@ -38,7 +38,7 @@ import { jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-sig
 export class JevAwaitingEvidence extends Data.TaggedError('JevAwaitingEvidence')<{
   readonly message: string
   readonly availableAt?: string
-  readonly readiness?: DecisionReadinessReason
+  readonly readiness: DecisionReadinessReason
 }> {}
 
 export class JevAwaitingFreshWindow extends Data.TaggedError('JevAwaitingFreshWindow')<{
@@ -66,6 +66,7 @@ export const jevObservationQuery = (
     return Result.fail(
       new JevAwaitingEvidence({
         message: 'Jev is waiting for its complete rolling signal window',
+        readiness: DecisionReadinessReason.LookbackWarmup,
         availableAt: utcInstantFromEpochMillis(
           Date.parse(cycle.window.executionOpenAt) +
             protocol.lookbackMinutes * 60_000 +
@@ -106,6 +107,7 @@ export const jevPricingQuery = (
     return Result.fail(
       new JevAwaitingEvidence({
         message: 'Jev pricing awaits the first observation after the completed-minute boundary',
+        readiness: DecisionReadinessReason.LookbackWarmup,
         availableAt: utcInstantFromEpochMillis(end + 1),
       }),
     )
@@ -145,7 +147,10 @@ export const jevPricingQuery = (
 export const evaluateJevObservation = (input: Parameters<typeof recordJevObservation>[0]) =>
   Effect.gen(function* () {
     if (!(yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)))
-      return yield* new JevAwaitingEvidence({ message: 'A committed Jev batch still awaits its original deadline' })
+      return yield* new JevAwaitingEvidence({
+        message: 'A committed Jev batch still awaits its original deadline',
+        readiness: DecisionReadinessReason.DecisionPending,
+      })
     const latest = yield* (yield* CandidateObservationStore).latestJevWindowEnd({
       cycleId: input.cycleId,
       purpose: input.portfolio.purpose,
@@ -187,6 +192,7 @@ export const evaluateJevObservation = (input: Parameters<typeof recordJevObserva
     )
       return yield* new JevAwaitingEvidence({
         message: 'The complete committed Jev batch is not usable within its deadline',
+        readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     return { observation: observation.payload, batchPlan: saved.plan, batchResult: saved.result, decidedAt }
   })
@@ -274,7 +280,10 @@ export const evaluateJevPositionExit = (input: {
     const pricing = yield* loadIntradaySnapshot(input.marketData, pricingQuery)
     const quote = pricing.latestQuotes[position.symbol]
     if (quote === undefined || !jevProtectiveQuoteIsFresh(quote, observedAt, input.protocol.maximumQuoteAgeMs))
-      return yield* new JevAwaitingEvidence({ message: 'Held position has no verified current quote' })
+      return yield* new JevAwaitingEvidence({
+        message: 'Held position has no verified current quote',
+        readiness: DecisionReadinessReason.SnapshotStale,
+      })
     const bid = yield* Effect.fromResult(numberToMicros(quote.bidPrice))
     if (
       quote.bidSize > 0 &&
