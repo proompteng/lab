@@ -1,10 +1,11 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
-import { decodeJevResponse, jevModel, type JevRequest, type JevResponse } from './contract'
+import { decodeJevResponse, jevModel, prepareJevRequest, type JevResponse } from './contract'
 import { jevTradingQuestions } from './trading-signals'
 
-export const tradingSignalInferenceFixture = (request: JevRequest, at: string) => {
+export const tradingSignalInferenceFixture = (input: unknown, at: string) => {
+  const { request } = Result.getOrThrow(prepareJevRequest(input))
   const response = {
     model: jevModel,
     answers: {
