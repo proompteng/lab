@@ -122,6 +122,7 @@ describe('executionMandateAllocationCapitalMicros', () => {
           allocationCapitalMicros: 100_000_000_000n,
           maxOrderNotionalMicros: 40_000_000_000n,
           maxSymbolExposureMicros: 50_000_000_000n,
+          maxAdverseSlippageBps: 0n,
           targetWeights: { AMD: 0.5, NVDA: 0.5 },
         }),
       ),
@@ -132,6 +133,7 @@ describe('executionMandateAllocationCapitalMicros', () => {
           allocationCapitalMicros: 100_000_000_000n,
           maxOrderNotionalMicros: 40_000_000_000n,
           maxSymbolExposureMicros: 40_000_000_000n,
+          maxAdverseSlippageBps: 0n,
           targetWeights: { AMD: Number.NaN },
         }),
       ),
@@ -145,6 +147,7 @@ describe('executionMandateAllocationCapitalMicros', () => {
         allocationCapitalMicros: 100_000_000_000n,
         maxOrderNotionalMicros: 20_000_000_000n,
         maxSymbolExposureMicros: 40_000_000_000n,
+        maxAdverseSlippageBps: 0n,
         targetWeights: { AAPL: weight },
       }),
     )

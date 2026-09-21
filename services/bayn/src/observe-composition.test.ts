@@ -3981,6 +3981,26 @@ describe('OBSERVE runtime composition', () => {
     }
   })
 
+  test.each([
+    'maxOrderNotionalMicros',
+    'maxSymbolExposureMicros',
+    'maxGrossExposureMicros',
+    'maxNetExposureMicros',
+  ] as const)('plans an approved Jev entry at the binding %s cap', async (limit) => {
+    const baseline = await executionLifecycleFixture()
+    const cap = baseline.document.targetPlan.requiredReferenceBuyNotionalMicros
+    const bounded = await executionLifecycleFixture((policy) => ({ ...policy, [limit]: cap }))
+    expect(bounded.document.dispatchable).toBe(true)
+    expect(bounded.risk.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
+    if (limit === 'maxOrderNotionalMicros') {
+      expect(BigInt(bounded.intent.quantityMicros)).toBeLessThan(BigInt(baseline.intent.quantityMicros))
+      expect(BigInt(bounded.risk.notionalLimitMicros)).toBeLessThanOrEqual(BigInt(cap))
+    } else {
+      expect(bounded.intent.quantityMicros).toBe(baseline.intent.quantityMicros)
+    }
+    expect(bounded.policy[limit]).toBe(cap)
+  })
+
   test('binds a native Jev entry to its full signal batch and independent execution pricing', async () => {
     const fixture = await executionLifecycleFixture()
     expect(fixture.snapshotRequests).toHaveLength(2)

@@ -50,6 +50,8 @@ export type ExecutionMandateAllocationFailure =
 const nonNegative = (value: bigint): bigint => (value < 0n ? 0n : value)
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const BASIS_POINTS = 10_000n
+const referenceNotionalWithinSlippage = (limit: bigint, slippageBps: bigint): bigint =>
+  (nonNegative(limit) * BASIS_POINTS) / (BASIS_POINTS + nonNegative(slippageBps))
 
 const currentReferenceGrossExposureMicros = (
   facts: ExecutionMandateAllocationFacts,
@@ -85,8 +87,10 @@ export const executionMandateAllocationCapitalMicros = (
   facts: ExecutionMandateAllocationFacts,
 ): Result.Result<bigint, ExecutionMandateAllocationFailure> => {
   const remainingDailyTurnover = nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros)
-  const remainingReferenceTurnover =
-    (remainingDailyTurnover * BASIS_POINTS) / (BASIS_POINTS + nonNegative(facts.maxAdverseSlippageBps))
+  const remainingReferenceTurnover = referenceNotionalWithinSlippage(
+    remainingDailyTurnover,
+    facts.maxAdverseSlippageBps,
+  )
   const grossTargetWeight = Result.all(
     Object.entries(facts.targetWeights).map(([symbol, weight]) =>
       Result.mapError(
@@ -126,6 +130,7 @@ export interface ExecutionTargetAllocationFacts {
   readonly allocationCapitalMicros: bigint
   readonly maxOrderNotionalMicros: bigint
   readonly maxSymbolExposureMicros: bigint
+  readonly maxAdverseSlippageBps: bigint
   readonly targetWeights: Readonly<Record<string, number>>
 }
 
@@ -135,14 +140,13 @@ export type ExecutionTargetAllocationFailure = {
   readonly cause: unknown
 }
 
-/** Caps portfolio capital so every positive target remains inside both per-order and per-symbol policy limits. */
+/** Buy limits round down; only the order cap needs slippage because exposure gates use reference prices. */
 export const constrainExecutionTargetAllocationCapitalMicros = (
   facts: ExecutionTargetAllocationFacts,
 ): Result.Result<bigint, ExecutionTargetAllocationFailure> => {
+  const referenceOrderLimit = referenceNotionalWithinSlippage(facts.maxOrderNotionalMicros, facts.maxAdverseSlippageBps)
   const targetNotionalLimit =
-    facts.maxOrderNotionalMicros < facts.maxSymbolExposureMicros
-      ? facts.maxOrderNotionalMicros
-      : facts.maxSymbolExposureMicros
+    referenceOrderLimit < facts.maxSymbolExposureMicros ? referenceOrderLimit : facts.maxSymbolExposureMicros
   return Object.entries(facts.targetWeights).reduce<Result.Result<bigint, ExecutionTargetAllocationFailure>>(
     (bounded, [symbol, weight]) =>
       Result.flatMap(bounded, (current) =>

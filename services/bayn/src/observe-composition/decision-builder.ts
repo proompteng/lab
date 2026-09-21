@@ -1212,6 +1212,7 @@ function buildCycleDecision<R>(
                       allocationCapitalMicros: capitalMicros,
                       maxOrderNotionalMicros: BigInt(input.policy.maxOrderNotionalMicros),
                       maxSymbolExposureMicros: BigInt(input.policy.maxSymbolExposureMicros),
+                      maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
                       targetWeights: planningTargetWeights,
                     })
                   : Result.succeed(capitalMicros),
