@@ -61,6 +61,17 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 
 ## Execution contract
 
+Jev migration work lives under `src/jev`. The trading-signal batch constructor reproduces the retained live or
+simulated snapshot once and freezes the complete candidate universe, source exclusions, exact requests and common
+deadline. Batch results bind every planned candidate, including failed, abandoned and unattempted evaluations.
+Reproduction detects a rehashed plan that omits a candidate or substitutes model input. Selection requires the whole
+batch to remain valid after completion and persistence; it cannot use only the fastest successful response.
+
+These contracts do not yet replace the active strategy. Batch persistence, native decision binding and repeated
+position management remain migration work. Historical inference evidence, an API response, or a batch result grants
+no execution or capital authority. Economic qualification uses the frozen protocol in
+[`docs/bayn/jev-migration-acceptance-v2.json`](../../docs/bayn/jev-migration-acceptance-v2.json).
+
 - `BAYN_BROKER_ACCESS` and `BAYN_CAPITAL_AUTHORITY` are static capability ceilings. Effective execution additionally
   requires an exact durable grant bound to the source, image, strategy, account, and risk policy.
 - Sandbox and live accounts use the same decisions, intents, risk checks, reconciliation, recovery, and mutation code.

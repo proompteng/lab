@@ -7,7 +7,10 @@ import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from '../marke
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
+import { canonicalHashV1Result } from '../hash'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
+import { decodeJevBatchPlan, JevCandidatePlanStatus, makeJevBatchPlan } from './batch'
+import { makeJevEvaluationRequest } from './evidence'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -164,23 +167,9 @@ export const jevTradingQuestions = {
   },
 } satisfies JevRequest['questions']
 
-export const makeJevTradingSignalRequest = (
-  sourceSnapshot: VerifiedStrategyMarketSnapshot,
-  symbol: string,
-  benchmarkSymbol: string,
-) =>
+const requestFromSnapshot = (snapshot: StrategyMarketSnapshot, symbol: string, benchmarkSymbol: string) =>
   Result.gen(function* () {
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
-    const rows = yield* persistIntradayRecordRows(sourceSnapshot).pipe(
-      Result.mapError((cause) => new JevContractError({ message: 'Jev snapshot rows cannot be retained', cause })),
-    )
-    const reproduction: Result.Result<StrategyMarketSnapshot, IntradaySnapshotFailure> =
-      sourceSnapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
-        ? reproduceStreamingSnapshot(sourceSnapshot.manifest, rows)
-        : reproduceSimulatedSnapshot(sourceSnapshot.manifest, rows)
-    const snapshot = yield* reproduction.pipe(
-      Result.mapError((cause) => new JevContractError({ message: 'Jev snapshot evidence does not reproduce', cause })),
-    )
     const candidate = yield* signalFor(snapshot, symbol)
     const benchmark = yield* signalFor(snapshot, benchmarkSymbol)
     const { metrics } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
@@ -223,4 +212,86 @@ export const makeJevTradingSignalRequest = (
       },
       questions: jevTradingQuestions,
     })
+  })
+
+const reproduceJevSnapshot = (sourceSnapshot: VerifiedStrategyMarketSnapshot) =>
+  Result.gen(function* () {
+    const rows = yield* persistIntradayRecordRows(sourceSnapshot).pipe(
+      Result.mapError((cause) => new JevContractError({ message: 'Jev snapshot rows cannot be retained', cause })),
+    )
+    const reproduction: Result.Result<StrategyMarketSnapshot, IntradaySnapshotFailure> =
+      sourceSnapshot.manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+        ? reproduceStreamingSnapshot(sourceSnapshot.manifest, rows)
+        : reproduceSimulatedSnapshot(sourceSnapshot.manifest, rows)
+    return yield* reproduction.pipe(
+      Result.mapError((cause) => new JevContractError({ message: 'Jev snapshot evidence does not reproduce', cause })),
+    )
+  })
+
+export const makeJevTradingSignalRequest = (
+  snapshot: VerifiedStrategyMarketSnapshot,
+  symbol: string,
+  benchmarkSymbol: string,
+) =>
+  reproduceJevSnapshot(snapshot).pipe(Result.flatMap((source) => requestFromSnapshot(source, symbol, benchmarkSymbol)))
+
+export const makeJevTradingSignalBatch = (input: {
+  readonly snapshot: VerifiedStrategyMarketSnapshot
+  readonly cycleId: string
+  readonly authorityGenerationHash: string
+  readonly observationHash: string
+  readonly protocolHash: string
+  readonly expiresAt: string
+  readonly benchmarkSymbol: string
+}) =>
+  Result.gen(function* () {
+    const snapshot = yield* reproduceJevSnapshot(input.snapshot)
+    const manifest = snapshot.manifest
+    if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
+      return yield* unavailable('Jev batch requires the complete recorded candidate universe')
+    const candidates = []
+    for (const symbol of manifest.candidateSymbols) {
+      const excluded = manifest.candidateExclusions?.find((candidate) => candidate.symbol === symbol)
+      if (excluded !== undefined) {
+        candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
+        continue
+      }
+      const prepared = yield* requestFromSnapshot(snapshot, symbol, input.benchmarkSymbol)
+      const request = yield* makeJevEvaluationRequest({
+        schemaVersion: 'bayn.jev-evaluation-request.v1',
+        cycleId: input.cycleId,
+        authorityGenerationHash: input.authorityGenerationHash,
+        snapshotId: manifest.snapshotId,
+        symbol,
+        observedAt: manifest.observedAt,
+        expiresAt: input.expiresAt,
+        requestHash: prepared.requestHash,
+        request: prepared.request,
+      })
+      candidates.push({ symbol, status: JevCandidatePlanStatus.Requested, request })
+    }
+    return yield* makeJevBatchPlan({
+      schemaVersion: 'bayn.jev-batch-plan.v1',
+      cycleId: input.cycleId,
+      authorityGenerationHash: input.authorityGenerationHash,
+      observationHash: input.observationHash,
+      protocolHash: input.protocolHash,
+      snapshotId: manifest.snapshotId,
+      observedAt: manifest.observedAt,
+      expiresAt: input.expiresAt,
+      benchmarkSymbol: input.benchmarkSymbol,
+      questionSetHash: yield* canonicalHashV1Result({ model: jevModel, questions: jevTradingQuestions }).pipe(
+        Result.mapError((cause) => new JevContractError({ message: 'Jev question set cannot be hashed', cause })),
+      ),
+      candidates,
+    })
+  })
+
+export const reproduceJevTradingSignalBatch = (snapshot: VerifiedStrategyMarketSnapshot, input: unknown) =>
+  Result.gen(function* () {
+    const plan = yield* decodeJevBatchPlan(input)
+    const reproduced = yield* makeJevTradingSignalBatch({ ...plan, snapshot })
+    if (reproduced.batchId !== plan.batchId)
+      return yield* unavailable('Jev batch requests or candidate universe differ from the reproduced source')
+    return reproduced
   })
