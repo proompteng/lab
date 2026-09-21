@@ -124,5 +124,10 @@ describe('intraday calendar decisions', () => {
     expect(thirdDraft.identity.cycleId).not.toBe(secondDraft.identity.cycleId)
     expect(nextIntradayEntryAttemptOrdinal(second, second.window.submissionCutoffAt)).toBeUndefined()
     expect(nextIntradayEntryAttemptOrdinal({ ...second, state: CycleState.Active }, atRearm)).toBeUndefined()
+    const blocked = { ...first, state: CycleState.Blocked }
+    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm)).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal(blocked, beforeRearm, true)).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm, true)).toBe(2)
+    expect(nextIntradayEntryAttemptOrdinal({ ...first, state: CycleState.Active }, atRearm, true)).toBeUndefined()
   })
 })

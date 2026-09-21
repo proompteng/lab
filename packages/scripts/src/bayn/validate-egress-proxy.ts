@@ -1,4 +1,9 @@
-const requiredAlpacaHosts = new Set(['paper-api.alpaca.markets', 'api.alpaca.markets', 'data.alpaca.markets'])
+const requiredTradingHosts = new Set([
+  'paper-api.alpaca.markets',
+  'api.alpaca.markets',
+  'data.alpaca.markets',
+  'api.typesafe.ai',
+])
 
 export interface BaynEgressProxyContract {
   readonly aclName: string
@@ -29,27 +34,33 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
   if (aclName === undefined || directive !== 'dstdomain' || allowedHosts.length === 0) {
     throw new Error('destination-domain ACL is incomplete')
   }
-  if (allowedHosts.length !== requiredAlpacaHosts.size || allowedHosts.some((host) => !requiredAlpacaHosts.has(host))) {
-    throw new Error('destination-domain ACL must contain only the Alpaca sandbox, live trading, and market-data hosts')
+  if (
+    allowedHosts.length !== requiredTradingHosts.size ||
+    new Set(allowedHosts).size !== requiredTradingHosts.size ||
+    allowedHosts.some((host) => !requiredTradingHosts.has(host))
+  ) {
+    throw new Error(
+      'destination-domain ACL must contain exactly the Alpaca trading, market-data, and TypeSafe API hosts',
+    )
   }
 
   const denyNonConnect = lines.indexOf('http_access deny !CONNECT')
   const denyNonTls = lines.indexOf('http_access deny CONNECT !SSL_ports')
   const denyUnlisted = lines.indexOf(`http_access deny !${aclName}`)
-  const allowAlpaca = lines.indexOf(`http_access allow CONNECT ${aclName}`)
+  const allowTrading = lines.indexOf(`http_access allow CONNECT ${aclName}`)
   const denyAll = lines.indexOf('http_access deny all')
-  if ([denyNonConnect, denyNonTls, denyUnlisted, allowAlpaca, denyAll].some((index) => index < 0)) {
+  if ([denyNonConnect, denyNonTls, denyUnlisted, allowTrading, denyAll].some((index) => index < 0)) {
     throw new Error('proxy access policy is missing a required fail-closed rule')
   }
   if (
-    !(denyNonConnect < denyNonTls && denyNonTls < denyUnlisted && denyUnlisted < allowAlpaca && allowAlpaca < denyAll)
+    !(denyNonConnect < denyNonTls && denyNonTls < denyUnlisted && denyUnlisted < allowTrading && allowTrading < denyAll)
   ) {
     throw new Error('proxy access policy rules are not in fail-closed order')
   }
 
   const allowRules = lines.filter((line) => line.startsWith('http_access allow '))
   if (allowRules.length !== 1 || allowRules[0] !== `http_access allow CONNECT ${aclName}`) {
-    throw new Error('proxy must have exactly one allow rule for CONNECT to the exact Alpaca ACL')
+    throw new Error('proxy must have exactly one allow rule for CONNECT to the exact trading API ACL')
   }
 
   return { aclName, allowedHosts: [...allowedHosts].sort() }

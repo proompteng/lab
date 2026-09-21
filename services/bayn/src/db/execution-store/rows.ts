@@ -136,7 +136,9 @@ export const AuthorityGenerationRow = Schema.Struct({
   activation_source_revision: Schema.NullOr(Schema.String),
   activation_image_repository: Schema.NullOr(NonEmptyString),
   activation_image_digest: Schema.NullOr(Schema.String),
-  strategy_name: Schema.NullOr(Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum'])),
+  strategy_name: Schema.NullOr(
+    Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum', 'jev']),
+  ),
   strategy_behavior_hash: Schema.NullOr(Sha256),
   strategy_parameter_hash: Schema.NullOr(Sha256),
   strategy_parameter_schema_version: Schema.NullOr(
@@ -147,6 +149,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.intraday-momentum.protocol.v1',
       'bayn.intraday-momentum.protocol.v2',
       'bayn.intraday-momentum.protocol.v3',
+      'bayn.jev.protocol.v1',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
