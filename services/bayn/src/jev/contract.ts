@@ -112,6 +112,31 @@ const sameKeys = (left: object, right: object): boolean => {
   return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index])
 }
 
+const scoreMatchesProbabilities = (score: number, probabilities: Readonly<Record<string, number>>): boolean => {
+  // Bayn permits half of a 0.01 rounding step per reported value. TypeSafe does not guarantee decimal precision.
+  const rounding = 0.005
+  const levels = Object.entries(probabilities)
+    .map(([level, probability]) => ({
+      level: Number(level),
+      lower: Math.max(0, probability - rounding),
+      upper: Math.min(1, probability + rounding),
+    }))
+    .sort((left, right) => left.level - right.level)
+  const lowerMass = levels.reduce((sum, value) => sum + value.lower, 0)
+  const lowerMean = levels.reduce((sum, value) => sum + value.level * value.lower, 0)
+  const bound = (ordered: typeof levels): number => {
+    let remaining = 1 - lowerMass
+    let mean = lowerMean
+    for (const value of ordered) {
+      const mass = Math.min(remaining, value.upper - value.lower)
+      mean += value.level * mass
+      remaining -= mass
+    }
+    return mean
+  }
+  return score >= bound(levels) - rounding - 1e-9 && score <= bound(levels.toReversed()) + rounding + 1e-9
+}
+
 export const decodeJevResponse = (request: JevRequest, input: unknown): Result.Result<JevResponse, JevContractError> =>
   Schema.decodeUnknownResult(
     JevResponseSchema,
@@ -154,6 +179,11 @@ export const decodeJevResponse = (request: JevRequest, input: unknown): Result.R
           ) {
             return Result.fail(
               new JevContractError({ message: 'Jev score levels differ from the request', question: name }),
+            )
+          }
+          if (!scoreMatchesProbabilities(answer.score, answer.probabilities)) {
+            return Result.fail(
+              new JevContractError({ message: 'Jev score contradicts its probability distribution', question: name }),
             )
           }
           continue

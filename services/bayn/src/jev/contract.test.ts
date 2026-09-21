@@ -4,6 +4,33 @@ import { Result } from 'effect'
 import { decodeJevResponse, jevModel, prepareJevRequest } from './contract'
 import { requestFixture, responseFixture } from './test-support'
 
+const scoreResponse = (score: number, probabilities: ReadonlyArray<number>) => {
+  const criteria = probabilities.map((_, level) => `Level ${level}`)
+  const { request } = Result.getOrThrow(
+    prepareJevRequest({
+      model: jevModel,
+      state: { signal: 'fixture' },
+      questions: { setup: { type: 'score', instructions: 'Assess the signal', criteria } },
+    }),
+  )
+  return {
+    request,
+    response: {
+      model: jevModel,
+      answers: {
+        setup: {
+          type: 'score' as const,
+          score,
+          confidence: 0.5,
+          probabilities: Object.fromEntries(probabilities.map((value, level) => [String(level), value])),
+          legend: Object.fromEntries(criteria.map((value, level) => [String(level), value])),
+        },
+      },
+      usage: { input_tokens: 100, output_tokens: 10 },
+    },
+  }
+}
+
 describe('Jev provider contract', () => {
   test('binds canonical requests independently of object key order', () => {
     const prepared = Result.getOrThrow(prepareJevRequest(requestFixture))
@@ -17,6 +44,36 @@ describe('Jev provider contract', () => {
 
   test('accepts an exact response without treating confidence as profitable-trade probability', () => {
     expect(Result.getOrThrow(decodeJevResponse(requestFixture, responseFixture()))).toEqual(responseFixture())
+  })
+
+  test.each([
+    [2, [1, 0, 0]],
+    [0, [0, 0, 1]],
+    [0.011, [1, 0]],
+    [8.949, [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]],
+    [1.69, [0.03, 0.46, 0.35, 0.15, 0.01]],
+  ] as const)('rejects a score incompatible with its rounded probabilities: %s', (score, probabilities) => {
+    const { request, response } = scoreResponse(score, probabilities)
+    const result = decodeJevResponse(request, response)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.message).toBe('Jev score contradicts its probability distribution')
+      expect(result.failure.question).toBe('setup')
+    }
+  })
+
+  test.each([
+    [0, [1, 0]],
+    [0.01, [1, 0]],
+    [8.95, [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]],
+    [1.63, [0.03, 0.45999999999999996, 0.35, 0.15, 0.01]],
+    [3.25, [0, 0.02, 0.07, 0.55, 0.36]],
+    [1.52, [0.03, 0.54, 0.31, 0.12, 0]],
+    [1.11, [0.14, 0.66, 0.15, 0.05, 0]],
+    [2.54, [0.01, 0.1, 0.3, 0.51, 0.08]],
+  ] as const)('preserves compatible exact and recorded rounded scores: %s', (score, probabilities) => {
+    const { request, response } = scoreResponse(score, probabilities)
+    expect(Result.getOrThrow(decodeJevResponse(request, response))).toEqual(response)
   })
 
   test.each([
