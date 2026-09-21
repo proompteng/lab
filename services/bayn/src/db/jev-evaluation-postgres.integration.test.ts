@@ -13,7 +13,8 @@ import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluati
 import { JevClient } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
-import { makeJevTradingSignalRequest } from '../jev/trading-signals'
+import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from '../jev/trading-signals'
+import { JevBatchStore } from '../jev/batch-evaluation'
 import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -21,6 +22,7 @@ import { candidateObservationFixture } from '../testing/candidate-observation-fi
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
+import { JevBatchStoreLive } from './jev-batch-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 
@@ -28,7 +30,8 @@ const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_j
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const makeRuntime = () =>
   ManagedRuntime.make(
-    Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevEvaluationStoreLive).pipe(
+    Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevBatchStoreLive).pipe(
+      Layer.provideMerge(JevEvaluationStoreLive),
       Layer.provideMerge(
         PostgresClientLive({
           operationTimeoutMs: 5000,
@@ -67,6 +70,9 @@ const receipt = Result.getOrThrow(
     },
   }),
 )
+const batch = Result.getOrThrow(
+  makeJevTradingSignalBatch({ observation: fixture.observation.payload, expiresAt: request.expiresAt }),
+)
 const recorded = Result.getOrThrow(
   makeJevResolution(request, receipt, {
     schemaVersion: 'bayn.jev-evaluation-resolution.v1',
@@ -97,6 +103,10 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* sql`INSERT INTO authority_generations (
         generation_hash, schema_version, maximum, authority_version, activated_at
       ) VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${request.observedAt})`
+        yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
+          Effect.andThen((yield* JevBatchStore).begin(batch)),
+          Effect.provide(TestClock.layer()),
+        )
       }),
     )
   })

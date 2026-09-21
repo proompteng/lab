@@ -2,6 +2,7 @@ import executionWaitingStatus from '../../migrations/0074_execution_waiting_stat
 import candidateObservations from '../../migrations/0075_candidate_observations'
 import jevEvaluationEvidence from '../../migrations/0076_jev_evaluation_evidence'
 import jevEvaluationResolution from '../../migrations/0077_jev_evaluation_resolution'
+import jevBatches from '../../migrations/0078_jev_batches'
 import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
 import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
 import pacedIntradayEntryAttempts from '../../migrations/0073_paced_intraday_entry_attempts'
@@ -79,6 +80,7 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '78_jev_batches': jevBatches,
   '77_jev_evaluation_resolution': jevEvaluationResolution,
   '76_jev_evaluation_evidence': jevEvaluationEvidence,
   '67_position_cost_basis': positionCostBasis,
