@@ -50,10 +50,10 @@ export const evaluationRequestFixture = () =>
     }),
   )
 
-export const inferenceFixture = () => ({
+export const inferenceFixture = (at = '1970-01-01T00:00:00.000Z') => ({
   requestHash: canonicalHashV1(requestFixture),
   responseHash: canonicalHashV1(responseFixture()),
-  startedAt: '1970-01-01T00:00:00.000Z',
-  completedAt: '1970-01-01T00:00:00.000Z',
+  startedAt: at,
+  completedAt: at,
   response: responseFixture(),
 })

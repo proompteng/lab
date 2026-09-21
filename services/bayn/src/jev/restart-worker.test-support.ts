@@ -54,7 +54,7 @@ const main = Effect.gen(function* () {
             requestId: request.requestId,
             startedAt: request.observedAt,
             completedAt: request.observedAt,
-            outcome: { status: JevOutcome.Received, inference: inferenceFixture() },
+            outcome: { status: JevOutcome.Received, inference: inferenceFixture(request.observedAt) },
           }),
         ),
       )

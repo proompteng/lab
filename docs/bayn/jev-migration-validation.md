@@ -2,7 +2,11 @@
 
 ## Request recovery
 
-Jev evaluation requests commit before inference. Each request has one immutable resolution: `RECORDED`, bound to its
+Jev evaluation requests require a persisted candidate observation matching the exact cycle, authority generation,
+snapshot, candidate symbol and observation time. Excluded candidates cannot acquire a request. The store verifies the
+observation's content hash before claiming the request and again on historical readback.
+
+Requests commit before inference. Each request has one immutable resolution: `RECORDED`, bound to its
 receipt hash, or `ABANDONED`, with a recovery time at or after the request deadline. Receipt persistence and resolution
 commit in the same transaction. Recovery and result recording lock the request row, so the first committed resolution
 wins. These operations reject ambient transactions to preserve their independent commit boundary.

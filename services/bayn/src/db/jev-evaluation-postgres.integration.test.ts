@@ -16,6 +16,8 @@ import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -24,7 +26,7 @@ const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_j
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const makeRuntime = () =>
   ManagedRuntime.make(
-    Layer.mergeAll(CycleStoreLive, JevEvaluationStoreLive).pipe(
+    Layer.mergeAll(CycleStoreLive, CandidateObservationStoreLive, JevEvaluationStoreLive).pipe(
       Layer.provideMerge(
         PostgresClientLive({
           operationTimeoutMs: 5000,
@@ -36,14 +38,22 @@ const makeRuntime = () =>
   )
 const fixture = candidateObservationFixture()
 const { requestId: _, ...material } = evaluationRequestFixture()
-const request = Result.getOrThrow(makeJevEvaluationRequest({ ...material, cycleId: fixture.draft.identity.cycleId }))
+const request = Result.getOrThrow(
+  makeJevEvaluationRequest({
+    ...material,
+    cycleId: fixture.draft.identity.cycleId,
+    snapshotId: fixture.snapshot.manifest.snapshotId,
+    observedAt: fixture.input.observedAt,
+    expiresAt: new Date(Date.parse(fixture.input.observedAt) + 5000).toISOString(),
+  }),
+)
 const receipt = Result.getOrThrow(
   makeJevEvaluationReceipt(request, {
     schemaVersion: 'bayn.jev-evaluation-receipt.v1',
     requestId: request.requestId,
     startedAt: request.observedAt,
     completedAt: request.observedAt,
-    outcome: { status: JevOutcome.Received, inference: inferenceFixture() },
+    outcome: { status: JevOutcome.Received, inference: inferenceFixture(request.observedAt) },
   }),
 )
 const recorded = Result.getOrThrow(
@@ -72,6 +82,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.cycle.createdAt)
+        yield* (yield* CandidateObservationStore).record(fixture.observation)
         yield* sql`INSERT INTO authority_generations (
         generation_hash, schema_version, maximum, authority_version, activated_at
       ) VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${request.observedAt})`
@@ -113,6 +124,42 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
     )
   })
 
+  test('rejects validly hashed claims without a matching persisted cycle observation', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const otherGeneration = 'd'.repeat(64)
+        yield* sql`INSERT INTO authority_generations (
+        generation_hash, schema_version, maximum, authority_version, activated_at
+      ) VALUES (${otherGeneration}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 2, ${request.observedAt})`
+        const { requestId: _, ...base } = request
+        for (const change of [
+          { snapshotId: 'e'.repeat(64) },
+          { authorityGenerationHash: otherGeneration },
+          { symbol: 'ZZZZ' },
+          { observedAt: new Date(Date.parse(request.observedAt) + 1).toISOString() },
+        ]) {
+          const changed = Result.getOrThrow(makeJevEvaluationRequest({ ...base, ...change }))
+          const result = yield* (yield* JevEvaluationStore).begin(changed).pipe(Effect.result)
+          expect(Result.isFailure(result)).toBe(true)
+        }
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+      }),
+    )
+  })
+
+  test('rejects a candidate observation whose retained content hash is forged', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+        VALUES (${'f'.repeat(64)}, ${request.cycleId}, ${request.observedAt}::timestamptz, ${sql.json(fixture.observation.payload)})`
+        expect(Result.isFailure(yield* (yield* JevEvaluationStore).begin(request).pipe(Effect.result))).toBe(true)
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+      }),
+    )
+  })
+
   test('rejects a competing result and preserves the first recorded inference', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -123,7 +170,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const changed = Result.getOrThrow(
           makeJevEvaluationReceipt(request, {
             ...material,
-            completedAt: '1970-01-01T00:00:00.001Z',
+            completedAt: new Date(Date.parse(request.observedAt) + 1).toISOString(),
           }),
         )
         expect(Result.isFailure(yield* store.record(request, changed).pipe(Effect.result))).toBe(true)
@@ -146,13 +193,14 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const result = yield* sql.withTransaction(evaluateJevOnce(request)).pipe(
+        const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
+          Effect.andThen(sql.withTransaction(evaluateJevOnce(request))),
           Effect.result,
           Effect.provideService(JevClient, {
             evaluate: () =>
               Effect.sync(() => {
                 calls += 1
-                return inferenceFixture()
+                return inferenceFixture(request.observedAt)
               }),
           }),
           Effect.provide(TestClock.layer()),

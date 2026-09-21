@@ -2,6 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Option, Schema } from 'effect'
 
 import { operationalError } from '../errors'
+import { canonicalHashV1Result } from '../hash'
 import {
   decodeJevEvaluationReceipt,
   decodeJevEvaluationRequest,
@@ -39,6 +40,35 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       return yield* persistError('Jev evidence must commit independently before inference or decision use')
     }
   })
+  const requireCandidateObservation = (request: JevEvaluationRequest) =>
+    Effect.gen(function* () {
+      const rows = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ content_hash: Sha256Schema, payload: Schema.Unknown })),
+        strictParseOptions,
+      )(
+        yield* sql`
+        SELECT content_hash, payload FROM intraday_candidate_observations
+        WHERE cycle_id = ${request.cycleId}
+          AND payload->>'authorityGenerationHash' = ${request.authorityGenerationHash}
+          AND payload->>'observedAt' = ${request.observedAt}
+          AND payload->'manifest'->>'observedAt' = ${request.observedAt}
+          AND payload->'manifest'->>'snapshotId' = ${request.snapshotId}
+          AND payload->'manifest'->'candidateSymbols' ? ${request.symbol}
+          AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(payload->'manifest'->'candidateExclusions') AS excluded
+            WHERE excluded->>'symbol' = ${request.symbol}
+          )
+      `,
+      )
+      if (rows.length === 0)
+        return yield* persistError(
+          'Jev request has no matching persisted candidate observation for its cycle, generation, snapshot, symbol and time',
+        )
+      for (const row of rows) {
+        if ((yield* Effect.fromResult(canonicalHashV1Result(row.payload))) !== row.content_hash)
+          return yield* persistError('Jev candidate observation content differs from its committed identity')
+      }
+    })
   const read = (input: string) =>
     Effect.gen(function* () {
       const requestId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
@@ -58,6 +88,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       if (row === undefined) return null
       const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
       if (request.requestId !== requestId) return yield* persistError('Stored Jev request identity differs')
+      yield* requireCandidateObservation(request)
       const receipt =
         row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
       const resolution =
@@ -82,6 +113,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireAutocommit
         const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
+        yield* requireCandidateObservation(request)
         const inserted = yield* Schema.decodeUnknownEffect(
           Schema.Array(Schema.Struct({ request_id: Sha256Schema })),
           strictParseOptions,
