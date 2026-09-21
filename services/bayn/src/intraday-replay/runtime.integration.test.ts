@@ -1,7 +1,7 @@
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
-import { OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
+import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
 import type { RuntimeConfig } from '../config'
@@ -95,6 +95,7 @@ durableTest.each([
   'partial-exit-reentry',
   'measured-exit',
   'measured-entry-expired',
+  'measured-zero-fill-reentry',
 ] as const)(
   'native Jev production cycle and durable accounting: %s',
   async (scenario) => {
@@ -111,7 +112,8 @@ durableTest.each([
     let managementCalls = 0
     const measuredCalls: ReplayJevCall[] = []
     let measuredProviderClock: TestClock.TestClock | undefined
-    const measured = scenario === 'measured-exit' || scenario === 'measured-entry-expired'
+    const measured =
+      scenario === 'measured-exit' || scenario === 'measured-entry-expired' || scenario === 'measured-zero-fill-reentry'
     const fixture = { ...simulationFixture(undefined, undefined, scenario === 'no-trade' ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const reentryAtMs = initialAtMs + 120_000
@@ -137,6 +139,9 @@ durableTest.each([
                 bidSize: 100,
                 premium: 0.02 + (index + 1) * 0.00002,
               })),
+              ...(scenario === 'measured-zero-fill-reentry'
+                ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+                : []),
             ]
           : []
     const lifecycleArrivals = lifecycleObservations
@@ -331,7 +336,7 @@ durableTest.each([
           assumptions: {
             latencyMs: 10,
             slippageBps: 0,
-            availableLiquidityPpm: scenario === 'recovery' ? 1 : 1000000,
+            availableLiquidityPpm: scenario === 'recovery' || scenario === 'measured-zero-fill-reentry' ? 1 : 1000000,
             feeMultiplierPpm: 1000000,
           },
           fractionalTrading: false,
@@ -677,6 +682,52 @@ durableTest.each([
           return { _tag: 'Recovery' as const }
         }
         yield* advanceMarketTo(initialMs + 1)
+        if (scenario === 'measured-zero-fill-reentry') {
+          let pendingCompletionCount = 0
+          const completeCycle = Effect.gen(function* () {
+            for (let pass = 0; pass < 20; pass++) {
+              const advanced = yield* runtime.advance
+              expect(advanced.observation.result, JSON.stringify(advanced.observation)).toBe('SUCCESS')
+              if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') return
+              if (
+                advanced.result?.outcome === 'RECOVERED' &&
+                advanced.result.action === 'WAITING' &&
+                advanced.result.waitReason === 'COMPLETION_EVIDENCE_PENDING'
+              )
+                pendingCompletionCount += 1
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            }
+            throw new Error('Zero-fill cycle did not complete')
+          })
+          yield* completeCycle
+          expect(pendingCompletionCount).toBeGreaterThan(0)
+          const first = yield* broker.snapshot
+          expect(first.orders).toHaveLength(1)
+          expect(first.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+          expect(first.fills).toHaveLength(0)
+          expect(first.ledger.positions).toHaveLength(0)
+          yield* runtime.advance
+          expect((yield* broker.snapshot).orders).toHaveLength(1)
+          yield* advanceMarketTo(reentryAtMs)
+          yield* completeCycle
+          const final = yield* broker.snapshot
+          expect(final.orders).toHaveLength(2)
+          expect(final.orders.every(({ order }) => order.status === OrderStatus.Canceled)).toBe(true)
+          expect(final.fills).toHaveLength(0)
+          expect(final.ledger.positions).toHaveLength(0)
+          expect(yield* sql`SELECT state FROM autonomous_cycles ORDER BY created_at`).toEqual([
+            { state: 'COMPLETED' },
+            { state: 'COMPLETED' },
+          ])
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing durable authority reader')
+          expect(yield* readAuthority).toMatchObject({
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+          })
+          expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          return { _tag: 'ZeroFill' as const }
+        }
         for (let pass = 0; pass < 20; pass++) {
           const advanced = yield* runtime.advance
           if (advanced.observation.result === 'FAILURE' || (yield* broker.snapshot).fills.length > 0) break

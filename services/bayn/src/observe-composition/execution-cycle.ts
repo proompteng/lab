@@ -3,6 +3,7 @@ import { Effect, Option, Result } from 'effect'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError, runAutonomousCyclePass, type CycleRunContext, type CycleRunResult } from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
+import { cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
 import {
   makeExecutionCycleClosure,
   type ExecutionCycleClosure,
@@ -1075,18 +1076,40 @@ const interpretBoundMutationCycleOutcome = (
           )
         : terminalizeBlockedExecutionCycle(cycle, outcome, input.authorityGenerationHash, input.blockedCycleIntentStore)
     case 'Complete':
-      return CycleStore.pipe(
-        Effect.flatMap((store) => store.finish(cycle.identity.cycleId, CycleState.Completed, outcome.observedAt)),
-        Effect.mapError((cause) =>
-          mutationRunnerError({ message: 'completed execution cycle finalization failed', cause, failure: 'store' }),
-        ),
-        Effect.map((receipt) => ({
+      return Effect.gen(function* () {
+        const document = yield* readBoundMutationDocument(cycle)
+        const evidence = cycleDecisionStoreEvidence(document)
+        if (document.contentHash !== cycle.bindings.decisionHash || evidence === undefined)
+          return yield* mutationRunnerError({
+            message: 'cycle completion requires its exact durable decision evidence',
+            failure: 'contract',
+          })
+        const observedAt = yield* currentUtcInstant
+        if (!evidence.executionCompletionEvidenceMatches)
+          return {
+            outcome: 'RECOVERED' as const,
+            action: 'WAITING' as const,
+            observedAt,
+            cycle,
+            waitReason: 'COMPLETION_EVIDENCE_PENDING',
+          }
+        const store = yield* CycleStore
+        const receipt = yield* store.finish(cycle.identity.cycleId, CycleState.Completed, observedAt).pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({
+              message: 'completed execution cycle finalization failed',
+              cause,
+              failure: 'store',
+            }),
+          ),
+        )
+        return {
           outcome: 'RECOVERED' as const,
           action: 'COMPLETED' as const,
-          observedAt: outcome.observedAt,
+          observedAt,
           cycle: receipt.cycle,
-        })),
-      )
+        }
+      })
   }
 }
 

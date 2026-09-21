@@ -67,6 +67,7 @@ export const CycleWaitReasonSchema = Schema.Union([
     'MUTATION_NOT_ADVANCED',
     'MUTATION_RECOVERY_BACKOFF',
     'MUTATION_EVIDENCE_PENDING',
+    'COMPLETION_EVIDENCE_PENDING',
     'SUBMISSION_NOT_ALLOWED',
   ]),
 ])
