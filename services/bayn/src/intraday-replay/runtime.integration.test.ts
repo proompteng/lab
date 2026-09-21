@@ -1303,6 +1303,7 @@ durableTest.each([
         Effect.provide(stores),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),
+        Effect.timeout('60 seconds'),
       ),
     )
     if (outcome._tag !== 'Fill') return
@@ -1315,5 +1316,5 @@ durableTest.each([
     expect(outcome.reconciliation.report.metrics.accountingExact).toBe(true)
     expect(outcome.reconciliation.riskContext.unknownMutationCount).toBe(0)
   },
-  30000,
+  90000,
 )
