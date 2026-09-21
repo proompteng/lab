@@ -23,8 +23,12 @@ import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
 import { CandidateObservationStore } from './candidate-observation'
 import type { IntradayExitTiming } from '../strategy/intraday-momentum/research'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClient } from '../jev/client'
+import { JevPositionStore } from '../jev/portfolio'
 
-export type ObserveDecisionRuntime =
+export type ReconciliationRuntime =
   | CandidateObservationStore
   | BrokerRead
   | BrokerEventStore
@@ -34,6 +38,13 @@ export type ObserveDecisionRuntime =
   | AuthorityGenerationStore
   | AuthorityRestrictionStore
   | WriterFence
+
+export type ObserveDecisionRuntime =
+  | ReconciliationRuntime
+  | JevBatchStore
+  | JevEvaluationStore
+  | JevClient
+  | JevPositionStore
 
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 

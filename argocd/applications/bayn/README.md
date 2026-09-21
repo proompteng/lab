@@ -1,11 +1,22 @@
 # Bayn GitOps rollout notes
 
-## Streaming protocol activation
+## Jev protocol activation
 
-The streaming implementation uses `bayn.intraday-momentum.protocol.v3`. Its reviewed behavior, parameter, and protocol
+The active implementation uses `bayn.jev.protocol.v1` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol
 hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
 The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
 subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+
+The Jev mandate preserves the existing published build as its lineage anchor and binds the new strategy explicitly.
+Kargo writes the exact newly published source and image into the activation endpoint of every runtime lineage. The
+previous strategy cannot execute against the Jev mandate. The activation hook still requires compatible durable
+state and exact reconciliation before replacing the account-keyed controller.
+
+Only the execution worker receives `BAYN_JEV_API_KEY` from `bayn-jev-auth`, delivered by the SealedSecrets controller
+before worker rollout. Jev uses a scoped HTTP CONNECT client through the existing egress proxy. The allowlist contains
+the three exact Alpaca API hosts and `api.typesafe.ai`; direct external worker access remains unavailable. A missing
+credential or unavailable provider blocks new entries while deterministic position-reducing management remains active.
+The public status service and activation hook do not receive the model credential.
 
 The worker requires Kafka and consumes verified raw-feature joins through the common market-data adapter. Its versioned bootstrap budget is five minutes: the initial 905,542-record
 catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's
@@ -53,7 +64,7 @@ multi-architecture image.
 
 The public Bayn process is read-only status/health only and owns no writer fence or scheduler. It runs two replicas,
 spreads them across Kubernetes hostnames, and keeps at least one available during voluntary disruption. Its stateless
-CONNECT-only Alpaca egress proxy uses the same two-replica, hostname-spread, minimum-one-available contract, so broker
+CONNECT-only trading API egress proxy uses the same two-replica, hostname-spread, minimum-one-available contract, so broker
 readiness does not collapse back onto a single proxy pod. This gives the status/readiness plane node-failure tolerance
 independently of the singleton execution owner and also continuously exercises the same immutable image on whatever
 supported architecture the scheduler selects.

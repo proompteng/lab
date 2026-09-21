@@ -4,26 +4,46 @@ Bayn is a single-writer intraday execution service. Restate schedules one accoun
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-There is one active strategy: `intraday-momentum` using `bayn.intraday-momentum.protocol.v3`. Historical strategy
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
 ## Active strategy
 
+Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified prices, volume, computed technical
+indicators, quotes, benchmark relationships and actual position context. Bayn computes quantities, cost basis,
+holding time, returns, sizing and risk. The model returns typed probability distributions for entry or management.
+
+The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
+describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
+each reported probability, so the total allowance scales with the number of choices. These are Bayn validation bounds, not a
+provider precision guarantee. Score answers must also fit the same distribution bounds and a 0.005 score allowance.
+Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
+discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
+
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
-the two-second decision delay, without an additional clock warmup. It evaluates subsequent rolling windows until
-five minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH against SPY and requires:
+the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
+before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no
+wider than five basis points. It selects at most one long position, capped at 20% of account equity and reduced when
+the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
+includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
+bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
+The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
+and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
+A complete batch must remain valid within its five-second evidence lifetime. These parameters have not established
+an economic advantage under the frozen qualification protocol.
 
-- positive candidate momentum and non-negative SPY momentum;
-- at least 10 basis points of excess momentum;
-- a top-quartile location in the rolling range;
-- a spread no wider than 5 basis points; and
-- valid rolling-bar evidence plus fresh executable quotes and trades.
-
-The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
-normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
+Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
+least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
+50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
+quote's event time. The immutable exit target binds that deadline. These deterministic exits do not require Jev.
+PostgreSQL checks the initial exit deadline in a deferred constraint at transaction commitment, after evidence reads
+and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
+account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
+A committed close retains its original trigger through partial fills and recovery after the inference deadline.
+New entries and quote-backed whole-share closes use
 IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
 verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
-decision retains the original quote, allowance, exact limit notional, and risk evidence; historical decisions without
+decision retains the original quote, phase-specific allowance, exact limit notional, and risk evidence; historical decisions without
 an allowance retain their original exact quote limit. Quote freshness and submission deadlines still apply.
 Bayn starts flattening five minutes before the close and
 requires a flat account at the closing bell. Entries stop when flattening starts, and close orders remain eligible
@@ -38,17 +58,22 @@ elapsed preparatory work for a fresh reconciliation and close planning; a slow i
 leaves less time for archive reads. The overall pass and close deadlines still apply.
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
-is retained in behavior v15; entry decisions retain their existing evidence and LIMIT/IOC requirements.
+preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
 mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
 whole observation. Raw candidate rows and their exclusions remain in the hashed snapshot for revalidation.
 
-The v3 strategy target records measured signals separately from excluded candidates. Measured signals retain their
-threshold rejections and selection rank; eligible candidates outside the position limit remain visible. An observation
-with every candidate excluded remains unavailable and cannot establish a valid `NO_TRADE`. Execution pricing requires
-fresh quotes for positive targets and reconciled holdings. Legacy v2 targets remain readable for audit.
+Native Jev targets retain every candidate result and source exclusion with the exact full-batch evidence. An
+observation with every candidate excluded remains unavailable. Execution pricing requires fresh quotes for positive
+targets and reconciled holdings. Historical momentum targets remain readable for audit.
+
+Entry and position-management observations each commit at most once per completed signal window within a cycle.
+Later polls and process restarts consult the retained observation before creating another inference batch. The next
+evaluation requires the next completed minute and its decision delay. An interrupted or failed observation does not
+authorize another inference attempt on the same window. Protective stops and the holding limit remain eligible on
+every management pass.
 
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
@@ -61,7 +86,7 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 
 ## Execution contract
 
-Jev migration work lives under `src/jev`. The trading-signal batch constructor requires the complete retained
+The Jev implementation lives under `src/jev`. The trading-signal batch constructor requires the complete retained
 observation, derives its observation and protocol hashes, reproduces the live or simulated snapshot once, and freezes
 the complete candidate universe, source exclusions, exact requests and common deadline. Batch results bind every
 planned candidate, including failed, abandoned and unattempted evaluations.
@@ -73,9 +98,9 @@ database's request receipts and resolutions, serializes competing recovery, and 
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
-These contracts do not yet replace the active strategy. Native decision binding and repeated
-position management remain migration work. Historical inference evidence, an API response, or a batch result grants
-no execution or capital authority. Economic qualification uses the frozen protocol in
+Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
+remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
+or capital authority. Economic qualification uses the frozen protocol in
 [`docs/bayn/jev-migration-acceptance-v2.json`](../../docs/bayn/jev-migration-acceptance-v2.json).
 
 - `BAYN_BROKER_ACCESS` and `BAYN_CAPITAL_AUTHORITY` are static capability ceilings. Effective execution additionally
@@ -92,19 +117,17 @@ no execution or capital authority. Economic qualification uses the frozen protoc
 
 An accepted LIMIT/IOC entry may finish canceled after filling only part of its requested quantity. Bayn verifies the
 exact broker order and intent identity and treats a positive fill smaller than the requested quantity as settled
-entry exposure, without restricting authority or submitting the unfilled remainder. The cycle remains open for its
-scheduled close. Rejected, mismatched, overfilled, and non-IOC canceled orders retain their failure handling.
+entry exposure, without submitting the unfilled remainder. The cycle remains open for position management and exit. Rejected, mismatched, overfilled, and non-IOC canceled orders retain their failure handling.
 Durable completion additionally requires the recorded partial fills to match the accepted order, a later trusted flat
 position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
 
-An exact zero-fill LIMIT/IOC cancellation is the only terminal entry outcome that can release an intraday attempt
-before the close. Bayn first requires a later exact flat reconciliation with no unknown mutations or open orders. The
+A completed Jev position or an exact zero-fill LIMIT/IOC cancellation can release an intraday attempt before the close. Bayn first requires a later exact flat reconciliation with no unknown mutations or open orders. The
 attempt then completes without inventing a fill. After at least one minute, while the entry cutoff remains open, the
 standing mandate may create the next rolling observation across all strategy candidates. Zero-fill attempts do not
 exhaust a session-wide quota. Each new attempt requires fresh signals and pricing, exact flat reconciliation, no
 unresolved mutations or open orders, and the existing risk limits. Attempts use increasing ordinals, distinct immutable
-v4 cycle identities, and unique PostgreSQL authority slots. A filled or partially filled
-attempt never rearms and remains bound through its scheduled close. Failed or ambiguous outcomes retain their existing
+v4 cycle identities, and unique PostgreSQL authority slots. Filled and partially filled attempts remain bound until
+all exits settle and durable completion proves the account flat. Failed or ambiguous outcomes retain their existing
 fail-closed handling.
 
 When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
@@ -112,10 +135,14 @@ recovery. A running worker also checks durable authority before and after each p
 system restriction appears. It cannot discover new cycles or submit entries while restricted. During the existing close window it can cancel outstanding
 orders belonging to the bound cycle and submit the existing position-reducing close after fresh exact reconciliation.
 The persisted kill state remains active, and broker identity, unknown-order, quantity, accounting, and close-deadline
-checks still apply. Operator restrictions do not enter this recovery path.
+checks still apply. Operator restrictions do not enter this recovery path. An operator hold replaces an existing
+automatic restriction, and later automatic failures preserve the hold.
 Once durable completion evidence is verified, the cycle may settle its restricted generation even when it had fills.
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
+A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
+accounting and flatness checks. A bound pending or active cycle keeps its existing generation while recovery manages
+the position; it cannot attempt authority rollover until the cycle is terminal.
 The existing activation path then verifies the grant before publishing the next execution driver. This transition
 does not require a worker restart. An untouched, unbound cycle retains its plan until the session's entry cutoff,
 including restrictions after market open. Its snapshot, decision and intent history must remain empty. Partially
@@ -139,7 +166,7 @@ Broker reconciliation recaptures changing history or lagging fill activities at 
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
 outcomes and aggregate fills still must agree. Equity marks from separate account and position observations remain
 visible as valuation differences, while cash, inventory, cost basis, fees, and ledger reconciliation remain exact.
-Flat accounts and marks observed at the same instant also require exact equity agreement.
+Flat accounts require exact equity agreement. Matching receipt timestamps do not make separate broker responses atomic.
 
 ## Runtime architecture
 
@@ -210,7 +237,7 @@ Flat accounts and marks observed at the same instant also require exact equity a
 ## Market data
 
 Dorvud's optional technical-indicator stream is joined as immutable decision evidence when
-`BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC` is configured. The active momentum strategy remains unchanged. See the
+`BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC` is configured. See the
 [streaming contract](src/market-data/streaming/README.md#technical-indicator-evidence) for timing, readiness,
 source matching, replay and delivery requirements.
 
@@ -259,16 +286,17 @@ or grant live capital authority.
   state.
 
 Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
-and its readiness or lifecycle reason. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies ordinary holding. Snapshot
+and its readiness or lifecycle reason. `JEV_POSITION_HELD` identifies a reconciled position that remains open. Snapshot
 waits retain the affected symbol, missing timestamp, required feature definition and window, or first available time when known.
 Both `autonomousCycleLoop.lastPass` and `executionController.status.lastPass` expose these structured fields. Free-form
 readiness and failure messages stay out of the public response. Historical pass observations without these details remain readable.
 New tagged waiting observations require exactly one lifecycle reason or structured readiness detail. Pre-open,
 mutation recovery backoff, pending broker intents, unavailable close data, and ordinary holding remain distinct.
 
-Candidate evaluations are stored in the append-only `intraday_candidate_observations` table before the pass proceeds.
-Each content hash binds the cycle, protocol, snapshot manifest, raw rows, and full decision. The corresponding log
-contains that hash, selected symbols, and rejection or exclusion reasons. A failed audit write fails the pass.
+Candidate observations are stored in the append-only `intraday_candidate_observations` table before inference proceeds.
+Native content hashes bind the cycle, authority generation, protocol, snapshot manifest, raw rows, and reconciled
+portfolio. Entry and management decisions additionally bind the completed inference batch. The corresponding log
+contains that hash, candidate symbols, and source exclusions. A failed audit write fails the pass.
 
 Execution latency metrics use separate clocks:
 
@@ -354,23 +382,53 @@ node services/bayn/dist/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-The baseline input is `bayn.backtest.v1` in `src/intraday-replay/backtest.ts`. It binds `sessionDates`, the full
-calendar, source manifest, build and strategy identities, opening cash, asset metadata and its observation policy,
-execution assumptions, and controller/reconciliation cadence. The older
-archive and vendor replay commands and their input contracts have been removed.
+The input is `bayn.backtest.v3` in `src/intraday-replay/backtest.ts`. It binds `sessionDates`, the full calendar,
+source manifest, native Jev build and strategy identities, opening cash, asset metadata, execution assumptions,
+controller cadence, and cost assumptions. Retired momentum backtest inputs cannot start the native runtime.
+Historical artifacts remain available for comparison and audit.
 
-`bayn.backtest.v2` adds a required `exitTiming` research choice: `CURRENT`, `CLOSE_15_MINUTES_BEFORE_BELL`, or
-`CLOSE_30_MINUTES_BEFORE_BELL`. These runs move `flattenBeforeCloseMinutes` and clamp the entry/submission cutoff
-to that boundary so the strategy cannot reopen after flattening. They use the same native close planner, risk
-checks, simulated broker, and accounting path. Signal rules, ranking, sizing, and costs remain those in the frozen
-input; entry eligibility in the last minutes of the session can differ. Compare actual entries before attributing
-economic differences to exits alone. The report binds both timing boundaries and the baseline build and parameter
-hash separately from the effective research parameter hash. Each choice has a distinct run identity and requires fresh local persistence. These inputs do not
-change the production protocol or supply a deployable strategy recommendation.
+Set `BAYN_JEV_API_KEY` through the existing protected environment. The command requires an
+`inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
+`inputDefinition: "bayn.jev-trading-signal-state.v2"`. Its `costs` object contains
+`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
+`allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
 
-Native startup and recovery admit these presets only when explicitly bound to their synthetic `replay-<runId>`
-account. Ordinary accounts still require the baseline protocol. The isolated runtime and grant use the effective
-research parameter hash; the report keeps the baseline build evidence separately.
+The provider uses an independent live clock. Replay retains original provider requests, responses and timestamps
+in `jev-calls.ndjson` before advancing market and database time. Concurrent calls share elapsed time. Native
+PostgreSQL batch and evaluation stores retain the mapped evidence and enforce the original inference deadline.
+Failed or interrupted calls with unresolved charges make the cost result incomplete. Known charges use the declared
+tariff with each call rounded upward to one micro-dollar. Invoice verification remains required for qualification.
+
+This local replay command connects directly to TypeSafe through Node HTTP. Production inference uses the dedicated
+CONNECT proxy. Development replay latency therefore includes the local host and network path; it does not prove
+production proxy latency or connectivity. Record that transport difference with the run and measure the deployed
+path before claiming production timing parity.
+
+Final authorization samples measured elapsed time after provider, persistence, writer-lock, grant and broker reads.
+Every replay reconciliation, including those inside the cycle driver, uses that measured clock after ingestion.
+During measured operations, the replay account's transaction-acceptance clock advances with PostgreSQL wall time,
+including evidence queries, insertions and work in the enclosing transaction. Recorded observation timestamps retain
+their synchronized replay time. Reconciliation returns that published source timestamp; it cannot stamp evidence
+ahead of the account and market-data clocks. Time spent publishing arrivals is retained for the next synchronization
+and the measured scope's completion. Pausing measurement retains elapsed time and advances the market clock. The
+runtime then consumes arrivals through that timestamp before returning to scheduling or valuation. Deferred
+exit deadlines therefore see time spent before transaction acceptance.
+Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
+Initialization starts one minute before the first registered open and retains its measured start, completion and
+elapsed time in the report. If initialization misses that open, the run fails without rewinding or omitting opening
+coverage. The scheduled session boundaries remain the supplied calendar's open and close.
+This preserves causal ordering between broker observations and their reconciliation; a partial IOC entry can finish
+after its exit and fresh exact-flat evidence. Clock failures remain explicit and cannot produce a successful receipt.
+Risk expiry and the submission lease use the same final timestamp. Controlled regressions reject expired evidence
+without a broker submission, including time spent advancing retained replay data. Full lifecycle simulation must
+also prove arrival-time pricing, position management, exact-flat completion and fresh reentry. These timing tests
+do not establish economic performance.
+
+Replay uses the production generation driver for restricted-cycle settlement, exact-flat reconciliation and
+reactivation. A blocked cycle may re-enter after the existing delay only when its immutable decision belongs to
+an earlier generation; a block in the current generation remains terminal. Restart preserves the recovered grant,
+and operator restrictions remain held. Session-close valuation selects the most recent retained quote that was
+available at close, even when a later arrival has replaced the projection's current quote.
 
 The broker calendar must include the next trading session after the final replay date. The production scheduler
 selects that successor after finishing its last position; omitting it is an input error even when all requested market
@@ -383,8 +441,12 @@ coordinates, partition inventory, record ordering, and coverage must validate be
 establish the retained stream's bounds; they do not establish historical liquidity or original delivery for REST data.
 See the [streaming guide](src/market-data/streaming/README.md) for source capture and Dorvud feature regeneration.
 
-Each pass records the engine's decision/cycle result and simulated broker state. The final `bayn.backtest-report.v1`
-retains every session's schedule, closing equity and reconciliation, plus cumulative equity change, observed peak
+Each pass records the engine's decision/cycle result and simulated broker state. Entry and position-management waits
+retain typed readiness: pending, rejected or expired inference and unavailable market inputs count as missing decision
+data, even when a later deterministic exit succeeds. A verified model hold remains distinct from unavailable evidence.
+The final `bayn.backtest-report.v2`
+retains every session's schedule, closing broker equity, net equity after known model and allocated data costs,
+and reconciliation, plus cumulative net equity change, observed peak
 and drawdown, final broker orders/fills/positions, durable accounting counts, and input identities. The output keeps
 the exact input, source receipt, pass log, decoded entry and closing decisions, accounting rows with full integer precision, and hashes. Valuations retain the last observed valid bid and its age; that accounting mark never relaxes executable-quote freshness. Preserve the source file and both databases with the report.
 
@@ -392,7 +454,9 @@ Simulation accounts are isolated from production. The command cannot acquire Alp
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,
 failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance.
 The session schedule counts unavailable required decision observations separately from successful no-trade and
-expected lifecycle waits. Close-only market sells support fractional liquidation with fresh, sufficient arrival
+expected lifecycle waits. Failed or expired entry inference is unavailable decision data even when its token usage
+can be fully priced. Only a complete valid decision can report no eligible candidate. Close-only market sells support
+fractional liquidation with fresh, sufficient arrival
 liquidity; an unsupported market remainder fails the simulation. See the streaming guide's
 [close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.

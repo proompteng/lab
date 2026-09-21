@@ -19,6 +19,12 @@ import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from '
 import { positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
+import { makeReplayJevTiming } from './jev-timing'
+import {
+  emptyStreamingProjection,
+  incorporateRecordedMarketValue,
+  observedQuoteAt,
+} from '../market-data/streaming/projection'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -147,6 +153,72 @@ test('historical arrival scheduler advances data before delivery without a wall-
   expect(arrivals).toEqual([startMs + 100])
   expect(result.order.filledAveragePriceMicros).toBe('100500000')
   expect(result.order.filledAt).toBe('2026-09-04T14:31:00.100Z')
+})
+
+test('measured Jev submission follows final authorization and prices quotes available after source synchronization', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(startMs)
+      const providerClock = yield* TestClock.make()
+      yield* providerClock.setTime(0)
+      const timing = yield* makeReplayJevTiming({
+        measureDatabaseTime: (operation) => operation,
+        provider: { evaluate: () => Effect.die('This timing case does not need inference') },
+        providerClock,
+        retain: () => Effect.void,
+        advanceTo: (at) => TestClock.setTime(at).pipe(Effect.andThen(providerClock.adjust(100))),
+      })
+      let lastArrival = startMs
+      const broker = yield* setup({
+        submissionTime: timing.currentUtcInstant,
+        assumptions: { ...config.assumptions, latencyMs: 10 },
+        advanceToArrival: (at) =>
+          Effect.sync(() => {
+            lastArrival = at
+          }).pipe(Effect.andThen(TestClock.setTime(at))),
+        quoteAt: (_symbol, at) =>
+          Effect.succeed(
+            observedQuote(
+              { ...quote, askPrice: at >= startMs + 100 ? 100.5 : 100 },
+              at >= startMs + 100 ? startMs + 100 : startMs,
+            ),
+          ),
+      })
+      const completed = yield* timing.run(
+        Effect.gen(function* () {
+          const authorizedAt = yield* timing.currentUtcInstant
+          const submitted = yield* broker.mutation.submit(intent())
+          return { authorizedAt, order: submitted.order, checkpoint: yield* broker.checkpoint, lastArrival }
+        }),
+      )
+      return { ...completed, marketAfter: yield* Clock.currentTimeMillis }
+    }),
+  )
+  const submittedAt = result.order.submittedAt
+  if (submittedAt === undefined) throw new Error('Measured replay order is missing its submission time')
+  expect(Date.parse(result.authorizedAt)).toBe(startMs + 100)
+  expect(Date.parse(submittedAt)).toBeGreaterThanOrEqual(Date.parse(result.authorizedAt))
+  expect(Date.parse(submittedAt)).toBe(startMs + 300)
+  expect(result.lastArrival).toBe(Date.parse(submittedAt) + 10)
+  expect(result.marketAfter).toBe(result.lastArrival + 100)
+  expect(result.order.filledAveragePriceMicros).toBe('100500000')
+  expect(result.checkpoint.state.orders[0]?.execution?.quote?.availableAtMs).toBe(startMs + 100)
+})
+
+test('an unavailable measured submission clock cannot create a replay order or fill', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        submissionTime: Effect.fail(new ReplayBrokerFailure({ message: 'Measured clock unavailable' })),
+        advanceToArrival: (at) => TestClock.setTime(at),
+      })
+      const submitted = yield* broker.mutation.submit(intent()).pipe(Effect.exit)
+      return { submitted, state: yield* broker.snapshot }
+    }),
+  )
+  expect(Exit.isFailure(result.submitted)).toBe(true)
+  expect(result.state.orders).toEqual([])
+  expect(result.state.fills).toEqual([])
 })
 
 test('an inaccurate historical scheduler cannot manufacture a fill', async () => {
@@ -344,40 +416,118 @@ test('real account identity and unapproved intent cannot mutate the simulated ac
   expect(result.state.orders).toEqual([])
 })
 
-test('next session uses recorded closing equity while retaining open positions', async () => {
+test('delayed session close rejects quotes first available after the closing boundary', async () => {
   const closingMs = Date.parse('2026-09-04T20:00:00.000Z')
-  const nextOpenMs = Date.parse('2026-09-08T13:30:00.000Z')
-  const result = await run(
+  await run(
     Effect.gen(function* () {
       const broker = yield* setup({
-        calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
         quoteAt: (_symbol, time) => {
-          const price = time >= nextOpenMs ? 102 : time >= closingMs ? 101 : 100
-          return Effect.succeed(
-            observedQuote({ ...quote, eventAt: new Date(time).toISOString(), bidPrice: price, askPrice: price }, time),
-          )
+          const at = time >= closingMs ? closingMs + 1 : time
+          return Effect.succeed(observedQuote({ ...quote, eventAt: new Date(at).toISOString() }, at))
         },
       })
       yield* submit(broker, intent())
-      const earlyClose = yield* Effect.result(broker.completeSession('2026-09-04'))
-      yield* TestClock.setTime(closingMs)
-      const close = yield* broker.completeSession('2026-09-04')
-      const repeatedClose = yield* broker.completeSession('2026-09-04')
-      yield* TestClock.setTime(nextOpenMs)
-      return {
-        earlyClose,
-        close,
-        repeatedClose,
-        account: (yield* broker.read.account).value,
-        positions: (yield* broker.read.positions).value,
-      }
+      yield* TestClock.setTime(closingMs + 350)
+      const result = yield* broker.completeSession('2026-09-04').pipe(Effect.result)
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: { message: 'Session close has no retained valuation quote' },
+      })
+      expect((yield* broker.snapshot).sessionCloses).toEqual([])
     }),
   )
-  expect(Result.isFailure(result.earlyClose)).toBe(true)
-  expect(result.close).toEqual(result.repeatedClose)
-  expect(result.account.lastEquityMicros).toBe(result.close.equityMicros)
-  expect(BigInt(result.account.equityMicros) - BigInt(result.account.lastEquityMicros)).toBe(5_000_000n)
-  expect(result.positions[0]?.quantityMicros).toBe('5000000')
+})
+
+test.each([0, 350])(
+  'session close retains its exact valuation when processing finishes %sms later',
+  async (elapsedMs) => {
+    const closingMs = Date.parse('2026-09-04T20:00:00.000Z')
+    const nextOpenMs = Date.parse('2026-09-08T13:30:00.000Z')
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+          quoteAt: (_symbol, time) => {
+            const price = time > closingMs ? 102 : time === closingMs ? 101 : 100
+            return Effect.succeed(
+              observedQuote(
+                { ...quote, eventAt: new Date(time).toISOString(), bidPrice: price, askPrice: price },
+                time,
+              ),
+            )
+          },
+        })
+        yield* submit(broker, intent())
+        const earlyClose = yield* Effect.result(broker.completeSession('2026-09-04'))
+        yield* TestClock.setTime(closingMs + elapsedMs)
+        const close = yield* broker.completeSession('2026-09-04')
+        const repeatedClose = yield* broker.completeSession('2026-09-04')
+        yield* TestClock.setTime(nextOpenMs)
+        return {
+          earlyClose,
+          close,
+          repeatedClose,
+          account: (yield* broker.read.account).value,
+          positions: (yield* broker.read.positions).value,
+        }
+      }),
+    )
+    expect(Result.isFailure(result.earlyClose)).toBe(true)
+    expect(result.close).toEqual(result.repeatedClose)
+    expect(result.account.lastEquityMicros).toBe(result.close.equityMicros)
+    expect(BigInt(result.account.equityMicros) - BigInt(result.account.lastEquityMicros)).toBe(5_000_000n)
+    expect(result.positions[0]?.quantityMicros).toBe('5000000')
+  },
+)
+
+test('delayed close selects the retained projection quote available at close', async () => {
+  const closingMs = Date.parse('2026-09-04T20:00:00.000Z')
+  const universe = {
+    universeId: protocol.universeId,
+    universeSymbolHash: protocol.universeSymbolHash,
+    symbols: protocol.universe,
+    topics: { ...protocol.sourceTopics, features: 'torghut.market-features.v1' },
+  }
+  await run(
+    Effect.gen(function* () {
+      let projection = incorporateRecordedMarketValue(
+        emptyStreamingProjection('closing-quote'),
+        quote,
+        universe,
+        startMs,
+      )
+      const broker = yield* setup({
+        quoteAt: (symbol, atMs) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs)),
+      })
+      yield* submit(broker, intent())
+      for (const [index, availableAtMs, eventAtMs, price] of [
+        [1, closingMs - 1000, closingMs - 1000, 101],
+        [2, closingMs + 100, closingMs - 500, 102],
+      ] as const) {
+        projection = incorporateRecordedMarketValue(
+          projection,
+          {
+            ...quote,
+            sourceOffset: String(BigInt(quote.sourceOffset) + BigInt(index)),
+            eventAt: new Date(eventAtMs).toISOString(),
+            ingestedAt: new Date(availableAtMs).toISOString(),
+            bidPrice: price,
+            askPrice: price,
+          },
+          universe,
+          availableAtMs,
+        )
+      }
+      expect(projection.quotes.get('AAPL')?.value.bidPrice).toBe(102)
+      expect(projection.quoteHistory.get('AAPL')).toHaveLength(3)
+      yield* TestClock.setTime(closingMs + 350)
+      const close = yield* broker.completeSession('2026-09-04')
+      const state = yield* broker.snapshot
+      expect(close.equityMicros).toBe((BigInt(state.ledger.cashMicros) + 505_000_000n).toString())
+      expect(state.ledger.positions[0]?.quantityMicros).toBe('5000000')
+      expect(state.fills).toHaveLength(1)
+    }),
+  )
 })
 
 test('missing session close prevents a fabricated next-day equity baseline', async () => {

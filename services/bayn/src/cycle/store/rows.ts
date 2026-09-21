@@ -33,7 +33,7 @@ const StoredCycleRowSchema = Schema.Struct({
     'bayn.autonomous-cycle-identity.v3',
     'bayn.autonomous-cycle-identity.v4',
   ]),
-  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum']),
+  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum', 'jev']),
   qualification_run_id: Sha256Schema,
   strategy_protocol_hash: Sha256Schema,
   account_id: StrictNonEmptyStringSchema,

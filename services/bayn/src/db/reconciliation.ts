@@ -32,7 +32,11 @@ import {
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
 } from '../reconciliation'
-import { isExecutionMandateFailureRestriction } from '../execution/mandate'
+import {
+  isExecutionMandateFailureRestriction,
+  isExecutionMandateRecoveryRestriction,
+  isRetiredOneShotMandateRestriction,
+} from '../execution/mandate'
 import {
   IsoDateSchema,
   Sha256Schema as Sha256,
@@ -217,9 +221,14 @@ const attempt = <A>(
   })
 
 const isTransientReconciliationRestriction = (reason: string | null): boolean =>
-  reason === 'reconciliation pass incomplete' || reason?.startsWith('reconciliation discrepancy ') === true
+  reason === 'reconciliation pass incomplete' ||
+  (reason?.startsWith('reconciliation discrepancy ') === true && isExecutionMandateFailureRestriction(reason))
+
+const isRecoverableRestriction = (reason: string | null): boolean =>
+  isExecutionMandateRecoveryRestriction(reason ?? undefined) || isRetiredOneShotMandateRestriction(reason ?? undefined)
 
 const shouldPromoteRestrictionReason = (currentReason: string | null, nextReason: string): boolean =>
+  (isRecoverableRestriction(currentReason) && !isRecoverableRestriction(nextReason)) ||
   (currentReason === 'reconciliation pass incomplete' && nextReason.startsWith('reconciliation discrepancy ')) ||
   (isTransientReconciliationRestriction(currentReason) &&
     !isTransientReconciliationRestriction(nextReason) &&
