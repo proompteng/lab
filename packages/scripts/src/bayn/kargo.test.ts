@@ -11,7 +11,7 @@ const stage = stages.find((document) => document.getIn(['metadata', 'name']) ===
 const steps = stage.spec.promotionTemplate.spec.steps
 const build = read('.github/workflows/bayn-build-push.yml')
 
-test('delivers the Jev credential only to the execution worker through a sealed secret', () => {
+test('delivers the sealed Jev credential only to the worker without blocking independent recovery when absent', () => {
   const secret = read('argocd/applications/bayn/jev-sealedsecret.yaml')
   expect(secret.metadata).toMatchObject({
     name: 'bayn-jev-auth',
@@ -29,9 +29,24 @@ test('delivers the Jev credential only to the execution worker through a sealed 
     const key = environment.filter((entry: { name: string }) => entry.name === 'BAYN_JEV_API_KEY')
     expect(key).toEqual(
       file === 'execution-controller'
-        ? [{ name: 'BAYN_JEV_API_KEY', valueFrom: { secretKeyRef: { name: 'bayn-jev-auth', key: 'api-key' } } }]
+        ? [
+            {
+              name: 'BAYN_JEV_API_KEY',
+              valueFrom: { secretKeyRef: { name: 'bayn-jev-auth', key: 'api-key', optional: true } },
+            },
+          ]
         : [],
     )
+    const brokerKeys = environment.filter((entry: { name: string }) =>
+      ['BAYN_ALPACA_KEY_ID', 'BAYN_ALPACA_SECRET_KEY'].includes(entry.name),
+    )
+    expect(brokerKeys).toHaveLength(2)
+    expect(
+      brokerKeys.every(
+        (entry: { valueFrom: { secretKeyRef: { optional?: boolean } } }) =>
+          entry.valueFrom.secretKeyRef.optional !== true,
+      ),
+    ).toBe(true)
   }
 })
 
