@@ -4,7 +4,7 @@ import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 import { loadConfig } from './config'
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
-import { runForwardPerformance, ForwardPerformanceProgramError } from './forward-performance'
+import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
 import { Sha256Schema } from './schemas'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
@@ -44,11 +44,11 @@ const runProof = (options: { readonly authorityGenerationHash?: string }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const config = yield* loadConfig()
-      const receipt = yield* runForwardPerformance(config, undefined, options).pipe(
+      const report = yield* runForwardPerformanceReport(config, undefined, options).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
         Effect.provide(PostgresClientLive(config)),
       )
-      const output = yield* Effect.fromResult(canonicalJsonV1Result(receipt)).pipe(
+      const output = yield* Effect.fromResult(canonicalJsonV1Result(report)).pipe(
         Effect.mapError(
           (cause) =>
             new ForwardPerformanceProgramError({
