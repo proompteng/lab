@@ -77,7 +77,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "1",
         )
 
-    def test_production_ta_recovers_transient_dependencies_without_losing_state(
+    def test_production_ta_uses_savepoint_rollouts_and_transient_restart_backoff(
         self,
     ) -> None:
         manifest = _load_yaml_mapping(
@@ -162,7 +162,6 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
     def test_direct_torghut_deployments_bound_replica_set_history(self) -> None:
         deployment_paths = [
             "argocd/applications/torghut/alloy-deployment.yaml",
-            "argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml",
             "argocd/applications/torghut/llm-guardrails-exporter.yaml",
             "argocd/applications/torghut/ws/deployment.yaml",
             "argocd/applications/torghut-options/catalog/deployment.yaml",

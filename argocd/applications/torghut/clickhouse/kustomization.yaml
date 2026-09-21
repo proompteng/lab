@@ -10,13 +10,13 @@ resources:
   - sealed-secret.yaml
   - bayn-sealed-secret.yaml
   - signal-publisher-sealed-secret.yaml
-  - clickhouse-guardrails-exporter-configmap.yaml
-  - clickhouse-guardrails-exporter.yaml
   - clickhouse-cluster.yaml
   - clickhouse-service.yaml
   - ta-replicated-table-migration-job.yaml
   - signal-schema-job.yaml
   - intraday-bars-schema-job.yaml
+  - intraday-features-schema-job.yaml
+  - historical-datasets-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
   - signal-publisher-cronjob.yaml
 images:

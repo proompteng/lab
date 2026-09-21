@@ -13,7 +13,7 @@ import {
 } from '../cycle'
 import { canonicalHashV1, sha256 } from '../hash'
 import { IntradaySnapshotPurpose, type IntradayMarketSnapshot } from '../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
+import { streamingFixture } from '../testing/streaming-market-fixture'
 import { IntradayMomentumFailure, type IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import { makeIntradayMomentumDefinition } from '../strategy/intraday-momentum/decision'
 import {
@@ -238,16 +238,11 @@ describe('intraday-momentum runtime decision boundary', () => {
     }
 
     expect(
-      failure(
-        evaluateIntradayMomentumDecision(
-          definition,
-          makeActiveCycle(),
-          {} as unknown as ArchiveVerifiedIntradayMarketSnapshot,
-        ),
-      ),
+      failure(evaluateIntradayMomentumDecision(definition, makeActiveCycle(), streamingFixture().snapshot)),
     ).toEqual(
       new IntradayMomentumEntryAwaitingSnapshot({
         message: 'intraday symbol lacks the complete rolling lookback baseline',
+        symbol: 'AMD',
       }),
     )
   })
@@ -264,13 +259,7 @@ describe('intraday-momentum runtime decision boundary', () => {
     }
 
     expect(
-      failure(
-        evaluateIntradayMomentumDecision(
-          definition,
-          makeActiveCycle(),
-          {} as unknown as ArchiveVerifiedIntradayMarketSnapshot,
-        ),
-      ),
+      failure(evaluateIntradayMomentumDecision(definition, makeActiveCycle(), streamingFixture().snapshot)),
     ).toMatchObject({
       operation: 'entry-decision',
       message: 'snapshot-coverage: intraday benchmark quote exceeds the protocol freshness bound; symbol=SPY',

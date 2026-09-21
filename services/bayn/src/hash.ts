@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { pipe, Result } from 'effect'
 
-export const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
+export const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
 
 const compareUtf16 = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 

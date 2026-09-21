@@ -51,6 +51,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 const draft = (
   strategyProtocolHash = canonicalHashV1({ strategy: 'intraday-momentum', version: 1 }),
   executionModel = intradayMomentumExecutionModel,
+  entryAttemptOrdinal = 1,
 ) => {
   const calendar = value(
     makeExecutionCalendarObservation({
@@ -64,11 +65,12 @@ const draft = (
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(executionModel))
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
       strategyName: 'intraday-momentum',
       qualificationRunId,
       strategyProtocolHash,
       accountId,
+      entryAttemptOrdinal,
       executionSessionDate: sessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
       executionCalendarSource: calendar.executionCalendarSource,
@@ -140,6 +142,46 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     ])
     expect(Option.getOrThrow(result.stored)).toMatchObject({ state: CycleState.Pending, stateVersion: 1 })
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
+  })
+
+  test('stores successive immutable attempts in one session and converges retries on the latest authority slot', async () => {
+    const first = draft(undefined, undefined, 1)
+    const second = draft(undefined, undefined, 2)
+    const third = draft(undefined, undefined, 3)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const firstReceipt = yield* store.acquire(first, acquiredAt)
+        const secondReceipt = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
+        const secondReplay = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
+        const thirdReceipts = yield* Effect.all(
+          [store.acquire(third, '2026-08-28T15:02:00.000Z'), store.acquire(third, '2026-08-28T15:02:00.000Z')],
+          { concurrency: 'unbounded' },
+        )
+        return {
+          firstReceipt,
+          secondReceipt,
+          secondReplay,
+          thirdReceipts,
+          first: yield* store.read(first.identity.cycleId),
+          second: yield* store.read(second.identity.cycleId),
+          slot: yield* store.readAuthoritySlot({ qualificationRunId, accountId, executionSessionDate: sessionDate }),
+        }
+      }),
+    )
+
+    expect(first.identity.cycleId).not.toBe(second.identity.cycleId)
+    expect(result.firstReceipt.created).toBeTrue()
+    expect(result.secondReceipt.created).toBeTrue()
+    expect(result.secondReplay.created).toBeFalse()
+    expect(result.thirdReceipts.filter(({ created }) => created)).toHaveLength(1)
+    expect(result.thirdReceipts.every(({ cycle }) => cycle.identity.cycleId === third.identity.cycleId)).toBeTrue()
+    expect(Option.getOrThrow(result.first).identity).toMatchObject({ entryAttemptOrdinal: 1 })
+    expect(Option.getOrThrow(result.second).identity).toMatchObject({ entryAttemptOrdinal: 2 })
+    expect(Option.getOrThrow(result.slot).identity).toMatchObject({
+      cycleId: third.identity.cycleId,
+      entryAttemptOrdinal: 3,
+    })
   })
 
   test('persists and reloads an exact full-session cycle with zero boundary offsets', async () => {
@@ -263,7 +305,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         reconciliationHash,
         policyHash,
         decisionMarketData: {
-          schemaVersion: 'bayn.execution-market-data-binding.v2',
+          schemaVersion: 'bayn.execution-market-data-binding.v3',
           snapshotId,
           contentHash: snapshotContentHash,
           observedAt,
@@ -459,14 +501,15 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             )
         `
         const queries = makeCycleQueries(sql)
-        const missingArchiveReference = yield* queries.decisionEvidenceMatches(document)
+        const missingStreamReference = yield* queries.decisionEvidenceMatches(document)
         yield* sql`
-          INSERT INTO intraday_snapshot_references (
+          INSERT INTO streaming_snapshot_references (
             snapshot_id, schema_version, content_hash, observed_at, manifest
           ) VALUES (
-            ${snapshotId}, 'bayn.intraday-snapshot-reference.v1', ${snapshotContentHash}, ${observedAt},
+            ${snapshotId}, 'bayn.streaming-snapshot-reference.v1', ${snapshotContentHash}, ${observedAt},
             ${sql.json({
-              schemaVersion: 'bayn.intraday-market-snapshot.v1',
+              schemaVersion: 'bayn.streaming-market-snapshot.v1',
+              streaming: { schemaVersion: 'bayn.streaming-input-cut.v1' },
               snapshotId,
               contentHash: snapshotContentHash,
               observedAt,
@@ -476,14 +519,14 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         const exact = yield* queries.decisionEvidenceMatches(document)
         const unverifiedSnapshotId = 'd'.repeat(64)
         const unverifiedSnapshotContentHash = 'e'.repeat(64)
-        const unverifiedArchiveReference = yield* queries.decisionEvidenceMatches({
+        const unverifiedStreamReference = yield* queries.decisionEvidenceMatches({
           ...document,
           bindings: {
             ...document.bindings,
             snapshotId: unverifiedSnapshotId,
             snapshotContentHash: unverifiedSnapshotContentHash,
             decisionMarketData: {
-              schemaVersion: 'bayn.execution-market-data-binding.v2',
+              schemaVersion: 'bayn.execution-market-data-binding.v3',
               snapshotId: unverifiedSnapshotId,
               contentHash: unverifiedSnapshotContentHash,
               observedAt,
@@ -516,9 +559,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
         return {
-          missingArchiveReference,
+          missingStreamReference,
           exact,
-          unverifiedArchiveReference,
+          unverifiedStreamReference,
           forgedAuthority,
           forgedEquity,
           forgedPolicyHash,
@@ -528,9 +571,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     )
 
     expect(result).toEqual({
-      missingArchiveReference: false,
+      missingStreamReference: false,
       exact: true,
-      unverifiedArchiveReference: false,
+      unverifiedStreamReference: false,
       forgedAuthority: false,
       forgedEquity: false,
       forgedPolicyHash: false,

@@ -1,5 +1,5 @@
 import { create } from '@bufbuild/protobuf'
-import { Effect, Exit } from 'effect'
+import { Effect, Exit, type Fiber } from 'effect'
 import * as Cause from 'effect/Cause'
 import * as Chunk from 'effect/Chunk'
 import * as Option from 'effect/Option'
@@ -18,6 +18,7 @@ import { PayloadsSchema } from '../proto/temporal/api/common/v1/message_pb'
 import { CommandType } from '../proto/temporal/api/enums/v1/command_type_pb'
 import { QueryResultType } from '../proto/temporal/api/enums/v1/query_pb'
 import { type WorkflowQueryResult, WorkflowQueryResultSchema } from '../proto/temporal/api/query/v1/message_pb'
+import { WorkflowActivationRuntime, type WorkflowActivation, type WorkflowActivationJob } from './activation'
 import { materializeCommands, type StartChildWorkflowCommandIntent, type WorkflowCommandIntent } from './commands'
 import {
   type ActivityResolution,
@@ -121,6 +122,7 @@ export type WorkflowUpdateDispatch =
     }
 
 export interface ExecuteWorkflowInput {
+  readonly activations?: readonly WorkflowActivation[]
   readonly workflowType: string
   readonly workflowId: string
   readonly runId: string
@@ -138,6 +140,7 @@ export interface ExecuteWorkflowInput {
   readonly queryRequests?: readonly WorkflowQueryRequest[]
   readonly updates?: readonly WorkflowUpdateInvocation[]
   readonly mode?: 'workflow' | 'query'
+  readonly localActivityDeadline?: AbortSignal
 }
 
 export type WorkflowCompletionStatus = 'completed' | 'failed' | 'continued-as-new' | 'pending'
@@ -184,7 +187,15 @@ export class WorkflowExecutor {
 
   async execute(input: ExecuteWorkflowInput): Promise<WorkflowExecutionOutput> {
     installWorkflowRuntimeGuards({ mode: this.#workflowGuards })
+    const runtime = new WorkflowActivationRuntime()
+    try {
+      return await this.#execute(input, runtime)
+    } finally {
+      runtime.dispose()
+    }
+  }
 
+  async #execute(input: ExecuteWorkflowInput, runtime: WorkflowActivationRuntime): Promise<WorkflowExecutionOutput> {
     const info: WorkflowInfo = {
       namespace: input.namespace,
       taskQueue: input.taskQueue,
@@ -203,31 +214,54 @@ export class WorkflowExecutor {
       info,
       guard,
       logger: this.#logger,
+      guardMode: this.#workflowGuards,
     }
 
     let lastCommandContext: WorkflowCommandContext | undefined
     let lastQueryRegistry: WorkflowQueryRegistry | undefined
     let lastWorkflowContext: WorkflowContext<unknown> | undefined
     let lastUpdateRegistry: WorkflowUpdateRegistry | undefined
-    let blockedFromUpdates: WorkflowBlockedError | undefined
+    let applyActivationJob: ((job: WorkflowActivationJob) => void) | undefined
+    const pendingUpdates = new Set<Fiber.RuntimeFiber<unknown, unknown>>()
+    const updateDispatches: WorkflowUpdateDispatch[] = []
+    const activations: readonly WorkflowActivation[] = input.activations?.length
+      ? input.activations
+      : [
+          { jobs: (input.signalDeliveries ?? []).map((delivery) => ({ type: 'signal', delivery })) },
+          {
+            jobs: [
+              ...[...(input.activityResults ?? [])].map(([id, resolution]) => ({
+                type: 'activity' as const,
+                id,
+                resolution,
+              })),
+              ...[...(input.nexusResults ?? [])].map(([id, resolution]) => ({
+                type: 'nexus' as const,
+                id,
+                resolution,
+              })),
+              ...[...(input.timerResults ?? [])].map((id) => ({ type: 'timer' as const, id })),
+            ],
+            updates: input.updates,
+          },
+        ]
 
     const workflowEffect = Effect.flatMap(decodedEffect, (parsed) => {
       const created = createWorkflowContext({
         input: parsed,
         info,
         determinismGuard: guard,
-        activityResults: input.activityResults,
         activityScheduleEventIds: input.activityScheduleEventIds,
-        nexusResults: input.nexusResults,
         nexusScheduleEventIds: input.nexusScheduleEventIds,
-        signalDeliveries: input.signalDeliveries,
-        timerResults: input.timerResults,
         updates: definition.updates,
+        localActivityDeadline: input.localActivityDeadline,
       })
       lastCommandContext = created.commandContext
       lastQueryRegistry = created.queryRegistry
       lastWorkflowContext = created.context
       lastUpdateRegistry = created.updateRegistry
+      applyActivationJob = created.applyActivationJob
+      for (const job of activations[0]?.jobs ?? []) applyActivationJob(job)
       return Effect.flatMap(definition.handler(created.context), (result) =>
         Effect.sync(() => ({
           result,
@@ -238,37 +272,32 @@ export class WorkflowExecutor {
       )
     })
 
-    const exit = await runWithWorkflowLogContext(logContext, async () => await Effect.runPromiseExit(workflowEffect))
-    const updatesToProcess = input.updates ?? []
-    let updateDispatches: WorkflowUpdateDispatch[] = []
-
-    if (updatesToProcess.length > 0) {
-      const contextForUpdates = Exit.isSuccess(exit) ? exit.value.context : lastWorkflowContext
-      const registryForUpdates = Exit.isSuccess(exit) ? exit.value.updateRegistry : lastUpdateRegistry
-      if (!contextForUpdates || !registryForUpdates) {
-        throw new Error('Workflow update context unavailable after execution')
+    const exit = await runWithWorkflowLogContext(logContext, async () => {
+      const fiber = runtime.fork(workflowEffect)
+      const settleLocalActivities = async () => {
+        await lastCommandContext?.settleLocalActivities()
       }
-      try {
-        updateDispatches = await runWithWorkflowLogContext(
-          logContext,
-          async () =>
-            await this.#processWorkflowUpdates({
-              context: contextForUpdates,
-              registry: registryForUpdates,
-              updates: updatesToProcess,
-              guard,
-            }),
-        )
-      } catch (error) {
-        if (error instanceof WorkflowBlockedError) {
-          blockedFromUpdates = error
-        } else {
-          throw error
+      for (const [index, activation] of activations.entries()) {
+        if (index > 0) for (const job of activation.jobs) applyActivationJob?.(job)
+        await runtime.drain(settleLocalActivities)
+        if (activation.updates?.length) {
+          if (!lastWorkflowContext || !lastUpdateRegistry)
+            throw new Error('Workflow update context unavailable after execution')
+          await this.#processWorkflowUpdates({
+            context: lastWorkflowContext,
+            registry: lastUpdateRegistry,
+            updates: activation.updates,
+            guard,
+            runtime,
+            dispatches: updateDispatches,
+            pendingUpdates,
+          })
+          await runtime.drain(settleLocalActivities)
         }
       }
-    }
-
-    const executionError = Exit.isFailure(exit) ? this.#resolveError(exit.cause) : undefined
+      return fiber.unsafePoll()
+    })
+    const executionError = exit && Exit.isFailure(exit) ? this.#resolveError(exit.cause) : undefined
     const nondeterminismError = executionError
       ? unwrapWorkflowError(executionError, WorkflowNondeterminismError)
       : undefined
@@ -287,7 +316,7 @@ export class WorkflowExecutor {
     const resultDeterminismState =
       executionMode === 'query' ? snapshotToDeterminismState(guard.snapshot) : workflowDeterminismState
 
-    if (Exit.isSuccess(exit)) {
+    if (exit && Exit.isSuccess(exit)) {
       if (executionMode === 'query') {
         return {
           commands: [],
@@ -303,7 +332,7 @@ export class WorkflowExecutor {
         input.pendingChildWorkflows,
         exit.value.commandContext.intents,
       )
-      if (pendingChildStarts.size > 0) {
+      if (pendingChildStarts.size > 0 || pendingUpdates.size > 0) {
         const commands = await materializeCommands(exit.value.commandContext.intents, {
           dataConverter: this.#dataConverter,
           workflowInfo: info,
@@ -372,8 +401,8 @@ export class WorkflowExecutor {
       }
     }
 
-    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError) ?? blockedFromUpdates
-    if (blockedError) {
+    const blockedError = unwrapWorkflowError(error, WorkflowBlockedError)
+    if (!exit || blockedError) {
       const contextForPending =
         lastCommandContext ??
         (() => {
@@ -431,17 +460,21 @@ export class WorkflowExecutor {
     registry,
     updates,
     guard,
+    runtime,
+    dispatches,
+    pendingUpdates,
   }: {
     context: WorkflowContext<unknown>
     registry: WorkflowUpdateRegistry
     updates: readonly WorkflowUpdateInvocation[]
     guard: DeterminismGuard
-  }): Promise<WorkflowUpdateDispatch[]> {
+    runtime: WorkflowActivationRuntime
+    dispatches: WorkflowUpdateDispatch[]
+    pendingUpdates: Set<Fiber.RuntimeFiber<unknown, unknown>>
+  }): Promise<void> {
     if (!updates.length) {
-      return []
+      return
     }
-
-    const dispatches: WorkflowUpdateDispatch[] = []
 
     for (const invocation of updates) {
       const messageId = invocation.requestMessageId
@@ -546,59 +579,56 @@ export class WorkflowExecutor {
       })
 
       const priorCompletion = guard.getUpdateCompletion(invocation.updateId)
-      if (priorCompletion) {
-        // Re-run the handler to rebuild workflow state during replay, but avoid emitting duplicate protocol messages.
-        await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
-        guard.recordUpdate(priorCompletion)
-        continue
-      }
-
-      const executionExit = await Effect.runPromiseExit(registered.handler(context as never, decodedInput as never))
-      if (Exit.isSuccess(executionExit)) {
-        dispatches.push({
-          type: 'completion',
-          protocolInstanceId: invocation.protocolInstanceId,
-          updateId: invocation.updateId,
-          status: 'success',
-          result: executionExit.value,
-          handlerName: registered.name,
-          identity: invocation.identity,
-        })
-        guard.recordUpdate({
-          updateId: invocation.updateId,
-          stage: 'completed',
-          handlerName: registered.name,
-          identity: invocation.identity,
-          outcome: 'success',
-          messageId,
-        })
-      } else {
-        const failure = this.#resolveError(executionExit.cause)
-        if (failure instanceof WorkflowBlockedError) {
-          continue
+      const fiber = runtime.fork(registered.handler(context as never, decodedInput as never))
+      pendingUpdates.add(fiber)
+      fiber.addObserver((executionExit) => {
+        pendingUpdates.delete(fiber)
+        if (priorCompletion) {
+          guard.recordUpdate(priorCompletion)
+          return
         }
-        dispatches.push({
-          type: 'completion',
-          protocolInstanceId: invocation.protocolInstanceId,
-          updateId: invocation.updateId,
-          status: 'failure',
-          failure,
-          handlerName: registered.name,
-          identity: invocation.identity,
-        })
-        guard.recordUpdate({
-          updateId: invocation.updateId,
-          stage: 'completed',
-          handlerName: registered.name,
-          identity: invocation.identity,
-          outcome: 'failure',
-          failureMessage: failure instanceof Error ? failure.message : String(failure),
-          messageId,
-        })
-      }
+        if (Exit.isSuccess(executionExit)) {
+          dispatches.push({
+            type: 'completion',
+            protocolInstanceId: invocation.protocolInstanceId,
+            updateId: invocation.updateId,
+            status: 'success',
+            result: executionExit.value,
+            handlerName: registered.name,
+            identity: invocation.identity,
+          })
+          guard.recordUpdate({
+            updateId: invocation.updateId,
+            stage: 'completed',
+            handlerName: registered.name,
+            identity: invocation.identity,
+            outcome: 'success',
+            messageId,
+          })
+        } else {
+          const failure = this.#resolveError(executionExit.cause)
+          if (failure instanceof WorkflowBlockedError) return
+          dispatches.push({
+            type: 'completion',
+            protocolInstanceId: invocation.protocolInstanceId,
+            updateId: invocation.updateId,
+            status: 'failure',
+            failure,
+            handlerName: registered.name,
+            identity: invocation.identity,
+          })
+          guard.recordUpdate({
+            updateId: invocation.updateId,
+            stage: 'completed',
+            handlerName: registered.name,
+            identity: invocation.identity,
+            outcome: 'failure',
+            failureMessage: failure instanceof Error ? failure.message : String(failure),
+            messageId,
+          })
+        }
+      })
     }
-
-    return dispatches
   }
 
   #normalizeUpdateError(error: unknown): Error {

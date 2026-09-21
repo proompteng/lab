@@ -260,13 +260,16 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
            AND cycle.strategy_protocol_hash = generation.strategy_protocol_hash
           WHERE generation.requires_blocked_cycle
             AND generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
-            AND cycle.schema_version = 'bayn.autonomous-cycle.v3'
-            AND cycle.identity_schema_version = 'bayn.autonomous-cycle-identity.v3'
+            AND cycle.schema_version IN ('bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
+            AND cycle.identity_schema_version IN (
+              'bayn.autonomous-cycle-identity.v3',
+              'bayn.autonomous-cycle-identity.v4'
+            )
             AND cycle.state IN ('PENDING', 'ACTIVE')
             AND cycle.snapshot_id IS NULL
             AND cycle.decision_hash IS NULL
-            AND cycle.updated_at <= generation.restricted_at
-            AND ${input.observedAt}::timestamptz < cycle.submission_open_at
+            AND cycle.updated_at <= ${input.observedAt}::timestamptz
+            AND ${input.observedAt}::timestamptz < cycle.submission_cutoff_at
             AND NOT EXISTS (
               SELECT 1
               FROM autonomous_cycle_shadow_decisions AS decision

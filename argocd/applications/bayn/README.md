@@ -1,5 +1,17 @@
 # Bayn GitOps rollout notes
 
+## Streaming protocol activation
+
+The streaming implementation uses `bayn.intraday-momentum.protocol.v3`. Its reviewed behavior, parameter, and protocol
+hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
+The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
+subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+
+The worker requires Kafka and consumes verified raw-feature joins through the common market-data adapter. Its versioned bootstrap budget is five minutes: the initial 905,542-record
+catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's
+content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
+progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
+
 ## Regular-session trading boundaries
 
 Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
@@ -16,18 +28,11 @@ activation identity, stored cycle boundaries, natural controller progress, and u
 After zero-offset cycles exist, rollback must retain a runtime that can decode them. Do not restore the old positive-only
 constraints or delete cycles to make an incompatible binary start.
 
-## Archive reader availability evidence
+## Historical evidence after the hard migration
 
-Migration 58 adds the append-only `intraday_archive_availability` evidence table. The execution worker records the
-first retained completed observation of each exact source record; historical replay only reads it. This rollout does
-not alter strategy parameters, behavior identity, broker access, or the standing research mandate. Deliver it through
-the existing Bayn build/release/GitOps path. Startup migrations must finish before the new execution worker runs.
-
-Verify the exact worker source/image, successful migration, fresh controller progress, and unchanged reconciliation
-and authority. Natural read receipts require an actual eligible session/read and must not be inferred from pod health.
-Replay without historical receipts must remain incomplete in default recorded-reader mode. A compatible source rollback
-may stop new collection but must retain the additive table and all receipts; never backfill receipt timestamps, delete
-evidence, or submit a broker order as rollout proof.
+The worker no longer collects archive-reader receipts or falls back to ClickHouse for trading input. Historical
+receipts and financial records remain append-only in PostgreSQL. The backtest command consumes frozen datasets
+through the common market-data interface and binds each run to its source manifest, clock, and simulated broker.
 
 ## Native Restate execution cutover
 
@@ -107,6 +112,12 @@ A mandate rotation must update the request content hash, build lineage, and acti
 change. Argo replaces the Secret in wave `-2`, rolls the controller in wave `-1`, runs the idempotent activation hook in
 wave `0`, and rolls the read-only status service in wave `1`. The expected impact is one normal controller/status rollout
 and a drained Restate worker revision; the activation hook itself cannot reach the broker.
+
+The SealedSecret's `proompteng.ai/bayn.mandate-identity` annotation records the request hash, strategy identity, authored
+build, and ciphertext hash without exposing the broker account. The manifest check compares it with the compiled
+strategy and all three runtime lineages. Regenerate this annotation from the validated request when sealing it;
+changing an annotation does not authorize a different encrypted request. Runtime validation remains authoritative.
+Invalid static mandate configuration fails preparation with its specific reason before authority recovery begins.
 
 After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
 sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation

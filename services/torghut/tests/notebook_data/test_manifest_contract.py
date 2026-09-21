@@ -437,3 +437,26 @@ def test_database_principals_are_read_only_and_bounded() -> None:
         "name": "torghut-notebook-clickhouse",
         "key": "password",
     }
+
+
+@pytest.mark.parametrize(
+    "retired_key",
+    [
+        "PGHOST",
+        "PGPORT",
+        "PGDATABASE",
+        "PGUSER",
+        "PGPASSWORD",
+        "PGOPTIONS",
+        "TORGHUT_STATUS_URL",
+    ],
+)
+def test_notebook_validation_rejects_retired_service_connections(
+    retired_key: str,
+) -> None:
+    from scripts.validate_notebook_render import _validate_singleuser_values
+
+    values = yaml.safe_load((NOTEBOOKS_DIR / "values.yaml").read_text())
+    values["singleuser"]["extraEnv"][retired_key] = "retired-service"
+    with pytest.raises(AssertionError):
+        _validate_singleuser_values(values)

@@ -44,6 +44,9 @@ dependencies {
   implementation("ch.qos.logback:logback-classic:$logbackVersion")
 
   testImplementation(kotlin("test"))
+  testImplementation("org.apache.flink:flink-streaming-java:$flinkVersion:tests")
+  testImplementation("org.apache.flink:flink-runtime:$flinkVersion:tests")
+  testImplementation("org.apache.flink:flink-test-utils-junit:$flinkVersion")
 }
 
 tasks.withType<Jar> { archiveBaseName.set("technical-analysis-flink") }
@@ -64,7 +67,10 @@ tasks.register<Jar>("uberJar") {
   manifest { attributes["Main-Class"] = "ai.proompteng.dorvud.ta.flink.FlinkTechnicalAnalysisJobKt" }
 }
 
-tasks.withType<Test> { useJUnitPlatform() }
+tasks.withType<Test> {
+  useJUnitPlatform()
+  systemProperty("writeMarketFeatureFixture", providers.gradleProperty("writeMarketFeatureFixture").orElse("false").get())
+}
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
   compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)

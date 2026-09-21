@@ -1,5 +1,10 @@
 # Torghut Quant Control Plane Runbook
 
+The ClickHouse guardrails exporter and its `torghut-clickhouse.guardrails.rules` and
+`torghut-freshness.rules` alert groups are retired. Exporter commands and thresholds below are historical
+and must not be used as current acceptance checks. See
+[the current retirement record](../../argocd/applications/torghut/runtime-retirement.md#clickhouse-exporter-removal).
+
 ## Overview
 
 Use this runbook for alerts tied to the Jangar quant control-plane (near-real-time strategy performance) and its

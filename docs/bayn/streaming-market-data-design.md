@@ -1,6 +1,7 @@
 # Bayn streaming market data and Flink features
 
-Status: Proposed implementation design. This document describes the requested architecture, not deployed behavior.
+Status: Implemented contract and PAPER cutover design. See [streaming operations](../../services/bayn/src/market-data/streaming/README.md)
+for the configured runtime and replay procedures; deployment and market-session evidence require current verification.
 Source baseline: `13c53e073a655fde7250d59b926e71d02ca6c2b9`, inspected September 12, 2026 UTC.
 The [current Bayn architecture](architecture.md) remains the reference for the existing runtime.
 
@@ -36,7 +37,7 @@ Raw quotes reach Bayn independently of feature production. An execution price mu
 when a slower feature window supplies the reason to enter. Flink feature updates do not submit orders or trigger a
 second trading scheduler. The account-keyed Restate controller continues to own execution cadence.
 
-## What exists today
+## Source baseline and change scope
 
 | Component           | Source-backed behavior                                                                              | Required change                                                                          |
 | ------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -100,16 +101,16 @@ first feature contract does not depend on that API.
 Every message is a complete feature snapshot for one identity and one completed window. Consumers do not need an
 earlier delta to interpret it.
 
-| Field group | Required content                                                                                           |
-| ----------- | ---------------------------------------------------------------------------------------------------------- |
-| Contract    | Schema version, feature definition ID and hash, calculation artifact revision                              |
-| Identity    | Provider, feed, delay class, universe ID and hash, symbol, market session, session date, calendar identity |
-| Window      | Bar duration, inclusive start, exclusive end, session open and close                                       |
-| Provenance  | Exact input bar revisions, their Kafka topic/partition/offset, content digests, and source ingestion times |
-| Revision    | Logical window ID, immutable feature ID, ordered input digest, correction cause when applicable            |
-| Computation | Actual `computedAt`, maximum input event time, maximum source ingestion time                               |
-| Quality     | Expected and observed bars, missing intervals, contiguous history length, validity and warmup per feature  |
-| Values      | Named values with units, periods, seed rules, rounding, and missing-value reasons                          |
+| Field group | Required content                                                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Contract    | Schema version, feature definition ID and hash, calculation artifact revision                                          |
+| Identity    | Provider, feed, delay class, universe ID and hash, symbol, market session, session date, source session-policy version |
+| Window      | Bar duration, inclusive start, exclusive end; Bayn binds the broker session open and close                             |
+| Provenance  | Exact input bar revisions, their Kafka topic/partition/offset, content digests, and source ingestion times             |
+| Revision    | Logical window ID, immutable feature ID, ordered input digest, correction cause when applicable                        |
+| Computation | Actual `computedAt`, maximum input event time, maximum source ingestion time                                           |
+| Quality     | Expected and observed bars, missing intervals, contiguous history length, validity and warmup per feature              |
+| Values      | Named values with units, periods, seed rules, rounding, and missing-value reasons                                      |
 
 The logical window ID binds identity, definition, and window boundaries. The feature ID additionally binds the
 canonical input revisions and calculated values. Reprocessing identical inputs produces the same feature ID even
@@ -143,9 +144,11 @@ extension declares periods, seed behavior, required history, units, and rounding
 labeled VWAP, and volatility must state its horizon and annualization. These extensions do not delay the initial
 raw-plus-rolling-feature release or silently introduce new entry rules.
 
-State is isolated by the full data identity and exchange session. Session boundaries use a versioned exchange
-calendar, including holidays, early closes, and daylight saving changes. The broker calendar remains authoritative
-for Bayn's order window; a disagreement blocks entry until resolved.
+State is isolated by the full data identity and New York session date. The producer requires the existing Alpaca
+`regular` session classification and a window contained in one local date. Its versioned source policy is
+`alpaca.regular.new-york-date.v1`; it does not claim to supply a second exchange calendar. Bayn binds the existing
+verified broker calendar and checks every feature window against the actual open and close, including holidays,
+early closes, and daylight saving changes. A source classification outside that broker session cannot authorize entry.
 
 Within a session, retain one canonical bar revision per minute. Bound state to that session's scheduled minutes and
 expire old session state. Resolve retransmissions and corrections using the same explicit precedence rule as the

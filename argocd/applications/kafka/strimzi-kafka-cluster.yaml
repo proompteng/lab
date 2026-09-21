@@ -32,6 +32,7 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
+      broker.session.timeout.ms: 60000
       controller.quorum.election.timeout.ms: 60000
       controller.quorum.fetch.timeout.ms: 180000
     livenessProbe:
