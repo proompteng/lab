@@ -1,3 +1,11 @@
+import { makeStrategyProtocolHashResult } from './contracts'
+import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
+import { defaultJevProtocolDocument, jevBehaviorHash } from './jev/protocol'
+import { jevExitCommitDeadline, JevExitReason } from './jev/exit'
+import {
+  SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
+  SnapshotManifestFields as ExecutionMarketDataBindingFields,
+} from './market-data/streaming/manifest-schema'
 import type {
   SimulatedMarketSnapshot,
   StreamingMarketSnapshot,
@@ -43,7 +51,6 @@ import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthor
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
-  PositiveIntegerSchema,
   Sha256Schema,
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
@@ -63,7 +70,7 @@ import {
 } from './target-planner'
 import { verifyIntradayMomentumDecisionEnvelope } from './strategy/intraday-momentum/decision'
 import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision-core'
-import { RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
+import { isFlatExecutionTarget, RuntimeStrategyDecisionSchema } from './strategy/runtime-decision'
 import {
   intradayMomentumSignalRejectionReasons,
   selectCanonicalIntradayMomentumSignals,
@@ -74,64 +81,6 @@ import {
   intradayMomentumSnapshotSymbols,
 } from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'
-
-const ExecutionCalendarObservationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
-  source: Schema.Literal('alpaca-v2-calendar'),
-  requestedRange: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }),
-  timeZone: Schema.Literal('UTC'),
-  sessions: Schema.Array(
-    Schema.Struct({ date: IsoDateSchema, openAt: UtcInstantSchema, closeAt: UtcInstantSchema }),
-  ).check(Schema.isMinLength(1)),
-  normalizedResponseHash: Sha256Schema,
-})
-
-const ExecutionLineageSchema = Schema.Struct({
-  sourceTopic: StrictNonEmptyStringSchema,
-  sourcePartition: NonNegativeIntegerSchema,
-  firstOffset: UnsignedMicrosSchema,
-  lastOffset: UnsignedMicrosSchema,
-  recordCount: PositiveIntegerSchema,
-})
-
-const ExecutionCandidateExclusionSchema = Schema.Struct({
-  symbol: SymbolSchema,
-  reason: Schema.Literals(['not-ready', 'freshness']),
-  message: StrictNonEmptyStringSchema,
-})
-
-const ExecutionMarketDataBindingFields = {
-  sessionDate: IsoDateSchema,
-  calendar: ExecutionCalendarObservationSchema,
-  rangeStartAt: UtcInstantSchema,
-  rangeEndAt: UtcInstantSchema,
-  observedAt: UtcInstantSchema,
-  universeId: StrictNonEmptyStringSchema,
-  universeSymbolHash: Sha256Schema,
-  symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
-  /** Independent entry evidence carries the complete candidate request and its availability result. */
-  candidateSymbols: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
-  candidateExclusions: Schema.optionalKey(Schema.Array(ExecutionCandidateExclusionSchema).check(Schema.isUnique())),
-  purpose: Schema.optionalKey(Schema.Enum(IntradaySnapshotPurpose)),
-  feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
-  delayClass: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
-  sourceTopics: Schema.Struct({
-    bars: StrictNonEmptyStringSchema,
-    quotes: StrictNonEmptyStringSchema,
-    trades: StrictNonEmptyStringSchema,
-  }),
-  maximumQuoteAgeMs: PositiveIntegerSchema,
-  minimumWatermarkLagMs: NonNegativeIntegerSchema,
-  barCount: NonNegativeIntegerSchema,
-  quoteCount: PositiveIntegerSchema,
-  tradeCount: NonNegativeIntegerSchema,
-  barsContentHash: Sha256Schema,
-  quotesContentHash: Sha256Schema,
-  tradesContentHash: Sha256Schema,
-  lineage: Schema.Array(ExecutionLineageSchema).check(Schema.isMinLength(1)),
-  contentHash: Sha256Schema,
-  snapshotId: Sha256Schema,
-} as const
 
 const ExecutionMarketDataBindingBase = Schema.Union([
   Schema.Struct({
@@ -1043,7 +992,8 @@ const streamingPricingEvidenceIssues = (
         facts?.state.marketDataSymbol === symbol &&
         facts.state.entryQuote !== undefined &&
         (facts.state.entryQuote.eventAt !== quote.eventAt ||
-          facts.state.entryQuote.maximumAgeMs !== binding.maximumQuoteAgeMs)
+          facts.state.entryQuote.maximumAgeMs !==
+            entryQuoteAgeLimit(document, quote.eventAt, binding.maximumQuoteAgeMs))
       )
         return [
           { path: ['deltaRisk'], issue: `streaming entry deadline does not bind the verified quote for ${symbol}` },
@@ -1197,12 +1147,173 @@ const reconstructProposedPositionSequence = (
   return sequence
 }
 
+const jevEntryEvidenceIssues = (
+  document: typeof ExecutionDecisionMaterialSchema.Type,
+): readonly Schema.FilterIssue[] => {
+  const target = document.strategyDecision
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v1' || document.plannerInput === undefined)
+    return [
+      { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
+    ]
+  const issues: Schema.FilterIssue[] = []
+  const { observation, batchPlan } = target.evidence
+  const source = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
+  const pricing = document.bindings.executionMarketData
+  const sourceSnapshot =
+    isSnapshotExecutionMarketDataBinding(source) && document.decisionMarketDataRows !== undefined
+      ? reconstructBoundIntradaySnapshot(source, document.decisionMarketDataRows)
+      : undefined
+  const equal = (left: unknown, right: unknown) => {
+    const a = canonicalHashV1Result(left)
+    const b = canonicalHashV1Result(right)
+    return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
+  }
+  const parameterHash = canonicalHashV1Result(observation.protocol)
+  const protocolHash = parameterHash.pipe(
+    Result.flatMap((hash) =>
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: jevBehaviorHash,
+        parameterHash: hash,
+        parameterSchemaVersion: observation.protocol.schemaVersion,
+      }),
+    ),
+  )
+  if (
+    !equal(observation.protocol, defaultJevProtocolDocument) ||
+    Result.isFailure(protocolHash) ||
+    protocolHash.success !== document.bindings.strategyProtocolHash ||
+    observation.cycleId !== document.bindings.cycleId ||
+    observation.authorityGenerationHash !== document.bindings.authorityGenerationHash ||
+    observation.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
+    observation.portfolio.purpose !== 'ENTRY' ||
+    observation.observedAt > target.decidedAt ||
+    target.decidedAt > document.createdAt ||
+    document.createdAt >= batchPlan.expiresAt
+  )
+    issues.push({
+      path: ['strategyDecision', 'evidence'],
+      issue:
+        'Jev entry must bind this cycle, account, generation, source-controlled protocol and unexpired complete inference batch',
+    })
+  if (
+    sourceSnapshot === undefined ||
+    !equal(sourceSnapshot.manifest, observation.manifest) ||
+    !equal(document.decisionMarketDataRows, observation.rows) ||
+    source?.snapshotId !== document.bindings.snapshotId ||
+    source.contentHash !== document.bindings.snapshotContentHash ||
+    source.observedAt !== document.bindings.snapshotFinalizedAt
+  )
+    issues.push({
+      path: ['decisionMarketDataRows'],
+      issue: 'Jev source rows and snapshot must exactly match the recorded observation',
+    })
+  if (
+    document.plannerInput.brokerState.positions.some((position) => BigInt(position.quantityMicros) !== 0n) ||
+    document.plannerInput.brokerState.reconciliation.reconciledAt <
+      observation.portfolio.brokerState.reconciliation.reconciledAt ||
+    !equal(document.plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
+    document.targetPlan.intentTargets.some((intent) => intent.side !== OrderSide.Buy)
+  )
+    issues.push({
+      path: ['plannerInput'],
+      issue: 'Jev entry requires fresh flat reconciliation and the exact model-selected weights',
+    })
+  if (
+    !isSnapshotExecutionMarketDataBinding(source) ||
+    !isSnapshotExecutionMarketDataBinding(pricing) ||
+    !sameSourceUniverse(source, pricing) ||
+    document.executionSession === undefined ||
+    source.calendar.normalizedResponseHash !== document.executionSession.calendar.normalizedResponseHash ||
+    pricing.calendar.normalizedResponseHash !== source.calendar.normalizedResponseHash ||
+    source.sessionDate !== target.sessionDate ||
+    pricing.sessionDate !== target.sessionDate ||
+    target.sessionDate !== document.executionSession.executionSession.date ||
+    pricing.observedAt > document.createdAt ||
+    (document.bindings.decisionMarketData === undefined
+      ? document.targetPlan.intentTargets.length > 0
+      : pricing.purpose !== IntradaySnapshotPurpose.EntryPricing || pricing.observedAt < target.decidedAt)
+  )
+    issues.push({
+      path: ['bindings'],
+      issue: 'Jev execution requires fresh quote pricing from the same verified source universe and session',
+    })
+  issues.push(...streamingPricingEvidenceIssues(document))
+  return issues
+}
+
+const entryQuoteAgeLimit = (document: typeof ExecutionDecisionMaterialSchema.Type, eventAt: string, limit: number) =>
+  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v1'
+    ? jevEntryQuoteMaximumAgeMs(document.strategyDecision, eventAt, limit)
+    : limit
+
+const jevExitEvidenceIssues = (
+  document: typeof ExecutionDecisionMaterialSchema.Type,
+): readonly Schema.FilterIssue[] => {
+  const target = document.strategyDecision
+  if (target?.schemaVersion !== 'bayn.jev-exit-target.v1') return []
+  const evidence = target.evidence
+  const input = document.plannerInput
+  const position = evidence.portfolio.brokerState.positions.find(({ quantityMicros }) => BigInt(quantityMicros) > 0n)
+  const protocolHash = canonicalHashV1Result(evidence.protocol).pipe(
+    Result.flatMap((parameterHash) =>
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: jevBehaviorHash,
+        parameterHash,
+        parameterSchemaVersion: evidence.protocol.schemaVersion,
+      }),
+    ),
+  )
+  const actualProtocol = canonicalHashV1Result(evidence.protocol)
+  const expectedProtocol = canonicalHashV1Result(defaultJevProtocolDocument)
+  if (
+    input === undefined ||
+    position === undefined ||
+    evidence.portfolio.purpose !== 'MANAGE' ||
+    Result.isFailure(protocolHash) ||
+    protocolHash.success !== document.bindings.strategyProtocolHash ||
+    Result.isFailure(actualProtocol) ||
+    Result.isFailure(expectedProtocol) ||
+    actualProtocol.success !== expectedProtocol.success ||
+    target.cycleId !== document.bindings.cycleId ||
+    target.sessionDate !== document.executionSession?.executionSession.date ||
+    evidence.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
+    document.createdAt < target.observedAt ||
+    (document.replanGenerationHash === undefined && document.createdAt >= jevExitCommitDeadline(target)) ||
+    input.brokerState.reconciliation.reconciledAt < evidence.portfolio.brokerState.reconciliation.reconciledAt ||
+    input.brokerState.positions.some(
+      (held) =>
+        BigInt(held.quantityMicros) !== 0n &&
+        (held.symbol !== position.symbol ||
+          BigInt(held.quantityMicros) < 0n ||
+          BigInt(held.quantityMicros) > BigInt(position.quantityMicros)),
+    ) ||
+    Object.values(input.targetWeights).some((weight) => weight !== 0) ||
+    document.targetPlan.intentTargets.some(
+      (intent) => intent.side !== OrderSide.Sell || intent.symbol !== position.symbol,
+    ) ||
+    (evidence.trigger.reason === JevExitReason.Model &&
+      evidence.trigger.decision.evidence.observation.authorityGenerationHash !==
+        document.bindings.authorityGenerationHash)
+  )
+    return [
+      {
+        path: ['strategyDecision', 'evidence'],
+        issue:
+          'Jev exit must bind this account, native protocol, cycle, session and decreasing held position; its initial close must commit before evidence expiry',
+      },
+    ]
+  return []
+}
+
 const executionMaterialIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const planned = document.targetPlan.status === TargetPlanStatus.Planned
-  const requiresDurableRiskFacts = document.bindings.strategyName === 'intraday-momentum' && planned
+  const intradayStrategy = ['intraday-momentum', 'jev'].includes(document.bindings.strategyName)
+  const requiresDurableRiskFacts = intradayStrategy && planned
   const riskContext = document.bindings.riskContext
   if (requiresDurableRiskFacts && riskContext === undefined) {
     issues.push({
@@ -1259,11 +1370,11 @@ const executionMaterialIssues = (
   const usesExtendedCloseLease =
     document.executionSession !== undefined &&
     document.submissionCutoffAt > document.executionSession.submissionCutoffAt
-  const isClosePlan = strategyDecision?.schemaVersion === 'bayn.execution-flat-target.v1' || usesExtendedCloseLease
+  const isClosePlan = isFlatExecutionTarget(strategyDecision) || usesExtendedCloseLease
   if (
     document.entryLimitSlippageBps !== undefined &&
     (isClosePlan ||
-      document.bindings.strategyName !== 'intraday-momentum' ||
+      !intradayStrategy ||
       document.riskPolicy === undefined ||
       document.entryLimitSlippageBps > document.riskPolicy.maxAdverseSlippageBps)
   ) {
@@ -1281,7 +1392,7 @@ const executionMaterialIssues = (
       issue: 'liquidation market data must bind a close-only target plan and must not bind an entry plan',
     })
   }
-  if (usesEntryPricingMarketData && (isClosePlan || document.bindings.strategyName !== 'intraday-momentum')) {
+  if (usesEntryPricingMarketData && (isClosePlan || !intradayStrategy)) {
     issues.push({
       path: ['bindings', 'executionMarketData', 'purpose'],
       issue: 'entry-pricing market data may bind only an intraday-momentum entry plan',
@@ -1326,6 +1437,8 @@ const executionMaterialIssues = (
         issue: 'simulated input cuts require one source manifest, replay run, and its synthetic account',
       })
   }
+  if (document.bindings.strategyName === 'jev' && !isClosePlan) issues.push(...jevEntryEvidenceIssues(document))
+  issues.push(...jevExitEvidenceIssues(document))
   if (document.bindings.strategyName === 'intraday-momentum' && !isClosePlan) {
     if (document.plannerInput === undefined) {
       issues.push({
@@ -1693,7 +1806,8 @@ const executionMaterialIssues = (
           (facts.state.entryQuote !== undefined &&
             (executionMarketData === undefined ||
               !('maximumQuoteAgeMs' in executionMarketData) ||
-              facts.state.entryQuote.maximumAgeMs !== executionMarketData.maximumQuoteAgeMs)) ||
+              facts.state.entryQuote.maximumAgeMs !==
+                entryQuoteAgeLimit(document, facts.state.entryQuote.eventAt, executionMarketData.maximumQuoteAgeMs))) ||
           facts.state.marketDataHash !== expectedMarketDataHash ||
           facts.state.executionMarketDataHash !== executionMarketData?.contentHash ||
           facts.state.referencePriceMicros !==

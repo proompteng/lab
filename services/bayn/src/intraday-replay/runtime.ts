@@ -1,4 +1,11 @@
 import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
+import { makeJevBatchStore } from '../db/jev-batch-postgres'
+import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
+import { makeJevPositionStore } from '../db/jev-position-postgres'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevClient } from '../jev/client'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevPositionStore } from '../jev/portfolio'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { PgClient } from '@effect/sql-pg'
 import { Context, Effect } from 'effect'
@@ -34,6 +41,7 @@ import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
 import { MutationStore } from '../execution/mutations'
 import { makeTradingEngine } from '../composition/trading-engine'
 import { WriterFence } from '../execution/writer-fence'
+import type { ExecutionProgramDependencies } from '../execution/runtime-program'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -42,14 +50,13 @@ import type { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evi
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
 import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
 import type { StrategyRuntime } from '../strategy'
-import type { IntradayExitTiming } from '../strategy/intraday-momentum/research'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { operationalError, type OperationalError } from '../errors'
 import { currentUtcInstant } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
 
 export interface ReplayExecutionRuntimeInput {
-  readonly exitTiming?: IntradayExitTiming
+  readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
   readonly config: ExecutionStoreRuntimeConfig
   readonly strategy: StrategyRuntime
   readonly broker: Effect.Success<ReturnType<typeof makeReplayBroker>>
@@ -99,6 +106,10 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const cycleStore = withWriterFenceCycleStore(yield* makeCycleStore(input.clock), fence)
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
     const candidateObservationStore = yield* makeCandidateObservationStore
+    const jevClient = yield* JevClient
+    const jevEvaluations = yield* makeJevEvaluationStore
+    const jevBatches = yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations))
+    const jevPositions = yield* makeJevPositionStore
     const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
     const plan = {
       schemaVersion: 'bayn.research-execution-plan.v1' as const,
@@ -162,9 +173,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const engine = yield* makeTradingEngine({
       authority,
       cycle: {
-        ...(input.exitTiming === undefined
-          ? {}
-          : { simulation: { runId: input.source.runId, exitTiming: input.exitTiming } }),
         accountId: identity.accountId,
         authorityGenerationHash: activated.generationHash,
         strategy: input.strategy,
@@ -177,6 +185,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       },
       executionMode: 'Mutation',
       execution: {
+        currentUtcInstant: input.currentUtcInstant,
         brokerRead: input.broker.read,
         brokerMutation: input.broker.mutation,
         intentStore,
@@ -189,6 +198,10 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     })
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
       Context.add(CandidateObservationStore, candidateObservationStore),
+      Context.add(JevClient, jevClient),
+      Context.add(JevEvaluationStore, jevEvaluations),
+      Context.add(JevBatchStore, jevBatches),
+      Context.add(JevPositionStore, jevPositions),
       Context.add(CycleStore, cycleStore),
       Context.add(BrokerEventStore, store.events),
       Context.add(FillAccountingStore, store.accounting),

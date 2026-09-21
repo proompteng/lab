@@ -12,6 +12,8 @@ import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from '
 import { decodeJevBatchPlan, JevCandidatePlanStatus, makeJevBatchPlan } from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
+import { JevPurpose, type JevPortfolio } from './portfolio'
+import type { JevProtocol } from './protocol'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -168,7 +170,27 @@ export const jevTradingQuestions = {
   },
 } satisfies JevRequest['questions']
 
-const requestFromSnapshot = (snapshot: StrategyMarketSnapshot, symbol: string, benchmarkSymbol: string) =>
+export const jevManagementQuestions = {
+  continuation: jevTradingQuestions.continuation,
+  exhaustion: jevTradingQuestions.exhaustion,
+  action: {
+    type: 'choice',
+    instructions:
+      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
+    criteria: {
+      hold: 'Continuation is supported by the current evidence over the remaining holding horizon.',
+      exit: 'Deteriorating, exhausted or contradictory current evidence supports closing the long.',
+      unclear: 'The evidence does not distinguish holding from exiting.',
+    },
+  },
+} satisfies JevRequest['questions']
+
+const requestFromSnapshot = (
+  snapshot: StrategyMarketSnapshot,
+  symbol: string,
+  benchmarkSymbol: string,
+  native?: { readonly protocol: JevProtocol; readonly portfolio: JevPortfolio },
+) =>
   Result.gen(function* () {
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
     const candidate = yield* signalFor(snapshot, symbol)
@@ -177,16 +199,49 @@ const requestFromSnapshot = (snapshot: StrategyMarketSnapshot, symbol: string, b
     const session = snapshot.manifest.calendar.sessions.find((entry) => entry.date === snapshot.manifest.sessionDate)
     if (session === undefined) return yield* unavailable('Jev signal snapshot has no matching market session')
     const observed = Date.parse(snapshot.manifest.observedAt)
+    let position = null
+    if (native?.portfolio.purpose === JevPurpose.Manage) {
+      const held = native.portfolio.brokerState.positions.find(
+        (entry) => entry.symbol === symbol && BigInt(entry.quantityMicros) > 0n,
+      )
+      const firstFill = native.portfolio.entryFills[0]
+      if (
+        held === undefined ||
+        held.schemaVersion !== 'bayn.position.v2' ||
+        firstFill === undefined ||
+        BigInt(held.costBasisMicros) <= 0n
+      )
+        return yield* unavailable('Jev management requires the actual long, cost basis and entry fills')
+      const cost = BigInt(held.costBasisMicros)
+      const pnl = (candidate.prices.bid * BigInt(held.quantityMicros)) / 1_000_000n - cost
+      const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
+      position = {
+        symbol,
+        quantityShares: Number(held.quantityMicros) / 1_000_000,
+        costBasisUsd: Number(cost) / 1_000_000,
+        averageEntryPriceUsd: Number(cost) / Number(held.quantityMicros),
+        entryFilledAt: firstFill.occurredAt,
+        heldForMinutes,
+        maximumHoldingMinutes: native.protocol.maximumHoldingMinutes,
+        remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
+        unrealizedPnlAtBidUsd: Number(pnl) / 1_000_000,
+        unrealizedPnlAtBidBps: Number((pnl * 10_000n) / cost),
+        entryFeesUsd:
+          Number(native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n)) / 1_000_000,
+      }
+    }
     return yield* prepareJevRequest({
       model: jevModel,
       state: {
-        schemaVersion: 'bayn.jev-trading-signal-state.v1',
+        schemaVersion: native === undefined ? 'bayn.jev-trading-signal-state.v1' : native.protocol.inputDefinition,
         task: {
           positionPolicy: 'long-only',
-          horizonMinutes: 15,
+          horizonMinutes: native?.protocol.horizonMinutes ?? 15,
+          ...(native === undefined ? {} : { decisionPurpose: native.portfolio.purpose }),
           purpose:
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',
         },
+        ...(native === undefined ? {} : { position }),
         units: {
           prices: 'USD per share',
           volume: 'shares on the IEX feed',
@@ -211,7 +266,7 @@ const requestFromSnapshot = (snapshot: StrategyMarketSnapshot, symbol: string, b
         benchmark: benchmark.state,
         relativeSignals: metrics,
       },
-      questions: jevTradingQuestions,
+      questions: native?.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
     })
   })
 
@@ -251,6 +306,7 @@ export const reproduceJevRequestFromObservation = (request: JevEvaluationRequest
       observation.snapshot,
       request.symbol,
       observation.protocol.benchmarkSymbol,
+      observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
     )
     if (prepared.requestHash !== request.requestHash)
       return yield* unavailable('Jev request payload differs from the reproduced trading signals and questions')
@@ -262,6 +318,11 @@ export const makeJevTradingSignalBatch = (input: { readonly observation: unknown
     const observation = yield* reproduceJevCandidateObservation(input.observation)
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
+    if (
+      observation.schemaVersion === 'bayn.jev-observation.v1' &&
+      Date.parse(input.expiresAt) !== Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs
+    )
+      return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
       return yield* unavailable('Jev batch requires the complete recorded candidate universe')
     const candidates = []
@@ -271,7 +332,12 @@ export const makeJevTradingSignalBatch = (input: { readonly observation: unknown
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
         continue
       }
-      const prepared = yield* requestFromSnapshot(snapshot, symbol, protocol.benchmarkSymbol)
+      const prepared = yield* requestFromSnapshot(
+        snapshot,
+        symbol,
+        protocol.benchmarkSymbol,
+        observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
+      )
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
         cycleId: observation.cycleId,
@@ -297,7 +363,13 @@ export const makeJevTradingSignalBatch = (input: { readonly observation: unknown
       observedAt: manifest.observedAt,
       expiresAt: input.expiresAt,
       benchmarkSymbol: protocol.benchmarkSymbol,
-      questionSetHash: yield* canonicalHashV1Result({ model: jevModel, questions: jevTradingQuestions }).pipe(
+      questionSetHash: yield* canonicalHashV1Result({
+        model: jevModel,
+        questions:
+          observation.schemaVersion === 'bayn.jev-observation.v1' && observation.portfolio.purpose === JevPurpose.Manage
+            ? jevManagementQuestions
+            : jevTradingQuestions,
+      }).pipe(
         Result.mapError((cause) => new JevContractError({ message: 'Jev question set cannot be hashed', cause })),
       ),
       candidates,

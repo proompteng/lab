@@ -11,6 +11,7 @@ export enum DecisionReadinessReason {
   SnapshotStale = 'SNAPSHOT_STALE',
   ArchiveWatermark = 'ARCHIVE_WATERMARK',
   NoEligibleCandidate = 'NO_ELIGIBLE_CANDIDATE',
+  SignalWindowObserved = 'SIGNAL_WINDOW_OBSERVED',
 }
 
 export const RequiredFeatureReadinessSchema = Schema.Struct({
@@ -55,6 +56,8 @@ export const CycleWaitReasonSchema = Schema.Union([
   CycleCompletionWaitReasonSchema,
   Schema.Literals([
     'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
+    'JEV_POSITION_AWAITING_RECONCILIATION',
+    'JEV_POSITION_HELD',
     'POST_MUTATION_RECONCILIATION',
     'AWAITING_SUBMISSION_OPEN',
     'AWAITING_CLOSE_WINDOW',

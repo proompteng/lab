@@ -45,7 +45,8 @@ import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
-import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
+import type { ExecutionModelV5Schema } from '../execution-model-contract'
+import type { ReplayQuoteProtocol } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import {
   simulateIntradayReplayMarketCloseCore,
@@ -79,7 +80,7 @@ export interface ReplayBrokerConfig {
   /** Commit terminal broker state before publishing it to readers or returning a response. */
   readonly retainSettlement?: (checkpoint: ReplayBrokerCheckpoint) => Effect.Effect<void, ReplayBrokerFailure>
   readonly openingCashMicros: string
-  readonly protocol: IntradayMomentumProtocol
+  readonly protocol: ReplayQuoteProtocol & { readonly executionModel: typeof ExecutionModelV5Schema.Type }
   readonly assumptions: IntradayReplayIocAssumptions & { readonly latencyMs: number; readonly feeMultiplierPpm: number }
   readonly fractionalTrading: boolean
   readonly assets: readonly AssetObservation[]

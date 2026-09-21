@@ -1,4 +1,11 @@
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
+import { JevBatchStoreLive } from '../db/jev-batch-postgres'
+import { JevPositionStoreLive } from '../db/jev-position-postgres'
+import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
+import { JevClient, JevClientLive, JevError } from '../jev/client'
+import { JevFailure } from '../jev/contract'
+import { defaultJevProtocolDocument } from '../jev/protocol'
+import { intradayFeatureTopic } from '../strategy/intraday-market'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
@@ -23,10 +30,6 @@ import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, MarketDataHealth, type IntradayMarketDataService } from '../market-data'
 import { KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
-import {
-  defaultIntradayMomentumProtocolDocument,
-  intradayMomentumFeatureTopic,
-} from '../strategy/intraday-momentum/protocol'
 import { sqlResource } from '../operations'
 import { operationalError } from '../errors'
 import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
@@ -104,14 +107,14 @@ const WorkerMarketDataLive = (plan: ApplicationIdentity, postgres: ReturnType<ty
         }),
       ),
     )
-  const protocol = defaultIntradayMomentumProtocolDocument
+  const protocol = defaultJevProtocolDocument
   const kafka = KafkaMarketProjectionLive(plan.config.kafka, {
     universeId: protocol.universeId,
     universeSymbolHash: protocol.universeSymbolHash,
     symbols: protocol.universe,
     topics: {
       ...protocol.sourceTopics,
-      features: intradayMomentumFeatureTopic,
+      features: intradayFeatureTopic,
       ...(plan.config.kafka.technicalFeaturesTopic === undefined
         ? {}
         : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
@@ -168,7 +171,9 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
   const journal = JournalResourceLive(plan.config)
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(
+    JevBatchStoreLive.pipe(Layer.provideMerge(JevEvaluationStoreLive)),
     CandidateObservationStoreLive,
+    JevPositionStoreLive,
     ExecutionStoreResourceLive(plan.config),
     BlockedCycleIntentStoreLive,
     IntentStoreLive,
@@ -178,6 +183,31 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
+    plan.config.jevKey === undefined
+      ? Layer.succeed(JevClient, {
+          evaluate: () =>
+            Effect.fail(
+              new JevError({
+                failure: JevFailure.Request,
+                message: 'Jev entry requires the configured TypeSafe credential',
+              }),
+            ),
+        })
+      : JevClientLive(plan.config.jevKey, defaultJevProtocolDocument.inferenceValidityMs).pipe(
+          Layer.catch((cause) =>
+            Layer.effect(
+              JevClient,
+              Effect.fail(
+                operationalError({
+                  component: 'config',
+                  operation: 'jev-client',
+                  message: 'Jev inference configuration is invalid',
+                  cause,
+                }),
+              ),
+            ),
+          ),
+        ),
     BrokerSessionResourceLive(plan.config),
     executionPersistence,
     WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),

@@ -21,7 +21,9 @@ const ExecutionCycleClosureMaterialSchema = Schema.Struct({
       closure.document.bindings.cycleId === closure.cycleId &&
       closure.document.submissionCutoffAt === closure.expiresAt &&
       closure.document.expiresAt === closure.expiresAt &&
-      closure.document.createdAt === closure.createdAt,
+      closure.document.createdAt === closure.createdAt &&
+      (closure.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v1' ||
+        closure.document.strategyDecision.entryDecisionHash === closure.entryDecisionHash),
   ),
 )
 

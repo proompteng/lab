@@ -8,8 +8,8 @@ import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { defaultIntradayMomentumProtocolDocument, strategyDefinition, type StrategyRuntime } from '../strategy'
-import { replayIntradayProtocol } from '../strategy/intraday-momentum/research'
+import { strategyDefinition, type StrategyRuntime } from '../strategy'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -26,12 +26,12 @@ export const prepareObserveStartup = (
   input: ObserveAutonomousCycleInput,
 ): Result.Result<ObserveStartupPreparation, OperationalError> => {
   const definition = strategyDefinition(input.strategy)
-  if (definition.name !== 'intraday-momentum' || definition.holdingPeriod !== 'INTRADAY') {
+  if (definition.name !== 'jev' || definition.holdingPeriod !== 'INTRADAY') {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-policy',
-        message: 'autonomous execution requires the active intraday-momentum strategy',
+        message: 'autonomous execution requires the active Jev strategy',
       }),
     )
   }
@@ -60,18 +60,13 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const sourceProtocolHash =
-    input.simulation === undefined
-      ? canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
-      : replayIntradayProtocol({ accountId: input.accountId, ...input.simulation }).pipe(
-          Result.flatMap(canonicalHashV1Result),
-        )
+  const sourceProtocolHash = canonicalHashV1Result(defaultJevProtocolDocument)
   if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'cycle-policy',
-        message: 'intraday-momentum autonomous execution requires the source-controlled protocol',
+        message: 'Jev autonomous execution requires the source-controlled protocol',
         ...(Result.isFailure(sourceProtocolHash) ? { cause: sourceProtocolHash.failure } : {}),
       }),
     )

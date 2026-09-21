@@ -32,11 +32,20 @@ import { postgresMigrations } from '../db/postgres-migrations'
 import { JournalLive } from '../ledger'
 import { canonicalHashV1 } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
-import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
+import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { makeActiveStrategyRuntime } from '../strategy'
-import { IntradayExitTiming, intradayExitTimingProtocol } from '../strategy/intraday-momentum/research'
+import { JevClient } from '../jev/client'
+import { nativeJevInference } from '../jev/native.test-support'
+import { prepareJevRequest } from '../jev/contract'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevPositionStore } from '../jev/portfolio'
+import { JevBatchStoreLive } from '../db/jev-batch-postgres'
+import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
+import { JevPositionStoreLive } from '../db/jev-position-postgres'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
+import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import {
@@ -45,9 +54,10 @@ import {
   arrivalPosition,
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
-import { utcInstantFromEpochMillis } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
+import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 import { BrokerRead } from '../broker/alpaca'
 import {
   AuthorityGenerationStore,
@@ -75,17 +85,18 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
 durableTest.each([
-  ['fill', IntradayExitTiming.Current],
-  ['fallback', IntradayExitTiming.Current],
-  ['missing-benchmark', IntradayExitTiming.Current],
-  ['no-trade', IntradayExitTiming.Current],
-  ['recovery', IntradayExitTiming.Current],
-  ['recovery-filled', IntradayExitTiming.Current],
-  ['fill', IntradayExitTiming.FifteenMinutes],
-  ['fill', IntradayExitTiming.ThirtyMinutes],
+  'fill',
+  'fallback',
+  'missing-benchmark',
+  'no-trade',
+  'recovery',
+  'recovery-filled',
+  'early-exit',
+  'partial-exit-reentry',
+  'measured-exit',
 ] as const)(
-  'production cycle and durable accounting: %s / %s',
-  async (scenario, exitTiming) => {
+  'native Jev production cycle and durable accounting: %s',
+  async (scenario) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -95,8 +106,83 @@ durableTest.each([
       !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
     )
       throw new Error('Replay acceptance requires isolated local test databases')
-    const protocol = Result.getOrThrow(intradayExitTimingProtocol(exitTiming))
+    const protocol = fixtureProtocol
+    let managementCalls = 0
+    const measuredCalls: ReplayJevCall[] = []
     const fixture = { ...simulationFixture(undefined, undefined, scenario === 'no-trade' ? {} : undefined), protocol }
+    const initialAtMs = Date.parse(fixture.query.observedAt)
+    const reentryAtMs = initialAtMs + 120_000
+    const lifecycleObservations =
+      scenario === 'partial-exit-reentry'
+        ? [
+            ...Array.from({ length: 25 }, (_, index) => ({
+              at: initialAtMs + (index + 1) * 1000,
+              fullWindow: false,
+              offset: BigInt((index + 1) * 1000),
+              bidSize: 40,
+              premium: 0.02,
+            })),
+            { at: reentryAtMs, fullWindow: true, offset: 30_000n, bidSize: 100, premium: 0.02 },
+          ]
+        : scenario === 'measured-exit'
+          ? [
+              { at: initialAtMs + 1, fullWindow: true, offset: 1000n, bidSize: 100, premium: 0.02 },
+              ...Array.from({ length: 200 }, (_, index) => ({
+                at: initialAtMs + (index + 1) * 200,
+                fullWindow: false,
+                offset: BigInt((index + 2) * 1000),
+                bidSize: 100,
+                premium: 0.02 + (index + 1) * 0.00002,
+              })),
+            ]
+          : []
+    const lifecycleArrivals = lifecycleObservations
+      .flatMap(({ at, fullWindow, offset, bidSize, premium }) => {
+        const windowEnd = Math.floor(at / 60_000) * 60_000
+        const query = {
+          ...fixture.query,
+          symbols: [...protocol.candidateSymbols, protocol.benchmarkSymbol].sort(),
+          candidateSymbols: protocol.candidateSymbols,
+          rangeStartAt: utcInstantFromEpochMillis(windowEnd - (fullWindow ? 30 : 1) * 60_000),
+          rangeEndAt: utcInstantFromEpochMillis(windowEnd),
+          observedAt: utcInstantFromEpochMillis(at),
+          ...(fullWindow ? {} : { purpose: IntradaySnapshotPurpose.EntryPricing }),
+        }
+        const original = makeIntradayMomentumTestSnapshot(
+          protocol,
+          { ...query, archiveWatermarks: [] },
+          { AAPL: premium, AMZN: 0.01 },
+          100,
+          { AAPL: bidSize },
+        )
+        const shiftOffset = <A extends { readonly sourceOffset: string }>(row: A): A => ({
+          ...row,
+          sourceOffset: String(BigInt(row.sourceOffset) + offset),
+        })
+        const raw = {
+          ...original,
+          bars: original.bars.map(shiftOffset),
+          quotes: original.quotes.map(shiftOffset),
+          trades: original.trades.map(shiftOffset),
+        }
+        const arrivals = historicalRawArrivals(raw, at)
+        if (fullWindow) {
+          const { cut } = streamingFixtureFromRaw(raw, query)
+          arrivals.push(
+            ...[...cut.projection.features.values()].flat().map((feature) => ({
+              availableAtMs: at,
+              record: {
+                topic: feature.topic,
+                partition: feature.partition,
+                offset: String(BigInt(feature.offset) + offset),
+                value: JSON.stringify(feature.value),
+              },
+            })),
+          )
+        }
+        return arrivals
+      })
+      .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
     const strategyRuntime = makeActiveStrategyRuntime(protocol, {
       ...fixtureRuntime.provenance,
       strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
@@ -122,7 +208,7 @@ durableTest.each([
     )
       .map((arrival) => ({
         ...arrival,
-        record: { ...arrival.record, offset: String(BigInt(arrival.record.offset) + 10000n) },
+        record: { ...arrival.record, offset: String(BigInt(arrival.record.offset) + 1_000_000n) },
       }))
       .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
     const runId = canonicalHashV1({ attempt: randomUUID() })
@@ -131,7 +217,10 @@ durableTest.each([
       runId,
       sourceManifestHash: canonicalHashV1({
         ...fixture.input,
-        arrivals: { ...fixture.input.arrivals, events: [...fixture.input.arrivals.events, ...closeArrivals] },
+        arrivals: {
+          ...fixture.input.arrivals,
+          events: [...fixture.input.arrivals.events, ...lifecycleArrivals, ...closeArrivals],
+        },
       }),
     }
     const accountId = `replay-${runId}`
@@ -160,12 +249,14 @@ durableTest.each([
     )
     const stores = Layer.mergeAll(
       CandidateObservationStoreLive,
+      JevBatchStoreLive,
+      JevPositionStoreLive,
       IntentStoreLive,
       BlockedCycleIntentStoreLive,
       MutationStoreLive,
       ExecutionCycleClosureStoreLive,
       PersistedCapitalGrantStoreLive,
-    ).pipe(Layer.provideMerge(base))
+    ).pipe(Layer.provideMerge(JevEvaluationStoreLive), Layer.provideMerge(base))
     const outcome = await Effect.runPromise(
       Effect.gen(function* () {
         const initialMs = Date.parse(fixture.query.observedAt)
@@ -195,6 +286,37 @@ durableTest.each([
           runId,
           projection: { ...fixture.cursor.projection, epoch: `historical-${runId}` },
         }
+        let nextLifecycleArrival = 0
+        const advanceMarketTo = (atMs: number) =>
+          Effect.gen(function* () {
+            while (nextLifecycleArrival < lifecycleArrivals.length) {
+              const arrival = lifecycleArrivals[nextLifecycleArrival]
+              if (arrival === undefined || arrival.availableAtMs > atMs) break
+              cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+              nextLifecycleArrival += 1
+            }
+            yield* clock.advanceTo(utcInstantFromEpochMillis(atMs))
+            yield* TestClock.setTime(atMs)
+          })
+        const provider = yield* JevClient
+        const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+        const timing =
+          scenario === 'measured-exit'
+            ? yield* makeReplayJevTiming({
+                provider,
+                providerClock,
+                advanceTo: (atMs) =>
+                  advanceMarketTo(atMs).pipe(
+                    Effect.mapError(
+                      (cause) => new ReplayBrokerFailure({ message: 'Measured source advance failed', cause }),
+                    ),
+                  ),
+                retain: (call) =>
+                  Effect.sync(() => {
+                    measuredCalls.push(call)
+                  }),
+              })
+            : undefined
         const broker = yield* makeReplayBroker({
           runId,
           sourceManifestHash: source.sourceManifestHash,
@@ -227,8 +349,7 @@ durableTest.each([
           ),
           quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
           advanceToArrival: (atMs) =>
-            clock.advanceTo(utcInstantFromEpochMillis(atMs)).pipe(
-              Effect.andThen(TestClock.setTime(atMs)),
+            advanceMarketTo(atMs).pipe(
               Effect.mapError(
                 (cause) => new ReplayBrokerFailure({ message: 'Cannot advance test arrival clock', cause }),
               ),
@@ -240,7 +361,6 @@ durableTest.each([
         const runtimeInput = {
           config,
           strategy: strategyRuntime,
-          exitTiming,
           broker: {
             ...broker,
             read: {
@@ -269,14 +389,24 @@ durableTest.each([
                 : cursor,
           ),
           clock,
+          currentUtcInstant: timing?.currentUtcInstant ?? currentUtcInstant,
           recordPass: (pass: Parameters<import('../app').RecordAutonomousCyclePass>[0]) =>
             Ref.update(passes, (values) => [...values, pass]),
           pollIntervalMs: 1000,
-          reconciliationIntervalMs: 1000,
+          reconciliationIntervalMs: scenario === 'measured-exit' ? config.operationTimeoutMs : 1000,
           reconciliationPassTimeoutMs:
             scenario === 'fill' || scenario === 'fallback' ? 1000 : config.operationTimeoutMs,
         }
-        const runtime = yield* makeReplayExecutionRuntime(runtimeInput)
+        const engine = yield* makeReplayExecutionRuntime(runtimeInput).pipe(
+          Effect.provideService(JevClient, timing?.client ?? provider),
+        )
+        const runtime = {
+          ...engine,
+          advance:
+            timing === undefined
+              ? engine.advance
+              : timing.run(engine.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
+        }
         if (scenario === 'missing-benchmark' || scenario === 'no-trade') {
           const schedule = yield* driveReplaySession(
             runtime,
@@ -340,6 +470,10 @@ durableTest.each([
             Context.add(WriterFence, fence),
             Context.add(IntentStore, intents),
             Context.add(MutationStore, mutations),
+            Context.add(JevClient, yield* JevClient),
+            Context.add(JevEvaluationStore, yield* JevEvaluationStore),
+            Context.add(JevBatchStore, yield* JevBatchStore),
+            Context.add(JevPositionStore, yield* JevPositionStore),
           )
           const asOperational = (cause: unknown) =>
             operationalError({
@@ -387,10 +521,11 @@ durableTest.each([
                   executionCycleClosureStore: closures,
                   blockedCycleIntentStore: blockedIntents,
                   pollIntervalMs: 1000,
-                  reconciliationIntervalMs: loseResponse ? 1000 : config.operationTimeoutMs,
-                  reconciliationPassTimeoutMs: loseResponse ? 1000 : config.operationTimeoutMs,
+                  reconciliationIntervalMs: loseResponse ? 3000 : config.operationTimeoutMs,
+                  reconciliationPassTimeoutMs: loseResponse ? 3000 : config.operationTimeoutMs,
                 },
                 execution: {
+                  currentUtcInstant,
                   brokerRead: broker.read,
                   brokerMutation: loseResponse
                     ? {
@@ -432,11 +567,13 @@ durableTest.each([
             })
           const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
           const healthy = yield* openOwner(runtime.authorityGenerationHash, 'Mutation', true)
+          const recoveryAdvances = []
           for (let attempt = 0; attempt < 20 && lostResponses === 0; attempt++) {
             yield* advanceBy(1000)
-            yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+            const advance = yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
+            recoveryAdvances.push(advance.observation)
           }
-          expect(lostResponses).toBe(1)
+          expect(lostResponses, JSON.stringify(recoveryAdvances)).toBe(1)
           yield* advanceBy(1000)
           yield* healthy.advance.pipe(Effect.provideService(OperationDeadlineClock, liveClock))
           expect(healthy.owner.pollUnsafe()).toBeDefined()
@@ -532,23 +669,140 @@ durableTest.each([
           expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
           return { _tag: 'Recovery' as const }
         }
-        yield* clock.advanceTo(utcInstantFromEpochMillis(initialMs + 1))
-        yield* TestClock.setTime(initialMs + 1)
+        yield* advanceMarketTo(initialMs + 1)
         for (let pass = 0; pass < 20; pass++) {
           const advanced = yield* runtime.advance
           if (advanced.observation.result === 'FAILURE' || (yield* broker.snapshot).fills.length > 0) break
           const nextMs = (yield* Clock.currentTimeMillis) + 1000
-          yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
-          yield* TestClock.setTime(nextMs)
+          yield* advanceMarketTo(nextMs)
         }
         const settledMs = (yield* Clock.currentTimeMillis) + 1
-        yield* clock.advanceTo(utcInstantFromEpochMillis(settledMs))
-        yield* TestClock.setTime(settledMs)
+        yield* advanceMarketTo(settledMs)
         yield* runtime.reconcile
+        if (scenario === 'early-exit' || scenario === 'partial-exit-reentry' || scenario === 'measured-exit') {
+          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          for (let attempt = 0; attempt < 12; attempt++) {
+            const advanced = yield* runtime.advance
+            if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
+            const next = (yield* Clock.currentTimeMillis) + 1000
+            yield* advanceMarketTo(next)
+          }
+          const state = yield* broker.snapshot
+          expect(managementCalls, JSON.stringify(yield* Ref.get(passes))).toBe(1)
+          expect(state.fills.map((fill) => fill.side)).toEqual(
+            scenario === 'partial-exit-reentry'
+              ? [OrderSide.Buy, OrderSide.Sell, OrderSide.Sell, OrderSide.Sell]
+              : [OrderSide.Buy, OrderSide.Sell],
+          )
+          expect(state.ledger.positions).toHaveLength(0)
+          const reconciliation = yield* runtime.reconcile
+          expect(reconciliation.report.metrics.accountingExact).toBe(true)
+          expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
+          expect(reconciliation.brokerState.account.cashMicros).toBe(state.ledger.cashMicros)
+          expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
+            { state: 'COMPLETED' },
+          ])
+          if (scenario === 'measured-exit') {
+            expect(measuredCalls).toHaveLength(16)
+            const entryCalls = measuredCalls.filter((call) => {
+              const action = call.request.questions['action']
+              return action?.type === 'choice' && 'enter' in action.criteria
+            })
+            expect(entryCalls).toHaveLength(15)
+            for (const call of measuredCalls) {
+              expect(call.outcome.status).toBe('RECEIVED')
+              expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBeGreaterThanOrEqual(
+                100,
+              )
+            }
+            const lastEntryResponse = Math.max(
+              ...entryCalls.map(
+                (call) =>
+                  Date.parse(call.simulatedStartedAt) +
+                  Date.parse(call.providerCompletedAt) -
+                  Date.parse(call.providerStartedAt),
+              ),
+            )
+            const entry = state.orders[0]?.execution
+            expect(entry).toBeDefined()
+            if (entry === undefined) throw new Error('Missing measured entry execution')
+            expect(Date.parse(entry.submittedAt)).toBeGreaterThanOrEqual(lastEntryResponse)
+            for (const order of state.orders) {
+              const execution = order.execution
+              if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
+                throw new Error('Measured lifecycle requires complete execution quote evidence')
+              const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)
+              const expectedMidpoint = 100 * (1.02 + tick * 0.00002)
+              expect(execution.quote.availableAtMs).toBe(initialAtMs + tick * 200)
+              expect(execution.quote.askPrice).toBeCloseTo(expectedMidpoint + 0.01, 8)
+              expect(execution.quote.bidPrice).toBeCloseTo(expectedMidpoint - 0.01, 8)
+              const fillPrice = order.order.side === OrderSide.Buy ? execution.quote.askPrice : execution.quote.bidPrice
+              const quotedMicros = BigInt(Math.round(fillPrice * 1_000_000))
+              const tickRoundedMicros =
+                order.order.side === OrderSide.Buy
+                  ? ((quotedMicros + 9999n) / 10000n) * 10000n
+                  : (quotedMicros / 10000n) * 10000n
+              expect(execution.outcome.fillPriceMicros).toBe(tickRoundedMicros.toString())
+              expect(Date.parse(execution.arrivedAt) - Date.parse(execution.submittedAt)).toBe(10)
+            }
+          }
+          if (scenario === 'partial-exit-reentry') {
+            expect(state.fills.map((fill) => fill.quantityMicros)).toEqual([
+              '100000000',
+              '40000000',
+              '40000000',
+              '20000000',
+            ])
+            const restarted = yield* makeReplayExecutionRuntime(runtimeInput)
+            expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
+            yield* restarted.advance
+            expect((yield* broker.snapshot).fills).toHaveLength(4)
+            yield* advanceMarketTo(reentryAtMs)
+            for (let attempt = 0; attempt < 12; attempt++) {
+              const advanced = yield* restarted.advance
+              if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            }
+            const repeated = yield* broker.snapshot
+            expect(
+              repeated.fills.map((fill) => fill.side),
+              JSON.stringify(yield* Ref.get(passes)),
+            ).toEqual([OrderSide.Buy, OrderSide.Sell, OrderSide.Sell, OrderSide.Sell, OrderSide.Buy, OrderSide.Sell])
+            expect(managementCalls).toBe(2)
+            expect(repeated.ledger.positions).toHaveLength(0)
+            const final = yield* restarted.reconcile
+            expect(final.report.metrics.accountingExact).toBe(true)
+            expect(final.brokerState.account.cashMicros).toBe(repeated.ledger.cashMicros)
+            expect(final.riskContext.unknownMutationCount).toBe(0)
+            expect(final.brokerState.unknownOrderCount).toBe(0)
+            expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
+              { state: 'COMPLETED' },
+              { state: 'COMPLETED' },
+            ])
+            expect(
+              yield* sql`
+                SELECT payload #>> '{manifest,rangeEndAt}' AS window_end
+                FROM intraday_candidate_observations
+                WHERE payload #>> '{portfolio,purpose}' = 'ENTRY'
+                ORDER BY observed_at
+              `,
+            ).toEqual([{ window_end: '2026-09-04T14:30:00.000Z' }, { window_end: '2026-09-04T14:32:00.000Z' }])
+            expect(
+              yield* sql`
+                SELECT count(*)::integer AS plans,
+                  bool_and(replan.document #> '{document,strategyDecision}' =
+                    original.document #> '{document,strategyDecision}') AS same_exit_evidence
+                FROM autonomous_cycle_paper_close_replans AS replan
+                JOIN autonomous_cycle_paper_closures AS original USING (cycle_id)
+              `,
+            ).toEqual([{ plans: 2, same_exit_evidence: true }])
+          }
+          return { _tag: 'Lifecycle' as const }
+        }
         let waiting = yield* runtime.advance
         for (
           let attempt = 0;
-          attempt < 4 && waiting.result?.outcome === 'RECOVERED' && waiting.result.waitReason !== 'open-position';
+          attempt < 4 && waiting.result?.outcome === 'RECOVERED' && waiting.result.waitReason !== 'JEV_POSITION_HELD';
           attempt++
         ) {
           const nextMs = (yield* Clock.currentTimeMillis) + 1000
@@ -559,7 +813,7 @@ durableTest.each([
         expect(waiting.result).toMatchObject({
           outcome: 'RECOVERED',
           action: 'WAITING',
-          waitReason: 'open-position',
+          waitReason: 'JEV_POSITION_HELD',
         })
         const recreated = yield* makeReplayExecutionRuntime(runtimeInput)
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
@@ -601,6 +855,32 @@ durableTest.each([
         return { _tag: 'Fill' as const, brokerState, reconciliation, rows, passes: yield* Ref.get(passes) }
       }).pipe(
         Effect.scoped,
+        Effect.provideService(JevClient, {
+          evaluate: (raw) =>
+            Effect.gen(function* () {
+              const started = yield* Clock.currentTimeMillis
+              const { request } = Result.getOrThrow(prepareJevRequest(raw))
+              const action = request.questions['action']
+              const managing = action?.type === 'choice' && 'exit' in action.criteria
+              if (managing) managementCalls += 1
+              if (scenario === 'measured-exit') yield* Effect.sleep('100 millis')
+              const now = yield* Clock.currentTimeMillis
+              return {
+                ...nativeJevInference(
+                  raw,
+                  utcInstantFromEpochMillis(now),
+                  managing
+                    ? scenario === 'early-exit' || scenario === 'partial-exit-reentry' || scenario === 'measured-exit'
+                      ? 'exit'
+                      : 'hold'
+                    : scenario === 'no-trade'
+                      ? 'wait'
+                      : 'enter',
+                ),
+                startedAt: utcInstantFromEpochMillis(started),
+              }
+            }),
+        }),
         Effect.provide(stores),
         Effect.provide(TestClock.layer()),
         Effect.provide(NodeServices.layer),

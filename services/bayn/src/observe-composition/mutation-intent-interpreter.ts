@@ -17,7 +17,7 @@ import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
 import type { CycleExecutionModel } from '../execution-model-contract'
 import {
-  decideExecutionCycleCompletion,
+  decideExecutionPhaseCompletion,
   decideExecutionIntentTerminalDisposition,
   countOpenPositions,
   decidePreparedCloseIntentAdmission,
@@ -588,7 +588,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             ...(record.intent.terminalOutcome === undefined ? {} : { terminalOutcome: record.intent.terminalOutcome }),
             updatedAt: record.updatedAt,
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
-            ...(disposition === 'BENIGN_ZERO_FILL_IOC' ? { benignZeroFillIoc: true as const } : {}),
+            terminalDisposition: disposition,
           })
           if (disposition === 'UNSUCCESSFUL') {
             if (!drainOpenOrders) {
@@ -741,7 +741,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
 
-    const completion = decideExecutionCycleCompletion(document.createdAt, terminalEvidence, {
+    const completion = decideExecutionPhaseCompletion(mutationPhase, document.createdAt, terminalEvidence, {
       status: facts.reconciliation.brokerState.reconciliation.status,
       reconciledAt: facts.reconciliation.brokerState.reconciliation.reconciledAt,
       accountingExact: facts.reconciliation.report.metrics.accountingExact,

@@ -65,6 +65,7 @@ export const driveReplaySession = <E>(
         switch (reason) {
           case DecisionReadinessReason.LookbackWarmup:
           case DecisionReadinessReason.NoEligibleCandidate:
+          case DecisionReadinessReason.SignalWindowObserved:
             break
           case DecisionReadinessReason.DecisionPending:
           case DecisionReadinessReason.SnapshotUnavailable:

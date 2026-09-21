@@ -17,7 +17,7 @@ import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { JournalLive } from '../ledger'
 import { Sha256Schema } from '../schemas'
 import { canonicalJsonV1Result } from '../hash'
-import { utcInstantFromEpochMillis } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import type { RuntimeConfig } from '../config'
 import { config as baseConfig, fixtureRuntime } from '../testing/runtime-fixtures'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
@@ -25,6 +25,8 @@ import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayExecutionRuntime } from './runtime'
 import { validateReplayDatabaseTargets } from '../backtest-command'
+import { JevClient } from '../jev/client'
+import { nativeJevInference } from '../jev/native.test-support'
 
 const main = Effect.scoped(
   Effect.gen(function* () {
@@ -143,6 +145,7 @@ const main = Effect.scoped(
       // The restored broker commits at checkpoint time; the restarted process observes it after that instant.
       if (mode === 'recover') yield* advanceTo(initialMs + 1)
       const runtime = yield* makeReplayExecutionRuntime({
+        currentUtcInstant,
         config,
         strategy: fixtureRuntime,
         broker,
@@ -178,7 +181,15 @@ const main = Effect.scoped(
         yield* Effect.fromResult(canonicalJsonV1Result({ state, reconciliation, counts })),
         { flag: 'wx' },
       )
-    }).pipe(Effect.provide(Layer.mergeAll(stores, TestClock.layer())))
+    }).pipe(
+      Effect.provideService(JevClient, {
+        evaluate: (request) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
+          ),
+      }),
+      Effect.provide(Layer.mergeAll(stores, TestClock.layer())),
+    )
   }),
 )
 if (import.meta.main)

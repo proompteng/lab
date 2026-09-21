@@ -25,7 +25,7 @@ const discoverIntradayCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
   const candidate =
-    context.strategyName === 'intraday-momentum' &&
+    (context.strategyName === 'intraday-momentum' || context.strategyName === 'jev') &&
     context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
       ? {
           cycleBindingId: context.cycleBindingId,

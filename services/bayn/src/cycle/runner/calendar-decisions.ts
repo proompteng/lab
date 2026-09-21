@@ -115,7 +115,7 @@ export const selectIntradayExecutionSession = (
 
 export interface IntradayCycleCandidate {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum'
+  readonly strategyName: 'intraday-momentum' | 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: Extract<
@@ -158,7 +158,7 @@ export const nextIntradayEntryAttemptOrdinal = (
   observedAt: string,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
   if (
-    cycle.identity.strategyName !== 'intraday-momentum' ||
+    (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
     cycle.state !== CycleState.Completed ||
     cycle.terminalAt === undefined ||
     cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
