@@ -98,6 +98,7 @@ durableTest.each([
   'early-exit',
   'partial-exit-reentry',
   'measured-exit',
+  'measured-bootstrap-delay',
   'measured-partial-entry-reentry',
   'measured-entry-expired',
   'measured-zero-fill-reentry',
@@ -126,6 +127,7 @@ durableTest.each([
     let expiredStartedSubmit = false
     const measured =
       scenario === 'measured-exit' ||
+      scenario === 'measured-bootstrap-delay' ||
       scenario === 'measured-partial-entry-reentry' ||
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
@@ -338,6 +340,7 @@ durableTest.each([
               providerClock,
               advanceTo: (atMs) =>
                 advanceMarketTo(atMs).pipe(
+                  Effect.tap(() => (scenario === 'measured-bootstrap-delay' ? providerClock.adjust(5) : Effect.void)),
                   Effect.mapError(
                     (cause) => new ReplayBrokerFailure({ message: 'Measured source advance failed', cause }),
                   ),
@@ -478,6 +481,20 @@ durableTest.each([
           })),
         )
         const runtime = yield* createRuntime
+        if (scenario === 'measured-bootstrap-delay') {
+          const restarted = yield* createRuntime
+          expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
+          expect(yield* sql`SELECT maximum, effective, kill_state FROM authority_state WHERE singleton`).toEqual([
+            { maximum: 'PAPER', effective: 'PAPER', kill_state: 'CLEAR' },
+          ])
+          expect(
+            yield* sql`SELECT status, reconciled_at <= execution_account_now(${accountId}) AS observed
+              FROM reconciliations ORDER BY reconciled_at DESC LIMIT 1`,
+          ).toEqual([{ status: 'EXACT', observed: true }])
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect(measuredCalls).toEqual([])
+          return { _tag: 'Coverage' as const }
+        }
         if (scenario === 'missing-calendar') {
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           const pass = yield* runtime.advance

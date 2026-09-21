@@ -406,6 +406,7 @@ path before claiming production timing parity.
 
 Final authorization samples measured elapsed time after provider, persistence, writer-lock, grant and broker reads.
 Every replay reconciliation, including those inside the cycle driver, uses that measured clock after ingestion.
+Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
 This preserves causal ordering between broker observations and their reconciliation; a partial IOC entry can finish
 after its exit and fresh exact-flat evidence. Clock failures remain explicit and cannot produce a successful receipt.
 Risk expiry and the submission lease use the same final timestamp. Controlled regressions reject expired evidence

@@ -171,6 +171,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       }),
     )
     yield* reconcile
+    yield* input.currentUtcInstant
     const activated =
       initialAuthority.maximum === Authority.Execution
         ? initialAuthority
