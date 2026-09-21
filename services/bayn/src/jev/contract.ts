@@ -20,19 +20,36 @@ export const jevModel = 'jev-1.13.0' as const
 export const jevEndpoint = 'https://api.typesafe.ai/v1/systemone' as const
 
 const QuestionName = StrictNonEmptyStringSchema.check(Schema.isMaxLength(64))
-const Instructions = StrictNonEmptyStringSchema.check(Schema.isMaxLength(16_000))
-const ChoiceCriteria = Schema.Record(QuestionName, Instructions).check(
-  Schema.makeFilter((value) => Object.keys(value).length >= 2 && Object.keys(value).length <= 32),
+const Instructions = Schema.Json.check(
+  Schema.makeFilter((value) =>
+    typeof value === 'string'
+      ? value.trim().length > 0
+      : value !== null && typeof value === 'object' && Object.keys(value).length > 0,
+  ),
+)
+const ChoiceCriteria = Schema.Record(QuestionName, Schema.NullOr(Instructions)).check(
+  Schema.makeFilter((value) => Object.keys(value).length >= 2 && Object.keys(value).length <= 255),
 )
 
 const Question = Schema.Union([
-  Schema.Struct({ type: Schema.Literal('noul'), instructions: Instructions }),
+  Schema.Struct({
+    type: Schema.Literal('noul'),
+    instructions: Instructions,
+    criteria: Schema.optionalKey(Schema.Struct({ true: Instructions, false: Instructions })),
+  }),
   Schema.Struct({ type: Schema.Literal('choice'), instructions: Instructions, criteria: ChoiceCriteria }),
+  Schema.Struct({
+    type: Schema.Literal('score'),
+    instructions: Instructions,
+    criteria: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isLengthBetween(2, 10)),
+  }),
 ])
 
 export const JevRequestSchema = Schema.Struct({
   model: Schema.Literal(jevModel),
-  state: Schema.Json,
+  state: Schema.Json.check(
+    Schema.makeFilter((value) => typeof value === 'string' || (value !== null && typeof value === 'object')),
+  ),
   questions: Schema.Record(QuestionName, Question).check(
     Schema.makeFilter((value) => Object.keys(value).length >= 1 && Object.keys(value).length <= 32),
   ),
@@ -47,6 +64,13 @@ const Answer = Schema.Union([
     choice: QuestionName,
     confidence: UnitIntervalSchema,
     probabilities: Schema.Record(QuestionName, UnitIntervalSchema),
+  }),
+  Schema.Struct({
+    type: Schema.Literal('score'),
+    score: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 9 })),
+    confidence: UnitIntervalSchema,
+    probabilities: Schema.Record(QuestionName, UnitIntervalSchema),
+    legend: Schema.Record(QuestionName, Schema.String),
   }),
 ])
 
@@ -105,10 +129,13 @@ export const decodeJevResponse = (request: JevRequest, input: unknown): Result.R
             new JevContractError({ message: 'Jev answer type differs from the request', question: name }),
           )
         }
-        if (question.type !== 'choice' || answer.type !== 'choice') continue
+        if (question.type === 'noul' || answer.type === 'noul') continue
         const probabilities = Object.values(answer.probabilities)
-        const selected = answer.probabilities[answer.choice]
-        if (!sameKeys(question.criteria, answer.probabilities) || selected === undefined) {
+        const expected =
+          question.type === 'score'
+            ? Object.fromEntries(question.criteria.map((description, index) => [String(index), description]))
+            : question.criteria
+        if (!sameKeys(expected, answer.probabilities)) {
           return Result.fail(
             new JevContractError({ message: 'Jev choice identities differ from the request', question: name }),
           )
@@ -118,7 +145,21 @@ export const decodeJevResponse = (request: JevRequest, input: unknown): Result.R
             new JevContractError({ message: 'Jev choice probabilities do not sum to one', question: name }),
           )
         }
-        if (probabilities.some((value) => value > selected)) {
+        if (answer.type === 'score') {
+          if (
+            question.type !== 'score' ||
+            answer.score > question.criteria.length - 1 ||
+            !sameKeys(expected, answer.legend) ||
+            Object.entries(expected).some(([level, description]) => answer.legend[level] !== description)
+          ) {
+            return Result.fail(
+              new JevContractError({ message: 'Jev score levels differ from the request', question: name }),
+            )
+          }
+          continue
+        }
+        const selected = answer.probabilities[answer.choice]
+        if (selected === undefined || probabilities.some((value) => value > selected)) {
           return Result.fail(
             new JevContractError({ message: 'Jev selected choice is not a maximum probability', question: name }),
           )
