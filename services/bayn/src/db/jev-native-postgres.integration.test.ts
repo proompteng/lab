@@ -16,7 +16,7 @@ import { JevClient, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
 import { decodeJevPortfolio, JevPositionStore, JevPurpose } from '../jev/portfolio'
 import { clientOrderIdForIntentId } from '../execution/intents/domain'
-import { WriterFenceLive } from '../execution/writer-fence'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { IntentStoreLive } from '../execution/intents'
 import { MutationStoreLive } from '../execution/mutations'
 import { ensureExecutionCycleClosure } from '../observe-composition/execution-cycle'
@@ -24,7 +24,7 @@ import { reconciledStateHash } from '../reconciliation'
 import { makeExecutionCycleClosure, ExecutionCycleClosureStore } from './execution-cycle-closure'
 import type { IntradayMarketDataService } from '../market-data'
 import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgres'
-import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
+import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
 import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
 import { JevExitReason } from '../jev/exit'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -49,6 +49,9 @@ import { postgresMigrations } from './postgres-migrations'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
+const replayAccountId = `replay-${'e'.repeat(64)}`
+const nativeJevFixture = (purpose: JevPurpose = JevPurpose.Entry, observedAt?: string) =>
+  fixtureForAccount(purpose, observedAt, replayAccountId)
 const fixture = nativeJevFixture()
 const observed = Date.parse(fixture.observation.payload.observedAt)
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -220,6 +223,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
+        yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+          VALUES (${replayAccountId}, ${'e'.repeat(64)}, ${fixture.observation.payload.observedAt})`
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.draft.window.executionOpenAt)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
         VALUES (${nativeInput.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${fixture.observation.payload.observedAt})`
@@ -764,7 +769,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   })
 
-  test('native entry, early exit and residual close retain exact evidence across persistence and recovery', async () => {
+  const nativeExitPersistence = async (scenario: string) => {
     const state = fixture.portfolio.brokerState
     const at = fixture.observation.payload.observedAt
     let reconciliations = 0
@@ -974,12 +979,42 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }),
         )
         const store = yield* ExecutionCycleClosureStore
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${closure.createdAt}
+        WHERE account_id = ${replayAccountId}`
         const expired = yield* Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(exitTarget.observedAt) + 5000)
           return yield* store.bind(closure).pipe(Effect.result)
         }).pipe(Effect.provide(TestClock.layer()))
         expect(Result.isFailure(expired)).toBe(true)
         expect(Option.isNone(yield* store.read(nativeInput.cycleId))).toBe(true)
+        if (scenario !== 'recovery') {
+          if (scenario === 'expires-during-insert') {
+            yield* sql`CREATE FUNCTION advance_test_exit_clock() RETURNS trigger LANGUAGE plpgsql AS $function$
+            BEGIN
+              UPDATE simulated_execution_clocks
+              SET observed_at = (NEW.document #>> '{document,strategyDecision,commitDeadlineAt}')::timestamptz
+              WHERE account_id = NEW.document #>> '{document,bindings,accountId}';
+              RETURN NEW;
+            END
+          $function$`
+            yield* sql`CREATE TRIGGER advance_test_exit_clock BEFORE INSERT ON autonomous_cycle_paper_closures
+            FOR EACH ROW EXECUTE FUNCTION advance_test_exit_clock()`
+          }
+          const attempted = yield* (yield* WriterFence)
+            .transaction(
+              Effect.gen(function* () {
+                yield* store.bind(closure)
+                if (scenario === 'expires-before-commit')
+                  yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${exitTarget.commitDeadlineAt}
+                WHERE account_id = ${replayAccountId}`
+              }),
+            )
+            .pipe(Effect.result)
+          expect(Result.isFailure(attempted)).toBe(true)
+          expect(Option.isNone(yield* store.read(nativeInput.cycleId))).toBe(true)
+          return
+        }
         const saved = yield* store.bind(closure)
         expect(saved).toEqual(closure)
         yield* TestClock.setTime(Date.parse(exitTarget.observedAt) + 60_000)
@@ -1026,11 +1061,10 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           reconciledAt: remainingAt,
           contentHash: canonicalHashV1(remainingMaterial),
         }
-        const sql = yield* PgClient.PgClient
         yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
-          content_hash, status, discrepancies, reconciled_at) VALUES (${remainingReconciliation.reconciliationId},
-          ${remainingReconciliation.schemaVersion}, ${state.account.accountId}, ${remainingHash}, ${remainingHash},
-          ${remainingReconciliation.contentHash}, 'EXACT', '[]'::jsonb, ${remainingAt})`
+        content_hash, status, discrepancies, reconciled_at) VALUES (${remainingReconciliation.reconciliationId},
+        ${remainingReconciliation.schemaVersion}, ${state.account.accountId}, ${remainingHash}, ${remainingHash},
+        ${remainingReconciliation.contentHash}, 'EXACT', '[]'::jsonb, ${remainingAt})`
         const remainingFacts: ReconciliationPassResult = {
           ...closeFacts,
           brokerState: { ...remainingMaterial, reconciliation: remainingReconciliation },
@@ -1087,5 +1121,10 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         atObservation,
       ),
     )
-  }, 30_000)
+  }
+  test.each(['recovery', 'expires-during-insert', 'expires-before-commit'])(
+    'native exit persistence: %s',
+    nativeExitPersistence,
+    30_000,
+  )
 })

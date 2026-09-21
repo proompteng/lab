@@ -28,7 +28,11 @@ import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { makeJevTradingSignalBatch } from './trading-signals'
 
-export const nativeJevFixture = (purpose: JevPurpose = JevPurpose.Entry, observedAt?: string) => {
+export const nativeJevFixture = (
+  purpose: JevPurpose = JevPurpose.Entry,
+  observedAt?: string,
+  accountId = 'jev-native-test',
+) => {
   const base = streamingFixture()
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const end =
@@ -57,7 +61,6 @@ export const nativeJevFixture = (purpose: JevPurpose = JevPurpose.Entry, observe
     query,
   )
   const at = snapshot.manifest.observedAt
-  const accountId = 'jev-native-test'
   const intentId = 'c'.repeat(64)
   const positions: Position[] =
     purpose === JevPurpose.Entry
