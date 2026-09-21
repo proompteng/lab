@@ -43,8 +43,8 @@ export const historicalRawArrivals = (
     },
   }))
 
-export const historicalStreamingFixture = () => {
-  const { cut, snapshot, protocol, query } = streamingFixture()
+export const historicalStreamingFixture = (returns?: Readonly<Record<string, number>>) => {
+  const { cut, snapshot, protocol, query } = streamingFixture(returns)
   const observedAtMs = Date.parse(snapshot.manifest.observedAt)
   const raw = historicalRawArrivals(snapshot, observedAtMs)
   const features = [...cut.projection.features.values()].flat().map((feature, partition) => ({

@@ -777,7 +777,7 @@ describe('native execution runtime', () => {
       )
 
       expect(result.first).toBe(failure)
-      expect(result.second.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
+      expect(result.second.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
       expect(acquired).toBe(2)
       expect(released).toBe(2)
     },
@@ -814,7 +814,7 @@ describe('native execution runtime', () => {
       ),
     )
 
-    expect(result.outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 30_000 })
+    expect(result.outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 30_000 })
     expect(result.observation).toEqual(windowClosedObservation)
     expect(projected).toMatchObject({
       controllerKey: command.controllerKey,
@@ -822,7 +822,7 @@ describe('native execution runtime', () => {
       epoch: command.epoch,
       nextSequence: command.sequence + 1,
       lastSequence: command.sequence,
-      lastOutcome: 'Blocked',
+      lastOutcome: 'Waiting',
       lastReceiptHash: result.outcome.receiptHash,
       lastPass: windowClosedObservation,
     })
@@ -1158,7 +1158,7 @@ describe('native execution runtime', () => {
     )
 
     expect(advanceCount).toBe(1)
-    expect(result.outcome._tag).toBe(ExecutionControllerOutcome.Blocked)
+    expect(result.outcome._tag).toBe(ExecutionControllerOutcome.Waiting)
     expect(projected).toMatchObject({
       planHash: controllerPlanHash,
       epoch: command.epoch,

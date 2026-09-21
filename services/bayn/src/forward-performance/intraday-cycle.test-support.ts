@@ -2,6 +2,9 @@ import { Result, Schema } from 'effect'
 import { IntradayPerformanceManifestSchema } from './intraday-schema'
 import { intradayPerformanceDecisionRequest, intradayPerformanceSessionQuery } from './intraday-volume'
 import type { ForwardPerformanceIntradayMarketVolumeRequest } from './model'
+import { streamingFixture } from '../testing/streaming-market-fixture'
+import { IsoDateSchema } from '../schemas'
+import { canonicalHashV1 } from '../hash'
 
 export const completedIntradayCycles = [
   {
@@ -685,9 +688,83 @@ export const makeIntradayPerformanceFixture = () => {
     sourceFeed: 'iex',
     decisionManifest: Schema.decodeUnknownSync(IntradayPerformanceManifestSchema)(cycle.manifest),
   }
+  return performanceSessionFixture(request)
+}
+
+export const makeStreamingPerformanceFixture = () => {
+  const { snapshot } = streamingFixture()
+  return performanceSessionFixture({
+    cycleId: 'a'.repeat(64),
+    decisionSnapshotId: snapshot.manifest.snapshotId,
+    decisionSnapshotAsOfSession: Schema.decodeUnknownSync(IsoDateSchema)(snapshot.manifest.sessionDate),
+    symbol: 'AAPL',
+    executionSessionDate: Schema.decodeUnknownSync(IsoDateSchema)(snapshot.manifest.sessionDate),
+    windowOpenedAt: '2026-09-04T13:30:00.000Z',
+    windowClosedAt: '2026-09-04T20:00:00.000Z',
+    evidenceCutoffAt: '2026-09-04T21:00:00.000Z',
+    sourceFeed: 'iex',
+    decisionManifest: snapshot.manifest,
+  })
+}
+
+export const makeStreamingPartitionPerformanceFixture = () => {
+  const { request, archive, bars } = makeStreamingPerformanceFixture()
+  const manifest = request.decisionManifest
+  if (manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1') throw new Error('expected streaming fixture')
+  const { contentHash: _contentHash, snapshotId: _snapshotId, ...original } = manifest
+  const position = { topic: manifest.sourceTopics.bars, partition: 1, offset: '0' }
+  const material = {
+    ...original,
+    streaming: {
+      ...manifest.streaming,
+      positions: [...manifest.streaming.positions, position].toSorted(
+        (left, right) => left.topic.localeCompare(right.topic) || left.partition - right.partition,
+      ),
+      bootstrap: {
+        ...manifest.streaming.bootstrap,
+        partitions: [
+          ...manifest.streaming.bootstrap.partitions,
+          {
+            topic: position.topic,
+            partition: position.partition,
+            logStartOffset: '0',
+            startOffset: '0',
+            endOffset: '0',
+          },
+        ].toSorted((left, right) => left.topic.localeCompare(right.topic) || left.partition - right.partition),
+      },
+    },
+  }
+  const hashed = { ...material, contentHash: canonicalHashV1(material) }
+  const decisionManifest = { ...hashed, snapshotId: canonicalHashV1(hashed) }
+  return {
+    request: { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId },
+    archive: {
+      ...archive,
+      archiveWatermarks: [
+        ...archive.archiveWatermarks,
+        { sourceTopic: position.topic, sourcePartition: position.partition, inclusiveLastOffset: '390' },
+      ].toSorted(
+        (left, right) =>
+          left.sourceTopic.localeCompare(right.sourceTopic) || left.sourcePartition - right.sourcePartition,
+      ),
+    },
+    bars: bars.map((bar, index) =>
+      index % 2 === 0 ? bar : { ...bar, source_partition: '1', source_offset: String(index) },
+    ),
+  }
+}
+
+const performanceSessionFixture = (request: ForwardPerformanceIntradayMarketVolumeRequest) => {
   const original = Result.getOrThrow(intradayPerformanceDecisionRequest(request))
-  const archive = intradayPerformanceSessionQuery(request, original)
-  // Synthetic prices and volumes exercise the report arithmetic; the decision binding is the persisted Sep 11 cycle.
+  const archive = {
+    ...intradayPerformanceSessionQuery(request, original),
+    archiveWatermarks: original.archiveWatermarks.map((watermark) => ({
+      ...watermark,
+      inclusiveLastOffset: String(BigInt(watermark.inclusiveLastOffset) + 390n),
+    })),
+  }
+  // Synthetic session prices and volumes exercise report arithmetic, not strategy profitability.
   const bars = Array.from({ length: 390 }, (_, index) => ({
     provider: 'alpaca',
     universe_id: archive.universeId,
@@ -695,7 +772,7 @@ export const makeIntradayPerformanceFixture = () => {
     feed: 'iex',
     market_session: 'regular',
     delay_class: 'real_time_exchange_only',
-    symbol: 'NVDA',
+    symbol: request.symbol,
     event_at: new Date(Date.parse(request.windowOpenedAt) + index * 60_000).toISOString(),
     ingested_at: new Date(Date.parse(request.windowOpenedAt) + (index + 1) * 60_000 + 2_000).toISOString(),
     source_topic: archive.sourceTopics.bars,

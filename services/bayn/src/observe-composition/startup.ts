@@ -9,6 +9,7 @@ import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
 import { defaultIntradayMomentumProtocolDocument, strategyDefinition, type StrategyRuntime } from '../strategy'
+import { replayIntradayProtocol } from '../strategy/intraday-momentum/research'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -59,7 +60,12 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const sourceProtocolHash = canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
+  const sourceProtocolHash =
+    input.simulation === undefined
+      ? canonicalHashV1Result(defaultIntradayMomentumProtocolDocument)
+      : replayIntradayProtocol({ accountId: input.accountId, ...input.simulation }).pipe(
+          Result.flatMap(canonicalHashV1Result),
+        )
   if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
     return Result.fail(
       operationalError({

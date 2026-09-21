@@ -1,7 +1,15 @@
 import { expect, test } from 'bun:test'
 import { Clock, Deferred, Effect, Exit, Fiber, Result, Scope } from 'effect'
 import { TestClock } from 'effect/testing'
-import { AssetClass, AssetExchange, AssetStatus, OrderCollection, OrderStatus } from '../broker/alpaca/model'
+import {
+  AssetClass,
+  AssetExchange,
+  AssetStatus,
+  OrderCollection,
+  OrderStatus,
+  OrderType as BrokerOrderType,
+  TimeInForce as BrokerTimeInForce,
+} from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
 import { streamingFixture } from '../testing/streaming-market-fixture'
@@ -799,7 +807,7 @@ test('cancellation commits before its response and can restore before delivery l
   )
 })
 
-test('delivery failures and session closes retain their terminal state before publication', async () => {
+test('delivery failures retain terminal evidence and prevent session acceptance', async () => {
   await run(
     Effect.gen(function* () {
       const retained: ReplayBrokerCheckpoint[] = []
@@ -814,13 +822,148 @@ test('delivery failures and session closes retain their terminal state before pu
       expect(retained.at(-1)?.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
       expect(retained.at(-1)?.state.orders[0]?.deliveryFailure).toBeDefined()
       yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
-      const close = yield* broker.completeSession('2026-09-04')
-      const checkpoint = retained.at(-1)
-      if (checkpoint === undefined) throw new Error('expected retained session close')
-      expect(checkpoint.state.sessionCloses).toHaveLength(1)
-      expect(checkpoint.state.sessionCloses[0]?.sessionDate).toBe('2026-09-04')
-      expect(checkpoint.state.sessionCloses[0]?.equityMicros).toBe(close.equityMicros)
-      expect((yield* broker.checkpoint).checkpointHash).toBe(checkpoint.checkpointHash)
+      expect((yield* Effect.exit(broker.completeSession('2026-09-04')))._tag).toBe('Failure')
+      expect((yield* broker.snapshot).sessionCloses).toEqual([])
+    }),
+  )
+})
+
+test('production MARKET/DAY close liquidates at the adverse arrival price and survives restore', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        advanceToArrival: (at) => TestClock.setTime(at),
+        assumptions: { ...config.assumptions, slippageBps: 1 },
+      })
+      yield* broker.mutation.submit(intent())
+      const close = intent({
+        clientOrderId: 'market-close',
+        side: OrderSide.Sell,
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+        notionalLimitMicros: '1',
+      })
+      const result = yield* broker.mutation.submit(close, true)
+      expect(result.order.orderType).toBe(BrokerOrderType.Market)
+      expect(result.order.timeInForce).toBe(BrokerTimeInForce.Day)
+      expect(result.order.limitPriceMicros).toBeUndefined()
+      expect(result.order.status).toBe(OrderStatus.Filled)
+      expect(result.order.filledAveragePriceMicros).toBe('99990000')
+      expect((yield* broker.snapshot).ledger.positions).toEqual([])
+      const checkpoint = yield* broker.checkpoint
+      const restored = yield* makeReplayBroker({
+        ...config,
+        assumptions: { ...config.assumptions, slippageBps: 1 },
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      expect((yield* restored.snapshot).ledger.positions).toEqual([])
+    }),
+  )
+})
+
+test('fractional market closes preserve residual inventory, fees, and restart evidence', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ fractionalTrading: true, advanceToArrival: (at) => TestClock.setTime(at) })
+      yield* broker.mutation.submit(intent())
+      for (const [index, quantityMicros] of ['500000', '4500000'].entries()) {
+        const closed = yield* broker.mutation.submit(
+          intent({
+            clientOrderId: `fractional-close-${index}`,
+            side: OrderSide.Sell,
+            orderType: OrderType.Market,
+            timeInForce: TimeInForce.Day,
+            quantityMicros,
+            notionalLimitMicros: '1',
+          }),
+          true,
+        )
+        expect(closed.order.filledQuantityMicros).toBe(quantityMicros)
+        const checkpoint = yield* broker.checkpoint
+        const restored = yield* makeReplayBroker({
+          ...config,
+          fractionalTrading: true,
+          restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+        })
+        expect(yield* restored.snapshot).toEqual(yield* broker.snapshot)
+      }
+      const state = yield* broker.snapshot
+      expect(state.ledger.positions).toEqual([])
+      expect(BigInt(state.ledger.cashMicros) + BigInt(state.ledger.executionFeesMicros)).toBe(
+        BigInt(config.openingCashMicros),
+      )
+    }),
+  )
+})
+
+for (const scenario of ['missing', 'stale', 'future', 'thin', 'zero'] as const) {
+  test(`market close with ${scenario} arrival evidence fails the simulation without fabricated fills`, async () => {
+    await run(
+      Effect.gen(function* () {
+        let closing = false
+        const broker = yield* setup({
+          advanceToArrival: (at) => TestClock.setTime(at),
+          quoteAt: (_symbol, at) =>
+            Effect.succeed(
+              !closing
+                ? observedQuote(quote)
+                : scenario === 'missing'
+                  ? undefined
+                  : observedQuote(
+                      {
+                        ...quote,
+                        eventAt: new Date(
+                          scenario === 'stale'
+                            ? at - protocol.maximumQuoteAgeMs - 1
+                            : scenario === 'future'
+                              ? at + 1
+                              : at,
+                        ).toISOString(),
+                        bidSize: scenario === 'thin' ? 2 : scenario === 'zero' ? 0 : quote.bidSize,
+                      },
+                      at,
+                    ),
+            ),
+        })
+        yield* broker.mutation.submit(intent())
+        closing = true
+        const rejected = yield* Effect.exit(
+          broker.mutation.submit(
+            intent({
+              clientOrderId: 'failed-market-close',
+              side: OrderSide.Sell,
+              orderType: OrderType.Market,
+              timeInForce: TimeInForce.Day,
+            }),
+            true,
+          ),
+        )
+        expect(rejected._tag).toBe('Failure')
+        const state = yield* broker.snapshot
+        expect(state.fills).toHaveLength(1)
+        expect(state.ledger.positions[0]?.quantityMicros).toBe('5000000')
+        expect(state.orders[1]?.deliveryFailure).toBeDefined()
+        yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
+        expect((yield* Effect.exit(broker.completeSession('2026-09-04')))._tag).toBe('Failure')
+      }),
+    )
+  })
+}
+
+test('fractional market close requires the captured account fractional-trading setting', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ fractionalTrading: false, advanceToArrival: (at) => TestClock.setTime(at) })
+      yield* broker.mutation.submit(intent())
+      const close = intent({
+        clientOrderId: 'disabled-fractional-close',
+        side: OrderSide.Sell,
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
+        quantityMicros: '500000',
+      })
+      expect((yield* Effect.exit(broker.mutation.submit(close, true)))._tag).toBe('Failure')
+      expect((yield* broker.snapshot).orders).toHaveLength(1)
     }),
   )
 })

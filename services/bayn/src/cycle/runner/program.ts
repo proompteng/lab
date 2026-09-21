@@ -17,6 +17,7 @@ import {
   type CyclePassProgress,
 } from './decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
+import { DecisionReadinessReason } from './readiness'
 
 const currentIsoTime = currentUtcInstant
 
@@ -209,6 +210,7 @@ const recoverCycle = <R>(
       return Effect.succeed({
         outcome: 'RECOVERED',
         action: 'WAITING',
+        waitReason: 'AWAITING_SUBMISSION_OPEN',
         observedAt: selection.observedAt,
         cycle: selection.cycle,
       })
@@ -221,6 +223,10 @@ const recoverCycle = <R>(
                   Effect.map((observedAt) => ({
                     outcome: 'RECOVERED' as const,
                     action: 'WAITING' as const,
+                    readiness: cause.readiness ?? {
+                      reason: DecisionReadinessReason.DecisionPending,
+                      message: cause.message,
+                    },
                     observedAt,
                     cycle: selection.cycle,
                   })),
