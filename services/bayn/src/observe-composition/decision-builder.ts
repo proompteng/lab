@@ -928,9 +928,10 @@ const compileObserveStrategyDecision = <R>(
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
               readiness: {
                 reason:
-                  cause.availableAt === undefined
+                  cause.readiness ??
+                  (cause.availableAt === undefined
                     ? DecisionReadinessReason.NoEligibleCandidate
-                    : DecisionReadinessReason.LookbackWarmup,
+                    : DecisionReadinessReason.LookbackWarmup),
                 message: cause.message,
                 ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
               },

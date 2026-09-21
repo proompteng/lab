@@ -233,6 +233,105 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await runtime?.dispose()
   })
 
+  test.each([JevPurpose.Entry, JevPurpose.Manage])(
+    'stale benchmark trades wait without consuming the %s window or preventing fresh inference',
+    async (purpose) => {
+      let calls = 0
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const atMs = observed + 30_000
+          const at = utcInstantFromEpochMillis(atMs)
+          yield* TestClock.setTime(atMs)
+          const fresh = nativeJevFixture(JevPurpose.Entry, at)
+          const selected =
+            purpose === JevPurpose.Manage
+              ? yield* seedManagedPosition({ observedAt: at })
+              : { managed: fresh, portfolio: fresh.portfolio }
+          const sql = yield* PgClient.PgClient
+          let portfolio = selected.portfolio
+          if (purpose === JevPurpose.Entry) {
+            const r = { ...portfolio.brokerState.reconciliation, reconciliationId: '9'.repeat(64) }
+            portfolio = { ...portfolio, brokerState: { ...portfolio.brokerState, reconciliation: r } }
+            yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+              content_hash, status, discrepancies, reconciled_at) VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId},
+              ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+          }
+          const query = selected.managed.snapshot.manifest
+          const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] })
+          const snapshot = streamingFixtureFromRaw(
+            {
+              ...raw,
+              trades: raw.trades.map((trade) =>
+                trade.symbol === 'SPY' ? { ...trade, eventAt: utcInstantFromEpochMillis(atMs - 10_422) } : trade,
+              ),
+            },
+            query,
+          ).snapshot
+          const input = { ...nativeInput, portfolio, snapshot }
+          const result = yield* evaluateJevObservation(input).pipe(Effect.result)
+          expect(result).toMatchObject({
+            _tag: 'Failure',
+            failure: { _tag: 'JevAwaitingEvidence', readiness: 'SNAPSHOT_STALE' },
+          })
+          expect(calls).toBe(0)
+          expect(yield* sql`SELECT count(*)::integer AS count FROM intraday_candidate_observations`).toEqual([
+            { count: 0 },
+          ])
+          expect(yield* sql`SELECT count(*)::integer AS count FROM jev_batch_plans`).toEqual([{ count: 0 }])
+          if (portfolio.purpose === JevPurpose.Manage) {
+            const cycle = Option.getOrThrow(yield* (yield* CycleStore).read(nativeInput.cycleId))
+            expect(
+              yield* evaluateJevPositionExit({
+                cycle,
+                entryDecisionHash: portfolio.entryDecisionHash,
+                authorityGenerationHash: nativeInput.authorityGenerationHash,
+                protocol: fixture.protocol,
+                calendar: query.calendar,
+                brokerState: portfolio.brokerState,
+                marketData: {
+                  check: Effect.void,
+                  verifyReference: fixtureStreamingReference,
+                  loadSnapshot: (pricingQuery) =>
+                    Effect.succeed(
+                      pricingQuery.purpose === undefined
+                        ? snapshot
+                        : streamingFixtureFromRaw(
+                            makeIntradayMomentumTestSnapshot(
+                              fixture.protocol,
+                              { ...pricingQuery, archiveWatermarks: [] },
+                              { AAPL: 0.02 },
+                            ),
+                            pricingQuery,
+                          ).snapshot,
+                    ),
+                },
+              }),
+            ).toBeUndefined()
+            expect(calls).toBe(0)
+          }
+          const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
+          expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
+          expect(calls).toBe(purpose === JevPurpose.Entry ? 15 : 1)
+        }).pipe(
+          Effect.provideService(JevClient, {
+            evaluate: (request) =>
+              Clock.currentTimeMillis.pipe(
+                Effect.map((now) => {
+                  calls += 1
+                  return nativeJevInference(
+                    request,
+                    utcInstantFromEpochMillis(now),
+                    purpose === JevPurpose.Entry ? 'enter' : 'hold',
+                  )
+                }),
+              ),
+          }),
+          atObservation,
+        ),
+      )
+    },
+  )
+
   test.each([JevExitReason.MaximumHold, JevExitReason.ProtectiveStop])(
     'deterministic %s exits do not call Jev',
     async (reason) => {

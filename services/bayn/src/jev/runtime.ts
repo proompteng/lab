@@ -2,6 +2,7 @@ import { Data, Effect, Option, Result } from 'effect'
 
 import type { MarketCalendarObservation } from '../broker/alpaca'
 import type { AutonomousCycle } from '../cycle'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type IntradayMarketDataService } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import type { ReconciledBrokerState } from '../reconciliation'
@@ -32,11 +33,12 @@ import { JevPositionStore } from './portfolio'
 import { JevOutcome } from './evidence'
 import { JevResolutionStatus } from './resolution'
 import { jevSnapshotSymbols, type JevProtocol } from './protocol'
-import { makeJevTradingSignalBatch } from './trading-signals'
+import { jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
 
 export class JevAwaitingEvidence extends Data.TaggedError('JevAwaitingEvidence')<{
   readonly message: string
   readonly availableAt?: string
+  readonly readiness?: DecisionReadinessReason
 }> {}
 
 export class JevAwaitingFreshWindow extends Data.TaggedError('JevAwaitingFreshWindow')<{
@@ -154,6 +156,12 @@ export const evaluateJevObservation = (input: Parameters<typeof recordJevObserva
         availableAt: utcInstantFromEpochMillis(
           Date.parse(latest.value) + 60_000 + input.protocol.decisionDelaySeconds * 1000,
         ),
+      })
+    const staleSymbols = jevStalePricingSymbols(input.snapshot)
+    if (staleSymbols.length > 0)
+      return yield* new JevAwaitingEvidence({
+        message: `Jev is waiting for fresh signal pricing for ${staleSymbols.join(', ')}`,
+        readiness: DecisionReadinessReason.SnapshotStale,
       })
     const observation = yield* recordJevObservation(input)
     const batchPlan = yield* Effect.fromResult(

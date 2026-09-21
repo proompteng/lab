@@ -17,6 +17,25 @@ import type { JevProtocol } from './protocol'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
+const latestSignalTrade = (snapshot: StrategyMarketSnapshot, symbol: string) =>
+  snapshot.trades
+    .filter((entry) => entry.symbol === symbol)
+    .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
+    .at(-1)
+
+const pricingAgeMs = (snapshot: StrategyMarketSnapshot, eventAt: string) =>
+  Number(intradayAgeNanos(snapshot.manifest.observedAt, eventAt)) / 1_000_000
+
+export const jevStalePricingSymbols = (snapshot: VerifiedStrategyMarketSnapshot) =>
+  snapshot.manifest.symbols.filter((symbol) => {
+    if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) return false
+    const quote = snapshot.latestQuotes[symbol]
+    const trade = latestSignalTrade(snapshot, symbol)
+    return [quote, trade].some(
+      (entry) => entry !== undefined && pricingAgeMs(snapshot, entry.eventAt) > snapshot.manifest.maximumQuoteAgeMs,
+    )
+  })
+
 const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
   Result.gen(function* () {
     const manifest = snapshot.manifest
@@ -27,17 +46,14 @@ const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
       return yield* unavailable('Jev signal subject is excluded or outside the verified snapshot')
     const rolling = manifest.streaming.features.find((entry) => entry.value.material.symbol === symbol)
     const quote = snapshot.latestQuotes[symbol]
-    const trade = snapshot.trades
-      .filter((entry) => entry.symbol === symbol)
-      .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
-      .at(-1)
+    const trade = latestSignalTrade(snapshot, symbol)
     const bars = snapshot.bars
       .filter((bar) => bar.symbol === symbol)
       .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
     if (rolling === undefined || quote === undefined || trade === undefined || bars.length !== 30)
       return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
-    const quoteAgeMs = Number(intradayAgeNanos(manifest.observedAt, quote.eventAt)) / 1_000_000
-    const tradeAgeMs = Number(intradayAgeNanos(manifest.observedAt, trade.eventAt)) / 1_000_000
+    const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
+    const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
     if ([quoteAgeMs, tradeAgeMs].some((age) => age < 0 || age > manifest.maximumQuoteAgeMs))
       return yield* unavailable('Jev signal pricing evidence is stale or future dated')
     const technical = manifest.streaming.technical?.features.find((entry) => entry.value.material.symbol === symbol)
