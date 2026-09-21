@@ -112,14 +112,27 @@ const sameKeys = (left: object, right: object): boolean => {
   return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index])
 }
 
+// Bayn bounds the SDK's approximate probabilities without changing the retained provider values.
+const reportingHalfStep = 0.005
+
+const probabilitiesMatchUnitMass = (probabilities: ReadonlyArray<number>): boolean => {
+  let total = 0
+  let lowerMass = 0
+  let upperMass = 0
+  for (const probability of probabilities) {
+    total += probability
+    lowerMass += Math.max(0, probability - reportingHalfStep)
+    upperMass += Math.min(1, probability + reportingHalfStep)
+  }
+  return Math.abs(total - 1) <= 0.01 + 1e-9 && lowerMass <= 1 + 1e-9 && upperMass >= 1 - 1e-9
+}
+
 const scoreMatchesProbabilities = (score: number, probabilities: Readonly<Record<string, number>>): boolean => {
-  // Bayn permits half of a 0.01 rounding step per reported value. TypeSafe does not guarantee decimal precision.
-  const rounding = 0.005
   const levels = Object.entries(probabilities)
     .map(([level, probability]) => ({
       level: Number(level),
-      lower: Math.max(0, probability - rounding),
-      upper: Math.min(1, probability + rounding),
+      lower: Math.max(0, probability - reportingHalfStep),
+      upper: Math.min(1, probability + reportingHalfStep),
     }))
     .sort((left, right) => left.level - right.level)
   const lowerMass = levels.reduce((sum, value) => sum + value.lower, 0)
@@ -134,7 +147,9 @@ const scoreMatchesProbabilities = (score: number, probabilities: Readonly<Record
     }
     return mean
   }
-  return score >= bound(levels) - rounding - 1e-9 && score <= bound(levels.toReversed()) + rounding + 1e-9
+  return (
+    score >= bound(levels) - reportingHalfStep - 1e-9 && score <= bound(levels.toReversed()) + reportingHalfStep + 1e-9
+  )
 }
 
 export const decodeJevResponse = (request: JevRequest, input: unknown): Result.Result<JevResponse, JevContractError> =>
@@ -165,9 +180,9 @@ export const decodeJevResponse = (request: JevRequest, input: unknown): Result.R
             new JevContractError({ message: 'Jev choice identities differ from the request', question: name }),
           )
         }
-        if (Math.abs(probabilities.reduce((sum, value) => sum + value, 0) - 1) > 1e-6) {
+        if (!probabilitiesMatchUnitMass(probabilities)) {
           return Result.fail(
-            new JevContractError({ message: 'Jev choice probabilities do not sum to one', question: name }),
+            new JevContractError({ message: 'Jev probabilities exceed the reporting allowance', question: name }),
           )
         }
         if (answer.type === 'score') {

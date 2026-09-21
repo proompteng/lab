@@ -13,6 +13,13 @@ Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified pric
 indicators, quotes, benchmark relationships and actual position context. Bayn computes quantities, cost basis,
 holding time, returns, sizing and risk. The model returns typed probability distributions for entry or management.
 
+The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
+describes approximately normalized probabilities. Bayn permits at most 0.01 total deviation from one and requires a
+normalized distribution to fit within 0.005 of each reported probability. These are Bayn validation bounds, not a
+provider precision guarantee. Score answers must also fit the same distribution bounds and a 0.005 score allowance.
+Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
+discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
+
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
 before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no

@@ -71,6 +71,7 @@ describe('Jev provider contract', () => {
     [0.011, [1, 0]],
     [8.949, [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]],
     [1.69, [0.03, 0.46, 0.35, 0.15, 0.01]],
+    [1, [0.28, 0.65, 0.05, 0.01, 0]],
   ] as const)('rejects a score incompatible with its rounded probabilities: %s', (score, probabilities) => {
     const { request, response } = scoreResponse(score, probabilities)
     const result = decodeJevResponse(request, response)
@@ -137,7 +138,7 @@ describe('Jev provider contract', () => {
       },
     }),
     (response: ReturnType<typeof responseFixture>) => ({ ...response, usage: { input_tokens: -1, output_tokens: 80 } }),
-  ])('rejects malformed, mismatched, or non-normalized responses %#', (mutate) => {
+  ])('rejects malformed, mismatched, or inconsistent responses %#', (mutate) => {
     expect(Result.isFailure(decodeJevResponse(requestFixture, mutate(responseFixture())))).toBe(true)
   })
 })
