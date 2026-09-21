@@ -27,6 +27,8 @@ wider than five basis points. It selects at most one long position, capped at 20
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
+The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
+and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
 A complete batch must remain valid within its five-second evidence lifetime. These parameters have not established
 an economic advantage under the frozen qualification protocol.
 
@@ -34,6 +36,9 @@ Position management uses accounted entry fills and fresh reconciliation. A model
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
 50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
 quote's event time. The immutable exit target binds that deadline. These deterministic exits do not require Jev.
+PostgreSQL checks the initial exit deadline in a deferred constraint at transaction commitment, after evidence reads
+and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
+account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the inference deadline.
 New entries use whole-share
 IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
@@ -400,6 +405,9 @@ production proxy latency or connectivity. Record that transport difference with 
 path before claiming production timing parity.
 
 Final authorization samples measured elapsed time after provider, persistence, writer-lock, grant and broker reads.
+Every replay reconciliation, including those inside the cycle driver, uses that measured clock after ingestion.
+This preserves causal ordering between broker observations and their reconciliation; a partial IOC entry can finish
+after its exit and fresh exact-flat evidence. Clock failures remain explicit and cannot produce a successful receipt.
 Risk expiry and the submission lease use the same final timestamp. Controlled regressions reject expired evidence
 without a broker submission, including time spent advancing retained replay data. Full lifecycle simulation must
 also prove arrival-time pricing, position management, exact-flat completion and fresh reentry. These timing tests

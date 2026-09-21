@@ -396,7 +396,7 @@ export const runBacktest = (
       clock,
       recordPass: () => Effect.void,
       ...prepared.input.cadence,
-    }).pipe(Effect.provideService(JevClient, timing.client))
+    }).pipe(Effect.provideService(JevClient, timing.client), timing.run)
     let peakEquity = BigInt(prepared.input.openingCashMicros)
     let maximumObservedDrawdown = 0n
     let previousClosingEquity = peakEquity
@@ -448,7 +448,7 @@ export const runBacktest = (
           const closingNetEquity = markedNetEquity(closingEquity.equityMicros)
           observeEquity(closingNetEquity)
           yield* advanceTo(Math.max(yield* Clock.currentTimeMillis, Date.parse(session.closeAt) + 1))
-          const reconciliation = yield* runtime.reconcile
+          const reconciliation = yield* timing.run(runtime.reconcile)
           const state = yield* broker.snapshot
           const netEquityChangeMicros = (closingNetEquity - previousClosingEquity).toString()
           previousClosingEquity = closingNetEquity

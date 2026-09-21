@@ -55,6 +55,8 @@ import type { HistoricalMarketCursor } from '../market-data/streaming/historical
 import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
 import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
+import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
+import { ReconciliationClock } from '../reconciler'
 import { operationalError, type OperationalError } from '../errors'
 import { currentUtcInstant } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
@@ -146,7 +148,18 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       generationHash: sourceGenerationHash,
       maximum: Authority.Observe,
     })
-    const reconcile = runReconciliation({ read: input.broker.read, store, fence, now: currentUtcInstant }).pipe(
+    const reconciliationTime = input.currentUtcInstant.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ReconciliationError({
+            operation: 'clock',
+            failure: { _tag: 'Clock' },
+            message: 'Replay reconciliation clock could not advance',
+            cause,
+          }),
+      ),
+    )
+    const reconcile = runReconciliation({ read: input.broker.read, store, fence, now: reconciliationTime }).pipe(
       operationTimeoutOrElse({
         duration: input.reconciliationPassTimeoutMs,
         orElse: () =>
@@ -166,6 +179,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
             initialAuthority.generationHash,
           )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
+      Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, candidateObservationStore),
       Context.add(JevClient, jevClient),
       Context.add(JevEvaluationStore, jevEvaluations),

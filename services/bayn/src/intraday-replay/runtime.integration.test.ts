@@ -98,6 +98,7 @@ durableTest.each([
   'early-exit',
   'partial-exit-reentry',
   'measured-exit',
+  'measured-partial-entry-reentry',
   'measured-entry-expired',
   'measured-zero-fill-reentry',
   'measured-submit-expired-reentry',
@@ -125,6 +126,7 @@ durableTest.each([
     let expiredStartedSubmit = false
     const measured =
       scenario === 'measured-exit' ||
+      scenario === 'measured-partial-entry-reentry' ||
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
@@ -153,7 +155,9 @@ durableTest.each([
                 bidSize: 100,
                 premium: 0.02 + (index + 1) * 0.00002,
               })),
-              ...(scenario === 'measured-zero-fill-reentry' || scenario === 'measured-submit-expired-reentry'
+              ...(scenario === 'measured-zero-fill-reentry' ||
+              scenario === 'measured-submit-expired-reentry' ||
+              scenario === 'measured-partial-entry-reentry'
                 ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
                 : []),
             ]
@@ -354,7 +358,12 @@ durableTest.each([
           assumptions: {
             latencyMs: 10,
             slippageBps: 0,
-            availableLiquidityPpm: scenario === 'recovery' || scenario === 'measured-zero-fill-reentry' ? 1 : 1000000,
+            availableLiquidityPpm:
+              scenario === 'recovery' || scenario === 'measured-zero-fill-reentry'
+                ? 1
+                : scenario === 'measured-partial-entry-reentry'
+                  ? 400000
+                  : 1000000,
             feeMultiplierPpm: 1000000,
           },
           fractionalTrading: false,
@@ -430,7 +439,8 @@ durableTest.each([
           currentUtcInstant: Effect.gen(function* () {
             if (scenario === 'reconciliation-idle-recovery')
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
-            if (scenario === 'measured-submit-expired-reentry') yield* providerClock.adjust(1)
+            if (scenario === 'measured-submit-expired-reentry' || scenario === 'measured-partial-entry-reentry')
+              yield* providerClock.adjust(1)
             if (scenario === 'measured-submit-expired-reentry' && !expiredStartedSubmit) {
               const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
               if (started.length > 0) {
@@ -452,18 +462,24 @@ durableTest.each([
                 ? 1000
                 : config.operationTimeoutMs,
         }
-        const engine = yield* makeReplayExecutionRuntime(runtimeInput).pipe(
+        const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
           Effect.provideService(JevClient, timing?.client ?? provider),
+          (operation) => (timing === undefined ? operation : timing.run(operation)),
+          Effect.map((engine) => ({
+            ...engine,
+            advance:
+              timing === undefined
+                ? engine.advance
+                : timing.run(engine.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
+            reconcile:
+              timing === undefined
+                ? engine.reconcile
+                : timing.run(engine.reconcile).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
+          })),
         )
-        const runtime = {
-          ...engine,
-          advance:
-            timing === undefined
-              ? engine.advance
-              : timing.run(engine.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
-        }
+        const runtime = yield* createRuntime
         if (scenario === 'missing-calendar') {
-          yield* advanceMarketTo(initialMs + 1)
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           const pass = yield* runtime.advance
           expect(pass.observation).toMatchObject({ result: 'FAILURE', failure: 'calendar-unavailable' })
           expect((yield* broker.snapshot).orders).toEqual([])
@@ -475,13 +491,13 @@ durableTest.each([
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing replay authority reader')
           expect(yield* sql`SELECT count(*)::int AS cycles FROM autonomous_cycles`).toEqual([{ cycles: 0 }])
-          yield* advanceMarketTo(initialMs + 1)
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           yield* runtime.store.authorityRestriction.restrictAuthority(
             `reconciliation discrepancy ${canonicalHashV1({ transient: true })}`,
             yield* currentUtcInstant,
           )
           yield* advanceMarketTo(initialMs + 1000)
-          const restarted = yield* makeReplayExecutionRuntime(runtimeInput)
+          const restarted = yield* createRuntime
           for (let attempt = 0; attempt < 5; attempt++) {
             yield* restarted.advance
             if ((yield* readAuthority).effective === Authority.Execution) break
@@ -502,7 +518,7 @@ durableTest.each([
           return { _tag: 'IdleRecovery' as const }
         }
         if (scenario === 'operator-held-replay' || scenario === 'operator-after-system-replay') {
-          yield* advanceMarketTo(initialMs + 1)
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           if (scenario === 'operator-after-system-replay') {
             yield* runtime.store.authorityRestriction.restrictAuthority(
               `reconciliation discrepancy ${canonicalHashV1({ transient: true })}`,
@@ -513,7 +529,7 @@ durableTest.each([
           yield* runtime.store.authorityRestriction.restrictAuthority('operator hold fixture', yield* currentUtcInstant)
           expect(yield* sql`SELECT reason FROM authority_state`).toEqual([{ reason: 'operator hold fixture' }])
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
-          const restarted = yield* makeReplayExecutionRuntime(runtimeInput)
+          const restarted = yield* createRuntime
           for (let attempt = 0; attempt < 3; attempt++) {
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
             expect((yield* restarted.advance).observation.result).toBe('FAILURE')
@@ -531,7 +547,7 @@ durableTest.each([
           return { _tag: 'OperatorHeld' as const }
         }
         if (scenario === 'measured-submit-expired-reentry') {
-          yield* advanceMarketTo(initialMs + 1)
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing replay authority reader')
           for (let attempt = 0; attempt < 20; attempt++) {
@@ -558,14 +574,12 @@ durableTest.each([
           })
           expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
           expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
-          const restarted = yield* makeReplayExecutionRuntime(runtimeInput).pipe(
-            Effect.provideService(JevClient, timing?.client ?? provider),
-          )
+          const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.client ?? provider))
           expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
           if (timing === undefined) throw new Error('Missing measured timing')
           yield* advanceMarketTo(reentryAtMs)
           for (let attempt = 0; attempt < 8; attempt++) {
-            yield* timing.run(restarted.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock))
+            yield* restarted.advance
             if ((yield* broker.snapshot).fills.length > 0) break
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
           }
@@ -580,7 +594,7 @@ durableTest.each([
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
         if (scenario === 'no-trade-finalization') {
-          yield* advanceMarketTo(initialMs + 1)
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           yield* runtime.advance
           yield* advanceMarketTo(initialMs + 2)
           yield* runtime.advance
@@ -896,7 +910,7 @@ durableTest.each([
           expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
           return { _tag: 'Recovery' as const }
         }
-        yield* advanceMarketTo(initialMs + 1)
+        yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
         if (scenario === 'measured-zero-fill-reentry') {
           let pendingCompletionCount = 0
           const completeCycle = Effect.gen(function* () {
@@ -967,7 +981,12 @@ durableTest.each([
           ).toEqual([{ intents: 0, requests: 15, batches: 1 }])
           return { _tag: 'Expired' as const }
         }
-        if (scenario === 'early-exit' || scenario === 'partial-exit-reentry' || scenario === 'measured-exit') {
+        if (
+          scenario === 'early-exit' ||
+          scenario === 'partial-exit-reentry' ||
+          scenario === 'measured-exit' ||
+          scenario === 'measured-partial-entry-reentry'
+        ) {
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
           for (let attempt = 0; attempt < 12; attempt++) {
             const advanced = yield* runtime.advance
@@ -990,6 +1009,30 @@ durableTest.each([
           expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
             { state: 'COMPLETED' },
           ])
+          if (scenario === 'measured-partial-entry-reentry') {
+            expect(state.fills.map((fill) => fill.quantityMicros)).toEqual(['40000000', '40000000'])
+            expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+            const restarted = yield* createRuntime
+            yield* advanceMarketTo(reentryAtMs)
+            for (let attempt = 0; attempt < 12; attempt++) {
+              const advanced = yield* restarted.advance
+              if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
+              yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            }
+            const repeated = yield* broker.snapshot
+            expect(repeated.fills.map((fill) => fill.side)).toEqual([
+              OrderSide.Buy,
+              OrderSide.Sell,
+              OrderSide.Buy,
+              OrderSide.Sell,
+            ])
+            expect(repeated.ledger.positions).toHaveLength(0)
+            expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+            expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
+              { state: 'COMPLETED' },
+              { state: 'COMPLETED' },
+            ])
+          }
           if (scenario === 'measured-exit') {
             expect(measuredCalls).toHaveLength(16)
             const entryCalls = measuredCalls.filter((call) => {
@@ -1041,7 +1084,7 @@ durableTest.each([
               '40000000',
               '20000000',
             ])
-            const restarted = yield* makeReplayExecutionRuntime(runtimeInput)
+            const restarted = yield* createRuntime
             expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
             yield* restarted.advance
             expect((yield* broker.snapshot).fills).toHaveLength(4)
@@ -1148,7 +1191,7 @@ durableTest.each([
           action: 'WAITING',
           waitReason: 'JEV_POSITION_HELD',
         })
-        const recreated = yield* makeReplayExecutionRuntime(runtimeInput)
+        const recreated = yield* createRuntime
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
         const frozenAt = yield* Clock.currentTimeMillis
         const liveClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
@@ -1218,7 +1261,10 @@ durableTest.each([
                   raw,
                   utcInstantFromEpochMillis(now),
                   managing
-                    ? scenario === 'early-exit' || scenario === 'partial-exit-reentry' || scenario === 'measured-exit'
+                    ? scenario === 'early-exit' ||
+                      scenario === 'partial-exit-reentry' ||
+                      scenario === 'measured-exit' ||
+                      scenario === 'measured-partial-entry-reentry'
                       ? 'exit'
                       : 'hold'
                     : noTrade
