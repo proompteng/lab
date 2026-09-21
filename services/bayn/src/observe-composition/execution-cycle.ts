@@ -31,7 +31,7 @@ import { currentUtcInstant } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { strategyDefinition } from '../strategy'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
-import { evaluateJevPositionExit } from '../jev/runtime'
+import { evaluateJevPositionManagement } from '../jev/runtime'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -796,7 +796,7 @@ const executeBoundExecutionCycle = (
             })
           if (terminalFacts.riskContext.unknownMutationCount !== 0 || !terminalFacts.report.metrics.accountingExact)
             return { _tag: 'Wait', observedAt: step.observedAt, waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION' }
-          const exitTarget = yield* evaluateJevPositionExit({
+          const management = yield* evaluateJevPositionManagement({
             cycle,
             entryDecisionHash: document.contentHash,
             authorityGenerationHash: input.authorityGenerationHash,
@@ -809,8 +809,8 @@ const executeBoundExecutionCycle = (
               mutationRunnerError({ message: 'Jev position management failed', cause, failure: 'operational' }),
             ),
           )
-          if (exitTarget === undefined)
-            return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'JEV_POSITION_HELD' }
+          if (management._tag === 'Wait')
+            return { _tag: 'Wait', observedAt: yield* currentUtcInstant, ...management.details }
           const closure = yield* ensureExecutionCycleClosure(
             input,
             preparation,
@@ -819,7 +819,7 @@ const executeBoundExecutionCycle = (
             document,
             closeWindow,
             reconcile,
-            exitTarget,
+            management.target,
           )
           if (closure._tag !== 'Close') return closure
           closeOnly = true
@@ -1064,7 +1064,7 @@ const interpretBoundMutationCycleOutcome = (
         action: 'WAITING',
         observedAt: outcome.observedAt,
         cycle,
-        waitReason: outcome.waitReason,
+        ...(outcome.readiness === undefined ? { waitReason: outcome.waitReason } : { readiness: outcome.readiness }),
       })
     case 'Block':
       return input.blockedCycleIntentStore === undefined

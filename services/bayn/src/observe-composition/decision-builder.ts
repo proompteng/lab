@@ -38,11 +38,7 @@ import {
   type CyclePassObservation,
 } from '../cycle/runner'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
-import {
-  DecisionReadinessReason,
-  RequiredFeatureReadinessSchema,
-  type DecisionReadiness,
-} from '../cycle/runner/readiness'
+import { DecisionReadinessReason, snapshotReadiness, type DecisionReadiness } from '../cycle/runner/readiness'
 import {
   bindCycleExecutionSession,
   type ExecutionSessionBinding,
@@ -85,7 +81,7 @@ import {
   type ObserveShadowDecisionDocument,
   type ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
-import { strictParseOptions, UtcInstantSchema } from '../schemas'
+import { strictParseOptions } from '../schemas'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import {
@@ -774,24 +770,6 @@ const nativeJevProtocol = (strategy: StrategyRuntime) => {
 }
 
 type JevDecisionServices = CandidateObservationStore | JevBatchStore | JevEvaluationStore | JevClient
-
-const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionReadiness => {
-  const symbol = failure.facts?.['symbol']
-  const eventAt = failure.facts?.['eventAt']
-  const requiredFeature = failure.facts?.['requiredFeature']
-  return {
-    reason:
-      failure.reason === 'watermark'
-        ? DecisionReadinessReason.ArchiveWatermark
-        : failure.reason === 'freshness'
-          ? DecisionReadinessReason.SnapshotStale
-          : DecisionReadinessReason.SnapshotUnavailable,
-    message: failure.message,
-    ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
-    ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
-    ...(Schema.is(RequiredFeatureReadinessSchema)(requiredFeature) ? { requiredFeature } : {}),
-  }
-}
 
 const snapshotQueryReadiness = (query: IntradaySnapshotQuery) => ({
   rangeStartAt: query.rangeStartAt,

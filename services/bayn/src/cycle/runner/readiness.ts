@@ -2,6 +2,7 @@ import { Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema } from '../../schemas'
 import { MarketFeatureDefinition } from '../../market-data/features/contract'
+import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
 
 export enum DecisionReadinessReason {
   DecisionPending = 'DECISION_PENDING',
@@ -39,6 +40,24 @@ export const DecisionReadinessSchema = Schema.Struct({
 })
 
 export type DecisionReadiness = typeof DecisionReadinessSchema.Type
+
+export const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionReadiness => {
+  const symbol = failure.facts?.['symbol']
+  const eventAt = failure.facts?.['eventAt']
+  const requiredFeature = failure.facts?.['requiredFeature']
+  return {
+    reason:
+      failure.reason === 'watermark'
+        ? DecisionReadinessReason.ArchiveWatermark
+        : failure.reason === 'freshness'
+          ? DecisionReadinessReason.SnapshotStale
+          : DecisionReadinessReason.SnapshotUnavailable,
+    message: failure.message,
+    ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
+    ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
+    ...(Schema.is(RequiredFeatureReadinessSchema)(requiredFeature) ? { requiredFeature } : {}),
+  }
+}
 
 export const CycleCompletionWaitReasonSchema = Schema.Literals([
   'accounting-inexact',

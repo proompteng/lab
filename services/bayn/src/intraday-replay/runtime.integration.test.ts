@@ -90,6 +90,7 @@ durableTest.each([
   'missing-benchmark',
   'no-trade',
   'failed-model-response',
+  'failed-management-response',
   'recovery',
   'recovery-filled',
   'early-exit',
@@ -205,9 +206,11 @@ durableTest.each([
       strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
     })
     const closeAtMs =
-      scenario === 'fill' || scenario === 'fallback'
-        ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
-        : Date.parse('2026-09-04T19:59:02Z')
+      scenario === 'failed-management-response'
+        ? initialAtMs + (protocol.maximumHoldingMinutes + 1) * 60_000
+        : scenario === 'fill' || scenario === 'fallback'
+          ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
+          : Date.parse('2026-09-04T19:59:02Z')
     const closeQuery = {
       ...fixture.query,
       purpose: IntradaySnapshotPurpose.Liquidation,
@@ -1006,6 +1009,51 @@ durableTest.each([
           }
           return { _tag: 'Lifecycle' as const }
         }
+        if (scenario === 'failed-management-response') {
+          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          const start = (yield* Clock.currentTimeMillis) + 1
+          const schedule = yield* driveReplaySession(
+            runtime,
+            (at) =>
+              advanceMarketTo(at).pipe(
+                Effect.mapError(
+                  (cause) => new ReplayBrokerFailure({ message: 'Management evidence clock failed', cause }),
+                ),
+              ),
+            start,
+            start + 4000,
+          )
+          expect(managementCalls).toBe(1)
+          expect(schedule.failedPassCount).toBe(0)
+          expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
+          expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
+          for (const arrival of closeArrivals)
+            cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+          yield* advanceMarketTo(closeAtMs)
+          for (let attempt = 0; attempt < 20 && (yield* broker.snapshot).ledger.positions.length > 0; attempt++) {
+            yield* runtime.advance
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          const state = yield* broker.snapshot
+          const reconciliation = yield* runtime.reconcile
+          expect(state.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
+          expect(state.ledger.positions).toHaveLength(0)
+          expect(managementCalls).toBe(1)
+          expect(
+            assessBacktestSession({
+              ...schedule,
+              valuationFailureCount: 0,
+              remainingPositionCount: state.ledger.positions.length,
+              reconciliation: {
+                status: reconciliation.report.reconciliation.status,
+                metrics: reconciliation.report.metrics,
+                unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
+                unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+              },
+            }),
+          ).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
+          return { _tag: 'ManagementUnavailable' as const }
+        }
         let waiting = yield* runtime.advance
         for (
           let attempt = 0;
@@ -1075,9 +1123,9 @@ durableTest.each([
                 yield* measuredProviderClock.adjust(100)
               }
               const now = yield* Clock.currentTimeMillis
-              if (scenario === 'failed-model-response') {
+              if (scenario === 'failed-model-response' || (scenario === 'failed-management-response' && managing)) {
                 const rejected = {
-                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), 'enter').response,
+                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), managing ? 'hold' : 'enter').response,
                   answers: {},
                 }
                 return yield* new JevError({

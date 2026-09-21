@@ -7,7 +7,7 @@ import {
   orderRequestNotionalMicros,
 } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
-import type { CycleCompletionWaitReason, CycleWaitReason } from '../cycle/runner/readiness'
+import type { CycleCompletionWaitReason, CycleWaitingDetails } from '../cycle/runner/readiness'
 import {
   Authority,
   IntentState,
@@ -643,7 +643,7 @@ export type PreparedMutationCycleStep =
         | CycleTerminalReason.Risk
       readonly observedAt: string
     }
-  | { readonly _tag: 'Wait'; readonly observedAt: string; readonly waitReason: CycleWaitReason }
+  | ({ readonly _tag: 'Wait'; readonly observedAt: string } & CycleWaitingDetails)
   | { readonly _tag: 'Complete'; readonly observedAt: string }
 
 export type BoundMutationCycleOutcome = Exclude<PreparedMutationCycleStep, { readonly _tag: 'Execute' }>

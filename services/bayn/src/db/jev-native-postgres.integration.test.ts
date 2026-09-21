@@ -25,7 +25,7 @@ import { makeExecutionCycleClosure, ExecutionCycleClosureStore } from './executi
 import type { IntradayMarketDataService } from '../market-data'
 import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgres'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
-import { evaluateJevObservation, evaluateJevPositionExit } from '../jev/runtime'
+import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
 import { JevExitReason } from '../jev/exit'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
@@ -281,7 +281,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           if (portfolio.purpose === JevPurpose.Manage) {
             const cycle = Option.getOrThrow(yield* (yield* CycleStore).read(nativeInput.cycleId))
             expect(
-              yield* evaluateJevPositionExit({
+              yield* evaluateJevPositionManagement({
                 cycle,
                 entryDecisionHash: portfolio.entryDecisionHash,
                 authorityGenerationHash: nativeInput.authorityGenerationHash,
@@ -306,7 +306,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                     ),
                 },
               }),
-            ).toBeUndefined()
+            ).toMatchObject({ _tag: 'Wait', details: { readiness: { reason: 'SNAPSHOT_STALE' } } })
             expect(calls).toBe(0)
           }
           const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
@@ -341,7 +341,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             reason === JevExitReason.MaximumHold ? { heldMinutes: 15 } : {},
           )
           const cycle = Option.getOrThrow(yield* (yield* CycleStore).read(nativeInput.cycleId))
-          const target = yield* evaluateJevPositionExit({
+          const target = yield* evaluateJevPositionManagement({
             cycle,
             entryDecisionHash: portfolio.entryDecisionHash,
             authorityGenerationHash: nativeInput.authorityGenerationHash,
@@ -366,7 +366,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                     ),
             },
           })
-          expect(target?.reason).toBe(reason)
+          expect(target).toMatchObject({ _tag: 'Exit', target: { reason } })
         }).pipe(
           Effect.provideService(JevClient, {
             evaluate: () => Effect.die('Deterministic exit unexpectedly called Jev'),
@@ -409,11 +409,20 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               ),
           },
         }
-        expect(yield* evaluateJevPositionExit(input)).toBeUndefined()
-        expect(yield* evaluateJevPositionExit(input)).toBeUndefined()
+        expect(yield* evaluateJevPositionManagement(input)).toEqual({
+          _tag: 'Wait',
+          details: { waitReason: 'JEV_POSITION_HELD' },
+        })
+        expect(yield* evaluateJevPositionManagement(input)).toMatchObject({
+          _tag: 'Wait',
+          details: { readiness: { reason: 'SIGNAL_WINDOW_OBSERVED' } },
+        })
         expect(calls).toBe(1)
         adverseQuote = true
-        expect((yield* evaluateJevPositionExit(input))?.reason).toBe(JevExitReason.ProtectiveStop)
+        expect(yield* evaluateJevPositionManagement(input)).toMatchObject({
+          _tag: 'Exit',
+          target: { reason: JevExitReason.ProtectiveStop },
+        })
         expect(calls).toBe(1)
       }).pipe(
         Effect.provideService(JevClient, {
@@ -894,7 +903,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                   ).snapshot,
             ),
         }
-        const exitTarget = yield* evaluateJevPositionExit({
+        const management = yield* evaluateJevPositionManagement({
           cycle,
           entryDecisionHash: document.contentHash,
           authorityGenerationHash: nativeInput.authorityGenerationHash,
@@ -903,7 +912,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           brokerState: portfolio.brokerState,
           marketData,
         })
-        if (exitTarget === undefined) throw new Error('Expected native Jev exit')
+        if (management._tag !== 'Exit') throw new Error('Expected native Jev exit')
+        const exitTarget = management.target
         expect(exitTarget.reason).toBe(JevExitReason.Model)
         expect(calls).toBe(16)
         if (reconciliation.riskContext.authority === null) throw new Error('Expected execution authority')

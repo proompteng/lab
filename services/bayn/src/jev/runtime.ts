@@ -2,7 +2,12 @@ import { Data, Effect, Option, Result } from 'effect'
 
 import type { MarketCalendarObservation } from '../broker/alpaca'
 import type { AutonomousCycle } from '../cycle'
-import { DecisionReadinessReason } from '../cycle/runner/readiness'
+import {
+  DecisionReadinessReason,
+  snapshotReadiness,
+  type CycleWaitingDetails,
+  type DecisionReadiness,
+} from '../cycle/runner/readiness'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type IntradayMarketDataService } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import type { ReconciledBrokerState } from '../reconciliation'
@@ -28,7 +33,13 @@ import {
   jevPlanningTargetWeights,
   type JevEntryTarget,
 } from './decision'
-import { decideJevExit, jevProtectiveQuoteIsFresh, jevProtectiveStopCrossed, JevExitReason } from './exit'
+import {
+  decideJevExit,
+  jevProtectiveQuoteIsFresh,
+  jevProtectiveStopCrossed,
+  JevExitReason,
+  type JevExitTarget,
+} from './exit'
 import { JevPositionStore } from './portfolio'
 import { JevOutcome } from './evidence'
 import { JevResolutionStatus } from './resolution'
@@ -237,7 +248,16 @@ export const compileJevEntry = (
     }
   })
 
-export const evaluateJevPositionExit = (input: {
+type JevPositionManagement =
+  | { readonly _tag: 'Exit'; readonly target: JevExitTarget }
+  | { readonly _tag: 'Wait'; readonly details: CycleWaitingDetails }
+
+const awaitPositionEvidence = (readiness: DecisionReadiness): JevPositionManagement => ({
+  _tag: 'Wait',
+  details: { readiness },
+})
+
+export const evaluateJevPositionManagement = (input: {
   readonly cycle: AutonomousCycle
   readonly entryDecisionHash: string
   readonly authorityGenerationHash: string
@@ -327,10 +347,39 @@ export const evaluateJevPositionExit = (input: {
         )
       : undefined
   }).pipe(
+    Effect.map(
+      (target): JevPositionManagement =>
+        target === undefined
+          ? { _tag: 'Wait', details: { waitReason: 'JEV_POSITION_HELD' } }
+          : { _tag: 'Exit', target },
+    ),
     Effect.catchTags({
-      JevAwaitingEvidence: () => Effect.void,
-      JevAwaitingFreshWindow: () => Effect.void,
+      JevAwaitingEvidence: (cause) =>
+        Effect.succeed(
+          awaitPositionEvidence({
+            reason: cause.readiness,
+            message: cause.message,
+            ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
+          }),
+        ),
+      JevAwaitingFreshWindow: (cause) =>
+        Effect.succeed(
+          awaitPositionEvidence({
+            reason: DecisionReadinessReason.SignalWindowObserved,
+            message: cause.message,
+            availableAt: cause.availableAt,
+          }),
+        ),
       OperationalError: (cause) =>
-        isIntradaySnapshotPending(cause.cause) || cause.retryable ? Effect.void : Effect.fail(cause),
+        isIntradaySnapshotPending(cause.cause)
+          ? Effect.succeed(awaitPositionEvidence(snapshotReadiness(cause.cause)))
+          : cause.retryable
+            ? Effect.succeed(
+                awaitPositionEvidence({
+                  reason: DecisionReadinessReason.SnapshotUnavailable,
+                  message: cause.message,
+                }),
+              )
+            : Effect.fail(cause),
     }),
   )

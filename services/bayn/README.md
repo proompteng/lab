@@ -412,7 +412,10 @@ coordinates, partition inventory, record ordering, and coverage must validate be
 establish the retained stream's bounds; they do not establish historical liquidity or original delivery for REST data.
 See the [streaming guide](src/market-data/streaming/README.md) for source capture and Dorvud feature regeneration.
 
-Each pass records the engine's decision/cycle result and simulated broker state. The final `bayn.backtest-report.v2`
+Each pass records the engine's decision/cycle result and simulated broker state. Entry and position-management waits
+retain typed readiness: pending, rejected or expired inference and unavailable market inputs count as missing decision
+data, even when a later deterministic exit succeeds. A verified model hold remains distinct from unavailable evidence.
+The final `bayn.backtest-report.v2`
 retains every session's schedule, closing broker equity, net equity after known model and allocated data costs,
 and reconciliation, plus cumulative net equity change, observed peak
 and drawdown, final broker orders/fills/positions, durable accounting counts, and input identities. The output keeps
