@@ -1488,6 +1488,7 @@ for (const phase of [
         let clockUnavailable = false
         const delay = (at: typeof phase) => (phase === at ? providerClock.setTime(providerStart + 10_000) : Effect.void)
         const timing = yield* makeReplayJevTiming({
+          measureDatabaseTime: (operation) => operation,
           providerClock,
           provider: { evaluate: () => Effect.die('final authorization must not call Jev') },
           advanceTo: (atMs) =>

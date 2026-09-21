@@ -41,7 +41,8 @@ const fixture = Effect.gen(function* () {
     Effect.sync(() => {
       calls.push(call)
     })
-  return { providerClock, marketClock, calls, marketArrivals, advanceTo, retain }
+  const measureDatabaseTime = <A, E, R>(operation: Effect.Effect<A, E, R>) => operation
+  return { providerClock, marketClock, calls, marketArrivals, advanceTo, retain, measureDatabaseTime }
 })
 
 test('concurrent inference advances source time by elapsed batch time and preserves original provider receipts', async () => {

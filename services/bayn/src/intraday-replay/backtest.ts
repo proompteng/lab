@@ -1,4 +1,5 @@
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
+import { utcInstantFromEpochMillis } from '../time'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -342,15 +343,17 @@ export const runBacktest = (
     )
     const sql = yield* PgClient.PgClient
     yield* prepareFreshReplayDatabase(databases.operationTimeoutMs)
-    yield* TestClock.setTime(prepared.openMs - 1)
+    const initializationStartedAtMs = prepared.openMs - 60_000
+    yield* TestClock.setTime(initializationStartedAtMs)
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash)
     const advanceTo = yield* makeReplayTimeline(source, clock, prepared.closeMs + databases.operationTimeoutMs + 10_000)
-    yield* advanceTo(prepared.openMs - 1)
+    yield* advanceTo(initializationStartedAtMs)
     const providerClock = yield* OperationDeadlineClock
     if (providerClock === undefined)
       return yield* new ReplayBrokerFailure({ message: 'Native Jev backtest requires its measured provider clock' })
     const inferenceCalls: ReplayJevCall[] = []
     const timing = yield* makeReplayJevTiming({
+      measureDatabaseTime: clock.measure,
       provider: yield* JevClient,
       providerClock,
       advanceTo,
@@ -397,6 +400,15 @@ export const runBacktest = (
       recordPass: () => Effect.void,
       ...prepared.input.cadence,
     }).pipe(Effect.provideService(JevClient, timing.client), timing.run)
+    const initializationCompletedAtMs = yield* Clock.currentTimeMillis
+    if (initializationCompletedAtMs > prepared.openMs)
+      return yield* new ReplayBrokerFailure({ message: 'Replay initialization missed the first session open' })
+    const initialization = {
+      startedAt: utcInstantFromEpochMillis(initializationStartedAtMs),
+      completedAt: utcInstantFromEpochMillis(initializationCompletedAtMs),
+      elapsedMs: initializationCompletedAtMs - initializationStartedAtMs,
+      firstSessionOpenAt: utcInstantFromEpochMillis(prepared.openMs),
+    }
     let peakEquity = BigInt(prepared.input.openingCashMicros)
     let maximumObservedDrawdown = 0n
     let previousClosingEquity = peakEquity
@@ -561,6 +573,7 @@ export const runBacktest = (
       sourceReceiptHash: prepared.sourceReceipt.contentHash,
       build: prepared.buildEvidence,
       assumptions: prepared.input.assumptions,
+      initialization,
       sessions,
       schedule: {
         passCount: sessions.reduce((total, session) => total + session.schedule.passCount, 0),

@@ -406,7 +406,14 @@ path before claiming production timing parity.
 
 Final authorization samples measured elapsed time after provider, persistence, writer-lock, grant and broker reads.
 Every replay reconciliation, including those inside the cycle driver, uses that measured clock after ingestion.
+During measured operations, the replay account's transaction-acceptance clock advances with PostgreSQL wall time,
+including evidence queries, insertions and work in the enclosing transaction. Recorded observation timestamps retain
+their synchronized replay time. Pausing measurement retains elapsed time and advances the market clock. Deferred
+exit deadlines therefore see time spent before transaction acceptance.
 Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
+Initialization starts one minute before the first registered open and retains its measured start, completion and
+elapsed time in the report. If initialization misses that open, the run fails without rewinding or omitting opening
+coverage. The scheduled session boundaries remain the supplied calendar's open and close.
 This preserves causal ordering between broker observations and their reconciliation; a partial IOC entry can finish
 after its exit and fresh exact-flat evidence. Clock failures remain explicit and cannot produce a successful receipt.
 Risk expiry and the submission lease use the same final timestamp. Controlled regressions reject expired evidence

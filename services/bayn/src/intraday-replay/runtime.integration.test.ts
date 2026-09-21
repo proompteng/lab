@@ -336,6 +336,7 @@ durableTest.each([
         yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
         const timing = measured
           ? yield* makeReplayJevTiming({
+              measureDatabaseTime: (operation) => operation,
               provider,
               providerClock,
               advanceTo: (atMs) =>

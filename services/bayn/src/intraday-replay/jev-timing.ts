@@ -44,6 +44,9 @@ export const makeReplayJevTiming = (input: {
   readonly providerClock: Clock.Clock
   readonly advanceTo: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
   readonly retain: (call: ReplayJevCall) => Effect.Effect<void, ReplayBrokerFailure>
+  readonly measureDatabaseTime: <A, E, R>(
+    operation: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ReplayBrokerFailure, R>
 }) =>
   Effect.gen(function* () {
     const marketClock = yield* Clock.clockWith(Effect.succeed)
@@ -126,22 +129,24 @@ export const makeReplayJevTiming = (input: {
 
     const run = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
       passPermit.withPermit(
-        Effect.gen(function* () {
-          yield* Ref.set(failure, undefined)
-          measurement = {
-            providerAt: yield* input.providerClock.currentTimeMillis,
-            marketAt: yield* marketClock.currentTimeMillis,
-          }
-          const result = yield* Effect.result(operation)
-          yield* synchronize
-          const failed = yield* Ref.get(failure)
-          if (failed !== undefined) return yield* failed
-          return yield* Effect.fromResult(result)
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              measurement = undefined
-            }),
+        input.measureDatabaseTime(
+          Effect.gen(function* () {
+            yield* Ref.set(failure, undefined)
+            measurement = {
+              providerAt: yield* input.providerClock.currentTimeMillis,
+              marketAt: yield* marketClock.currentTimeMillis,
+            }
+            const result = yield* Effect.result(operation)
+            yield* synchronize
+            const failed = yield* Ref.get(failure)
+            if (failed !== undefined) return yield* failed
+            return yield* Effect.fromResult(result)
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                measurement = undefined
+              }),
+            ),
           ),
         ),
       )

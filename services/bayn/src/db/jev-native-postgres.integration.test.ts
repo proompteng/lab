@@ -1,8 +1,22 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import {
+  Cause,
+  Clock,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Redacted,
+  Result,
+  Schema,
+} from 'effect'
 import { TestClock } from 'effect/testing'
 import { makeReplayJevTiming, type ReplayJevCall } from '../intraday-replay/jev-timing'
+import { makeSimulatedExecutionClock } from '../intraday-replay/clock'
 import { utcInstantFromEpochMillis } from '../time'
 import { NodeServices } from '@effect/platform-node'
 
@@ -540,6 +554,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
             const calls: ReplayJevCall[] = []
             const timing = yield* makeReplayJevTiming({
+              measureDatabaseTime: (operation) => operation,
               providerClock,
               advanceTo: (atMs) => TestClock.setTime(atMs),
               retain: (call) =>
@@ -769,7 +784,34 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   })
 
+  test('interrupting measured work freezes the database clock and retains elapsed market time', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64))
+        const entered = yield* Deferred.make<void>()
+        const worker = yield* clock
+          .measure(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)))
+          .pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        expect(yield* sql`SELECT measured_at IS NOT NULL AS active FROM simulated_execution_clocks`).toEqual([
+          { active: true },
+        ])
+        yield* sql`SELECT pg_sleep(0.01)`
+        yield* Fiber.interrupt(worker)
+        expect(yield* sql`SELECT measured_at IS NULL AS stopped FROM simulated_execution_clocks`).toEqual([
+          { stopped: true },
+        ])
+        expect(yield* Clock.currentTimeMillis).toBeGreaterThan(observed)
+        const frozen = yield* sql`SELECT execution_account_now(${replayAccountId}) AS now`
+        yield* sql`SELECT pg_sleep(0.01)`
+        expect(yield* sql`SELECT execution_account_now(${replayAccountId}) AS now`).toEqual(frozen)
+      }).pipe(Effect.scoped, atObservation),
+    )
+  })
+
   const nativeExitPersistence = async (scenario: string) => {
+    const providerClock = await Effect.runPromise(Clock.clockWith(Effect.succeed))
     const state = fixture.portfolio.brokerState
     const at = fixture.observation.payload.observedAt
     let reconciliations = 0
@@ -988,6 +1030,61 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         }).pipe(Effect.provide(TestClock.layer()))
         expect(Result.isFailure(expired)).toBe(true)
         expect(Option.isNone(yield* store.read(nativeInput.cycleId))).toBe(true)
+        if (
+          scenario === 'measured-expires-during-insert' ||
+          scenario === 'measured-expires-before-commit' ||
+          scenario === 'measured-on-time'
+        ) {
+          yield* TestClock.setTime(
+            Date.parse(exitTarget.commitDeadlineAt) - (scenario === 'measured-on-time' ? 2000 : 300),
+          )
+          const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64))
+          const timing = yield* makeReplayJevTiming({
+            measureDatabaseTime: clock.measure,
+            providerClock,
+            provider: { evaluate: () => Effect.die('Exit persistence must use its recorded evidence') },
+            advanceTo: (atMs) =>
+              clock
+                .advanceTo(utcInstantFromEpochMillis(atMs))
+                .pipe(Effect.andThen(TestClock.setTime(atMs)), Effect.orDie),
+            retain: () => Effect.die('Exit persistence must not infer'),
+          })
+          if (scenario === 'measured-expires-during-insert') {
+            yield* sql`CREATE FUNCTION delay_test_exit_insert() RETURNS trigger LANGUAGE plpgsql AS $function$
+              BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END
+            $function$`
+            yield* sql`CREATE TRIGGER delay_test_exit_insert BEFORE INSERT ON autonomous_cycle_paper_closures
+              FOR EACH ROW EXECUTE FUNCTION delay_test_exit_insert()`
+          }
+          const attempted = yield* timing
+            .run(
+              Effect.gen(function* () {
+                yield* timing.currentUtcInstant
+                return yield* (yield* WriterFence).transaction(
+                  Effect.gen(function* () {
+                    yield* store.bind(closure)
+                    if (scenario === 'measured-expires-before-commit') yield* sql`SELECT pg_sleep(0.5)`
+                  }),
+                )
+              }),
+            )
+            .pipe(Effect.exit)
+          if (scenario === 'measured-on-time') {
+            expect(Exit.isSuccess(attempted)).toBe(true)
+            expect(Option.getOrThrow(yield* store.read(nativeInput.cycleId))).toEqual(closure)
+          } else {
+            expect(Exit.isFailure(attempted)).toBe(true)
+            if (Exit.isFailure(attempted))
+              expect(Cause.pretty(attempted.cause)).toContain(
+                'initial Jev exit evidence expired before transaction commitment',
+              )
+            expect(Option.isNone(yield* store.read(nativeInput.cycleId))).toBe(true)
+          }
+          expect(
+            yield* sql`SELECT measured_at IS NULL AS stopped FROM simulated_execution_clocks WHERE account_id = ${replayAccountId}`,
+          ).toEqual([{ stopped: true }])
+          return
+        }
         if (scenario !== 'recovery') {
           if (scenario === 'expires-during-insert') {
             yield* sql`CREATE FUNCTION advance_test_exit_clock() RETURNS trigger LANGUAGE plpgsql AS $function$
@@ -1122,9 +1219,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
       ),
     )
   }
-  test.each(['recovery', 'expires-during-insert', 'expires-before-commit'])(
-    'native exit persistence: %s',
-    nativeExitPersistence,
-    30_000,
-  )
+  test.each([
+    'recovery',
+    'expires-during-insert',
+    'expires-before-commit',
+    'measured-expires-during-insert',
+    'measured-expires-before-commit',
+    'measured-on-time',
+  ])('native exit persistence: %s', nativeExitPersistence, 30_000)
 })

@@ -162,6 +162,7 @@ test('measured Jev submission follows final authorization and prices quotes avai
       const providerClock = yield* TestClock.make()
       yield* providerClock.setTime(0)
       const timing = yield* makeReplayJevTiming({
+        measureDatabaseTime: (operation) => operation,
         provider: { evaluate: () => Effect.die('This timing case does not need inference') },
         providerClock,
         retain: () => Effect.void,
