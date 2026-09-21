@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Schema } from 'effect'
+import { Effect, Layer, Option, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import {
@@ -23,9 +23,15 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       message: 'Jev evaluation evidence could not be durably verified',
       cause,
     })
+  const requireAutocommit = Effect.gen(function* () {
+    if (Option.isSome(yield* Effect.serviceOption(sql.transactionService))) {
+      return yield* persistError('Jev evidence must commit independently before inference or decision use')
+    }
+  })
   return {
     begin: (input: JevEvaluationRequest) =>
       Effect.gen(function* () {
+        yield* requireAutocommit
         const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
         const inserted = yield* Schema.decodeUnknownEffect(
           Schema.Array(Schema.Struct({ request_id: Sha256Schema })),
@@ -64,6 +70,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       }).pipe(Effect.mapError(persistError)),
     record: (input: JevEvaluationRequest, evidence: JevEvaluationReceipt) =>
       Effect.gen(function* () {
+        yield* requireAutocommit
         const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
         const receipt = yield* Effect.fromResult(decodeJevEvaluationReceipt(request, evidence))
         yield* Schema.decodeUnknownEffect(

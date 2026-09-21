@@ -2,7 +2,8 @@ import { Clock, Context, Effect, Redacted, Result } from 'effect'
 
 import type { OperationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
-import { JevClient } from './client'
+import { JevClient, JevError } from './client'
+import { JevFailure } from './contract'
 import {
   decodeJevEvaluationReceipt,
   decodeJevEvaluationRequest,
@@ -59,7 +60,20 @@ export const evaluateJevOnce = (input: unknown) =>
         return yield* new JevEvidenceError({ message: 'Jev request expired or its clock regressed during persistence' })
       }
       const client = yield* JevClient
-      const result = yield* client.evaluate(request.request).pipe(Effect.result)
+      const result = yield* client.evaluate(request.request).pipe(
+        Effect.timeoutOrElse({
+          duration: Date.parse(request.expiresAt) - now,
+          orElse: () =>
+            Effect.fail(
+              new JevError({
+                failure: JevFailure.Timeout,
+                message: 'Jev request validity expired during inference',
+                requestHash: request.requestHash,
+              }),
+            ),
+        }),
+        Effect.result,
+      )
       const completedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
       receipt = yield* Effect.fromResult(
         makeJevEvaluationReceipt(request, {

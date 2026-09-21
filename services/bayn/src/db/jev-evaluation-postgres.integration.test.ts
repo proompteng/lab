@@ -2,12 +2,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
 import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
-import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
+import { JevClient } from '../jev/client'
+import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
@@ -126,6 +128,45 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
       }),
     )
     expect(Result.isFailure(result)).toBe(true)
+  })
+
+  test('rejects an ambient transaction before claiming or invoking the provider', async () => {
+    let calls = 0
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const result = yield* sql.withTransaction(evaluateJevOnce(request)).pipe(
+          Effect.result,
+          Effect.provideService(JevClient, {
+            evaluate: () =>
+              Effect.sync(() => {
+                calls += 1
+                return inferenceFixture()
+              }),
+          }),
+          Effect.provide(TestClock.layer()),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        expect(calls).toBe(0)
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
+      }),
+    )
+  })
+
+  test('rejects receipt persistence in an ambient transaction', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* JevEvaluationStore
+        yield* store.begin(request)
+        expect(Result.isFailure(yield* sql.withTransaction(store.record(request, receipt)).pipe(Effect.result))).toBe(
+          true,
+        )
+        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Pending })
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
+      }),
+    )
   })
 
   test('forbids update, delete and truncate of both evidence tables', async () => {

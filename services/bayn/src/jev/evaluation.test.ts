@@ -209,6 +209,55 @@ describe('durable Jev evaluation', () => {
     expect(calls).toBe(0)
   })
 
+  test('cancels inference at the remaining request deadline and durably records the timeout', async () => {
+    const memory = memoryStore()
+    let calls = 0
+    let stopped = 0
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.adjust(4900)
+          yield* evaluateJevOnce(request).pipe(Effect.result, Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.yieldNow
+          expect(calls).toBe(1)
+          yield* TestClock.adjust(99)
+          expect(stopped).toBe(0)
+          expect(memory.receipt()).toBeUndefined()
+          yield* TestClock.adjust(1)
+          yield* Effect.yieldNow
+          expect(stopped).toBe(1)
+          expect(memory.recordings()).toBe(1)
+          expect(memory.receipt()?.completedAt).toBe(request.expiresAt)
+          expect(memory.receipt()?.outcome).toEqual({
+            status: JevOutcome.Failed,
+            failure: JevFailure.Timeout,
+            httpStatus: null,
+            responseHash: null,
+            rejectedResponse: null,
+          })
+          expect(Result.isFailure(yield* evaluateJevOnce(request).pipe(Effect.result))).toBe(true)
+          expect(calls).toBe(1)
+        }),
+      ).pipe(
+        Effect.provideService(JevEvaluationStore, memory.store),
+        Effect.provideService(JevClient, {
+          evaluate: () =>
+            Effect.sync(() => {
+              calls += 1
+            }).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  stopped += 1
+                }),
+              ),
+            ),
+        }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+  })
+
   test('retains a response but withholds entry if receipt persistence crosses expiry', async () => {
     const memory = memoryStore()
     const result = await Effect.runPromise(
