@@ -238,7 +238,7 @@ flat reconciliation. The standing mandate may then create the next distinct atte
 the entry cutoff remains open. Each attempt evaluates fresh signals across the strategy candidates. The v4 cycle
 identity and unique PostgreSQL authority slot record an increasing attempt ordinal without a session-wide quota;
 replay uses the same rule through the production engine. No retry reuses an intent, decision, cycle ID, or broker order.
-Entry limit prices include the production risk policy's bounded allowance, and the modeled arrival price must still
+Entry and quote-backed close limit prices include the production risk policy's bounded allowance, and the modeled arrival price must still
 satisfy that limit before a fill is possible.
 
 For captured Kafka, the required receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,

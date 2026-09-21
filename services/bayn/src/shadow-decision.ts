@@ -110,6 +110,7 @@ export interface ObserveShadowDecisionInput {
 export interface ExecutionDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
   readonly entryLimitSlippageBps?: number
+  readonly closeLimitSlippageBps?: number
   /** The immutable signal/session binding retained for restart-safe close construction. */
   readonly executionSession: ExecutionSessionBinding
   /** A close-only plan uses the activation lease as its submission boundary. */
@@ -1011,6 +1012,7 @@ const assembleExecutionDecisionDocument = (
   submissionCutoffAt: string,
   replanGenerationHash?: string,
   entryLimitSlippageBps?: number,
+  closeLimitSlippageBps?: number,
 ): Result.Result<ExecutionDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
@@ -1063,6 +1065,7 @@ const assembleExecutionDecisionDocument = (
       plannerInput: input.plannerInput,
       riskPolicy: input.policy,
       ...(entryLimitSlippageBps === undefined ? {} : { entryLimitSlippageBps }),
+      ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
@@ -1116,6 +1119,7 @@ export const buildExecutionDecision = (
                   input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
                   input.replanGenerationHash,
                   input.entryLimitSlippageBps,
+                  input.closeLimitSlippageBps,
                 ),
             ),
           ),

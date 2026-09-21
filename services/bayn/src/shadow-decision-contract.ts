@@ -33,9 +33,11 @@ import { IntradaySnapshotPurpose } from './market-data/intraday/model'
 import {
   AuthorityStateSchema,
   OrderSide,
+  OrderType,
   PositionSchema,
   PositiveMicrosSchema,
   RiskOutcome,
+  TimeInForce,
   type Position,
 } from './execution/contracts'
 import { deriveExecutionIntentPricing } from './execution/intent-pricing'
@@ -522,6 +524,7 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   /** Persist the exact risk policy so durable decoding can reproduce every gate and derived metric. */
   riskPolicy: Schema.optionalKey(PolicySchema),
   entryLimitSlippageBps: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9_999 }))),
+  closeLimitSlippageBps: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9_999 }))),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
@@ -1387,6 +1390,20 @@ const executionMaterialIssues = (
       issue: 'entry limit allowance must stay within the bound intraday risk policy',
     })
   }
+  if (
+    document.closeLimitSlippageBps !== undefined &&
+    (!isClosePlan ||
+      !intradayStrategy ||
+      targetExecutionTerms?.orderType !== OrderType.Limit ||
+      targetExecutionTerms.timeInForce !== TimeInForce.ImmediateOrCancel ||
+      document.riskPolicy === undefined ||
+      document.closeLimitSlippageBps > document.riskPolicy.maxAdverseSlippageBps)
+  ) {
+    issues.push({
+      path: ['closeLimitSlippageBps'],
+      issue: 'close limit allowance must bind a close-only IOC plan within the intraday risk policy',
+    })
+  }
   const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined
   const intentTargetSymbols = document.targetPlan.intentTargets.map(({ symbol }) => symbol).toSorted()
   const plannedTargetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol).toSorted()
@@ -1729,7 +1746,7 @@ const executionMaterialIssues = (
               quantityMicros: BigInt(target.quantityMicros),
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               executionModel: intradayMomentumExecutionModel,
-              limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? 0),
+              limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0),
             })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)

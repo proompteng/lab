@@ -101,6 +101,7 @@ durableTest.each([
   'measured-bootstrap-delay',
   'measured-partial-entry-reentry',
   'measured-source-delay-reentry',
+  'measured-slipped-exit-reentry',
   'measured-entry-expired',
   'measured-zero-fill-reentry',
   'measured-submit-expired-reentry',
@@ -121,7 +122,8 @@ durableTest.each([
       throw new Error('Replay acceptance requires isolated local test databases')
     const protocol = fixtureProtocol
     const sourceDelay = scenario === 'measured-source-delay-reentry'
-    const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || sourceDelay
+    const slippedExit = scenario === 'measured-slipped-exit-reentry'
+    const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || sourceDelay || slippedExit
     const noTrade = scenario === 'no-trade' || scenario === 'no-trade-finalization'
     const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
@@ -158,7 +160,7 @@ durableTest.each([
                 fullWindow: false,
                 offset: BigInt((index + 2) * 1000),
                 bidSize: 100,
-                premium: 0.02 + (index + 1) * 0.00002,
+                premium: slippedExit ? 0.02 : 0.02 + (index + 1) * 0.00002,
               })),
               ...(scenario === 'measured-zero-fill-reentry' ||
               scenario === 'measured-submit-expired-reentry' ||
@@ -366,7 +368,7 @@ durableTest.each([
           protocol: fixture.protocol,
           assumptions: {
             latencyMs: 10,
-            slippageBps: 0,
+            slippageBps: slippedExit ? 1 : 0,
             availableLiquidityPpm:
               scenario === 'recovery' || scenario === 'measured-zero-fill-reentry'
                 ? 1

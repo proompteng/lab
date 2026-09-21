@@ -1670,9 +1670,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
     const targetPlan = yield* Effect.fromResult(planTargets(plannerInput)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const closeLimitSlippageBps =
+      reconciledPositionClose || requiresFractionalClose ? undefined : policy.maxAdverseSlippageBps
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
-        limitSlippageBps: 0,
+        limitSlippageBps: closeLimitSlippageBps ?? 0,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,
@@ -1699,6 +1701,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       plannerInput,
       targetPlan,
       policy,
+      ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
       riskInputs,
       authorityGenerationHash: input.authorityGenerationHash,
       executionSession,

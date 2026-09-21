@@ -3057,6 +3057,21 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect(close.dispatchable).toBe(true)
+    expect(close.closeLimitSlippageBps).toBe(fixture.policy.maxAdverseSlippageBps)
+    expect(close.entryLimitSlippageBps).toBeUndefined()
+    for (const risk of close.deltaRisk) {
+      const facts = risk.facts
+      if (facts === undefined) throw new Error('close is missing durable risk facts')
+      const reference = BigInt(facts.state.referencePriceMicros)
+      const limit = BigInt(facts.state.expectedExecutionPriceMicros)
+      expect(limit).toBeLessThan(reference)
+      expect((reference - limit) * 10_000n).toBeLessThanOrEqual(reference * 10n)
+    }
+    const { contentHash: _closeHash, ...closeMaterial } = close
+    expect(Result.isFailure(makeExecutionDecisionDocument({ ...closeMaterial, closeLimitSlippageBps: 11 }))).toBeTrue()
+    expect(Result.isFailure(makeExecutionDecisionDocument({ ...closeMaterial, entryLimitSlippageBps: 10 }))).toBeTrue()
+    const { closeLimitSlippageBps: _closeAllowance, ...withoutCloseAllowance } = closeMaterial
+    expect(Result.isFailure(makeExecutionDecisionDocument(withoutCloseAllowance))).toBeTrue()
     expect(decideExecutionCycleCloseDocument({ ...close, dispatchable: false })).toEqual({ _tag: 'Block' })
     expect(legacyFailure).toMatchObject({
       _tag: 'CycleRunnerError',
@@ -3276,6 +3291,9 @@ describe('OBSERVE runtime composition', () => {
       )
     const close = await buildClose()
     expect(close.dispatchable).toBeTrue()
+    expect(close.closeLimitSlippageBps).toBeUndefined()
+    const { contentHash: _closeHash, ...closeMaterial } = close
+    expect(Result.isFailure(makeExecutionDecisionDocument({ ...closeMaterial, closeLimitSlippageBps: 10 }))).toBeTrue()
     expect(close.bindings.executionMarketData).toMatchObject({
       schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
       symbols: ['IWM'],
@@ -4659,6 +4677,7 @@ test('persists the pricing quote event and its shorter approval deadline for eve
   }
   const { contentHash: _contentHash, ...material } = fixture.document
   expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, entryLimitSlippageBps: 11 }))).toBeTrue()
+  expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, closeLimitSlippageBps: 10 }))).toBeTrue()
   const { entryLimitSlippageBps: _allowance, ...withoutAllowance } = material
   expect(Result.isFailure(makeExecutionDecisionDocument(withoutAllowance))).toBeTrue()
 })
