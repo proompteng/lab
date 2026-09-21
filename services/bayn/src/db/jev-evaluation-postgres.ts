@@ -118,30 +118,52 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
         const observations = yield* requireCandidateObservation(request)
         for (const observation of observations)
           yield* Effect.fromResult(reproduceJevRequestFromObservation(request, observation.payload))
-        const inserted = yield* Schema.decodeUnknownEffect(
-          Schema.Array(Schema.Struct({ request_id: Sha256Schema })),
-          strictParseOptions,
-        )(
-          yield* sql`
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const batches = yield* Schema.decodeUnknownEffect(
+              Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })]),
+              strictParseOptions,
+            )(
+              yield* sql`
+          SELECT batch_id FROM jev_batch_plans
+          WHERE cycle_id = ${request.cycleId}
+            AND authority_generation_hash = ${request.authorityGenerationHash}
+            AND snapshot_id = ${request.snapshotId}
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(payload->'candidates') AS candidate
+              WHERE candidate->>'status' = 'REQUESTED' AND candidate->'request' = ${sql.json(request)}
+            )
+          FOR UPDATE
+        `,
+            )
+            const batchId = batches[0].batch_id
+            const inserted = yield* Schema.decodeUnknownEffect(
+              Schema.Array(Schema.Struct({ request_id: Sha256Schema })),
+              strictParseOptions,
+            )(
+              yield* sql`
           INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
-          VALUES (${request.requestId}, ${request.cycleId}, ${request.authorityGenerationHash}, ${sql.json(request)})
+          SELECT ${request.requestId}, ${request.cycleId}, ${request.authorityGenerationHash}, ${sql.json(request)}
+          WHERE NOT EXISTS (SELECT 1 FROM jev_batch_results WHERE batch_id = ${batchId})
           ON CONFLICT (request_id) DO NOTHING RETURNING request_id
         `,
+            )
+            if (inserted.length === 1 && inserted[0]?.request_id === request.requestId) {
+              return { status: JevClaim.Acquired } satisfies JevEvaluationClaim
+            }
+            const evidence = yield* read(request.requestId)
+            if (evidence === null) return yield* persistError('A finalized Jev batch cannot acquire another request')
+            if (evidence.resolution?.status === JevResolutionStatus.Abandoned)
+              return { status: JevClaim.Abandoned, resolution: evidence.resolution } satisfies JevEvaluationClaim
+            if (evidence.resolution?.status === JevResolutionStatus.Recorded && evidence.receipt !== null)
+              return {
+                status: JevClaim.Recorded,
+                receipt: evidence.receipt,
+                resolution: evidence.resolution,
+              } satisfies JevEvaluationClaim
+            return { status: JevClaim.Pending } satisfies JevEvaluationClaim
+          }),
         )
-        if (inserted.length === 1 && inserted[0]?.request_id === request.requestId) {
-          return { status: JevClaim.Acquired } satisfies JevEvaluationClaim
-        }
-        const evidence = yield* read(request.requestId)
-        if (evidence === null) return yield* persistError('Claimed Jev request is missing')
-        if (evidence.resolution?.status === JevResolutionStatus.Abandoned)
-          return { status: JevClaim.Abandoned, resolution: evidence.resolution } satisfies JevEvaluationClaim
-        if (evidence.resolution?.status === JevResolutionStatus.Recorded && evidence.receipt !== null)
-          return {
-            status: JevClaim.Recorded,
-            receipt: evidence.receipt,
-            resolution: evidence.resolution,
-          } satisfies JevEvaluationClaim
-        return { status: JevClaim.Pending } satisfies JevEvaluationClaim
       }).pipe(Effect.mapError(persistError)),
     record: (input: JevEvaluationRequest, evidence: JevEvaluationReceipt) =>
       Effect.gen(function* () {
