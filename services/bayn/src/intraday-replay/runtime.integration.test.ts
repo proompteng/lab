@@ -360,7 +360,11 @@ durableTest.each([
           fractionalTrading: false,
           calendar: Result.getOrThrow(
             Schema.decodeUnknownResult(MarketCalendarResponseSchema)(
-              scenario === 'missing-calendar' ? [] : fixture.input.calendar,
+              scenario === 'missing-calendar'
+                ? []
+                : scenario === 'no-trade-finalization'
+                  ? [...fixture.input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }]
+                  : fixture.input.calendar,
             ),
           ),
           assets: fixture.protocol.universe.map((symbol, index) =>
@@ -601,9 +605,9 @@ durableTest.each([
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           expect(state.ledger.positions).toEqual([])
-          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
-            { state: 'NO_TRADE', bound: true },
-          ])
+          expect(
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04'`,
+          ).toEqual([{ state: 'NO_TRADE', bound: true }])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           expect(schedule.failedPassCount).toBe(0)
           expect(schedule.unavailableDecisionPassCount).toBe(0)
