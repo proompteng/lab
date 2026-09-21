@@ -40,6 +40,15 @@ const call = (inputTokens: number, outputTokens = 0): ReplayJevCall => {
   }
 }
 
+const rejectedCall = (
+  response: unknown,
+  failure = JevFailure.Response,
+  responseHash: string | null = canonicalHashV1OrThrow(response),
+): ReplayJevCall => ({
+  ...call(0),
+  outcome: { status: 'FAILED', failure, httpStatus: null, responseHash, rejectedResponse: response },
+})
+
 test('inference cost uses exact declared tariffs and conservative per-call micro rounding', () => {
   expect(calculateReplayJevCosts([call(1_000_000)], costs)).toMatchObject({
     knownCostMicros: '42000',
@@ -65,5 +74,44 @@ test('failed, interrupted and defective calls remain unresolved instead of recei
     unresolvedCallCount: 3,
     inputTokens: '100',
     knownCostMicros: '5',
+  })
+})
+
+test('charges verified provider usage even when answers are rejected or the response arrives late', () => {
+  const response = {
+    model: jevModel,
+    answers: { enter: { type: 'noul', noul: 1.5 } },
+    usage: { input_tokens: 7858, output_tokens: 150 },
+  }
+  const calls = [rejectedCall(response), rejectedCall(response, JevFailure.Timeout)]
+  expect(calculateReplayJevCosts(calls, costs)).toMatchObject({
+    callCount: 2,
+    unresolvedCallCount: 0,
+    inputTokens: '15716',
+    outputTokens: '300',
+    knownCostMicros: '662',
+  })
+  expect(calls.every(({ outcome }) => outcome.status === 'FAILED')).toBe(true)
+})
+
+test('does not infer charges from missing, changed, mismatched or malformed usage receipts', () => {
+  const response = { model: jevModel, usage: { input_tokens: 7858, output_tokens: 150 } }
+  const calls = [
+    rejectedCall(response, JevFailure.Response, null),
+    rejectedCall(response, JevFailure.Response, '0'.repeat(64)),
+    rejectedCall(response, JevFailure.Transport),
+    rejectedCall({ ...response, model: 'unrecognized-model' }),
+    rejectedCall({ model: jevModel }),
+    ...[-1, 1.5, '7858', Number.MAX_SAFE_INTEGER + 1].map((input_tokens) =>
+      rejectedCall({ ...response, usage: { ...response.usage, input_tokens } }),
+    ),
+    rejectedCall({ ...response, usage: { ...response.usage, output_tokens: -1 } }),
+  ]
+  expect(calculateReplayJevCosts(calls, costs)).toMatchObject({
+    callCount: calls.length,
+    unresolvedCallCount: calls.length,
+    inputTokens: '0',
+    outputTokens: '0',
+    knownCostMicros: '0',
   })
 })
