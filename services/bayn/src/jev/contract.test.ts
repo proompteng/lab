@@ -47,6 +47,25 @@ describe('Jev provider contract', () => {
   })
 
   test.each([
+    { favorable: 0.93, unfavorable: 0.05, unclear: 0.01 },
+    { favorable: 0.93, unfavorable: 0.05, unclear: 0.03 },
+  ])('preserves approximately normalized reported probabilities %#', (probabilities) => {
+    const response = responseFixture()
+    response.answers.direction.probabilities = probabilities
+    expect(Result.getOrThrow(decodeJevResponse(requestFixture, response))).toEqual(response)
+  })
+
+  test.each([
+    { favorable: 0.92, unfavorable: 0.05, unclear: 0.01 },
+    { favorable: 0.94, unfavorable: 0.05, unclear: 0.03 },
+    { favorable: 0, unfavorable: 0, unclear: 0 },
+  ])('rejects probability totals beyond the reporting allowance %#', (probabilities) => {
+    const response = responseFixture()
+    response.answers.direction.probabilities = probabilities
+    expect(Result.isFailure(decodeJevResponse(requestFixture, response))).toBe(true)
+  })
+
+  test.each([
     [2, [1, 0, 0]],
     [0, [0, 0, 1]],
     [0.011, [1, 0]],
@@ -71,6 +90,9 @@ describe('Jev provider contract', () => {
     [1.52, [0.03, 0.54, 0.31, 0.12, 0]],
     [1.11, [0.14, 0.66, 0.15, 0.05, 0]],
     [2.54, [0.01, 0.1, 0.3, 0.51, 0.08]],
+    [0.8, [0.28, 0.65, 0.05, 0.01, 0]],
+    [0.89, [0.22, 0.68, 0.08, 0.01, 0]],
+    [1.44, [0.03, 0.56, 0.34, 0.06, 0]],
   ] as const)('preserves compatible exact and recorded rounded scores: %s', (score, probabilities) => {
     const { request, response } = scoreResponse(score, probabilities)
     expect(Result.getOrThrow(decodeJevResponse(request, response))).toEqual(response)
@@ -110,7 +132,7 @@ describe('Jev provider contract', () => {
         ...response.answers,
         direction: {
           ...response.answers.direction,
-          probabilities: { favorable: 0.93, unfavorable: 0.05, unclear: 0.01 },
+          probabilities: { favorable: 0.9, unfavorable: 0.05, unclear: 0.01 },
         },
       },
     }),
