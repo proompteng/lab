@@ -11,7 +11,7 @@ import {
   decodeForwardPerformanceReceiptEnvelopeResult,
   makeForwardPerformanceReceiptEnvelope,
 } from '../db/forward-performance-receipt'
-import { makeForwardPerformanceReceipt } from './domain'
+import { makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
 import { measurePositionEpisodes, PositionEpisodeReason } from './position-episodes'
 
@@ -99,9 +99,9 @@ describe('position episodes', () => {
     ]
     const result = success(measurePositionEpisodes(evidence(history)))
     expect(result).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0, crossScopeCount: 0 })
-    const receipt = success(makeForwardPerformanceReceipt(evidence(history)))
-    expect(receipt.counts.completedExecutionCount).toBe(4)
-    expect(receipt.positionEpisodes).toEqual(result)
+    const report = success(makeForwardPerformanceReport(evidence(history)))
+    expect(report.receipt.counts.completedExecutionCount).toBe(4)
+    expect(report.positionEpisodes).toEqual(result)
   })
 
   test('counts re-entry and interleaved symbols separately from open inventory', () => {
@@ -218,8 +218,20 @@ describe('position episodes', () => {
     })
   })
 
-  test('persists the versioned evidence and rejects tampering with its count', () => {
-    const receipt = success(makeForwardPerformanceReceipt(evidence(roundTrip())))
+  test('keeps the strict v3 stored receipt unchanged and binds episodes in a separate versioned report', () => {
+    const report = success(makeForwardPerformanceReport(evidence(roundTrip())))
+    const { receipt, reportHash, ...reportFields } = report
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
+    expect(receipt).not.toHaveProperty('positionEpisodes')
+    expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)
+    expect(
+      canonicalHashV1({
+        ...reportFields,
+        receipt,
+        positionEpisodes: { ...report.positionEpisodes, completedCount: 99 },
+      }),
+    ).not.toBe(reportHash)
     const envelope = success(
       makeForwardPerformanceReceiptEnvelope({
         schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
@@ -231,10 +243,18 @@ describe('position episodes', () => {
       }),
     )
     expect(success(decodeForwardPerformanceReceiptEnvelopeResult(envelope))).toEqual(envelope)
-    const tampered = {
-      ...envelope,
-      receipt: { ...receipt, positionEpisodes: { ...receipt.positionEpisodes, completedCount: 99 } },
-    }
-    expect(Result.isFailure(decodeForwardPerformanceReceiptEnvelopeResult(tampered))).toBe(true)
+    const { receiptHash: _, ...receiptMaterial } = receipt
+    const changedMaterial = { ...receiptMaterial, positionEpisodes: report.positionEpisodes }
+    const changedReceipt = { ...changedMaterial, receiptHash: canonicalHashV1(changedMaterial) }
+    const { contentHash: _contentHash, ...envelopeMaterial } = envelope
+    const changedEnvelope = { ...envelopeMaterial, receiptHash: changedReceipt.receiptHash, receipt: changedReceipt }
+    expect(
+      Result.isFailure(
+        decodeForwardPerformanceReceiptEnvelopeResult({
+          ...changedEnvelope,
+          contentHash: canonicalHashV1(changedEnvelope),
+        }),
+      ),
+    ).toBe(true)
   })
 })

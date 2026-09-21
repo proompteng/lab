@@ -14,7 +14,6 @@ import {
   strictParseOptions,
 } from '../schemas'
 import type { ForwardPerformanceReceipt } from '../forward-performance/model'
-import { PositionEpisodeEvidenceSchema } from '../forward-performance/position-episodes'
 
 const DecimalSchema = Schema.String.check(Schema.isPattern(/^-?(?:0|[1-9][0-9]*)\.[0-9]+$/))
 const ReceiptStringSchema = Schema.String.check(Schema.isMinLength(1))
@@ -156,7 +155,6 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
 
 const ForwardPerformanceReceiptSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v3'),
-  positionEpisodes: Schema.optionalKey(PositionEpisodeEvidenceSchema),
   bindings: Schema.Struct({
     runtime: ForwardPerformanceBuildBindingSchema,
     source: Schema.NullOr(ForwardPerformanceBuildBindingSchema),

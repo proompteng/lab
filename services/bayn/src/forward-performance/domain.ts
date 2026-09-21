@@ -1,7 +1,6 @@
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { measurePositionEpisodes } from './position-episodes'
 import {
   makeForwardPerformanceExecutionMeasurements,
   type ForwardPerformanceExecutionMeasurements,
@@ -22,7 +21,7 @@ const RETURN_SCALE = 10n ** BigInt(RETURN_DECIMAL_PLACES)
 
 export interface ForwardPerformanceDomainFailure {
   readonly _tag: 'ForwardPerformanceDomainFailure'
-  readonly operation: 'hash-execution-evidence' | 'hash-position-episodes' | 'hash-receipt'
+  readonly operation: 'hash-execution-evidence' | 'hash-position-episodes' | 'hash-receipt' | 'hash-report'
   readonly cause: unknown
 }
 
@@ -402,24 +401,15 @@ export const makeForwardPerformanceReceipt = (
         cause,
       }),
     ),
-    (measurements) =>
-      Result.gen(function* () {
-        const positionEpisodes = yield* Result.mapError(
-          measurePositionEpisodes(input),
-          (cause): ForwardPerformanceDomainFailure => ({
-            _tag: 'ForwardPerformanceDomainFailure',
-            operation: 'hash-position-episodes',
-            cause,
-          }),
-        )
-        const material = { ...makeMaterial(input, measurements), positionEpisodes }
-        return yield* Result.mapError(
-          Result.map(canonicalHashV1Result(material), (receiptHash) => ({ ...material, receiptHash })),
-          (cause): ForwardPerformanceDomainFailure => ({
-            _tag: 'ForwardPerformanceDomainFailure',
-            operation: 'hash-receipt',
-            cause,
-          }),
-        )
-      }),
+    (measurements) => {
+      const material = makeMaterial(input, measurements)
+      return Result.mapError(
+        Result.map(canonicalHashV1Result(material), (receiptHash) => ({ ...material, receiptHash })),
+        (cause): ForwardPerformanceDomainFailure => ({
+          _tag: 'ForwardPerformanceDomainFailure',
+          operation: 'hash-receipt',
+          cause,
+        }),
+      )
+    },
   )
