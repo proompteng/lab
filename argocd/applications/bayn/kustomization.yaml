@@ -22,6 +22,7 @@ resources:
 - service.yaml
 - status-pdb.yaml
 - networkpolicy.yaml
+- jev-sealedsecret.yaml
 configMapGenerator:
 - name: bayn-egress-proxy
   files:
@@ -29,4 +30,4 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:6258696657de5c1192d52b4dad2d2fa00a24613cd8c6f16d15b11d0521d12ce2
+  digest: sha256:6095cbef14bf4f46bc374fc3153d77fecf5b40ddfde2c97628cbe3ecda08a526

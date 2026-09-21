@@ -5,7 +5,7 @@ import type { RecoveryFirstCycleAdvance } from '../observe-composition/model'
 import { ReplayBrokerFailure } from './broker'
 import { utcInstantFromEpochMillis } from '../time'
 
-/** One owner advances raw arrivals, SQL time, and Effect time; database I/O consumes no modeled market time. */
+/** One owner advances raw arrivals, the account clock and Effect time at each synchronization point. */
 export const makeReplayTimeline = <SourceError, DatabaseError>(
   source: { readonly advanceTo: (atMs: number) => Effect.Effect<void, SourceError> },
   databaseClock: { readonly advanceTo: (instant: string) => Effect.Effect<void, DatabaseError> },
@@ -65,8 +65,10 @@ export const driveReplaySession = <E>(
         switch (reason) {
           case DecisionReadinessReason.LookbackWarmup:
           case DecisionReadinessReason.NoEligibleCandidate:
+          case DecisionReadinessReason.SignalWindowObserved:
             break
           case DecisionReadinessReason.DecisionPending:
+          case DecisionReadinessReason.InferenceUnavailable:
           case DecisionReadinessReason.SnapshotUnavailable:
           case DecisionReadinessReason.SnapshotCoverage:
           case DecisionReadinessReason.SnapshotStale:

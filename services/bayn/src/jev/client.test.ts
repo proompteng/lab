@@ -47,9 +47,17 @@ describe('Jev inference transport', () => {
     }
   })
 
-  test('preserves rejected raw response and hash for evidence without printing its contents', async () => {
+  test('retains approximately normalized probabilities and their original response hash', async () => {
     const body = responseFixture()
     body.answers.direction.probabilities = { favorable: 0.93, unfavorable: 0.05, unclear: 0.01 }
+    const result = await Effect.runPromise(run(evaluate, responseClient(body)))
+    expect(result.response).toEqual(body)
+    expect(result.responseHash).toBe(Result.getOrThrow(canonicalHashV1Result(body)))
+  })
+
+  test('preserves rejected raw response and hash for evidence without printing its contents', async () => {
+    const body = responseFixture()
+    body.answers.direction.probabilities = { favorable: 0.9, unfavorable: 0.05, unclear: 0.01 }
     const result = await Effect.runPromise(run(Effect.result(evaluate), responseClient(body)))
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result)) {

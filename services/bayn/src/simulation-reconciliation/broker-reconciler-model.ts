@@ -104,6 +104,7 @@ export type ValidationFailureReason =
 export type NormalizationStage = 'order-timestamp' | 'order' | 'fill-ordering' | 'fill' | 'account' | 'positions'
 
 type ReconciliationFailure =
+  | { readonly _tag: 'Clock' }
   | { readonly _tag: 'Pagination'; readonly reason: PaginationFailureReason }
   | { readonly _tag: 'Snapshot'; readonly reason: SnapshotFailureReason }
   | { readonly _tag: 'HistoryHash'; readonly side: HistorySnapshotSide; readonly error: HistoryHashFailure }
@@ -119,11 +120,11 @@ type ReconciliationFailure =
       readonly reconciliationCause: Cause.Cause<
         BrokerReadError | ExecutionStoreError | ReconciliationError | WriterFenceError
       >
-      readonly restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError>
+      readonly restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError | ReconciliationError>
     }
 
 export class ReconciliationError extends Data.TaggedError('ReconciliationError')<{
-  readonly operation: 'containment' | 'normalization' | 'pagination' | 'snapshot'
+  readonly operation: 'clock' | 'containment' | 'normalization' | 'pagination' | 'snapshot'
   readonly message: string
   readonly failure?: ReconciliationFailure
   readonly cause?: unknown

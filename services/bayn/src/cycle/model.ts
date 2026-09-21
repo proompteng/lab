@@ -225,7 +225,7 @@ export type IntradayCycleEntryAttemptOrdinal = typeof IntradayCycleEntryAttemptO
 
 const IntradayMomentumCycleIdentityV4MaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-identity.v4'),
-  strategyName: Schema.Literal('intraday-momentum'),
+  strategyName: Schema.Literals(['intraday-momentum', 'jev']),
   ...CycleIdentityExecutionMaterial,
   entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinalSchema,
   executionPolicy: CycleExecutionPolicyV3Base.check(Schema.makeFilter(cycleExecutionPolicyIssues)),

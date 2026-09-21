@@ -9,7 +9,7 @@ import { Result } from 'effect'
 import { constructStreamingSnapshot } from './snapshot'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
-import type { IntradaySnapshotQuery } from '../intraday/model'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../intraday/model'
 import { canonicalHashV1 } from '../../hash'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
@@ -393,6 +393,43 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test.each([IntradaySnapshotPurpose.EntryPricing, IntradaySnapshotPurpose.Liquidation])(
+    '%s waits for a current quote when the latest received quote predates the requested range',
+    (purpose) => {
+      const old = rawRecord('quotes', 1, end - 120_000, { bp: 130, ap: 131, bs: 100, as: 100 })
+      const pricing = { ...query, purpose, rangeStartAt: new Date(end - 60_000).toISOString() }
+      const initial = incorporate([old])
+      const unavailable = constructStreamingSnapshot(cutFor(initial), pricing)
+      expect(Result.isFailure(unavailable)).toBe(true)
+      if (Result.isFailure(unavailable)) expect(unavailable.failure.reason).toBe('not-ready')
+      const fresh = rawRecord('quotes', 2, end + 2000, { bp: 130, ap: 131, bs: 100, as: 100 })
+      const available = incorporateMarketRecord(initial, fresh, universe, end + 3000)
+      const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(available), pricing))
+      expect(snapshot.latestQuotes['AAPL']?.eventAt).toBe('2026-09-11T14:00:02.000000000Z')
+      expect(snapshot.manifest.streaming.records).toHaveLength(1)
+    },
+  )
+
+  test.each(['quotes', 'trades'] as const)(
+    'signal evidence waits when the latest received %s record predates the requested range',
+    (channel) => {
+      const old = rawRecord(
+        channel,
+        1,
+        start - 1,
+        channel === 'quotes' ? { bp: 130, ap: 131, bs: 100, as: 100 } : { p: 130, s: 100 },
+      )
+      const current = incorporate([
+        ...raw().filter((record) => record.topic !== universe.topics[channel]),
+        old,
+        featureRecord,
+      ])
+      const unavailable = constructStreamingSnapshot(cutFor(current), query)
+      expect(Result.isFailure(unavailable)).toBe(true)
+      if (Result.isFailure(unavailable)) expect(unavailable.failure.reason).toBe('not-ready')
+    },
+  )
+
   test('later rejection cannot erase the rejection applicable to an earlier observation', () => {
     const initial = incorporate([...raw(), featureRecord], end + 2000)
     expect(Result.isSuccess(constructStreamingSnapshot(cutFor(initial), query))).toBe(true)
