@@ -604,7 +604,7 @@
     },
     "packages/temporal-bun-sdk": {
       "name": "@proompteng/temporal-bun-sdk",
-      "version": "0.11.3",
+      "version": "0.11.4",
       "bin": {
         "temporal-bun": "./dist/src/bin/temporal-bun.js",
         "temporal-bun-skill": "./dist/src/bin/temporal-bun-skill.js",
@@ -614,7 +614,7 @@
         "@bufbuild/protobuf": "^2.14.0",
         "@connectrpc/connect": "^2.1.2",
         "@connectrpc/connect-node": "^2.1.2",
-        "effect": "^3.22.1",
+        "effect": "3.22.1",
         "typescript": "^7.0.2",
       },
       "devDependencies": {
