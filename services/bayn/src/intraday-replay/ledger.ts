@@ -4,7 +4,7 @@ import type { ExecutionModel } from '../execution-model-contract'
 import { saleCostBasisMicros } from '../strategy/execution-model/cash'
 import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
 import { notionalMicros } from '../strategy/execution-model/fixed-point'
-import { MICROS, type ExecutionModelFailure } from '../strategy/execution-model/model'
+import { type ExecutionModelFailure } from '../strategy/execution-model/model'
 import { UtcInstantSchema } from '../schemas'
 
 const MAX_U128 = (1n << 128n) - 1n
@@ -23,7 +23,6 @@ type InvalidReason =
   | 'invalid-notional'
   | 'notional-mismatch'
   | 'quantity-exceeds-requested'
-  | 'non-whole-share-quantity'
   | 'inconsistent-fees'
   | 'invalid-observed-at'
 
@@ -100,12 +99,6 @@ const parseUnsigned = (
     : Result.succeed(parsed)
 }
 
-const parseWholeQuantity = (value: unknown, field: string): Result.Result<bigint, IntradayReplayLedgerFailure> => {
-  const parsed = parseUnsigned(value, field, true)
-  if (Result.isFailure(parsed)) return Result.fail(parsed.failure)
-  return parsed.success % MICROS === 0n ? parsed : invalid(field, value, 'non-whole-share-quantity')
-}
-
 const parseFeeMultiplier = (value: number): Result.Result<bigint, IntradayReplayLedgerFailure> =>
   Number.isSafeInteger(value) && value >= feeMultiplierMinimumPpm && value <= feeMultiplierMaximumPpm
     ? Result.succeed(BigInt(value))
@@ -172,9 +165,9 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   if (Result.isFailure(feeMultiplier)) return Result.fail(feeMultiplier.failure)
   const side = fill.side
   if (side !== 'buy' && side !== 'sell') return invalid('fill.side', side, 'invalid-side')
-  const requestedQuantity = parseWholeQuantity(requestedQuantityMicros, 'requestedQuantityMicros')
+  const requestedQuantity = parseUnsigned(requestedQuantityMicros, 'requestedQuantityMicros', true)
   if (Result.isFailure(requestedQuantity)) return Result.fail(requestedQuantity.failure)
-  const filledQuantity = parseWholeQuantity(fill.quantityMicros, 'fill.quantityMicros')
+  const filledQuantity = parseUnsigned(fill.quantityMicros, 'fill.quantityMicros', true)
   if (Result.isFailure(filledQuantity)) return Result.fail(filledQuantity.failure)
   if (filledQuantity.success > requestedQuantity.success) {
     return invalid('fill.quantityMicros', fill.quantityMicros, 'quantity-exceeds-requested')

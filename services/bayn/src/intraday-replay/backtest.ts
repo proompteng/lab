@@ -26,6 +26,7 @@ import {
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
 } from '../strategy'
+import { IntradayExitTiming, intradayExitTimingProtocol } from '../strategy/intraday-momentum/research'
 import {
   BacktestSourceManifestSchema,
   openBacktestSource,
@@ -53,10 +54,12 @@ export enum BacktestIssue {
   UnresolvedMutation = 'unresolved-mutation',
   UnclosedPosition = 'unclosed-position',
   MissingValuation = 'missing-valuation',
+  MissingDecisionData = 'missing-decision-data',
 }
 
 export const assessBacktestSession = (input: {
   readonly failedPassCount: number
+  readonly unavailableDecisionPassCount: number
   readonly valuationFailureCount: number
   readonly reconciliation: {
     readonly status: ReconciliationStatus
@@ -68,6 +71,7 @@ export const assessBacktestSession = (input: {
 }) => {
   const issues: BacktestIssue[] = []
   const { status, metrics, unknownOrderCount, unknownMutationCount } = input.reconciliation
+  if (input.unavailableDecisionPassCount > 0) issues.push(BacktestIssue.MissingDecisionData)
   if (input.failedPassCount > 0) issues.push(BacktestIssue.CycleFailure)
   if (input.valuationFailureCount > 0) issues.push(BacktestIssue.MissingValuation)
   if (
@@ -84,7 +88,7 @@ export const assessBacktestSession = (input: {
   return { completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const), issues }
 }
 
-export const BacktestInputSchema = Schema.Struct({
+const BaselineBacktestInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest.v1'),
   replicate: StrictNonEmptyStringSchema,
   sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(1)),
@@ -109,6 +113,16 @@ export const BacktestInputSchema = Schema.Struct({
     reconciliationStaleThresholdMs: PositiveIntegerSchema,
   }),
 })
+
+export const BacktestInputSchema = Schema.Union([
+  BaselineBacktestInputSchema,
+  Schema.Struct({
+    ...BaselineBacktestInputSchema.fields,
+    schemaVersion: Schema.Literal('bayn.backtest.v2'),
+    exitTiming: Schema.Enum(IntradayExitTiming),
+  }),
+])
+
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
@@ -120,11 +134,11 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     }
     yield* validateBacktestSourceManifest(decoded.source)
     yield* validateBacktestSourceCuts(decoded.source, sourceReceipt)
-    const protocol = yield* loadActiveStrategyProtocol()
-    const parameterHash = yield* canonicalHashV1Result(protocol)
+    const baselineProtocol = yield* loadActiveStrategyProtocol()
+    const baselineParameterHash = yield* canonicalHashV1Result(baselineProtocol)
     if (
       decoded.build.strategyBehaviorHash !== activeStrategyBehaviorHash ||
-      decoded.build.strategyParameterHash !== parameterHash
+      decoded.build.strategyParameterHash !== baselineParameterHash
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay must use the unchanged source-controlled strategy' }),
@@ -142,6 +156,22 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),
       )
+    const protocol =
+      decoded.schemaVersion === 'bayn.backtest.v1'
+        ? baselineProtocol
+        : yield* intradayExitTimingProtocol(decoded.exitTiming)
+    const parameterHash = yield* canonicalHashV1Result(protocol)
+    const research =
+      decoded.schemaVersion === 'bayn.backtest.v1'
+        ? undefined
+        : {
+            schemaVersion: 'bayn.exit-timing-research.v1' as const,
+            variant: decoded.exitTiming,
+            baselineParameterHash,
+            effectiveParameterHash: parameterHash,
+            flattenBeforeCloseMinutes: protocol.flattenBeforeCloseMinutes,
+            entryCutoffMinutesBeforeClose: protocol.entryCutoffMinutesBeforeClose,
+          }
     const universe = {
       universeId: protocol.universeId,
       universeSymbolHash: protocol.universeSymbolHash,
@@ -243,6 +273,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     })
     return {
       input: decoded,
+      research,
       sourceReceipt,
       runId,
       protocol,
@@ -261,8 +292,9 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         sourceAndStrategyVerification:
           embeddedBuildMetadata === undefined ? ('configured' as const) : ('embedded' as const),
       },
-      build: {
+      runtimeBuild: {
         ...decoded.build,
+        strategyParameterHash: parameterHash,
         verification: embeddedBuildMetadata === undefined ? ('development-configured' as const) : ('embedded' as const),
       },
       strategy: makeActiveStrategyRuntime(protocol, provenance),
@@ -336,9 +368,10 @@ export const runBacktest = (
       quoteAt: (symbol) => source.cursor.pipe(Effect.map((cursor) => cursor.projection.quotes.get(symbol))),
     })
     const runtime = yield* makeReplayExecutionRuntime({
+      ...(prepared.research === undefined ? {} : { exitTiming: prepared.research.variant }),
       config: {
         ...databases,
-        build: prepared.build,
+        build: prepared.runtimeBuild,
         reconciliationStaleThresholdMs: prepared.input.cadence.reconciliationStaleThresholdMs,
         execution: {
           brokerIdentity: prepared.identity,
@@ -403,6 +436,7 @@ export const runBacktest = (
           return {
             ...assessBacktestSession({
               failedPassCount: schedule.failedPassCount,
+              unavailableDecisionPassCount: schedule.unavailableDecisionPassCount,
               valuationFailureCount,
               reconciliation: {
                 status: reconciliation.report.reconciliation.status,
@@ -477,6 +511,7 @@ export const runBacktest = (
       sessionDates: prepared.input.sessionDates,
       sourceReceiptHash: prepared.sourceReceipt.contentHash,
       build: prepared.buildEvidence,
+      ...(prepared.research === undefined ? {} : { research: prepared.research }),
       assumptions: prepared.input.assumptions,
       sessions,
       schedule: {

@@ -1,3 +1,4 @@
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
 
@@ -21,6 +22,7 @@ import { WriterFence } from '../execution/writer-fence'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
 
 export const autonomousRuntimeServices = Effect.all({
+  candidateObservationStore: CandidateObservationStore,
   pgClient: PgClient.PgClient,
   session: BrokerSession,
   alpacaHttpClient: AlpacaHttpClient,
@@ -47,6 +49,7 @@ export const makeAutonomousCycleResources = (
   marketData: IntradayMarketDataService,
 ) =>
   Layer.mergeAll(
+    Layer.succeed(CandidateObservationStore, runtimeServices.candidateObservationStore),
     Layer.succeed(BrokerRead, runtimeServices.session.read),
     Layer.succeed(IntradayMarketData, marketData),
     Layer.succeed(CycleStore, runtimeServices.cycleStore),
