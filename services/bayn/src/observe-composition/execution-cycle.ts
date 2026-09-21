@@ -28,6 +28,7 @@ import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow
 import { currentUtcInstant } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { decodeIntradayMomentumProtocol, intradayMomentumExecutionModel, strategyDefinition } from '../strategy'
+import { replayIntradayProtocol } from '../strategy/intraday-momentum/research'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import {
@@ -81,9 +82,25 @@ export const recoverBoundExecutionContext = (
   currentPolicy: Policy,
   cycle: AutonomousCycle,
   document: ExecutionDecisionDocument,
+  simulation?: ObserveAutonomousCycleInput['simulation'],
 ): Effect.Effect<RecoveredExecutionContext, CycleRunnerError> =>
   Effect.gen(function* () {
-    const executionModelHash = canonicalHashV1Result(intradayMomentumExecutionModel)
+    const model =
+      simulation === undefined
+        ? Result.succeed(intradayMomentumExecutionModel)
+        : replayIntradayProtocol({ accountId: cycle.identity.accountId, ...simulation }).pipe(
+            Result.map((protocol) => protocol.executionModel),
+          )
+    const executionModel = yield* Effect.fromResult(model).pipe(
+      Effect.mapError((cause) =>
+        mutationRunnerError({
+          message: 'bound execution cycle has an invalid simulated protocol binding',
+          failure: 'contract',
+          cause,
+        }),
+      ),
+    )
+    const executionModelHash = canonicalHashV1Result(executionModel)
     if (
       cycle.identity.strategyName !== 'intraday-momentum' ||
       cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3' ||
@@ -106,7 +123,7 @@ export const recoverBoundExecutionContext = (
     }
     return {
       preparation: {
-        executionModel: intradayMomentumExecutionModel,
+        executionModel,
         executionPolicy: cycle.identity.executionPolicy,
         strategyProtocolHash: cycle.identity.strategyProtocolHash,
       },
@@ -404,7 +421,11 @@ export const ensureExecutionCycleClosure = (
     const store = input.executionCycleClosureStore
     const observedAt = yield* currentUtcInstant
     if (store === undefined || observedAt < closeWindow.startAt) {
-      return { _tag: 'Wait', observedAt } as const
+      return {
+        _tag: 'Wait',
+        observedAt,
+        waitReason: store === undefined ? 'CLOSE_STORE_UNAVAILABLE' : 'AWAITING_CLOSE_WINDOW',
+      } as const
     }
     const existing = yield* readExecutionCycleClosure(cycle.identity.cycleId, store)
     const entryDecisionHash = cycle.bindings.decisionHash
@@ -521,7 +542,11 @@ export const ensureExecutionCycleClosure = (
     return { _tag: 'Close', document: stored.document, reconciliation: prepared.reconciliation } as const
   }).pipe(
     Effect.catchTag('ExecutionCloseAwaitingMarketData', ({ observedAt }) =>
-      Effect.succeed<ExecutionCycleClosureResult>({ _tag: 'Wait', observedAt }),
+      Effect.succeed<ExecutionCycleClosureResult>({
+        _tag: 'Wait',
+        observedAt,
+        waitReason: 'CLOSE_MARKET_DATA_UNAVAILABLE',
+      }),
     ),
   )
 
@@ -673,7 +698,7 @@ const executeBoundExecutionCycle = (
     let step: PreparedMutationCycleStep | undefined
 
     if (step === undefined && entryRequiresCloseOnlyContainment && !closeDue) {
-      return { _tag: 'Wait', observedAt }
+      return { _tag: 'Wait', observedAt, waitReason: 'CLOSE_ONLY_UNTIL_CLOSE' }
     }
 
     if (step === undefined && closeDue && !entryRequiresCloseOnlyContainment) {
@@ -817,7 +842,7 @@ const executeBoundExecutionCycle = (
         logContext,
         observedAt: step.observedAt,
       }
-    return { _tag: 'Wait' as const, observedAt: step.observedAt }
+    return { _tag: 'Wait' as const, observedAt: step.observedAt, waitReason: 'MUTATION_NOT_ADVANCED' }
   })
 
 export const deferPostMutationReconciliation = (pending: PostMutationReconciliation): CycleRunResult => ({
@@ -973,7 +998,7 @@ const interpretBoundMutationCycleOutcome = (
         action: 'WAITING',
         observedAt: outcome.observedAt,
         cycle,
-        ...(outcome.waitReason === undefined ? {} : { waitReason: outcome.waitReason }),
+        waitReason: outcome.waitReason,
       })
     case 'Block':
       return input.blockedCycleIntentStore === undefined
@@ -1029,7 +1054,7 @@ const recoverBoundMutationCycle = (
               failure: 'contract',
             }),
           )
-        : recoverBoundExecutionContext(policy, cycle, document).pipe(
+        : recoverBoundExecutionContext(policy, cycle, document, input.simulation).pipe(
             Effect.flatMap((recovered) =>
               executeBoundExecutionCycle(
                 input,

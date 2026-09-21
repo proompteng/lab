@@ -69,6 +69,8 @@ export const makeSimulatedMarketData = (
             positions: _positions,
             sequence: _sequence,
             records: _records,
+            barPublications: _barPublications,
+            barPublicationPolicy: _barPublicationPolicy,
             features: _features,
             technical: _technical,
             ...provenance

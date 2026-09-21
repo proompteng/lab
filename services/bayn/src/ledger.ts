@@ -18,7 +18,6 @@ import {
   type LedgerTransferRecord,
 } from './ledger-plan'
 import {
-  accountReconciliationQueries,
   assembleAccountPlan,
   classifyAccountCreateBatch,
   classifyTransferCreateBatch,
@@ -26,6 +25,7 @@ import {
   runPlanQueries,
   transactionTransferQuery,
 } from './ledger/decisions'
+import { readAccountLedger } from './ledger/account-read'
 import {
   makeTigerBeetleRequestClient,
   type JournalDependencies,
@@ -169,13 +169,8 @@ const verifyAccount = (
 ): Effect.Effect<boolean, JournalError> =>
   Effect.gen(function* () {
     const expected = yield* validationBoundary(assembleAccountPlan(accountId, plans))
-    const queries = yield* validationBoundary(accountReconciliationQueries(expected, ledger))
-    const [accounts, transfers] = yield* Effect.all(
-      [
-        client.request('verify-account-accounts', (active) => active.queryAccounts(queries.accounts)),
-        client.request('verify-account-transfers', (active) => active.queryTransfers(queries.transfers)),
-      ],
-      { concurrency: 'unbounded' },
+    const { accounts, transfers } = yield* readAccountLedger(client, expected, ledger).pipe(
+      Effect.catchTag('LedgerValidationError', (error) => Effect.fail(new JournalValidationError(error))),
     )
     return Result.isSuccess(reconcileLedgerPlan(expected, accounts, transfers, 'verify-account'))
   })

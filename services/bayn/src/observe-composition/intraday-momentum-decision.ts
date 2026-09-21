@@ -38,6 +38,7 @@ export class IntradayMomentumRuntimeDecisionFailure extends Data.TaggedError('In
 export class IntradayMomentumEntryAwaitingSnapshot extends Data.TaggedError('IntradayMomentumEntryAwaitingSnapshot')<{
   readonly message: string
   readonly availableAt?: string
+  readonly symbol?: string
 }> {}
 
 export class IntradayMomentumCloseAwaitingSnapshot extends Data.TaggedError('IntradayMomentumCloseAwaitingSnapshot')<{
@@ -281,7 +282,10 @@ export const evaluateIntradayMomentumDecision = (
         cause.reason === 'snapshot-coverage' &&
         cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
       ) {
-        return new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
+        return new IntradayMomentumEntryAwaitingSnapshot({
+          message: cause.message,
+          ...(cause.symbol === undefined ? {} : { symbol: cause.symbol }),
+        })
       }
       const details = [
         `${cause.reason}: ${cause.message}`,

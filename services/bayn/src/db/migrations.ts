@@ -1,3 +1,5 @@
+import executionWaitingStatus from '../../migrations/0074_execution_waiting_status'
+import candidateObservations from '../../migrations/0075_candidate_observations'
 import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
 import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
 import pacedIntradayEntryAttempts from '../../migrations/0073_paced_intraday_entry_attempts'
@@ -148,4 +150,6 @@ export const migrationLoader = PgMigrator.fromRecord({
   '71_recover_intraday_authority_cycle': recoverIntradayAuthorityCycle,
   '72_intraday_zero_fill_rearm': intradayZeroFillRearm,
   '73_paced_intraday_entry_attempts': pacedIntradayEntryAttempts,
+  '74_execution_waiting_status': executionWaitingStatus,
+  '75_candidate_observations': candidateObservations,
 })

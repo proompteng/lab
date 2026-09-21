@@ -2,9 +2,9 @@ import { Schema } from 'effect'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import { IsoDateSchema, NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
 import { marketCalendarSchemaVersion, marketCalendarSource } from '../broker/alpaca/model'
+import { StreamingSnapshotEvidenceSchema } from '../market-data/streaming/evidence-schema'
 
-export const IntradayPerformanceManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-market-snapshot.v1'),
+const ManifestFields = {
   sessionDate: IsoDateSchema,
   calendar: Schema.Struct({
     schemaVersion: Schema.Literal(marketCalendarSchemaVersion),
@@ -35,13 +35,6 @@ export const IntradayPerformanceManifestSchema = Schema.Struct({
   feed: Schema.Literal('iex'),
   delayClass: Schema.Literal('real_time_exchange_only'),
   sourceTopics: Schema.Struct({ bars: Schema.String, quotes: Schema.String, trades: Schema.String }),
-  archiveWatermarks: Schema.Array(
-    Schema.Struct({
-      sourceTopic: Schema.String,
-      sourcePartition: NonNegativeIntegerSchema,
-      inclusiveLastOffset: Schema.String,
-    }),
-  ),
   maximumQuoteAgeMs: NonNegativeIntegerSchema,
   minimumWatermarkLagMs: NonNegativeIntegerSchema,
   barCount: NonNegativeIntegerSchema,
@@ -61,7 +54,31 @@ export const IntradayPerformanceManifestSchema = Schema.Struct({
   ),
   contentHash: Sha256Schema,
   snapshotId: Sha256Schema,
+}
+
+export const IntradayPerformanceManifestSchema = Schema.Struct({
+  ...ManifestFields,
+  schemaVersion: Schema.Literal('bayn.intraday-market-snapshot.v1'),
+  archiveWatermarks: Schema.Array(
+    Schema.Struct({
+      sourceTopic: Schema.String,
+      sourcePartition: NonNegativeIntegerSchema,
+      inclusiveLastOffset: Schema.String,
+    }),
+  ),
 })
+
+export const StreamingPerformanceManifestSchema = Schema.Struct({
+  ...ManifestFields,
+  schemaVersion: Schema.Literal('bayn.streaming-market-snapshot.v1'),
+  universe: Schema.Array(Schema.String),
+  streaming: StreamingSnapshotEvidenceSchema,
+})
+
+export const IntradayPerformanceDecisionManifestSchema = Schema.Union([
+  IntradayPerformanceManifestSchema,
+  StreamingPerformanceManifestSchema,
+])
 
 export const IntradayPerformanceArchiveRequestSchema = Schema.Struct({
   sessionDate: IsoDateSchema,
@@ -92,7 +109,7 @@ export const IntradayPerformanceVolumeEvidenceSchema = Schema.Struct({
   windowClosedAt: UtcInstantSchema,
   evidenceCutoffAt: UtcInstantSchema,
   sourceFeed: Schema.Literal('iex'),
-  decisionManifest: IntradayPerformanceManifestSchema,
+  decisionManifest: IntradayPerformanceDecisionManifestSchema,
   volumeScope: Schema.Literal('IEX_RECORDED_SESSION_VOLUME'),
   terminalPriceBasis: Schema.Literal('FINAL_MINUTE_BAR_CLOSE'),
   quantityMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
