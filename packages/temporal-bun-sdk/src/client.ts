@@ -416,6 +416,7 @@ export interface TemporalWorkflowClient {
   ): Promise<WorkflowUpdateResult>
   cancelUpdate(handle: WorkflowUpdateHandle): Promise<void>
   getUpdateHandle(handle: WorkflowHandle, updateId: string, firstExecutionRunId?: string): WorkflowUpdateHandle
+  /** Waits for the final result, following retry, cron, and continue-as-new successor runs. */
   result<T = unknown>(handle: WorkflowHandle, callOptions?: BrandedTemporalClientCallOptions): Promise<T>
 }
 
@@ -1444,6 +1445,7 @@ class TemporalClientImpl implements TemporalClient {
       'workflow.result',
       async () => {
         this.ensureOpen()
+        let nextPageToken: Uint8Array = new Uint8Array()
         while (true) {
           const execution: WorkflowExecution = create(WorkflowExecutionSchema, {
             workflowId: resolvedHandle.workflowId,
@@ -1453,7 +1455,7 @@ class TemporalClientImpl implements TemporalClient {
           const request = create(GetWorkflowExecutionHistoryRequestSchema, {
             namespace: resolvedHandle.namespace ?? this.namespace,
             execution,
-            maximumPageSize: 1,
+            nextPageToken,
             historyEventFilterType: HistoryEventFilterType.CLOSE_EVENT,
             waitNewEvent: true,
             skipArchival: true,
@@ -1467,22 +1469,27 @@ class TemporalClientImpl implements TemporalClient {
 
           const closeEvent = this.#extractCloseEvent(response)
           if (!closeEvent || !closeEvent.attributes) {
-            // Temporal long polls may return an empty history when their server-side
-            // poll interval expires before the Workflow closes. Keep polling until a
-            // close event arrives; an empty response is not a terminal condition.
+            // Empty pages and expired server long polls are not terminal. Preserve
+            // the history cursor until this run produces a close event.
+            nextPageToken = response.nextPageToken
             continue
           }
 
           const attributes = closeEvent.attributes
+          if (
+            (attributes.case === 'workflowExecutionContinuedAsNewEventAttributes' ||
+              attributes.case === 'workflowExecutionCompletedEventAttributes' ||
+              attributes.case === 'workflowExecutionFailedEventAttributes' ||
+              attributes.case === 'workflowExecutionTimedOutEventAttributes') &&
+            attributes.value.newExecutionRunId
+          ) {
+            resolvedHandle = { ...resolvedHandle, runId: attributes.value.newExecutionRunId }
+            nextPageToken = new Uint8Array()
+            continue
+          }
           switch (attributes.case) {
-            case 'workflowExecutionContinuedAsNewEventAttributes': {
-              const nextRunId = attributes.value.newExecutionRunId
-              if (!nextRunId) {
-                throw new Error('Continue-as-new event missing newExecutionRunId')
-              }
-              resolvedHandle = { ...resolvedHandle, runId: nextRunId }
-              continue
-            }
+            case 'workflowExecutionContinuedAsNewEventAttributes':
+              throw new Error('Continue-as-new event missing newExecutionRunId')
             case 'workflowExecutionCompletedEventAttributes': {
               const payloads = attributes.value.result?.payloads ?? []
               const decoded = await this.dataConverter.fromPayloads(payloads)
@@ -1680,26 +1687,31 @@ class TemporalClientImpl implements TemporalClient {
           }
         }
 
-        throwIfAborted()
-
         try {
-          const response = await this.executeRpc(
-            'pollWorkflowExecutionUpdate',
-            (rpcOptions) => this.workflowService.pollWorkflowExecutionUpdate(request, rpcOptions),
-            mergedCallOptions,
-          )
-          const stage = this.#stageFromProto(response.stage)
-          const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
-          const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
-            updateId,
-            runId,
-            firstExecutionRunId: pollHandle.firstExecutionRunId,
-          })
-          const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
-          return {
-            handle: updateHandle,
-            stage,
-            outcome,
+          while (true) {
+            throwIfAborted()
+            const response = await this.executeRpc(
+              'pollWorkflowExecutionUpdate',
+              (rpcOptions) => this.workflowService.pollWorkflowExecutionUpdate(request, rpcOptions),
+              mergedCallOptions,
+            )
+            throwIfAborted()
+            if ((response.stage ?? UpdateWorkflowExecutionLifecycleStage.UNSPECIFIED) < waitStage) {
+              continue
+            }
+            const stage = this.#stageFromProto(response.stage)
+            const runId = response.updateRef?.workflowExecution?.runId || resolvedHandle.runId
+            const updateHandle = this.#createWorkflowUpdateHandle(resolvedHandle, {
+              updateId,
+              runId,
+              firstExecutionRunId: pollHandle.firstExecutionRunId,
+            })
+            const outcome = await decodeUpdateOutcome(this.dataConverter, response.outcome)
+            return {
+              handle: updateHandle,
+              stage,
+              outcome,
+            }
           }
         } catch (error) {
           throwIfAborted()
