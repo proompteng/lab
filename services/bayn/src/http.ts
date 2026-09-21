@@ -1045,7 +1045,7 @@ const renderPrometheusMetricsDataFirst = (
                 '# HELP bayn_forward_performance_accounting_exact Whether the terminal receipt proves exact accounting receipts and ledger replay.',
                 '# TYPE bayn_forward_performance_accounting_exact gauge',
                 `bayn_forward_performance_accounting_exact ${forwardPerformance.accountingReceiptsExact && forwardPerformance.ledgerExact ? 1 : 0}`,
-                '# HELP bayn_forward_performance_completed_execution_count Completed executions in the terminal performance receipt.',
+                '# HELP bayn_forward_performance_completed_execution_count Accounting transactions in the terminal performance receipt.',
                 '# TYPE bayn_forward_performance_completed_execution_count gauge',
                 `bayn_forward_performance_completed_execution_count ${forwardPerformance.completedExecutionCount}`,
                 '# HELP bayn_forward_performance_realized_close_count Realized closes in the terminal performance receipt.',
