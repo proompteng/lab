@@ -12,6 +12,8 @@ import { canonicalHashV1 } from '../hash'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
 import { JevClient } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
+import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
+import { makeJevTradingSignalRequest } from '../jev/trading-signals'
 import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -37,10 +39,16 @@ const makeRuntime = () =>
     ),
   )
 const fixture = candidateObservationFixture()
-const { requestId: _, ...material } = evaluationRequestFixture()
+const prepared = Result.getOrThrow(
+  makeJevTradingSignalRequest(fixture.snapshot, 'AAPL', fixture.protocol.benchmarkSymbol),
+)
 const request = Result.getOrThrow(
   makeJevEvaluationRequest({
-    ...material,
+    schemaVersion: 'bayn.jev-evaluation-request.v1',
+    symbol: 'AAPL',
+    authorityGenerationHash: fixture.input.authorityGenerationHash,
+    requestHash: prepared.requestHash,
+    request: prepared.request,
     cycleId: fixture.draft.identity.cycleId,
     snapshotId: fixture.snapshot.manifest.snapshotId,
     observedAt: fixture.input.observedAt,
@@ -53,7 +61,10 @@ const receipt = Result.getOrThrow(
     requestId: request.requestId,
     startedAt: request.observedAt,
     completedAt: request.observedAt,
-    outcome: { status: JevOutcome.Received, inference: inferenceFixture(request.observedAt) },
+    outcome: {
+      status: JevOutcome.Received,
+      inference: tradingSignalInferenceFixture(request.request, request.observedAt),
+    },
   }),
 )
 const recorded = Result.getOrThrow(
@@ -120,6 +131,62 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         )
         expect(Result.isFailure(yield* store.begin(changed).pipe(Effect.result))).toBe(true)
         expect(yield* store.begin(request)).toEqual({ status: JevClaim.Pending })
+      }),
+    )
+  })
+
+  test('rejects substituted model input before it can acquire the immutable candidate slot', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevEvaluationStore
+        const { requestId: _, ...material } = request
+        for (const payload of [
+          { ...request.request, state: { fabricated: 'unrelated favorable market' } },
+          { ...request.request, questions: { changed: { type: 'noul', instructions: 'Is this favorable?' } } },
+        ]) {
+          const substituted = Result.getOrThrow(
+            makeJevEvaluationRequest({ ...material, request: payload, requestHash: canonicalHashV1(payload) }),
+          )
+          expect(Result.isFailure(yield* store.begin(substituted).pipe(Effect.result))).toBe(true)
+        }
+        expect(yield* (yield* PgClient.PgClient)`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Acquired })
+      }),
+    )
+  })
+
+  test('historical request bytes remain readable while superseded input cannot start or resume inference', async () => {
+    const { requestId: _, ...material } = request
+    const priorInput = evaluationRequestFixture()
+    const historical = Result.getOrThrow(
+      makeJevEvaluationRequest({
+        ...material,
+        request: priorInput.request,
+        requestHash: priorInput.requestHash,
+      }),
+    )
+    const historicalReceipt = Result.getOrThrow(
+      makeJevEvaluationReceipt(historical, {
+        schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+        requestId: historical.requestId,
+        startedAt: historical.observedAt,
+        completedAt: historical.observedAt,
+        outcome: { status: JevOutcome.Received, inference: inferenceFixture(historical.observedAt) },
+      }),
+    )
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
+        VALUES (${historical.requestId}, ${historical.cycleId}, ${historical.authorityGenerationHash}, ${sql.json(historical)})`
+        const store = yield* JevEvaluationStore
+        const resolution = yield* store.record(historical, historicalReceipt)
+        expect(yield* store.read(historical.requestId)).toEqual({
+          request: historical,
+          receipt: historicalReceipt,
+          resolution,
+        })
+        expect(Result.isFailure(yield* store.begin(historical).pipe(Effect.result))).toBe(true)
       }),
     )
   })
@@ -200,7 +267,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
             evaluate: () =>
               Effect.sync(() => {
                 calls += 1
-                return inferenceFixture(request.observedAt)
+                return tradingSignalInferenceFixture(request.request, request.observedAt)
               }),
           }),
           Effect.provide(TestClock.layer()),

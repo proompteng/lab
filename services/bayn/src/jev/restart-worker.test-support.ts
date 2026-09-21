@@ -6,7 +6,7 @@ import { PostgresClientLive } from '../db/postgres-client'
 import { Sha256Schema } from '../schemas'
 import { decodeJevEvaluationRequest, JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevEvaluationStore, recoverExpiredJevEvaluation } from './evaluation'
-import { inferenceFixture } from './test-support'
+import { tradingSignalInferenceFixture } from './trading-signal.test-support'
 
 const main = Effect.gen(function* () {
   const [mode, rawRequestId, requestPath, checkpointPath, resultPath] = process.argv.slice(2)
@@ -54,7 +54,10 @@ const main = Effect.gen(function* () {
             requestId: request.requestId,
             startedAt: request.observedAt,
             completedAt: request.observedAt,
-            outcome: { status: JevOutcome.Received, inference: inferenceFixture(request.observedAt) },
+            outcome: {
+              status: JevOutcome.Received,
+              inference: tradingSignalInferenceFixture(request.request, request.observedAt),
+            },
           }),
         ),
       )

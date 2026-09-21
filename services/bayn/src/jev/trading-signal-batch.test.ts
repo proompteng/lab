@@ -10,6 +10,7 @@ import { makeJevEvaluationRequest } from './evidence'
 import {
   makeJevTradingSignalBatch,
   makeJevTradingSignalRequest,
+  reproduceJevRequestFromObservation,
   reproduceJevTradingSignalBatch,
 } from './trading-signals'
 
@@ -34,10 +35,28 @@ describe('Jev trading batch source reproduction', () => {
         makeJevTradingSignalRequest(input.snapshot, candidate.symbol, input.benchmarkSymbol),
       )
       expect(candidate.request.requestHash).toBe(prepared.requestHash)
+      expect(
+        Result.getOrThrow(reproduceJevRequestFromObservation(candidate.request, fixture.observation.payload))
+          .requestHash,
+      ).toBe(prepared.requestHash)
     }
     expect(Result.getOrThrow(reproduceJevTradingSignalBatch(input.snapshot, JSON.parse(JSON.stringify(plan))))).toEqual(
       plan,
     )
+  })
+
+  test('request reconstruction rejects incomplete rows, different observation time and a changed universe', () => {
+    const plan = Result.getOrThrow(makeJevTradingSignalBatch(input))
+    const candidate = plan.candidates[0]
+    if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing request fixture')
+    const source = fixture.observation.payload
+    for (const changed of [
+      { ...source, rows: { ...source.rows, quotes: source.rows.quotes.slice(1) } },
+      { ...source, observedAt: new Date(Date.parse(source.observedAt) + 1).toISOString() },
+      { ...source, protocol: { ...source.protocol, candidateSymbols: source.protocol.candidateSymbols.slice(1) } },
+      { ...source, manifest: { ...source.manifest, schemaVersion: 'unknown-source' } },
+    ])
+      expect(Result.isFailure(reproduceJevRequestFromObservation(candidate.request, changed))).toBe(true)
   })
 
   test('a correctly rehashed plan cannot omit a losing candidate or change model input', () => {

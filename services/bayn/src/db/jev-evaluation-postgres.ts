@@ -10,6 +10,7 @@ import {
   type JevEvaluationRequest,
 } from '../jev/evidence'
 import { JevClaim, JevEvaluationStore, type JevEvaluationClaim } from '../jev/evaluation'
+import { reproduceJevRequestFromObservation } from '../jev/trading-signals'
 import {
   decodeJevResolution,
   JevResolutionStatus,
@@ -68,6 +69,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
         if ((yield* Effect.fromResult(canonicalHashV1Result(row.payload))) !== row.content_hash)
           return yield* persistError('Jev candidate observation content differs from its committed identity')
       }
+      return rows
     })
   const read = (input: string) =>
     Effect.gen(function* () {
@@ -113,7 +115,9 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireAutocommit
         const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
-        yield* requireCandidateObservation(request)
+        const observations = yield* requireCandidateObservation(request)
+        for (const observation of observations)
+          yield* Effect.fromResult(reproduceJevRequestFromObservation(request, observation.payload))
         const inserted = yield* Schema.decodeUnknownEffect(
           Schema.Array(Schema.Struct({ request_id: Sha256Schema })),
           strictParseOptions,

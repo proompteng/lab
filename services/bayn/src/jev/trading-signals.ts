@@ -10,7 +10,8 @@ import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
 import { decodeJevBatchPlan, JevCandidatePlanStatus, makeJevBatchPlan } from './batch'
-import { makeJevEvaluationRequest } from './evidence'
+import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
+import { reproduceJevCandidateObservation } from './observation'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -234,6 +235,27 @@ export const makeJevTradingSignalRequest = (
   benchmarkSymbol: string,
 ) =>
   reproduceJevSnapshot(snapshot).pipe(Result.flatMap((source) => requestFromSnapshot(source, symbol, benchmarkSymbol)))
+
+export const reproduceJevRequestFromObservation = (request: JevEvaluationRequest, input: unknown) =>
+  Result.gen(function* () {
+    const observation = yield* reproduceJevCandidateObservation(input)
+    if (
+      request.cycleId !== observation.cycleId ||
+      request.authorityGenerationHash !== observation.authorityGenerationHash ||
+      request.snapshotId !== observation.snapshot.manifest.snapshotId ||
+      request.observedAt !== observation.observedAt ||
+      !observation.protocol.candidateSymbols.includes(request.symbol)
+    )
+      return yield* unavailable('Jev request does not belong to its reproduced observation')
+    const prepared = yield* requestFromSnapshot(
+      observation.snapshot,
+      request.symbol,
+      observation.protocol.benchmarkSymbol,
+    )
+    if (prepared.requestHash !== request.requestHash)
+      return yield* unavailable('Jev request payload differs from the reproduced trading signals and questions')
+    return prepared
+  })
 
 export const makeJevTradingSignalBatch = (input: {
   readonly snapshot: VerifiedStrategyMarketSnapshot
