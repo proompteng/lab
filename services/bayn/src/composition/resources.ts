@@ -4,6 +4,7 @@ import { JevPositionStoreLive } from '../db/jev-position-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { JevClient, JevClientLive, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
+import { JevHttpClientLive } from '../jev/http'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { intradayFeatureTopic } from '../strategy/intraday-market'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
@@ -194,6 +195,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
             ),
         })
       : JevClientLive(plan.config.jevKey, defaultJevProtocolDocument.inferenceValidityMs).pipe(
+          Layer.provide(JevHttpClientLive(plan.config.alpaca.proxyUrl)),
           Layer.catch((cause) =>
             Layer.effect(
               JevClient,

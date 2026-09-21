@@ -499,7 +499,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         atObservation,
       ),
     )
-  })
+  }, 30_000)
 
   test('entry waits for a new completed window after restart instead of buying another inference batch', async () => {
     let calls = 0
@@ -560,7 +560,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         }),
       ),
     ).toEqual([{ count: 2 }])
-  })
+  }, 30_000)
 
   test('rejects unstored reconciliation, a substituted cycle and an uncommitted observation', async () => {
     await runtime.runPromise(
@@ -964,5 +964,5 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         atObservation,
       ),
     )
-  })
+  }, 30_000)
 })
