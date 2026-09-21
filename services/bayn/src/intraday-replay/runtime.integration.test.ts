@@ -348,6 +348,7 @@ durableTest.each([
             ),
           ),
           quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
+          ...(timing === undefined ? {} : { submissionTime: timing.currentUtcInstant }),
           advanceToArrival: (atMs) =>
             advanceMarketTo(atMs).pipe(
               Effect.mapError(

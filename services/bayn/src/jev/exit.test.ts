@@ -6,7 +6,13 @@ import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { decideJevManagement } from './decision'
-import { decideJevExit, jevExitCommitDeadline, JevExitReason, JevExitTargetSchema } from './exit'
+import {
+  decideJevExit,
+  jevExitCommitDeadline,
+  jevProtectiveQuoteIsFresh,
+  JevExitReason,
+  JevExitTargetSchema,
+} from './exit'
 import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import { JevPurpose } from './portfolio'
 import { jevPricingQuery } from './runtime'
@@ -21,6 +27,52 @@ const evidence = {
 }
 
 describe('native Jev exit targets', () => {
+  test('protective quote freshness preserves nanosecond boundaries and rejects future bids', () => {
+    const at = '2026-09-04T14:30:32.000Z'
+    expect(jevProtectiveQuoteIsFresh({ eventAt: '2026-09-04T14:30:22.000000000Z' }, at, 10_000)).toBe(true)
+    expect(jevProtectiveQuoteIsFresh({ eventAt: '2026-09-04T14:30:21.999999999Z' }, at, 10_000)).toBe(false)
+    expect(jevProtectiveQuoteIsFresh({ eventAt: '2026-09-04T14:30:32.000000001Z' }, at, 10_000)).toBe(false)
+  })
+
+  test.each([
+    [10_000, true],
+    [10_001, false],
+    [31_000, false],
+  ])('protective stop reproduces a %ims-old bid only when it is executable', (ageMs, accepted) => {
+    const held = nativeJevFixture(JevPurpose.Manage, '2026-09-04T14:30:32.000Z')
+    const observedAt = held.observation.payload.observedAt
+    const query = Result.getOrThrow(
+      jevPricingQuery(
+        held.draft,
+        held.protocol,
+        held.snapshot.manifest.calendar,
+        observedAt,
+        ['AAPL'],
+        IntradaySnapshotPurpose.Liquidation,
+      ),
+    )
+    const raw = makeIntradayMomentumTestSnapshot(held.protocol, { ...query, archiveWatermarks: [] }, { AAPL: -0.02 })
+    const quoteAt = new Date(Date.parse(observedAt) - ageMs).toISOString()
+    const snapshot = streamingFixtureFromRaw(
+      { ...raw, quotes: raw.quotes.map((quote) => ({ ...quote, eventAt: quoteAt, ingestedAt: quoteAt })) },
+      query,
+    ).snapshot
+    const trigger = {
+      reason: JevExitReason.ProtectiveStop,
+      manifest: snapshot.manifest,
+      rows: Result.getOrThrow(persistIntradayRecordRows(snapshot)),
+    }
+    const result = decideJevExit({
+      cycleId: held.draft.identity.cycleId,
+      sessionDate: held.snapshot.manifest.sessionDate,
+      protocol: held.protocol,
+      portfolio: held.portfolio,
+      observedAt,
+      trigger,
+    })
+    expect(Result.isSuccess(result)).toBe(accepted)
+  })
+
   test('pricing waits at the exact minute boundary instead of invalidating the position', () => {
     const result = jevPricingQuery(
       fixture.draft,

@@ -364,6 +364,7 @@ export const runBacktest = (
     })
     const broker = yield* makeReplayBroker({
       runId: prepared.runId,
+      submissionTime: timing.currentUtcInstant,
       sourceManifestHash: source.source.sourceManifestHash,
       openingCashMicros: prepared.input.openingCashMicros,
       protocol: prepared.protocol,

@@ -51,23 +51,20 @@ export const makeReplayJevTiming = (input: {
       return yield* new ReplayBrokerFailure({ message: 'Jev replay requires independent provider and market clocks' })
     const permit = yield* Semaphore.make(1)
     const passPermit = yield* Semaphore.make(1)
-    let previousProviderAt: number | undefined
+    let measurement: { readonly providerAt: number; readonly marketAt: number } | undefined
     const failure = yield* Ref.make<ReplayBrokerFailure | undefined>(undefined)
 
-    const synchronize = Effect.uninterruptible(
-      permit.withPermit(
-        Effect.gen(function* () {
-          const providerAt = yield* input.providerClock.currentTimeMillis
-          const marketAt = yield* marketClock.currentTimeMillis
-          if (previousProviderAt === undefined || providerAt < previousProviderAt)
-            return yield* new ReplayBrokerFailure({ message: 'Jev replay clock is unbound or moved backwards' })
-          const atMs = marketAt + providerAt - previousProviderAt
-          yield* input.advanceTo(atMs)
-          previousProviderAt = providerAt
-          return { providerAt, marketAt: atMs }
-        }),
-      ),
-    )
+    const synchronizeUnlocked = Effect.gen(function* () {
+      const providerAt = yield* input.providerClock.currentTimeMillis
+      const marketAt = yield* marketClock.currentTimeMillis
+      if (measurement === undefined || providerAt < measurement.providerAt)
+        return yield* new ReplayBrokerFailure({ message: 'Jev replay clock is unbound or moved backwards' })
+      const atMs = Math.max(marketAt, measurement.marketAt) + providerAt - measurement.providerAt
+      yield* input.advanceTo(atMs)
+      measurement = { providerAt, marketAt: atMs }
+      return measurement
+    })
+    const synchronize = Effect.uninterruptible(permit.withPermit(synchronizeUnlocked))
 
     const client: JevClient['Service'] = {
       evaluate: (raw) =>
@@ -131,7 +128,10 @@ export const makeReplayJevTiming = (input: {
       passPermit.withPermit(
         Effect.gen(function* () {
           yield* Ref.set(failure, undefined)
-          previousProviderAt = yield* input.providerClock.currentTimeMillis
+          measurement = {
+            providerAt: yield* input.providerClock.currentTimeMillis,
+            marketAt: yield* marketClock.currentTimeMillis,
+          }
           const result = yield* Effect.result(operation)
           yield* synchronize
           const failed = yield* Ref.get(failure)
@@ -140,7 +140,7 @@ export const makeReplayJevTiming = (input: {
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {
-              previousProviderAt = undefined
+              measurement = undefined
             }),
           ),
         ),
@@ -148,14 +148,19 @@ export const makeReplayJevTiming = (input: {
     return {
       client,
       run,
-      currentUtcInstant: Effect.gen(function* () {
-        const synchronized = yield* synchronize
-        const providerAt = yield* input.providerClock.currentTimeMillis
-        if (providerAt < synchronized.providerAt)
-          return yield* new ReplayBrokerFailure({
-            message: 'Jev replay clock moved backwards during source advancement',
-          })
-        return utcInstantFromEpochMillis(synchronized.marketAt + providerAt - synchronized.providerAt)
-      }),
+      currentUtcInstant: Effect.uninterruptible(
+        permit.withPermit(
+          Effect.gen(function* () {
+            const synchronized = yield* synchronizeUnlocked
+            const providerAt = yield* input.providerClock.currentTimeMillis
+            if (providerAt < synchronized.providerAt)
+              return yield* new ReplayBrokerFailure({
+                message: 'Jev replay clock moved backwards during source advancement',
+              })
+            measurement = { providerAt, marketAt: synchronized.marketAt + providerAt - synchronized.providerAt }
+            return utcInstantFromEpochMillis(measurement.marketAt)
+          }),
+        ),
+      ),
     }
   })

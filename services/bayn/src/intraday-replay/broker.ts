@@ -85,6 +85,8 @@ export interface ReplayBrokerConfig {
   readonly fractionalTrading: boolean
   readonly assets: readonly AssetObservation[]
   readonly calendar: typeof MarketCalendarResponseSchema.Type
+  /** Use the same measured clock as final authorization before fixing submission and arrival timestamps. */
+  readonly submissionTime?: Effect.Effect<string, ReplayBrokerFailure>
   /** A historical runner advances retained arrivals and both clocks to this exact delivery instant. */
   readonly advanceToArrival?: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
   readonly quoteAt: (
@@ -602,7 +604,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               MutationOperation.Submit,
               'Replay requires LIMIT/IOC or close-only MARKET/DAY sell',
             )
-          const observedAt = yield* now
+          const observedAt = yield* config.submissionTime ?? now
           const metadata = asset(intent.symbol)
           if (metadata === undefined || !metadata.tradable)
             return yield* mutationFailure(MutationOperation.Submit, 'Captured asset is not tradable')

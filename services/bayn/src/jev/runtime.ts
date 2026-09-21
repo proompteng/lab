@@ -27,7 +27,7 @@ import {
   jevPlanningTargetWeights,
   type JevEntryTarget,
 } from './decision'
-import { decideJevExit, jevProtectiveStopCrossed, JevExitReason } from './exit'
+import { decideJevExit, jevProtectiveQuoteIsFresh, jevProtectiveStopCrossed, JevExitReason } from './exit'
 import { JevPositionStore } from './portfolio'
 import { JevOutcome } from './evidence'
 import { JevResolutionStatus } from './resolution'
@@ -265,7 +265,7 @@ export const evaluateJevPositionExit = (input: {
     )
     const pricing = yield* loadIntradaySnapshot(input.marketData, pricingQuery)
     const quote = pricing.latestQuotes[position.symbol]
-    if (quote === undefined)
+    if (quote === undefined || !jevProtectiveQuoteIsFresh(quote, observedAt, input.protocol.maximumQuoteAgeMs))
       return yield* new JevAwaitingEvidence({ message: 'Held position has no verified current quote' })
     const bid = yield* Effect.fromResult(numberToMicros(quote.bidPrice))
     if (

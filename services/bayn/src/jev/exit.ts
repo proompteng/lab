@@ -2,6 +2,8 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { IntradaySnapshotPurpose } from '../market-data'
+import type { IntradayQuote } from '../market-data/intraday/model'
+import { intradayAgeNanos, millisecondsAsNanos } from '../market-data/intraday/time'
 import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
@@ -38,6 +40,15 @@ export const JevExitEvidenceSchema = Schema.Struct({
 export type JevExitEvidence = typeof JevExitEvidenceSchema.Type
 
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
+export const jevProtectiveQuoteIsFresh = (
+  quote: Pick<IntradayQuote, 'eventAt'>,
+  observedAt: string,
+  maximumAgeMs: number,
+): boolean => {
+  const age = intradayAgeNanos(observedAt, quote.eventAt)
+  return age >= 0n && age <= millisecondsAsNanos(maximumAgeMs)
+}
+
 export const jevProtectiveStopCrossed = (
   basisMicros: bigint,
   quantityMicros: bigint,
@@ -121,7 +132,12 @@ export const decideJevExit = (input: unknown) =>
             'Protective stop requires a fresh reproduced liquidation quote from the exact market source',
           )
         const quote = snapshot.latestQuotes[position.symbol]
-        if (quote === undefined || quote.bidSize <= 0) return yield* invalid('Protective stop has no executable bid')
+        if (
+          quote === undefined ||
+          quote.bidSize <= 0 ||
+          !jevProtectiveQuoteIsFresh(quote, evidence.observedAt, protocol.maximumQuoteAgeMs)
+        )
+          return yield* invalid('Protective stop has no fresh executable bid')
         const bid = yield* numberToMicros(quote.bidPrice)
         if (
           !jevProtectiveStopCrossed(

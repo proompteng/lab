@@ -19,6 +19,7 @@ import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from '
 import { positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
+import { makeReplayJevTiming } from './jev-timing'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -147,6 +148,71 @@ test('historical arrival scheduler advances data before delivery without a wall-
   expect(arrivals).toEqual([startMs + 100])
   expect(result.order.filledAveragePriceMicros).toBe('100500000')
   expect(result.order.filledAt).toBe('2026-09-04T14:31:00.100Z')
+})
+
+test('measured Jev submission follows final authorization and prices quotes available after source synchronization', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(startMs)
+      const providerClock = yield* TestClock.make()
+      yield* providerClock.setTime(0)
+      const timing = yield* makeReplayJevTiming({
+        provider: { evaluate: () => Effect.die('This timing case does not need inference') },
+        providerClock,
+        retain: () => Effect.void,
+        advanceTo: (at) => TestClock.setTime(at).pipe(Effect.andThen(providerClock.adjust(100))),
+      })
+      let lastArrival = startMs
+      const broker = yield* setup({
+        submissionTime: timing.currentUtcInstant,
+        assumptions: { ...config.assumptions, latencyMs: 10 },
+        advanceToArrival: (at) =>
+          Effect.sync(() => {
+            lastArrival = at
+          }).pipe(Effect.andThen(TestClock.setTime(at))),
+        quoteAt: (_symbol, at) =>
+          Effect.succeed(
+            observedQuote(
+              { ...quote, askPrice: at >= startMs + 100 ? 100.5 : 100 },
+              at >= startMs + 100 ? startMs + 100 : startMs,
+            ),
+          ),
+      })
+      const completed = yield* timing.run(
+        Effect.gen(function* () {
+          const authorizedAt = yield* timing.currentUtcInstant
+          const submitted = yield* broker.mutation.submit(intent())
+          return { authorizedAt, order: submitted.order, checkpoint: yield* broker.checkpoint, lastArrival }
+        }),
+      )
+      return { ...completed, marketAfter: yield* Clock.currentTimeMillis }
+    }),
+  )
+  const submittedAt = result.order.submittedAt
+  if (submittedAt === undefined) throw new Error('Measured replay order is missing its submission time')
+  expect(Date.parse(result.authorizedAt)).toBe(startMs + 100)
+  expect(Date.parse(submittedAt)).toBeGreaterThanOrEqual(Date.parse(result.authorizedAt))
+  expect(Date.parse(submittedAt)).toBe(startMs + 200)
+  expect(result.lastArrival).toBe(Date.parse(submittedAt) + 10)
+  expect(result.marketAfter).toBe(result.lastArrival)
+  expect(result.order.filledAveragePriceMicros).toBe('100500000')
+  expect(result.checkpoint.state.orders[0]?.execution?.quote?.availableAtMs).toBe(startMs + 100)
+})
+
+test('an unavailable measured submission clock cannot create a replay order or fill', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        submissionTime: Effect.fail(new ReplayBrokerFailure({ message: 'Measured clock unavailable' })),
+        advanceToArrival: (at) => TestClock.setTime(at),
+      })
+      const submitted = yield* broker.mutation.submit(intent()).pipe(Effect.exit)
+      return { submitted, state: yield* broker.snapshot }
+    }),
+  )
+  expect(Exit.isFailure(result.submitted)).toBe(true)
+  expect(result.state.orders).toEqual([])
+  expect(result.state.fills).toEqual([])
 })
 
 test('an inaccurate historical scheduler cannot manufacture a fill', async () => {
