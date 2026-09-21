@@ -1,5 +1,25 @@
 # Jev migration validation
 
+## Request recovery
+
+Jev evaluation requests commit before inference. Each request has one immutable resolution: `RECORDED`, bound to its
+receipt hash, or `ABANDONED`, with a recovery time at or after the request deadline. Receipt persistence and resolution
+commit in the same transaction. Recovery and result recording lock the request row, so the first committed resolution
+wins. These operations reject ambient transactions to preserve their independent commit boundary.
+
+A provider response that arrives after abandonment remains in the receipt table for replay and cost analysis. It cannot
+replace the abandoned resolution or authorize entry. A crash before a result commits leaves a pending request until
+`recoverExpiredJevEvaluation` records abandonment after expiry. Recovery never issues another inference for that request.
+`JevEvaluationStore.read` verifies historical request, receipt and resolution identities without applying a current-time
+entry check. `evaluateJevOnce` continues to enforce freshness before returning usable inference.
+
+The PostgreSQL integration tests kill separate workers after request and result commits, remove their temporary files,
+then recover with a new process using only PostgreSQL. They also test concurrent recovery, late receipts, immutable
+records, canonical migration of existing receipts and ambient-transaction rejection. These are persistence proofs; the
+active trading strategy still requires Jev batch binding and runtime integration.
+
+## Economic acceptance
+
 [Acceptance v2](jev-migration-acceptance-v2.json) retains all absolute targets from
 [v1](jev-migration-acceptance.json). It adds a paired lower confidence bound above $50 of incremental net profit per
 session over each of the three controls. This is an additional research objective of more than $1,000 over twenty

@@ -13,7 +13,8 @@ import {
   makeJevEvaluationReceipt,
   type JevEvaluationReceipt,
 } from './evidence'
-import { evaluateJevOnce, JevClaim, JevEvaluationStore } from './evaluation'
+import { evaluateJevOnce, JevClaim, JevEvaluationStore, recoverExpiredJevEvaluation } from './evaluation'
+import { decodeJevResolution, JevResolutionStatus, makeJevResolution, type JevResolution } from './resolution'
 import { evaluationRequestFixture, inferenceFixture, responseFixture } from './test-support'
 
 const request = evaluationRequestFixture()
@@ -31,11 +32,14 @@ const fixtureReceipt = () =>
 const memoryStore = () => {
   let claimed = false
   let receipt: JevEvaluationReceipt | undefined
+  let resolution: JevResolution | null = null
   let recordings = 0
   const store: typeof JevEvaluationStore.Service = {
+    read: () => Effect.sync(() => (claimed ? { request, receipt: receipt ?? null, resolution } : null)),
     begin: () =>
       Effect.sync(() => {
-        if (receipt !== undefined) return { status: JevClaim.Recorded, receipt }
+        if (resolution?.status === JevResolutionStatus.Abandoned) return { status: JevClaim.Abandoned, resolution }
+        if (receipt !== undefined && resolution !== null) return { status: JevClaim.Recorded, receipt, resolution }
         if (claimed) return { status: JevClaim.Pending }
         claimed = true
         return { status: JevClaim.Acquired }
@@ -44,6 +48,34 @@ const memoryStore = () => {
       Effect.sync(() => {
         receipt = value
         recordings += 1
+        resolution ??= Result.getOrThrow(
+          makeJevResolution(request, value, {
+            schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+            requestId: request.requestId,
+            status: JevResolutionStatus.Recorded,
+            receiptHash: value.receiptHash,
+          }),
+        )
+        return resolution
+      }),
+    abandon: (_, abandonedAt) =>
+      Effect.gen(function* () {
+        const abandoned = yield* Effect.fromResult(
+          makeJevResolution(request, null, {
+            schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+            requestId: request.requestId,
+            status: JevResolutionStatus.Abandoned,
+            abandonedAt,
+          }),
+        ).pipe(
+          Effect.mapError((cause) =>
+            operationalError({ component: 'database', operation: 'test', message: 'Invalid abandonment', cause }),
+          ),
+        )
+        if (!claimed)
+          return yield* operationalError({ component: 'database', operation: 'test', message: 'No request claim' })
+        resolution ??= abandoned
+        return resolution
       }),
   }
   return { store, receipt: () => receipt, recordings: () => recordings }
@@ -188,12 +220,13 @@ describe('durable Jev evaluation', () => {
 
   test('blocks provider calls if the request expires during request persistence', async () => {
     let calls = 0
+    const memory = memoryStore()
     const result = await Effect.runPromise(
       evaluateJevOnce(request).pipe(
         Effect.result,
         Effect.provideService(JevEvaluationStore, {
-          ...memoryStore().store,
-          begin: () => TestClock.adjust(5000).pipe(Effect.as({ status: JevClaim.Acquired as const })),
+          ...memory.store,
+          begin: (request) => memory.store.begin(request).pipe(Effect.tap(() => TestClock.adjust(5000))),
         }),
         Effect.provideService(JevClient, {
           evaluate: () =>
@@ -266,7 +299,7 @@ describe('durable Jev evaluation', () => {
         Effect.provideService(JevEvaluationStore, {
           ...memory.store,
           record: (request, receipt) =>
-            memory.store.record(request, receipt).pipe(Effect.andThen(TestClock.adjust(5000))),
+            memory.store.record(request, receipt).pipe(Effect.tap(() => TestClock.adjust(5000))),
         }),
         Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inferenceFixture()) }),
         Effect.provide(TestClock.layer()),
@@ -303,5 +336,116 @@ describe('durable Jev evaluation', () => {
     )
     expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(defect)
     expect(memory.receipt()).toBeUndefined()
+  })
+
+  test('recovers an interrupted request only after expiry and retains a later provider receipt without reviving entry', async () => {
+    const memory = memoryStore()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* memory.store.begin(request)
+        expect(Result.isFailure(yield* recoverExpiredJevEvaluation(request).pipe(Effect.result))).toBe(true)
+        yield* TestClock.adjust(5000)
+        const recovered = yield* recoverExpiredJevEvaluation(request)
+        expect(recovered.resolution.status).toBe(JevResolutionStatus.Abandoned)
+        expect(yield* memory.store.record(request, fixtureReceipt())).toEqual(recovered.resolution)
+        expect(yield* memory.store.read(request.requestId)).toEqual({
+          request,
+          receipt: fixtureReceipt(),
+          resolution: recovered.resolution,
+        })
+        yield* TestClock.setTime(1)
+        expect(Result.isFailure(yield* evaluateJevOnce(request).pipe(Effect.result))).toBe(true)
+      }).pipe(
+        Effect.provideService(JevEvaluationStore, memory.store),
+        Effect.provideService(JevClient, { evaluate: () => Effect.die('Abandoned requests must never reinvoke Jev') }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+  })
+
+  test('a lost claim acknowledgement is recoverable without another inference', async () => {
+    const memory = memoryStore()
+    const failure = operationalError({
+      component: 'database',
+      operation: 'test',
+      message: 'Claim commit acknowledgement lost',
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        expect(Result.isFailure(yield* evaluateJevOnce(request).pipe(Effect.result))).toBe(true)
+        expect(yield* memory.store.begin(request)).toEqual({ status: JevClaim.Pending })
+        yield* TestClock.adjust(5000)
+        expect((yield* recoverExpiredJevEvaluation(request)).resolution.status).toBe(JevResolutionStatus.Abandoned)
+      }).pipe(
+        Effect.provideService(JevEvaluationStore, {
+          ...memory.store,
+          begin: (request) => memory.store.begin(request).pipe(Effect.andThen(Effect.fail(failure))),
+        }),
+        Effect.provideService(JevClient, { evaluate: () => Effect.die('An unacknowledged claim must not invoke Jev') }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+  })
+
+  test('a lost result acknowledgement replays the first result and remains readable after expiry', async () => {
+    const memory = memoryStore()
+    let calls = 0
+    const failure = operationalError({
+      component: 'database',
+      operation: 'test',
+      message: 'Result commit acknowledgement lost',
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        expect(Result.isFailure(yield* evaluateJevOnce(request).pipe(Effect.result))).toBe(true)
+        const replay = yield* evaluateJevOnce(request)
+        expect(replay.receipt).toEqual(fixtureReceipt())
+        expect(calls).toBe(1)
+        yield* TestClock.adjust(100000)
+        expect((yield* recoverExpiredJevEvaluation(request)).resolution).toEqual(replay.resolution)
+        expect((yield* memory.store.read(request.requestId))?.receipt).toEqual(replay.receipt)
+        expect(Result.isFailure(yield* evaluateJevOnce(request).pipe(Effect.result))).toBe(true)
+        expect(calls).toBe(1)
+      }).pipe(
+        Effect.provideService(JevEvaluationStore, {
+          ...memory.store,
+          record: (request, receipt) =>
+            memory.store.record(request, receipt).pipe(Effect.andThen(Effect.fail(failure))),
+        }),
+        Effect.provideService(JevClient, {
+          evaluate: () =>
+            Effect.sync(() => {
+              calls += 1
+              return inferenceFixture()
+            }),
+        }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+  })
+
+  test('rejects early abandonment and resolution identity or hash tampering', () => {
+    const material = {
+      schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+      requestId: request.requestId,
+      status: JevResolutionStatus.Abandoned,
+      abandonedAt: request.expiresAt,
+    }
+    const resolution = Result.getOrThrow(makeJevResolution(request, null, material))
+    expect(Result.isSuccess(decodeJevResolution(request, null, resolution))).toBe(true)
+    for (const invalid of [
+      { ...material, abandonedAt: request.observedAt },
+      { ...material, requestId: 'd'.repeat(64) },
+      {
+        schemaVersion: material.schemaVersion,
+        requestId: request.requestId,
+        status: JevResolutionStatus.Recorded,
+        receiptHash: fixtureReceipt().receiptHash,
+      },
+    ])
+      expect(Result.isFailure(makeJevResolution(request, null, invalid))).toBe(true)
+    expect(
+      Result.isFailure(decodeJevResolution(request, null, { ...resolution, resolutionHash: 'e'.repeat(64) })),
+    ).toBe(true)
   })
 })

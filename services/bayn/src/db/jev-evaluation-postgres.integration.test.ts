@@ -1,16 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Effect, FileSystem, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
 
+import resolutionMigration from '../../migrations/0077_jev_evaluation_resolution'
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
-import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
+import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
 import { JevClient } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
+import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
@@ -41,6 +44,14 @@ const receipt = Result.getOrThrow(
     startedAt: request.observedAt,
     completedAt: request.observedAt,
     outcome: { status: JevOutcome.Received, inference: inferenceFixture() },
+  }),
+)
+const recorded = Result.getOrThrow(
+  makeJevResolution(request, receipt, {
+    schemaVersion: 'bayn.jev-evaluation-resolution.v1',
+    requestId: request.requestId,
+    status: JevResolutionStatus.Recorded,
+    receiptHash: receipt.receiptHash,
   }),
 )
 
@@ -79,7 +90,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         expect(claims.map((claim) => claim.status).sort()).toEqual([JevClaim.Acquired, JevClaim.Pending])
         yield* store.record(request, receipt)
         yield* store.record(request, receipt)
-        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Recorded, receipt })
+        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Recorded, receipt, resolution: recorded })
         const sql = yield* PgClient.PgClient
         expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([{ request_id: request.requestId }])
       }),
@@ -116,7 +127,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
           }),
         )
         expect(Result.isFailure(yield* store.record(request, changed).pipe(Effect.result))).toBe(true)
-        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Recorded, receipt })
+        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Recorded, receipt, resolution: recorded })
       }),
     )
   })
@@ -169,7 +180,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
     )
   })
 
-  test('forbids update, delete and truncate of both evidence tables', async () => {
+  test('forbids update, delete and truncate of every evidence table', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
@@ -182,11 +193,149 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
           sql`TRUNCATE jev_evaluation_requests CASCADE`,
           sql`UPDATE jev_evaluation_receipts SET payload = payload`,
           sql`DELETE FROM jev_evaluation_receipts`,
-          sql`TRUNCATE jev_evaluation_receipts`,
+          sql`TRUNCATE jev_evaluation_receipts CASCADE`,
+          sql`UPDATE jev_evaluation_resolutions SET payload = payload`,
+          sql`DELETE FROM jev_evaluation_resolutions`,
+          sql`TRUNCATE jev_evaluation_resolutions`,
         ])
           expect(Result.isFailure(yield* operation.pipe(Effect.result))).toBe(true)
-        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Recorded, receipt })
+        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Recorded, receipt, resolution: recorded })
       }),
     )
   })
+
+  test('abandonment is terminal and keeps the first recovery time while retaining late evidence', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevEvaluationStore
+        expect(yield* store.read(request.requestId)).toBeNull()
+        expect(Result.isFailure(yield* store.abandon(request, request.expiresAt).pipe(Effect.result))).toBe(true)
+        yield* store.begin(request)
+        expect(Result.isFailure(yield* store.abandon(request, request.observedAt).pipe(Effect.result))).toBe(true)
+        const resolution = yield* store.abandon(request, request.expiresAt)
+        expect(resolution.status).toBe(JevResolutionStatus.Abandoned)
+        expect(yield* store.abandon(request, '2026-09-21T00:00:00.000Z')).toEqual(resolution)
+        expect(yield* store.record(request, receipt)).toEqual(resolution)
+        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Abandoned, resolution })
+        expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution })
+      }),
+    )
+  })
+
+  test('a committed result remains recorded when expired recovery runs', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevEvaluationStore
+        yield* store.begin(request)
+        expect(yield* store.record(request, receipt)).toEqual(recorded)
+        expect(yield* store.abandon(request, request.expiresAt)).toEqual(recorded)
+        expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution: recorded })
+      }),
+    )
+  })
+
+  test('concurrent record and abandonment agree on one immutable resolution', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevEvaluationStore
+        yield* store.begin(request)
+        const [record, abandon] = yield* Effect.all(
+          [store.record(request, receipt), store.abandon(request, request.expiresAt)],
+          { concurrency: 2 },
+        )
+        expect(record).toEqual(abandon)
+        expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution: record })
+        expect(
+          yield* (yield* PgClient.PgClient)`SELECT count(*)::int AS count FROM jev_evaluation_resolutions`,
+        ).toEqual([{ count: 1 }])
+      }),
+    )
+  })
+
+  test('rejects abandonment in an ambient transaction', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* JevEvaluationStore
+        yield* store.begin(request)
+        expect(
+          Result.isFailure(yield* sql.withTransaction(store.abandon(request, request.expiresAt)).pipe(Effect.result)),
+        ).toBe(true)
+        expect(yield* store.read(request.requestId)).toEqual({ request, receipt: null, resolution: null })
+      }),
+    )
+  })
+
+  test('migrates existing receipts to canonical resolutions without changing their bytes', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* JevEvaluationStore
+        yield* store.begin(request)
+        yield* sql`DROP TABLE jev_evaluation_resolutions`
+        yield* sql`ALTER TABLE jev_evaluation_receipts DROP CONSTRAINT jev_receipt_request_hash`
+        yield* sql`INSERT INTO jev_evaluation_receipts (request_id, receipt_hash, payload)
+        VALUES (${request.requestId}, ${receipt.receiptHash}, ${sql.json(receipt)})`
+        const before = yield* sql`SELECT payload::text AS payload FROM jev_evaluation_receipts`
+        yield* sql.withTransaction(resolutionMigration)
+        expect(yield* sql`SELECT payload::text AS payload FROM jev_evaluation_receipts`).toEqual(before)
+        expect(yield* store.read(request.requestId)).toEqual({ request, receipt, resolution: recorded })
+      }),
+    )
+  })
+
+  for (const mode of ['claim', 'record'])
+    test(`process death after ${mode} commits recovers from PostgreSQL alone`, async () => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+          const directory = yield* fs.makeTempDirectoryScoped()
+          const requestPath = `${directory}/request.json`,
+            checkpoint = `${directory}/checkpoint`,
+            resultPath = `${directory}/result.json`
+          yield* fs.writeFileString(requestPath, JSON.stringify(request))
+          const command = (mode: string) =>
+            ChildProcess.make(
+              process.execPath,
+              [
+                `${import.meta.dir}/../jev/restart-worker.test-support.ts`,
+                mode,
+                request.requestId,
+                requestPath,
+                checkpoint,
+                resultPath,
+              ],
+              { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit', killSignal: 'SIGKILL' },
+            )
+          const first = yield* spawner.spawn(command(mode))
+          while (!(yield* fs.exists(checkpoint))) {
+            if (!(yield* first.isRunning))
+              return yield* new JevEvidenceError({ message: 'Jev worker exited before durable commit' })
+            yield* Effect.sleep('25 millis')
+          }
+          yield* first.kill({ killSignal: 'SIGKILL' })
+          yield* Effect.exit(first.exitCode)
+          yield* fs.remove(checkpoint)
+          yield* fs.remove(requestPath)
+          const second = yield* spawner.spawn(command('recover'))
+          expect(second.pid).not.toBe(first.pid)
+          expect(Number(yield* second.exitCode)).toBe(0)
+          const result = yield* fs
+            .readFileString(resultPath)
+            .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))))
+          const recovered = yield* Effect.fromResult(
+            decodeJevResolution(request, mode === 'record' ? receipt : null, result),
+          )
+          expect(recovered.status).toBe(
+            mode === 'record' ? JevResolutionStatus.Recorded : JevResolutionStatus.Abandoned,
+          )
+          expect(yield* (yield* JevEvaluationStore).read(request.requestId)).toEqual({
+            request,
+            receipt: mode === 'record' ? receipt : null,
+            resolution: recovered,
+          })
+        }).pipe(Effect.scoped, Effect.timeout('25 seconds')),
+      )
+    }, 30000)
 })
