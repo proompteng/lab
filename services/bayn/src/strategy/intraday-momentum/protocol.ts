@@ -1,17 +1,5 @@
 import { Data, Result, Schema } from 'effect'
-import {
-  MarketFeatureContract,
-  MarketFeatureDefinition,
-  marketFeatureClockSkewAllowanceMs,
-  rollingFeatureDefinitionMaterial,
-} from '../../market-data/features/contract'
-import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../../market-data/streaming/bootstrap'
-
-import {
-  ExecutionModelV5Schema,
-  usEquityRegularSessionDurationMs,
-  type ExecutionModel,
-} from '../../execution-model-contract'
+import { ExecutionModelV5Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
 import {
   maximumIntradayObservationLagMs,
@@ -25,7 +13,6 @@ import {
   SymbolSchema,
   strictParseOptions,
 } from '../../schemas'
-import { defaultExecutionModel } from '../execution-model/model'
 
 const PositiveUnitIntervalSchema = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))
 const BasisPointsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000))
@@ -33,89 +20,21 @@ const PartsPerMillionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0),
 const IntradayMinuteOffsetSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 60))
 const SessionBoundaryMinuteOffsetSchema = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 60))
 
-const coreUniverse = {
-  id: 'torghut-core-equity-v2',
-  symbols: [
-    'AAPL',
-    'AMD',
-    'AMZN',
-    'AVGO',
-    'COHR',
-    'CRDO',
-    'IWM',
-    'LITE',
-    'MRVL',
-    'MU',
-    'NVDA',
-    'QQQ',
-    'SMH',
-    'SNDK',
-    'SPY',
-    'WDC',
-  ],
-  symbolHash: '12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1',
-} as const
+import {
+  intradayUniverse as coreUniverse,
+  intradaySourceTopics,
+  intradayExecutionModel,
+  intradayFeatureTopic,
+  intradayStreamingContract,
+  IntradayStreamingInputSchema as StreamingInputContract,
+} from '../intraday-market'
 
-export const intradayMomentumSourceTopics = Object.freeze({
-  bars: 'torghut.bars.1m.v1',
-  quotes: 'torghut.quotes.v1',
-  trades: 'torghut.trades.v1',
-} as const)
-
+export const intradayMomentumSourceTopics = intradaySourceTopics
+export const intradayMomentumExecutionModel = intradayExecutionModel
+export const intradayMomentumFeatureTopic = intradayFeatureTopic
+export const intradayMomentumStreamingContract = intradayStreamingContract
 export const intradayMomentumCandidateSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'] as const
 const prospectiveBenchmark = 'SPY' as const
-
-export const intradayMomentumExecutionModel: Extract<
-  ExecutionModel,
-  { readonly schemaVersion: 'bayn.execution-model.v5' }
-> = Object.freeze({
-  ...defaultExecutionModel,
-  schemaVersion: 'bayn.execution-model.v5',
-  order: Object.freeze({
-    type: 'limit',
-    timeInForce: 'ioc',
-    extendedHours: false,
-    planAfter: 'verified-intraday-window',
-    submitAfter: 'plan-committed',
-    submitBefore: 'intraday-entry-cutoff',
-    planningPriceReference: 'verified-adverse-top-of-book',
-    planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
-    fillPriceReference: 'limit-or-better',
-    buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
-    warmupAfterOpenMs: 0,
-    submissionCutoffBeforeCloseMs: 5 * 60_000,
-  }),
-  precision: Object.freeze({
-    ...defaultExecutionModel.precision,
-    quantityIncrementMicros: '1000000',
-  }),
-})
-
-export const intradayMomentumFeatureTopic = 'torghut.market-features.v1' as const
-export const intradayMomentumStreamingContract = Object.freeze({
-  schemaVersion: 'bayn.streaming-strategy-input.v1',
-  snapshotSchemaVersion: 'bayn.streaming-market-snapshot.v1',
-  featureTopic: intradayMomentumFeatureTopic,
-  featureSchemaVersion: MarketFeatureContract.V1,
-  requiredDefinitionId: MarketFeatureDefinition.RollingPrice30m,
-  requiredDefinitionHash: sha256(JSON.stringify(rollingFeatureDefinitionMaterial)),
-  clockSkewAllowanceMs: marketFeatureClockSkewAllowanceMs,
-  bootstrapTimestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
-  bootstrapDeadlineMs: kafkaBootstrapDeadlineMs,
-  freshness: 'exact-completed-window-and-matching-raw-inputs',
-} as const)
-const StreamingInputContract = Schema.Struct({
-  schemaVersion: Schema.Literal(intradayMomentumStreamingContract.schemaVersion),
-  snapshotSchemaVersion: Schema.Literal(intradayMomentumStreamingContract.snapshotSchemaVersion),
-  featureTopic: Schema.Literal(intradayMomentumFeatureTopic),
-  featureSchemaVersion: Schema.Literal(MarketFeatureContract.V1),
-  requiredDefinitionId: Schema.Literal(MarketFeatureDefinition.RollingPrice30m),
-  requiredDefinitionHash: Schema.Literal(intradayMomentumStreamingContract.requiredDefinitionHash),
-  clockSkewAllowanceMs: Schema.Literal(marketFeatureClockSkewAllowanceMs),
-  bootstrapTimestampPolicy: Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),
-  bootstrapDeadlineMs: Schema.Literal(kafkaBootstrapDeadlineMs),
-  freshness: Schema.Literal(intradayMomentumStreamingContract.freshness),
-})
 
 const IntradayMomentumProtocolBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.intraday-momentum.protocol.v3'),

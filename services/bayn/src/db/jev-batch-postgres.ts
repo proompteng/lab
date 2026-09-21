@@ -179,7 +179,26 @@ export const makeJevBatchStore = Effect.gen(function* () {
       )
     }).pipe(Effect.mapError(persistError))
 
-  return { read, begin, finish } satisfies typeof JevBatchStore.Service
+  const pending = (cycleId: string, authorityGenerationHash: string) =>
+    Effect.gen(function* () {
+      yield* Schema.decodeUnknownEffect(Sha256Schema)(cycleId)
+      yield* Schema.decodeUnknownEffect(Sha256Schema)(authorityGenerationHash)
+      const rows = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ batch_id: Sha256Schema })),
+        strictParseOptions,
+      )(
+        yield* sql`
+          SELECT plan.batch_id FROM jev_batch_plans AS plan
+          LEFT JOIN jev_batch_results AS result USING (batch_id)
+          WHERE plan.cycle_id = ${cycleId} AND plan.authority_generation_hash = ${authorityGenerationHash}
+            AND result.batch_id IS NULL
+          ORDER BY plan.payload->>'observedAt', plan.batch_id COLLATE "C"
+        `,
+      )
+      return rows.map((row) => row.batch_id)
+    }).pipe(Effect.mapError(persistError))
+
+  return { read, pending, begin, finish } satisfies typeof JevBatchStore.Service
 })
 
 export const JevBatchStoreLive = Layer.effect(JevBatchStore, makeJevBatchStore)

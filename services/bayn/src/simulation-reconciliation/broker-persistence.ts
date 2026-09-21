@@ -7,6 +7,7 @@ import {
   compareText,
   type NormalizedBrokerSnapshot,
   type ReconciliationPassResult,
+  type ReconciliationError,
   type ReconciliationWriteDecision,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
@@ -100,7 +101,7 @@ const writeReconciliation = (
   store: ReconciliationPersistence,
   normalized: NormalizedBrokerSnapshot,
   ordersObservedAt: string,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
 ) =>
   Effect.gen(function* () {
     const valuation = yield* ingestBrokerEvents(store, normalized)
@@ -115,7 +116,7 @@ const persistStableSnapshotDataFirst = (
   store: ReconciliationPersistence,
   fence: WriterFenceService,
   snapshot: StableBrokerSnapshot,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
 ) =>
   fence.transaction(
     prepareNormalizedSnapshot(store, snapshot).pipe(

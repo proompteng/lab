@@ -12,6 +12,7 @@ import {
   legacyExecutionMandateFailureRestrictionPattern,
   legacyExecutionMandateFailureRestrictionPrefix,
   legacyV1CompletedRestrictionReason,
+  reconciliationDiscrepancyRestrictionPattern,
 } from '../mandate'
 import {
   BlockedCycleIntentStore,
@@ -199,6 +200,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern}
+              OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR state.reason = ${reconciliationIncompleteRestrictionReason}
               OR (
                 state.reason IN (
@@ -301,10 +303,19 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
         ), recoverable_generation AS MATERIALIZED (
           SELECT generation.*
           FROM current_generation AS generation
-          WHERE NOT generation.requires_blocked_cycle
-             OR EXISTS (SELECT 1 FROM blocked_cycles)
-             OR EXISTS (SELECT 1 FROM preserved_cycles)
-             OR EXISTS (SELECT 1 FROM completed_cycles)
+          WHERE (
+              NOT generation.requires_blocked_cycle
+              OR EXISTS (SELECT 1 FROM blocked_cycles)
+              OR EXISTS (SELECT 1 FROM preserved_cycles)
+              OR EXISTS (SELECT 1 FROM completed_cycles)
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM autonomous_cycles AS cycle
+              WHERE cycle.account_id = generation.account_id
+                AND cycle.state IN ('PENDING', 'ACTIVE')
+                AND cycle.decision_hash IS NOT NULL
+            )
         ), terminalized AS (
           UPDATE intents AS intent
           SET

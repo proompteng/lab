@@ -13,6 +13,10 @@ export class JevBatchStore extends Context.Service<
   JevBatchStore,
   {
     readonly read: (batchId: string) => Effect.Effect<JevBatchEvidence | null, OperationalError>
+    readonly pending: (
+      cycleId: string,
+      authorityGenerationHash: string,
+    ) => Effect.Effect<readonly string[], OperationalError>
     readonly begin: (plan: JevBatchPlan) => Effect.Effect<JevBatchEvidence, OperationalError>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
   }
@@ -44,4 +48,12 @@ export const recoverJevBatch = (batchId: string) =>
   Effect.gen(function* () {
     const store = yield* JevBatchStore
     return yield* store.finish(batchId)
+  })
+
+export const recoverPendingJevBatches = (cycleId: string, authorityGenerationHash: string) =>
+  Effect.gen(function* () {
+    const store = yield* JevBatchStore
+    const pending = yield* store.pending(cycleId, authorityGenerationHash)
+    const recovered = yield* Effect.forEach(pending, (batchId) => store.finish(batchId))
+    return recovered.every((batch) => batch.result !== null)
   })

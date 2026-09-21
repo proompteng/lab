@@ -42,7 +42,7 @@ import {
 } from './db/execution-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
-import { ReconciliationError, runOnce } from './reconciler'
+import { ReconciliationClock, ReconciliationError, runOnce } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import { decideContainment } from './simulation-reconciliation/broker-containment'
 import { decideFillPage, decideOrderPage, decideStableHistory } from './simulation-reconciliation/broker-history'
@@ -370,6 +370,41 @@ describe('reconciliation pure decisions', () => {
 })
 
 describe('execution reconciliation loop', () => {
+  test.each([false, true])('retains a clock failure when containment clock also fails: %s', async (persistent) => {
+    const clockFailure = new ReconciliationError({
+      operation: 'clock',
+      failure: { _tag: 'Clock' },
+      message: 'Measured replay clock unavailable',
+    })
+    let reads = 0
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    const failed = await Effect.runPromise(
+      provide(emptyRead(), makeStore(control)).pipe(
+        Effect.provideService(
+          ReconciliationClock,
+          Effect.suspend(() => {
+            reads += 1
+            return persistent || reads === 1 ? Effect.fail(clockFailure) : Effect.succeed(observedAt)
+          }),
+        ),
+        Effect.flip,
+      ),
+    )
+    expect(control.writes).toBe(0)
+    expect(control.reconciliations).toEqual([])
+    expect(reads).toBe(2)
+    if (persistent) {
+      if (!(failed instanceof ReconciliationError) || failed.failure?._tag !== 'AuthorityRestrictionFailed')
+        throw new Error('Expected both reconciliation and containment failures')
+      expect(Cause.squash(failed.failure.reconciliationCause)).toBe(clockFailure)
+      expect(Cause.squash(failed.failure.restrictionCause)).toBe(clockFailure)
+      expect(control.restrictions).toEqual([])
+    } else {
+      expect(failed).toBe(clockFailure)
+      expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+    }
+  })
+
   test('recovers a retryable broker read on the next pass without restricting authority', async () => {
     const transientFailure = new BrokerReadError({
       operation: 'account',
