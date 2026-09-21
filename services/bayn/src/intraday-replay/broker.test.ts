@@ -410,41 +410,69 @@ test('real account identity and unapproved intent cannot mutate the simulated ac
   expect(result.state.orders).toEqual([])
 })
 
-test('next session uses recorded closing equity while retaining open positions', async () => {
+test('delayed session close rejects quotes first available after the closing boundary', async () => {
   const closingMs = Date.parse('2026-09-04T20:00:00.000Z')
-  const nextOpenMs = Date.parse('2026-09-08T13:30:00.000Z')
-  const result = await run(
+  await run(
     Effect.gen(function* () {
       const broker = yield* setup({
-        calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
         quoteAt: (_symbol, time) => {
-          const price = time >= nextOpenMs ? 102 : time >= closingMs ? 101 : 100
-          return Effect.succeed(
-            observedQuote({ ...quote, eventAt: new Date(time).toISOString(), bidPrice: price, askPrice: price }, time),
-          )
+          const at = time >= closingMs ? closingMs + 1 : time
+          return Effect.succeed(observedQuote({ ...quote, eventAt: new Date(at).toISOString() }, at))
         },
       })
       yield* submit(broker, intent())
-      const earlyClose = yield* Effect.result(broker.completeSession('2026-09-04'))
-      yield* TestClock.setTime(closingMs)
-      const close = yield* broker.completeSession('2026-09-04')
-      const repeatedClose = yield* broker.completeSession('2026-09-04')
-      yield* TestClock.setTime(nextOpenMs)
-      return {
-        earlyClose,
-        close,
-        repeatedClose,
-        account: (yield* broker.read.account).value,
-        positions: (yield* broker.read.positions).value,
-      }
+      yield* TestClock.setTime(closingMs + 350)
+      const result = yield* broker.completeSession('2026-09-04').pipe(Effect.result)
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: { message: 'Session close has no retained valuation quote' },
+      })
+      expect((yield* broker.snapshot).sessionCloses).toEqual([])
     }),
   )
-  expect(Result.isFailure(result.earlyClose)).toBe(true)
-  expect(result.close).toEqual(result.repeatedClose)
-  expect(result.account.lastEquityMicros).toBe(result.close.equityMicros)
-  expect(BigInt(result.account.equityMicros) - BigInt(result.account.lastEquityMicros)).toBe(5_000_000n)
-  expect(result.positions[0]?.quantityMicros).toBe('5000000')
 })
+
+test.each([0, 350])(
+  'session close retains its exact valuation when processing finishes %sms later',
+  async (elapsedMs) => {
+    const closingMs = Date.parse('2026-09-04T20:00:00.000Z')
+    const nextOpenMs = Date.parse('2026-09-08T13:30:00.000Z')
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+          quoteAt: (_symbol, time) => {
+            const price = time > closingMs ? 102 : time === closingMs ? 101 : 100
+            return Effect.succeed(
+              observedQuote(
+                { ...quote, eventAt: new Date(time).toISOString(), bidPrice: price, askPrice: price },
+                time,
+              ),
+            )
+          },
+        })
+        yield* submit(broker, intent())
+        const earlyClose = yield* Effect.result(broker.completeSession('2026-09-04'))
+        yield* TestClock.setTime(closingMs + elapsedMs)
+        const close = yield* broker.completeSession('2026-09-04')
+        const repeatedClose = yield* broker.completeSession('2026-09-04')
+        yield* TestClock.setTime(nextOpenMs)
+        return {
+          earlyClose,
+          close,
+          repeatedClose,
+          account: (yield* broker.read.account).value,
+          positions: (yield* broker.read.positions).value,
+        }
+      }),
+    )
+    expect(Result.isFailure(result.earlyClose)).toBe(true)
+    expect(result.close).toEqual(result.repeatedClose)
+    expect(result.account.lastEquityMicros).toBe(result.close.equityMicros)
+    expect(BigInt(result.account.equityMicros) - BigInt(result.account.lastEquityMicros)).toBe(5_000_000n)
+    expect(result.positions[0]?.quantityMicros).toBe('5000000')
+  },
+)
 
 test('missing session close prevents a fabricated next-day equity baseline', async () => {
   const result = await run(

@@ -378,6 +378,11 @@ PostgreSQL batch and evaluation stores retain the mapped evidence and enforce th
 Failed or interrupted calls with unresolved charges make the cost result incomplete. Known charges use the declared
 tariff with each call rounded upward to one micro-dollar. Invoice verification remains required for qualification.
 
+This local replay command connects directly to TypeSafe through Node HTTP. Production inference uses the dedicated
+CONNECT proxy. Development replay latency therefore includes the local host and network path; it does not prove
+production proxy latency or connectivity. Record that transport difference with the run and measure the deployed
+path before claiming production timing parity.
+
 Final authorization samples measured elapsed time after provider, persistence, writer-lock, grant and broker reads.
 Risk expiry and the submission lease use the same final timestamp. Controlled regressions reject expired evidence
 without a broker submission, including time spent advancing retained replay data. Full lifecycle simulation must

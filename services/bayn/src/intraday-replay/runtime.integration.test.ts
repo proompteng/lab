@@ -94,6 +94,7 @@ durableTest.each([
   'early-exit',
   'partial-exit-reentry',
   'measured-exit',
+  'measured-entry-expired',
 ] as const)(
   'native Jev production cycle and durable accounting: %s',
   async (scenario) => {
@@ -109,6 +110,8 @@ durableTest.each([
     const protocol = fixtureProtocol
     let managementCalls = 0
     const measuredCalls: ReplayJevCall[] = []
+    let measuredProviderClock: TestClock.TestClock | undefined
+    const measured = scenario === 'measured-exit' || scenario === 'measured-entry-expired'
     const fixture = { ...simulationFixture(undefined, undefined, scenario === 'no-trade' ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const reentryAtMs = initialAtMs + 120_000
@@ -124,7 +127,7 @@ durableTest.each([
             })),
             { at: reentryAtMs, fullWindow: true, offset: 30_000n, bidSize: 100, premium: 0.02 },
           ]
-        : scenario === 'measured-exit'
+        : measured
           ? [
               { at: initialAtMs + 1, fullWindow: true, offset: 1000n, bidSize: 100, premium: 0.02 },
               ...Array.from({ length: 200 }, (_, index) => ({
@@ -299,24 +302,27 @@ durableTest.each([
             yield* TestClock.setTime(atMs)
           })
         const provider = yield* JevClient
-        const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
-        const timing =
-          scenario === 'measured-exit'
-            ? yield* makeReplayJevTiming({
-                provider,
-                providerClock,
-                advanceTo: (atMs) =>
-                  advanceMarketTo(atMs).pipe(
-                    Effect.mapError(
-                      (cause) => new ReplayBrokerFailure({ message: 'Measured source advance failed', cause }),
-                    ),
+        const providerClock = yield* TestClock.make()
+        measuredProviderClock = providerClock
+        yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
+        const timing = measured
+          ? yield* makeReplayJevTiming({
+              provider,
+              providerClock,
+              advanceTo: (atMs) =>
+                advanceMarketTo(atMs).pipe(
+                  Effect.mapError(
+                    (cause) => new ReplayBrokerFailure({ message: 'Measured source advance failed', cause }),
                   ),
-                retain: (call) =>
-                  Effect.sync(() => {
-                    measuredCalls.push(call)
-                  }),
-              })
-            : undefined
+                ),
+              retain: (call) =>
+                Effect.gen(function* () {
+                  measuredCalls.push(call)
+                  if (scenario === 'measured-entry-expired' && measuredCalls.length === 15)
+                    yield* providerClock.adjust(6000)
+                }),
+            })
+          : undefined
         const broker = yield* makeReplayBroker({
           runId,
           sourceManifestHash: source.sourceManifestHash,
@@ -394,7 +400,7 @@ durableTest.each([
           recordPass: (pass: Parameters<import('../app').RecordAutonomousCyclePass>[0]) =>
             Ref.update(passes, (values) => [...values, pass]),
           pollIntervalMs: 1000,
-          reconciliationIntervalMs: scenario === 'measured-exit' ? config.operationTimeoutMs : 1000,
+          reconciliationIntervalMs: measured ? config.operationTimeoutMs : 1000,
           reconciliationPassTimeoutMs:
             scenario === 'fill' || scenario === 'fallback' ? 1000 : config.operationTimeoutMs,
         }
@@ -680,6 +686,21 @@ durableTest.each([
         const settledMs = (yield* Clock.currentTimeMillis) + 1
         yield* advanceMarketTo(settledMs)
         yield* runtime.reconcile
+        if (scenario === 'measured-entry-expired') {
+          const state = yield* broker.snapshot
+          expect(measuredCalls).toHaveLength(15)
+          expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
+          expect(state.orders).toHaveLength(0)
+          expect(state.fills).toHaveLength(0)
+          expect(state.ledger.positions).toHaveLength(0)
+          expect(managementCalls).toBe(0)
+          expect(
+            yield* sql`SELECT (SELECT count(*)::int FROM intents) AS intents,
+              (SELECT count(*)::int FROM jev_evaluation_requests) AS requests,
+              (SELECT count(*)::int FROM jev_batch_results) AS batches`,
+          ).toEqual([{ intents: 0, requests: 15, batches: 1 }])
+          return { _tag: 'Expired' as const }
+        }
         if (scenario === 'early-exit' || scenario === 'partial-exit-reentry' || scenario === 'measured-exit') {
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
           for (let attempt = 0; attempt < 12; attempt++) {
@@ -864,7 +885,10 @@ durableTest.each([
               const action = request.questions['action']
               const managing = action?.type === 'choice' && 'exit' in action.criteria
               if (managing) managementCalls += 1
-              if (scenario === 'measured-exit') yield* Effect.sleep('100 millis')
+              if (measured) {
+                if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
+                yield* measuredProviderClock.adjust(100)
+              }
               const now = yield* Clock.currentTimeMillis
               return {
                 ...nativeJevInference(
