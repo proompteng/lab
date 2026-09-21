@@ -22,6 +22,7 @@ import {
   makeForwardPerformanceMarketVolumeEvidence,
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformance,
+  runForwardPerformanceReport,
   type ForwardPerformanceReaders,
 } from './program'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
@@ -634,6 +635,13 @@ describe('forward performance read program', () => {
     const receipt = await Effect.runPromise(
       Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
+    const report = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(report.receipt).toEqual(receipt)
+    expect(report.positionEpisodes.status).toBe('UNDETERMINED')
+    expect(report.receipt).not.toHaveProperty('positionEpisodes')
 
     expect(observation.statements.length).toBeGreaterThan(8)
     expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
