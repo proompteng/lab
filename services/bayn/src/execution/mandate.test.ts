@@ -20,6 +20,26 @@ import {
 } from './mandate'
 
 describe('executionMandateAllocationCapitalMicros', () => {
+  test('keeps the recorded partial target at its account weight while the complete order fits remaining turnover', () => {
+    const facts = {
+      accountEquityMicros: 99_766_030_000n,
+      dailyTradedNotionalMicros: 118_742_840_000n,
+      maxGrossExposureMicros: 100_000_000_000n,
+      maxNetExposureMicros: 100_000_000_000n,
+      maxDailyTradedNotionalMicros: 200_000_000_000n,
+      maxAdverseSlippageBps: 10n,
+      positions: [],
+      referencePriceMicros: { AAPL: '335000000' },
+      targetWeights: { AAPL: 0.2 },
+    }
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros(facts))).toBe(99_766_030_000n)
+    expect(
+      Result.getOrThrow(
+        executionMandateAllocationCapitalMicros({ ...facts, dailyTradedNotionalMicros: 190_000_000_000n }),
+      ),
+    ).toBe(49_950_049_950n)
+  })
+
   test('selects the smallest account, exposure, and remaining-turnover bound', () => {
     const common = {
       accountEquityMicros: 100_000_000_000n,
@@ -30,6 +50,7 @@ describe('executionMandateAllocationCapitalMicros', () => {
       maxAdverseSlippageBps: 0n,
       positions: [],
       referencePriceMicros: {},
+      targetWeights: { SPY: 1 },
     }
 
     expect(Result.getOrThrow(executionMandateAllocationCapitalMicros(common))).toBe(1_000_000_000n)
@@ -60,6 +81,7 @@ describe('executionMandateAllocationCapitalMicros', () => {
       maxDailyTradedNotionalMicros: 1_000_000_000n,
       maxAdverseSlippageBps: 0n,
       referencePriceMicros: { SPY: '100000000' },
+      targetWeights: { SPY: 1 },
     }
     const scalable = Result.getOrThrow(
       executionMandateAllocationCapitalMicros({
