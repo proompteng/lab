@@ -14,11 +14,10 @@ import type { StrategyDefinition } from '../strategy/core'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableJevBatchInferences } from './batch'
 import { JevContractError } from './contract'
-import { reproduceJevCandidateObservation } from './observation'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
-import { reproduceJevTradingSignalBatch } from './trading-signals'
+import { reproduceJevTradingSignalBatchEvidence } from './trading-signals'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
   observation: JevObservationSchema,
@@ -33,10 +32,12 @@ const unavailable = (message: string) => Result.fail(new JevContractError({ mess
 const reproduceDecisionEvidence = (input: unknown) =>
   Result.gen(function* () {
     const evidence = yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input)
-    const observation = yield* reproduceJevCandidateObservation(evidence.observation)
+    const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(
+      evidence.observation,
+      evidence.batchPlan,
+    )
     if (observation.schemaVersion !== 'bayn.jev-observation.v1')
       return yield* unavailable('Native Jev decisions require native observations')
-    const plan = yield* reproduceJevTradingSignalBatch(evidence.observation, evidence.batchPlan)
     const inferences = yield* usableJevBatchInferences(plan, evidence.batchResult, Date.parse(evidence.decidedAt))
     const session = observation.snapshot.manifest.calendar.sessions.find(
       (value) => value.date === observation.snapshot.manifest.sessionDate,
@@ -122,8 +123,11 @@ const TargetBase = Schema.Struct({
 
 export const JevEntryTargetSchema = TargetBase.check(
   Schema.makeFilter((target) => {
-    const reproduced = decideJevEntry(target.evidence).pipe(Result.flatMap(canonicalHashV1Result))
-    const supplied = canonicalHashV1Result(target)
+    const { evidence, ...material } = target
+    const reproduced = decideJevEntry(evidence).pipe(
+      Result.flatMap(({ evidence: _, ...derived }) => canonicalHashV1Result(derived)),
+    )
+    const supplied = canonicalHashV1Result(material)
     return Result.isSuccess(reproduced) && Result.isSuccess(supplied) && reproduced.success === supplied.success
       ? []
       : [{ path: ['evidence'], issue: 'complete recorded candidate evidence must reproduce the exact Jev target' }]
@@ -180,8 +184,11 @@ export const JevManagementDecisionSchema = Schema.Struct({
   evidence: JevDecisionEvidenceSchema,
 }).check(
   Schema.makeFilter((decision) => {
-    const reproduced = decideJevManagement(decision.evidence).pipe(Result.flatMap(canonicalHashV1Result))
-    const supplied = canonicalHashV1Result(decision)
+    const { evidence, ...material } = decision
+    const reproduced = decideJevManagement(evidence).pipe(
+      Result.flatMap(({ evidence: _, ...derived }) => canonicalHashV1Result(derived)),
+    )
+    const supplied = canonicalHashV1Result(material)
     return Result.isSuccess(reproduced) && Result.isSuccess(supplied) && reproduced.success === supplied.success
       ? []
       : [{ path: ['evidence'], issue: 'recorded held-position evidence must reproduce the exact management decision' }]

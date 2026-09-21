@@ -756,6 +756,20 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema)(JSON.parse(JSON.stringify(document))),
           ),
         ).toBe(true)
+        if (document.decisionMarketDataRows === undefined) throw new Error('Missing bound Jev source rows')
+        const { contentHash: _documentHash, ...documentMaterial } = document
+        const substitutedSource = {
+          ...documentMaterial,
+          decisionMarketDataRows: { ...document.decisionMarketDataRows, bars: [] },
+        }
+        expect(
+          Result.isFailure(
+            Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema)({
+              ...substitutedSource,
+              contentHash: canonicalHashV1(substitutedSource),
+            }),
+          ),
+        ).toBe(true)
         const { managed, portfolio } = yield* seedManagedPosition({
           entryDocument: document,
           observedAt: '2026-09-04T14:33:03.000Z',

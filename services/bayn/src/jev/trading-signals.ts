@@ -292,8 +292,15 @@ export const makeJevTradingSignalRequest = (
   reproduceJevSnapshot(snapshot).pipe(Result.flatMap((source) => requestFromSnapshot(source, symbol, benchmarkSymbol)))
 
 export const reproduceJevRequestFromObservation = (request: JevEvaluationRequest, input: unknown) =>
+  reproduceJevCandidateObservation(input).pipe(
+    Result.flatMap((observation) => reproduceJevRequestFromVerifiedObservation(request, observation)),
+  )
+
+export const reproduceJevRequestFromVerifiedObservation = (
+  request: JevEvaluationRequest,
+  observation: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,
+) =>
   Result.gen(function* () {
-    const observation = yield* reproduceJevCandidateObservation(input)
     if (
       request.cycleId !== observation.cycleId ||
       request.authorityGenerationHash !== observation.authorityGenerationHash ||
@@ -313,14 +320,16 @@ export const reproduceJevRequestFromObservation = (request: JevEvaluationRequest
     return prepared
   })
 
-export const makeJevTradingSignalBatch = (input: { readonly observation: unknown; readonly expiresAt: string }) =>
+const batchFromObservation = (
+  observation: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,
+  expiresAt: string,
+) =>
   Result.gen(function* () {
-    const observation = yield* reproduceJevCandidateObservation(input.observation)
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
     if (
       observation.schemaVersion === 'bayn.jev-observation.v1' &&
-      Date.parse(input.expiresAt) !== Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs
+      Date.parse(expiresAt) !== Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs
     )
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
@@ -345,7 +354,7 @@ export const makeJevTradingSignalBatch = (input: { readonly observation: unknown
         snapshotId: manifest.snapshotId,
         symbol,
         observedAt: manifest.observedAt,
-        expiresAt: input.expiresAt,
+        expiresAt,
         requestHash: prepared.requestHash,
         request: prepared.request,
       })
@@ -361,7 +370,7 @@ export const makeJevTradingSignalBatch = (input: { readonly observation: unknown
       ),
       snapshotId: manifest.snapshotId,
       observedAt: manifest.observedAt,
-      expiresAt: input.expiresAt,
+      expiresAt,
       benchmarkSymbol: protocol.benchmarkSymbol,
       questionSetHash: yield* canonicalHashV1Result({
         model: jevModel,
@@ -376,11 +385,20 @@ export const makeJevTradingSignalBatch = (input: { readonly observation: unknown
     })
   })
 
-export const reproduceJevTradingSignalBatch = (observation: unknown, input: unknown) =>
+export const makeJevTradingSignalBatch = (input: { readonly observation: unknown; readonly expiresAt: string }) =>
+  reproduceJevCandidateObservation(input.observation).pipe(
+    Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt)),
+  )
+
+export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>
   Result.gen(function* () {
     const plan = yield* decodeJevBatchPlan(input)
-    const reproduced = yield* makeJevTradingSignalBatch({ observation, expiresAt: plan.expiresAt })
+    const observation = yield* reproduceJevCandidateObservation(inputObservation)
+    const reproduced = yield* batchFromObservation(observation, plan.expiresAt)
     if (reproduced.batchId !== plan.batchId)
       return yield* unavailable('Jev batch requests or candidate universe differ from the reproduced source')
-    return reproduced
+    return { observation, plan: reproduced }
   })
+
+export const reproduceJevTradingSignalBatch = (observation: unknown, input: unknown) =>
+  reproduceJevTradingSignalBatchEvidence(observation, input).pipe(Result.map(({ plan }) => plan))

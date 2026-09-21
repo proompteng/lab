@@ -1159,10 +1159,14 @@ const jevEntryEvidenceIssues = (
   const { observation, batchPlan } = target.evidence
   const source = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
   const pricing = document.bindings.executionMarketData
-  const sourceSnapshot =
-    isSnapshotExecutionMarketDataBinding(source) && document.decisionMarketDataRows !== undefined
-      ? reconstructBoundIntradaySnapshot(source, document.decisionMarketDataRows)
-      : undefined
+  // JevEntryTargetSchema has already reproduced the observation. Exact manifest and row equality binds that
+  // verified snapshot here without reconstructing the same complete source a second time.
+  const sourceManifest = isSnapshotExecutionMarketDataBinding(source)
+    ? (({ schemaVersion: _, snapshotSchemaVersion, ...material }) => ({
+        ...material,
+        schemaVersion: snapshotSchemaVersion,
+      }))(source)
+    : undefined
   const equal = (left: unknown, right: unknown) => {
     const a = canonicalHashV1Result(left)
     const b = canonicalHashV1Result(right)
@@ -1197,8 +1201,8 @@ const jevEntryEvidenceIssues = (
         'Jev entry must bind this cycle, account, generation, source-controlled protocol and unexpired complete inference batch',
     })
   if (
-    sourceSnapshot === undefined ||
-    !equal(sourceSnapshot.manifest, observation.manifest) ||
+    sourceManifest === undefined ||
+    !equal(sourceManifest, observation.manifest) ||
     !equal(document.decisionMarketDataRows, observation.rows) ||
     source?.snapshotId !== document.bindings.snapshotId ||
     source.contentHash !== document.bindings.snapshotContentHash ||
