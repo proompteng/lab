@@ -68,7 +68,12 @@ planned candidate, including failed, abandoned and unattempted evaluations.
 Reproduction detects a rehashed plan that omits a candidate or substitutes model input. Selection requires the whole
 batch to remain valid after completion and persistence; it cannot use only the fastest successful response.
 
-These contracts do not yet replace the active strategy. Batch persistence, native decision binding and repeated
+The batch store commits the full plan before any candidate request can be claimed. It finalizes results from the
+database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
+Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
+remain available for accounting but cannot change an abandoned resolution or a finalized batch.
+
+These contracts do not yet replace the active strategy. Native decision binding and repeated
 position management remain migration work. Historical inference evidence, an API response, or a batch result grants
 no execution or capital authority. Economic qualification uses the frozen protocol in
 [`docs/bayn/jev-migration-acceptance-v2.json`](../../docs/bayn/jev-migration-acceptance-v2.json).
