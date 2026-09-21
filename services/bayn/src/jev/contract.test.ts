@@ -55,6 +55,44 @@ describe('Jev provider contract', () => {
     expect(Result.getOrThrow(decodeJevResponse(requestFixture, response))).toEqual(response)
   })
 
+  test.each([{ values: [0.14, 0.14, 0.14, 0.14, 0.42] }, { values: [0.16, 0.16, 0.16, 0.16, 0.38] }])(
+    'preserves five-choice distributions whose rounding intervals contain unit mass %#',
+    ({ values }) => {
+      const criteria = Object.fromEntries(values.map((_, index) => [String(index), `Choice ${index}`]))
+      const { request } = Result.getOrThrow(
+        prepareJevRequest({
+          model: jevModel,
+          state: { signal: 'fixture' },
+          questions: { regime: { type: 'choice', instructions: 'Assess the signal', criteria } },
+        }),
+      )
+      const response = {
+        model: jevModel,
+        answers: {
+          regime: {
+            type: 'choice' as const,
+            choice: '4',
+            confidence: 0.5,
+            probabilities: Object.fromEntries(values.map((value, index) => [String(index), value])),
+          },
+        },
+        usage: { input_tokens: 100, output_tokens: 10 },
+      }
+      expect(Result.getOrThrow(decodeJevResponse(request, response))).toEqual(response)
+    },
+  )
+
+  test.each([{ values: [0.14, 0.14, 0.14, 0.14, 0.41] }, { values: [0.16, 0.16, 0.16, 0.16, 0.39] }])(
+    'rejects five-level distributions whose rounding intervals exclude unit mass %#',
+    ({ values }) => {
+      const { request, response } = scoreResponse(2.5, values)
+      const result = decodeJevResponse(request, response)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result))
+        expect(result.failure.message).toBe('Jev probabilities exceed the reporting allowance')
+    },
+  )
+
   test.each([
     { favorable: 0.92, unfavorable: 0.05, unclear: 0.01 },
     { favorable: 0.94, unfavorable: 0.05, unclear: 0.03 },
@@ -94,6 +132,8 @@ describe('Jev provider contract', () => {
     [0.8, [0.28, 0.65, 0.05, 0.01, 0]],
     [0.89, [0.22, 0.68, 0.08, 0.01, 0]],
     [1.44, [0.03, 0.56, 0.34, 0.06, 0]],
+    [2.56, [0.14, 0.14, 0.14, 0.14, 0.42]],
+    [2.44, [0.16, 0.16, 0.16, 0.16, 0.38]],
   ] as const)('preserves compatible exact and recorded rounded scores: %s', (score, probabilities) => {
     const { request, response } = scoreResponse(score, probabilities)
     expect(Result.getOrThrow(decodeJevResponse(request, response))).toEqual(response)

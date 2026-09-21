@@ -116,15 +116,13 @@ const sameKeys = (left: object, right: object): boolean => {
 const reportingHalfStep = 0.005
 
 const probabilitiesMatchUnitMass = (probabilities: ReadonlyArray<number>): boolean => {
-  let total = 0
   let lowerMass = 0
   let upperMass = 0
   for (const probability of probabilities) {
-    total += probability
     lowerMass += Math.max(0, probability - reportingHalfStep)
     upperMass += Math.min(1, probability + reportingHalfStep)
   }
-  return Math.abs(total - 1) <= 0.01 + 1e-9 && lowerMass <= 1 + 1e-9 && upperMass >= 1 - 1e-9
+  return lowerMass <= 1 + 1e-9 && upperMass >= 1 - 1e-9
 }
 
 const scoreMatchesProbabilities = (score: number, probabilities: Readonly<Record<string, number>>): boolean => {

@@ -14,8 +14,8 @@ indicators, quotes, benchmark relationships and actual position context. Bayn co
 holding time, returns, sizing and risk. The model returns typed probability distributions for entry or management.
 
 The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
-describes approximately normalized probabilities. Bayn permits at most 0.01 total deviation from one and requires a
-normalized distribution to fit within 0.005 of each reported probability. These are Bayn validation bounds, not a
+describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
+each reported probability, so the total allowance scales with the number of choices. These are Bayn validation bounds, not a
 provider precision guarantee. Score answers must also fit the same distribution bounds and a 0.005 score allowance.
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
