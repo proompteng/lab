@@ -188,6 +188,7 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
 
 const validateCurrentMutationExecutionTerms = (
   preparation: MutationPreparation,
+  entryLimitSlippageBps: number,
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
@@ -199,6 +200,7 @@ const validateCurrentMutationExecutionTerms = (
     quantityMicros: BigInt(targetIntent.quantityMicros),
     referencePriceMicros: BigInt(target.referencePriceMicros),
     executionModel: preparation.executionModel,
+    limitSlippageBps: BigInt(entryLimitSlippageBps),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -388,7 +390,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               intentId: prepared.intent.intentId,
               observedAt: recoveryObservedAt,
             }
-          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
       }
       if (recovery._tag === 'ObservePending' && pendingRecovery === undefined) {
         pendingRecovery = { intentId: prepared.intent.intentId, event: recovery.event }
@@ -404,7 +406,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               intentId: pendingRecovery.intentId,
               observedAt: recoveryObservedAt,
             }
-          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
       }
       return {
         _tag: 'Block',
@@ -423,7 +425,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               intentId: pendingRecovery.intentId,
               observedAt: recoveryObservedAt,
             }
-          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
       }
       return yield* policyValidation.failure
     }
@@ -455,7 +457,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
     if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
-      return { _tag: 'Wait', observedAt: recoveryObservedAt }
+      return { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
     }
     if (allowSubmit) {
       for (const prepared of preparedIntents) {
@@ -466,6 +468,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         yield* Effect.fromResult(
           validateCurrentMutationExecutionTerms(
             preparation,
+            document.entryLimitSlippageBps ?? 0,
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
@@ -624,7 +627,11 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
                 intentId: prepared.intent.intentId,
                 observedAt: facts.evaluatedAt,
               }
-            : { _tag: 'Wait', observedAt: facts.evaluatedAt }
+            : {
+                _tag: 'Wait',
+                observedAt: facts.evaluatedAt,
+                waitReason: latest === undefined ? 'MUTATION_EVIDENCE_PENDING' : 'MUTATION_RECOVERY_BACKOFF',
+              }
         }
         case 'Recover':
           return latest !== undefined && mutationRecoveryIsDue(latest, facts.evaluatedAt)
@@ -634,11 +641,15 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
                 intentId: prepared.intent.intentId,
                 observedAt: facts.evaluatedAt,
               }
-            : { _tag: 'Wait', observedAt: facts.evaluatedAt }
+            : {
+                _tag: 'Wait',
+                observedAt: facts.evaluatedAt,
+                waitReason: latest === undefined ? 'MUTATION_EVIDENCE_PENDING' : 'MUTATION_RECOVERY_BACKOFF',
+              }
         case 'Submit': {
           if (drainOpenOrders) continue
           if (entryHasTerminalUnsuccessfulIntent) continue
-          if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+          if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
           const submitExpiresAt = executionSubmitExpiresAt(
             submissionCutoffAt,
             prepared.riskBinding.evaluation.decision.expiresAt,
@@ -703,7 +714,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           }),
         )
       }
-      return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+      return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'intent-nonterminal' }
     }
 
     if (unsuccessfulIntentFound) {
@@ -713,7 +724,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         recoveryDeadline !== undefined &&
         facts.evaluatedAt < recoveryDeadline
       ) {
-        return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+        return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'intent-unsuccessful' }
       }
       return {
         _tag: 'Block',

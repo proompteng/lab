@@ -1,3 +1,4 @@
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { expect, test } from 'bun:test'
 
 import { Cause, Deferred, Effect, Exit, Fiber, Semaphore } from 'effect'
@@ -96,6 +97,7 @@ test('maps an expected armed-entry wait to a non-terminal decision outcome', () 
   const error = decisionBuildError(
     new ObserveDecisionAwaitingSignal({
       message: 'entry remains armed',
+      readiness: { reason: DecisionReadinessReason.NoEligibleCandidate, message: 'entry remains armed' },
       observedAt: '2026-08-18T13:35:01.000Z',
       submissionCutoffAt: '2026-08-18T14:00:00.000Z',
     }),
@@ -129,7 +131,16 @@ test('keeps an incomplete intraday archive retryable without weakening malformed
     }),
   )
 
-  expect(incomplete).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'not-ready' })
+  expect(incomplete).toMatchObject({
+    _tag: 'CycleDecisionBuildError',
+    failure: 'not-ready',
+    readiness: {
+      reason: 'SNAPSHOT_UNAVAILABLE',
+      message: 'intraday snapshot lacks a per-symbol range-completion bar',
+      symbol: 'AMD',
+      eventAt: '2026-08-27T13:34:00.000Z',
+    },
+  })
   expect(malformed).toMatchObject({ _tag: 'CycleDecisionBuildError', failure: 'market-data' })
 })
 

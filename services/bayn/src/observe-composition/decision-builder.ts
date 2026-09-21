@@ -1,3 +1,4 @@
+import { CandidateObservationStore, recordCandidateObservation } from './candidate-observation'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -22,13 +23,18 @@ import {
 } from '../cycle/runner'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
 import {
+  DecisionReadinessReason,
+  RequiredFeatureReadinessSchema,
+  type DecisionReadiness,
+} from '../cycle/runner/readiness'
+import {
   bindCycleExecutionSession,
   type ExecutionSessionBinding,
   type ExecutionSessionBindingFailure,
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { IntradaySnapshotPurpose, type PersistedIntradaySnapshotRows } from '../market-data'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type PersistedIntradaySnapshotRows } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import {
@@ -63,7 +69,7 @@ import {
   type ObserveShadowDecisionDocument,
   type ExecutionDecisionDocument,
 } from '../shadow-decision-contract'
-import { strictParseOptions } from '../schemas'
+import { strictParseOptions, UtcInstantSchema } from '../schemas'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import {
@@ -261,6 +267,7 @@ export type ObserveDecisionInput<R = never> = {
 
 export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDecisionAwaitingSignal')<{
   readonly message: string
+  readonly readiness: DecisionReadiness
   readonly observedAt: string
   readonly submissionCutoffAt: string
 }> {}
@@ -402,7 +409,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
   switch (cause._tag) {
     case 'OperationalError':
       if (isIntradaySnapshotPending(cause.cause)) {
-        return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
+        return new CycleDecisionBuildError({
+          failure: 'not-ready',
+          message: cause.message,
+          readiness: snapshotReadiness(cause.cause),
+          cause,
+        })
       }
       return new CycleDecisionBuildError({
         failure: operationalDecisionFailure(cause.component),
@@ -418,7 +430,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
     case 'ExecutionSessionBindingFailure':
       return new CycleDecisionBuildError({ failure: 'contract', message: cause.message, cause })
     case 'ObserveDecisionAwaitingSignal':
-      return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
+      return new CycleDecisionBuildError({
+        failure: 'not-ready',
+        message: cause.message,
+        readiness: cause.readiness,
+        cause,
+      })
     case 'ObserveDecisionCompositionFailure':
     case 'ShadowDecisionError':
     case 'TargetPlannerFailure':
@@ -764,15 +781,49 @@ const intradayMomentumDefinition = (
   )
 }
 
+const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionReadiness => {
+  const symbol = failure.facts?.['symbol']
+  const eventAt = failure.facts?.['eventAt']
+  const requiredFeature = failure.facts?.['requiredFeature']
+  return {
+    reason:
+      failure.reason === 'watermark'
+        ? DecisionReadinessReason.ArchiveWatermark
+        : failure.reason === 'freshness'
+          ? DecisionReadinessReason.SnapshotStale
+          : DecisionReadinessReason.SnapshotUnavailable,
+    message: failure.message,
+    ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
+    ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
+    ...(Schema.is(RequiredFeatureReadinessSchema)(requiredFeature) ? { requiredFeature } : {}),
+  }
+}
+
+const snapshotQueryReadiness = (query: IntradaySnapshotQuery) => ({
+  rangeStartAt: query.rangeStartAt,
+  rangeEndAt: query.rangeEndAt,
+  symbols: query.symbols ?? query.universe,
+})
+
+const awaitingSnapshotReadiness = (cause: IntradayMomentumEntryAwaitingSnapshot): DecisionReadiness => ({
+  reason:
+    cause.availableAt === undefined ? DecisionReadinessReason.SnapshotCoverage : DecisionReadinessReason.LookbackWarmup,
+  message: cause.message,
+  ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
+  ...(cause.symbol === undefined ? {} : { symbol: cause.symbol }),
+})
+
 const classifyIntradayEntrySnapshotFailure = (
   cause: OperationalError,
   observedAt: string,
   submissionCutoffAt: string,
+  query: IntradaySnapshotQuery,
 ): OperationalError | ObserveDecisionAwaitingSignal => {
   const snapshotFailure = cause.cause
   return isIntradaySnapshotPending(snapshotFailure)
     ? new ObserveDecisionAwaitingSignal({
         message: snapshotFailure.message,
+        readiness: { ...snapshotReadiness(snapshotFailure), snapshotQuery: snapshotQueryReadiness(query) },
         observedAt,
         submissionCutoffAt,
       })
@@ -783,7 +834,11 @@ const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
-): Effect.Effect<CompiledObserveStrategyDecision, OperationalError | ObserveDecisionAwaitingSignal> => {
+): Effect.Effect<
+  CompiledObserveStrategyDecision,
+  OperationalError | ObserveDecisionAwaitingSignal,
+  CandidateObservationStore
+> => {
   return Effect.gen(function* () {
     const intradayMarketData = input.intradayMarketData
     if (intradayMarketData === undefined) {
@@ -812,6 +867,7 @@ const compileObserveStrategyDecision = <R>(
         cause instanceof IntradayMomentumEntryAwaitingSnapshot
           ? new ObserveDecisionAwaitingSignal({
               message: cause.message,
+              readiness: awaitingSnapshotReadiness(cause),
               observedAt: facts.evaluatedAt,
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
             })
@@ -825,7 +881,12 @@ const compileObserveStrategyDecision = <R>(
     )
     const decisionSnapshot = yield* loadIntradaySnapshot(intradayMarketData, decisionQuery).pipe(
       Effect.mapError((cause) =>
-        classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+        classifyIntradayEntrySnapshotFailure(
+          cause,
+          facts.evaluatedAt,
+          input.cycle.window.submissionCutoffAt,
+          decisionQuery,
+        ),
       ),
     )
     const decision = yield* Effect.fromResult(
@@ -835,6 +896,7 @@ const compileObserveStrategyDecision = <R>(
         cause instanceof IntradayMomentumEntryAwaitingSnapshot
           ? new ObserveDecisionAwaitingSignal({
               message: cause.message,
+              readiness: { ...awaitingSnapshotReadiness(cause), snapshotQuery: snapshotQueryReadiness(decisionQuery) },
               observedAt: facts.evaluatedAt,
               submissionCutoffAt: input.cycle.window.submissionCutoffAt,
             })
@@ -846,17 +908,22 @@ const compileObserveStrategyDecision = <R>(
             }),
       ),
     )
-    yield* Effect.logInfo({
-      event: 'bayn.intraday-candidate-observation.v1',
+    yield* recordCandidateObservation({
       cycleId: input.cycle.identity.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
       observedAt: facts.evaluatedAt,
-      manifest: decisionSnapshot.manifest,
+      protocol: intradayDefinition.parameters,
+      snapshot: decisionSnapshot,
       decision,
     })
     if (decision.signals.length === 0 && heldPositions.length === 0) {
       return yield* new ObserveDecisionAwaitingSignal({
         message: 'intraday entry is waiting for at least one available candidate signal',
+        readiness: {
+          reason: DecisionReadinessReason.NoEligibleCandidate,
+          message: 'intraday entry is waiting for at least one available candidate signal',
+          snapshotQuery: snapshotQueryReadiness(decisionQuery),
+        },
         observedAt: facts.evaluatedAt,
         submissionCutoffAt: input.cycle.window.submissionCutoffAt,
       })
@@ -894,7 +961,12 @@ const compileObserveStrategyDecision = <R>(
             )
             return yield* loadIntradaySnapshot(intradayMarketData, pricingQuery).pipe(
               Effect.mapError((cause) =>
-                classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
+                classifyIntradayEntrySnapshotFailure(
+                  cause,
+                  facts.evaluatedAt,
+                  input.cycle.window.submissionCutoffAt,
+                  pricingQuery,
+                ),
               ),
             )
           })
@@ -924,6 +996,11 @@ const compileObserveStrategyDecision = <R>(
     ) {
       return yield* new ObserveDecisionAwaitingSignal({
         message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
+        readiness: {
+          reason: DecisionReadinessReason.NoEligibleCandidate,
+          message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
+          snapshotQuery: snapshotQueryReadiness(decisionQuery),
+        },
         observedAt: facts.evaluatedAt,
         submissionCutoffAt: input.cycle.window.submissionCutoffAt,
       })
@@ -1019,6 +1096,7 @@ export const prepareObservePlanner = <R>(
   )
 
 type RiskInputPreparation = {
+  readonly limitSlippageBps: number
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
@@ -1069,6 +1147,7 @@ const reduceRiskInputs = (
             quantityMicros: BigInt(target.quantityMicros),
             referencePriceMicros: referencePrice,
             executionModel: input.executionModel,
+            limitSlippageBps: BigInt(input.limitSlippageBps),
           }),
           (pricing): ShadowDeltaRiskInput => {
             const state: State = {
@@ -1130,6 +1209,10 @@ const reduceObserveRiskInputs = <R>(
   entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
+    limitSlippageBps:
+      closeOnlyExpiresAt === undefined && authorityObservation.authority.effective === Authority.Execution
+        ? input.policy.maxAdverseSlippageBps
+        : 0,
     ...(entryQuotes === undefined ? {} : { entryQuotes }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
@@ -1144,7 +1227,7 @@ const reduceObserveRiskInputs = <R>(
 
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R> =>
   buildCycleDecision(input, { authorityRequirement: Authority.Observe, documentMode: Authority.Observe })
 
 type CycleDecisionRequirements =
@@ -1154,15 +1237,15 @@ type CycleDecisionRequirements =
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: { readonly authorityRequirement: Authority.Observe; readonly documentMode: Authority.Observe },
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: { readonly authorityRequirement: Authority.Execution; readonly documentMode: Authority.Execution },
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: CycleDecisionRequirements,
-): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | R> {
+): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
     const facts = yield* readObserveDecisionFacts(input, readPreparation)
@@ -1286,6 +1369,7 @@ function buildCycleDecision<R>(
       ? yield* buildObserveShadowDecision(decisionInput)
       : yield* buildExecutionDecision({
           ...decisionInput,
+          entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
         })
@@ -1294,7 +1378,7 @@ function buildCycleDecision<R>(
 
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | CandidateObservationStore | R> =>
   buildCycleDecision(input, { authorityRequirement: Authority.Execution, documentMode: Authority.Execution })
 
 export const makeClosingDecisionPlan = (
@@ -1644,6 +1728,7 @@ const buildClosingExecutionCycleDecisionWithSource = (
     )
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
+        limitSlippageBps: 0,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,

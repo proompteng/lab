@@ -10,6 +10,7 @@
     "services/jangar/*"
   ],
   "scripts": {
+    "release:temporal": "bun packages/temporal-bun-sdk/scripts/release.ts",
     "dev:landing": "bun run --filter landing --filter @proompteng/backend dev",
     "build:landing": "turbo run build --filter=landing",
     "build:proompteng": "bun run packages/scripts/src/proompteng/build-image.ts",

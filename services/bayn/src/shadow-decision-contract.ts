@@ -572,6 +572,7 @@ const ExecutionDecisionMaterialSchema = Schema.Struct({
   plannerInput: Schema.optionalKey(TargetPlannerInputSchema),
   /** Persist the exact risk policy so durable decoding can reproduce every gate and derived metric. */
   riskPolicy: Schema.optionalKey(PolicySchema),
+  entryLimitSlippageBps: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9_999 }))),
   targetPlan: TargetPlanResultSchema,
   deltaRisk: Schema.Array(DeltaRiskEvaluationSchema),
   orderedIntentIds: Schema.Array(Sha256Schema),
@@ -1259,6 +1260,18 @@ const executionMaterialIssues = (
     document.executionSession !== undefined &&
     document.submissionCutoffAt > document.executionSession.submissionCutoffAt
   const isClosePlan = strategyDecision?.schemaVersion === 'bayn.execution-flat-target.v1' || usesExtendedCloseLease
+  if (
+    document.entryLimitSlippageBps !== undefined &&
+    (isClosePlan ||
+      document.bindings.strategyName !== 'intraday-momentum' ||
+      document.riskPolicy === undefined ||
+      document.entryLimitSlippageBps > document.riskPolicy.maxAdverseSlippageBps)
+  ) {
+    issues.push({
+      path: ['entryLimitSlippageBps'],
+      issue: 'entry limit allowance must stay within the bound intraday risk policy',
+    })
+  }
   const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined
   const intentTargetSymbols = document.targetPlan.intentTargets.map(({ symbol }) => symbol).toSorted()
   const plannedTargetSymbols = document.targetPlan.targets.map(({ symbol }) => symbol).toSorted()
@@ -1599,6 +1612,7 @@ const executionMaterialIssues = (
               quantityMicros: BigInt(target.quantityMicros),
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               executionModel: intradayMomentumExecutionModel,
+              limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? 0),
             })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)

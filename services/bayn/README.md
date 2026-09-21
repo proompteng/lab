@@ -21,7 +21,11 @@ five minutes before the close. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH a
 
 The strategy selects at most one long position and caps it at 10% of the mandate allocation. A valid `NO_TRADE` is a
 normal decision; unavailable mandatory evidence blocks evaluation. New entries use whole-share
-IOC limit orders at an adverse verified quote boundary. Bayn starts flattening five minutes before the close and
+IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
+verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
+decision retains the original quote, allowance, exact limit notional, and risk evidence; historical decisions without
+an allowance retain their original exact quote limit. Quote freshness and submission deadlines still apply.
+Bayn starts flattening five minutes before the close and
 requires a flat account at the closing bell. Entries stop when flattening starts, and close orders remain eligible
 until the actual close, including early-close sessions. The five-minute exit budget is an operational policy;
 unfilled exits or unresolved reconciliation remain incomplete and visible.
@@ -34,7 +38,7 @@ elapsed preparatory work for a fresh reconciliation and close planning; a slow i
 leaves less time for archive reads. The overall pass and close deadlines still apply.
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
-is retained in behavior v14; entry decisions retain their existing evidence and LIMIT/IOC requirements.
+is retained in behavior v15; entry decisions retain their existing evidence and LIMIT/IOC requirements.
 
 Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
 exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
@@ -75,6 +79,16 @@ entry exposure, without restricting authority or submitting the unfilled remaind
 scheduled close. Rejected, mismatched, overfilled, and non-IOC canceled orders retain their failure handling.
 Durable completion additionally requires the recorded partial fills to match the accepted order, a later trusted flat
 position snapshot, exact reconciliation covering the account's latest broker events, and no open broker orders.
+
+An exact zero-fill LIMIT/IOC cancellation is the only terminal entry outcome that can release an intraday attempt
+before the close. Bayn first requires a later exact flat reconciliation with no unknown mutations or open orders. The
+attempt then completes without inventing a fill. After at least one minute, while the entry cutoff remains open, the
+standing mandate may create the next rolling observation across all strategy candidates. Zero-fill attempts do not
+exhaust a session-wide quota. Each new attempt requires fresh signals and pricing, exact flat reconciliation, no
+unresolved mutations or open orders, and the existing risk limits. Attempts use increasing ordinals, distinct immutable
+v4 cycle identities, and unique PostgreSQL authority slots. A filled or partially filled
+attempt never rearms and remains bound through its scheduled close. Failed or ambiguous outcomes retain their existing
+fail-closed handling.
 
 When a worker resumes an existing PAPER grant under a recognized system failure restriction, it runs close-only
 recovery. A running worker also checks durable authority before and after each pass and replaces its driver when a
@@ -157,6 +171,11 @@ Flat accounts and marks observed at the same instant also require exact equity a
 - The Bayn namespace log collector includes the CNPG postgres containers. Database pods do not inherit the
   application's part-of label, so discovery uses the namespace and explicit container names.
 - TigerBeetle is the authoritative fee, cost-basis, cash, and realized-P&L ledger.
+- Account reconciliation and forward-performance reads paginate the complete expected account history by TigerBeetle
+  timestamp. Each request stays within the batch limit. Reads continue through short pages and request one additional
+  record to detect unexpected history. Exact record identities, metadata, and aggregate balances remain mandatory;
+  a malformed page or transport failure cannot produce an exact result. Individual posting batches and persisted
+  simulation-run limits remain unchanged.
 - Reconciliation reads Alpaca `FEE` activities alongside fills and orders. Each fee or refund has an immutable
   account/activity identity and a deterministic cash/fee-expense ledger transfer. Delayed fees update exact cash
   reconciliation without changing the opening balance or inventing fills; changed or missing activity history fails
@@ -222,6 +241,37 @@ or grant live capital authority.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
+and its readiness or lifecycle reason. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies ordinary holding. Snapshot
+waits retain the affected symbol, missing timestamp, required feature definition and window, or first available time when known.
+Both `autonomousCycleLoop.lastPass` and `executionController.status.lastPass` expose these structured fields. Free-form
+readiness and failure messages stay out of the public response. Historical pass observations without these details remain readable.
+New tagged waiting observations require exactly one lifecycle reason or structured readiness detail. Pre-open,
+mutation recovery backoff, pending broker intents, unavailable close data, and ordinary holding remain distinct.
+
+Candidate evaluations are stored in the append-only `intraday_candidate_observations` table before the pass proceeds.
+Each content hash binds the cycle, protocol, snapshot manifest, raw rows, and full decision. The corresponding log
+contains that hash, selected symbols, and rejection or exclusion reasons. A failed audit write fails the pass.
+
+Execution latency metrics use separate clocks:
+
+| Metric suffix (`bayn_cycle_…_latency_seconds`) | Start                        | End                           |
+| ---------------------------------------------- | ---------------------------- | ----------------------------- |
+| `intent_to_submit`                             | Intent creation              | `SUBMIT_STARTED`              |
+| `order_acknowledgement`                        | `SUBMIT_STARTED`             | `SUBMIT_ACCEPTED`             |
+| `order_observation`                            | Intent creation              | First local order observation |
+| `intent_to_broker_fill`                        | Intent creation              | Broker fill source timestamp  |
+| `fill`                                         | Intent creation              | Local fill observation        |
+| `fill_ingestion`                               | Broker fill source timestamp | Local fill observation        |
+
+Acknowledgement includes local pretransmission work after `SUBMIT_STARTED`; it is not the HTTP request duration.
+It replaces the previous acknowledgement metric's intent-to-order-observation calculation. Recovery that finds an
+order without a recorded acceptance does not invent an acknowledgement sample. Missing samples are omitted;
+negative differences are excluded and counted in `bayn_cycle_latency_clock_regressions`.
+
+Decision building can reuse a reconciliation completed by the same pass's preflight. The result does not survive
+that pass, and submission preparation retains its separate reconciliation and final mutation-authority checks.
+
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
 configured runtime:
@@ -231,6 +281,9 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 ```
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
+Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
+created before its generation activates; its creation timestamp does not override that durable binding. Account,
+research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
 Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
@@ -238,7 +291,10 @@ Historical decisions that the current runtime cannot validate are listed by hash
 Their accounting remains reportable, but any such decision leaves execution quality and capacity `UNDETERMINED`.
 Native archive requests use durable intent symbols independently of decision validation; reporting cannot authorize an order.
 
-Completed native intraday cycles bind performance evidence to `intraday_snapshot_references`. The reader uses the
+Completed native intraday cycles bind performance evidence to `streaming_snapshot_references` or older
+`intraday_snapshot_references`. Streaming receipts preserve the original input cut and content hash. Their retrospective
+archive request retains every decision lineage offset and verifies that each precedes its consumed partition position.
+The reader uses the
 same universe, IEX feed and exchange calendar as the decision, with the complete regular-session window, a fixed
 reconciliation cutoff, and captured Kafka partition offsets. Legacy daily SIP publications remain supported.
 Native receipts retain the archive request, source hashes, recorded volume and missing minute timestamps. IEX
@@ -277,10 +333,23 @@ node services/bayn/dist/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-The canonical input is `bayn.backtest.v1` in `src/intraday-replay/backtest.ts`. It binds `sessionDates`, the full
+The baseline input is `bayn.backtest.v1` in `src/intraday-replay/backtest.ts`. It binds `sessionDates`, the full
 calendar, source manifest, build and strategy identities, opening cash, asset metadata and its observation policy,
-execution assumptions, and controller/reconciliation cadence. The command accepts only this contract. The older
+execution assumptions, and controller/reconciliation cadence. The older
 archive and vendor replay commands and their input contracts have been removed.
+
+`bayn.backtest.v2` adds a required `exitTiming` research choice: `CURRENT`, `CLOSE_15_MINUTES_BEFORE_BELL`, or
+`CLOSE_30_MINUTES_BEFORE_BELL`. These runs move `flattenBeforeCloseMinutes` and clamp the entry/submission cutoff
+to that boundary so the strategy cannot reopen after flattening. They use the same native close planner, risk
+checks, simulated broker, and accounting path. Signal rules, ranking, sizing, and costs remain those in the frozen
+input; entry eligibility in the last minutes of the session can differ. Compare actual entries before attributing
+economic differences to exits alone. The report binds both timing boundaries and the baseline build and parameter
+hash separately from the effective research parameter hash. Each choice has a distinct run identity and requires fresh local persistence. These inputs do not
+change the production protocol or supply a deployable strategy recommendation.
+
+Native startup and recovery admit these presets only when explicitly bound to their synthetic `replay-<runId>`
+account. Ordinary accounts still require the baseline protocol. The isolated runtime and grant use the effective
+research parameter hash; the report keeps the baseline build evidence separately.
 
 The broker calendar must include the next trading session after the final replay date. The production scheduler
 selects that successor after finishing its last position; omitting it is an input error even when all requested market
@@ -300,7 +369,11 @@ the exact input, source receipt, pass log, decoded entry and closing decisions, 
 
 Simulation accounts are isolated from production. The command cannot acquire Alpaca trading credentials, target a
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,
-failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance. Negative
+failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance.
+The session schedule counts unavailable required decision observations separately from successful no-trade and
+expected lifecycle waits. Close-only market sells support fractional liquidation with fresh, sufficient arrival
+liquidity; an unsupported market remainder fails the simulation. See the streaming guide's
+[close and coverage acceptance](src/market-data/streaming/README.md#replay-close-and-coverage-acceptance). Negative
 returns are valid measurements. Reconciled simulated results do not establish profitability or calibrate broker fills.
 
 ## Historical data workflow
@@ -364,5 +437,14 @@ bun run --filter @proompteng/bayn build
 ```
 
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
+
+The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
+ID `2001`. It posts 10,500 synthetic transfers, verifies account and performance evidence, and supports rerunning against
+the same data after restarting the server. Run it from the repository root:
+
+```sh
+BAYN_TEST_TIGERBEETLE_ADDRESS=127.0.0.1:39701 bun test services/bayn/src/ledger/account-history.test.ts
+```
+
 Historical development candidates are terminal, non-executable records summarized in
 [`docs/bayn/candidate-terminal-history.md`](../../docs/bayn/candidate-terminal-history.md).

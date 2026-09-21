@@ -1,6 +1,7 @@
-import { Effect } from 'effect'
+import { Effect, FiberRef } from 'effect'
 import * as Schema from 'effect/Schema'
 
+import { WorkflowMailbox, type WorkflowActivationJob } from './activation'
 import type {
   CancelTimerCommandIntent,
   CancelWorkflowCommandIntent,
@@ -25,7 +26,12 @@ import type {
   WorkflowUpdateValidator,
 } from './definition'
 import type { DeterminismGuard, RecordedCommandKind, WorkflowRetryPolicyInput } from './determinism'
-import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowQueryHandlerMissingError } from './errors'
+import {
+  ContinueAsNewWorkflowError,
+  WorkflowBlockedError,
+  WorkflowQueryHandlerMissingError,
+  WorkflowQueryViolationError,
+} from './errors'
 import {
   normalizeInboundArguments,
   type WorkflowQueryHandle,
@@ -44,6 +50,7 @@ import {
 export type WorkflowCommandIntentId = string
 
 const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS = 10_000
+const queryResolverActive = FiberRef.unsafeMake(false)
 const MARKER_SIDE_EFFECT = 'temporal-bun-sdk/side-effect'
 const MARKER_VERSION = 'temporal-bun-sdk/get-version'
 const MARKER_PATCH = 'temporal-bun-sdk/patch'
@@ -165,7 +172,7 @@ export interface WorkflowActivities {
     activityType: string,
     args?: unknown[],
     options?: ScheduleActivityOptions,
-  ): Effect.Effect<unknown, never, never>
+  ): Effect.Effect<unknown, Error, never>
 
   cancel(
     activityId: string,
@@ -180,7 +187,7 @@ export interface WorkflowNexusOperations {
     operation: string,
     input?: unknown,
     options?: ScheduleNexusOperationOptions,
-  ): Effect.Effect<unknown, never, never>
+  ): Effect.Effect<unknown, Error, never>
 
   cancel(
     operationId: string,
@@ -283,6 +290,7 @@ export interface CreateWorkflowContextParams<I> {
   readonly signalDeliveries?: readonly WorkflowSignalDeliveryInput[]
   readonly timerResults?: ReadonlySet<string>
   readonly updates?: WorkflowUpdateDefinitions
+  readonly localActivityDeadline?: AbortSignal
 }
 
 export type ActivityResolution = { status: 'completed'; value: unknown } | { status: 'failed'; error: Error }
@@ -293,6 +301,7 @@ export class WorkflowCommandContext {
   readonly #info: WorkflowInfo
   readonly #guard: DeterminismGuard
   readonly #intents: WorkflowCommandIntent[] = []
+  readonly #localActivities: Promise<unknown>[] = []
   readonly #activityScheduleEventIds?: Map<string, string>
   readonly #nexusScheduleEventIds?: Map<string, string>
   #sequence = 0
@@ -311,6 +320,14 @@ export class WorkflowCommandContext {
 
   get intents(): readonly WorkflowCommandIntent[] {
     return this.#intents
+  }
+
+  trackLocalActivity(result: Promise<unknown>): void {
+    this.#localActivities.push(result.catch(() => undefined))
+  }
+
+  async settleLocalActivities(): Promise<void> {
+    await Promise.all(this.#localActivities)
   }
 
   addIntent(intent: WorkflowCommandIntent): RecordedCommandKind {
@@ -355,6 +372,7 @@ export const createWorkflowContext = <I>(
   commandContext: WorkflowCommandContext
   queryRegistry: WorkflowQueryRegistry
   updateRegistry: WorkflowUpdateRegistry
+  applyActivationJob: (job: WorkflowActivationJob) => void
 } => {
   const commandContext = new WorkflowCommandContext({
     info: params.info,
@@ -364,8 +382,12 @@ export const createWorkflowContext = <I>(
   })
   const updateRegistry = new WorkflowUpdateRegistry()
 
-  const activityResults = params.activityResults ?? new Map<string, ActivityResolution>()
-  const nexusResults = params.nexusResults ?? new Map<string, NexusOperationResolution>()
+  const activityResults = new WorkflowMailbox<ActivityResolution>()
+  const nexusResults = new WorkflowMailbox<NexusOperationResolution>()
+  const timerResults = new WorkflowMailbox<void>()
+  for (const [id, result] of params.activityResults ?? []) activityResults.deliver(id, result)
+  for (const [id, result] of params.nexusResults ?? []) nexusResults.deliver(id, result)
+  for (const id of params.timerResults ?? []) timerResults.deliver(id, undefined)
   const inboundSignals = new WorkflowInboundSignals({
     guard: params.determinismGuard,
     deliveries: params.signalDeliveries,
@@ -374,20 +396,12 @@ export const createWorkflowContext = <I>(
 
   const activities: WorkflowActivities = {
     schedule(activityType, args = [], options = {}) {
-      return Effect.sync(() => {
+      return Effect.suspend(() => {
         const intent = buildScheduleActivityIntent(commandContext, activityType, args, options)
         commandContext.addIntent(intent)
-        const resolution = activityResults.get(intent.activityId)
-        if (!resolution) {
-          throw new WorkflowBlockedError(`Activity ${intent.activityId} pending`)
-        }
-        if (resolution.status === 'failed') {
-          throw resolution.error
-        }
-        // When the activity result is already available (e.g., during replay/query),
-        // return the resolved value instead of a command reference so workflow code
-        // sees the decoded activity output.
-        return resolution.value
+        return Effect.flatMap(activityResults.take(intent.activityId), (resolution) =>
+          resolution.status === 'failed' ? Effect.fail(resolution.error) : Effect.succeed(resolution.value),
+        )
       })
     },
     cancel(activityId, options = {}) {
@@ -401,17 +415,12 @@ export const createWorkflowContext = <I>(
 
   const nexus: WorkflowNexusOperations = {
     schedule(endpoint, service, operation, input, options = {}) {
-      return Effect.sync(() => {
+      return Effect.suspend(() => {
         const intent = buildScheduleNexusOperationIntent(commandContext, endpoint, service, operation, input, options)
         commandContext.addIntent(intent)
-        const resolution = nexusResults.get(intent.operationId)
-        if (!resolution) {
-          throw new WorkflowBlockedError(`Nexus operation ${intent.operationId} pending`)
-        }
-        if (resolution.status === 'failed') {
-          throw resolution.error
-        }
-        return resolution.value
+        return Effect.flatMap(nexusResults.take(intent.operationId), (resolution) =>
+          resolution.status === 'failed' ? Effect.fail(resolution.error) : Effect.succeed(resolution.value),
+        )
       })
     },
     cancel(operationId, options = {}) {
@@ -425,18 +434,13 @@ export const createWorkflowContext = <I>(
 
   const timers: WorkflowTimers = {
     start(options) {
-      return Effect.sync(() => {
+      return Effect.suspend(() => {
         if (!options || typeof options.timeoutMs !== 'number' || options.timeoutMs <= 0) {
-          throw new WorkflowBlockedError('Timer timeoutMs must be a positive number')
+          return Effect.die(new Error('Timer timeoutMs must be a positive number'))
         }
         const intent = buildStartTimerIntent(commandContext, options)
         commandContext.addIntent(intent)
-        // If the timer hasn't fired yet, block the workflow so it will resume
-        // when the corresponding TimerFired event is observed on replay.
-        if (!params.timerResults?.has(intent.timerId)) {
-          throw new WorkflowBlockedError(`Timer ${intent.timerId} pending`)
-        }
-        return { timerId: intent.timerId }
+        return Effect.as(timerResults.take(intent.timerId), { timerId: intent.timerId })
       })
     },
     cancel(timerId, options = {}) {
@@ -535,6 +539,7 @@ export const createWorkflowContext = <I>(
         args,
         handler: options?.handler,
         activityId: options?.activityId,
+        deadline: params.localActivityDeadline,
       }),
   }
 
@@ -595,7 +600,28 @@ export const createWorkflowContext = <I>(
     },
   }
 
-  return { context, commandContext, queryRegistry, updateRegistry }
+  return {
+    context,
+    commandContext,
+    queryRegistry,
+    updateRegistry,
+    applyActivationJob(job) {
+      switch (job.type) {
+        case 'activity':
+          activityResults.deliver(job.id, job.resolution)
+          break
+        case 'nexus':
+          nexusResults.deliver(job.id, job.resolution)
+          break
+        case 'timer':
+          timerResults.deliver(job.id, undefined)
+          break
+        case 'signal':
+          inboundSignals.deliver(job.delivery)
+          break
+      }
+    },
+  }
 }
 
 const createCommandRef = (
@@ -980,6 +1006,7 @@ const runLocalActivity = <T>(params: {
   args: unknown[]
   handler?: (...args: unknown[]) => unknown
   activityId?: string
+  deadline?: AbortSignal
 }): T => {
   const sequence = params.commandContext.nextSequence()
   const activityId = params.activityId ?? `local-activity-${sequence}`
@@ -991,12 +1018,17 @@ const runLocalActivity = <T>(params: {
       const message = typeof details.errorMessage === 'string' ? details.errorMessage : 'Local activity failed'
       throw new Error(message)
     }
-    return (details.result as T) ?? (details.payload as T)
+    return ('result' in details ? details.result : details.payload) as T
   }
 
   if (previous && previous.kind === 'record-marker' && previous.markerName === MARKER_LOCAL_ACTIVITY) {
     const intent: RecordMarkerCommandIntent = { ...previous, sequence }
     params.commandContext.addIntent(intent)
+    if (intent.details?.async === true) {
+      const result = Promise.resolve().then(() => readPreviousResult(intent))
+      params.commandContext.trackLocalActivity(result)
+      return result as T
+    }
     return readPreviousResult(intent)
   }
 
@@ -1005,7 +1037,43 @@ const runLocalActivity = <T>(params: {
   }
 
   try {
+    const timeoutError = () =>
+      new Error('Local activity exceeded the workflow task budget; use a remote activity for longer work')
+    if (params.deadline?.aborted) throw timeoutError()
     const value = params.handler(...params.args) as T
+    if (value instanceof Promise) {
+      const details: Record<string, unknown> = { activityId, activityType: params.activityType, async: true }
+      params.commandContext.addIntent({
+        id: `local-activity-${sequence}`,
+        kind: 'record-marker',
+        sequence,
+        markerName: MARKER_LOCAL_ACTIVITY,
+        details,
+      })
+      let pending: Promise<unknown> = value
+      const signal = params.deadline
+      if (signal) {
+        const deadline = Promise.withResolvers<never>()
+        const onAbort = () => deadline.reject(timeoutError())
+        signal.addEventListener('abort', onAbort, { once: true })
+        pending = Promise.race([value, deadline.promise]).finally(() => signal.removeEventListener('abort', onAbort))
+        if (signal.aborted) onAbort()
+      }
+      const result = pending.then(
+        (resolved: unknown) => {
+          details.status = 'completed'
+          details.result = resolved
+          return resolved
+        },
+        (error: unknown) => {
+          details.status = 'failed'
+          details.errorMessage = error instanceof Error ? error.message : String(error)
+          throw error
+        },
+      )
+      params.commandContext.trackLocalActivity(result)
+      return result as T
+    }
     const intent: RecordMarkerCommandIntent = {
       id: `local-activity-${sequence}`,
       kind: 'record-marker',
@@ -1088,82 +1156,69 @@ interface SignalQueueEntry {
 
 class WorkflowInboundSignals {
   readonly #guard: DeterminismGuard
-  readonly #buffers = new Map<string, SignalQueueEntry[]>()
+  readonly #messages = new WorkflowMailbox<SignalQueueEntry>()
 
   constructor(params: { guard: DeterminismGuard; deliveries?: readonly WorkflowSignalDeliveryInput[] }) {
     this.#guard = params.guard
-    for (const delivery of params.deliveries ?? []) {
-      const queue = this.#buffers.get(delivery.name) ?? []
-      queue.push({ args: [...delivery.args], metadata: delivery.metadata ?? {} })
-      this.#buffers.set(delivery.name, queue)
-    }
+    for (const delivery of params.deliveries ?? []) this.deliver(delivery)
+  }
+
+  deliver(delivery: WorkflowSignalDeliveryInput): void {
+    this.#messages.deliver(delivery.name, { args: [...delivery.args], metadata: delivery.metadata ?? {} })
   }
 
   on<I>(
     handle: WorkflowSignalHandle<I>,
     handler: WorkflowSignalHandler<I, void>,
     options?: WorkflowSignalHandlerOptions,
-  ): Effect.Effect<void, WorkflowBlockedError | unknown, never> {
-    const entry = this.#shift(handle.name)
-    if (!entry) {
-      return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
-    }
-    const handlerName = resolveHandlerName(options?.name, handler, handle.name)
-    return this.#decode(handle, entry)
-      .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
-      .pipe(Effect.flatMap((payload) => handler(payload, entry.metadata)))
+  ): Effect.Effect<void, unknown, never> {
+    return Effect.flatMap(this.#consume(this.#messages.take(handle.name)), (entry) => {
+      const handlerName = resolveHandlerName(options?.name, handler, handle.name)
+      return this.#decode(handle, entry)
+        .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
+        .pipe(Effect.flatMap((payload) => handler(payload, entry.metadata)))
+    })
   }
 
   waitFor<I>(
     handle: WorkflowSignalHandle<I>,
     options?: WorkflowSignalHandlerOptions,
-  ): Effect.Effect<WorkflowSignalDelivery<I>, WorkflowBlockedError | unknown, never> {
-    const entry = this.#shift(handle.name)
-    if (!entry) {
-      return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
-    }
-    const handlerName = options?.name ?? 'waitFor'
-    return this.#decode(handle, entry)
-      .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
-      .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>))
+  ): Effect.Effect<WorkflowSignalDelivery<I>, unknown, never> {
+    return Effect.flatMap(this.#consume(this.#messages.take(handle.name)), (entry) => {
+      const handlerName = options?.name ?? 'waitFor'
+      return this.#decode(handle, entry)
+        .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
+        .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>))
+    })
   }
 
   drain<I>(
     handle: WorkflowSignalHandle<I>,
     options?: WorkflowSignalHandlerOptions,
-  ): Effect.Effect<readonly WorkflowSignalDelivery<I>[], WorkflowBlockedError | unknown, never> {
-    const entries = this.#drain(handle.name)
-    if (entries.length === 0) {
-      return Effect.fail(new WorkflowBlockedError(`Signal "${handle.name}" not yet delivered`))
-    }
-    const handlerName = options?.name ?? 'drain'
-    return runSequential(entries, (entry) =>
-      this.#decode(handle, entry)
-        .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
-        .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>)),
-    )
-  }
-
-  #shift(name: string): SignalQueueEntry | undefined {
-    const queue = this.#buffers.get(name)
-    if (!queue || queue.length === 0) {
-      return undefined
-    }
-    return queue.shift()
-  }
-
-  #drain(name: string): SignalQueueEntry[] {
-    const queue = this.#buffers.get(name)
-    if (!queue || queue.length === 0) {
-      return []
-    }
-    this.#buffers.set(name, [])
-    return queue
+  ): Effect.Effect<readonly WorkflowSignalDelivery<I>[], unknown, never> {
+    return Effect.flatMap(this.#consume(this.#messages.takeAll(handle.name)), (entries) => {
+      const handlerName = options?.name ?? 'drain'
+      return runSequential(entries, (entry) =>
+        this.#decode(handle, entry)
+          .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
+          .pipe(Effect.map((payload) => ({ payload, metadata: entry.metadata }) as WorkflowSignalDelivery<I>)),
+      )
+    })
   }
 
   #decode<I>(handle: WorkflowSignalHandle<I>, entry: SignalQueueEntry): Effect.Effect<I, unknown, never> {
     const normalized = normalizeInboundArguments(entry.args, handle.decodeArgumentsAsArray)
     return Schema.decodeUnknown(handle.schema)(normalized)
+  }
+
+  #consume<A>(effect: Effect.Effect<A>): Effect.Effect<A, WorkflowQueryViolationError> {
+    return Effect.flatMap(FiberRef.get(queryResolverActive), (active) =>
+      active
+        ? Effect.fail(
+            new WorkflowQueryViolationError('Workflow query cannot consume signals; queries must be read-only'),
+          )
+        : effect,
+    )
   }
 
   #record(signalName: string, handlerName: string, payload: unknown, metadata: WorkflowSignalMetadata) {
@@ -1284,7 +1339,8 @@ export class WorkflowQueryRegistry {
     const invocationMetadata = metadata ?? {}
     const value = (input ?? (undefined as I)) as unknown
     const resolver = entry.resolver as WorkflowQueryResolver<I, O>
-    return resolver(value as I, invocationMetadata)
+    return Effect.suspend(() => resolver(value as I, invocationMetadata))
+      .pipe(Effect.locally(queryResolverActive, true))
       .pipe(
         Effect.tap((result) =>
           this.#recordQueryEvaluation(
@@ -1321,7 +1377,8 @@ export class WorkflowQueryRegistry {
     return Schema.decodeUnknown(entry.handle.inputSchema)(normalized)
       .pipe(
         Effect.flatMap((decoded) =>
-          (entry.resolver as WorkflowQueryResolver<unknown, unknown>)(decoded, metadata)
+          Effect.suspend(() => entry.resolver(decoded, metadata))
+            .pipe(Effect.locally(queryResolverActive, true))
             .pipe(Effect.map((result) => ({ status: 'success', decoded, result }) as const))
             .pipe(Effect.catchAll((error) => Effect.succeed({ status: 'failure', decoded, error } as const))),
         ),

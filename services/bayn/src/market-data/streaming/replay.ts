@@ -1,3 +1,4 @@
+import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
@@ -49,6 +50,8 @@ export const reproduceStreamingSnapshot = (
       manifest.streaming,
       strictParseOptions,
     ).pipe(Result.mapError((cause) => fail('Invalid recorded streaming evidence', cause)))
+    if (evidence.barPublications !== undefined && evidence.barPublicationPolicy === undefined)
+      return yield* Result.fail(fail('Publication witnesses require an explicit timing policy'))
     const bounds = yield* Result.try({
       try: () =>
         bootstrapKafkaPartitions(
@@ -115,6 +118,7 @@ export const reproduceStreamingSnapshot = (
     const reproduced = yield* constructStreamingSnapshot(
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
       query,
+      evidence.barPublicationPolicy ?? BarPublicationPolicy.LegacyQuoteAge,
     )
     if (
       (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
@@ -133,14 +137,17 @@ export const reproduceStreamingSnapshot = (
 const restoreRecordedProjection = (
   manifest: StreamingSnapshotManifest | SimulatedSnapshotManifest,
   rows: PersistedIntradaySnapshotRows,
-  evidence: Pick<StreamingSnapshotEvidence, 'records' | 'features' | 'sequence' | 'technical'>,
+  evidence: Pick<StreamingSnapshotEvidence, 'records' | 'features' | 'sequence' | 'technical' | 'barPublications'>,
   universe: StreamingUniverse,
   epoch: string,
   simulation?: typeof SimulatedSnapshotSourceSchema.Type,
 ) =>
   Result.gen(function* () {
     const decoded = yield* Result.all({
-      bars: decodeIntradayBarRows(rows.bars).pipe(Result.flatMap((values) => Result.all(values.map(normalizeBar)))),
+      bars: decodeIntradayBarRows([
+        ...rows.bars,
+        ...(evidence.barPublications ?? []).map((publication) => publication.row),
+      ]).pipe(Result.flatMap((values) => Result.all(values.map(normalizeBar)))),
       quotes: decodeIntradayQuoteRows(rows.quotes).pipe(
         Result.flatMap((values) => Result.all(values.map(normalizeQuote))),
       ),
@@ -148,11 +155,12 @@ const restoreRecordedProjection = (
         Result.flatMap((values) => Result.all(values.map(normalizeTrade))),
       ),
     })
+    const records = [...evidence.records, ...(evidence.barPublications ?? []).map((publication) => publication.receipt)]
     const values = [...decoded.bars, ...decoded.quotes, ...decoded.trades]
     const byCoordinate = new Map(
       values.map((value) => [coordinate(value.sourceTopic, value.sourcePartition, value.sourceOffset), value]),
     )
-    if (byCoordinate.size !== values.length || evidence.records.length !== values.length)
+    if (byCoordinate.size !== values.length || records.length !== values.length)
       return yield* Result.fail(fail('Recorded rows and receipts must have exactly one matching source coordinate'))
     let projection = {
       ...emptyStreamingProjection(epoch, universe.topics.technicalFeatures),
@@ -160,7 +168,7 @@ const restoreRecordedProjection = (
     }
     const receiptKeys = new Set<string>()
     const deliveries = [
-      ...evidence.records.map((receipt) => ({ kind: 'raw' as const, receipt })),
+      ...records.map((receipt) => ({ kind: 'raw' as const, receipt })),
       ...evidence.features.map((receipt) => ({ kind: 'feature' as const, receipt })),
       ...(evidence.technical?.features ?? []).map((receipt) => ({ kind: 'technical' as const, receipt })),
     ].toSorted((a, b) => a.receipt.sequence - b.receipt.sequence)
@@ -217,12 +225,16 @@ export const reproduceSimulatedSnapshot = (
       SimulatedSnapshotEvidenceSchema,
       strictParseOptions,
     )(manifest.streaming).pipe(Result.mapError((cause) => fail('Invalid simulated input cut', cause)))
+    if (evidence.barPublications !== undefined && evidence.barPublicationPolicy === undefined)
+      return yield* Result.fail(fail('Publication witnesses require an explicit timing policy'))
     if (canonicalPositions(evidence.positions).some((position, index) => position !== evidence.positions[index]))
       return yield* Result.fail(fail('Simulated source positions are not canonical'))
     const {
       schemaVersion: _schemaVersion,
       positions: _positions,
       records: _records,
+      barPublications: _barPublications,
+      barPublicationPolicy: _barPublicationPolicy,
       features: _features,
       technical: _technical,
       sequence: _sequence,
@@ -250,11 +262,13 @@ export const reproduceSimulatedSnapshot = (
       bounds.size !== evidence.positions.length ||
       [...bounds.values()].some((offset) => offset <= 0n) ||
       [
-        ...evidence.records.map((receipt) => ({
-          topic: receipt.sourceTopic,
-          partition: receipt.sourcePartition,
-          offset: receipt.sourceOffset,
-        })),
+        ...[...evidence.records, ...(evidence.barPublications ?? []).map((publication) => publication.receipt)].map(
+          (receipt) => ({
+            topic: receipt.sourceTopic,
+            partition: receipt.sourcePartition,
+            offset: receipt.sourceOffset,
+          }),
+        ),
         ...evidence.features,
         ...(evidence.technical?.features ?? []),
       ].some(
@@ -312,6 +326,7 @@ export const reproduceSimulatedSnapshot = (
       },
       source,
       query,
+      evidence.barPublicationPolicy ?? BarPublicationPolicy.LegacyQuoteAge,
     )
     if (
       (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
