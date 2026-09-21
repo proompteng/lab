@@ -8,7 +8,10 @@ and content must reproduce the snapshot identity. A matching symbol alone is ins
 
 Jev evaluation requests require a persisted candidate observation matching the exact cycle, authority generation,
 snapshot, candidate symbol and observation time. Excluded candidates cannot acquire a request. The store verifies the
-observation's content hash before claiming the request and again on historical readback.
+observation's content hash before claiming the request and again on historical readback. Before creating or resuming
+an inference claim, it also reconstructs the exact candidate/benchmark state and pinned questions from the retained
+source. Valid metadata cannot disguise substituted model input. Historical request bytes remain readable for audit;
+superseded input definitions cannot resume inference through the entry path.
 
 Requests commit before inference. Each request has one immutable resolution: `RECORDED`, bound to its
 receipt hash, or `ABANDONED`, with a recovery time at or after the request deadline. Receipt persistence and resolution
@@ -25,6 +28,19 @@ The PostgreSQL integration tests kill separate workers after request and result 
 then recover with a new process using only PostgreSQL. They also test concurrent recovery, late receipts, immutable
 records, canonical migration of existing receipts and ambient-transaction rejection. These are persistence proofs; the
 active trading strategy still requires Jev batch binding and runtime integration.
+
+## Complete candidate batches
+
+`makeJevTradingSignalBatch` takes the complete retained observation and a bounded expiry. It derives cycle,
+generation, observation and protocol identities from that evidence, reconstructs the source once, and freezes every
+candidate request or source exclusion. `reproduceJevTradingSignalBatch` requires the same complete observation and
+rejects a rehashed plan with unrelated source hashes, changed input or an omitted candidate.
+
+Batch results bind one outcome per planned candidate. Recorded failures, abandonment and unattempted candidates
+remain visible. Selection requires all requested candidates to have usable recorded results and checks freshness
+against the entire batch completion time and the current time after persistence. No candidate can be selected while
+another result is missing. These pure contracts do not persist batches or grant authority; durable orchestration and
+the native decision binding remain unfinished.
 
 ## Economic acceptance
 

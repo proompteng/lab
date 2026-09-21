@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
-import { constructSimulatedSnapshot, constructStreamingSnapshot } from '../market-data/streaming/snapshot'
+import {
+  constructSimulatedSnapshot,
+  constructStreamingSnapshot,
+  type VerifiedStrategyMarketSnapshot,
+} from '../market-data/streaming/snapshot'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { JevCandidatePlanStatus, makeJevBatchPlan } from './batch'
@@ -15,24 +20,27 @@ import {
 } from './trading-signals'
 
 const fixture = candidateObservationFixture()
+const observationFor = (snapshot: VerifiedStrategyMarketSnapshot) => ({
+  ...fixture.observation.payload,
+  manifest: snapshot.manifest,
+  observedAt: snapshot.manifest.observedAt,
+  rows: Result.getOrThrow(persistIntradayRecordRows(snapshot)),
+})
 const input = {
-  snapshot: fixture.snapshot,
-  cycleId: fixture.input.cycleId,
-  authorityGenerationHash: fixture.input.authorityGenerationHash,
-  observationHash: fixture.observation.contentHash,
-  protocolHash: canonicalHashV1(fixture.protocol),
+  observation: fixture.observation.payload,
   expiresAt: new Date(Date.parse(fixture.input.observedAt) + 5000).toISOString(),
-  benchmarkSymbol: fixture.protocol.benchmarkSymbol,
 }
 
 describe('Jev trading batch source reproduction', () => {
   test('freezes the entire recorded universe and reproduces each exact request', () => {
     const plan = Result.getOrThrow(makeJevTradingSignalBatch(input))
+    expect(plan.observationHash).toBe(fixture.observation.contentHash)
+    expect(plan.protocolHash).toBe(canonicalHashV1(fixture.protocol))
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual([...fixture.protocol.candidateSymbols])
     for (const candidate of plan.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected complete fixture')
       const prepared = Result.getOrThrow(
-        makeJevTradingSignalRequest(input.snapshot, candidate.symbol, input.benchmarkSymbol),
+        makeJevTradingSignalRequest(fixture.snapshot, candidate.symbol, fixture.protocol.benchmarkSymbol),
       )
       expect(candidate.request.requestHash).toBe(prepared.requestHash)
       expect(
@@ -40,9 +48,9 @@ describe('Jev trading batch source reproduction', () => {
           .requestHash,
       ).toBe(prepared.requestHash)
     }
-    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(input.snapshot, JSON.parse(JSON.stringify(plan))))).toEqual(
-      plan,
-    )
+    expect(
+      Result.getOrThrow(reproduceJevTradingSignalBatch(input.observation, JSON.parse(JSON.stringify(plan)))),
+    ).toEqual(plan)
   })
 
   test('request reconstruction rejects incomplete rows, different observation time and a changed universe', () => {
@@ -62,7 +70,7 @@ describe('Jev trading batch source reproduction', () => {
   test('a correctly rehashed plan cannot omit a losing candidate or change model input', () => {
     const { batchId: _, ...material } = Result.getOrThrow(makeJevTradingSignalBatch(input))
     const omitted = Result.getOrThrow(makeJevBatchPlan({ ...material, candidates: material.candidates.slice(1) }))
-    expect(Result.isFailure(reproduceJevTradingSignalBatch(input.snapshot, omitted))).toBe(true)
+    expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, omitted))).toBe(true)
     const altered = Result.getOrThrow(
       makeJevBatchPlan({
         ...material,
@@ -79,7 +87,15 @@ describe('Jev trading batch source reproduction', () => {
         }),
       }),
     )
-    expect(Result.isFailure(reproduceJevTradingSignalBatch(input.snapshot, altered))).toBe(true)
+    expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, altered))).toBe(true)
+  })
+
+  test('reproduction rejects a rehashed claim to an unrelated observation or protocol', () => {
+    const { batchId: _, ...material } = Result.getOrThrow(makeJevTradingSignalBatch(input))
+    for (const field of ['observationHash', 'protocolHash']) {
+      const altered = Result.getOrThrow(makeJevBatchPlan({ ...material, [field]: 'f'.repeat(64) }))
+      expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, altered))).toBe(true)
+    }
   })
 
   test('retains the exact source exclusion rather than dropping an unavailable candidate', () => {
@@ -91,7 +107,8 @@ describe('Jev trading batch source reproduction', () => {
         fixture.query,
       ),
     )
-    const plan = Result.getOrThrow(makeJevTradingSignalBatch({ ...input, snapshot }))
+    const observation = observationFor(snapshot)
+    const plan = Result.getOrThrow(makeJevTradingSignalBatch({ ...input, observation }))
     const excluded = plan.candidates.find((candidate) => candidate.symbol === 'NVDA')
     expect(excluded?.status).toBe(JevCandidatePlanStatus.Excluded)
     if (excluded?.status !== JevCandidatePlanStatus.Excluded) throw new Error('Missing source exclusion')
@@ -101,7 +118,7 @@ describe('Jev trading batch source reproduction', () => {
     expect(sourceExclusion.reason).toBe(excluded.reason)
     expect(sourceExclusion.message).toBe(excluded.message)
     expect(plan.candidates).toHaveLength(fixture.protocol.candidateSymbols.length)
-    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(snapshot, plan))).toEqual(plan)
+    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(observation, plan))).toEqual(plan)
     const { batchId: _, ...material } = plan
     const changedReason = Result.getOrThrow(
       makeJevBatchPlan({
@@ -113,23 +130,24 @@ describe('Jev trading batch source reproduction', () => {
         ),
       }),
     )
-    expect(Result.isFailure(reproduceJevTradingSignalBatch(snapshot, changedReason))).toBe(true)
+    expect(Result.isFailure(reproduceJevTradingSignalBatch(observation, changedReason))).toBe(true)
   })
 
   test('uses the same complete batch contract with retained simulated snapshots', () => {
     const simulated = simulationFixture()
     const snapshot = Result.getOrThrow(constructSimulatedSnapshot(simulated.cursor, simulated.source, simulated.query))
+    const observation = observationFor(snapshot)
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         ...input,
-        snapshot,
+        observation,
         expiresAt: new Date(Date.parse(snapshot.manifest.observedAt) + 5000).toISOString(),
       }),
     )
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual([
       ...(snapshot.manifest.candidateSymbols ?? []),
     ])
-    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(snapshot, plan))).toEqual(plan)
-    expect(Result.isFailure(reproduceJevTradingSignalBatch(input.snapshot, plan))).toBe(true)
+    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(observation, plan))).toEqual(plan)
+    expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, plan))).toBe(true)
   })
 })

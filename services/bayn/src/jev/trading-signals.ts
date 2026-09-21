@@ -257,17 +257,10 @@ export const reproduceJevRequestFromObservation = (request: JevEvaluationRequest
     return prepared
   })
 
-export const makeJevTradingSignalBatch = (input: {
-  readonly snapshot: VerifiedStrategyMarketSnapshot
-  readonly cycleId: string
-  readonly authorityGenerationHash: string
-  readonly observationHash: string
-  readonly protocolHash: string
-  readonly expiresAt: string
-  readonly benchmarkSymbol: string
-}) =>
+export const makeJevTradingSignalBatch = (input: { readonly observation: unknown; readonly expiresAt: string }) =>
   Result.gen(function* () {
-    const snapshot = yield* reproduceJevSnapshot(input.snapshot)
+    const observation = yield* reproduceJevCandidateObservation(input.observation)
+    const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
       return yield* unavailable('Jev batch requires the complete recorded candidate universe')
@@ -278,11 +271,11 @@ export const makeJevTradingSignalBatch = (input: {
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
         continue
       }
-      const prepared = yield* requestFromSnapshot(snapshot, symbol, input.benchmarkSymbol)
+      const prepared = yield* requestFromSnapshot(snapshot, symbol, protocol.benchmarkSymbol)
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
-        cycleId: input.cycleId,
-        authorityGenerationHash: input.authorityGenerationHash,
+        cycleId: observation.cycleId,
+        authorityGenerationHash: observation.authorityGenerationHash,
         snapshotId: manifest.snapshotId,
         symbol,
         observedAt: manifest.observedAt,
@@ -294,14 +287,16 @@ export const makeJevTradingSignalBatch = (input: {
     }
     return yield* makeJevBatchPlan({
       schemaVersion: 'bayn.jev-batch-plan.v1',
-      cycleId: input.cycleId,
-      authorityGenerationHash: input.authorityGenerationHash,
-      observationHash: input.observationHash,
-      protocolHash: input.protocolHash,
+      cycleId: observation.cycleId,
+      authorityGenerationHash: observation.authorityGenerationHash,
+      observationHash: observation.contentHash,
+      protocolHash: yield* canonicalHashV1Result(protocol).pipe(
+        Result.mapError((cause) => new JevContractError({ message: 'Jev source protocol cannot be hashed', cause })),
+      ),
       snapshotId: manifest.snapshotId,
       observedAt: manifest.observedAt,
       expiresAt: input.expiresAt,
-      benchmarkSymbol: input.benchmarkSymbol,
+      benchmarkSymbol: protocol.benchmarkSymbol,
       questionSetHash: yield* canonicalHashV1Result({ model: jevModel, questions: jevTradingQuestions }).pipe(
         Result.mapError((cause) => new JevContractError({ message: 'Jev question set cannot be hashed', cause })),
       ),
@@ -309,10 +304,10 @@ export const makeJevTradingSignalBatch = (input: {
     })
   })
 
-export const reproduceJevTradingSignalBatch = (snapshot: VerifiedStrategyMarketSnapshot, input: unknown) =>
+export const reproduceJevTradingSignalBatch = (observation: unknown, input: unknown) =>
   Result.gen(function* () {
     const plan = yield* decodeJevBatchPlan(input)
-    const reproduced = yield* makeJevTradingSignalBatch({ ...plan, snapshot })
+    const reproduced = yield* makeJevTradingSignalBatch({ observation, expiresAt: plan.expiresAt })
     if (reproduced.batchId !== plan.batchId)
       return yield* unavailable('Jev batch requests or candidate universe differ from the reproduced source')
     return reproduced

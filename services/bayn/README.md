@@ -61,9 +61,10 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 
 ## Execution contract
 
-Jev migration work lives under `src/jev`. The trading-signal batch constructor reproduces the retained live or
-simulated snapshot once and freezes the complete candidate universe, source exclusions, exact requests and common
-deadline. Batch results bind every planned candidate, including failed, abandoned and unattempted evaluations.
+Jev migration work lives under `src/jev`. The trading-signal batch constructor requires the complete retained
+observation, derives its observation and protocol hashes, reproduces the live or simulated snapshot once, and freezes
+the complete candidate universe, source exclusions, exact requests and common deadline. Batch results bind every
+planned candidate, including failed, abandoned and unattempted evaluations.
 Reproduction detects a rehashed plan that omits a candidate or substitutes model input. Selection requires the whole
 batch to remain valid after completion and persistence; it cannot use only the fastest successful response.
 
