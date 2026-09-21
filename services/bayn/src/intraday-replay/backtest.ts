@@ -51,6 +51,7 @@ import { ReconciliationStatus } from '../execution/contracts'
 import type { ReconciliationMetrics } from '../simulation-reconciliation/broker-model'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import { decodeExecutionCycleClosureResult } from '../db/execution-cycle-closure'
+import { observedQuoteAt } from '../market-data/streaming/projection'
 
 export enum BacktestIssue {
   CycleFailure = 'cycle-failure',
@@ -373,7 +374,8 @@ export const runBacktest = (
       assets: prepared.assets,
       calendar: prepared.input.calendar,
       advanceToArrival: advanceTo,
-      quoteAt: (symbol) => source.cursor.pipe(Effect.map((cursor) => cursor.projection.quotes.get(symbol))),
+      quoteAt: (symbol, atMs) =>
+        source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs))),
     })
     const runtime = yield* makeReplayExecutionRuntime({
       currentUtcInstant: timing.currentUtcInstant,

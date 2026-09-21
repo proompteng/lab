@@ -389,6 +389,12 @@ without a broker submission, including time spent advancing retained replay data
 also prove arrival-time pricing, position management, exact-flat completion and fresh reentry. These timing tests
 do not establish economic performance.
 
+Replay uses the production generation driver for restricted-cycle settlement, exact-flat reconciliation and
+reactivation. A blocked cycle may re-enter after the existing delay only when its immutable decision belongs to
+an earlier generation; a block in the current generation remains terminal. Restart preserves the recovered grant,
+and operator restrictions remain held. Session-close valuation selects the most recent retained quote that was
+available at close, even when a later arrival has replaced the projection's current quote.
+
 The broker calendar must include the next trading session after the final replay date. The production scheduler
 selects that successor after finishing its last position; omitting it is an input error even when all requested market
 hours have data. Retain the actual Alpaca calendar response, including holidays and early closes. The export's

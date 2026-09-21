@@ -20,6 +20,11 @@ import { positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
 import { makeReplayJevTiming } from './jev-timing'
+import {
+  emptyStreamingProjection,
+  incorporateRecordedMarketValue,
+  observedQuoteAt,
+} from '../market-data/streaming/projection'
 
 const runId = 'a'.repeat(64)
 const observedAt = '2026-09-04T14:31:00.000Z'
@@ -473,6 +478,56 @@ test.each([0, 350])(
     expect(result.positions[0]?.quantityMicros).toBe('5000000')
   },
 )
+
+test('delayed close selects the retained projection quote available at close', async () => {
+  const closingMs = Date.parse('2026-09-04T20:00:00.000Z')
+  const universe = {
+    universeId: protocol.universeId,
+    universeSymbolHash: protocol.universeSymbolHash,
+    symbols: protocol.universe,
+    topics: { ...protocol.sourceTopics, features: 'torghut.market-features.v1' },
+  }
+  await run(
+    Effect.gen(function* () {
+      let projection = incorporateRecordedMarketValue(
+        emptyStreamingProjection('closing-quote'),
+        quote,
+        universe,
+        startMs,
+      )
+      const broker = yield* setup({
+        quoteAt: (symbol, atMs) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs)),
+      })
+      yield* submit(broker, intent())
+      for (const [index, availableAtMs, eventAtMs, price] of [
+        [1, closingMs - 1000, closingMs - 1000, 101],
+        [2, closingMs + 100, closingMs - 500, 102],
+      ] as const) {
+        projection = incorporateRecordedMarketValue(
+          projection,
+          {
+            ...quote,
+            sourceOffset: String(BigInt(quote.sourceOffset) + BigInt(index)),
+            eventAt: new Date(eventAtMs).toISOString(),
+            ingestedAt: new Date(availableAtMs).toISOString(),
+            bidPrice: price,
+            askPrice: price,
+          },
+          universe,
+          availableAtMs,
+        )
+      }
+      expect(projection.quotes.get('AAPL')?.value.bidPrice).toBe(102)
+      expect(projection.quoteHistory.get('AAPL')).toHaveLength(3)
+      yield* TestClock.setTime(closingMs + 350)
+      const close = yield* broker.completeSession('2026-09-04')
+      const state = yield* broker.snapshot
+      expect(close.equityMicros).toBe((BigInt(state.ledger.cashMicros) + 505_000_000n).toString())
+      expect(state.ledger.positions[0]?.quantityMicros).toBe('5000000')
+      expect(state.fills).toHaveLength(1)
+    }),
+  )
+})
 
 test('missing session close prevents a fabricated next-day equity baseline', async () => {
   const result = await run(
