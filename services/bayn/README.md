@@ -61,6 +61,18 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 
 ## Execution contract
 
+Jev migration work lives under `src/jev`. The trading-signal batch constructor requires the complete retained
+observation, derives its observation and protocol hashes, reproduces the live or simulated snapshot once, and freezes
+the complete candidate universe, source exclusions, exact requests and common deadline. Batch results bind every
+planned candidate, including failed, abandoned and unattempted evaluations.
+Reproduction detects a rehashed plan that omits a candidate or substitutes model input. Selection requires the whole
+batch to remain valid after completion and persistence; it cannot use only the fastest successful response.
+
+These contracts do not yet replace the active strategy. Batch persistence, native decision binding and repeated
+position management remain migration work. Historical inference evidence, an API response, or a batch result grants
+no execution or capital authority. Economic qualification uses the frozen protocol in
+[`docs/bayn/jev-migration-acceptance-v2.json`](../../docs/bayn/jev-migration-acceptance-v2.json).
+
 - `BAYN_BROKER_ACCESS` and `BAYN_CAPITAL_AUTHORITY` are static capability ceilings. Effective execution additionally
   requires an exact durable grant bound to the source, image, strategy, account, and risk policy.
 - Sandbox and live accounts use the same decisions, intents, risk checks, reconciliation, recovery, and mutation code.
@@ -281,13 +293,17 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 ```
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
+The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
+`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
+binds both. Native controller persistence still writes only the original v3 receipt. The analysis report never changes
+an immutable per-generation receipt or requires mixed-version replicas to read a new stored field.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
 Malformed or ambiguous arguments fail before configuration or evidence reads. A generation-scoped receipt still
 requires completed executions and exact accounting; operational readiness and an active research mandate do not
 establish profitability.
-Historical decisions that the current runtime cannot validate are listed by hash in `executionQuality.unverifiedDecisionHashes`.
+Historical decisions that the current runtime cannot validate are listed by hash in `receipt.executionQuality.unverifiedDecisionHashes`.
 Their accounting remains reportable, but any such decision leaves execution quality and capacity `UNDETERMINED`.
 Native archive requests use durable intent symbols independently of decision validation; reporting cannot authorize an order.
 
