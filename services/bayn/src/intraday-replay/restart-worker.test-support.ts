@@ -176,9 +176,21 @@ const main = Effect.scoped(
       (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills,
       (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
       const state = yield* broker.snapshot
+      const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+      if (readAuthority === undefined)
+        return yield* new ReplayBrokerFailure({ message: 'Restart acceptance requires durable authority readback' })
+      const authority = yield* readAuthority
       yield* fs.writeFileString(
         resultPath,
-        yield* Effect.fromResult(canonicalJsonV1Result({ state, reconciliation, counts })),
+        yield* Effect.fromResult(
+          canonicalJsonV1Result({
+            state,
+            reconciliation,
+            counts,
+            initialGenerationHash: runtime.authorityGenerationHash,
+            authority,
+          }),
+        ),
         { flag: 'wx' },
       )
     }).pipe(

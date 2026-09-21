@@ -90,8 +90,9 @@ export const selectStreamingInputs = (
           }
         }
       }
-      if (quote !== undefined) entries.push(quote)
-      if (request.purpose === undefined && trade !== undefined) entries.push(trade)
+      if (quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= start) entries.push(quote)
+      if (request.purpose === undefined && trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start)
+        entries.push(trade)
       if (request.purpose !== undefined) continue
       if (state.technicalTopic !== undefined) {
         for (const candidate of state.technicalFeatures.get(symbol) ?? []) {
