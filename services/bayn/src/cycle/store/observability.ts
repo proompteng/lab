@@ -186,7 +186,6 @@ const ProjectionRowSchema = Schema.Struct({
   performance_net_realized_pnl_after_costs_micros: NullableSignedMicros,
   performance_net_realized_return_decimal: NullableReturnDecimal,
   performance_completed_execution_count: Schema.NullOr(NonNegativeIntegerSchema),
-  performance_completed_position_episode_count: Schema.NullOr(NonNegativeIntegerSchema),
   performance_realized_close_count: Schema.NullOr(NonNegativeIntegerSchema),
   performance_accounting_receipts_exact: Schema.NullOr(Schema.Boolean),
   performance_ledger_exact: Schema.NullOr(Schema.Boolean),
@@ -359,7 +358,6 @@ const economicsFromRow = (row: ProjectionRow): Result.Result<CycleEconomicsObser
       netRealizedPnlAfterCostsMicros: row.performance_net_realized_pnl_after_costs_micros,
       netRealizedReturnDecimal: row.performance_net_realized_return_decimal,
       completedExecutionCount,
-      completedPositionEpisodeCount: row.performance_completed_position_episode_count,
       realizedCloseCount,
       accountingReceiptsExact,
       ledgerExact,
@@ -995,9 +993,6 @@ const makeCycleObservability = Effect.gen(function* () {
               AS performance_net_realized_return_decimal,
             (SELECT (document -> 'counts' ->> 'completedExecutionCount')::integer FROM latest_performance_receipt)
               AS performance_completed_execution_count,
-            (SELECT CASE WHEN document -> 'positionEpisodes' ->> 'status' = 'MEASURED'
-              THEN (document -> 'positionEpisodes' ->> 'completedCount')::integer END
-              FROM latest_performance_receipt) AS performance_completed_position_episode_count,
             (SELECT (document -> 'counts' ->> 'realizedCloseCount')::integer FROM latest_performance_receipt)
               AS performance_realized_close_count,
             (SELECT (document -> 'reconciliationProof' ->> 'accountingReceiptsExact')::boolean FROM latest_performance_receipt)
