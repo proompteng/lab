@@ -14,6 +14,18 @@ Dorvud ingests market data, calculates technical signals, and archives source re
 Bayn consumes raw Kafka records and the feature topic. It owns strategy selection, risk, broker orders, accounting,
 and reconciliation. Dorvud does not grant trading authority or establish strategy profitability.
 
+With `ENABLE_BARS_BACKFILL=true`, the WebSocket forwarder also reconciles provider bars every minute. This task remains
+active after the market closes and while the WebSocket reconnects, refreshing requested symbols on each pass.
+It first checks `BARS_BACKFILL_LOOKBACK_HOURS`,
+then uses five-minute overlapping windows. It repeats the full lookback hourly and when the requested symbols change.
+Every request page uses the same completed-minute cutoff. Each pass has a 60-second deadline.
+
+Recovery publishes only provider-supplied completed bars that this process has not acknowledged in Kafka. A failed
+request, malformed page or failed acknowledgement leaves the scan incomplete for retry. It does not invent bars for
+intervals the provider omits. Recovered envelopes keep `source=rest` and their actual recovery time, so they cannot
+establish earlier live availability. Restarts repeat the bounded scan and may republish equivalent bars; consumers
+retain their existing revision and duplicate handling. Recovery does not satisfy live WebSocket freshness gates.
+
 See [the Flink guide](technical-analysis-flink/README.md) for contracts, state migration, and validation, and the
 [Bayn streaming design](../../docs/bayn/streaming-market-data-design.md) for the consumer and replay architecture.
 

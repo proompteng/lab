@@ -91,6 +91,8 @@ import {
   prepareWorkflowBunEnvironmentBundle,
   type WorkflowBunEnvironmentBundle,
 } from '../workflow/bun-environment-lint'
+import { buildWorkflowActivations } from '../workflow/activation-history'
+import type { WorkflowActivationJob } from '../workflow/activation'
 import type { ActivityResolution, NexusOperationResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
 import type {
@@ -1374,8 +1376,7 @@ export class WorkerRuntime {
     const isLegacyQueryOnly = isLegacyQueryTask && !hasHistoryEvents && !hasMoreHistory
     const hasQueryPayloads = Boolean(response.query) || queryCount > 0
     const historyEvents = await this.#collectWorkflowHistory(execution, response, {
-      forceFullHistory: (hasQueryPayloads && !isLegacyQueryOnly) || nondeterminismRetry > 0,
-      skipFetchOnMissingStart: isLegacyQueryOnly,
+      forceFullHistory: hasQueryPayloads || nondeterminismRetry > 0,
     })
     const workflowStart = this.#findWorkflowStartedEvent(historyEvents)?.attributes
     const taskTimeoutMs =
@@ -1506,16 +1507,21 @@ export class WorkerRuntime {
     const stickyNexusScheduleEventIds = resolveStickyNexusScheduleEventIds(stickyEntry, stickyCacheMatchesHistory)
 
     try {
+      const activationJobs = new Map<string, WorkflowActivationJob>()
+      for (const delivery of signalDeliveries) {
+        if (delivery.metadata?.eventId) activationJobs.set(delivery.metadata.eventId, { type: 'signal', delivery })
+      }
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
-        await this.#extractActivityResolutions(historyEvents)
+        await this.#extractActivityResolutions(historyEvents, activationJobs)
       const { results: nexusResults, scheduledEventIds: nexusScheduleEventIds } = await this.#extractNexusResolutions(
         historyEvents,
         {
           markerState: historyReplay?.hasDeterminismMarker ? historyReplay.determinismState : undefined,
           knownScheduleEventIds: stickyNexusScheduleEventIds,
         },
+        activationJobs,
       )
-      const timerResults = await this.#extractTimerResolutions(historyEvents)
+      const timerResults = await this.#extractTimerResolutions(historyEvents, activationJobs)
       const mergedActivityResults = new Map<string, ActivityResolution>(stickyEntry?.activityResults ?? [])
       for (const [activityId, resolution] of activityResults.entries()) {
         mergedActivityResults.set(activityId, resolution)
@@ -1540,10 +1546,12 @@ export class WorkerRuntime {
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
+      const activations = buildWorkflowActivations(historyEvents, activationJobs, mergedUpdates)
       const localActivityBudgetMs = Math.floor(taskStartedAt + taskTimeoutMs / 2 - Date.now())
       const localActivityDeadline =
         localActivityBudgetMs > 0 ? AbortSignal.timeout(localActivityBudgetMs) : AbortSignal.abort()
       const output = await this.#executor.execute({
+        activations,
         workflowType,
         workflowId: execution.workflowId,
         runId: execution.runId,
@@ -1980,7 +1988,7 @@ export class WorkerRuntime {
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
     response: PollWorkflowTaskQueueResponse,
-    options?: { forceFullHistory?: boolean; skipFetchOnMissingStart?: boolean },
+    options?: { forceFullHistory?: boolean },
   ): Promise<HistoryEvent[]> {
     const events: HistoryEvent[] = []
     const initialEvents = response.history?.events ?? []
@@ -1998,8 +2006,7 @@ export class WorkerRuntime {
     }
 
     let sorted = this.#sortHistoryEvents(events)
-    const shouldFetchFullHistory =
-      options?.forceFullHistory || (!options?.skipFetchOnMissingStart && !this.#findWorkflowStartedEvent(sorted))
+    const shouldFetchFullHistory = options?.forceFullHistory || !this.#findWorkflowStartedEvent(sorted)
     if (shouldFetchFullHistory) {
       const fullHistory = await this.#fetchWorkflowHistoryFromStart(execution)
       if (fullHistory.length > 0) {
@@ -2079,13 +2086,20 @@ export class WorkerRuntime {
     return 0n
   }
 
-  async #extractActivityResolutions(events: HistoryEvent[]): Promise<{
+  async #extractActivityResolutions(
+    events: HistoryEvent[],
+    activationJobs?: Map<string, WorkflowActivationJob>,
+  ): Promise<{
     results: Map<string, ActivityResolution>
     scheduledEventIds: Map<string, string>
   }> {
     const resolutions = new Map<string, ActivityResolution>()
     const scheduledActivityIds = new Map<string, string>()
     const activityScheduleById = new Map<string, string>()
+    const record = (event: HistoryEvent, id: string, resolution: ActivityResolution) => {
+      resolutions.set(id, resolution)
+      activationJobs?.set(event.eventId.toString(), { type: 'activity', id, resolution })
+    }
 
     const normalizeEventId = (value: bigint | number | string | undefined | null): string | undefined => {
       if (value === undefined || value === null) {
@@ -2138,7 +2152,7 @@ export class WorkerRuntime {
           const decoded = await decodePayloadsToValues(this.#dataConverter, payloads)
           const value =
             decoded.length === 0 ? undefined : decoded.length === 1 ? decoded[0] : Object.freeze([...decoded])
-          resolutions.set(activityId, { status: 'completed', value })
+          record(event, activityId, { status: 'completed', value })
           break
         }
         case EventType.ACTIVITY_TASK_FAILED: {
@@ -2152,7 +2166,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
             new Error(`Activity ${activityId} failed`)
-          resolutions.set(activityId, { status: 'failed', error: failureError })
+          record(event, activityId, { status: 'failed', error: failureError })
           break
         }
         case EventType.ACTIVITY_TASK_TIMED_OUT: {
@@ -2171,7 +2185,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
             new Error(`Activity ${activityId} timed out (${timeoutType})`)
-          resolutions.set(activityId, { status: 'failed', error: failureError })
+          record(event, activityId, { status: 'failed', error: failureError })
           break
         }
         case EventType.ACTIVITY_TASK_CANCELED: {
@@ -2188,7 +2202,7 @@ export class WorkerRuntime {
           )
           const error = new Error(`Activity ${activityId} was canceled`)
           ;(error as { details?: unknown[] }).details = details
-          resolutions.set(activityId, { status: 'failed', error })
+          record(event, activityId, { status: 'failed', error })
           break
         }
         default:
@@ -2204,11 +2218,16 @@ export class WorkerRuntime {
       markerState?: WorkflowDeterminismState
       knownScheduleEventIds?: ReadonlyMap<string, string>
     } = {},
+    activationJobs?: Map<string, WorkflowActivationJob>,
   ): Promise<{
     results: Map<string, NexusOperationResolution>
     scheduledEventIds: Map<string, string>
   }> {
     const resolutions = new Map<string, NexusOperationResolution>()
+    const record = (event: HistoryEvent, id: string, resolution: NexusOperationResolution) => {
+      resolutions.set(id, resolution)
+      activationJobs?.set(event.eventId.toString(), { type: 'nexus', id, resolution })
+    }
     const identities = resolveNexusOperationHistoryIdentities(events, identityOptions)
     const scheduledOperationIds = identities.operationIdsByScheduledEventId
     const operationScheduleById = identities.scheduledEventIdsByOperationId
@@ -2253,7 +2272,7 @@ export class WorkerRuntime {
           }
           const payload = attrs.result
           const value = payload ? await this.#dataConverter.fromPayload(payload) : undefined
-          resolutions.set(operationId, { status: 'completed', value })
+          record(event, operationId, { status: 'completed', value })
           break
         }
         case EventType.NEXUS_OPERATION_FAILED: {
@@ -2268,7 +2287,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, attrs.failure)) ??
             new Error(`Nexus operation ${operationId} failed`)
-          resolutions.set(operationId, { status: 'failed', error: failureError })
+          record(event, operationId, { status: 'failed', error: failureError })
           break
         }
         case EventType.NEXUS_OPERATION_CANCELED: {
@@ -2283,7 +2302,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, attrs.failure)) ??
             new Error(`Nexus operation ${operationId} canceled`)
-          resolutions.set(operationId, { status: 'failed', error: failureError })
+          record(event, operationId, { status: 'failed', error: failureError })
           break
         }
         case EventType.NEXUS_OPERATION_TIMED_OUT: {
@@ -2298,7 +2317,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, attrs.failure)) ??
             new Error(`Nexus operation ${operationId} timed out`)
-          resolutions.set(operationId, { status: 'failed', error: failureError })
+          record(event, operationId, { status: 'failed', error: failureError })
           break
         }
         default:
@@ -2439,7 +2458,10 @@ export class WorkerRuntime {
     return deliveries
   }
 
-  async #extractTimerResolutions(events: HistoryEvent[]): Promise<Set<string>> {
+  async #extractTimerResolutions(
+    events: HistoryEvent[],
+    activationJobs?: Map<string, WorkflowActivationJob>,
+  ): Promise<Set<string>> {
     const fired = new Set<string>()
     for (const event of events) {
       if (event.eventType !== EventType.TIMER_FIRED) {
@@ -2451,6 +2473,7 @@ export class WorkerRuntime {
       const attrs = event.attributes.value as { timerId?: string }
       if (attrs.timerId) {
         fired.add(attrs.timerId)
+        activationJobs?.set(event.eventId.toString(), { type: 'timer', id: attrs.timerId })
       }
     }
     return fired

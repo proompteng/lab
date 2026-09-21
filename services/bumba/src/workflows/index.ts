@@ -112,27 +112,37 @@ export const workflows = [
           },
         }) as Effect.Effect<ReconcileAtlasRepositoryOutput, unknown, never>
 
-        const result = yield* Effect.catchAllCause(reconcile, (cause) =>
+        // Pre-patch histories scheduled this failed upsert while reconciliation was still pending.
+        // Replay both commands before awaiting their outcomes, including a real reconciliation failure.
+        const reconcileWithLegacyHistory =
+          !preservePendingReconciliation && eventDeliveryId
+            ? Effect.all(
+                [
+                  Effect.exit(reconcile),
+                  activities.schedule(
+                    'upsertIngestion',
+                    [
+                      {
+                        deliveryId: eventDeliveryId,
+                        workflowId: info.workflowId,
+                        status: 'failed',
+                        error: LEGACY_RECONCILE_PENDING_ERROR,
+                      },
+                    ],
+                    { ...upsertIngestionTimeouts, retry: activityRetry },
+                  ),
+                ],
+                { concurrency: 'unbounded' },
+              ).pipe(Effect.flatMap(([outcome]) => outcome))
+            : reconcile
+
+        const result = yield* Effect.catchAllCause(reconcileWithLegacyHistory, (cause) =>
           Effect.gen(function* () {
             const workflowBlocked = isWorkflowBlocked(cause)
             if (preservePendingReconciliation && workflowBlocked) {
               return yield* Effect.failCause(cause)
             }
             if (eventDeliveryId) {
-              if (!preservePendingReconciliation) {
-                yield* activities.schedule(
-                  'upsertIngestion',
-                  [
-                    {
-                      deliveryId: eventDeliveryId,
-                      workflowId: info.workflowId,
-                      status: 'failed',
-                      error: LEGACY_RECONCILE_PENDING_ERROR,
-                    },
-                  ],
-                  { ...upsertIngestionTimeouts, retry: activityRetry },
-                )
-              }
               if (workflowBlocked) {
                 return yield* Effect.failCause(cause)
               }
@@ -155,22 +165,6 @@ export const workflows = [
         )
 
         if (eventDeliveryId) {
-          if (!preservePendingReconciliation) {
-            // Pre-patch histories recorded this command while activity-1 was pending. Consume that command and its
-            // existing result before emitting the corrective completed upsert so those histories remain replayable.
-            yield* activities.schedule(
-              'upsertIngestion',
-              [
-                {
-                  deliveryId: eventDeliveryId,
-                  workflowId: info.workflowId,
-                  status: 'failed',
-                  error: LEGACY_RECONCILE_PENDING_ERROR,
-                },
-              ],
-              { ...upsertIngestionTimeouts, retry: activityRetry },
-            )
-          }
           yield* activities.schedule(
             'upsertIngestion',
             [

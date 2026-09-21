@@ -1,3 +1,4 @@
+import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
@@ -167,6 +168,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
   const journal = JournalResourceLive(plan.config)
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(
+    CandidateObservationStoreLive,
     ExecutionStoreResourceLive(plan.config),
     BlockedCycleIntentStoreLive,
     IntentStoreLive,

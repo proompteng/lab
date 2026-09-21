@@ -1,3 +1,4 @@
+import { BarPublicationPolicy, maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
@@ -674,10 +675,16 @@ export const validateBarCoverage = (
   request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
   clockSkewMs = 0,
+  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<void, IntradaySnapshotFailure> => {
-  const feedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
-  const maximumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs + request.maximumQuoteAgeMs + clockSkewMs)
   for (const bar of bars) {
+    const maximumAvailabilityDelay = millisecondsAsNanos(
+      (publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision
+        ? maximumBarPublicationDelayMs(bar)
+        : (request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0) +
+          minuteMs +
+          request.maximumQuoteAgeMs) + clockSkewMs,
+    )
     if (intradayAgeNanos(bar.ingestedAt, bar.eventAt) > maximumAvailabilityDelay) {
       return Result.fail(
         new IntradaySnapshotFailure({
@@ -898,6 +905,7 @@ export const candidateAvailability = (
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
   clockSkewMs = 0,
+  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<
   {
     readonly latest: Readonly<Record<string, IntradayQuote>>
@@ -917,6 +925,7 @@ export const candidateAvailability = (
           symbolRequest,
           bars.filter((bar) => bar.symbol === symbol),
           clockSkewMs,
+          publicationPolicy,
         ),
         () =>
           latestQuotes(
@@ -1110,7 +1119,7 @@ const replaySnapshotEnvelope = (snapshot: unknown): Result.Result<IntradayMarket
     ),
   )
 
-const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, IntradaySnapshotFailure> =>
+export const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const candidate = yield* Result.try({
       try: () => ({

@@ -77,7 +77,7 @@ const run = async (
   command: readonly string[],
   cwd: string,
 ): Promise<{ readonly stdout: string; readonly stderr: string }> => {
-  const child = Bun.spawn(command, {
+  const child = Bun.spawn([...command], {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
@@ -175,7 +175,7 @@ const assertRequiredPackedFiles = async (pack: NpmPackEntry, root: string) => {
   }
 }
 
-const verifyPublishedPack = async (packageJson: PackageJson, spec: string) => {
+export const verifyPublishedPack = async (packageJson: PackageJson, spec: string, expectedSha?: string) => {
   const tempDir = await mkdtemp(join(tmpdir(), 'temporal-bun-sdk-pack-'))
   try {
     const pack = await runNpmPack([spec], tempDir)
@@ -195,6 +195,9 @@ const verifyPublishedPack = async (packageJson: PackageJson, spec: string) => {
     const publishedSha = releaseProvenance.git?.githubSha
     if (!publishedSha || !/^[a-f0-9]{40}$/.test(publishedSha)) {
       throw new Error('Published release provenance must identify its GitHub commit')
+    }
+    if (expectedSha && publishedSha !== expectedSha) {
+      throw new Error(`Published package commit ${publishedSha} does not match release commit ${expectedSha}`)
     }
     if (process.env.GITHUB_OUTPUT) {
       await appendFile(process.env.GITHUB_OUTPUT, `published_sha=${publishedSha}\n`)
@@ -240,4 +243,6 @@ const main = async () => {
   )
 }
 
-await main()
+if (import.meta.main) {
+  await main()
+}
