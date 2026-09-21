@@ -165,6 +165,25 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
     )
   })
 
+  test('a retained source reproduction does not hide changed observation bytes', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevEvaluationStore
+        const sql = yield* PgClient.PgClient
+        expect(yield* store.begin(request)).toEqual({ status: JevClaim.Acquired })
+        // Simulate privileged storage corruption after the source cut has been verified and retained.
+        yield* sql`ALTER TABLE intraday_candidate_observations DISABLE TRIGGER intraday_candidate_observations_immutable`
+        yield* sql`UPDATE intraday_candidate_observations
+          SET payload = jsonb_set(payload, '{protocol,maximumQuoteAgeMs}', '1'::jsonb)
+          WHERE content_hash = ${fixture.observation.contentHash}`
+        yield* sql`ALTER TABLE intraday_candidate_observations ENABLE TRIGGER intraday_candidate_observations_immutable`
+        expect(Result.isFailure(yield* store.begin(request).pipe(Effect.result))).toBe(true)
+        expect(Result.isFailure(yield* store.read(request.requestId).pipe(Effect.result))).toBe(true)
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_receipts`).toEqual([])
+      }),
+    )
+  })
+
   test('historical request bytes remain readable while superseded input cannot start or resume inference', async () => {
     const { requestId: _, ...material } = request
     const priorInput = evaluationRequestFixture()

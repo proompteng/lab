@@ -17,7 +17,7 @@ import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
 import type { CycleExecutionModel } from '../execution-model-contract'
 import {
-  decideExecutionCycleCompletion,
+  decideExecutionPhaseCompletion,
   decideExecutionIntentTerminalDisposition,
   countOpenPositions,
   decidePreparedCloseIntentAdmission,
@@ -188,7 +188,7 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
 
 const validateCurrentMutationExecutionTerms = (
   preparation: MutationPreparation,
-  entryLimitSlippageBps: number,
+  limitSlippageBps: number,
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
@@ -200,7 +200,7 @@ const validateCurrentMutationExecutionTerms = (
     quantityMicros: BigInt(targetIntent.quantityMicros),
     referencePriceMicros: BigInt(target.referencePriceMicros),
     executionModel: preparation.executionModel,
-    limitSlippageBps: BigInt(entryLimitSlippageBps),
+    limitSlippageBps: BigInt(limitSlippageBps),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -468,7 +468,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         yield* Effect.fromResult(
           validateCurrentMutationExecutionTerms(
             preparation,
-            document.entryLimitSlippageBps ?? 0,
+            document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0,
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
@@ -588,7 +588,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             ...(record.intent.terminalOutcome === undefined ? {} : { terminalOutcome: record.intent.terminalOutcome }),
             updatedAt: record.updatedAt,
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
-            ...(disposition === 'BENIGN_ZERO_FILL_IOC' ? { benignZeroFillIoc: true as const } : {}),
+            terminalDisposition: disposition,
           })
           if (disposition === 'UNSUCCESSFUL') {
             if (!drainOpenOrders) {
@@ -741,7 +741,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
 
-    const completion = decideExecutionCycleCompletion(document.createdAt, terminalEvidence, {
+    const completion = decideExecutionPhaseCompletion(mutationPhase, document.createdAt, terminalEvidence, {
       status: facts.reconciliation.brokerState.reconciliation.status,
       reconciledAt: facts.reconciliation.brokerState.reconciliation.reconciledAt,
       accountingExact: facts.reconciliation.report.metrics.accountingExact,

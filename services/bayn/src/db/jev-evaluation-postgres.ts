@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Effect, Layer, Option, Schema, type Result } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
@@ -10,7 +10,8 @@ import {
   type JevEvaluationRequest,
 } from '../jev/evidence'
 import { JevClaim, JevEvaluationStore, type JevEvaluationClaim } from '../jev/evaluation'
-import { reproduceJevRequestFromObservation } from '../jev/trading-signals'
+import { reproduceJevCandidateObservation } from '../jev/observation'
+import { reproduceJevRequestFromVerifiedObservation } from '../jev/trading-signals'
 import {
   decodeJevResolution,
   JevResolutionStatus,
@@ -29,6 +30,7 @@ const Matches = Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })])
 
 export const makeJevEvaluationStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
+  let verifiedObservation: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>> | undefined
   const persistError = (cause: unknown) =>
     operationalError({
       component: 'database',
@@ -116,8 +118,13 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
         yield* requireAutocommit
         const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
         const observations = yield* requireCandidateObservation(request)
-        for (const observation of observations)
-          yield* Effect.fromResult(reproduceJevRequestFromObservation(request, observation.payload))
+        for (const observation of observations) {
+          // requireCandidateObservation checks the freshly read bytes against this identity on every call.
+          // Retain only the latest reproduction so concurrent candidates share its verified source cut.
+          if (verifiedObservation?.contentHash !== observation.content_hash)
+            verifiedObservation = yield* Effect.fromResult(reproduceJevCandidateObservation(observation.payload))
+          yield* Effect.fromResult(reproduceJevRequestFromVerifiedObservation(request, verifiedObservation))
+        }
         return yield* sql.withTransaction(
           Effect.gen(function* () {
             const batches = yield* Schema.decodeUnknownEffect(

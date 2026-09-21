@@ -295,6 +295,7 @@ export const makeAutonomousServiceRuntime = (
                                     },
                                     executionMode: restricted ? 'CloseOnly' : 'Mutation',
                                     execution: {
+                                      currentUtcInstant,
                                       brokerRead: runtimeServices.session.read,
                                       brokerMutation,
                                       persistedCapitalGrants: runtimeServices.persistedCapitalGrants,
