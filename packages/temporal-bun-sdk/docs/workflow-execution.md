@@ -21,6 +21,10 @@ Update handlers use the same activation scheduler. A handler can await an
 activity or timer across workflow tasks, and a successful main workflow waits
 for pending update handlers before completing. Legacy queries fetch history to
 reconstruct workflow state before evaluating their resolver.
+Query resolvers cannot consume signals with `waitFor`, `on`, or `drain`, even
+when a signal is buffered. These calls return a read-only query violation
+instead of suspending the query. Signal consumption during workflow replay
+still reconstructs the state that queries read.
 
 ## Supported waits
 

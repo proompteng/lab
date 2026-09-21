@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
-import { Effect, Fiber } from 'effect'
+import { Cause, Effect, Exit, Fiber } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { createWorkflowContext } from '../../src/workflow/context'
 import { DeterminismGuard } from '../../src/workflow/determinism'
+import { WorkflowQueryViolationError } from '../../src/workflow/errors'
 import { defineWorkflowQueries, defineWorkflowSignals } from '../../src/workflow/inbound'
 
 type TestWorkflowInfo = Parameters<typeof createWorkflowContext>[0]['info']
@@ -89,3 +90,56 @@ test('query registry registers resolvers and records evaluations', async () => {
   expect(snapshot.queries[0]?.queryName).toBe('state')
   expect(snapshot.queries[0]?.handlerName).toBeDefined()
 })
+
+for (const method of ['waitFor', 'on', 'drain'] as const) {
+  for (const buffered of [false, true]) {
+    for (const entrypoint of ['resolve', 'evaluate'] as const) {
+      test(`query ${entrypoint} rejects signals.${method} with buffered=${buffered}`, async () => {
+        const signals = defineWorkflowSignals({ incoming: Schema.Unknown })
+        const queries = defineWorkflowQueries({ probe: { input: Schema.Unknown, output: Schema.Unknown } })
+        const { context, queryRegistry, applyActivationJob } = createWorkflowContext({
+          input: [],
+          info: baseInfo,
+          determinismGuard: new DeterminismGuard(),
+          signalDeliveries: buffered ? [{ name: 'incoming', args: ['first'] }] : [],
+        })
+        let handled = 0
+        const consume =
+          method === 'on'
+            ? context.signals.on(signals.incoming, () =>
+                Effect.sync(() => {
+                  handled += 1
+                }),
+              )
+            : context.signals[method](signals.incoming)
+        await Effect.runPromise(context.queries.register(queries.probe, () => consume))
+        const evaluation =
+          entrypoint === 'resolve'
+            ? context.queries.resolve(queries.probe).pipe(Effect.exit)
+            : queryRegistry
+                .evaluate({ id: 'probe', name: 'probe', args: [], source: 'multi' })
+                .pipe(
+                  Effect.map((result) =>
+                    result.status === 'failure' ? Exit.fail(result.error) : Exit.succeed(result.result),
+                  ),
+                )
+        const fiber = Effect.runFork(evaluation)
+        try {
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          expect(fiber.unsafePoll()).not.toBeNull()
+          const result = await Effect.runPromise(Fiber.join(fiber))
+          expect(Exit.isFailure(result)).toBe(true)
+          const failure = Exit.isFailure(result) ? Cause.squash(result.cause) : undefined
+          expect(failure).toBeInstanceOf(WorkflowQueryViolationError)
+          expect(failure instanceof Error ? failure.message : '').toContain('signals')
+          expect(handled).toBe(0)
+          if (!buffered) applyActivationJob({ type: 'signal', delivery: { name: 'incoming', args: ['first'] } })
+          const delivery = await Effect.runPromise(context.signals.waitFor(signals.incoming))
+          expect(delivery.payload).toBe('first')
+        } finally {
+          await Effect.runPromise(Fiber.interrupt(fiber))
+        }
+      })
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { releaseWeakRefs } from 'bun:jsc'
 import { Effect, Exit, Fiber } from 'effect'
 
 import { WorkflowActivationRuntime, WorkflowMailbox } from '../../src/workflow/activation'
@@ -93,8 +94,14 @@ test('discarded durable fibers and daemon children are collectible without touch
     expect(Fiber.unsafeRoots(undefined)).toContain(unrelated)
     let retained = references.length
     for (let attempt = 0; attempt < 10 && retained > 0; attempt += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      Bun.gc(true)
+      // Collect on a fresh callback stack; deref() also protects targets within a job.
+      await new Promise<void>((resolve) =>
+        setImmediate(() => {
+          releaseWeakRefs()
+          Bun.gc(true)
+          resolve()
+        }),
+      )
       retained = references.filter((reference) => reference.deref() !== undefined).length
     }
     expect(retained).toBe(0)

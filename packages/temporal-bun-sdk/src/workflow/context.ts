@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect, FiberRef } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { WorkflowMailbox, type WorkflowActivationJob } from './activation'
@@ -26,7 +26,12 @@ import type {
   WorkflowUpdateValidator,
 } from './definition'
 import type { DeterminismGuard, RecordedCommandKind, WorkflowRetryPolicyInput } from './determinism'
-import { ContinueAsNewWorkflowError, WorkflowBlockedError, WorkflowQueryHandlerMissingError } from './errors'
+import {
+  ContinueAsNewWorkflowError,
+  WorkflowBlockedError,
+  WorkflowQueryHandlerMissingError,
+  WorkflowQueryViolationError,
+} from './errors'
 import {
   normalizeInboundArguments,
   type WorkflowQueryHandle,
@@ -45,6 +50,7 @@ import {
 export type WorkflowCommandIntentId = string
 
 const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS = 10_000
+const queryResolverActive = FiberRef.unsafeMake(false)
 const MARKER_SIDE_EFFECT = 'temporal-bun-sdk/side-effect'
 const MARKER_VERSION = 'temporal-bun-sdk/get-version'
 const MARKER_PATCH = 'temporal-bun-sdk/patch'
@@ -1166,7 +1172,7 @@ class WorkflowInboundSignals {
     handler: WorkflowSignalHandler<I, void>,
     options?: WorkflowSignalHandlerOptions,
   ): Effect.Effect<void, unknown, never> {
-    return Effect.flatMap(this.#messages.take(handle.name), (entry) => {
+    return Effect.flatMap(this.#consume(this.#messages.take(handle.name)), (entry) => {
       const handlerName = resolveHandlerName(options?.name, handler, handle.name)
       return this.#decode(handle, entry)
         .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
@@ -1178,7 +1184,7 @@ class WorkflowInboundSignals {
     handle: WorkflowSignalHandle<I>,
     options?: WorkflowSignalHandlerOptions,
   ): Effect.Effect<WorkflowSignalDelivery<I>, unknown, never> {
-    return Effect.flatMap(this.#messages.take(handle.name), (entry) => {
+    return Effect.flatMap(this.#consume(this.#messages.take(handle.name)), (entry) => {
       const handlerName = options?.name ?? 'waitFor'
       return this.#decode(handle, entry)
         .pipe(Effect.tap((payload) => this.#record(handle.name, handlerName, payload, entry.metadata)))
@@ -1190,7 +1196,7 @@ class WorkflowInboundSignals {
     handle: WorkflowSignalHandle<I>,
     options?: WorkflowSignalHandlerOptions,
   ): Effect.Effect<readonly WorkflowSignalDelivery<I>[], unknown, never> {
-    return Effect.flatMap(this.#messages.takeAll(handle.name), (entries) => {
+    return Effect.flatMap(this.#consume(this.#messages.takeAll(handle.name)), (entries) => {
       const handlerName = options?.name ?? 'drain'
       return runSequential(entries, (entry) =>
         this.#decode(handle, entry)
@@ -1203,6 +1209,16 @@ class WorkflowInboundSignals {
   #decode<I>(handle: WorkflowSignalHandle<I>, entry: SignalQueueEntry): Effect.Effect<I, unknown, never> {
     const normalized = normalizeInboundArguments(entry.args, handle.decodeArgumentsAsArray)
     return Schema.decodeUnknown(handle.schema)(normalized)
+  }
+
+  #consume<A>(effect: Effect.Effect<A>): Effect.Effect<A, WorkflowQueryViolationError> {
+    return Effect.flatMap(FiberRef.get(queryResolverActive), (active) =>
+      active
+        ? Effect.fail(
+            new WorkflowQueryViolationError('Workflow query cannot consume signals; queries must be read-only'),
+          )
+        : effect,
+    )
   }
 
   #record(signalName: string, handlerName: string, payload: unknown, metadata: WorkflowSignalMetadata) {
@@ -1323,7 +1339,8 @@ export class WorkflowQueryRegistry {
     const invocationMetadata = metadata ?? {}
     const value = (input ?? (undefined as I)) as unknown
     const resolver = entry.resolver as WorkflowQueryResolver<I, O>
-    return resolver(value as I, invocationMetadata)
+    return Effect.suspend(() => resolver(value as I, invocationMetadata))
+      .pipe(Effect.locally(queryResolverActive, true))
       .pipe(
         Effect.tap((result) =>
           this.#recordQueryEvaluation(
@@ -1360,7 +1377,8 @@ export class WorkflowQueryRegistry {
     return Schema.decodeUnknown(entry.handle.inputSchema)(normalized)
       .pipe(
         Effect.flatMap((decoded) =>
-          (entry.resolver as WorkflowQueryResolver<unknown, unknown>)(decoded, metadata)
+          Effect.suspend(() => entry.resolver(decoded, metadata))
+            .pipe(Effect.locally(queryResolverActive, true))
             .pipe(Effect.map((result) => ({ status: 'success', decoded, result }) as const))
             .pipe(Effect.catchAll((error) => Effect.succeed({ status: 'failure', decoded, error } as const))),
         ),
