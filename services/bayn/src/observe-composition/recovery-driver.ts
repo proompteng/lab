@@ -302,6 +302,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           strategyName: 'jev',
           strategyProtocolHash: preparation.strategyProtocolHash,
           accountId: input.accountId,
+          authorityGenerationHash: input.authorityGenerationHash,
           executionPolicy: preparation.executionPolicy,
           buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),

@@ -156,10 +156,11 @@ export const makeIntradayCycleDraft = (
 export const nextIntradayEntryAttemptOrdinal = (
   cycle: AutonomousCycle,
   observedAt: string,
+  recoveredBlockedCycle = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
   if (
     (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
-    cycle.state !== CycleState.Completed ||
+    (cycle.state !== CycleState.Completed && !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
     cycle.terminalAt === undefined ||
     cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
     observedAt >= cycle.window.submissionCutoffAt

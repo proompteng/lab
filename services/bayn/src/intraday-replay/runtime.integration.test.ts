@@ -96,6 +96,8 @@ durableTest.each([
   'measured-exit',
   'measured-entry-expired',
   'measured-zero-fill-reentry',
+  'measured-submit-expired-reentry',
+  'operator-held-replay',
 ] as const)(
   'native Jev production cycle and durable accounting: %s',
   async (scenario) => {
@@ -112,8 +114,12 @@ durableTest.each([
     let managementCalls = 0
     const measuredCalls: ReplayJevCall[] = []
     let measuredProviderClock: TestClock.TestClock | undefined
+    let expiredStartedSubmit = false
     const measured =
-      scenario === 'measured-exit' || scenario === 'measured-entry-expired' || scenario === 'measured-zero-fill-reentry'
+      scenario === 'measured-exit' ||
+      scenario === 'measured-entry-expired' ||
+      scenario === 'measured-zero-fill-reentry' ||
+      scenario === 'measured-submit-expired-reentry'
     const fixture = { ...simulationFixture(undefined, undefined, scenario === 'no-trade' ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const reentryAtMs = initialAtMs + 120_000
@@ -139,7 +145,7 @@ durableTest.each([
                 bidSize: 100,
                 premium: 0.02 + (index + 1) * 0.00002,
               })),
-              ...(scenario === 'measured-zero-fill-reentry'
+              ...(scenario === 'measured-zero-fill-reentry' || scenario === 'measured-submit-expired-reentry'
                 ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
                 : []),
             ]
@@ -401,7 +407,17 @@ durableTest.each([
                 : cursor,
           ),
           clock,
-          currentUtcInstant: timing?.currentUtcInstant ?? currentUtcInstant,
+          currentUtcInstant: Effect.gen(function* () {
+            if (scenario === 'measured-submit-expired-reentry') yield* providerClock.adjust(1)
+            if (scenario === 'measured-submit-expired-reentry' && !expiredStartedSubmit) {
+              const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
+              if (started.length > 0) {
+                expiredStartedSubmit = true
+                yield* providerClock.adjust(6000)
+              }
+            }
+            return yield* timing?.currentUtcInstant ?? currentUtcInstant
+          }),
           recordPass: (pass: Parameters<import('../app').RecordAutonomousCyclePass>[0]) =>
             Ref.update(passes, (values) => [...values, pass]),
           pollIntervalMs: 1000,
@@ -418,6 +434,76 @@ durableTest.each([
             timing === undefined
               ? engine.advance
               : timing.run(engine.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
+        }
+        if (scenario === 'operator-held-replay') {
+          yield* advanceMarketTo(initialMs + 1)
+          yield* runtime.store.authorityRestriction.restrictAuthority('operator hold fixture', yield* currentUtcInstant)
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          const restarted = yield* makeReplayExecutionRuntime(runtimeInput)
+          for (let attempt = 0; attempt < 3; attempt++) {
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            expect((yield* restarted.advance).observation.result).toBe('FAILURE')
+          }
+          expect((yield* broker.snapshot).orders).toHaveLength(0)
+          expect(yield* sql`SELECT count(*)::int AS calls FROM jev_evaluation_requests`).toEqual([{ calls: 0 }])
+          expect(yield* sql`SELECT generation_hash, effective, kill_state, reason FROM authority_state`).toEqual([
+            {
+              generation_hash: runtime.authorityGenerationHash,
+              effective: 'OBSERVE',
+              kill_state: 'ACTIVE',
+              reason: 'operator hold fixture',
+            },
+          ])
+          return { _tag: 'OperatorHeld' as const }
+        }
+        if (scenario === 'measured-submit-expired-reentry') {
+          yield* advanceMarketTo(initialMs + 1)
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing replay authority reader')
+          for (let attempt = 0; attempt < 20; attempt++) {
+            yield* runtime.advance
+            const authority = yield* readAuthority
+            if (
+              expiredStartedSubmit &&
+              authority.generationHash !== runtime.authorityGenerationHash &&
+              authority.effective === Authority.Execution
+            )
+              break
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          expect(expiredStartedSubmit).toBe(true)
+          expect((yield* broker.snapshot).orders).toHaveLength(0)
+          expect(yield* sql`SELECT event_type FROM mutation_events WHERE event_type = 'SUBMIT_DENIED'`).toEqual([
+            { event_type: 'SUBMIT_DENIED' },
+          ])
+          const recovered = yield* readAuthority
+          expect(recovered).toMatchObject({
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+          })
+          expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
+          expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          const restarted = yield* makeReplayExecutionRuntime(runtimeInput).pipe(
+            Effect.provideService(JevClient, timing?.client ?? provider),
+          )
+          expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
+          if (timing === undefined) throw new Error('Missing measured timing')
+          yield* advanceMarketTo(reentryAtMs)
+          for (let attempt = 0; attempt < 8; attempt++) {
+            yield* timing.run(restarted.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock))
+            if ((yield* broker.snapshot).fills.length > 0) break
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+          }
+          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          expect(measuredCalls).toHaveLength(30)
+          expect(
+            yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
+          ).toEqual([
+            { state: 'ACTIVE', count: 1 },
+            { state: 'BLOCKED', count: 1 },
+          ])
+          return { _tag: 'ExpiredSubmitRecovered' as const }
         }
         if (scenario === 'missing-benchmark' || scenario === 'no-trade') {
           const schedule = yield* driveReplaySession(

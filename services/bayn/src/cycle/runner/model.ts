@@ -19,6 +19,7 @@ export interface CycleRunContext<R = never> {
   readonly strategyName: 'intraday-momentum' | 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
+  readonly authorityGenerationHash?: string
   readonly executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
