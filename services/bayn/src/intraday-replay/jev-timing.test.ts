@@ -45,6 +45,72 @@ const fixture = Effect.gen(function* () {
   return { providerClock, marketClock, calls, marketArrivals, advanceTo, retain, measureDatabaseTime }
 })
 
+test('reconciliation timestamps stay on the published source clock when advancing arrivals consumes time', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture
+      const timing = yield* makeReplayJevTiming({
+        ...f,
+        provider: { evaluate: () => Effect.die('This clock regression does not infer') },
+        advanceTo: (atMs) => f.advanceTo(atMs).pipe(Effect.andThen(f.providerClock.adjust(5))),
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      const observations = yield* timing.run(
+        Effect.gen(function* () {
+          yield* f.providerClock.adjust(20)
+          const reconciledAt = yield* timing.currentUtcInstant
+          const observationAt = utcInstantFromEpochMillis(yield* f.marketClock.currentTimeMillis)
+          const nextReconciliationAt = yield* timing.currentUtcInstant
+          const nextObservationAt = utcInstantFromEpochMillis(yield* f.marketClock.currentTimeMillis)
+          return { reconciledAt, observationAt, nextReconciliationAt, nextObservationAt }
+        }),
+      )
+      return { ...observations, now: yield* f.marketClock.currentTimeMillis }
+    }).pipe(Effect.scoped),
+  )
+  expect(result.reconciledAt).toBe(result.observationAt)
+  expect(result.nextReconciliationAt).toBe(result.nextObservationAt)
+  expect(Date.parse(result.nextReconciliationAt) - Date.parse(result.reconciledAt)).toBe(10)
+  expect(result.now).toBe(marketAt + 40)
+})
+
+test('failed operations still publish the final source cut after measurement cleanup', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture
+      const failure = new ReplayBrokerFailure({ message: 'Runtime failed' })
+      const timing = yield* makeReplayJevTiming({
+        ...f,
+        provider: { evaluate: () => Effect.die('This cleanup regression does not infer') },
+        measureDatabaseTime: (operation) => operation.pipe(Effect.ensuring(f.marketClock.adjust(25))),
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      const exit = yield* timing.run(Effect.fail(failure)).pipe(Effect.result)
+      return { exit, sourceCut: f.marketArrivals.at(-1), now: yield* f.marketClock.currentTimeMillis }
+    }).pipe(Effect.scoped),
+  )
+  expect(result.exit).toMatchObject({ _tag: 'Failure', failure: { message: 'Runtime failed' } })
+  expect(result.sourceCut).toBe(marketAt + 25)
+  expect(result.sourceCut).toBe(result.now)
+})
+
+test('failure to publish the cleanup source cut fails an otherwise successful replay operation', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture
+      const timing = yield* makeReplayJevTiming({
+        ...f,
+        provider: { evaluate: () => Effect.die('This cleanup regression does not infer') },
+        measureDatabaseTime: (operation) => operation.pipe(Effect.ensuring(f.marketClock.adjust(25))),
+        advanceTo: (atMs) =>
+          atMs > marketAt
+            ? Effect.fail(new ReplayBrokerFailure({ message: 'Closing source unavailable' }))
+            : f.advanceTo(atMs),
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      return yield* timing.run(Effect.void).pipe(Effect.result)
+    }).pipe(Effect.scoped),
+  )
+  expect(result).toMatchObject({ _tag: 'Failure', failure: { message: 'Closing source unavailable' } })
+})
+
 test('concurrent inference advances source time by elapsed batch time and preserves original provider receipts', async () => {
   const result = await Effect.runPromise(
     Effect.scoped(

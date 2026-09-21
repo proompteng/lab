@@ -166,7 +166,7 @@ Broker reconciliation recaptures changing history or lagging fill activities at 
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
 outcomes and aggregate fills still must agree. Equity marks from separate account and position observations remain
 visible as valuation differences, while cash, inventory, cost basis, fees, and ledger reconciliation remain exact.
-Flat accounts and marks observed at the same instant also require exact equity agreement.
+Flat accounts require exact equity agreement. Matching receipt timestamps do not make separate broker responses atomic.
 
 ## Runtime architecture
 
@@ -408,7 +408,10 @@ Final authorization samples measured elapsed time after provider, persistence, w
 Every replay reconciliation, including those inside the cycle driver, uses that measured clock after ingestion.
 During measured operations, the replay account's transaction-acceptance clock advances with PostgreSQL wall time,
 including evidence queries, insertions and work in the enclosing transaction. Recorded observation timestamps retain
-their synchronized replay time. Pausing measurement retains elapsed time and advances the market clock. Deferred
+their synchronized replay time. Reconciliation returns that published source timestamp; it cannot stamp evidence
+ahead of the account and market-data clocks. Time spent publishing arrivals is retained for the next synchronization
+and the measured scope's completion. Pausing measurement retains elapsed time and advances the market clock. The
+runtime then consumes arrivals through that timestamp before returning to scheduling or valuation. Deferred
 exit deadlines therefore see time spent before transaction acceptance.
 Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
 Initialization starts one minute before the first registered open and retains its measured start, completion and

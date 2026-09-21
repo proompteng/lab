@@ -100,6 +100,7 @@ durableTest.each([
   'measured-exit',
   'measured-bootstrap-delay',
   'measured-partial-entry-reentry',
+  'measured-source-delay-reentry',
   'measured-entry-expired',
   'measured-zero-fill-reentry',
   'measured-submit-expired-reentry',
@@ -119,6 +120,8 @@ durableTest.each([
     )
       throw new Error('Replay acceptance requires isolated local test databases')
     const protocol = fixtureProtocol
+    const sourceDelay = scenario === 'measured-source-delay-reentry'
+    const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || sourceDelay
     const noTrade = scenario === 'no-trade' || scenario === 'no-trade-finalization'
     const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
@@ -128,7 +131,7 @@ durableTest.each([
     const measured =
       scenario === 'measured-exit' ||
       scenario === 'measured-bootstrap-delay' ||
-      scenario === 'measured-partial-entry-reentry' ||
+      partialEntryReentry ||
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
@@ -159,7 +162,7 @@ durableTest.each([
               })),
               ...(scenario === 'measured-zero-fill-reentry' ||
               scenario === 'measured-submit-expired-reentry' ||
-              scenario === 'measured-partial-entry-reentry'
+              partialEntryReentry
                 ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
                 : []),
             ]
@@ -341,7 +344,9 @@ durableTest.each([
               providerClock,
               advanceTo: (atMs) =>
                 advanceMarketTo(atMs).pipe(
-                  Effect.tap(() => (scenario === 'measured-bootstrap-delay' ? providerClock.adjust(5) : Effect.void)),
+                  Effect.tap(() =>
+                    scenario === 'measured-bootstrap-delay' || sourceDelay ? providerClock.adjust(5) : Effect.void,
+                  ),
                   Effect.mapError(
                     (cause) => new ReplayBrokerFailure({ message: 'Measured source advance failed', cause }),
                   ),
@@ -365,7 +370,7 @@ durableTest.each([
             availableLiquidityPpm:
               scenario === 'recovery' || scenario === 'measured-zero-fill-reentry'
                 ? 1
-                : scenario === 'measured-partial-entry-reentry'
+                : partialEntryReentry
                   ? 400000
                   : 1000000,
             feeMultiplierPpm: 1000000,
@@ -406,7 +411,7 @@ durableTest.each([
               ),
             ),
         })
-        const passes = yield* Ref.make<unknown[]>([])
+        const passes = yield* Ref.make<Array<Parameters<import('../app').RecordAutonomousCyclePass>[0]>>([])
         const stallReconciliation = yield* Ref.make(false)
         const interrupted = yield* Ref.make(false)
         const runtimeInput = {
@@ -443,8 +448,7 @@ durableTest.each([
           currentUtcInstant: Effect.gen(function* () {
             if (scenario === 'reconciliation-idle-recovery')
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
-            if (scenario === 'measured-submit-expired-reentry' || scenario === 'measured-partial-entry-reentry')
-              yield* providerClock.adjust(1)
+            if (scenario === 'measured-submit-expired-reentry' || partialEntryReentry) yield* providerClock.adjust(1)
             if (scenario === 'measured-submit-expired-reentry' && !expiredStartedSubmit) {
               const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
               if (started.length > 0) {
@@ -1003,7 +1007,7 @@ durableTest.each([
           scenario === 'early-exit' ||
           scenario === 'partial-exit-reentry' ||
           scenario === 'measured-exit' ||
-          scenario === 'measured-partial-entry-reentry'
+          partialEntryReentry
         ) {
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
           for (let attempt = 0; attempt < 12; attempt++) {
@@ -1027,7 +1031,7 @@ durableTest.each([
           expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
             { state: 'COMPLETED' },
           ])
-          if (scenario === 'measured-partial-entry-reentry') {
+          if (partialEntryReentry) {
             expect(state.fills.map((fill) => fill.quantityMicros)).toEqual(['40000000', '40000000'])
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
@@ -1050,6 +1054,7 @@ durableTest.each([
               { state: 'COMPLETED' },
               { state: 'COMPLETED' },
             ])
+            expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
             expect(measuredCalls).toHaveLength(16)
@@ -1282,7 +1287,7 @@ durableTest.each([
                     ? scenario === 'early-exit' ||
                       scenario === 'partial-exit-reentry' ||
                       scenario === 'measured-exit' ||
-                      scenario === 'measured-partial-entry-reentry'
+                      partialEntryReentry
                       ? 'exit'
                       : 'hold'
                     : noTrade

@@ -129,26 +129,28 @@ export const makeReplayJevTiming = (input: {
 
     const run = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
       passPermit.withPermit(
-        input.measureDatabaseTime(
-          Effect.gen(function* () {
-            yield* Ref.set(failure, undefined)
-            measurement = {
-              providerAt: yield* input.providerClock.currentTimeMillis,
-              marketAt: yield* marketClock.currentTimeMillis,
-            }
-            const result = yield* Effect.result(operation)
-            yield* synchronize
-            const failed = yield* Ref.get(failure)
-            if (failed !== undefined) return yield* failed
-            return yield* Effect.fromResult(result)
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                measurement = undefined
-              }),
+        input
+          .measureDatabaseTime(
+            Effect.gen(function* () {
+              yield* Ref.set(failure, undefined)
+              measurement = {
+                providerAt: yield* input.providerClock.currentTimeMillis,
+                marketAt: yield* marketClock.currentTimeMillis,
+              }
+              const result = yield* Effect.result(operation)
+              yield* synchronize
+              const failed = yield* Ref.get(failure)
+              if (failed !== undefined) return yield* failed
+              return yield* Effect.fromResult(result)
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  measurement = undefined
+                }),
+              ),
             ),
-          ),
-        ),
+          )
+          .pipe(Effect.onExit(() => marketClock.currentTimeMillis.pipe(Effect.flatMap(input.advanceTo)))),
       )
     return {
       client,
@@ -163,6 +165,7 @@ export const makeReplayJevTiming = (input: {
                 message: 'Jev replay clock moved backwards during source advancement',
               })
             measurement = { providerAt, marketAt: synchronized.marketAt + providerAt - synchronized.providerAt }
+            yield* input.advanceTo(measurement.marketAt)
             return utcInstantFromEpochMillis(measurement.marketAt)
           }),
         ),
