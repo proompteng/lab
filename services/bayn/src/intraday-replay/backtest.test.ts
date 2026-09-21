@@ -4,7 +4,7 @@ import { Result } from 'effect'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { prepareBacktest as prepareWithCapture, assessBacktestSession, BacktestIssue } from './backtest'
-import { IntradayExitTiming } from '../strategy/intraday-momentum/research'
+import { jevModel } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
 import { validateBacktestSourceReceipt } from './source'
 import { sha256 } from '../hash'
@@ -14,7 +14,14 @@ const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v1',
+    schemaVersion: 'bayn.backtest.v3',
+    inference: {
+      mode: 'measured-provider',
+      model: jevModel,
+      inputDefinition: 'bayn.jev-trading-signal-state.v2',
+      costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+    },
+    allocatedDataCostPerSessionMicros: '0',
     replicate: 'validation-test',
     sessionDates: ['2026-09-04'],
     source: {
@@ -58,104 +65,80 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
 })
 
-test('explicit exit-timing research binds both close boundaries while preserving signal rules and build identity', () => {
+test('native backtest binds Jev identity, provider cost assumptions and the unchanged financial grant', () => {
   const input = fixture()
-  const baseline = Result.getOrThrow(prepareBacktest(input))
-  const identities = new Set<string>()
-  for (const [exitTiming, minutes] of [
-    [IntradayExitTiming.Current, baseline.protocol.flattenBeforeCloseMinutes],
-    [IntradayExitTiming.FifteenMinutes, 15],
-    [IntradayExitTiming.ThirtyMinutes, 30],
-  ] as const) {
-    const research = Result.getOrThrow(prepareBacktest({ ...input, schemaVersion: 'bayn.backtest.v2', exitTiming }))
-    if (research.research === undefined) throw new Error('Research identity is required for v2 inputs')
-    const entryCutoff = Math.max(minutes, baseline.protocol.entryCutoffMinutesBeforeClose)
-    expect(research.protocol).toEqual({
-      ...baseline.protocol,
-      flattenBeforeCloseMinutes: minutes,
-      entryCutoffMinutesBeforeClose: entryCutoff,
-      executionModel: {
-        ...baseline.protocol.executionModel,
-        order: { ...baseline.protocol.executionModel.order, submissionCutoffBeforeCloseMs: entryCutoff * 60_000 },
-      },
-    })
-    expect(research.strategy.provenance.strategy.parameterHash).toBe(research.research.effectiveParameterHash)
-    expect(research.research).toMatchObject({
-      variant: exitTiming,
-      baselineParameterHash: baseline.input.build.strategyParameterHash,
-    })
-    expect(research.buildEvidence).toEqual(baseline.buildEvidence)
-    expect(research.runtimeBuild).toEqual({
-      ...baseline.runtimeBuild,
-      strategyParameterHash: research.research.effectiveParameterHash,
-    })
-    const strategy = research.strategy.provenance.strategy
-    const proof = {
-      schemaVersion: 'bayn.research-paper-grant-proof.v1' as const,
-      grant: { _tag: 'Research' as const, planHash: '0'.repeat(64) },
-      activationSourceRevision: input.build.sourceRevision,
-      activationImageRepository: input.build.imageRepository,
-      activationImageDigest: input.build.imageDigest,
-      strategyName: strategy.name,
-      strategyBehaviorHash: strategy.behaviorHash,
-      strategyParameterHash: strategy.parameterHash,
-      strategyParameterSchemaVersion: strategy.parameterSchemaVersion,
-      strategyProtocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(strategy)),
-      accountId: research.identity.accountId,
-      brokerIdentityHash: research.identity.identityHash,
-      riskPolicyHash: '0'.repeat(64),
-      proofPlanHash: '0'.repeat(64),
-    }
-    const binding = {
-      proof,
-      sourceGenerationHash: '0'.repeat(64),
-      accountId: research.identity.accountId,
-      brokerIdentityHash: research.identity.identityHash,
-    }
-    expect(Result.isSuccess(validateResearchCapitalGrantProof({ ...binding, build: research.runtimeBuild }))).toBe(true)
-    expect(Result.isSuccess(validateResearchCapitalGrantProof({ ...binding, build: baseline.runtimeBuild }))).toBe(
-      exitTiming === IntradayExitTiming.Current,
-    )
-    const startup = {
-      accountId: research.identity.accountId,
-      authorityGenerationHash: '0'.repeat(64),
-      strategy: research.strategy,
-      ...input.cadence,
-    }
-    expect(Result.isSuccess(prepareObserveStartup(startup))).toBe(exitTiming === IntradayExitTiming.Current)
-    const simulation = { runId: research.runId, exitTiming }
-    expect(Result.isSuccess(prepareObserveStartup({ ...startup, simulation }))).toBe(true)
-    expect(Result.isFailure(prepareObserveStartup({ ...startup, accountId: 'ordinary-account', simulation }))).toBe(
-      true,
-    )
-    expect(
-      Result.isFailure(prepareObserveStartup({ ...startup, simulation: { ...simulation, runId: 'invalid' } })),
-    ).toBe(true)
-    expect(
-      Result.isSuccess(
-        prepareObserveStartup({
-          ...startup,
-          simulation: { ...simulation, exitTiming: IntradayExitTiming.Current },
-        }),
-      ),
-    ).toBe(exitTiming === IntradayExitTiming.Current)
-    expect(research.input.assumptions).toEqual(baseline.input.assumptions)
-    expect(research.runId).not.toBe(baseline.runId)
-    identities.add(research.runId)
+  const prepared = Result.getOrThrow(prepareBacktest(input))
+  expect(prepared.strategy.provenance.strategy.name).toBe('jev')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v1')
+  expect(prepared.protocol.model).toBe(jevModel)
+  expect(prepared.runtimeBuild).toMatchObject(input.build)
+  const strategy = prepared.strategy.provenance.strategy
+  const proof = {
+    schemaVersion: 'bayn.research-paper-grant-proof.v1' as const,
+    grant: { _tag: 'Research' as const, planHash: '0'.repeat(64) },
+    activationSourceRevision: input.build.sourceRevision,
+    activationImageRepository: input.build.imageRepository,
+    activationImageDigest: input.build.imageDigest,
+    strategyName: strategy.name,
+    strategyBehaviorHash: strategy.behaviorHash,
+    strategyParameterHash: strategy.parameterHash,
+    strategyParameterSchemaVersion: strategy.parameterSchemaVersion,
+    strategyProtocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(strategy)),
+    accountId: prepared.identity.accountId,
+    brokerIdentityHash: prepared.identity.identityHash,
+    riskPolicyHash: '0'.repeat(64),
+    proofPlanHash: '0'.repeat(64),
   }
-  expect(identities.size).toBe(3)
-  expect(Result.getOrThrow(prepareBacktest(input)).protocol).toEqual(baseline.protocol)
+  expect(
+    Result.isSuccess(
+      validateResearchCapitalGrantProof({
+        proof,
+        sourceGenerationHash: '0'.repeat(64),
+        accountId: prepared.identity.accountId,
+        brokerIdentityHash: prepared.identity.identityHash,
+        build: prepared.runtimeBuild,
+      }),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isSuccess(
+      prepareObserveStartup({
+        accountId: prepared.identity.accountId,
+        authorityGenerationHash: '0'.repeat(64),
+        strategy: prepared.strategy,
+        ...input.cadence,
+      }),
+    ),
+  ).toBe(true)
+  expect(Result.getOrThrow(prepareBacktest({ ...input, allocatedDataCostPerSessionMicros: '1000000' })).runId).not.toBe(
+    prepared.runId,
+  )
+  expect(
+    Result.getOrThrow(
+      prepareBacktest({
+        ...input,
+        inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '84000' } },
+      }),
+    ).runId,
+  ).not.toBe(prepared.runId)
 })
 
-test('research cannot override source identity, arbitrary parameters, or an undeclared v1 exit policy', () => {
+test('native backtest rejects retired momentum inputs, missing inference provenance and arbitrary parameters', () => {
   const input = fixture()
-  const research = { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: IntradayExitTiming.FifteenMinutes }
   for (const invalid of [
-    { ...input, exitTiming: IntradayExitTiming.FifteenMinutes },
-    { ...research, exitTiming: 'CLOSE_AT_LOOKAHEAD_BEST_PRICE' },
-    { ...research, protocol: { minimumLookbackReturnBps: 0 } },
-    { ...research, build: { ...input.build, strategyParameterHash: '0'.repeat(64) } },
-    { ...research, build: { ...input.build, strategyBehaviorHash: '0'.repeat(64) } },
+    { ...input, schemaVersion: 'bayn.backtest.v1' },
+    { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: 'current' },
+    { ...input, exitTiming: 'current' },
+    { ...input, inference: undefined },
+    { ...input, inference: { ...input.inference, mode: 'constant-response' } },
+    { ...input, inference: { ...input.inference, model: 'unverified' } },
+    {
+      ...input,
+      inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '0' } },
+    },
+    { ...input, protocol: { minimumLookbackReturnBps: 0 } },
+    { ...input, build: { ...input.build, strategyParameterHash: '0'.repeat(64) } },
+    { ...input, build: { ...input.build, strategyBehaviorHash: '0'.repeat(64) } },
   ])
     expect(Result.isFailure(prepareBacktest(invalid))).toBe(true)
 })

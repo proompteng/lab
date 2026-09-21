@@ -285,7 +285,22 @@ describePostgres('PostgreSQL execution persistence', () => {
           `${executionMandateFailureRestrictionPrefix} permanent failure`,
           '2026-08-28T14:34:00.000Z',
         )
-        return { initial, replay, lineage, restricted, promoted: yield* authority.readAuthorityState }
+        const promoted = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority('operator hold', '2026-08-28T14:35:00.000Z')
+        const held = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority(
+          `${executionMandateFailureRestrictionPrefix} later automatic failure`,
+          '2026-08-28T14:36:00.000Z',
+        )
+        return {
+          initial,
+          replay,
+          lineage,
+          restricted,
+          promoted,
+          held,
+          afterLaterFailure: yield* authority.readAuthorityState,
+        }
       }),
     )
 
@@ -315,6 +330,13 @@ describePostgres('PostgreSQL execution persistence', () => {
       reason: `${executionMandateFailureRestrictionPrefix} permanent failure`,
       version: 4,
     })
+    expect(result.held).toMatchObject({
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: 'operator hold',
+      version: 5,
+    })
+    expect(result.afterLaterFailure).toEqual(result.held)
   })
 
   test('deduplicates broker observations and derives valuation from one complete position snapshot', async () => {

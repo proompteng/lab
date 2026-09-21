@@ -120,7 +120,11 @@ test('unavailable decision evidence is counted separately from lifecycle waits a
 
 test('expected warmup, valid no-trade and lifecycle waits preserve complete decision coverage', async () => {
   const observations: RetainedAutonomousCyclePassObservation[] = [
-    ...[DecisionReadinessReason.LookbackWarmup, DecisionReadinessReason.NoEligibleCandidate].map((reason) => ({
+    ...[
+      DecisionReadinessReason.LookbackWarmup,
+      DecisionReadinessReason.NoEligibleCandidate,
+      DecisionReadinessReason.SignalWindowObserved,
+    ].map((reason) => ({
       result: 'SUCCESS' as const,
       outcome: 'RECOVERED' as const,
       recoveryAction: 'WAITING' as const,
@@ -157,5 +161,5 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
     }).pipe(Effect.provide(TestClock.layer())),
   )
   expect(outcome.unavailableDecisionPassCount).toBe(0)
-  expect(outcome.readinessCounts).toEqual({ LOOKBACK_WARMUP: 1, NO_ELIGIBLE_CANDIDATE: 1 })
+  expect(outcome.readinessCounts).toEqual({ LOOKBACK_WARMUP: 1, NO_ELIGIBLE_CANDIDATE: 1, SIGNAL_WINDOW_OBSERVED: 1 })
 })

@@ -344,6 +344,9 @@ export interface StreamingSymbolInputs {
 }
 
 /** Choose the winning revision that had arrived at the observation, preserving earlier cuts across corrections. */
+export const observedQuoteAt = (state: StreamingProjection, symbol: string, observedAtMs: number) =>
+  state.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
+
 export const observedBarsAt = (
   state: StreamingProjection,
   symbol: string,
@@ -380,7 +383,7 @@ export const selectStreamingSymbolInputs = (
     if (observedAtMs < state.minimumObservationMs) return yield* fail('observation precedes retained arrival history')
     if (windowStartMs <= state.discardedRejectionsThroughMs)
       return yield* fail('requested window precedes retained rejection history')
-    const quote = state.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
+    const quote = observedQuoteAt(state, symbol, observedAtMs)
     const trade = state.tradeHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
     if (
       quote === undefined ||

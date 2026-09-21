@@ -1,3 +1,4 @@
+import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { isSnapshotExecutionMarketDataBinding } from './shadow-decision-contract'
 import { Data, Effect, Result, Schema } from 'effect'
 
@@ -57,6 +58,7 @@ import {
 } from './shadow-decision-contract'
 import {
   RuntimeStrategyDecisionSchema,
+  isFlatExecutionTarget,
   runtimeDecisionMatchesStrategy,
   type RuntimeStrategyDecision,
 } from './strategy/runtime-decision'
@@ -108,6 +110,7 @@ export interface ObserveShadowDecisionInput {
 export interface ExecutionDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
   readonly entryLimitSlippageBps?: number
+  readonly closeLimitSlippageBps?: number
   /** The immutable signal/session binding retained for restart-safe close construction. */
   readonly executionSession: ExecutionSessionBinding
   /** A close-only plan uses the activation lease as its submission boundary. */
@@ -320,7 +323,7 @@ const validateBindings = (
     return Result.fail(error('binding', 'compiled strategy decision must match the immutable cycle session'))
   }
   if (
-    decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
+    isFlatExecutionTarget(decision) &&
     (input.submissionCutoffAt === undefined ||
       input.submissionCutoffAt <= cycle.window.submissionCutoffAt ||
       input.riskInputs.some(
@@ -329,9 +332,10 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry = decision.schemaVersion === 'bayn.intraday-momentum.target.v3'
-  const intradayClose =
-    decision.schemaVersion === 'bayn.execution-flat-target.v1' && decision.strategyName === 'intraday-momentum'
+  const intradayEntry =
+    decision.schemaVersion === 'bayn.intraday-momentum.target.v3' ||
+    decision.schemaVersion === 'bayn.jev-entry-target.v1'
+  const intradayClose = isFlatExecutionTarget(decision) && ['intraday-momentum', 'jev'].includes(decision.strategyName)
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
   const executionMarketData = input.executionMarketData
@@ -368,7 +372,10 @@ const validateBindings = (
       error('binding', 'intraday-momentum entry requires a verified execution market-data snapshot binding'),
     )
   }
-  if (intradayEntry && isSnapshotExecutionMarketDataBinding(decisionMarketData)) {
+  if (
+    decision.schemaVersion === 'bayn.intraday-momentum.target.v3' &&
+    isSnapshotExecutionMarketDataBinding(decisionMarketData)
+  ) {
     const excludedSymbols = decision.excludedCandidates.map(({ symbol }) => symbol)
     const decisionSymbols = [
       ...decision.signals.map(({ symbol }) => symbol),
@@ -399,9 +406,7 @@ const validateBindings = (
     const positions = plannerInput.brokerState.positions
       .filter(
         ({ symbol, quantityMicros }) =>
-          decision.schemaVersion === 'bayn.execution-flat-target.v1' &&
-          decision.symbols.includes(symbol) &&
-          BigInt(quantityMicros) !== 0n,
+          isFlatExecutionTarget(decision) && decision.symbols.includes(symbol) && BigInt(quantityMicros) !== 0n,
       )
       .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
     const bindingMatchesReconciliation =
@@ -466,7 +471,9 @@ const validateBindings = (
             )
             .map((position) => position.symbol),
         )
-      : input.compiledDecision.targetWeights
+      : input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
+        ? jevPlanningTargetWeights(input.compiledDecision)
+        : input.compiledDecision.targetWeights
   const compiledWeightsHash = hashValue(
     expectedPlanningWeights,
     'contract',
@@ -518,7 +525,14 @@ const validateRiskState = (
     state.entryQuote !== undefined &&
     (input.executionMarketData === undefined ||
       !('maximumQuoteAgeMs' in input.executionMarketData) ||
-      state.entryQuote.maximumAgeMs !== input.executionMarketData.maximumQuoteAgeMs)
+      state.entryQuote.maximumAgeMs !==
+        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
+          ? jevEntryQuoteMaximumAgeMs(
+              input.compiledDecision,
+              state.entryQuote.eventAt,
+              input.executionMarketData.maximumQuoteAgeMs,
+            )
+          : input.executionMarketData.maximumQuoteAgeMs))
   )
     return Result.fail(error('binding', 'entry quote freshness must match its execution market-data binding'))
   const decisionMarketDataHash = input.executionMarketData?.contentHash ?? snapshot.contentHash
@@ -998,6 +1012,7 @@ const assembleExecutionDecisionDocument = (
   submissionCutoffAt: string,
   replanGenerationHash?: string,
   entryLimitSlippageBps?: number,
+  closeLimitSlippageBps?: number,
 ): Result.Result<ExecutionDecisionDocument, ShadowDecisionError> => {
   const { input, policyHash, strategyDecisionHash } = context
   const planningBrokerStateHash = Result.mapError(
@@ -1050,6 +1065,7 @@ const assembleExecutionDecisionDocument = (
       plannerInput: input.plannerInput,
       riskPolicy: input.policy,
       ...(entryLimitSlippageBps === undefined ? {} : { entryLimitSlippageBps }),
+      ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
       targetPlan: input.targetPlan,
       deltaRisk: reduction.deltaRisk,
       orderedIntentIds: reduction.deltaRisk.map((risk) => risk.evaluation.input.intentId),
@@ -1103,6 +1119,7 @@ export const buildExecutionDecision = (
                   input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
                   input.replanGenerationHash,
                   input.entryLimitSlippageBps,
+                  input.closeLimitSlippageBps,
                 ),
             ),
           ),
