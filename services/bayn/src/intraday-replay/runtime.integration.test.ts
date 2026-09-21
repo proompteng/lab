@@ -90,6 +90,7 @@ durableTest.each([
   'missing-benchmark',
   'no-trade',
   'no-trade-finalization',
+  'missing-calendar',
   'failed-model-response',
   'failed-management-response',
   'recovery',
@@ -357,7 +358,11 @@ durableTest.each([
             feeMultiplierPpm: 1000000,
           },
           fractionalTrading: false,
-          calendar: Result.getOrThrow(Schema.decodeUnknownResult(MarketCalendarResponseSchema)(fixture.input.calendar)),
+          calendar: Result.getOrThrow(
+            Schema.decodeUnknownResult(MarketCalendarResponseSchema)(
+              scenario === 'missing-calendar' ? [] : fixture.input.calendar,
+            ),
+          ),
           assets: fixture.protocol.universe.map((symbol, index) =>
             Result.getOrThrow(
               normalizeAssetResult(
@@ -452,6 +457,15 @@ durableTest.each([
             timing === undefined
               ? engine.advance
               : timing.run(engine.advance).pipe(Effect.provideService(OperationDeadlineClock, providerClock)),
+        }
+        if (scenario === 'missing-calendar') {
+          yield* advanceMarketTo(initialMs + 1)
+          const pass = yield* runtime.advance
+          expect(pass.observation).toMatchObject({ result: 'FAILURE', failure: 'calendar-unavailable' })
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect(yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles`).toEqual([{ count: 0 }])
+          expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
+          return { _tag: 'Coverage' as const }
         }
         if (scenario === 'reconciliation-idle-recovery') {
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
@@ -562,25 +576,40 @@ durableTest.each([
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
         if (scenario === 'no-trade-finalization') {
+          yield* advanceMarketTo(initialMs + 1)
+          yield* runtime.advance
+          yield* advanceMarketTo(initialMs + 2)
+          yield* runtime.advance
+          expect(yield* sql`SELECT state, decision_hash FROM autonomous_cycles`).toEqual([
+            { state: 'ACTIVE', decision_hash: null },
+          ])
           yield* advanceMarketTo(finalizationAtMs)
           const schedule = yield* driveReplaySession(
             runtime,
-            advanceMarketTo,
+            (at) =>
+              advanceMarketTo(at).pipe(
+                Effect.mapError(
+                  (cause) => new ReplayBrokerFailure({ message: 'Finalization test clock failed', cause }),
+                ),
+              ),
             finalizationAtMs + 1,
             finalizationAtMs + 120_001,
           )
           const reconciliation = yield* runtime.reconcile
           const state = yield* broker.snapshot
-          expect(schedule.failedPassCount).toBe(0)
-          expect(schedule.unavailableDecisionPassCount).toBe(0)
           expect(managementCalls).toBe(0)
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           expect(state.ledger.positions).toEqual([])
           expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
-            { state: 'COMPLETE', bound: true },
+            { state: 'NO_TRADE', bound: true },
           ])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
+          expect(schedule.failedPassCount).toBe(0)
+          expect(schedule.unavailableDecisionPassCount).toBe(0)
+          expect(yield* sql`SELECT effective, kill_state FROM authority_state`).toEqual([
+            { effective: 'PAPER', kill_state: 'CLEAR' },
+          ])
           expect(
             assessBacktestSession({
               ...schedule,
