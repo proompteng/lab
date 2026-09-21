@@ -23,7 +23,10 @@ discrepancies, mismatched choices or inconsistent scores remain unusable evidenc
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
 before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no
-wider than five basis points. It selects at most one long position, capped at 20% of the mandate allocation.
+wider than five basis points. It selects at most one long position, capped at 20% of account equity and reduced when
+the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
+includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
+bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 A complete batch must remain valid within its five-second evidence lifetime. These parameters have not established
 an economic advantage under the frozen qualification protocol.
 

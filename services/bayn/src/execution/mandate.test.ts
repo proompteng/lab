@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
+import { defaultExecutionModel, desiredQuantityMicros, notionalMicros } from '../execution-model'
 import { reconciliationIncompleteRestrictionReason } from './authority'
 import {
   decideExecutionMandateAuthority,
@@ -38,6 +39,16 @@ describe('executionMandateAllocationCapitalMicros', () => {
         executionMandateAllocationCapitalMicros({ ...facts, dailyTradedNotionalMicros: 190_000_000_000n }),
       ),
     ).toBe(49_950_049_950n)
+    expect(
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, maxGrossExposureMicros: 10_000_000_000n })),
+    ).toBe(50_000_000_000n)
+    expect(
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, maxNetExposureMicros: 8_000_000_000n })),
+    ).toBe(40_000_000_000n)
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, targetWeights: {} }))).toBe(0n)
+    expect(Result.isFailure(executionMandateAllocationCapitalMicros({ ...facts, targetWeights: { AAPL: -0.2 } }))).toBe(
+      true,
+    )
   })
 
   test('selects the smallest account, exposure, and remaining-turnover bound', () => {
@@ -125,6 +136,24 @@ describe('executionMandateAllocationCapitalMicros', () => {
         }),
       ),
     ).toBe(true)
+  })
+
+  test('uses the planner weight precision when enforcing the actual target notional limit', () => {
+    const weight = 0.20000049
+    const capital = Result.getOrThrow(
+      constrainExecutionTargetAllocationCapitalMicros({
+        allocationCapitalMicros: 100_000_000_000n,
+        maxOrderNotionalMicros: 20_000_000_000n,
+        maxSymbolExposureMicros: 40_000_000_000n,
+        targetWeights: { AAPL: weight },
+      }),
+    )
+    const quantity = Result.getOrThrow(
+      desiredQuantityMicros(capital, weight, 1_000_000n, {
+        precision: { ...defaultExecutionModel.precision, quantityIncrementMicros: '1' },
+      }),
+    )
+    expect(Result.getOrThrow(notionalMicros(quantity, 1_000_000n))).toBeLessThanOrEqual(20_000_000_000n)
   })
 })
 

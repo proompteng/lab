@@ -1202,6 +1202,7 @@ function buildCycleDecision<R>(
                 maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
                 maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
+                targetWeights: planningTargetWeights,
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),
