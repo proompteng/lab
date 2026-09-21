@@ -89,6 +89,7 @@ durableTest.each([
   'fallback',
   'missing-benchmark',
   'no-trade',
+  'no-trade-finalization',
   'failed-model-response',
   'failed-management-response',
   'recovery',
@@ -115,6 +116,8 @@ durableTest.each([
     )
       throw new Error('Replay acceptance requires isolated local test databases')
     const protocol = fixtureProtocol
+    const noTrade = scenario === 'no-trade' || scenario === 'no-trade-finalization'
+    const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
     const measuredCalls: ReplayJevCall[] = []
     let measuredProviderClock: TestClock.TestClock | undefined
@@ -124,7 +127,7 @@ durableTest.each([
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
-    const fixture = { ...simulationFixture(undefined, undefined, scenario === 'no-trade' ? {} : undefined), protocol }
+    const fixture = { ...simulationFixture(undefined, undefined, noTrade ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const reentryAtMs = initialAtMs + 120_000
     const lifecycleObservations =
@@ -153,7 +156,9 @@ durableTest.each([
                 ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
                 : []),
             ]
-          : []
+          : scenario === 'no-trade-finalization'
+            ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+            : []
     const lifecycleArrivals = lifecycleObservations
       .flatMap(({ at, fullWindow, offset, bidSize, premium }) => {
         const windowEnd = Math.floor(at / 60_000) * 60_000
@@ -428,10 +433,15 @@ durableTest.each([
           }),
           recordPass: (pass: Parameters<import('../app').RecordAutonomousCyclePass>[0]) =>
             Ref.update(passes, (values) => [...values, pass]),
-          pollIntervalMs: 1000,
-          reconciliationIntervalMs: measured ? config.operationTimeoutMs : 1000,
+          pollIntervalMs: scenario === 'no-trade-finalization' ? 30_000 : 1000,
+          reconciliationIntervalMs:
+            scenario === 'no-trade-finalization' ? 30_000 : measured ? config.operationTimeoutMs : 1000,
           reconciliationPassTimeoutMs:
-            scenario === 'fill' || scenario === 'fallback' ? 1000 : config.operationTimeoutMs,
+            scenario === 'no-trade-finalization'
+              ? 30_000
+              : scenario === 'fill' || scenario === 'fallback'
+                ? 1000
+                : config.operationTimeoutMs,
         }
         const engine = yield* makeReplayExecutionRuntime(runtimeInput).pipe(
           Effect.provideService(JevClient, timing?.client ?? provider),
@@ -550,6 +560,41 @@ durableTest.each([
             { state: 'BLOCKED', count: 1 },
           ])
           return { _tag: 'ExpiredSubmitRecovered' as const }
+        }
+        if (scenario === 'no-trade-finalization') {
+          yield* advanceMarketTo(finalizationAtMs)
+          const schedule = yield* driveReplaySession(
+            runtime,
+            advanceMarketTo,
+            finalizationAtMs + 1,
+            finalizationAtMs + 120_001,
+          )
+          const reconciliation = yield* runtime.reconcile
+          const state = yield* broker.snapshot
+          expect(schedule.failedPassCount).toBe(0)
+          expect(schedule.unavailableDecisionPassCount).toBe(0)
+          expect(managementCalls).toBe(0)
+          expect(state.orders).toEqual([])
+          expect(state.fills).toEqual([])
+          expect(state.ledger.positions).toEqual([])
+          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
+            { state: 'COMPLETE', bound: true },
+          ])
+          expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
+          expect(
+            assessBacktestSession({
+              ...schedule,
+              valuationFailureCount: 0,
+              remainingPositionCount: state.ledger.positions.length,
+              reconciliation: {
+                status: reconciliation.report.reconciliation.status,
+                metrics: reconciliation.report.metrics,
+                unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
+                unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+              },
+            }),
+          ).toEqual({ completion: 'COMPLETE', issues: [] })
+          return { _tag: 'Coverage' as const }
         }
         if (scenario === 'missing-benchmark' || scenario === 'no-trade' || scenario === 'failed-model-response') {
           const schedule = yield* driveReplaySession(
@@ -1143,7 +1188,7 @@ durableTest.each([
                     ? scenario === 'early-exit' || scenario === 'partial-exit-reentry' || scenario === 'measured-exit'
                       ? 'exit'
                       : 'hold'
-                    : scenario === 'no-trade'
+                    : noTrade
                       ? 'wait'
                       : 'enter',
                 ),
