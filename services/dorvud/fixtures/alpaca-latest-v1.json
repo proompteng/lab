@@ -1,0 +1,162 @@
+{
+  "observedAt": "2026-09-11T14:00:03Z",
+  "symbols": ["AAPL", "AMD"],
+  "quotesResponse": {
+    "quotes": {
+      "AAPL": {
+        "ap": 131.0,
+        "as": 100.0,
+        "ax": "V",
+        "bp": 130.0,
+        "bs": 100.0,
+        "bx": "V",
+        "c": ["R"],
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "z": "C"
+      },
+      "AMD": {
+        "ap": 131.0,
+        "as": 100.0,
+        "ax": "V",
+        "bp": 130.0,
+        "bs": 100.0,
+        "bx": "V",
+        "c": ["R"],
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "z": "C"
+      }
+    }
+  },
+  "tradesResponse": {
+    "trades": {
+      "AAPL": {
+        "c": ["@"],
+        "i": 100,
+        "p": 130.5,
+        "s": 100.0,
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "x": "V",
+        "z": "C"
+      },
+      "AMD": {
+        "c": ["@"],
+        "i": 101,
+        "p": 130.5,
+        "s": 100.0,
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "x": "V",
+        "z": "C"
+      }
+    }
+  },
+  "envelopes": [
+    {
+      "ingestTs": "2026-09-11T14:00:03Z",
+      "eventTs": "2026-09-11T14:00:02.123456789Z",
+      "feed": "iex",
+      "channel": "quotes",
+      "symbol": "AAPL",
+      "seq": 1,
+      "payload": {
+        "ap": 131.0,
+        "as": 100.0,
+        "ax": "V",
+        "bp": 130.0,
+        "bs": 100.0,
+        "bx": "V",
+        "c": ["R"],
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "z": "C",
+        "S": "AAPL"
+      },
+      "accountLabel": null,
+      "isFinal": true,
+      "source": "rest_latest",
+      "window": null,
+      "version": 2,
+      "provider": "alpaca",
+      "marketSession": "regular",
+      "delayClass": "real_time_exchange_only"
+    },
+    {
+      "ingestTs": "2026-09-11T14:00:03Z",
+      "eventTs": "2026-09-11T14:00:02.123456789Z",
+      "feed": "iex",
+      "channel": "quotes",
+      "symbol": "AMD",
+      "seq": 1,
+      "payload": {
+        "ap": 131.0,
+        "as": 100.0,
+        "ax": "V",
+        "bp": 130.0,
+        "bs": 100.0,
+        "bx": "V",
+        "c": ["R"],
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "z": "C",
+        "S": "AMD"
+      },
+      "accountLabel": null,
+      "isFinal": true,
+      "source": "rest_latest",
+      "window": null,
+      "version": 2,
+      "provider": "alpaca",
+      "marketSession": "regular",
+      "delayClass": "real_time_exchange_only"
+    },
+    {
+      "ingestTs": "2026-09-11T14:00:03Z",
+      "eventTs": "2026-09-11T14:00:02.123456789Z",
+      "feed": "iex",
+      "channel": "trades",
+      "symbol": "AAPL",
+      "seq": 1,
+      "payload": {
+        "c": ["@"],
+        "i": 100,
+        "p": 130.5,
+        "s": 100.0,
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "x": "V",
+        "z": "C",
+        "S": "AAPL"
+      },
+      "accountLabel": null,
+      "isFinal": true,
+      "source": "rest_latest",
+      "window": null,
+      "version": 2,
+      "provider": "alpaca",
+      "marketSession": "regular",
+      "delayClass": "real_time_exchange_only"
+    },
+    {
+      "ingestTs": "2026-09-11T14:00:03Z",
+      "eventTs": "2026-09-11T14:00:02.123456789Z",
+      "feed": "iex",
+      "channel": "trades",
+      "symbol": "AMD",
+      "seq": 1,
+      "payload": {
+        "c": ["@"],
+        "i": 101,
+        "p": 130.5,
+        "s": 100.0,
+        "t": "2026-09-11T14:00:02.123456789Z",
+        "x": "V",
+        "z": "C",
+        "S": "AMD"
+      },
+      "accountLabel": null,
+      "isFinal": true,
+      "source": "rest_latest",
+      "window": null,
+      "version": 2,
+      "provider": "alpaca",
+      "marketSession": "regular",
+      "delayClass": "real_time_exchange_only"
+    }
+  ]
+}
