@@ -360,6 +360,11 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
+[signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
+15-minute hypothetical outcomes. It is a signal screen, and its overlapping hypotheses do not form a portfolio
+backtest or satisfy the migration's economic acceptance protocol.
+
 Production execution and simulation use `makeTradingEngine`. The engine constructs the execution program and
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
