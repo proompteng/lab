@@ -55,6 +55,10 @@ are omitted; malformed responses fail that channel. It retains deduplication sta
 record. Failed publication remains retryable, acknowledged observations cannot regress in event time, and shutdown
 cancels the polling task. Restarts may republish an equivalent sample with new transport coordinates.
 
+Quote shape, identity, finite nonnegative values and timestamp syntax are validated before age filtering. Stale and
+future quotes are then omitted before checking executable prices, so an expired closing quote with a zero ask cannot
+discard fresh quotes for other symbols. Quotes within the age bound still require positive, non-crossed prices.
+
 `/readyz` reports `latest_rest_observations` separately from WebSocket gates. It includes configured symbols,
 acknowledged provider event times, unavailable symbols and channel errors. An old acknowledged value becomes
 unavailable when its provider age exceeds the configured bound, even when HTTP remains successful. REST publication
