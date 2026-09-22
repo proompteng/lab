@@ -12,7 +12,7 @@ import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
 import { NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
-import { numberToMicros, MICROS } from '../execution-model'
+import { calculateSessionFees, numberToMicros, MICROS } from '../execution-model'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from '../time'
@@ -31,13 +31,14 @@ export const signalStudyDefinition = {
   schemaVersion: 'bayn.jev-signal-study-definition.v1',
   horizonMs: 15 * 60_000,
   entryBudgetMicros: '10000000000',
+  entrySizing: 'Maximum whole shares whose limit-price notional plus entry fees fit the cash budget.',
   limitSlippageBps: 10,
   rules: {
     JEV: 'Reproduce the retained native entry decision at complete batch time, including its threshold and rank.',
     DETERMINISTIC_BREAKOUT:
       'Apply the retained momentum thresholds to every available candidate, ranked by exact benchmark-relative return then symbol.',
     RELATIVE_MOMENTUM:
-      'Positive 30-minute return and positive benchmark-relative return, spread at most 5 bps, positive displayed sizes; rank by exact relative return then symbol.',
+      'Strictly positive exact 30-minute return and benchmark-relative return, spread at most 5 bps, positive displayed sizes; rank by exact relative return then symbol.',
   },
   breakoutThresholds: {
     lookbackReturnBps: defaultIntradayMomentumProtocolDocument.minimumLookbackReturnBps,
@@ -140,7 +141,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
           excessReturn.numerator * 10_000n >= BigInt(t.excessReturnBps) * excessReturn.denominator &&
           metrics.breakoutBps >= t.breakoutBps &&
           metrics.rangeLocationPpm >= t.rangeLocationPpm,
-        relativeMomentum: liquid && metrics.lookbackReturnBps > 0 && excessReturn.numerator > 0n,
+        relativeMomentum: liquid && values.bid + values.ask > 2n * values.reference && excessReturn.numerator > 0n,
       })
     }
     signals.sort((a, b) => {
@@ -270,7 +271,21 @@ export const studyRoundTrip = (input: {
       executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
-    const quantity = (BigInt(signalStudyDefinition.entryBudgetMicros) / sizing.expectedExecutionPriceMicros) * MICROS
+    const budget = BigInt(signalStudyDefinition.entryBudgetMicros)
+    let affordableShares = 0n
+    let maximumShares = budget / sizing.expectedExecutionPriceMicros
+    while (affordableShares < maximumShares) {
+      const shares = (affordableShares + maximumShares + 1n) / 2n
+      const notionalMicros = shares * sizing.expectedExecutionPriceMicros
+      const fees = yield* calculateSessionFees(
+        [{ side: 'buy', quantityMicros: shares * MICROS, notionalMicros }],
+        input.protocol.executionModel,
+        BigInt(input.assumptions.feeMultiplierPpm),
+      )
+      if (notionalMicros + fees.totalMicros <= budget) affordableShares = shares
+      else maximumShares = shares - 1n
+    }
+    const quantity = affordableShares * MICROS
     if (quantity === 0n) return finish({ status: 'NO_ENTRY_FILL', reason: 'budget-below-one-share' })
     const entry = yield* studyIoc({
       ...input,

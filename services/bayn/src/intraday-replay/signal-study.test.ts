@@ -4,7 +4,10 @@ import { Result } from 'effect'
 import { OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
+import { makeJevObservation } from '../jev/observation'
 import type { IntradayQuote } from '../market-data/intraday/model'
+import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import {
   prepareSignalStudyBatch,
   SignalScreenRule,
@@ -65,6 +68,40 @@ test('missing model batch remains unavailable while deterministic rules retain t
   expect(prepared.signals.every((signal) => signal.enterProbability === null)).toBeTrue()
 })
 
+test.each([
+  [0.00005, 'AAPL'],
+  [0, null],
+  [-0.00005, null],
+] as const)('relative momentum applies exact positive return to premium %d', (premium, selected) => {
+  const base = streamingFixture()
+  const query = {
+    ...base.query,
+    symbols: [...fixture.protocol.candidateSymbols, fixture.protocol.benchmarkSymbol].sort(),
+    candidateSymbols: fixture.protocol.candidateSymbols,
+  }
+  const { snapshot } = streamingFixtureFromRaw(
+    makeIntradayMomentumTestSnapshot(
+      fixture.protocol,
+      { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
+      { AAPL: premium },
+    ),
+    query,
+  )
+  const observation = Result.getOrThrow(
+    makeJevObservation({
+      cycleId: fixture.observation.payload.cycleId,
+      authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+      protocol: fixture.protocol,
+      portfolio: fixture.portfolio,
+      snapshot,
+    }),
+  )
+  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, snapshot, observation })
+  const result = Result.getOrThrow(prepareSignalStudyBatch(evidence))
+  expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe(selected)
+  if (premium > 0) expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.metrics.lookbackReturnBps).toBe(0)
+})
+
 test('mutated model results and mismatched observations cannot enter the screen', () => {
   const valid = batch()
   expect(
@@ -110,6 +147,35 @@ test('partial entry limits the exit to the actual acquired quantity', () => {
   const result = Result.getOrThrow(studyRoundTrip({ ...input, entryArrivalQuote: quote(at + 100, { askSize: 5 }) }))
   expect(result.outcome.status).toBe('RESOLVED')
   expect(result.fills.map((fill) => fill.quantityMicros)).toEqual(['5000000', '5000000'])
+})
+
+test.each([1_000_000, 10_000_000])(
+  'entry sizing reserves fees within cash at fee multiplier %d',
+  (feeMultiplierPpm) => {
+    const result = Result.getOrThrow(
+      studyRoundTrip({
+        ...roundTrip(),
+        assumptions: { ...assumptions, feeMultiplierPpm },
+        entryDecisionQuote: quote(at, { bidPrice: 99.9, askPrice: 99.91 }),
+        entryArrivalQuote: quote(at + 100, { bidPrice: 99.98, askPrice: 99.99 }),
+      }),
+    )
+    expect(result.outcome.status).toBe('RESOLVED')
+    expect(result.fills.map((fill) => fill.quantityMicros)).toEqual(['99000000', '99000000'])
+    expect(result.fills[0]?.priceMicros).toBe('100000000')
+  },
+)
+
+test('a share whose notional fits but fees exceed cash remains an explicit unfilled hypothesis', () => {
+  const result = Result.getOrThrow(
+    studyRoundTrip({
+      ...roundTrip(),
+      entryDecisionQuote: quote(at, { bidPrice: 9990, askPrice: 9990.01 }),
+      entryArrivalQuote: quote(at + 100, { bidPrice: 9998.99, askPrice: 9999 }),
+    }),
+  )
+  expect(result.outcome).toEqual({ status: 'NO_ENTRY_FILL', reason: 'budget-below-one-share' })
+  expect(result.fills).toHaveLength(0)
 })
 
 test('partial exit retains unresolved exposure instead of reporting flat profit', () => {

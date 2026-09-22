@@ -57,8 +57,9 @@ bun services/bayn/tools/jev-signal-study.ts \
 The output path must be new. The tool needs no broker credentials, model credentials, or database connection.
 It does not make model calls or place broker orders.
 
-Each available candidate gets an independent hypothetical USD 10,000 entry. Whole-share sizing uses the decision
-quote with a 10 bp limit allowance. Entry reaches the market after the original routing latency. Exit is submitted
+Each available candidate gets an independent hypothetical USD 10,000 cash budget. Whole-share sizing fits both
+entry notional and buy-side fees within that budget, using the decision quote with a 10 bp limit allowance.
+Entry reaches the market after the original routing latency. Exit is submitted
 15 minutes after that entry arrival and incurs the same routing latency. Both legs use the replay's IOC fill model,
 arrival quote validation, displayed liquidity, adverse slippage, and fee ledger. A partial entry limits the exit to the
 actual acquired quantity. A partial exit remains unresolved. A horizon outside the session or source coverage also
