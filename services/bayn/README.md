@@ -365,6 +365,10 @@ For a development comparison of retained Jev entry signals against fixed determi
 15-minute hypothetical outcomes. It is a signal screen, and its overlapping hypotheses do not form a portfolio
 backtest or satisfy the migration's economic acceptance protocol.
 
+The separate [control portfolio command](../../docs/bayn/control-portfolios.md) evaluates full-session deterministic
+development portfolios with independent cash and positions, repeated entries, partial exits, and shared execution
+accounting. Its mechanical management and declared latency scenarios require further matching before acceptance.
+
 Production execution and simulation use `makeTradingEngine`. The engine constructs the execution program and
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
