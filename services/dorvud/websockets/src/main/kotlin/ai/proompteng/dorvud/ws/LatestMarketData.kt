@@ -64,8 +64,6 @@ internal fun decodeLatestMarketData(
         require(listOf(quote.bidPrice, quote.askPrice, quote.bidSize, quote.askSize).all { it.isFinite() && it >= 0 }) {
           "latest response has invalid quote prices or sizes"
         }
-        require(quote.bidPrice <= quote.askPrice) { "latest response has a crossed quote" }
-        require(quote.bidPrice > 0 && quote.askPrice > 0) { "latest response has a zero quote price" }
         message = quote
         timestamp = quote.timestamp
       }
@@ -82,7 +80,12 @@ internal fun decodeLatestMarketData(
       "latest timestamp must be a UTC instant"
     }
     val eventAt = Instant.parse(timestamp)
-    if (eventAt.isAfter(observedAt) || Duration.between(eventAt, observedAt) > Duration.ofMillis(maximumAgeMs)) null else message
+    if (eventAt.isAfter(observedAt) || Duration.between(eventAt, observedAt) > Duration.ofMillis(maximumAgeMs)) return@mapNotNull null
+    if (message is AlpacaQuote) {
+      require(message.bidPrice <= message.askPrice) { "latest response has a crossed quote" }
+      require(message.bidPrice > 0 && message.askPrice > 0) { "latest response has a zero quote price" }
+    }
+    message
   }
 }
 

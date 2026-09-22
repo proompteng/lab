@@ -216,7 +216,12 @@ class LatestMarketDataTest {
 
   @Test
   fun `stale and future non-executable quotes cannot discard fresh peers`() {
-    val quotes = fixture.getValue("quotesResponse").jsonObject.getValue("quotes").jsonObject
+    val quotes =
+      fixture
+        .getValue("quotesResponse")
+        .jsonObject
+        .getValue("quotes")
+        .jsonObject
     for (at in listOf(observedAt.minusSeconds(11), observedAt.plusNanos(1))) {
       val expired =
         JsonObject(
@@ -232,7 +237,12 @@ class LatestMarketDataTest {
   @Test
   fun `stale closing quotes leave only their own symbols unavailable`() =
     runBlocking {
-      val quotes = fixture.getValue("quotesResponse").jsonObject.getValue("quotes").jsonObject
+      val quotes =
+        fixture
+          .getValue("quotesResponse")
+          .jsonObject
+          .getValue("quotes")
+          .jsonObject
       val closing =
         JsonObject(
           quotes.getValue("AAPL").jsonObject +
