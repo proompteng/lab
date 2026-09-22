@@ -61,6 +61,7 @@ export interface ControlPortfolio {
   readonly inventory: ControlInventory
   readonly episodes: readonly ControlEpisode[]
   readonly tradedNotionalMicros: bigint
+  readonly consumedLiquidity: ReadonlyMap<string, bigint>
 }
 
 export const createControlPortfolio = (
@@ -72,6 +73,7 @@ export const createControlPortfolio = (
       inventory: { status: 'FLAT' as const },
       episodes: [],
       tradedNotionalMicros: 0n,
+      consumedLiquidity: new Map<string, bigint>(),
     })),
     Result.mapError((cause) => new ControlStudyFailure({ message: 'Invalid control opening cash', cause })),
   )
@@ -255,8 +257,25 @@ export const applyControlOrder = (portfolio: ControlPortfolio, input: Parameters
     const buying = input.side === OrderSide.Buy
     if ((buying && portfolio.inventory.status !== 'FLAT') || (!buying && portfolio.inventory.status !== 'EXITING'))
       return yield* Result.fail(new ControlStudyFailure({ message: 'Order violates control inventory phase' }))
-    const outcome = yield* studyIoc(input)
+    let outcome = yield* studyIoc(input)
     if (outcome.status !== 'FILLED') return { portfolio, outcome }
+    const quote = input.arrivalQuote
+    if (quote === undefined)
+      return yield* Result.fail(new ControlStudyFailure({ message: 'Filled control order has no arrival quote' }))
+    const liquidityKey = `${input.symbol}:${input.side}:${quote.recordHash}`
+    const consumed = portfolio.consumedLiquidity.get(liquidityKey) ?? 0n
+    if (consumed > 0n) {
+      const displayed = yield* numberToMicros(buying ? quote.value.askSize : quote.value.bidSize)
+      const available = (displayed * BigInt(input.assumptions.availableLiquidityPpm)) / MICROS
+      const remaining = available > consumed ? ((available - consumed) / MICROS) * MICROS : 0n
+      if (remaining === 0n)
+        return {
+          portfolio,
+          outcome: { status: 'CANCELED' as const, reason: 'quote-liquidity-exhausted', quoteHash: quote.recordHash },
+        }
+      if (remaining < input.quantityMicros) outcome = yield* studyIoc({ ...input, quantityMicros: remaining })
+      if (outcome.status !== 'FILLED') return { portfolio, outcome }
+    }
     const ledger = yield* applyReplayFill(
       portfolio.ledger,
       outcome.fill,
@@ -268,6 +287,10 @@ export const applyControlOrder = (portfolio: ControlPortfolio, input: Parameters
       ...portfolio,
       ledger,
       tradedNotionalMicros: portfolio.tradedNotionalMicros + BigInt(outcome.fill.notionalMicros),
+      consumedLiquidity: new Map(portfolio.consumedLiquidity).set(
+        liquidityKey,
+        consumed + BigInt(outcome.fill.quantityMicros),
+      ),
     }
     if (buying)
       return {

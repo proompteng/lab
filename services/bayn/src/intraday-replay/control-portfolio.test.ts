@@ -5,7 +5,10 @@ import { OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
+import { compareRecords } from '../market-data/intraday/verification'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { decideIntradayMomentumCore } from '../strategy/intraday-momentum/decision-core'
+import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import {
   applyControlOrder,
   controlEntryQuantity,
@@ -116,6 +119,54 @@ test('canceled and missing-price exits remain pending until actual remaining sha
   expect(missing.portfolio).toEqual(triggered)
 })
 
+test('exit retries cannot replenish an unchanged quote liquidity budget', () => {
+  let portfolio = exiting()
+  const retained = quote(at + 1_000_100, { bidSize: 1 })
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const sell = order(
+      OrderSide.Sell,
+      at + 1_000_000 + attempt * 500,
+      BigInt(portfolio.ledger.positions[0]?.quantityMicros ?? '0') / 1_000_000n,
+    )
+    portfolio = Result.getOrThrow(applyControlOrder(portfolio, { ...sell, arrivalQuote: retained })).portfolio
+  }
+  expect(portfolio.ledger.fills.filter((fill) => fill.side === 'sell')).toHaveLength(1)
+  expect(portfolio.ledger.positions[0]?.quantityMicros).toBe('9000000')
+  expect(portfolio.episodes).toHaveLength(0)
+  const nextQuote = quote(at + 1_005_100, { bidSize: 1 })
+  portfolio = Result.getOrThrow(
+    applyControlOrder(portfolio, { ...order(OrderSide.Sell, at + 1_005_000, 9n), arrivalQuote: nextQuote }),
+  ).portfolio
+  expect(portfolio.ledger.positions[0]?.quantityMicros).toBe('8000000')
+})
+
+test('quote budgets preserve unspent liquidity and remain independent between counterfactual portfolios', () => {
+  const retained = quote(at + 1_000_100, { bidSize: 3 })
+  const first = {
+    ...order(OrderSide.Sell, at + 1_000_000, 1n),
+    arrivalQuote: retained,
+    assumptions: { ...assumptions, availableLiquidityPpm: 500_000 },
+  }
+  const original = exiting()
+  const once = Result.getOrThrow(applyControlOrder(original, first)).portfolio
+  const again = Result.getOrThrow(
+    applyControlOrder(once, { ...first, decisionAtMs: at + 1_000_500, arrivalAtMs: at + 1_000_600 }),
+  ).portfolio
+  expect(again.ledger.positions[0]?.quantityMicros).toBe('9000000')
+  const independent = Result.getOrThrow(applyControlOrder(original, first)).portfolio
+  expect(independent.ledger.positions[0]?.quantityMicros).toBe('9000000')
+
+  const larger = quote(at + 1_000_100, { bidSize: 10 })
+  const partial = Result.getOrThrow(
+    applyControlOrder(original, { ...order(OrderSide.Sell, at + 1_000_000, 1n), arrivalQuote: larger }),
+  ).portfolio
+  const remaining = Result.getOrThrow(
+    applyControlOrder(partial, { ...order(OrderSide.Sell, at + 1_000_500, 9n), arrivalQuote: larger }),
+  ).portfolio
+  expect(remaining.episodes).toHaveLength(1)
+  expect(remaining.ledger.positions).toHaveLength(0)
+})
+
 test('mechanical stops require fresh quotes and retained policy holds until the close window', () => {
   const common = {
     portfolio: entry(),
@@ -197,6 +248,36 @@ test('control signal uses the full verified snapshot and rejects stale benchmark
     },
   }
   expect(Result.isFailure(selectControlSymbol(stale, ControlPolicy.RelativeMomentum, fixture.protocol))).toBeTrue()
+})
+
+test('retained breakout accepts a fresh benchmark quote when its trade is older than candidate freshness', () => {
+  const later = nativeJevFixture(undefined, new Date(at + 30_000).toISOString())
+  const observedAtMs = Date.parse(later.snapshot.manifest.observedAt)
+  const snapshot = {
+    ...later.snapshot,
+    trades: later.snapshot.trades.map((trade) =>
+      trade.symbol === 'SPY' ? { ...trade, eventAt: new Date(observedAtMs - 25_000).toISOString() } : trade,
+    ),
+  }
+  const native = Result.getOrThrow(
+    decideIntradayMomentumCore({
+      observedAt: snapshot.manifest.observedAt,
+      protocol: defaultIntradayMomentumProtocolDocument,
+      latestQuotes: snapshot.latestQuotes,
+      latestTrades: Object.fromEntries(snapshot.trades.toSorted(compareRecords).map((trade) => [trade.symbol, trade])),
+      rollingPrices: Object.fromEntries(
+        snapshot.manifest.streaming.features.map(({ value }) => [value.material.symbol, value.material.values]),
+      ),
+      candidateExclusions: snapshot.manifest.candidateExclusions ?? [],
+    }),
+  )
+  expect(native.selectedSymbols).toEqual(['AAPL'])
+  expect(Result.getOrThrow(selectControlSymbol(snapshot, ControlPolicy.RetainedBreakout, later.protocol))).toBe(
+    native.selectedSymbols[0],
+  )
+  expect(Result.getOrThrow(selectControlSymbol(snapshot, ControlPolicy.RepeatedBreakout, later.protocol))).toBe(
+    native.selectedSymbols[0],
+  )
 })
 
 test('retained breakout preserves the native breakout tie-break after equal relative returns', () => {

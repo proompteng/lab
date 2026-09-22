@@ -27,6 +27,7 @@ const simulate = async (
     dataCostMicros?: string
     maximumLossMicros?: string
     maximumDrawdownMicros?: string
+    zeroBidAtMs?: number
   } = {},
 ) => {
   let clock = openMs - 1
@@ -48,7 +49,7 @@ const simulate = async (
           ...original,
           eventAt: at,
           ingestedAt: at,
-          bidSize: options.tinyExit === true ? 1 : 1000,
+          bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
           askSize: 1000,
         }
         return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
@@ -157,6 +158,19 @@ test('missing exit prices retain the position and missing marks through close', 
   expect(report.completedEpisodes).toBe(0)
   expect(report.netPnlAfterKnownCostsMicros).toBeNull()
   expect(report.ledger.positions).toHaveLength(1)
+})
+
+test('a zero-size bid leaves a missing valuation even when the position later closes', async () => {
+  const zeroBidAtMs = openMs + 40 * 60_000
+  const { report } = await simulate({ zeroBidAtMs })
+  expect(report.ledger.positions).toHaveLength(0)
+  expect(report.completedEpisodes).toBeGreaterThan(0)
+  expect(report.completion).toBe('INCOMPLETE')
+  expect(report.issues).toContain('MISSING_VALUATION')
+  expect(report.marks.find((mark) => Date.parse(mark.observedAt) === zeroBidAtMs)).toMatchObject({
+    equityMicros: null,
+    cause: 'no-displayed-bid-liquidity',
+  })
 })
 
 test('small exit liquidity retries the same inventory and counts only completed episodes', async () => {

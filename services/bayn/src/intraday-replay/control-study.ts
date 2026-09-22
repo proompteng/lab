@@ -50,7 +50,7 @@ export const controlStudyDefinition = {
   sizing:
     'Bayn target allocation and order/symbol/turnover bounds, whole shares, cash reserved for cumulative fees at the adverse buy limit.',
   execution:
-    'Fresh decision and arrival quotes, shared native IOC execution and accounting. One entry IOC; persistent risk-reducing exit retries on the next poll.',
+    'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   limitations: [
     'DEVELOPMENT_CONTROL_PORTFOLIOS. Not the frozen matched-control acceptance experiment or a prospective qualification.',
     'No model calls or invented Jev decisions. Repeated controls use deterministic management and therefore are not management-matched to the deployed Jev strategy.',
@@ -142,7 +142,13 @@ export const runControlSession = (input: {
       Effect.gen(function* () {
         const position = portfolio.ledger.positions[0]
         const quote = position === undefined ? undefined : yield* market.quoteAt(position.symbol, atMs)
-        const rejection = position === undefined ? null : replayQuoteRejection(quote, position.symbol, atMs, protocol)
+        const rejection =
+          position === undefined
+            ? null
+            : (replayQuoteRejection(quote, position.symbol, atMs, protocol) ??
+              (quote !== undefined && Number.isFinite(quote.value.bidSize) && quote.value.bidSize > 0
+                ? null
+                : 'no-displayed-bid-liquidity'))
         if (rejection !== null) {
           marks.push({
             observedAt: utcInstantFromEpochMillis(atMs),

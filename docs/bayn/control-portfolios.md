@@ -40,11 +40,17 @@ execution core. The shared ledger accounts for actual fills and fees. Partial en
 partial exits keep the original exit trigger and retry the remaining shares. Only a flat-to-position-to-flat
 interval counts as a completed episode. Risk-reducing exits remain possible after the daily turnover cap.
 
+Each portfolio tracks consumed liquidity by quote identity, symbol, and side. Retrying against the same quote can
+fill only its remaining whole-share budget after the declared availability fraction. A later quote supplies a new
+budget. Counterfactual portfolios have independent budgets.
+
 The declared `decisionLatencyMs` covers the research scenario's full construction, evaluation, and persistence
 delay. Routing delay comes from the native replay assumptions and is added separately. The command does not
 measure full runtime latency. A scenario value cannot be presented as observed p95 latency.
 
-Every session retains opening, closing, and one-minute marked equity at executable bid. Missing observations,
+Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
+A zero-size bid produces a missing mark even if liquidity returns and the position closes later. Positive displayed
+size does not prove that the full position could be liquidated at that price. Missing observations,
 execution quotes, or marks make the session `INCOMPLETE`. Canceled IOC orders remain recorded. Unclosed positions
 retain a null realized result. Model charges are zero because controls make no model calls. Allocated data costs
 are charged once per policy per session, including zero-trade sessions. Reports also subtract an additional 10 bp
