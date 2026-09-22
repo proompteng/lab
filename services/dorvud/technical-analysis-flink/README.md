@@ -68,6 +68,14 @@ from new inputs instead of claiming that old truncated history contains a comple
 Subsequent checkpoints restore the complete new state. The restore tests cover open microbar buckets, duplicate
 redelivery, recursive seeds, and session totals. The rolling-price feature state and contract below are unchanged.
 
+## Sampled REST observations
+
+Trade envelopes with `source=rest_latest` contain filtered point samples from Alpaca's latest-trade endpoint. The trade
+parser excludes them before event-time watermarks and volume aggregation. Quote samples can update quote state, and
+the raw archive retains the original records. The minute-bar feature branches remain bar-derived. Deploy this
+exclusion before enabling the producer's `ALPACA_LATEST_SYMBOLS` setting. No operator IDs or checkpoint state schemas
+change for this exclusion. See the [producer contract](../README.md#latest-quote-and-trade-observations).
+
 ## ClickHouse sink batching
 
 The equity TA sinks bound `TA_CLICKHOUSE_BATCH_SIZE` to 1–1,000 rows. The deployed 1,000-row setting reaches the JDBC

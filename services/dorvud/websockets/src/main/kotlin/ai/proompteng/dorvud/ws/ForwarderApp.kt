@@ -12,7 +12,6 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -342,6 +341,8 @@ class ForwarderApp(
   private val marketDataFeeds = config.marketDataFeedConfigs().map { MarketDataFeedRuntimeState(it, config, nowMs) }
   private val coreMarketDataFeed = marketDataFeeds.single { it.config.core }
   private val barRecovery = BarRecovery(Duration.ofHours(config.barsBackfillLookbackHours))
+  private val rest = AlpacaRestClient(config, this.httpClient)
+  private val latestMarketData = config.latestMarketData?.let { LatestMarketDataPoller(it, config.alpacaBaseUrl, rest, nowMs) }
   private val tradeUpdatesReconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
 
   fun start(): Job {
@@ -405,6 +406,16 @@ class ForwarderApp(
                 streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
+
+        config.latestMarketData?.let { latest ->
+          jobs +=
+            launch {
+              while (isActive) {
+                pollLatestMarketData(producer)
+                delay(latest.pollIntervalMs)
+              }
+            }
+        }
 
         if (tradeUpdatesEnabled) {
           val tradeStreamUrl = config.alpacaTradeStreamUrl
@@ -479,6 +490,7 @@ class ForwarderApp(
       alpacaMarketDataWs = coreMarketDataFeed.websocketStatus.get(),
       marketDataChannels = channelSnapshot,
       marketDataFeeds = feedSnapshot,
+      latestRestObservations = latestMarketData?.coverage(),
       marketDataUniverse =
         config.universeContract?.let { contract ->
           MarketDataUniverseInfo(
@@ -1225,6 +1237,20 @@ class ForwarderApp(
     }
   }
 
+  internal suspend fun pollLatestMarketData(producer: KafkaProducer<String, String>) {
+    latestMarketData?.poll(coreMarketDataFeed.sequence::next) { envelope ->
+      val topic = requireNotNull(coreMarketDataFeed.config.topicFor(envelope.channel, config.alpacaMarketType))
+      recordLag(envelope, coreMarketDataFeed)
+      suspendCancellableCoroutine<Unit> { continuation ->
+        sendKafka(producer, topic, envelope, onCompletion = { error ->
+          if (continuation.isActive) {
+            if (error == null) continuation.resume(Unit) else continuation.resumeWithException(error)
+          }
+        })
+      }
+    }
+  }
+
   internal suspend fun reconcileBars(
     producer: KafkaProducer<String, String>,
     seq: SeqTracker,
@@ -1350,7 +1376,7 @@ class ForwarderApp(
       val query = alpacaTradesBackfillQuery(config, symbols, requestNow, pageToken)
       val response =
         decodeAlpacaTradesResponse(
-          httpClient
+          rest
             .get(url) {
               parameter("symbols", query.symbols)
               parameter("start", query.start)
@@ -1359,9 +1385,7 @@ class ForwarderApp(
               parameter("sort", query.sort)
               query.feed?.let { parameter("feed", it) }
               query.pageToken?.let { parameter("page_token", it) }
-              header("APCA-API-KEY-ID", config.alpacaKeyId)
-              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
-            }.body(),
+            },
           json,
         )
 
@@ -1408,9 +1432,8 @@ class ForwarderApp(
       val query = alpacaBarsBackfillQuery(config, symbols, window, pageToken)
       val response =
         decodeAlpacaBarsResponse(
-          httpClient
+          rest
             .get(url) {
-              expectSuccess = true
               parameter("symbols", query.symbols)
               parameter("timeframe", query.timeframe)
               parameter("start", query.start)
@@ -1419,9 +1442,7 @@ class ForwarderApp(
               parameter("sort", query.sort)
               query.feed?.let { parameter("feed", it) }
               query.pageToken?.let { parameter("page_token", it) }
-              header("APCA-API-KEY-ID", config.alpacaKeyId)
-              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
-            }.body(),
+            },
           json,
         )
 

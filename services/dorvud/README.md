@@ -26,6 +26,55 @@ intervals the provider omits. Recovered envelopes keep `source=rest` and their a
 establish earlier live availability. Restarts repeat the bounded scan and may republish equivalent bars; consumers
 retain their existing revision and duplicate handling. Recovery does not satisfy live WebSocket freshness gates.
 
+## Latest quote and trade observations
+
+The producer can supply missing IEX quotes and trades with Alpaca's bulk
+[latest-quotes](https://docs.alpaca.markets/us/reference/stocklatestquotes-1) and
+[latest-trades](https://docs.alpaca.markets/us/reference/stocklatesttrades-1) endpoints. Enable it with
+`ALPACA_LATEST_SYMBOLS`, listing static equity symbols that have neither quote nor trade WebSocket subscriptions.
+The configuration requires one shard and the existing IEX feed. An absent symbol list disables polling. The production
+list remains absent until the consumer rollout below is verified.
+
+`ALPACA_LATEST_POLL_INTERVAL_MS` defaults to 2,000 ms and accepts values from 2,000 to 60,000 ms. Each pass requests both
+channels; the next pass starts after the current pass finishes and the interval elapses. `ALPACA_LATEST_MAX_AGE_MS`
+defaults to 10,000 ms and accepts values from 1,000 to 10,000 ms. A five-second deadline bounds each channel's request
+and Kafka acknowledgements. The shared REST client spaces request starts by at least 500 ms, including every historical
+recovery page, and applies provider retry and reset headers. A rate limit without usable headers delays requests for
+60 seconds. Each HTTP request has a ten-second deadline. These are per-process limits; production uses one replica
+with a Recreate rollout.
+
+Emitted version-2 envelopes use `source=rest_latest`. They preserve provider event timestamps, numeric values,
+exchanges, conditions and trade IDs, and record actual HTTP arrival time in `ingestTs`. Alpaca's latest-trade endpoint
+excludes odd lots and other trades that do not update bar prices. Repeated polling also omits intermediate events.
+These records are point samples. Both technical-analysis trade-volume aggregators exclude them before creating
+microbars. Provider bars continue to supply Bayn's volume and technical features.
+
+The poller validates each response before publication. Missing symbols produce no observation; stale or future events
+are omitted; malformed responses fail that channel. It retains deduplication state only after Kafka acknowledges the
+record. Failed publication remains retryable, acknowledged observations cannot regress in event time, and shutdown
+cancels the polling task. Restarts may republish an equivalent sample with new transport coordinates.
+
+`/readyz` reports `latest_rest_observations` separately from WebSocket gates. It includes configured symbols,
+acknowledged provider event times, unavailable symbols and channel errors. An old acknowledged value becomes
+unavailable when its provider age exceeds the configured bound, even when HTTP remains successful. REST publication
+does not satisfy WebSocket subscription or event-freshness gates. Bayn still applies its own snapshot and Jev pricing
+checks. The Kafka record retains sample provenance; Bayn's snapshot binds normalized values and source coordinates.
+
+Roll out the TA sample exclusions and the producer implementation first. Verify the deployed TA image contains the
+exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The intended missing set is
+`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`; keep the existing 16 bar and seven quote/trade WebSocket subscriptions.
+Activation requires regular-session proof that actual provider events for these symbols reach Bayn and change its
+candidate coverage. Access checks and readiness alone cannot establish this. Existing historical captures retain their
+gaps, and completing the input stream does not establish a profitable strategy.
+
+`fixtures/alpaca-latest-v1.json` is a shared provider-to-envelope fixture checked by the real producer publication path
+and Bayn's immutable snapshot/replay tests. Run producer and consumer checks from this directory:
+
+```sh
+./gradlew :platform:test :websockets:test :technical-analysis:test :technical-analysis-flink:test
+./gradlew :platform:ktlintCheck :websockets:ktlintCheck :technical-analysis:ktlintCheck :technical-analysis-flink:ktlintCheck
+```
+
 See [the Flink guide](technical-analysis-flink/README.md) for contracts, state migration, and validation, and the
 [Bayn streaming design](../../docs/bayn/streaming-market-data-design.md) for the consumer and replay architecture.
 

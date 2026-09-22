@@ -1,6 +1,7 @@
 package ai.proompteng.dorvud.ta.flink
 
 import ai.proompteng.dorvud.platform.Envelope
+import ai.proompteng.dorvud.platform.LATEST_REST_SOURCE
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.json.Json
@@ -39,6 +40,7 @@ internal class ParseRecordedTrade : RichFlatMapFunction<ArchiveKafkaRecord, Reco
         rejected.inc()
         return
       }
+    if (envelope.source == LATEST_REST_SOURCE) return
     val trade = envelope.payload
     if (!trade.p.isFinite() || trade.p <= 0 || !trade.s.isFinite() || trade.s <= 0 || envelope.eventTs != trade.t) {
       rejected.inc()
