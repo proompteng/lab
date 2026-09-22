@@ -24,6 +24,12 @@ range-position tie-breaks. Relative momentum ranks by exact benchmark-relative r
 source exclusions are retained. A successful observation consumes that signal window, so a canceled entry waits
 for fresh evidence from a later window.
 
+Polls stay on a fixed schedule anchored to session open. Decision and routing latency consume time without shifting
+that schedule. If work lasts beyond a scheduled poll, the portfolio resumes at the first scheduled poll at or after
+completion. It evaluates the latest eligible window at that time; it never rewinds the source or reconstructs a
+missed decision with later information. This research schedule does not reproduce the native controller's durable
+scheduling machinery.
+
 The retained control reproduces its selection and successful-entry close lifecycle. This lightweight runner does
 not reproduce the historical strategy's persistence, reconciliation, authority, retry machinery, or market-close
 fallback. Use the native execution engine to verify those behaviors.
@@ -49,6 +55,9 @@ delay. Routing delay comes from the native replay assumptions and is added separ
 measure full runtime latency. A scenario value cannot be presented as observed p95 latency.
 
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
+It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid
+mark updates peak equity, drawdown, and session loss before subsequent entry risk checks. Intermediate peaks remain
+binding after the position closes, and the peak carries into later sessions.
 A zero-size bid produces a missing mark even if liquidity returns and the position closes later. Positive displayed
 size does not prove that the full position could be liquidated at that price. Missing observations,
 execution quotes, or marks make the session `INCOMPLETE`. Canceled IOC orders remain recorded. Unclosed positions

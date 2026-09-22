@@ -22,16 +22,19 @@ const simulate = async (
     missingSnapshot?: boolean
     missingExitQuotes?: boolean
     decisionLatencyMs?: number
+    pollIntervalMs?: number
     emptyAssets?: boolean
     tinyExit?: boolean
     dataCostMicros?: string
     maximumLossMicros?: string
     maximumDrawdownMicros?: string
     zeroBidAtMs?: number
+    bidPriceAtMs?: (atMs: number, referencePrice: number) => number
   } = {},
 ) => {
   let clock = openMs - 1
   let snapshots = 0
+  const observations: { atMs: number; rangeEndMs: number }[] = []
   const market: ControlMarket = {
     advanceTo: (atMs) =>
       Effect.sync(() => {
@@ -45,8 +48,11 @@ const simulate = async (
         if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 44 * 60_000))
           return undefined
         const at = new Date(atMs).toISOString()
+        const bidPrice = options.bidPriceAtMs?.(atMs, original.bidPrice) ?? original.bidPrice
         const value = {
           ...original,
+          bidPrice,
+          askPrice: original.askPrice + (bidPrice - original.bidPrice),
           eventAt: at,
           ingestedAt: at,
           bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
@@ -58,6 +64,7 @@ const simulate = async (
       Effect.sync(() => {
         snapshots += 1
         expect(Date.parse(query.observedAt)).toBe(clock)
+        observations.push({ atMs: clock, rangeEndMs: Date.parse(query.rangeEndAt) })
         if (options.missingSnapshot === true)
           return { status: 'UNAVAILABLE' as const, cause: { reason: 'fixture-missing-benchmark' } }
         const snapshot = {
@@ -101,13 +108,13 @@ const simulate = async (
       dataCostMicros: options.dataCostMicros ?? '0',
       targetWeight: 0.1,
       decisionLatencyMs: options.decisionLatencyMs ?? 1000,
-      pollIntervalMs: 30_000,
+      pollIntervalMs: options.pollIntervalMs ?? 30_000,
       assumptions,
       eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
       market,
     }),
   )
-  return { report, snapshots }
+  return { report, snapshots, observations }
 }
 
 test('chronological controls reuse flat cash, respect full decision and route latency, and mark open through close', async () => {
@@ -126,7 +133,7 @@ test('chronological controls reuse flat cash, respect full decision and route la
   if (firstDecision === undefined || firstOrder === undefined) throw new Error('Expected first decision and order')
   expect(Date.parse(firstOrder.submittedAt) - Date.parse(firstDecision.observedAt)).toBe(1000)
   expect(Date.parse(firstOrder.arrivedAt) - Date.parse(firstOrder.submittedAt)).toBe(100)
-  expect(report.marks).toHaveLength(91)
+  expect(report.marks.filter((mark) => (Date.parse(mark.observedAt) - openMs) % 60_000 === 0)).toHaveLength(91)
   expect(report.marks[0]?.equityMicros).toBe('99999000000')
   expect(report.marks.at(-1)?.observedAt).toBe(new Date(closeMs).toISOString())
   expect(report.marks.at(-1)?.equityMicros).toBe(report.ledger.cashMicros)
@@ -136,6 +143,46 @@ test('chronological controls reuse flat cash, respect full decision and route la
   expect(report.episodes.reduce((sum, episode) => sum + BigInt(episode.netExecutionPnlMicros), 0n)).toBe(
     BigInt(report.ledger.netRealizedPnlAfterCostsMicros ?? '0'),
   )
+})
+
+test('decision latency does not accumulate into skipped signal windows while flat', async () => {
+  const { report, observations } = await simulate({ emptyAssets: true, pollIntervalMs: 60_000 })
+  expect(report.orders).toHaveLength(0)
+  expect(observations.map(({ rangeEndMs }) => rangeEndMs)).toEqual(
+    Array.from({ length: 54 }, (_, index) => openMs + (30 + index) * 60_000),
+  )
+  expect(observations.every(({ atMs }) => (atMs - openMs) % 60_000 === 0)).toBeTrue()
+})
+
+test('a decision longer than the poll interval resumes at the first available scheduled poll', async () => {
+  const pollIntervalMs = 17_000
+  const decisionLatencyMs = 60_000
+  const { report, observations } = await simulate({ emptyAssets: true, pollIntervalMs, decisionLatencyMs })
+  expect(report.orders).toHaveLength(0)
+  expect(observations.length).toBeGreaterThan(40)
+  for (const [index, observation] of observations.entries()) {
+    expect((observation.atMs - openMs) % pollIntervalMs).toBe(0)
+    const previous = observations[index - 1]
+    if (previous !== undefined) {
+      expect(observation.atMs).toBeGreaterThanOrEqual(previous.atMs + decisionLatencyMs)
+      expect(observation.atMs).toBeLessThan(previous.atMs + decisionLatencyMs + pollIntervalMs)
+    }
+  }
+})
+
+test('an equity peak between minute marks blocks re-entry after the drawdown limit is exceeded', async () => {
+  const peakStartMs = openMs + 40 * 60_000 + 20_000
+  const peakEndMs = openMs + 40 * 60_000 + 45_000
+  const { report } = await simulate({
+    maximumDrawdownMicros: '100000000',
+    bidPriceAtMs: (atMs, referencePrice) => referencePrice + (atMs >= peakStartMs && atMs < peakEndMs ? 100 : 0),
+  })
+  expect(report.completion).toBe('COMPLETE')
+  expect(BigInt(report.peakEquityMicros)).toBeGreaterThan(100_100_000_000n)
+  expect(BigInt(report.maximumMarkedDrawdownMicros)).toBeGreaterThan(100_000_000n)
+  expect(report.completedEpisodes).toBe(1)
+  expect(report.orders.filter((order) => order.side === OrderSide.Buy)).toHaveLength(1)
+  expect(report.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
 })
 
 test('missing observations retain zero-trade sessions as incomplete instead of inventing entries', async () => {
@@ -263,7 +310,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         expect(session.completion).toBe('INCOMPLETE')
         expect(session.completedEpisodes).toBe(0)
         expect(session.netPnlAfterKnownCostsMicros).toBe('-1000000')
-        expect(session.marks).toHaveLength(391)
+        expect(session.marks.filter((mark) => Date.parse(mark.observedAt) % 60_000 === 0)).toHaveLength(391)
         expect(session.missingDecisions).toBeGreaterThan(0)
       }
       const { reportHash, ...material } = report

@@ -46,11 +46,13 @@ export const controlStudyDefinition = {
       'Jev candidate universe, exact positive return and benchmark-relative return, mechanical stop and maximum hold, repeated entries.',
   },
   opportunityClock:
-    'Each flat portfolio evaluates every eligible completed signal window. Breakout policies use native momentum ranking including all tie-breaks. Relative momentum ranks by exact relative return, then symbol. No repeated entry evaluation in a successfully observed window.',
+    'Polls are anchored to session open. After decision and routing work, resume at the first scheduled poll at or after completion; never replay missed polls. Each flat portfolio evaluates the latest eligible completed signal window once successfully observed. Breakout policies use native momentum ranking including all tie-breaks. Relative momentum ranks by exact relative return, then symbol.',
   sizing:
     'Bayn target allocation and order/symbol/turnover bounds, whole shares, cash reserved for cumulative fees at the adverse buy limit.',
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
+  valuation:
+    'Retain session boundaries, one-minute marks, each poll, decision completion and before/after order outcomes. Every valid mark updates carried peak equity, drawdown and session loss before subsequent entry risk checks.',
   limitations: [
     'DEVELOPMENT_CONTROL_PORTFOLIOS. Not the frozen matched-control acceptance experiment or a prospective qualification.',
     'No model calls or invented Jev decisions. Repeated controls use deterministic management and therefore are not management-matched to the deployed Jev strategy.',
@@ -182,8 +184,10 @@ export const runControlSession = (input: {
           nextMarkMs += 60_000
         }
         yield* market.advanceTo(atMs)
+        if (marks.at(-1)?.observedAt !== utcInstantFromEpochMillis(atMs)) yield* mark(atMs)
       })
     let atMs = openMs
+    let nextPollMs = openMs
     while (atMs < closeMs) {
       yield* advanceTo(atMs)
       const held = portfolio.ledger.positions[0]
@@ -311,6 +315,7 @@ export const runControlSession = (input: {
               }),
             )
             portfolio = result.portfolio
+            yield* mark(atMs)
             if (result.outcome.status === 'UNRESOLVED') missingExecutionQuotes += 1
             orders.push({
               submittedAt: utcInstantFromEpochMillis(submittedAtMs),
@@ -324,7 +329,8 @@ export const runControlSession = (input: {
             decisions.push({ observedAt: utcInstantFromEpochMillis(atMs), status: 'RISK_OR_CAPITAL_BLOCKED', symbol })
         }
       }
-      atMs = Math.min(atMs + input.pollIntervalMs, closeMs)
+      nextPollMs += Math.max(1, Math.ceil((atMs - nextPollMs) / input.pollIntervalMs)) * input.pollIntervalMs
+      atMs = Math.min(nextPollMs, closeMs)
     }
     yield* advanceTo(closeMs)
     if (marks.at(-1)?.observedAt !== utcInstantFromEpochMillis(closeMs)) yield* mark(closeMs)
