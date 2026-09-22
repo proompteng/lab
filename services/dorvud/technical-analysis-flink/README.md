@@ -71,10 +71,16 @@ redelivery, recursive seeds, and session totals. The rolling-price feature state
 ## Sampled REST observations
 
 Trade envelopes with `source=rest_latest` contain filtered point samples from Alpaca's latest-trade endpoint. The trade
-parser excludes them before event-time watermarks and volume aggregation. Quote samples can update quote state, and
-the raw archive retains the original records. The minute-bar feature branches remain bar-derived. Deploy this
-exclusion before enabling the producer's `ALPACA_LATEST_SYMBOLS` setting. No operator IDs or checkpoint state schemas
-change for this exclusion. See the [producer contract](../README.md#latest-quote-and-trade-observations).
+parser excludes them before event-time watermarks and volume aggregation. Quote samples can update quote state.
+Kafka retains the original envelopes for its configured retention period. ClickHouse archive rows retain normalized
+values and Kafka coordinates, but omit the `source` discriminator and complete provider payload. Preserve the original
+Kafka envelopes for experiments that need to distinguish REST samples from streaming observations. The minute-bar
+feature branches remain bar-derived.
+
+Deploy this exclusion before enabling the producer's `ALPACA_LATEST_SYMBOLS` setting. No operator IDs or checkpoint
+state schemas change for this exclusion. Disabling polling does not remove retained `rest_latest` records. A rollback
+must retain compatible volume exclusions or verify that restored offsets cannot replay sampled records into an older
+volume consumer. See the [producer contract](../README.md#latest-quote-and-trade-observations).
 
 ## ClickHouse sink batching
 

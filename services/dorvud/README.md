@@ -61,6 +61,9 @@ acknowledged provider event times, unavailable symbols and channel errors. An ol
 unavailable when its provider age exceeds the configured bound, even when HTTP remains successful. REST publication
 does not satisfy WebSocket subscription or event-freshness gates. Bayn still applies its own snapshot and Jev pricing
 checks. The Kafka record retains sample provenance; Bayn's snapshot binds normalized values and source coordinates.
+ClickHouse quote and trade archive rows retain normalized values and Kafka coordinates, but omit the `source`
+discriminator and complete provider payload. Preserve the original Kafka envelopes when acquisition provenance is
+required beyond Kafka's configured retention period.
 
 Roll out the TA sample exclusions and the producer implementation first. Verify the deployed TA image contains the
 exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The intended missing set is
@@ -68,6 +71,9 @@ exclusion before adding `ALPACA_LATEST_SYMBOLS` through GitOps. The intended mis
 Activation requires regular-session proof that actual provider events for these symbols reach Bayn and change its
 candidate coverage. Access checks and readiness alone cannot establish this. Existing historical captures retain their
 gaps, and completing the input stream does not establish a profitable strategy.
+
+Disabling polling does not remove retained sampled records. Keep compatible volume exclusions during rollback, or
+verify that restored offsets cannot replay sampled records into an older volume consumer.
 
 `fixtures/alpaca-latest-v1.json` is a shared provider-to-envelope fixture checked by the real producer publication path
 and Bayn's immutable snapshot/replay tests. Run producer and consumer checks from this directory:
