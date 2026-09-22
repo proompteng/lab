@@ -28,6 +28,7 @@ import java.util.concurrent.TimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class LatestMarketDataTest {
@@ -212,6 +213,71 @@ class LatestMarketDataTest {
       assertFailsWith<Exception> { decode(invalid) }
     }
   }
+
+  @Test
+  fun `stale and future non-executable quotes cannot discard fresh peers`() {
+    val quotes =
+      fixture
+        .getValue("quotesResponse")
+        .jsonObject
+        .getValue("quotes")
+        .jsonObject
+    for (at in listOf(observedAt.minusSeconds(11), observedAt.plusNanos(1))) {
+      val expired =
+        JsonObject(
+          quotes.getValue("AAPL").jsonObject +
+            mapOf("ap" to JsonPrimitive(0), "as" to JsonPrimitive(0), "t" to JsonPrimitive(at.toString())),
+        )
+      val body = JsonObject(mapOf("quotes" to JsonObject(quotes + ("AAPL" to expired)))).toString()
+      val decoded = decodeLatestMarketData(body, LatestMarketDataChannel.Quotes, setOf("AAPL", "AMD"), observedAt, 10_000)
+      assertEquals("AMD", assertIs<AlpacaQuote>(decoded.single()).symbol)
+    }
+  }
+
+  @Test
+  fun `stale closing quotes leave only their own symbols unavailable`() =
+    runBlocking {
+      val quotes =
+        fixture
+          .getValue("quotesResponse")
+          .jsonObject
+          .getValue("quotes")
+          .jsonObject
+      val closing =
+        JsonObject(
+          quotes.getValue("AAPL").jsonObject +
+            mapOf("ap" to JsonPrimitive(0), "as" to JsonPrimitive(0), "t" to JsonPrimitive(observedAt.minusSeconds(11).toString())),
+        )
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            val channel = request.url.encodedPath.split('/')[3]
+            respond(
+              if (channel == "quotes") {
+                JsonObject(mapOf("quotes" to JsonObject(quotes + ("AAPL" to closing)))).toString()
+              } else {
+                fixture.getValue("tradesResponse").toString()
+              },
+            )
+          },
+        )
+      try {
+        val poller =
+          LatestMarketDataPoller(
+            requireNotNull(config.latestMarketData),
+            config.alpacaBaseUrl,
+            AlpacaRestClient(config, client),
+          ) { observedAt.toEpochMilli() }
+        val delivered = mutableListOf<Envelope<JsonElement>>()
+        poller.poll(SeqTracker()::next) { delivered += it }
+        assertEquals(listOf("AMD"), delivered.filter { it.channel == "quotes" }.map { it.symbol })
+        assertEquals(listOf("AAPL"), poller.coverage().unavailableSymbols["quotes"])
+        assertEquals(emptyList(), poller.coverage().unavailableSymbols["trades"])
+        assertTrue(poller.coverage().errors.isEmpty())
+      } finally {
+        client.close()
+      }
+    }
 
   @Test
   fun `an HTTP deadline remains retryable without canceling its recovery caller`() =
