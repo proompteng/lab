@@ -12,6 +12,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -22,6 +24,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.TimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -211,12 +214,45 @@ class LatestMarketDataTest {
   }
 
   @Test
+  fun `an HTTP deadline remains retryable without canceling its recovery caller`() =
+    runBlocking {
+      val canceled = CompletableDeferred<Unit>()
+      var requests = 0
+      val client =
+        HttpClient(
+          MockEngine {
+            requests++
+            if (requests == 1) {
+              try {
+                awaitCancellation()
+              } finally {
+                canceled.complete(Unit)
+              }
+            } else {
+              respond("{}")
+            }
+          },
+        )
+      try {
+        val rest = AlpacaRestClient(config, client)
+        assertFailsWith<TimeoutException> { rest.get("https://data.alpaca.markets/v2/stocks/bars") {} }
+        canceled.await()
+        assertTrue(isActive)
+        assertEquals("{}", rest.get("https://data.alpaca.markets/v2/stocks/bars") {})
+        assertEquals(2, requests)
+      } finally {
+        client.close()
+      }
+    }
+
+  @Test
   fun `latest requests and historical pages share pacing and provider backoff`() =
     runBlocking {
       val requests = mutableListOf<Long>()
       val client =
         HttpClient(
           MockEngine {
+            if (requests.isEmpty()) delay(200)
             requests += System.currentTimeMillis()
             if (requests.size ==
               2
@@ -233,8 +269,8 @@ class LatestMarketDataTest {
         assertFailsWith<io.ktor.client.plugins.ClientRequestException> { rest.get("https://data.alpaca.markets/v2/stocks/bars") {} }
         rest.get("https://data.alpaca.markets/v2/stocks/trades/latest") {}
         assertEquals(3, requests.size)
-        assertTrue(requests[1] - requests[0] >= 500)
-        assertTrue(requests[2] - requests[1] >= 3000)
+        assertTrue(requests[1] - requests[0] >= 500, "provider request spacing was ${requests[1] - requests[0]} ms")
+        assertTrue(requests[2] - requests[1] >= 3000, "provider backoff was ${requests[2] - requests[1]} ms")
       } finally {
         client.close()
       }

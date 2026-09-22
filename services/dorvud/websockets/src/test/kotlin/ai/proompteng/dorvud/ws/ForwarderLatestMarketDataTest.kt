@@ -6,7 +6,10 @@ import io.ktor.client.engine.mock.respond
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -76,6 +79,44 @@ class ForwarderLatestMarketDataTest {
         assertFalse(app.readinessInfo().gates.alpacaWs)
         assertEquals(0, app.readinessInfo().alpacaMarketDataWs.subscribedSymbolCount)
       } finally {
+        app.stop()
+        client.close()
+      }
+    }
+
+  @Test
+  fun `canceling publication interrupts a blocking Kafka send without acknowledging the sample`() =
+    runBlocking {
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            respond(fixture.getValue("${request.url.encodedPath.split('/')[3]}Response").toString())
+          },
+        )
+      val entered = CompletableDeferred<Unit>()
+      val interrupted = CompletableDeferred<Unit>()
+      val producer = mockk<KafkaProducer<String, String>>(relaxed = true)
+      every { producer.send(any<ProducerRecord<String, String>>(), any<Callback>()) } answers {
+        entered.complete(Unit)
+        try {
+          Thread.sleep(3000)
+          CompletableFuture.completedFuture(mockk<RecordMetadata>())
+        } catch (error: InterruptedException) {
+          interrupted.complete(Unit)
+          throw error
+        }
+      }
+      val app = ForwarderApp(config, nowMs = { observedAt }, httpClient = client)
+      val publication = launch(Dispatchers.Default) { app.pollLatestMarketData(producer) }
+      try {
+        withTimeout(5000) { entered.await() }
+        withTimeout(1000) {
+          publication.cancelAndJoin()
+          interrupted.await()
+        }
+        assertTrue(requireNotNull(app.readinessInfo().latestRestObservations).acknowledgedEventAtMs.isEmpty())
+      } finally {
+        publication.cancelAndJoin()
         app.stop()
         client.close()
       }

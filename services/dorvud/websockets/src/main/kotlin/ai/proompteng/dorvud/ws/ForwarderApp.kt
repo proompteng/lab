@@ -24,6 +24,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,6 +34,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1241,13 +1243,13 @@ class ForwarderApp(
     latestMarketData?.poll(coreMarketDataFeed.sequence::next) { envelope ->
       val topic = requireNotNull(coreMarketDataFeed.config.topicFor(envelope.channel, config.alpacaMarketType))
       recordLag(envelope, coreMarketDataFeed)
-      suspendCancellableCoroutine<Unit> { continuation ->
+      val delivered = CompletableDeferred<Unit>()
+      runInterruptible(Dispatchers.IO) {
         sendKafka(producer, topic, envelope, onCompletion = { error ->
-          if (continuation.isActive) {
-            if (error == null) continuation.resume(Unit) else continuation.resumeWithException(error)
-          }
+          if (error == null) delivered.complete(Unit) else delivered.completeExceptionally(error)
         })
       }
+      delivered.await()
     }
   }
 

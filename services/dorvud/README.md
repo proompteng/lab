@@ -38,9 +38,11 @@ list remains absent until the consumer rollout below is verified.
 `ALPACA_LATEST_POLL_INTERVAL_MS` defaults to 2,000 ms and accepts values from 2,000 to 60,000 ms. Each pass requests both
 channels; the next pass starts after the current pass finishes and the interval elapses. `ALPACA_LATEST_MAX_AGE_MS`
 defaults to 10,000 ms and accepts values from 1,000 to 10,000 ms. A five-second deadline bounds each channel's request
-and Kafka acknowledgements. The shared REST client spaces request starts by at least 500 ms, including every historical
-recovery page, and applies provider retry and reset headers. A rate limit without usable headers delays requests for
-60 seconds. Each HTTP request has a ten-second deadline. These are per-process limits; production uses one replica
+and Kafka acknowledgements, including interruption of a blocking Kafka send. The shared REST client waits at least
+500 ms after each HTTP request completes before starting another, including every historical recovery page, and
+applies provider retry and reset headers. A rate limit without usable headers delays requests for 60 seconds. Each HTTP
+request has a ten-second deadline; expiration is a retryable failure, while caller cancellation still propagates.
+These are per-process limits; production uses one replica
 with a Recreate rollout.
 
 Emitted version-2 envelopes use `source=rest_latest`. They preserve provider event timestamps, numeric values,

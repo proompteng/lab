@@ -13,9 +13,10 @@ import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeoutException
 
 internal class AlpacaRestClient(
   private val config: ForwarderConfig,
@@ -31,25 +32,28 @@ internal class AlpacaRestClient(
   ): String =
     requests.withLock {
       while (nowMs() < nextRequestAtMs) delay(nextRequestAtMs - nowMs())
-      // Latest observations and every recovery page share a ceiling of 120 requests per minute.
-      nextRequestAtMs = nowMs() + 500
-      withTimeout(10_000) {
-        val response =
-          client.get(url) {
-            configure()
-            expectSuccess = false
-            header("APCA-API-KEY-ID", config.alpacaKeyId)
-            header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
+      try {
+        withTimeoutOrNull(10_000) {
+          val response =
+            client.get(url) {
+              configure()
+              expectSuccess = false
+              header("APCA-API-KEY-ID", config.alpacaKeyId)
+              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
+            }
+          alpacaRestResumeAtMs(response.status.value, response.headers, nowMs())?.let { resumeAt ->
+            nextRequestAtMs = maxOf(nextRequestAtMs, resumeAt)
           }
-        alpacaRestResumeAtMs(response.status.value, response.headers, nowMs())?.let { resumeAt ->
-          nextRequestAtMs = maxOf(nextRequestAtMs, resumeAt)
-        }
-        val body = response.bodyAsText()
-        when (response.status.value) {
-          in 200..299 -> body
-          in 500..599 -> throw ServerResponseException(response, body)
-          else -> throw ClientRequestException(response, body)
-        }
+          val body = response.bodyAsText()
+          when (response.status.value) {
+            in 200..299 -> body
+            in 500..599 -> throw ServerResponseException(response, body)
+            else -> throw ClientRequestException(response, body)
+          }
+        } ?: throw TimeoutException("Alpaca REST request timed out")
+      } finally {
+        // Space completed requests so HTTP dispatch latency cannot compress the provider budget.
+        nextRequestAtMs = maxOf(nextRequestAtMs, nowMs() + 500)
       }
     }
 }
