@@ -32,8 +32,7 @@ The producer can supply missing IEX quotes and trades with Alpaca's bulk
 [latest-quotes](https://docs.alpaca.markets/us/reference/stocklatestquotes-1) and
 [latest-trades](https://docs.alpaca.markets/us/reference/stocklatesttrades-1) endpoints. Enable it with
 `ALPACA_LATEST_SYMBOLS`, listing static equity symbols that have neither quote nor trade WebSocket subscriptions.
-The configuration requires one shard and the existing IEX feed. An absent symbol list disables polling. The production
-list remains absent until the consumer rollout below is verified.
+The configuration requires one shard and the existing IEX feed. An absent symbol list disables polling.
 
 `ALPACA_LATEST_POLL_INTERVAL_MS` defaults to 2,000 ms and accepts values from 2,000 to 60,000 ms. Each pass requests both
 channels; the next pass starts after the current pass finishes and the interval elapses. `ALPACA_LATEST_MAX_AGE_MS`
