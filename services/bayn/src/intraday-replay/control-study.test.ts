@@ -25,6 +25,8 @@ const simulate = async (
     emptyAssets?: boolean
     tinyExit?: boolean
     dataCostMicros?: string
+    maximumLossMicros?: string
+    maximumDrawdownMicros?: string
   } = {},
 ) => {
   let clock = openMs - 1
@@ -82,7 +84,11 @@ const simulate = async (
     runControlSession({
       policy: ControlPolicy.RelativeMomentum,
       protocol: fixture.protocol,
-      risk,
+      risk: {
+        ...risk,
+        maxDailyLossMicros: options.maximumLossMicros ?? risk.maxDailyLossMicros,
+        maxDrawdownMicros: options.maximumDrawdownMicros ?? risk.maxDrawdownMicros,
+      },
       session: {
         date: fixture.snapshot.manifest.sessionDate,
         openAt: new Date(openMs).toISOString(),
@@ -171,6 +177,16 @@ test('expired decisions and ineligible assets cannot submit entries', async () =
   expect(ineligible.orders).toHaveLength(0)
   expect(ineligible.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
 })
+
+test.each(['maximumLossMicros', 'maximumDrawdownMicros'] as const)(
+  'entries at the native %s boundary are allowed, and a one-micro excess is blocked',
+  async (limit) => {
+    const atBoundary = (await simulate({ dataCostMicros: '1000000', [limit]: '1000000' })).report
+    expect(atBoundary.orders.some((order) => order.side === OrderSide.Buy)).toBeTrue()
+    const exceeded = (await simulate({ dataCostMicros: '1000000', [limit]: '999999' })).report
+    expect(exceeded.orders).toHaveLength(0)
+  },
+)
 
 test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const retained = retainedReplayFixture()

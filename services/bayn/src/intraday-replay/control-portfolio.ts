@@ -11,10 +11,14 @@ import { jevProtectiveStopCrossed } from '../jev/exit'
 import type { JevProtocol } from '../jev/protocol'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
+import { compareRecords } from '../market-data/intraday/verification'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import type { Policy } from '../risk'
-import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
+import {
+  decideIntradayMomentumCore,
+  deriveIntradayMomentumSignalMetrics,
+} from '../strategy/intraday-momentum/decision-core'
 import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
@@ -79,13 +83,27 @@ export const controlCandidates = (policy: ControlPolicy, protocol: JevProtocol) 
 
 export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: ControlPolicy, protocol: JevProtocol) =>
   Result.gen(function* () {
+    const latestTrades = Object.fromEntries(
+      snapshot.trades.toSorted(compareRecords).map((trade) => [trade.symbol, trade]),
+    )
+    if (policy !== ControlPolicy.RelativeMomentum) {
+      const decision = yield* decideIntradayMomentumCore({
+        observedAt: snapshot.manifest.observedAt,
+        protocol: { ...defaultIntradayMomentumProtocolDocument, candidateSymbols: controlCandidates(policy, protocol) },
+        latestQuotes: snapshot.latestQuotes,
+        latestTrades,
+        rollingPrices: Object.fromEntries(
+          snapshot.manifest.streaming.features.map(({ value }) => [value.material.symbol, value.material.values]),
+        ),
+        candidateExclusions: snapshot.manifest.candidateExclusions ?? [],
+      })
+      return decision.selectedSymbols[0] ?? null
+    }
     const prices = (symbol: string) =>
       Result.gen(function* () {
         const rolling = snapshot.manifest.streaming.features.find((entry) => entry.value.material.symbol === symbol)
         const quote = snapshot.latestQuotes[symbol]
-        const trade = snapshot.trades
-          .filter((entry) => entry.symbol === symbol)
-          .toSorted((a, b) => (intradayInstantNanos(a.eventAt) < intradayInstantNanos(b.eventAt) ? 1 : -1))[0]
+        const trade = latestTrades[symbol]
         if (rolling === undefined || quote === undefined || trade === undefined)
           return yield* Result.fail(new ControlStudyFailure({ message: `Missing control signal for ${symbol}` }))
         const now = intradayInstantNanos(snapshot.manifest.observedAt)
@@ -107,21 +125,12 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
     if (!benchmark.liquid)
       return yield* Result.fail(new ControlStudyFailure({ message: 'Control benchmark is stale or illiquid' }))
     const signals = []
-    const t = defaultIntradayMomentumProtocolDocument
     for (const symbol of controlCandidates(policy, protocol)) {
       if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) continue
       const p = yield* prices(symbol)
       const { metrics, excessReturn } = yield* deriveIntradayMomentumSignalMetrics(p, symbol, benchmark)
       if (!p.liquid || metrics.spreadBps > protocol.maximumSpreadBps) continue
-      const eligible =
-        policy === ControlPolicy.RelativeMomentum
-          ? p.bid + p.ask > 2n * p.reference && excessReturn.numerator > 0n
-          : metrics.lookbackReturnBps >= t.minimumLookbackReturnBps &&
-            metrics.benchmarkReturnBps >= t.minimumBenchmarkReturnBps &&
-            excessReturn.numerator * 10_000n >= BigInt(t.minimumExcessReturnBps) * excessReturn.denominator &&
-            metrics.breakoutBps >= t.minimumBreakoutBps &&
-            metrics.rangeLocationPpm >= t.minimumRangeLocationPpm
-      if (eligible) signals.push({ symbol, excessReturn })
+      if (p.bid + p.ask > 2n * p.reference && excessReturn.numerator > 0n) signals.push({ symbol, excessReturn })
     }
     signals.sort((a, b) => {
       const delta =

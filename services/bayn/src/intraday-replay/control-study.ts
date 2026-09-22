@@ -46,7 +46,7 @@ export const controlStudyDefinition = {
       'Jev candidate universe, exact positive return and benchmark-relative return, mechanical stop and maximum hold, repeated entries.',
   },
   opportunityClock:
-    'Each flat portfolio evaluates every eligible completed signal window. Rank by exact relative return, then symbol. No repeated entry evaluation in a successfully observed window.',
+    'Each flat portfolio evaluates every eligible completed signal window. Breakout policies use native momentum ranking including all tie-breaks. Relative momentum ranks by exact relative return, then symbol. No repeated entry evaluation in a successfully observed window.',
   sizing:
     'Bayn target allocation and order/symbol/turnover bounds, whole shares, cash reserved for cumulative fees at the adverse buy limit.',
   execution:
@@ -269,8 +269,8 @@ export const runControlSession = (input: {
           const riskBlocked =
             side === OrderSide.Buy &&
             (!input.eligibleSymbols.has(symbol) ||
-              openingCash - BigInt(portfolio.ledger.cashMicros) >= BigInt(risk.maxDailyLossMicros) ||
-              peakEquity - BigInt(portfolio.ledger.cashMicros) >= BigInt(risk.maxDrawdownMicros))
+              openingCash - BigInt(portfolio.ledger.cashMicros) > BigInt(risk.maxDailyLossMicros) ||
+              peakEquity - BigInt(portfolio.ledger.cashMicros) > BigInt(risk.maxDrawdownMicros))
           const quantity = riskBlocked
             ? 0n
             : side === OrderSide.Sell

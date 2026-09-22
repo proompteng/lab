@@ -198,3 +198,49 @@ test('control signal uses the full verified snapshot and rejects stale benchmark
   }
   expect(Result.isFailure(selectControlSymbol(stale, ControlPolicy.RelativeMomentum, fixture.protocol))).toBeTrue()
 })
+
+test('retained breakout preserves the native breakout tie-break after equal relative returns', () => {
+  const tied = new Set(['AAPL', 'AMZN'])
+  const snapshot = {
+    ...fixture.snapshot,
+    manifest: {
+      ...fixture.snapshot.manifest,
+      streaming: {
+        ...fixture.snapshot.manifest.streaming,
+        features: fixture.snapshot.manifest.streaming.features.map((feature) => {
+          const material = feature.value.material
+          return tied.has(material.symbol)
+            ? {
+                ...feature,
+                value: {
+                  ...feature.value,
+                  material: {
+                    ...material,
+                    values: {
+                      ...material.values,
+                      referencePriceMicros: '100000000',
+                      rangeHighPriceMicros: material.symbol === 'AAPL' ? '102000000' : '101000000',
+                      rangeLowPriceMicros: '99000000',
+                    },
+                  },
+                },
+              }
+            : feature
+        }),
+      },
+    },
+    latestQuotes: Object.fromEntries(
+      Object.entries(fixture.snapshot.latestQuotes).map(([symbol, value]) => [
+        symbol,
+        tied.has(symbol) ? { ...value, bidPrice: 101.99, askPrice: 102.01 } : value,
+      ]),
+    ),
+    trades: fixture.snapshot.trades.map((trade) => (tied.has(trade.symbol) ? { ...trade, price: 102.01 } : trade)),
+  }
+  expect(Result.getOrThrow(selectControlSymbol(snapshot, ControlPolicy.RetainedBreakout, fixture.protocol))).toBe(
+    'AMZN',
+  )
+  expect(Result.getOrThrow(selectControlSymbol(snapshot, ControlPolicy.RepeatedBreakout, fixture.protocol))).toBe(
+    'AMZN',
+  )
+})

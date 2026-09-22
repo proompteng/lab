@@ -19,7 +19,8 @@ registered controls with common management, verified execution assumptions, and 
 | `REPEATED_RELATIVE_MOMENTUM` | Exact positive 30-minute and benchmark-relative return, with the native spread and liquidity filters | Same research weight                  | Same mechanical management                                  |
 
 The source-controlled Jev protocol supplies the universe, rolling window, freshness rules, close window, and
-mechanical holding limits. All selections rank by exact benchmark-relative return, then symbol. Candidate-local
+mechanical holding limits. Breakout policies call the retained decision core, including its breakout-strength and
+range-position tie-breaks. Relative momentum ranks by exact benchmark-relative return, then symbol. Candidate-local
 source exclusions are retained. A successful observation consumes that signal window, so a canceled entry waits
 for fresh evidence from a later window.
 
