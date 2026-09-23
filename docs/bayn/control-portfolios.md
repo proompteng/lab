@@ -48,7 +48,7 @@ interval counts as a completed episode. Risk-reducing exits remain possible afte
 
 Each portfolio tracks consumed liquidity by quote identity, symbol, and side. Retrying against the same quote can
 fill only its remaining whole-share budget after the declared availability fraction. A later quote supplies a new
-budget. Counterfactual portfolios have independent budgets.
+budget. Native replay applies the same per-quote consumption rule. Counterfactual portfolios have independent budgets.
 
 The declared `decisionLatencyMs` covers the research scenario's full construction, evaluation, and persistence
 delay. Routing delay comes from the native replay assumptions and is added separately. The command does not
