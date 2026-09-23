@@ -37,6 +37,9 @@ export enum AlpacaHistoricalKind {
 const AlpacaHistoricalKindSchema = Schema.Enum(AlpacaHistoricalKind)
 
 const UniqueSymbolsSchema = Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())
+const HistoricalQueryTimestampSchema = Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema])
+const orderTimestamp = (value: string) =>
+  value.replace(/\.([0-9]{3})Z$/, (_match, millis: string) => `.${millis}000000Z`)
 
 const isOrderedSessionQuery = (query: {
   readonly sessionDate: string
@@ -47,12 +50,16 @@ const isOrderedSessionQuery = (query: {
 }): boolean => {
   const sessionDatePrefix = `${query.sessionDate}T`
   const timestamps = [query.sessionOpenAt, query.sessionCloseAt, query.startAt, query.endAt]
+  const sessionOpenAt = orderTimestamp(query.sessionOpenAt)
+  const sessionCloseAt = orderTimestamp(query.sessionCloseAt)
+  const startAt = orderTimestamp(query.startAt)
+  const endAt = orderTimestamp(query.endAt)
   return (
     timestamps.every((timestamp) => timestamp.startsWith(sessionDatePrefix)) &&
-    query.sessionOpenAt < query.sessionCloseAt &&
-    query.sessionOpenAt <= query.startAt &&
-    query.startAt < query.endAt &&
-    query.endAt <= query.sessionCloseAt
+    sessionOpenAt < sessionCloseAt &&
+    sessionOpenAt <= startAt &&
+    startAt < endAt &&
+    endAt <= sessionCloseAt
   )
 }
 
@@ -61,8 +68,8 @@ export const AlpacaHistoricalQuerySchema = Schema.Struct({
   sessionDate: IsoDateSchema,
   sessionOpenAt: UtcInstantSchema,
   sessionCloseAt: UtcInstantSchema,
-  startAt: UtcInstantSchema,
-  endAt: UtcInstantSchema,
+  startAt: HistoricalQueryTimestampSchema,
+  endAt: HistoricalQueryTimestampSchema,
   symbols: UniqueSymbolsSchema,
   cacheDirectory: TrimmedNonEmptyStringSchema,
 }).check(
