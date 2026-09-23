@@ -39,7 +39,7 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 import { utcInstantFromEpochMillis } from '../time'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
-import { JevBatchStoreLive } from './jev-batch-postgres'
+import { JevBatchStoreLive, makeJevBatchStore } from './jev-batch-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -131,6 +131,60 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         }),
         atObservation,
       ),
+    )
+  })
+
+  test('finalizes recorded candidates before the deadline without serial evaluation reads', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const evaluations = yield* JevEvaluationStore
+        const delayed = {
+          ...evaluations,
+          read: (requestId: string) =>
+            evaluations.read(requestId).pipe(Effect.tap(() => TestClock.adjust('100 millis'))),
+        }
+        const batches = yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, delayed))
+        yield* batches.begin(plan)
+        for (const candidate of requested) {
+          yield* evaluations.begin(candidate.request)
+          yield* evaluations.record(
+            candidate.request,
+            Result.getOrThrow(
+              makeJevEvaluationReceipt(candidate.request, {
+                schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+                requestId: candidate.request.requestId,
+                startedAt: plan.observedAt,
+                completedAt: plan.observedAt,
+                outcome: {
+                  status: JevOutcome.Received,
+                  inference: tradingSignalInferenceFixture(candidate.request.request, plan.observedAt),
+                },
+              }),
+            ),
+          )
+        }
+        yield* TestClock.setTime(observed + 4_700)
+        const result = (yield* batches.finish(plan.batchId)).result
+        if (result === null) throw new Error('Recorded batch did not finalize')
+        expect(result.completedAt).toBe(utcInstantFromEpochMillis(observed + 4_700))
+        expect(Result.getOrThrow(usableJevBatchInferences(plan, result, yield* Clock.currentTimeMillis))).toHaveLength(
+          requested.length,
+        )
+      }).pipe(atObservation),
+    )
+  })
+
+  test('rejects a forged matching candidate observation before sealing the batch', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* batches.begin(plan)
+        yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+          VALUES (${'f'.repeat(64)}, ${plan.cycleId}, ${plan.observedAt}::timestamptz, ${sql.json(fixture.observation.payload)})`
+        expect(Result.isFailure(yield* batches.finish(plan.batchId).pipe(Effect.result))).toBe(true)
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
+      }).pipe(atObservation),
     )
   })
 
