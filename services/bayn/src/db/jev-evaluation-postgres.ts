@@ -52,6 +52,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
         yield* sql`
         SELECT content_hash, payload FROM intraday_candidate_observations
         WHERE cycle_id = ${request.cycleId}
+          AND observed_at = ${request.observedAt}::timestamptz
           AND payload->>'authorityGenerationHash' = ${request.authorityGenerationHash}
           AND payload->>'observedAt' = ${request.observedAt}
           AND payload->'manifest'->>'observedAt' = ${request.observedAt}
