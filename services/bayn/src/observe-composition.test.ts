@@ -816,9 +816,11 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   }
   const unusedAccounting = Effect.die(new Error('empty exact reconciliation must not account a fill'))
   const executionStore = {
+    completeHistory: () => Effect.succeed(new Set()),
     ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
     ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
     account: () => unusedAccounting,
+    verifyCompleted: () => Effect.void,
     value: () =>
       Effect.succeed({
         schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -4290,9 +4292,11 @@ describe('OBSERVE runtime composition', () => {
       AuthorityGenerationStoreShape &
       AuthorityRestrictionStoreShape
     const executionStore: TestStore = {
+      completeHistory: () => unused,
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
+      verifyCompleted: () => unused,
       value: () => unused,
       hasAccountBaseline: () => unused,
       bindings: () => unused,
@@ -4512,9 +4516,11 @@ describe('OBSERVE runtime composition', () => {
               Parameters<Parameters<ReturnType<typeof makeObserveAutonomousCycleStartup>>[0]['recordPass']>[0]
             >()
           const executionStore = {
+            completeHistory: () => Effect.succeed(new Set()),
             ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
             ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
             account: () => unusedAccounting,
+            verifyCompleted: () => Effect.void,
             value: () =>
               Effect.succeed({
                 schemaVersion: 'bayn.paper-valuation.v1' as const,

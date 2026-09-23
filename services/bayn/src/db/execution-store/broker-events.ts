@@ -3,7 +3,7 @@ import { Effect } from 'effect'
 
 import type { BrokerEventInput, PositionSnapshotInput } from '../../broker/observations'
 import { Broker } from '../../execution/contracts'
-import type { EventReceipt, ExecutionStoreError, PositionSnapshotReceipt } from './contract'
+import type { EventReceipt, ExecutionStoreError, HistoryEventInput, PositionSnapshotReceipt } from './contract'
 import {
   decideBrokerEventAppend,
   decideNextSourceSequence,
@@ -18,6 +18,7 @@ import {
   decodeEventIdRows,
   decodeEventInput,
   decodeEventRows,
+  decodeHistoryEventRows,
   decodeLastSequence,
   decodePositionSnapshotInput,
   decodePositionSnapshotRows,
@@ -25,6 +26,9 @@ import {
 } from './rows'
 
 export interface BrokerEventInterpreter {
+  readonly completeHistory: (
+    inputs: readonly HistoryEventInput[],
+  ) => Effect.Effect<ReadonlySet<string>, ExecutionStoreError>
   readonly append: (
     input: BrokerEventInput,
     positionSnapshotId?: string,
@@ -36,6 +40,63 @@ export interface BrokerEventInterpreter {
 }
 
 export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventInterpreter => {
+  const completeHistory = (
+    inputs: readonly HistoryEventInput[],
+  ): Effect.Effect<ReadonlySet<string>, ExecutionStoreError> =>
+    runExecutionOperation(
+      'ingest',
+      Effect.gen(function* () {
+        const first = inputs[0]
+        if (first === undefined) return new Set<string>()
+        if (inputs.some((input) => input.broker !== first.broker || input.accountId !== first.accountId)) {
+          return yield* failExecutionStore('ingest', 'invariant', 'broker history spans multiple accounts')
+        }
+
+        return yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
+            const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
+            const rows = yield* sql<Record<string, unknown>>`
+              SELECT event.event_id, event.event_kind, event.content_hash,
+                event.source_event_id, event.source_sequence::text AS source_sequence,
+                CASE event.event_kind
+                  WHEN 'ORDER' THEN historical_order.event_id IS NOT NULL
+                  WHEN 'FILL' THEN historical_fill.event_id IS NOT NULL
+                  ELSE false
+                END AS payload_exists,
+                (historical_transaction.transaction_id IS NOT NULL
+                  AND historical_receipt.receipt_id IS NOT NULL) AS accounting_complete
+              FROM broker_events AS event
+              LEFT JOIN orders AS historical_order ON historical_order.event_id = event.event_id
+              LEFT JOIN fills AS historical_fill ON historical_fill.event_id = event.event_id
+              LEFT JOIN accounting_transactions AS historical_transaction
+                ON historical_transaction.broker_event_id = event.event_id
+              LEFT JOIN accounting_receipts AS historical_receipt
+                ON historical_receipt.broker_event_id = event.event_id
+              WHERE event.broker = ${first.broker}
+                AND event.account_id = ${first.accountId}
+                AND event.source_event_id IN ${sql.in(sourceIds)}
+            `.pipe(Effect.flatMap(decodeHistoryEventRows))
+            const bySourceId = new Map(rows.map((row) => [row.source_event_id, row]))
+            const complete = new Set<string>()
+            for (const input of inputs) {
+              const row = bySourceId.get(input.sourceEventId)
+              const decision = yield* liftStoreDecision(
+                'ingest',
+                decideBrokerEventAppend(input, row === undefined ? [] : [row]),
+              )
+              if (decision._tag !== 'ReplayBrokerEvent') continue
+              if (row === undefined || !row.payload_exists) {
+                return yield* failExecutionStore('ingest', 'invariant', 'stored broker history payload is missing')
+              }
+              if (input._tag === 'Order' || row.accounting_complete) complete.add(input.sourceEventId)
+            }
+            return complete
+          }),
+        )
+      }),
+    )
+
   const insertPayload = (eventId: string, input: BrokerEventInput, positionSnapshotId?: string) => {
     switch (input._tag) {
       case 'Account':
@@ -202,5 +263,5 @@ export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventI
       ),
     )
 
-  return { append, ingest, ingestPositions }
+  return { append, completeHistory, ingest, ingestPositions }
 }
