@@ -37,28 +37,53 @@ const input = {
   planVersion: JevBatchPlanVersion.V1,
 }
 
-const nativeObservationWithWideQuotes = (fixture: ReturnType<typeof nativeJevFixture>, symbols: readonly string[]) => {
+const nativeObservationWithWideQuotes = (
+  fixture: ReturnType<typeof nativeJevFixture>,
+  symbols: readonly string[],
+  futurePricing?: 'quote' | 'trade',
+) => {
   const quotes = new Map(fixture.cut.projection.quotes)
   const quoteHistory = new Map(fixture.cut.projection.quoteHistory)
+  const trades = new Map(fixture.cut.projection.trades)
+  const tradeHistory = new Map(fixture.cut.projection.tradeHistory)
+  const futureAt = new Date(Date.parse(fixture.query.observedAt) + 1).toISOString()
   for (const symbol of symbols) {
     const quote = quotes.get(symbol)
     const history = quoteHistory.get(symbol)
     if (quote === undefined || history === undefined) throw new Error('Native fixture quote is missing')
     quotes.set(symbol, {
       ...quote,
-      value: { ...quote.value, askPrice: quote.value.bidPrice * 1.01 },
+      value: {
+        ...quote.value,
+        askPrice: quote.value.bidPrice * 1.01,
+        ...(futurePricing === 'quote' ? { eventAt: futureAt } : {}),
+      },
     })
     quoteHistory.set(
       symbol,
       history.map((entry) => ({
         ...entry,
-        value: { ...entry.value, askPrice: entry.value.bidPrice * 1.01 },
+        value: {
+          ...entry.value,
+          askPrice: entry.value.bidPrice * 1.01,
+          ...(futurePricing === 'quote' ? { eventAt: futureAt } : {}),
+        },
       })),
     )
+    if (futurePricing === 'trade') {
+      const trade = trades.get(symbol)
+      const history = tradeHistory.get(symbol)
+      if (trade === undefined || history === undefined) throw new Error('Native fixture trade is missing')
+      trades.set(symbol, { ...trade, value: { ...trade.value, eventAt: futureAt } })
+      tradeHistory.set(
+        symbol,
+        history.map((entry) => ({ ...entry, value: { ...entry.value, eventAt: futureAt } })),
+      )
+    }
   }
   const snapshot = Result.getOrThrow(
     constructStreamingSnapshot(
-      { ...fixture.cut, projection: { ...fixture.cut.projection, quotes, quoteHistory } },
+      { ...fixture.cut, projection: { ...fixture.cut.projection, quotes, quoteHistory, trades, tradeHistory } },
       fixture.query,
     ),
   )
@@ -74,6 +99,23 @@ const nativeObservationWithWideQuotes = (fixture: ReturnType<typeof nativeJevFix
 }
 
 describe('Jev trading batch source reproduction', () => {
+  test('does not exclude a candidate on future-dated pricing evidence', () => {
+    for (const futurePricing of ['quote', 'trade'] as const) {
+      const native = nativeJevFixture()
+      const observation = nativeObservationWithWideQuotes(native, ['AAPL'], futurePricing)
+      const material = {
+        observation: observation.payload,
+        expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
+      }
+      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V1 }))).toBe(
+        true,
+      )
+      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V2 }))).toBe(
+        true,
+      )
+    }
+  })
+
   test('excludes an entry quote that can never pass the existing spread limit without dropping its evidence', () => {
     const native = nativeJevFixture()
     const observation = nativeObservationWithWideQuotes(native, ['AAPL'])

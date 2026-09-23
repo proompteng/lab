@@ -376,6 +376,12 @@ const batchFromObservation = (
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
         continue
       }
+      const prepared = yield* requestFromSnapshot(
+        snapshot,
+        symbol,
+        protocol.benchmarkSymbol,
+        observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
+      )
       if (
         planVersion === JevBatchPlanVersion.V2 &&
         observation.schemaVersion === 'bayn.jev-observation.v1' &&
@@ -398,12 +404,6 @@ const batchFromObservation = (
           }
         }
       }
-      const prepared = yield* requestFromSnapshot(
-        snapshot,
-        symbol,
-        protocol.benchmarkSymbol,
-        observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
-      )
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
         cycleId: observation.cycleId,
