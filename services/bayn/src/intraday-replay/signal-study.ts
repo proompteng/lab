@@ -247,6 +247,8 @@ export const studyRoundTrip = (input: {
   readonly symbol: string
   readonly protocol: PreparedBatch['observation']['protocol']
   readonly assumptions: typeof SignalStudyInputSchema.Type.assumptions
+  readonly holdingIntervalMs: number
+  readonly entryBudgetMicros: string
   readonly decidedAtMs: number
   readonly entryDecisionQuote: Quote
   readonly entryArrivalQuote: Quote
@@ -254,9 +256,15 @@ export const studyRoundTrip = (input: {
   readonly exitArrivalQuote: Quote
 }) =>
   Result.gen(function* () {
+    if (!Number.isSafeInteger(input.holdingIntervalMs) || input.holdingIntervalMs <= 0)
+      return yield* Result.fail(
+        new SignalStudyFailure({ message: 'Holding interval must be a positive whole millisecond' }),
+      )
     const entryAtMs = input.decidedAtMs + input.assumptions.latencyMs
-    const exitDecisionAtMs = entryAtMs + signalStudyDefinition.horizonMs
-    let ledger = yield* createReplayLedger(signalStudyDefinition.entryBudgetMicros)
+    const exitDecisionAtMs = entryAtMs + input.holdingIntervalMs
+    let ledger = yield* createReplayLedger(input.entryBudgetMicros)
+    const budget = BigInt(input.entryBudgetMicros)
+    if (budget <= 0n) return yield* Result.fail(new SignalStudyFailure({ message: 'Entry budget must be positive' }))
     const quoteHashes: string[] = []
     const finish = (outcome: HypothesisOutcome) => ({ outcome, fills: ledger.fills, quoteHashes })
     const reference = input.entryDecisionQuote?.value.askPrice
@@ -271,7 +279,6 @@ export const studyRoundTrip = (input: {
       executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
-    const budget = BigInt(signalStudyDefinition.entryBudgetMicros)
     let affordableShares = 0n
     let maximumShares = budget / sizing.expectedExecutionPriceMicros
     while (affordableShares < maximumShares) {
@@ -433,6 +440,8 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
                 symbol: signal.symbol,
                 protocol,
                 assumptions: input.assumptions,
+                holdingIntervalMs: signalStudyDefinition.horizonMs,
+                entryBudgetMicros: signalStudyDefinition.entryBudgetMicros,
                 decidedAtMs: decisionAtMs,
                 entryDecisionQuote: quotes.get(decisionAtMs),
                 entryArrivalQuote: quotes.get(entryAtMs),
