@@ -60,10 +60,11 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
-Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
-exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
-mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
-whole observation. Raw candidate rows and their exclusions remain in the hashed snapshot for revalidation.
+Entry observations evaluate candidate availability independently. Missing or late candidate bars, and missing, late,
+or decision-time-stale candidate quotes or trades exclude that candidate with an explicit reason while other candidates
+remain eligible for evaluation. SPY is the mandatory benchmark. Source identity, canonical ordering, watermarks,
+finality, and premature data still fail the whole observation. Raw candidate rows and their exclusions remain in the
+hashed snapshot for revalidation.
 
 Native Jev targets retain every candidate result and source exclusion with the exact full-batch evidence. An
 observation with every candidate excluded remains unavailable. Execution pricing requires fresh quotes for positive
