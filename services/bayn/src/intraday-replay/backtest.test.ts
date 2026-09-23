@@ -3,7 +3,12 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { prepareBacktest as prepareWithCapture, assessBacktestSession, BacktestIssue } from './backtest'
+import {
+  prepareBacktest as prepareWithCapture,
+  assessBacktestSession,
+  BacktestIssue,
+  qualifiesReplayValuation,
+} from './backtest'
 import { jevModel } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
 import { validateBacktestSourceReceipt } from './source'
@@ -367,4 +372,25 @@ test('a completed schedule only qualifies economics with exact accounting and no
       completion: 'INCOMPLETE',
       issues: [BacktestIssue.UnresolvedMutation],
     })
+})
+
+test('stale held-position marks do not qualify replay economics', () => {
+  const mark = {
+    symbol: 'AAPL',
+    priceMicros: '100000000',
+    eventAt: '2026-09-08T13:30:00.000Z',
+    availableAtMs: Date.parse('2026-09-08T13:30:00.000Z'),
+    ageNanos: '1000000000',
+    staleForExecution: false,
+    bidLiquidityAvailable: true,
+    topic: 'quotes',
+    partition: 0,
+    offset: '1',
+    recordHash: 'a'.repeat(64),
+  }
+  const valuation = { model: 'last-observed-bid' as const, observedAt: '2026-09-08T13:30:01.000Z' }
+  expect(qualifiesReplayValuation({ ...valuation, marks: [] })).toBe(true)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [mark] })).toBe(true)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, staleForExecution: true }] })).toBe(false)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, bidLiquidityAvailable: false }] })).toBe(false)
 })
