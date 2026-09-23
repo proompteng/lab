@@ -133,6 +133,7 @@ export interface ReplayValuationEvidence {
     readonly availableAtMs: number
     readonly ageNanos: string
     readonly staleForExecution: boolean
+    readonly bidLiquidityAvailable: boolean
     readonly topic: string
     readonly partition: number
     readonly offset: string
@@ -315,15 +316,22 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           )
         }
         let equity = BigInt(closingLedger.cashMicros)
+        let valuationQualified = true
         for (const position of closingLedger.positions) {
           const atMs = Date.parse(closeAt)
           const quote = yield* config.quoteAt(position.symbol, atMs)
           if (!valuationQuoteUsable(quote, position.symbol, atMs))
             return yield* new ReplayBrokerFailure({ message: 'Session close has no retained valuation quote' })
+          if (
+            !quoteUsable(quote, position.symbol, atMs) ||
+            !Number.isFinite(quote.value.bidSize) ||
+            quote.value.bidSize <= 0
+          )
+            valuationQualified = false
           const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
           equity += yield* Effect.fromResult(notionalMicros(BigInt(position.quantityMicros), price))
         }
-        return equity.toString()
+        return { equityMicros: equity.toString(), valuationQualified }
       })
     if (restored !== undefined) {
       const consumedLiquidity = new Map<string, bigint>()
@@ -371,7 +379,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const session = calendar.sessions[0]
         if (session === undefined) return yield* new ReplayBrokerFailure({ message: 'Restored close has no session' })
         const equity = yield* closingEquity(restored.state, session.closeAt)
-        if (equity !== close.equityMicros)
+        if (equity.equityMicros !== close.equityMicros)
           return yield* new ReplayBrokerFailure({
             message: 'Restored closing equity differs from retained quotes and fills',
           })
@@ -420,6 +428,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 intradayInstantNanos(quote.value.eventAt)
               ).toString(),
               staleForExecution: !quoteUsable(quote, position.symbol, Date.parse(observedAt)),
+              bidLiquidityAvailable: Number.isFinite(quote.value.bidSize) && quote.value.bidSize > 0,
               topic: quote.value.sourceTopic,
               partition: quote.value.sourcePartition,
               offset: quote.value.sourceOffset,
@@ -984,7 +993,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           })
         if (current.orders.some((record) => isOpen(record.order)))
           return yield* new ReplayBrokerFailure({ message: 'Cannot complete session with unresolved broker orders' })
-        const close = { sessionDate: session.date, equityMicros: yield* closingEquity(current, session.closeAt) }
+        const closing = yield* closingEquity(current, session.closeAt)
+        const close = { sessionDate: session.date, equityMicros: closing.equityMicros }
         const previous = current.sessionCloses.find((value) => value.sessionDate === sessionDate)
         if (previous !== undefined && previous.equityMicros !== close.equityMicros)
           return yield* new ReplayBrokerFailure({ message: 'Session close changed after it was recorded' })
@@ -993,7 +1003,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             ...value,
             sessionCloses: [...value.sessionCloses, close],
           }))
-        return close
+        return { ...close, valuationQualified: closing.valuationQualified }
       })
     const checkpoint = Effect.gen(function* () {
       const observedAt = yield* now
