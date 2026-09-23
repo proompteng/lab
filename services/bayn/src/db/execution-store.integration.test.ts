@@ -159,6 +159,20 @@ const order = () => ({
   observedAt,
 })
 
+const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => {
+  const observedOrder = order()
+  return {
+    _tag: 'Order',
+    broker: Broker.Alpaca,
+    accountId,
+    sourceEventId: 'order-observation-1',
+    contentHash: canonicalHashV1(observedOrder),
+    occurredAt,
+    observedAt,
+    order: observedOrder,
+  }
+}
+
 const positionEvent = (
   sourceHash: string,
   symbol: string,
@@ -468,6 +482,45 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.replay).toEqual(result.recovered)
     expect(result.counts).toEqual({ events: 1, transactions: 1, receipts: 1 })
     expect(journalControl.postCount).toBe(3)
+  })
+
+  test('batches completed broker history while retaining conflicts and incomplete fill recovery', async () => {
+    const observedOrder = orderEvent()
+    const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000', '100000000')
+    const preparedFill = fillEvent('fill-pending', OrderSide.Buy, '1000000', '101000000')
+    const unaccountedFill = fillEvent('fill-unaccounted', OrderSide.Buy, '1000000', '101000000')
+    const newOrder = { ...observedOrder, sourceEventId: 'order-observation-2' }
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const accounting = yield* FillAccountingStore
+        yield* events.ingest(observedOrder)
+        yield* accounting.account(accountedFill)
+        yield* events.ingest(unaccountedFill)
+        journalControl.failPosts = true
+        const postingFailure = yield* accounting.account(preparedFill).pipe(Effect.flip)
+        journalControl.failPosts = false
+
+        const history = [observedOrder, accountedFill, preparedFill, unaccountedFill, newOrder]
+        const completed = yield* events.completeHistory(history)
+        yield* accounting.account(preparedFill)
+        const completedAfterRecovery = yield* events.completeHistory(history)
+        const conflict = yield* events
+          .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
+          .pipe(Effect.flip)
+        return { completed, completedAfterRecovery, postingFailure, conflict }
+      }),
+    )
+
+    expect([...result.completed].sort()).toEqual([accountedFill.sourceEventId, observedOrder.sourceEventId])
+    expect([...result.completedAfterRecovery].sort()).toEqual([
+      accountedFill.sourceEventId,
+      preparedFill.sourceEventId,
+      observedOrder.sourceEventId,
+    ])
+    expect(result.postingFailure).toMatchObject({ operation: 'account', failure: 'ledger' })
+    expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
   })
 
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {

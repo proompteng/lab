@@ -96,6 +96,7 @@ const writeResult = (persisted: BrokerSnapshot): ReconciliationWriteResult => ({
 
 const store: ReconciliationPersistence = {
   events: {
+    completeHistory: () => Effect.succeed(new Set()),
     ingest: (input) =>
       Effect.succeed({
         eventId: canonicalHashV1(input.sourceEventId),

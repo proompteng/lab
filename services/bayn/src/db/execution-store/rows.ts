@@ -34,6 +34,14 @@ export const EventRow = Schema.Struct({
 })
 export type EventRow = typeof EventRow.Type
 
+export const HistoryEventRow = Schema.Struct({
+  ...EventRow.fields,
+  source_event_id: NonEmptyString,
+  payload_exists: Schema.Boolean,
+  accounting_complete: Schema.Boolean,
+})
+export type HistoryEventRow = typeof HistoryEventRow.Type
+
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
   Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String }),
@@ -200,6 +208,9 @@ export const decodeValuationInput = Pipeable.dual(1, (input: unknown) => decodeV
 const decodeEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 
 export const decodeEventRows = Pipeable.dual(1, (input: unknown) => decodeEventRowsDataFirst(input))
+const decodeHistoryEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
+
+export const decodeHistoryEventRows = Pipeable.dual(1, (input: unknown) => decodeHistoryEventRowsDataFirst(input))
 const decodeLastSequenceDataFirst = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 
 export const decodeLastSequence = Pipeable.dual(1, (input: unknown) => decodeLastSequenceDataFirst(input))

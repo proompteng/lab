@@ -18,8 +18,17 @@ const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: Normal
   Effect.gen(function* () {
     const accountReceipt = yield* store.events.ingest(normalized.account)
     const positionsReceipt = yield* store.events.ingestPositions(normalized.positions)
-    yield* Effect.forEach(normalized.orderEvents, store.events.ingest, { discard: true })
-    yield* Effect.forEach(normalized.fillEvents, store.accounting.account, { discard: true })
+    const complete = yield* store.events.completeHistory([...normalized.orderEvents, ...normalized.fillEvents])
+    yield* Effect.forEach(
+      normalized.orderEvents.filter((event) => !complete.has(event.sourceEventId)),
+      store.events.ingest,
+      { discard: true },
+    )
+    yield* Effect.forEach(
+      normalized.fillEvents.filter((event) => !complete.has(event.sourceEventId)),
+      store.accounting.account,
+      { discard: true },
+    )
     return yield* store.valuation.value({
       accountEventId: accountReceipt.eventId,
       positionSnapshotId: positionsReceipt.snapshotId,
