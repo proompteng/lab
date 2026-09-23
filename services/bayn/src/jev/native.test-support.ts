@@ -52,7 +52,11 @@ export const nativeJevFixture = (
           candidateSymbols: protocol.candidateSymbols,
         }
       : { ...timedQuery, symbols: ['AAPL', 'SPY'], candidateSymbols: ['AAPL'] }
-  const { snapshot } = streamingFixtureFromRaw(
+  const {
+    cut,
+    query: snapshotQuery,
+    snapshot,
+  } = streamingFixtureFromRaw(
     makeIntradayMomentumTestSnapshot(
       protocol,
       { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
@@ -187,7 +191,7 @@ export const nativeJevFixture = (
       snapshot,
     }),
   )
-  return { protocol, portfolio, observation, snapshot, entryFills, draft }
+  return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft }
 }
 
 export const nativeJevInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {

@@ -28,6 +28,11 @@ export enum JevSourceExclusion {
   Freshness = 'freshness',
 }
 
+export enum JevEntryExclusion {
+  Spread = 'spread',
+  DisplayedSize = 'displayed-size',
+}
+
 const CandidatePlanSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal(JevCandidatePlanStatus.Requested),
@@ -37,7 +42,7 @@ const CandidatePlanSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal(JevCandidatePlanStatus.Excluded),
     symbol: SymbolSchema,
-    reason: Schema.Enum(JevSourceExclusion),
+    reason: Schema.Union([Schema.Enum(JevSourceExclusion), Schema.Enum(JevEntryExclusion)]),
     message: Schema.NonEmptyString,
   }),
 ])
@@ -202,6 +207,14 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
       const inference = yield* usableJevInference(planned.request, candidate.receipt, now)
       inferences.push({ symbol: candidate.symbol, requestId: candidate.requestId, inference })
     }
-    if (inferences.length === 0) return yield* invalid('No Jev candidate has usable inference evidence')
+    if (
+      inferences.length === 0 &&
+      !plan.candidates.some(
+        (candidate) =>
+          candidate.status === JevCandidatePlanStatus.Excluded &&
+          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize),
+      )
+    )
+      return yield* invalid('No Jev candidate has usable inference evidence')
     return inferences
   })

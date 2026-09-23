@@ -11,13 +11,12 @@ import {
   strictParseOptions,
 } from '../schemas'
 import type { StrategyDefinition } from '../strategy/core'
-import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableJevBatchInferences } from './batch'
 import { JevContractError } from './contract'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
-import { reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
   observation: JevObservationSchema,
@@ -71,16 +70,8 @@ export const decideJevEntry = (input: unknown) =>
         return yield* unavailable('Jev entry has no typed action or verified quote')
       const probability = answer.probabilities['enter']
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
-      const bid = yield* numberToMicros(quote.bidPrice)
-      const ask = yield* numberToMicros(quote.askPrice)
-      const spreadFits = (ask - bid) * 20_000n <= BigInt(observation.protocol.maximumSpreadBps) * (ask + bid)
-      if (
-        answer.choice === 'enter' &&
-        probability >= observation.protocol.minimumEntryProbability &&
-        spreadFits &&
-        quote.bidSize > 0 &&
-        quote.askSize > 0
-      )
+      const quoteEligible = (yield* jevEntryQuoteExclusion(quote, observation.protocol.maximumSpreadBps)) === null
+      if (answer.choice === 'enter' && probability >= observation.protocol.minimumEntryProbability && quoteEligible)
         eligible.push({ symbol, probability })
     }
     eligible.sort(

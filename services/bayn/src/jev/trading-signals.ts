@@ -9,13 +9,25 @@ import type { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
-import { decodeJevBatchPlan, JevCandidatePlanStatus, makeJevBatchPlan } from './batch'
+import { decodeJevBatchPlan, JevCandidatePlanStatus, JevEntryExclusion, makeJevBatchPlan } from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
+
+export const jevEntryQuoteExclusion = (
+  quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>,
+  maximumSpreadBps: number,
+) =>
+  Result.gen(function* () {
+    const bid = yield* numberToMicros(quote.bidPrice)
+    const ask = yield* numberToMicros(quote.askPrice)
+    if ((ask - bid) * 20_000n > BigInt(maximumSpreadBps) * (ask + bid)) return JevEntryExclusion.Spread
+    if (quote.bidSize <= 0 || quote.askSize <= 0) return JevEntryExclusion.DisplayedSize
+    return null
+  })
 
 const latestSignalTrade = (snapshot: StrategyMarketSnapshot, symbol: string) =>
   snapshot.trades
@@ -356,6 +368,27 @@ const batchFromObservation = (
       if (excluded !== undefined) {
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
         continue
+      }
+      if (
+        observation.schemaVersion === 'bayn.jev-observation.v1' &&
+        observation.portfolio.purpose === JevPurpose.Entry
+      ) {
+        const quote = snapshot.latestQuotes[symbol]
+        if (quote !== undefined) {
+          const entryExclusion = yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)
+          if (entryExclusion !== null) {
+            candidates.push({
+              symbol,
+              status: JevCandidatePlanStatus.Excluded,
+              reason: entryExclusion,
+              message:
+                entryExclusion === JevEntryExclusion.Spread
+                  ? 'Verified entry quote exceeds the maximum spread'
+                  : 'Verified entry quote has no two-sided displayed size',
+            })
+            continue
+          }
+        }
       }
       const prepared = yield* requestFromSnapshot(
         snapshot,
