@@ -140,7 +140,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
               SELECT 1 FROM jsonb_array_elements(payload->'candidates') AS candidate
               WHERE candidate->>'status' = 'REQUESTED' AND candidate->'request' = ${sql.json(request)}
             )
-          FOR UPDATE
+          FOR SHARE
         `,
             )
             const batchId = batches[0].batch_id
