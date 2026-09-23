@@ -96,6 +96,8 @@ batch to remain valid after completion and persistence; it cannot use only the f
 
 The batch store commits the full plan before any candidate request can be claimed. It finalizes results from the
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
+Requested candidates start concurrently across the complete source-verified batch, within the existing five-second
+validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 

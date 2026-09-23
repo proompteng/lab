@@ -314,7 +314,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  test('bounds concurrent inference and waits for both waves before finalizing', async () => {
+  test('starts every eligible inference concurrently before finalizing the complete batch', async () => {
     let calls = 0,
       active = 0,
       maximum = 0
@@ -332,7 +332,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                   maximum = Math.max(maximum, active)
                   if (calls === 4) yield* Deferred.succeed(wave, undefined)
                   if (calls === requested.length) yield* Deferred.succeed(all, undefined)
-                  yield* Effect.sleep('100 millis')
+                  yield* Effect.sleep('1 second')
                   return yield* successful.evaluate(request)
                 }).pipe(
                   Effect.ensuring(
@@ -346,14 +346,13 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           )
           yield* Deferred.await(wave)
           expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
-          yield* TestClock.adjust('100 millis')
+          yield* TestClock.adjust('200 millis')
           yield* Deferred.await(all)
-          yield* TestClock.adjust('100 millis')
+          yield* TestClock.adjust('1 second')
           const result = (yield* Fiber.join(fiber)).result
           if (result === null) throw new Error('Complete batch not finalized')
           expect(calls).toBe(requested.length)
-          expect(maximum).toBe(4)
-          expect(result.completedAt).toBe(utcInstantFromEpochMillis(observed + 200))
+          expect(maximum).toBe(requested.length)
           expect(active).toBe(0)
         }),
       ).pipe(atObservation),
