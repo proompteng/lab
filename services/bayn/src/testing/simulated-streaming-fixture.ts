@@ -7,8 +7,12 @@ import {
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
 
-export const simulationFixture = (regeneratedAtMs?: number, technicalFeatureTopic?: string) => {
-  const fixture = historicalStreamingFixture()
+export const simulationFixture = (
+  regeneratedAtMs?: number,
+  technicalFeatureTopic?: string,
+  returns?: Readonly<Record<string, number>>,
+) => {
+  const fixture = historicalStreamingFixture(returns)
   const { input, protocol } = fixture
   const source = {
     runId: input.arrivals.runId,

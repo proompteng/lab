@@ -1,6 +1,7 @@
-import { operationTimeoutOrElse } from '../operation-timeout'
+import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
+import { utcInstantFromEpochMillis } from '../time'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result, Schema } from 'effect'
+import { Clock, Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AssetResponseSchema, MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeAssetResult, normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -17,6 +18,7 @@ import {
   PositiveIntegerSchema,
   PositiveMicrosSchema,
   StrictNonEmptyStringSchema,
+  UnsignedMicrosSchema,
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
@@ -26,6 +28,10 @@ import {
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
 } from '../strategy'
+import { JevClient } from '../jev/client'
+import { jevModel } from '../jev/contract'
+import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { calculateReplayJevCosts, ReplayJevCostModelSchema } from './jev-costs'
 import {
   BacktestSourceManifestSchema,
   openBacktestSource,
@@ -46,6 +52,7 @@ import { ReconciliationStatus } from '../execution/contracts'
 import type { ReconciliationMetrics } from '../simulation-reconciliation/broker-model'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import { decodeExecutionCycleClosureResult } from '../db/execution-cycle-closure'
+import { observedQuoteAt } from '../market-data/streaming/projection'
 
 export enum BacktestIssue {
   CycleFailure = 'cycle-failure',
@@ -53,10 +60,14 @@ export enum BacktestIssue {
   UnresolvedMutation = 'unresolved-mutation',
   UnclosedPosition = 'unclosed-position',
   MissingValuation = 'missing-valuation',
+  MissingDecisionData = 'missing-decision-data',
+  UnresolvedModelCost = 'unresolved-model-cost',
+  UnresolvedExecutionCost = 'unresolved-execution-cost',
 }
 
 export const assessBacktestSession = (input: {
   readonly failedPassCount: number
+  readonly unavailableDecisionPassCount: number
   readonly valuationFailureCount: number
   readonly reconciliation: {
     readonly status: ReconciliationStatus
@@ -68,6 +79,7 @@ export const assessBacktestSession = (input: {
 }) => {
   const issues: BacktestIssue[] = []
   const { status, metrics, unknownOrderCount, unknownMutationCount } = input.reconciliation
+  if (input.unavailableDecisionPassCount > 0) issues.push(BacktestIssue.MissingDecisionData)
   if (input.failedPassCount > 0) issues.push(BacktestIssue.CycleFailure)
   if (input.valuationFailureCount > 0) issues.push(BacktestIssue.MissingValuation)
   if (
@@ -85,7 +97,14 @@ export const assessBacktestSession = (input: {
 }
 
 export const BacktestInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest.v1'),
+  schemaVersion: Schema.Literal('bayn.backtest.v3'),
+  inference: Schema.Struct({
+    mode: Schema.Literal('measured-provider'),
+    model: Schema.Literal(jevModel),
+    inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v2'),
+    costs: ReplayJevCostModelSchema,
+  }),
+  allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,
   replicate: StrictNonEmptyStringSchema,
   sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(1)),
   source: BacktestSourceManifestSchema,
@@ -109,6 +128,7 @@ export const BacktestInputSchema = Schema.Struct({
     reconciliationStaleThresholdMs: PositiveIntegerSchema,
   }),
 })
+
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
@@ -120,11 +140,11 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     }
     yield* validateBacktestSourceManifest(decoded.source)
     yield* validateBacktestSourceCuts(decoded.source, sourceReceipt)
-    const protocol = yield* loadActiveStrategyProtocol()
-    const parameterHash = yield* canonicalHashV1Result(protocol)
+    const baselineProtocol = yield* loadActiveStrategyProtocol()
+    const baselineParameterHash = yield* canonicalHashV1Result(baselineProtocol)
     if (
       decoded.build.strategyBehaviorHash !== activeStrategyBehaviorHash ||
-      decoded.build.strategyParameterHash !== parameterHash
+      decoded.build.strategyParameterHash !== baselineParameterHash
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay must use the unchanged source-controlled strategy' }),
@@ -142,6 +162,8 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay build differs from the executable embedded build' }),
       )
+    const protocol = baselineProtocol
+    const parameterHash = baselineParameterHash
     const universe = {
       universeId: protocol.universeId,
       universeSymbolHash: protocol.universeSymbolHash,
@@ -261,8 +283,9 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
         sourceAndStrategyVerification:
           embeddedBuildMetadata === undefined ? ('configured' as const) : ('embedded' as const),
       },
-      build: {
+      runtimeBuild: {
         ...decoded.build,
+        strategyParameterHash: parameterHash,
         verification: embeddedBuildMetadata === undefined ? ('development-configured' as const) : ('embedded' as const),
       },
       strategy: makeActiveStrategyRuntime(protocol, provenance),
@@ -303,12 +326,16 @@ export type BacktestPass = Parameters<RecordAutonomousCyclePass>[0] & {
   readonly valuationFailure: Readonly<Record<string, string>> | null
 }
 
+export const qualifiesReplayValuation = (valuation: ReplayValuationEvidence) =>
+  valuation.marks.every((mark) => !mark.staleForExecution && mark.bidLiquidityAvailable)
+
 /** One engine, broker, portfolio, and durable account span every declared calendar session. */
 export const runBacktest = (
   prepared: PreparedBacktest,
   arrivalsPath: string,
   databases: ReplayDatabaseConfig,
   recordPass: (pass: BacktestPass) => Effect.Effect<void, OperationalError>,
+  recordInference: (call: ReplayJevCall) => Effect.Effect<void, ReplayBrokerFailure>,
 ) =>
   Effect.gen(function* () {
     const source = yield* openBacktestSource(
@@ -319,12 +346,32 @@ export const runBacktest = (
     )
     const sql = yield* PgClient.PgClient
     yield* prepareFreshReplayDatabase(databases.operationTimeoutMs)
-    yield* TestClock.setTime(prepared.openMs - 1)
+    const initializationStartedAtMs = prepared.openMs - 60_000
+    yield* TestClock.setTime(initializationStartedAtMs)
     const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash)
-    const advanceTo = yield* makeReplayTimeline(source, clock, prepared.closeMs + 1)
-    yield* advanceTo(prepared.openMs - 1)
+    const advanceTo = yield* makeReplayTimeline(source, clock, prepared.closeMs + databases.operationTimeoutMs + 10_000)
+    yield* advanceTo(initializationStartedAtMs)
+    const providerClock = yield* OperationDeadlineClock
+    if (providerClock === undefined)
+      return yield* new ReplayBrokerFailure({ message: 'Native Jev backtest requires its measured provider clock' })
+    const inferenceCalls: ReplayJevCall[] = []
+    const timing = yield* makeReplayJevTiming({
+      measureDatabaseTime: clock.measure,
+      provider: yield* JevClient,
+      providerClock,
+      advanceTo,
+      retain: (call) =>
+        recordInference(call).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              inferenceCalls.push(call)
+            }),
+          ),
+        ),
+    })
     const broker = yield* makeReplayBroker({
       runId: prepared.runId,
+      submissionTime: timing.currentUtcInstant,
       sourceManifestHash: source.source.sourceManifestHash,
       openingCashMicros: prepared.input.openingCashMicros,
       protocol: prepared.protocol,
@@ -333,12 +380,14 @@ export const runBacktest = (
       assets: prepared.assets,
       calendar: prepared.input.calendar,
       advanceToArrival: advanceTo,
-      quoteAt: (symbol) => source.cursor.pipe(Effect.map((cursor) => cursor.projection.quotes.get(symbol))),
+      quoteAt: (symbol, atMs) =>
+        source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs))),
     })
     const runtime = yield* makeReplayExecutionRuntime({
+      currentUtcInstant: timing.currentUtcInstant,
       config: {
         ...databases,
-        build: prepared.build,
+        build: prepared.runtimeBuild,
         reconciliationStaleThresholdMs: prepared.input.cadence.reconciliationStaleThresholdMs,
         execution: {
           brokerIdentity: prepared.identity,
@@ -353,10 +402,24 @@ export const runBacktest = (
       clock,
       recordPass: () => Effect.void,
       ...prepared.input.cadence,
-    })
+    }).pipe(Effect.provideService(JevClient, timing.client), timing.run)
+    const initializationCompletedAtMs = yield* Clock.currentTimeMillis
+    if (initializationCompletedAtMs > prepared.openMs)
+      return yield* new ReplayBrokerFailure({ message: 'Replay initialization missed the first session open' })
+    const initialization = {
+      startedAt: utcInstantFromEpochMillis(initializationStartedAtMs),
+      completedAt: utcInstantFromEpochMillis(initializationCompletedAtMs),
+      elapsedMs: initializationCompletedAtMs - initializationStartedAtMs,
+      firstSessionOpenAt: utcInstantFromEpochMillis(prepared.openMs),
+    }
     let peakEquity = BigInt(prepared.input.openingCashMicros)
     let maximumObservedDrawdown = 0n
     let previousClosingEquity = peakEquity
+    let accruedDataCost = 0n
+    const markedNetEquity = (equityMicros: string) =>
+      BigInt(equityMicros) -
+      accruedDataCost -
+      BigInt(calculateReplayJevCosts(inferenceCalls, prepared.input.inference.costs).knownCostMicros)
     const observeEquity = (equity: bigint) => {
       if (equity > peakEquity) peakEquity = equity
       const drawdown = peakEquity - equity
@@ -367,23 +430,31 @@ export const runBacktest = (
       (session) =>
         Effect.gen(function* () {
           let valuationFailureCount = 0
+          const firstCallIndex = inferenceCalls.length
+          accruedDataCost += BigInt(prepared.input.allocatedDataCostPerSessionMicros)
           const schedule = yield* driveReplaySession(
             {
               ...runtime,
-              advance: runtime.advance.pipe(
+              advance: timing.run(runtime.advance).pipe(
                 Effect.tap((pass) =>
                   Effect.gen(function* () {
                     const valued = yield* Effect.result(
                       Effect.all({ account: broker.read.account, valuation: broker.valuation }),
                     )
-                    if (Result.isSuccess(valued)) observeEquity(BigInt(valued.success.account.value.equityMicros))
+                    const usableValuation =
+                      Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
+                    if (usableValuation) observeEquity(markedNetEquity(valued.success.account.value.equityMicros))
                     else valuationFailureCount++
                     yield* recordPass({
                       ...pass.observation,
                       cycleResult: pass.result ?? null,
                       brokerState: yield* broker.snapshot,
                       valuation: Result.isSuccess(valued) ? valued.success.valuation : null,
-                      valuationFailure: Result.isFailure(valued) ? causeSummary(valued.failure) : null,
+                      valuationFailure: Result.isFailure(valued)
+                        ? causeSummary(valued.failure)
+                        : usableValuation
+                          ? null
+                          : { reason: 'unexecutable-held-position-mark' },
                     })
                   }),
                 ),
@@ -394,37 +465,63 @@ export const runBacktest = (
             Date.parse(session.closeAt),
           )
           const closingEquity = yield* broker.completeSession(session.date)
-          observeEquity(BigInt(closingEquity.equityMicros))
-          yield* advanceTo(Date.parse(session.closeAt) + 1)
-          const reconciliation = yield* runtime.reconcile
+          const closingNetEquity = markedNetEquity(closingEquity.equityMicros)
+          if (closingEquity.valuationQualified) observeEquity(closingNetEquity)
+          else valuationFailureCount++
+          yield* advanceTo(Math.max(yield* Clock.currentTimeMillis, Date.parse(session.closeAt) + 1))
+          const reconciliation = yield* timing.run(runtime.reconcile)
           const state = yield* broker.snapshot
-          const netEquityChangeMicros = (BigInt(closingEquity.equityMicros) - previousClosingEquity).toString()
-          previousClosingEquity = BigInt(closingEquity.equityMicros)
+          const netEquityChangeMicros = (closingNetEquity - previousClosingEquity).toString()
+          previousClosingEquity = closingNetEquity
+          const modelCosts = calculateReplayJevCosts(
+            inferenceCalls.slice(firstCallIndex),
+            prepared.input.inference.costs,
+          )
+          const assessed = assessBacktestSession({
+            failedPassCount: schedule.failedPassCount,
+            unavailableDecisionPassCount: schedule.unavailableDecisionPassCount,
+            valuationFailureCount,
+            reconciliation: {
+              status: reconciliation.report.reconciliation.status,
+              metrics: reconciliation.report.metrics,
+              unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
+              unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+            },
+            remainingPositionCount: state.ledger.positions.length,
+          })
+          const issues =
+            modelCosts.unresolvedCallCount === 0
+              ? assessed.issues
+              : [...assessed.issues, BacktestIssue.UnresolvedModelCost]
           return {
-            ...assessBacktestSession({
-              failedPassCount: schedule.failedPassCount,
-              valuationFailureCount,
-              reconciliation: {
-                status: reconciliation.report.reconciliation.status,
-                metrics: reconciliation.report.metrics,
-                unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
-                unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
-              },
-              remainingPositionCount: state.ledger.positions.length,
-            }),
+            completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
+            issues,
             sessionDate: session.date,
             schedule,
             valuationFailureCount,
             closingEquity,
+            closingNetEquityMicros: closingNetEquity.toString(),
+            modelCosts,
+            allocatedDataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
             reconciliation,
-            netEquityChangeMicros,
+            netEquityChangeMicros: issues.length === 0 ? netEquityChangeMicros : null,
+            equityChangeAfterKnownCostsMicros: netEquityChangeMicros,
             remainingPositions: state.ledger.positions,
           }
         }),
       { concurrency: 1 },
     )
     const brokerState = yield* broker.snapshot
-    const complete = sessions.every((session) => session.completion === 'COMPLETE')
+    const modelCosts = calculateReplayJevCosts(inferenceCalls, prepared.input.inference.costs)
+    const dataCostMicros = (
+      BigInt(prepared.input.allocatedDataCostPerSessionMicros) * BigInt(sessions.length)
+    ).toString()
+    const executionPnl = brokerState.ledger.netRealizedPnlAfterCostsMicros
+    const issues = [
+      ...(modelCosts.unresolvedCallCount === 0 ? [] : [BacktestIssue.UnresolvedModelCost]),
+      ...(executionPnl === null ? [BacktestIssue.UnresolvedExecutionCost] : []),
+    ]
+    const complete = sessions.every((session) => session.completion === 'COMPLETE') && issues.length === 0
     // Consume and rehash any retained tail only after the final decision; it cannot affect execution inputs.
     yield* source.finish
     const rows = yield* sql<Record<string, unknown>>`SELECT
@@ -466,26 +563,38 @@ export const runBacktest = (
       WHERE account_id = ${broker.accountId} ORDER BY fee_date, activity_id
     `
     const report = {
-      schemaVersion: 'bayn.backtest-report.v1' as const,
+      schemaVersion: 'bayn.backtest-report.v2' as const,
       evidenceMode: 'simulated-production-execution' as const,
       profitability: 'UNPROVEN' as const,
       completion: complete ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
       executionEvidence: { orderCount: brokerState.orders.length, fillCount: brokerState.fills.length },
-      reconciledNetPnlAfterCostsMicros: complete ? brokerState.ledger.netRealizedPnlAfterCostsMicros : null,
+      reconciledExecutionPnlAfterCostsMicros: brokerState.ledger.netRealizedPnlAfterCostsMicros,
+      reconciledNetPnlAfterCostsMicros:
+        complete && executionPnl !== null
+          ? (BigInt(executionPnl) - BigInt(modelCosts.knownCostMicros) - BigInt(dataCostMicros)).toString()
+          : null,
+      inference: { definition: prepared.input.inference, costs: modelCosts, calls: inferenceCalls },
+      dataCostMicros,
+      issues,
       runId: prepared.runId,
       source: source.source,
       sessionDates: prepared.input.sessionDates,
       sourceReceiptHash: prepared.sourceReceipt.contentHash,
       build: prepared.buildEvidence,
       assumptions: prepared.input.assumptions,
+      initialization,
       sessions,
       schedule: {
         passCount: sessions.reduce((total, session) => total + session.schedule.passCount, 0),
         failedPassCount: sessions.reduce((total, session) => total + session.schedule.failedPassCount, 0),
       },
-      netEquityChangeMicros: (previousClosingEquity - BigInt(prepared.input.openingCashMicros)).toString(),
+      netEquityChangeMicros: complete
+        ? (previousClosingEquity - BigInt(prepared.input.openingCashMicros)).toString()
+        : null,
+      equityChangeAfterKnownCostsMicros: (previousClosingEquity - BigInt(prepared.input.openingCashMicros)).toString(),
       peakEquityMicros: peakEquity.toString(),
-      maximumObservedDrawdownMicros: maximumObservedDrawdown.toString(),
+      maximumObservedDrawdownMicros: complete ? maximumObservedDrawdown.toString() : null,
+      maximumObservedDrawdownAfterKnownCostsMicros: maximumObservedDrawdown.toString(),
       brokerState,
       durableCounts: rows[0],
       decisions,

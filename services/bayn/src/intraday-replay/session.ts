@@ -1,10 +1,11 @@
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { Clock, Effect, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 import type { RecoveryFirstCycleAdvance } from '../observe-composition/model'
 import { ReplayBrokerFailure } from './broker'
 import { utcInstantFromEpochMillis } from '../time'
 
-/** One owner advances raw arrivals, SQL time, and Effect time; database I/O consumes no modeled market time. */
+/** One owner advances raw arrivals, the account clock and Effect time at each synchronization point. */
 export const makeReplayTimeline = <SourceError, DatabaseError>(
   source: { readonly advanceTo: (atMs: number) => Effect.Effect<void, SourceError> },
   databaseClock: { readonly advanceTo: (instant: string) => Effect.Effect<void, DatabaseError> },
@@ -51,11 +52,31 @@ export const driveReplaySession = <E>(
     let scheduledAtMs = firstPollAtMs
     let passCount = 0
     let failedPassCount = 0
+    let unavailableDecisionPassCount = 0
+    const readinessCounts: Partial<Record<DecisionReadinessReason, number>> = {}
     while (true) {
       yield* advanceTo(scheduledAtMs)
       const pass = yield* runtime.advance
       passCount++
       if (pass.observation.result === 'FAILURE') failedPassCount++
+      else if (pass.observation.readiness !== undefined) {
+        const { reason } = pass.observation.readiness
+        readinessCounts[reason] = (readinessCounts[reason] ?? 0) + 1
+        switch (reason) {
+          case DecisionReadinessReason.LookbackWarmup:
+          case DecisionReadinessReason.NoEligibleCandidate:
+          case DecisionReadinessReason.SignalWindowObserved:
+            break
+          case DecisionReadinessReason.DecisionPending:
+          case DecisionReadinessReason.InferenceUnavailable:
+          case DecisionReadinessReason.SnapshotUnavailable:
+          case DecisionReadinessReason.SnapshotCoverage:
+          case DecisionReadinessReason.SnapshotStale:
+          case DecisionReadinessReason.ArchiveWatermark:
+            unavailableDecisionPassCount++
+            break
+        }
+      }
       const completedAtMs = yield* Clock.currentTimeMillis
       if (completedAtMs < scheduledAtMs)
         return yield* new ReplayBrokerFailure({ message: 'Execution command moved replay time backwards' })
@@ -65,5 +86,13 @@ export const driveReplaySession = <E>(
         return yield* new ReplayBrokerFailure({ message: 'Execution command returned an invalid polling delay' })
       scheduledAtMs = Math.min(completedAtMs + delay, lastPollAtMs)
     }
-    return { firstPollAtMs, lastPollAtMs, completedAtMs: yield* Clock.currentTimeMillis, passCount, failedPassCount }
+    return {
+      firstPollAtMs,
+      lastPollAtMs,
+      completedAtMs: yield* Clock.currentTimeMillis,
+      passCount,
+      failedPassCount,
+      unavailableDecisionPassCount,
+      readinessCounts,
+    }
   })

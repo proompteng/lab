@@ -12,9 +12,7 @@ const finishRecoveryResultDataFirst = (
   selection: Extract<CycleRecoverySelection, { readonly action: 'FINISH' }>,
   cycle: AutonomousCycle,
 ): Result.Result<CycleRunResult, CycleRunnerError> => {
-  const result = (
-    action: Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['action'],
-  ): Result.Result<CycleRunResult, CycleRunnerError> =>
+  const result = (action: 'BLOCKED' | 'COMPLETED' | 'NO_TRADE'): Result.Result<CycleRunResult, CycleRunnerError> =>
     Result.succeed({ outcome: 'RECOVERED', action, observedAt: selection.observedAt, cycle })
 
   switch (cycle.state) {
@@ -60,6 +58,13 @@ export const retainAutonomousCyclePassObservation = (
     result: 'SUCCESS',
     observedAt: observation.observedAt,
     outcome: observation.result.outcome,
+    ...(observation.result.outcome === 'RECOVERED'
+      ? {
+          recoveryAction: observation.result.action,
+          ...(observation.result.waitReason === undefined ? {} : { waitReason: observation.result.waitReason }),
+          ...(observation.result.readiness === undefined ? {} : { readiness: observation.result.readiness }),
+        }
+      : {}),
   }
 }
 
@@ -123,6 +128,8 @@ export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassL
         annotations: {
           outcome: result.outcome,
           recoveryAction: result.action,
+          ...(result.waitReason === undefined ? {} : { waitReason: result.waitReason }),
+          ...(result.readiness === undefined ? {} : { readiness: JSON.stringify(result.readiness) }),
           observedAt: result.observedAt,
           ...cycleAnnotations(result.cycle),
         },

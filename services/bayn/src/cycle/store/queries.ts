@@ -42,7 +42,7 @@ export const makeCycleQueries = (
       ? sql<Record<string, unknown>>`
           SELECT
             cycle_id, schema_version, identity_schema_version, strategy_name,
-            qualification_run_id, strategy_protocol_hash, account_id,
+            qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -60,7 +60,7 @@ export const makeCycleQueries = (
       : sql<Record<string, unknown>>`
           SELECT
             cycle_id, schema_version, identity_schema_version, strategy_name,
-            qualification_run_id, strategy_protocol_hash, account_id,
+            qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -83,7 +83,7 @@ export const makeCycleQueries = (
         ? sql<Record<string, unknown>>`
           SELECT
             cycle_id, schema_version, identity_schema_version, strategy_name,
-            qualification_run_id, strategy_protocol_hash, account_id,
+            qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
             signal_session_date::text AS signal_session_date, signal_calendar_version,
             execution_policy_schema_version, execution_policy_hash,
             strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -97,13 +97,15 @@ export const makeCycleQueries = (
           FROM autonomous_cycles
           WHERE qualification_run_id = ${slot.qualificationRunId}
             AND account_id = ${slot.accountId}
-            AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3')
+            AND schema_version IN ('bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
             AND execution_session_date = ${slot.executionSessionDate}
+          ORDER BY entry_attempt_ordinal DESC
+          LIMIT 1
         `
         : sql<Record<string, unknown>>`
       SELECT
         cycle_id, schema_version, identity_schema_version, strategy_name,
-        qualification_run_id, strategy_protocol_hash, account_id,
+        qualification_run_id, strategy_protocol_hash, account_id, entry_attempt_ordinal,
         signal_session_date::text AS signal_session_date, signal_calendar_version,
         execution_policy_schema_version, execution_policy_hash,
         strategy_execution_model_hash, submission_window_ms, submission_cutoff_before_open_ms,
@@ -238,7 +240,7 @@ export const makeCycleQueries = (
       )
       SELECT
         cycle.cycle_id, cycle.schema_version, cycle.identity_schema_version, cycle.strategy_name,
-        cycle.qualification_run_id, cycle.strategy_protocol_hash, cycle.account_id,
+        cycle.qualification_run_id, cycle.strategy_protocol_hash, cycle.account_id, cycle.entry_attempt_ordinal,
         cycle.signal_session_date::text AS signal_session_date, cycle.signal_calendar_version,
         cycle.execution_policy_schema_version, cycle.execution_policy_hash,
         cycle.strategy_execution_model_hash, cycle.submission_window_ms, cycle.submission_cutoff_before_open_ms,
@@ -381,12 +383,30 @@ export const makeCycleQueries = (
             AND snapshot.content_hash = ${pricing.contentHash}
             AND snapshot.observed_at = ${pricing.observedAt}::timestamptz)`
         : sql`true`
+    const jev =
+      document.mode === legacyExecutionAuthorityToken &&
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v1'
+        ? document.strategyDecision.evidence
+        : undefined
+    const jevEvidence =
+      jev === undefined
+        ? sql`true`
+        : sql`EXISTS (
+      SELECT 1 FROM jev_batch_plans AS plan
+      JOIN jev_batch_results AS result USING (batch_id)
+      JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
+      WHERE plan.batch_id = ${jev.batchPlan.batchId} AND plan.payload = ${sql.json(jev.batchPlan)}
+        AND result.result_hash = ${jev.batchResult.resultHash} AND result.payload = ${sql.json(jev.batchResult)}
+        AND observation.payload = ${sql.json(jev.observation)}
+        AND plan.cycle_id = ${document.bindings.cycleId}
+    )`
     return sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1
         FROM reconciliations AS reconciliation
         WHERE ${snapshotEvidence}
           AND ${pricingEvidence}
+          AND ${jevEvidence}
           AND ${riskContextEvidence}
           AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
           AND reconciliation.account_id = ${document.bindings.accountId}

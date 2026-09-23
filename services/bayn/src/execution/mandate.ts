@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
-import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
+import { notionalMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
+import { WEIGHT_SCALE } from '../strategy/execution-model/model'
 import { Sha256Schema } from '../schemas'
 import { reconciliationIncompleteRestrictionReason } from './authority'
 import { legacyAuthorityGenerationV2SchemaVersion, legacyAuthorityGenerationV3SchemaVersion } from './legacy-wire'
@@ -28,6 +29,7 @@ export interface ExecutionMandateAllocationFacts {
   readonly maxNetExposureMicros: bigint
   readonly maxDailyTradedNotionalMicros: bigint
   readonly maxAdverseSlippageBps: bigint
+  readonly targetWeights: Readonly<Record<string, number>>
   readonly positions: readonly {
     readonly quantityMicros: string
     readonly symbol: string
@@ -36,6 +38,7 @@ export interface ExecutionMandateAllocationFacts {
 }
 
 export type ExecutionMandateAllocationFailure =
+  | ExecutionTargetAllocationFailure
   | {
       readonly _tag: 'CurrentExposureExceedsRemainingTurnover'
       readonly currentReferenceGrossExposureMicros: bigint
@@ -47,6 +50,8 @@ export type ExecutionMandateAllocationFailure =
 const nonNegative = (value: bigint): bigint => (value < 0n ? 0n : value)
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const BASIS_POINTS = 10_000n
+const referenceNotionalWithinSlippage = (limit: bigint, slippageBps: bigint): bigint =>
+  (nonNegative(limit) * BASIS_POINTS) / (BASIS_POINTS + nonNegative(slippageBps))
 
 const currentReferenceGrossExposureMicros = (
   facts: ExecutionMandateAllocationFacts,
@@ -75,41 +80,57 @@ const currentReferenceGrossExposureMicros = (
 
 /**
  * Bounds entry target construction by a sell-plus-buy turnover upper bound. Current reference gross exposure plus
- * target gross capital bounds every absolute target delta, including rotations; an infeasible current portfolio is
+ * weighted target capital bounds every absolute target delta, including rotations; an infeasible current portfolio is
  * rejected before target planning instead of producing a risk-blocked authority transition.
  */
 export const executionMandateAllocationCapitalMicros = (
   facts: ExecutionMandateAllocationFacts,
 ): Result.Result<bigint, ExecutionMandateAllocationFailure> => {
   const remainingDailyTurnover = nonNegative(facts.maxDailyTradedNotionalMicros - facts.dailyTradedNotionalMicros)
-  const remainingReferenceTurnover =
-    (remainingDailyTurnover * BASIS_POINTS) / (BASIS_POINTS + nonNegative(facts.maxAdverseSlippageBps))
-  return Result.flatMap(currentReferenceGrossExposureMicros(facts), (currentReferenceGrossExposure) => {
-    if (currentReferenceGrossExposure > remainingReferenceTurnover) {
-      return Result.fail({
-        _tag: 'CurrentExposureExceedsRemainingTurnover',
-        currentReferenceGrossExposureMicros: currentReferenceGrossExposure,
-        remainingReferenceTurnoverMicros: remainingReferenceTurnover,
-      })
-    }
-    const referenceCapitalWithinTurnover = remainingReferenceTurnover - currentReferenceGrossExposure
-    return Result.succeed(
-      [
-        facts.accountEquityMicros,
-        facts.maxGrossExposureMicros,
-        facts.maxNetExposureMicros,
-        referenceCapitalWithinTurnover,
-      ]
-        .map(nonNegative)
-        .reduce((minimum, value) => (value < minimum ? value : minimum)),
-    )
-  })
+  const remainingReferenceTurnover = referenceNotionalWithinSlippage(
+    remainingDailyTurnover,
+    facts.maxAdverseSlippageBps,
+  )
+  const grossTargetWeight = Result.all(
+    Object.entries(facts.targetWeights).map(([symbol, weight]) =>
+      Result.mapError(
+        scaledNumber(weight, `target weight for ${symbol}`, Number(WEIGHT_SCALE)),
+        (cause): ExecutionTargetAllocationFailure => ({ _tag: 'InvalidTargetWeight', symbol, cause }),
+      ),
+    ),
+  ).pipe(Result.map((weights) => weights.reduce((total, weight) => total + weight, 0n)))
+  return Result.flatMap(
+    Result.all({ currentReferenceGrossExposure: currentReferenceGrossExposureMicros(facts), grossTargetWeight }),
+    ({ currentReferenceGrossExposure, grossTargetWeight }) => {
+      if (currentReferenceGrossExposure > remainingReferenceTurnover) {
+        return Result.fail({
+          _tag: 'CurrentExposureExceedsRemainingTurnover',
+          currentReferenceGrossExposureMicros: currentReferenceGrossExposure,
+          remainingReferenceTurnoverMicros: remainingReferenceTurnover,
+        })
+      }
+      if (grossTargetWeight === 0n) return Result.succeed(0n)
+      const capitalForNotional = (notional: bigint): bigint =>
+        (nonNegative(notional) * WEIGHT_SCALE) / grossTargetWeight
+      return Result.succeed(
+        [
+          facts.accountEquityMicros,
+          capitalForNotional(facts.maxGrossExposureMicros),
+          capitalForNotional(facts.maxNetExposureMicros),
+          capitalForNotional(remainingReferenceTurnover - currentReferenceGrossExposure),
+        ]
+          .map(nonNegative)
+          .reduce((minimum, value) => (value < minimum ? value : minimum)),
+      )
+    },
+  )
 }
 
 export interface ExecutionTargetAllocationFacts {
   readonly allocationCapitalMicros: bigint
   readonly maxOrderNotionalMicros: bigint
   readonly maxSymbolExposureMicros: bigint
+  readonly maxAdverseSlippageBps: bigint
   readonly targetWeights: Readonly<Record<string, number>>
 }
 
@@ -119,25 +140,24 @@ export type ExecutionTargetAllocationFailure = {
   readonly cause: unknown
 }
 
-/** Caps portfolio capital so every positive target remains inside both per-order and per-symbol policy limits. */
+/** Buy limits round down; only the order cap needs slippage because exposure gates use reference prices. */
 export const constrainExecutionTargetAllocationCapitalMicros = (
   facts: ExecutionTargetAllocationFacts,
 ): Result.Result<bigint, ExecutionTargetAllocationFailure> => {
+  const referenceOrderLimit = referenceNotionalWithinSlippage(facts.maxOrderNotionalMicros, facts.maxAdverseSlippageBps)
   const targetNotionalLimit =
-    facts.maxOrderNotionalMicros < facts.maxSymbolExposureMicros
-      ? facts.maxOrderNotionalMicros
-      : facts.maxSymbolExposureMicros
+    referenceOrderLimit < facts.maxSymbolExposureMicros ? referenceOrderLimit : facts.maxSymbolExposureMicros
   return Object.entries(facts.targetWeights).reduce<Result.Result<bigint, ExecutionTargetAllocationFailure>>(
     (bounded, [symbol, weight]) =>
       Result.flatMap(bounded, (current) =>
-        Result.mapError(numberToMicros(weight, `target weight for ${symbol}`), (cause) => ({
+        Result.mapError(scaledNumber(weight, `target weight for ${symbol}`, Number(WEIGHT_SCALE)), (cause) => ({
           _tag: 'InvalidTargetWeight' as const,
           symbol,
           cause,
         })).pipe(
-          Result.map((weightMicros) => {
-            if (weightMicros === 0n) return current
-            const targetBound = (targetNotionalLimit * MICROS) / weightMicros
+          Result.map((weightUnits) => {
+            if (weightUnits === 0n) return current
+            const targetBound = (targetNotionalLimit * WEIGHT_SCALE) / weightUnits
             return targetBound < current ? targetBound : current
           }),
         ),
@@ -225,7 +245,7 @@ export const executionActivationExpiredRestrictionReason = `${executionActivatio
 export const legacyExecutionActivationExpiredRestrictionReason =
   'PAPER activation lease restricted effective authority: immutable activation request expired'
 
-const isRetiredOneShotMandateRestriction = (reason: string | undefined): boolean =>
+export const isRetiredOneShotMandateRestriction = (reason: string | undefined): boolean =>
   reason === executionMandateCompletedRestrictionReason ||
   reason === legacyV1CompletedRestrictionReason ||
   reason === executionActivationExpiredRestrictionReason ||
@@ -295,9 +315,10 @@ export const decideExecutionMandateCycleTerminalization = (input: {
   readonly observedAt: string
   readonly entryCutoffAt?: string
   readonly entryHasUnsuccessfulIntent: boolean
+  readonly entrySettledWithoutFill: boolean
 }): ExecutionMandateCycleTerminalizationDecision => {
   if (!input.closeOnly && input.entryCutoffAt !== undefined && input.observedAt < input.entryCutoffAt) {
-    return { _tag: 'WaitForClose' }
+    return input.entrySettledWithoutFill ? { _tag: 'Complete' } : { _tag: 'WaitForClose' }
   }
   if (input.entryHasUnsuccessfulIntent) {
     return { _tag: 'Block' }

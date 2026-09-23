@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Context, Effect } from 'effect'
 
 import { BrokerRead } from './broker/alpaca'
 import {
@@ -12,6 +12,12 @@ import {
 import { WriterFence } from './execution/writer-fence'
 import { currentUtcInstant } from './time'
 import { runReconciliation } from './simulation-reconciliation/broker-reconciler-program'
+import type { ReconciliationError } from './simulation-reconciliation/broker-reconciler-model'
+
+export const ReconciliationClock = Context.Reference<Effect.Effect<string, ReconciliationError>>(
+  'bayn/ReconciliationClock',
+  { defaultValue: () => currentUtcInstant },
+)
 
 export { ReconciliationError } from './simulation-reconciliation/broker-reconciler-model'
 export type {
@@ -31,6 +37,6 @@ export const runOnce = Effect.gen(function* () {
     read: yield* BrokerRead,
     store,
     fence: yield* WriterFence,
-    now: currentUtcInstant,
+    now: yield* ReconciliationClock,
   })
 })

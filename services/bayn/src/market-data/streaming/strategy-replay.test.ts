@@ -14,8 +14,58 @@ import { operationalError } from '../../errors'
 import type { IntradayMarketDataService } from '../intraday/model'
 import { loadIntradaySnapshot, executionMarketDataBinding } from '../../observe-composition/intraday-market-data'
 import { reconstructBoundIntradaySnapshot } from '../../shadow-decision-contract'
+import { decisionBuildError } from '../../observe-composition/decision-builder'
+import { candidateObservationFixture } from '../../testing/candidate-observation-fixture'
+import { retainAutonomousCyclePassObservation } from '../../cycle/runner/pass-decisions'
+import { RetainedAutonomousCyclePassObservationSchema } from '../../cycle/runner/pass-observation'
 
 describe('streaming strategy and recorded decision replay', () => {
+  test('retains an unavailable benchmark feature identity through the durable waiting observation', () => {
+    const { cut, query, protocol } = streamingFixture()
+    const features = new Map(cut.projection.features)
+    features.delete(protocol.benchmarkSymbol)
+    const result = constructStreamingSnapshot({ ...cut, projection: { ...cut.projection, features } }, query)
+    if (Result.isSuccess(result)) throw new Error('Missing benchmark feature must withhold the snapshot')
+    const error = decisionBuildError(
+      operationalError({
+        component: 'market-data',
+        operation: 'load',
+        message: 'Streaming snapshot verification failed',
+        cause: result.failure,
+      }),
+    )
+    expect(error.failure).toBe('not-ready')
+    const readiness = error.readiness
+    if (readiness === undefined) throw new Error('Missing benchmark evidence must retain its readiness details')
+    const expected = {
+      reason: 'SNAPSHOT_UNAVAILABLE',
+      symbol: protocol.benchmarkSymbol,
+      eventAt: query.rangeEndAt,
+      requiredFeature: {
+        definitionId: protocol.streamingInput.requiredDefinitionId,
+        definitionHash: protocol.streamingInput.requiredDefinitionHash,
+        windowStartAt: query.rangeStartAt,
+        windowEndAt: query.rangeEndAt,
+      },
+    }
+    expect(readiness).toMatchObject(expected)
+    const retained = retainAutonomousCyclePassObservation({
+      outcome: 'SUCCEEDED',
+      observedAt: query.observedAt,
+      result: {
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        observedAt: query.observedAt,
+        cycle: candidateObservationFixture().cycle,
+        readiness,
+      },
+    })
+    expect(Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)(retained)).toMatchObject({
+      recoveryAction: 'WAITING',
+      readiness: expected,
+    })
+  })
+
   test('uses all seven decision symbols and reproduces the exact streaming decision', () => {
     const { snapshot, rows, protocol } = streamingFixture()
     const session = snapshot.manifest.calendar.sessions[0]

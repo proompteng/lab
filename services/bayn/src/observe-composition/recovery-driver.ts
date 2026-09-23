@@ -1,3 +1,4 @@
+import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
@@ -54,7 +55,7 @@ import {
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
 
 const verifyDecisionBindingEvidence = (
@@ -199,13 +200,12 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+): Effect.Effect<ReconciliationPassResult, CycleRunnerError, ObserveDecisionRuntime> =>
   Clock.currentTimeNanos.pipe(
     Effect.tap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })),
     Effect.andThen(
       reconcile.pipe(
-        Effect.asVoid,
         Effect.mapError(reconciliationRunnerError),
         Effect.tapError((lastFailure) =>
           Clock.currentTimeNanos.pipe(
@@ -219,14 +219,15 @@ const attemptMutationIdleReconciliation = (
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+): Effect.Effect<ReconciliationPassResult | undefined, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const nowNanos = yield* Clock.currentTimeNanos
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-    if (decision._tag === 'RECONCILE') yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    if (decision._tag === 'RECONCILE') return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
+    return undefined
   })
 
 const observeMutationCycleResult = (
@@ -290,45 +291,51 @@ const makeRecoveryFirstCycleDriverEffect = (
         Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
         Effect.map((observation) => ({ observation })),
       )
-    const advanceCycle = Effect.gen(function* () {
-      const context: CycleRunContext<ObserveDecisionRuntime> = {
-        cycleBindingId: startup.cycleBindingId,
-        strategyName: 'intraday-momentum',
-        strategyProtocolHash: preparation.strategyProtocolHash,
-        accountId: input.accountId,
-        executionPolicy: preparation.executionPolicy,
-        buildDecision: (cycle) => buildDecision(cycle, reconcile),
-        buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
-      }
-      const result = yield* runMutationPassWithinTimeout(
-        runRecoveryFirstCyclePass(input, policy, context, reconcile, capability),
-        cyclePassTimeoutMs,
-      )
-      if (isPostMutationReconciliation(result)) {
-        // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
-        // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
-        // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
-        // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
-        yield* Ref.set(cadence, {})
-        return {
-          result: deferPostMutationReconciliation(result),
-          ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
+    const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
+      Effect.gen(function* () {
+        const pendingPreflight = yield* Ref.make(preflight)
+        const reconcileForAdvance = Ref.getAndSet(pendingPreflight, undefined).pipe(
+          Effect.flatMap((available) => (available === undefined ? reconcile : Effect.succeed(available))),
+        )
+        const context: CycleRunContext<ObserveDecisionRuntime> = {
+          cycleBindingId: startup.cycleBindingId,
+          strategyName: 'jev',
+          strategyProtocolHash: preparation.strategyProtocolHash,
+          accountId: input.accountId,
+          authorityGenerationHash: input.authorityGenerationHash,
+          executionPolicy: preparation.executionPolicy,
+          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance),
+          buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
-      }
-      return { result }
-    }).pipe(
-      Effect.matchEffect({
-        onFailure: observeCycleFailure,
-        onSuccess: ({ result, nextDelayMs }) =>
-          observeMutationCycleResult(startup, cadence, result).pipe(
-            Effect.map((observation) => ({
-              observation,
-              result,
-              ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
-            })),
-          ),
-      }),
-    )
+        const result = yield* runMutationPassWithinTimeout(
+          runRecoveryFirstCyclePass(input, policy, context, reconcileForAdvance, capability),
+          cyclePassTimeoutMs,
+        )
+        if (isPostMutationReconciliation(result)) {
+          // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
+          // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
+          // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
+          // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
+          yield* Ref.set(cadence, {})
+          return {
+            result: deferPostMutationReconciliation(result),
+            ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
+          }
+        }
+        return { result }
+      }).pipe(
+        Effect.matchEffect({
+          onFailure: observeCycleFailure,
+          onSuccess: ({ result, nextDelayMs }) =>
+            observeMutationCycleResult(startup, cadence, result).pipe(
+              Effect.map((observation) => ({
+                observation,
+                result,
+                ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+              })),
+            ),
+        }),
+      )
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
     const runCycleAdvance = reconciliationPreflight.pipe(
       Effect.matchEffect({
@@ -337,8 +344,8 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
             Effect.map((observation) => ({ observation })),
           ),
-        onSuccess: () =>
-          advanceCycle.pipe(
+        onSuccess: (preflight) =>
+          advanceCycle(preflight).pipe(
             Effect.flatMap((advanced) =>
               capability._tag !== 'Mutation' ||
               input.intradayMarketData === undefined ||

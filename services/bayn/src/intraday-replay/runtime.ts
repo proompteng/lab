@@ -1,5 +1,14 @@
+import { makeCandidateObservationStore } from '../db/candidate-observation-postgres'
+import { makeJevBatchStore } from '../db/jev-batch-postgres'
+import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
+import { makeJevPositionStore } from '../db/jev-position-postgres'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevClient } from '../jev/client'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevPositionStore } from '../jev/portfolio'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { PgClient } from '@effect/sql-pg'
-import { Context, Effect } from 'effect'
+import { Context, Effect, Semaphore } from 'effect'
 import { operationTimeoutOrElse } from '../operation-timeout'
 
 import { BrokerRead } from '../broker/alpaca'
@@ -26,12 +35,17 @@ import {
   makeResearchCapitalActivationRequest,
   makeResearchCapitalPlanHash,
   researchCapitalGrantProof,
+  researchCapitalGenerationIsBoundToRequest,
 } from '../execution/configuration'
-import { Authority } from '../execution/contracts'
+import { Authority, KillState } from '../execution/contracts'
+import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
+import { executionGenerationNeedsRecovery, makeGenerationCycleDriver } from '../composition/generation-cycle'
+import { refreshResearchCapitalActivationReconciliation } from '../composition/capital-activation'
 import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
 import { MutationStore } from '../execution/mutations'
 import { makeTradingEngine } from '../composition/trading-engine'
 import { WriterFence } from '../execution/writer-fence'
+import type { ExecutionProgramDependencies } from '../execution/runtime-program'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -41,11 +55,14 @@ import type { HistoricalMarketCursor } from '../market-data/streaming/historical
 import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
 import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
+import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
+import { ReconciliationClock } from '../reconciler'
 import { operationalError, type OperationalError } from '../errors'
 import { currentUtcInstant } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
 
 export interface ReplayExecutionRuntimeInput {
+  readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
   readonly config: ExecutionStoreRuntimeConfig
   readonly strategy: StrategyRuntime
   readonly broker: Effect.Success<ReturnType<typeof makeReplayBroker>>
@@ -94,6 +111,11 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     )
     const cycleStore = withWriterFenceCycleStore(yield* makeCycleStore(input.clock), fence)
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
+    const candidateObservationStore = yield* makeCandidateObservationStore
+    const jevClient = yield* JevClient
+    const jevEvaluations = yield* makeJevEvaluationStore
+    const jevBatches = yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations))
+    const jevPositions = yield* makeJevPositionStore
     const riskPolicy = yield* loadStrategyExecutionRiskPolicy(identity.accountId, input.strategy)
     const plan = {
       schemaVersion: 'bayn.research-execution-plan.v1' as const,
@@ -122,11 +144,22 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
         grant: { _tag: 'Research', planHash },
       }),
     )
-    yield* store.authorityGeneration.readOrInitializeObserveAuthority({
+    const initialAuthority = yield* store.authorityGeneration.readOrInitializeObserveAuthority({
       generationHash: sourceGenerationHash,
       maximum: Authority.Observe,
     })
-    const reconcile = runReconciliation({ read: input.broker.read, store, fence, now: currentUtcInstant }).pipe(
+    const reconciliationTime = input.currentUtcInstant.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ReconciliationError({
+            operation: 'clock',
+            failure: { _tag: 'Clock' },
+            message: 'Replay reconciliation clock could not advance',
+            cause,
+          }),
+      ),
+    )
+    const reconcile = runReconciliation({ read: input.broker.read, store, fence, now: reconciliationTime }).pipe(
       operationTimeoutOrElse({
         duration: input.reconciliationPassTimeoutMs,
         orElse: () =>
@@ -138,48 +171,21 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       }),
     )
     yield* reconcile
-    const activated = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
-      researchCapitalGrantProof(request),
-      sourceGenerationHash,
-    )
-    const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(activated.generationHash)
-    if (generation === undefined)
-      return yield* new ReplayBrokerFailure({ message: 'Activated replay research generation is unavailable' })
-    const authority = yield* Effect.fromResult(
-      makeExecutionAuthority({
-        observedAt: yield* currentUtcInstant,
-        brokerIdentity: identity,
-        brokerAccess: BrokerAccess.Mutation,
-        capitalAuthority: grantedCapitalAuthority(activated.generationHash),
-        strategy: input.strategy.provenance.strategy,
-      }),
-    )
-    const engine = yield* makeTradingEngine({
-      authority,
-      cycle: {
-        accountId: identity.accountId,
-        authorityGenerationHash: activated.generationHash,
-        strategy: input.strategy,
-        intradayMarketData: marketData,
-        executionCycleClosureStore: closures,
-        blockedCycleIntentStore,
-        pollIntervalMs: input.pollIntervalMs,
-        reconciliationIntervalMs: input.reconciliationIntervalMs,
-        reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
-      },
-      executionMode: 'Mutation',
-      execution: {
-        brokerRead: input.broker.read,
-        brokerMutation: input.broker.mutation,
-        intentStore,
-        mutationStore,
-        writerFence: fence,
-        persistedCapitalGrants,
-        readFinalExecutionRiskContext: (observedAt) =>
-          readFinalExecutionRiskContext(sql, identity.accountId, observedAt),
-      },
-    })
+    yield* input.currentUtcInstant
+    const activated =
+      initialAuthority.maximum === Authority.Execution
+        ? initialAuthority
+        : yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+            researchCapitalGrantProof(request),
+            initialAuthority.generationHash,
+          )
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
+      Context.add(ReconciliationClock, reconciliationTime),
+      Context.add(CandidateObservationStore, candidateObservationStore),
+      Context.add(JevClient, jevClient),
+      Context.add(JevEvaluationStore, jevEvaluations),
+      Context.add(JevBatchStore, jevBatches),
+      Context.add(JevPositionStore, jevPositions),
       Context.add(CycleStore, cycleStore),
       Context.add(BrokerEventStore, store.events),
       Context.add(FillAccountingStore, store.accounting),
@@ -191,18 +197,124 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       Context.add(IntentStore, intentStore),
       Context.add(MutationStore, mutationStore),
     )
-    const startup = yield* engine.startCycle({
-      cycleBindingId: capitalGrantKey(capitalGrantFromLegacyGeneration(generation)),
-      recordPass: input.recordPass,
+    const readAuthorityState = store.authorityGeneration.readAuthorityState
+    if (readAuthorityState === undefined)
+      return yield* new ReplayBrokerFailure({ message: 'Replay runtime requires durable authority reads' })
+    const asOperational = (cause: unknown) =>
+      operationalError({
+        component: 'strategy',
+        operation: 'replay-generation-recovery',
+        message: 'Replay generation recovery failed',
+        cause,
+      })
+    const readAuthority = readAuthorityState.pipe(Effect.mapError(asOperational))
+    const reconcileForActivation = input.currentUtcInstant.pipe(
+      Effect.andThen(refreshResearchCapitalActivationReconciliation(reconcile, input.reconciliationPassTimeoutMs)),
+      Effect.andThen(input.currentUtcInstant),
+      Effect.asVoid,
+      Effect.mapError(asOperational),
+    )
+    const settle = recoverTerminalGenerationToObserve({
+      accountId: identity.accountId,
+      blockedIntents: blockedCycleIntentStore,
+      authorityStore: store.authorityGeneration,
+      writerFence: fence,
+      reconcileAfterSettlement: reconcileForActivation,
     })
-    const driver = yield* startup.pipe(Effect.provideContext(resources))
+    const startGeneration = (generationHash: string) =>
+      Effect.gen(function* () {
+        const generation = yield* store.authorityGeneration.readResearchAuthorityGeneration(generationHash)
+        if (generation === undefined)
+          return yield* new ReplayBrokerFailure({ message: 'Activated replay research generation is unavailable' })
+        yield* Effect.fromResult(
+          researchCapitalGenerationIsBoundToRequest(request, generation.previousGenerationHash, generation),
+        )
+        const mode = executionGenerationNeedsRecovery(yield* readAuthority)
+          ? ('CloseOnly' as const)
+          : ('Mutation' as const)
+        const authority = yield* Effect.fromResult(
+          makeExecutionAuthority({
+            observedAt: yield* currentUtcInstant,
+            brokerIdentity: identity,
+            brokerAccess: BrokerAccess.Mutation,
+            capitalAuthority: grantedCapitalAuthority(generationHash),
+            strategy: input.strategy.provenance.strategy,
+          }),
+        )
+        const engine = yield* makeTradingEngine({
+          authority,
+          cycle: {
+            accountId: identity.accountId,
+            authorityGenerationHash: generationHash,
+            strategy: input.strategy,
+            intradayMarketData: marketData,
+            executionCycleClosureStore: closures,
+            blockedCycleIntentStore,
+            pollIntervalMs: input.pollIntervalMs,
+            reconciliationIntervalMs: input.reconciliationIntervalMs,
+            reconciliationPassTimeoutMs: input.reconciliationPassTimeoutMs,
+          },
+          executionMode: mode,
+          execution: {
+            currentUtcInstant: input.currentUtcInstant,
+            brokerRead: input.broker.read,
+            brokerMutation: input.broker.mutation,
+            intentStore,
+            mutationStore,
+            writerFence: fence,
+            persistedCapitalGrants,
+            readFinalExecutionRiskContext: (observedAt) =>
+              readFinalExecutionRiskContext(sql, identity.accountId, observedAt),
+          },
+        })
+        const startup = yield* engine.startCycle({
+          cycleBindingId: capitalGrantKey(capitalGrantFromLegacyGeneration(generation)),
+          recordPass: input.recordPass,
+        })
+        const driver = yield* startup.pipe(Effect.provideContext(resources))
+        return yield* makeGenerationCycleDriver(
+          {
+            generationHash,
+            mode,
+            readAuthority,
+            reconcileWhenHeld: reconcileForActivation,
+            settle,
+          },
+          driver,
+        ).pipe(Effect.provideContext(resources))
+      }).pipe(Effect.mapError(asOperational))
+    let owned = yield* startGeneration(activated.generationHash)
+    const initialDriver = owned.driver
+    const permit = yield* Semaphore.make(1)
+    const advance = permit.withPermit(
+      Effect.gen(function* () {
+        if (yield* owned.needsRebind) {
+          const current = yield* readAuthority
+          let generationHash = current.generationHash
+          if (
+            current.maximum === Authority.Observe &&
+            current.effective === Authority.Observe &&
+            current.kill === KillState.Clear
+          ) {
+            yield* reconcileForActivation
+            const next = yield* store.capitalGrantLifecycle.activateResearchCapitalGrant(
+              researchCapitalGrantProof(request),
+              current.generationHash,
+            )
+            generationHash = next.generationHash
+          }
+          owned = yield* startGeneration(generationHash)
+        }
+        return yield* owned.driver.advance.pipe(Effect.provideContext(resources))
+      }),
+    )
     return {
       authorityGenerationHash: activated.generationHash,
       cycleStore,
       store,
       marketData,
-      advance: driver.advance.pipe(Effect.provideContext(resources)),
-      nextDelayMs: driver.nextDelayMs,
+      advance,
+      nextDelayMs: initialDriver.nextDelayMs,
       reconcile,
     }
   }).pipe(

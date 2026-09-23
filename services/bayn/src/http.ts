@@ -12,7 +12,7 @@ import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { isReady, type DependencyHealth, type RuntimeState } from './runtime-state'
+import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
 
 export type HttpResponseDecision =
@@ -123,30 +123,46 @@ const publicDependencies = (state: RuntimeState) => ({
   },
 })
 
-const publicAutonomousCycleLoop = (state: RuntimeState) => {
-  const lastPass = state.autonomousCycleLoop.lastPass
+const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined) => {
+  if (pass === null || pass === undefined) return null
+  if (pass.result === 'FAILURE') {
+    return {
+      result: pass.result,
+      observedAt: pass.observedAt,
+      operation: pass.operation,
+      failure: pass.failure,
+      reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
+    } as const
+  }
   return {
-    configured: state.autonomousCycleLoop.configured,
-    owner: state.autonomousCycleLoop.owner ?? 'Process',
-    startedAt: state.autonomousCycleLoop.startedAt,
-    lastPass:
-      lastPass === null
-        ? null
-        : lastPass.result === 'SUCCESS'
-          ? {
-              result: lastPass.result,
-              observedAt: lastPass.observedAt,
-              outcome: lastPass.outcome,
-            }
-          : {
-              result: lastPass.result,
-              observedAt: lastPass.observedAt,
-              operation: lastPass.operation,
-              failure: lastPass.failure,
-              reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED',
-            },
+    result: pass.result,
+    observedAt: pass.observedAt,
+    outcome: pass.outcome,
+    ...(pass.recoveryAction === undefined ? {} : { recoveryAction: pass.recoveryAction }),
+    ...(pass.waitReason === undefined ? {} : { waitReason: pass.waitReason }),
+    ...(pass.readiness === undefined
+      ? {}
+      : {
+          readiness: {
+            reason: pass.readiness.reason,
+            ...(pass.readiness.availableAt === undefined ? {} : { availableAt: pass.readiness.availableAt }),
+            ...(pass.readiness.symbol === undefined ? {} : { symbol: pass.readiness.symbol }),
+            ...(pass.readiness.eventAt === undefined ? {} : { eventAt: pass.readiness.eventAt }),
+            ...(pass.readiness.requiredFeature === undefined
+              ? {}
+              : { requiredFeature: pass.readiness.requiredFeature }),
+            ...(pass.readiness.snapshotQuery === undefined ? {} : { snapshotQuery: pass.readiness.snapshotQuery }),
+          },
+        }),
   } as const
 }
+
+const publicAutonomousCycleLoop = (state: RuntimeState) => ({
+  configured: state.autonomousCycleLoop.configured,
+  owner: state.autonomousCycleLoop.owner ?? 'Process',
+  startedAt: state.autonomousCycleLoop.startedAt,
+  lastPass: publicCyclePass(state.autonomousCycleLoop.lastPass),
+})
 
 const publicExecutionController = (state: RuntimeState) => {
   const controller = state.executionController
@@ -186,6 +202,7 @@ const publicExecutionController = (state: RuntimeState) => {
               lastReceiptHash: controller.status.lastReceiptHash,
               completedAt: controller.status.completedAt,
               nextDueAt: controller.status.nextDueAt ?? null,
+              lastPass: publicCyclePass(controller.status.lastPass),
             }
           : {
               active: controller.status.active,
@@ -196,6 +213,7 @@ const publicExecutionController = (state: RuntimeState) => {
               lastReceiptHash: null,
               completedAt: null,
               nextDueAt: null,
+              lastPass: null,
             },
     reasonCode,
   } as const
@@ -573,7 +591,7 @@ const renderPrometheusMetricsDataFirst = (
       ? undefined
       : Math.max(0, Date.parse(state.health.checkedAt) - Date.parse(state.autonomousCycleLoop.lastPass.observedAt))
   const executionController = state.executionController
-  const executionControllerOutcomes = ['unknown', 'completed', 'blocked'] as const
+  const executionControllerOutcomes = ['unknown', 'completed', 'blocked', 'waiting'] as const
   const executionControllerStatus = executionController?.status
   const executionControllerCompletion =
     executionControllerStatus !== null &&
@@ -862,17 +880,48 @@ const renderPrometheusMetricsDataFirst = (
                 '# TYPE bayn_cycle_latest_fill_timestamp_seconds gauge',
                 `bayn_cycle_latest_fill_timestamp_seconds ${prometheusNumber(epochSeconds(executionFunnel.latestFillAt))}`,
               ]),
+          ...(executionFunnel.maximumIntentToSubmitLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_intent_to_submit_latency_seconds Maximum current-cycle intent creation to SUBMIT_STARTED latency.',
+                '# TYPE bayn_cycle_intent_to_submit_latency_seconds gauge',
+                `bayn_cycle_intent_to_submit_latency_seconds ${prometheusNumber(executionFunnel.maximumIntentToSubmitLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumOrderObservationLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_order_observation_latency_seconds Maximum current-cycle intent creation to first local order observation latency.',
+                '# TYPE bayn_cycle_order_observation_latency_seconds gauge',
+                `bayn_cycle_order_observation_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderObservationLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumIntentToBrokerFillLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_intent_to_broker_fill_latency_seconds Maximum current-cycle intent creation to broker fill source timestamp latency.',
+                '# TYPE bayn_cycle_intent_to_broker_fill_latency_seconds gauge',
+                `bayn_cycle_intent_to_broker_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumIntentToBrokerFillLatencyMs / 1_000)}`,
+              ]),
+          ...(executionFunnel.maximumFillIngestionLatencyMs === null
+            ? []
+            : [
+                '# HELP bayn_cycle_fill_ingestion_latency_seconds Maximum current-cycle broker fill source timestamp to local fill observation latency.',
+                '# TYPE bayn_cycle_fill_ingestion_latency_seconds gauge',
+                `bayn_cycle_fill_ingestion_latency_seconds ${prometheusNumber(executionFunnel.maximumFillIngestionLatencyMs / 1_000)}`,
+              ]),
+          '# HELP bayn_cycle_latency_clock_regressions Number of negative clock differences excluded from current-cycle latency samples.',
+          '# TYPE bayn_cycle_latency_clock_regressions gauge',
+          `bayn_cycle_latency_clock_regressions ${executionFunnel.latencyClockRegressionCount}`,
           ...(executionFunnel.maximumOrderAcknowledgementLatencyMs === null
             ? []
             : [
-                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle intent-to-order acknowledgement latency.',
+                '# HELP bayn_cycle_order_acknowledgement_latency_seconds Maximum current-cycle SUBMIT_STARTED-to-SUBMIT_ACCEPTED latency, including local pretransmission work.',
                 '# TYPE bayn_cycle_order_acknowledgement_latency_seconds gauge',
                 `bayn_cycle_order_acknowledgement_latency_seconds ${prometheusNumber(executionFunnel.maximumOrderAcknowledgementLatencyMs / 1_000)}`,
               ]),
           ...(executionFunnel.maximumFillLatencyMs === null
             ? []
             : [
-                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent-to-fill latency.',
+                '# HELP bayn_cycle_fill_latency_seconds Maximum current-cycle intent creation to local fill observation latency.',
                 '# TYPE bayn_cycle_fill_latency_seconds gauge',
                 `bayn_cycle_fill_latency_seconds ${prometheusNumber(executionFunnel.maximumFillLatencyMs / 1_000)}`,
               ]),
@@ -996,7 +1045,7 @@ const renderPrometheusMetricsDataFirst = (
                 '# HELP bayn_forward_performance_accounting_exact Whether the terminal receipt proves exact accounting receipts and ledger replay.',
                 '# TYPE bayn_forward_performance_accounting_exact gauge',
                 `bayn_forward_performance_accounting_exact ${forwardPerformance.accountingReceiptsExact && forwardPerformance.ledgerExact ? 1 : 0}`,
-                '# HELP bayn_forward_performance_completed_execution_count Completed executions in the terminal performance receipt.',
+                '# HELP bayn_forward_performance_completed_execution_count Accounting transactions in the terminal performance receipt.',
                 '# TYPE bayn_forward_performance_completed_execution_count gauge',
                 `bayn_forward_performance_completed_execution_count ${forwardPerformance.completedExecutionCount}`,
                 '# HELP bayn_forward_performance_realized_close_count Realized closes in the terminal performance receipt.',

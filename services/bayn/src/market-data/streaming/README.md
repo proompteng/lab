@@ -232,10 +232,14 @@ used by the execution model. Order limits and quantities remain on the same brok
 latency, slippage, liquidity and fee assumptions. These receipts survive broker checkpoints. Every newly settled IOC retains its execution receipt.
 
 Every pass also retains the production cycle result and broker state. The final report binds the pass file's SHA-256
-and record count. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies
-the existing lifecycle rule that waits after terminal entry intents, including a zero-fill IOC cancellation. This
-distinguishes a waiting bound decision from a fresh strategy evaluation. Retaining these facts does not change entry
-thresholds, the lifecycle rule, or the modeled execution price.
+and record count. `ENTRY_INTENTS_SETTLED_UNTIL_CLOSE` identifies a filled or partially filled entry whose immutable
+attempt remains bound through the close. An exact zero-fill IOC cancellation instead completes only after a later exact
+flat reconciliation. The standing mandate may then create the next distinct attempt after at least one minute, while
+the entry cutoff remains open. Each attempt evaluates fresh signals across the strategy candidates. The v4 cycle
+identity and unique PostgreSQL authority slot record an increasing attempt ordinal without a session-wide quota;
+replay uses the same rule through the production engine. No retry reuses an intent, decision, cycle ID, or broker order.
+Entry and quote-backed close limit prices include the production risk policy's bounded allowance, and the modeled arrival price must still
+satisfy that limit before a fill is possible.
 
 For captured Kafka, the required receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,
 `coverageEndMs`, `universe`, and complete `positions` (`topic`, `partition`, `startOffset`, `endOffsetExclusive`).
@@ -271,3 +275,35 @@ publication or the coordinator response. It
 removes the exported checkpoint file before the kill and recovers from PostgreSQL in a new PID, proving one intent,
 one fill, one accounting transaction, and exact reconciliation with real TigerBeetle. Export files are not recovery
 authority. The full-session command still requires a fresh database; it does not expose a command-line resume mode.
+
+## Bar publication timing
+
+New live and simulated cuts bind `barPublicationPolicy: timely-equivalent-revision.v1`. Original minute bars allow
+60 seconds to finalize plus 10 seconds for publication; `updatedBars` allow the provider's following half-minute
+correction, or 90 seconds plus 10 seconds. Both include the existing five-second clock allowance. This follows
+[Alpaca's updated-bar timing](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data). These limits are
+independent of `maximumQuoteAgeMs`; executable quote freshness is unchanged.
+
+The latest bar revision still has to match the exact rolling feature's coordinates and content hash. If consecutive
+revisions have identical market values and identity, the projection retains the first publication as a timing witness,
+including after normal revision-history eviction. The snapshot binds its row, receipt, availability and source cut.
+A changed price, volume, VWAP or trade count starts a new publication history and must meet its own timing limit.
+Reconstruction verifies both deliveries and rejects altered, future or out-of-cut witnesses. The additional retained
+witness is bounded to one per bar revision. Cuts without the policy marker retain the legacy quote-linked timing
+rule and omit publication witnesses; archived snapshot contracts are unchanged.
+
+## Replay close and coverage acceptance
+
+The broker also accepts production close-only `MARKET/DAY` sells, including fractional quantities when the captured
+account configuration enables fractional trading. It uses the fresh
+arrival bid, adverse slippage, configured liquidity fraction and the existing fee model. The observed displayed
+liquidity must cover the entire close. Missing, stale, future or insufficient liquidity fails the simulation and
+prevents session acceptance; this model does not estimate how a DAY remainder would fill later. No partial fill or
+IOC cancellation is invented for that unsupported case. Market orders have no limit price, and checkpoint restoration
+reconstructs their request hash, fills, fees and remaining quantity.
+
+Session schedules retain readiness counts and `unavailableDecisionPassCount`. Missing, stale or incomplete required
+decision evidence, archive-watermark waits and unexplained decision-pending states produce `missing-decision-data`
+and `INCOMPLETE`, even with zero failed passes and exact flat accounting. Lookback warmup, valid no-candidate signals
+and expected order/reconciliation lifecycle waits do not count as missing decision evidence. These counters measure
+scheduled observations; they do not establish profitability or replace a complete retained source capture.
