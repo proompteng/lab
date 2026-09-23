@@ -442,15 +442,13 @@ const batchFromObservation = (
     })
   })
 
-export const makeJevTradingSignalBatch = (input: { readonly observation: unknown; readonly expiresAt: string }) =>
+export const makeJevTradingSignalBatch = (input: {
+  readonly observation: unknown
+  readonly expiresAt: string
+  readonly planVersion: JevBatchPlanVersion
+}) =>
   reproduceJevCandidateObservation(input.observation).pipe(
-    Result.flatMap((observation) =>
-      batchFromObservation(
-        observation,
-        input.expiresAt,
-        observation.schemaVersion === 'bayn.jev-observation.v1' ? JevBatchPlanVersion.V2 : JevBatchPlanVersion.V1,
-      ),
-    ),
+    Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt, input.planVersion)),
   )
 
 export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>

@@ -24,6 +24,7 @@ import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
+import { JevBatchPlanVersion } from '../jev/batch'
 import { decideJevEntry, decideJevManagement, JevManagementAction } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
@@ -829,6 +830,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           makeJevTradingSignalBatch({
             observation: fixture.observation.payload,
             expiresAt: new Date(observed + 5000).toISOString(),
+            planVersion: JevBatchPlanVersion.V1,
           }),
         )
         const store = yield* JevBatchStore

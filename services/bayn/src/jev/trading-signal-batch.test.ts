@@ -34,6 +34,7 @@ const observationFor = (snapshot: VerifiedStrategyMarketSnapshot) => ({
 const input = {
   observation: fixture.observation.payload,
   expiresAt: new Date(Date.parse(fixture.input.observedAt) + 5000).toISOString(),
+  planVersion: JevBatchPlanVersion.V1,
 }
 
 const nativeObservationWithWideQuotes = (fixture: ReturnType<typeof nativeJevFixture>, symbols: readonly string[]) => {
@@ -80,6 +81,7 @@ describe('Jev trading batch source reproduction', () => {
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
+        planVersion: JevBatchPlanVersion.V2,
       }),
     )
     const excluded = plan.candidates.find((candidate) => candidate.symbol === 'AAPL')
@@ -92,6 +94,17 @@ describe('Jev trading batch source reproduction', () => {
       native.protocol.candidateSymbols.length - 1,
     )
     expect(Result.getOrThrow(reproduceJevTradingSignalBatch(observation.payload, plan))).toEqual(plan)
+    const current = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: observation.payload,
+        expiresAt: plan.expiresAt,
+        planVersion: JevBatchPlanVersion.V1,
+      }),
+    )
+    expect(current.schemaVersion).toBe(JevBatchPlanVersion.V1)
+    expect(current.candidates.find((candidate) => candidate.symbol === 'AAPL')?.status).toBe(
+      JevCandidatePlanStatus.Requested,
+    )
     const { batchId: _, ...material } = plan
     const forged = Result.getOrThrow(
       makeJevBatchPlan({
@@ -119,6 +132,7 @@ describe('Jev trading batch source reproduction', () => {
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
+        planVersion: JevBatchPlanVersion.V2,
       }),
     )
     expect(plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)).toBe(true)
@@ -137,6 +151,7 @@ describe('Jev trading batch source reproduction', () => {
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
+        planVersion: JevBatchPlanVersion.V2,
       }),
     )
     expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
@@ -160,6 +175,7 @@ describe('Jev trading batch source reproduction', () => {
       makeJevTradingSignalBatch({
         observation: native.observation.payload,
         expiresAt: new Date(Date.parse(native.observation.payload.observedAt) + 5000).toISOString(),
+        planVersion: JevBatchPlanVersion.V1,
       }),
     )
     const { batchId: _, ...material } = current

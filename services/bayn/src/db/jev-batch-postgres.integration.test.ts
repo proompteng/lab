@@ -53,6 +53,7 @@ const plan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: utcInstantFromEpochMillis(observed + 5000),
+    planVersion: JevBatchPlanVersion.V1,
   }),
 )
 const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
@@ -252,6 +253,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           makeJevTradingSignalBatch({
             observation: fixture.observation.payload,
             expiresAt: utcInstantFromEpochMillis(observed + 6000),
+            planVersion: JevBatchPlanVersion.V1,
           }),
         )
         expect(Result.isFailure(yield* store.begin(second).pipe(Effect.result))).toBe(true)

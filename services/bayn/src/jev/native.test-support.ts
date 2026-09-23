@@ -23,7 +23,13 @@ import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { jevBehaviorHash } from './protocol'
 import { prepareJevRequest, decodeJevResponse, type JevResponse } from './contract'
-import { JevCandidatePlanStatus, JevCandidateResultStatus, makeJevBatchResult, type JevBatchPlan } from './batch'
+import {
+  JevBatchPlanVersion,
+  JevCandidatePlanStatus,
+  JevCandidateResultStatus,
+  makeJevBatchResult,
+  type JevBatchPlan,
+} from './batch'
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { makeJevTradingSignalBatch } from './trading-signals'
@@ -237,6 +243,7 @@ export const nativeJevDecisionEvidence = (fixture = nativeJevFixture(), action =
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.V1,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)

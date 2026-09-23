@@ -23,7 +23,7 @@ import {
 } from '../observe-composition/intraday-market-data'
 import type { EntryQuoteFreshness } from '../risk'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
-import { JevCandidateResultStatus } from './batch'
+import { JevBatchPlanVersion, JevCandidateResultStatus } from './batch'
 import { evaluateJevBatch, recoverPendingJevBatches } from './batch-evaluation'
 import { JevContractError } from './contract'
 import {
@@ -186,6 +186,7 @@ export const evaluateJevObservation = (input: Parameters<typeof recordJevObserva
         expiresAt: utcInstantFromEpochMillis(
           Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
         ),
+        planVersion: JevBatchPlanVersion.V1,
       }),
     )
     const saved = yield* evaluateJevBatch(batchPlan)
