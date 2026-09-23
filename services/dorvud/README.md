@@ -26,6 +26,10 @@ intervals the provider omits. Recovered envelopes keep `source=rest` and their a
 establish earlier live availability. Restarts repeat the bounded scan and may republish equivalent bars; consumers
 retain their existing revision and duplicate handling. Recovery does not satisfy live WebSocket freshness gates.
 
+During the regular IEX session, the core forwarder reconnects if no provider market-data event arrives within
+`ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS` of the subscription or the last event. This check also runs when the WebSocket
+keeps sending control frames. REST recovery cannot reset the provider-event clock.
+
 ## Latest quote and trade observations
 
 The producer can supply missing IEX quotes and trades with Alpaca's bulk
