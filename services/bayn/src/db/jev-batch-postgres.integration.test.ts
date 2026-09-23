@@ -23,6 +23,7 @@ import { canonicalHashV1 } from '../hash'
 import { Authority } from '../execution/contracts'
 import {
   JevCandidatePlanStatus,
+  JevBatchPlanVersion,
   JevCandidateResultStatus,
   makeJevBatchPlan,
   usableJevBatchInferences,
@@ -131,6 +132,19 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         }),
         atObservation,
       ),
+    )
+  })
+
+  test('persists a version-two batch plan under the expanded database constraint', async () => {
+    const { batchId: _, ...material } = plan
+    const versionTwo = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: JevBatchPlanVersion.V2 }))
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevBatchStore
+        const saved = yield* store.begin(versionTwo)
+        expect(saved).toEqual({ plan: versionTwo, result: null })
+        expect(yield* store.read(versionTwo.batchId)).toEqual(saved)
+      }).pipe(atObservation),
     )
   })
 

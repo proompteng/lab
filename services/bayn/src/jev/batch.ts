@@ -33,6 +33,11 @@ export enum JevEntryExclusion {
   DisplayedSize = 'displayed-size',
 }
 
+export enum JevBatchPlanVersion {
+  V1 = 'bayn.jev-batch-plan.v1',
+  V2 = 'bayn.jev-batch-plan.v2',
+}
+
 const CandidatePlanSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal(JevCandidatePlanStatus.Requested),
@@ -48,7 +53,7 @@ const CandidatePlanSchema = Schema.Union([
 ])
 
 const PlanMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-batch-plan.v1'),
+  schemaVersion: Schema.Enum(JevBatchPlanVersion),
   cycleId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
   observationHash: Sha256Schema,
@@ -108,7 +113,14 @@ export const makeJevBatchPlan = (input: unknown) =>
       if (candidate.symbol <= previous || candidate.symbol === material.benchmarkSymbol)
         return yield* invalid('Jev batch candidates must be unique, sorted and distinct from the benchmark')
       previous = candidate.symbol
-      if (candidate.status === JevCandidatePlanStatus.Excluded) continue
+      if (candidate.status === JevCandidatePlanStatus.Excluded) {
+        if (
+          material.schemaVersion === JevBatchPlanVersion.V1 &&
+          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize)
+        )
+          return yield* invalid('Version-one Jev batches cannot contain entry-quote exclusions')
+        continue
+      }
       const request = yield* decodeJevEvaluationRequest(candidate.request)
       if (
         request.symbol !== candidate.symbol ||
@@ -209,7 +221,7 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
     }
     if (
       inferences.length === 0 &&
-      !plan.candidates.some(
+      !plan.candidates.every(
         (candidate) =>
           candidate.status === JevCandidatePlanStatus.Excluded &&
           (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize),

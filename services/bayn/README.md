@@ -30,8 +30,9 @@ bounding the target; the target weight is applied once. Exposure-reducing closes
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
 Entry candidates whose verified quotes already exceed that spread limit or have zero displayed size remain recorded as
-explicit batch exclusions without a Jev call. An observation with no eligible entry quote can yield a verified no-entry
-decision. Position management still evaluates its held symbol regardless of entry spread eligibility. A complete
+explicit version-two batch exclusions without a Jev call. An observation where every candidate is excluded for a
+verified entry-quote reason can yield a no-entry decision; missing source evidence cannot. Retained version-one batches
+remain readable by their original identity. Position management still evaluates its held symbol. A complete
 batch must remain valid within its five-second evidence lifetime. These parameters have not established
 an economic advantage under the frozen qualification protocol.
 

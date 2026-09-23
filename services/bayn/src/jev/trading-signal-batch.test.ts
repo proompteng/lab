@@ -10,7 +10,7 @@ import {
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
-import { JevCandidatePlanStatus, JevEntryExclusion, makeJevBatchPlan } from './batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus, JevEntryExclusion, makeJevBatchPlan } from './batch'
 import { decideJevEntry } from './decision'
 import { makeJevEvaluationRequest } from './evidence'
 import { nativeJevBatchResult, nativeJevFixture } from './native.test-support'
@@ -83,6 +83,7 @@ describe('Jev trading batch source reproduction', () => {
       }),
     )
     const excluded = plan.candidates.find((candidate) => candidate.symbol === 'AAPL')
+    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V2)
     expect(excluded?.status).toBe(JevCandidatePlanStatus.Excluded)
     if (excluded?.status !== JevCandidatePlanStatus.Excluded) throw new Error('Missing spread exclusion')
     expect(excluded.reason).toBe(JevEntryExclusion.Spread)
@@ -151,6 +152,19 @@ describe('Jev trading batch source reproduction', () => {
     expect(
       Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004, askSize: 0 }, 5)),
     ).toBe(JevEntryExclusion.DisplayedSize)
+  })
+
+  test('reproduces retained version-one native plans without rewriting their immutable identity', () => {
+    const native = nativeJevFixture()
+    const current = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: native.observation.payload,
+        expiresAt: new Date(Date.parse(native.observation.payload.observedAt) + 5000).toISOString(),
+      }),
+    )
+    const { batchId: _, ...material } = current
+    const retained = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: JevBatchPlanVersion.V1 }))
+    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(native.observation.payload, retained))).toEqual(retained)
   })
 
   test('freezes the entire recorded universe and reproduces each exact request', () => {

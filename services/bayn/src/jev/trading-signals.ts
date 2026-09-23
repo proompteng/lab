@@ -9,7 +9,13 @@ import type { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
-import { decodeJevBatchPlan, JevCandidatePlanStatus, JevEntryExclusion, makeJevBatchPlan } from './batch'
+import {
+  decodeJevBatchPlan,
+  JevBatchPlanVersion,
+  JevCandidatePlanStatus,
+  JevEntryExclusion,
+  makeJevBatchPlan,
+} from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
@@ -351,6 +357,7 @@ export const reproduceJevRequestFromVerifiedObservation = (
 const batchFromObservation = (
   observation: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,
   expiresAt: string,
+  planVersion: JevBatchPlanVersion,
 ) =>
   Result.gen(function* () {
     const { snapshot, protocol } = observation
@@ -370,6 +377,7 @@ const batchFromObservation = (
         continue
       }
       if (
+        planVersion === JevBatchPlanVersion.V2 &&
         observation.schemaVersion === 'bayn.jev-observation.v1' &&
         observation.portfolio.purpose === JevPurpose.Entry
       ) {
@@ -410,7 +418,7 @@ const batchFromObservation = (
       candidates.push({ symbol, status: JevCandidatePlanStatus.Requested, request })
     }
     return yield* makeJevBatchPlan({
-      schemaVersion: 'bayn.jev-batch-plan.v1',
+      schemaVersion: planVersion,
       cycleId: observation.cycleId,
       authorityGenerationHash: observation.authorityGenerationHash,
       observationHash: observation.contentHash,
@@ -436,14 +444,20 @@ const batchFromObservation = (
 
 export const makeJevTradingSignalBatch = (input: { readonly observation: unknown; readonly expiresAt: string }) =>
   reproduceJevCandidateObservation(input.observation).pipe(
-    Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt)),
+    Result.flatMap((observation) =>
+      batchFromObservation(
+        observation,
+        input.expiresAt,
+        observation.schemaVersion === 'bayn.jev-observation.v1' ? JevBatchPlanVersion.V2 : JevBatchPlanVersion.V1,
+      ),
+    ),
   )
 
 export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>
   Result.gen(function* () {
     const plan = yield* decodeJevBatchPlan(input)
     const observation = yield* reproduceJevCandidateObservation(inputObservation)
-    const reproduced = yield* batchFromObservation(observation, plan.expiresAt)
+    const reproduced = yield* batchFromObservation(observation, plan.expiresAt, plan.schemaVersion)
     if (reproduced.batchId !== plan.batchId)
       return yield* unavailable('Jev batch requests or candidate universe differ from the reproduced source')
     return { observation, plan: reproduced }
