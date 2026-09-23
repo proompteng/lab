@@ -256,7 +256,7 @@ export const runControlSession = (input: {
               })
               atMs = Math.min(atMs + input.decisionLatencyMs, closeMs)
               yield* advanceTo(atMs)
-              if (atMs >= cutoffMs || input.decisionLatencyMs > protocol.inferenceValidityMs) {
+              if (atMs >= cutoffMs || input.decisionLatencyMs >= protocol.inferenceValidityMs) {
                 decisions.push({ observedAt: utcInstantFromEpochMillis(atMs), status: 'DECISION_EXPIRED' })
                 symbol = null
               }
