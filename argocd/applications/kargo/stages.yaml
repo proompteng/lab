@@ -2024,6 +2024,9 @@ spec:
               Source commit: ${{ commitFrom(vars.gitRepo).ID }}
         - uses: git-push
           as: push
+          retry:
+            timeout: 20m0s
+            errorThreshold: 5
           config:
             path: ${{ vars.outPath }}
             targetBranch: ${{ vars.targetBranch }}
