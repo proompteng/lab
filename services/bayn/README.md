@@ -457,7 +457,7 @@ The final `bayn.backtest-report.v2`
 retains every session's schedule, closing broker equity, net equity after known model and allocated data costs,
 and reconciliation, plus cumulative net equity change, observed peak
 and drawdown, final broker orders/fills/positions, durable accounting counts, and input identities. The output keeps
-the exact input, source receipt, pass log, decoded entry and closing decisions, accounting rows with full integer precision, and hashes. Valuations retain the last observed valid bid and its age; that accounting mark never relaxes executable-quote freshness. Preserve the source file and both databases with the report.
+the exact input, source receipt, pass log, decoded entry and closing decisions, accounting rows with full integer precision, and hashes. Valuations retain the last observed valid bid, its age, and whether displayed bid liquidity was positive; that accounting mark never relaxes executable-quote freshness. A stale or zero-liquidity held-position mark stays in the pass log for diagnosis but counts as a missing qualifying valuation, so the session cannot report complete economics. Preserve the source file and both databases with the report.
 
 Simulation accounts are isolated from production. The command cannot acquire Alpaca trading credentials, target a
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,

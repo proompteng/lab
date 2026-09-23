@@ -664,6 +664,21 @@ test('a quote gap retains an evidenced position mark but cannot supply an execut
   })
 })
 
+test('a zero-size bid remains an accounting mark but cannot qualify held-position economics', async () => {
+  let afterFill = false
+  const valuation = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        quoteAt: () => Effect.succeed(observedQuote(afterFill ? { ...quote, bidSize: 0 } : quote)),
+      })
+      yield* submit(broker, intent())
+      afterFill = true
+      return yield* broker.valuation
+    }),
+  )
+  expect(valuation.marks).toMatchObject([{ symbol: 'AAPL', bidLiquidityAvailable: false }])
+})
+
 test.each(['missing', 'future', 'crossed', 'other-feed'] as const)(
   'valuation rejects %s quotes after an actual fill',
   async (kind) => {

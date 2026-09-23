@@ -133,6 +133,7 @@ export interface ReplayValuationEvidence {
     readonly availableAtMs: number
     readonly ageNanos: string
     readonly staleForExecution: boolean
+    readonly bidLiquidityAvailable: boolean
     readonly topic: string
     readonly partition: number
     readonly offset: string
@@ -420,6 +421,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 intradayInstantNanos(quote.value.eventAt)
               ).toString(),
               staleForExecution: !quoteUsable(quote, position.symbol, Date.parse(observedAt)),
+              bidLiquidityAvailable: Number.isFinite(quote.value.bidSize) && quote.value.bidSize > 0,
               topic: quote.value.sourceTopic,
               partition: quote.value.sourcePartition,
               offset: quote.value.sourceOffset,
