@@ -239,6 +239,16 @@ test('expired decisions and ineligible assets cannot submit entries', async () =
   expect(ineligible.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
 })
 
+test.each([
+  [4999, true],
+  [5000, false],
+  [5001, false],
+] as const)('control decision latency %d ms obeys the native half-open deadline', async (decisionLatencyMs, usable) => {
+  const { report } = await simulate({ decisionLatencyMs })
+  expect(report.orders.some((order) => order.side === OrderSide.Buy)).toBe(usable)
+  expect(report.decisions.some((decision) => decision.status === 'DECISION_EXPIRED')).toBe(!usable)
+})
+
 test.each(['maximumLossMicros', 'maximumDrawdownMicros'] as const)(
   'entries at the native %s boundary are allowed, and a one-micro excess is blocked',
   async (limit) => {
