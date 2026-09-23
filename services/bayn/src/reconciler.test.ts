@@ -213,6 +213,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore 
       control.writes += 1
       return receipt
     }),
+  verifyCompleted: () => Effect.void,
   value: () =>
     Effect.sync(() => {
       control.writes += 1
@@ -726,6 +727,35 @@ describe('execution reconciliation loop', () => {
     expect(control.reconciliations[1].fills).toEqual(control.reconciliations[0].fills)
   })
 
+  test('does not reconcile or reuse a completed fill when its accounting verification fails', async () => {
+    const brokerOrder = order(0)
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: () => Effect.succeed({ value: [brokerOrder], evidence: evidence('orders') }),
+      fillActivities: () => Effect.succeed({ value: { items: [fill(0, brokerOrder)] }, evidence: evidence('fills') }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [], recordedHistory: true }
+    const failure = new ExecutionStoreError({
+      operation: 'account',
+      failure: 'conflict',
+      message: 'stored accounting plan differs from deterministic replay',
+    })
+    const store: TestStore = {
+      ...makeStore(control),
+      verifyCompleted: (inputs) => (inputs.length > 0 ? Effect.fail(failure) : Effect.void),
+    }
+
+    const exit = await Effect.runPromiseExit(provide(read, store))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      const failures = exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []))
+      expect(failures).toEqual([failure])
+    }
+    expect(control.reconciliations).toEqual([])
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
   test('fails a duplicate page before any durable write or false resolution', async () => {
     const duplicate = fill(0)
     const read: BrokerReadShape = {
@@ -1001,7 +1031,9 @@ describe('execution reconciliation loop', () => {
       ...baseStore,
       ingest: (input) => insideTransaction(baseStore.ingest(input)),
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
+      completeHistory: (inputs) => insideTransaction(baseStore.completeHistory(inputs)),
       account: (input) => insideTransaction(baseStore.account(input)),
+      verifyCompleted: (inputs) => insideTransaction(baseStore.verifyCompleted(inputs)),
       value: (input) => insideTransaction(baseStore.value(input)),
       hasAccountBaseline: (id) => insideTransaction(baseStore.hasAccountBaseline(id)),
       bindings: (id) => insideTransaction(baseStore.bindings(id)),

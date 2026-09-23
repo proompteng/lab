@@ -504,12 +504,17 @@ describePostgres('PostgreSQL execution persistence', () => {
 
         const history = [observedOrder, accountedFill, preparedFill, unaccountedFill, newOrder]
         const completed = yield* events.completeHistory(history)
+        yield* accounting.verifyCompleted([accountedFill])
+        const accountingMismatch = yield* accounting
+          .verifyCompleted([{ ...accountedFill, fill: { ...accountedFill.fill, quantityMicros: '2000000' } }])
+          .pipe(Effect.flip)
         yield* accounting.account(preparedFill)
         const completedAfterRecovery = yield* events.completeHistory(history)
+        yield* accounting.verifyCompleted([accountedFill, preparedFill])
         const conflict = yield* events
           .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
           .pipe(Effect.flip)
-        return { completed, completedAfterRecovery, postingFailure, conflict }
+        return { completed, completedAfterRecovery, postingFailure, accountingMismatch, conflict }
       }),
     )
 
@@ -520,6 +525,7 @@ describePostgres('PostgreSQL execution persistence', () => {
       observedOrder.sourceEventId,
     ])
     expect(result.postingFailure).toMatchObject({ operation: 'account', failure: 'ledger' })
+    expect(result.accountingMismatch).toMatchObject({ operation: 'account', failure: 'conflict' })
     expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
   })
 

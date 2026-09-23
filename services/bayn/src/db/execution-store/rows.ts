@@ -42,6 +42,15 @@ export const HistoryEventRow = Schema.Struct({
 })
 export type HistoryEventRow = typeof HistoryEventRow.Type
 
+export const CompletedAccountingRow = Schema.Struct({
+  ...AccountingTransactionRowSchema.fields,
+  source_event_id: NonEmptyString,
+  event_content_hash: Sha256,
+  prior_quantity_micros: Schema.String,
+  prior_cost_micros: Schema.String,
+})
+export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
+
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
   Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String }),
@@ -211,6 +220,14 @@ export const decodeEventRows = Pipeable.dual(1, (input: unknown) => decodeEventR
 const decodeHistoryEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
 
 export const decodeHistoryEventRows = Pipeable.dual(1, (input: unknown) => decodeHistoryEventRowsDataFirst(input))
+const decodeCompletedAccountingRowsDataFirst = Schema.decodeUnknownEffect(
+  Schema.Array(CompletedAccountingRow),
+  strictParseOptions,
+)
+
+export const decodeCompletedAccountingRows = Pipeable.dual(1, (input: unknown) =>
+  decodeCompletedAccountingRowsDataFirst(input),
+)
 const decodeLastSequenceDataFirst = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 
 export const decodeLastSequence = Pipeable.dual(1, (input: unknown) => decodeLastSequenceDataFirst(input))
