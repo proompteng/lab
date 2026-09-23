@@ -351,6 +351,64 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     },
   )
 
+  test('a stale optional candidate does not block fresh candidates in the same entry batch', async () => {
+    let calls = 0
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const atMs = observed + 30_000
+        const at = utcInstantFromEpochMillis(atMs)
+        yield* TestClock.setTime(atMs)
+        const fresh = nativeJevFixture(JevPurpose.Entry, at)
+        const reconciliation = {
+          ...fresh.portfolio.brokerState.reconciliation,
+          reconciliationId: '9'.repeat(64),
+        }
+        const portfolio = {
+          ...fresh.portfolio,
+          brokerState: { ...fresh.portfolio.brokerState, reconciliation },
+        }
+        const sql = yield* PgClient.PgClient
+        yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+          content_hash, status, discrepancies, reconciled_at) VALUES (${reconciliation.reconciliationId},
+          ${reconciliation.schemaVersion}, ${reconciliation.accountId}, ${reconciliation.expectedHash},
+          ${reconciliation.observedHash}, ${reconciliation.contentHash}, ${reconciliation.status}, '[]'::jsonb,
+          ${reconciliation.reconciledAt})`
+        const query = fresh.snapshot.manifest
+        const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] })
+        const staleAt = utcInstantFromEpochMillis(atMs - fixture.protocol.maximumQuoteAgeMs - 1)
+        const staleEvidence = {
+          ...raw,
+          quotes: raw.quotes.map((quote) =>
+            quote.symbol === 'AMD' ? { ...quote, eventAt: staleAt, ingestedAt: staleAt } : quote,
+          ),
+          trades: raw.trades.map((trade) =>
+            trade.symbol === 'AMD' ? { ...trade, eventAt: staleAt, ingestedAt: staleAt } : trade,
+          ),
+        }
+        const snapshot = streamingFixtureFromRaw(staleEvidence, query).snapshot
+        expect(snapshot.manifest.candidateExclusions).toContainEqual(
+          expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
+        )
+        const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
+        expect(result.batchPlan.candidates).toContainEqual(
+          expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
+        )
+        expect(calls).toBe(fixture.protocol.candidateSymbols.length - 1)
+      }).pipe(
+        Effect.provideService(JevClient, {
+          evaluate: (request) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => {
+                calls += 1
+                return nativeJevInference(request, utcInstantFromEpochMillis(now), 'enter')
+              }),
+            ),
+        }),
+        atObservation,
+      ),
+    )
+  })
+
   test.each([JevExitReason.MaximumHold, JevExitReason.ProtectiveStop])(
     'deterministic %s exits do not call Jev',
     async (reason) => {
