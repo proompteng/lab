@@ -131,6 +131,21 @@ internal fun marketDataIdleRequiresReconnect(
       equityFeed,
     )
 
+internal fun coreIexProviderIdleRequiresReconnect(
+  subscribedAt: Instant?,
+  lastProviderMarketDataAt: Instant?,
+  now: Instant,
+  marketType: AlpacaMarketType,
+  marketHolidays: Set<LocalDate>,
+  equityFeed: EquityFeed?,
+  idleTimeoutMs: Long,
+): Boolean {
+  if (marketType != AlpacaMarketType.EQUITY || equityFeed != EquityFeed.Iex || subscribedAt == null) return false
+  if (!marketDataFreshnessGateActive(marketSessionState(now, marketType, marketHolidays), equityFeed)) return false
+  val lastProviderOrSubscriptionAt = maxOf(subscribedAt, lastProviderMarketDataAt ?: subscribedAt)
+  return now.toEpochMilli() - lastProviderOrSubscriptionAt.toEpochMilli() >= idleTimeoutMs
+}
+
 internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
     AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/bars"
@@ -606,6 +621,7 @@ class ForwarderApp(
       var authOk = false
       var subscribedOk = false
       val subscribedSince = AtomicReference<Instant?>(null)
+      var lastProviderMarketDataAt: Instant? = null
       val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
       val starvationStatusPublished = AtomicBoolean(false)
       var readyNotified = false
@@ -989,6 +1005,7 @@ class ForwarderApp(
               else -> {
                 val observed = observedMarketDataMessage(msg)
                 if (observed != null) {
+                  lastProviderMarketDataAt = Instant.ofEpochMilli(nowMs())
                   metrics.recordProviderMessage(config.alpacaMarketType, feed.config.feed, observed.channel)
                   feed.channelFreshness.recordProviderEvent(observed.channel, observed.symbol)
                   if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && observed.isQuoteOrTrade) {
@@ -1007,6 +1024,20 @@ class ForwarderApp(
                 }
               }
             }
+          }
+          if (
+            feed.config.core &&
+            coreIexProviderIdleRequiresReconnect(
+              subscribedAt = subscribedSince.get(),
+              lastProviderMarketDataAt = lastProviderMarketDataAt,
+              now = Instant.ofEpochMilli(nowMs()),
+              marketType = config.alpacaMarketType,
+              marketHolidays = config.optionsMarketHolidays,
+              equityFeed = feed.config.equityFeed,
+              idleTimeoutMs = config.marketDataReadIdleTimeoutMs,
+            )
+          ) {
+            error("alpaca IEX websocket received no provider market data for ${config.marketDataReadIdleTimeoutMs}ms")
           }
         }
       } finally {
