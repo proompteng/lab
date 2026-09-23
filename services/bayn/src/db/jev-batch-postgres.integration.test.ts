@@ -30,7 +30,7 @@ import {
 import { evaluateJevBatch, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
-import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { JevResolutionStatus } from '../jev/resolution'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
@@ -131,6 +131,37 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         }),
         atObservation,
       ),
+    )
+  })
+
+  test('a candidate can claim a planned request while another claim holds the batch share lock', async () => {
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const batches = yield* JevBatchStore
+          const evaluations = yield* JevEvaluationStore
+          yield* batches.begin(plan)
+          const locked = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const holder = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SELECT batch_id FROM jev_batch_plans WHERE batch_id = ${plan.batchId} FOR SHARE`
+                yield* Deferred.succeed(locked, undefined)
+                yield* Deferred.await(release)
+              }),
+            )
+            .pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(locked)
+          expect(yield* evaluations.begin(first.request).pipe(Effect.timeout('2 seconds'))).toEqual({
+            status: JevClaim.Acquired,
+          })
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(holder)
+          expect((yield* batches.finish(plan.batchId)).result).toBeNull()
+        }),
+      ).pipe(atObservation, Effect.timeout('10 seconds')),
     )
   })
 
