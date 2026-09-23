@@ -462,6 +462,8 @@ the exact input, source receipt, pass log, decoded entry and closing decisions, 
 Simulation accounts are isolated from production. The command cannot acquire Alpaca trading credentials, target a
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,
 failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance.
+Repeated simulated orders consume each quote's declared displayed-liquidity budget once per symbol and side; a new
+quote identity starts a new budget. Checkpoint restoration replays the same consumption before accepting fills.
 The session schedule counts unavailable required decision observations separately from successful no-trade and
 expected lifecycle waits. Failed or expired entry inference is unavailable decision data even when its token usage
 can be fully priced. Only a complete valid decision can report no eligible candidate. Close-only market sells support
