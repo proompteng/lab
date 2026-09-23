@@ -29,13 +29,11 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
-The runtime currently writes version-one Jev batches while version-two plans are made readable and reproducible across
-the rolling deployment. Once every live reader accepts version two, a separate cutover can record verified wide-spread
-or zero-displayed-size entry quotes as explicit exclusions without a Jev call. A version-two observation where every
-candidate is excluded for a verified entry-quote reason can yield a no-entry decision; missing source evidence cannot.
-Retained version-one batches keep their original identity. Position management still evaluates its held symbol. A complete
-batch must remain valid within its five-second evidence lifetime. These parameters have not established
-an economic advantage under the frozen qualification protocol.
+The runtime writes version-two Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
+exclusions without a Jev call. A version-two observation where every candidate is excluded for a verified entry-quote
+reason can yield a no-entry decision; missing source evidence cannot. Retained version-one batches keep their original
+identity. Position management still evaluates its held symbol. A complete batch must remain valid within its five-second
+evidence lifetime. These parameters have not established an economic advantage under the frozen qualification protocol.
 
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
@@ -71,9 +69,10 @@ remain eligible for evaluation. SPY is the mandatory benchmark. Source identity,
 finality, and premature data still fail the whole observation. Raw candidate rows and their exclusions remain in the
 hashed snapshot for revalidation.
 
-Native Jev targets retain every candidate result and source exclusion with the exact full-batch evidence. An
-observation with every candidate excluded remains unavailable. Execution pricing requires fresh quotes for positive
-targets and reconciled holdings. Historical momentum targets remain readable for audit.
+Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
+alone cannot authorize a no-entry decision. A version-two entry batch with every candidate excluded by a verified
+spread or displayed-size rule can. Execution pricing requires fresh quotes for positive targets and reconciled holdings.
+Historical momentum targets remain readable for audit.
 
 Entry and position-management observations each commit at most once per completed signal window within a cycle.
 Later polls and process restarts consult the retained observation before creating another inference batch. The next
