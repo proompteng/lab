@@ -273,6 +273,89 @@ test('arrival quote drives partial IOC fill and the remainder is canceled once',
   })
 })
 
+test.each([
+  { first: '1000000', second: '2000000', expectedSecond: '1000000', askSize: 2, liquidityPpm: 1_000_000 },
+  { first: '2000000', second: '1000000', expectedSecond: '0', askSize: 2, liquidityPpm: 1_000_000 },
+  { first: '1000000', second: '2000000', expectedSecond: '1000000', askSize: 4, liquidityPpm: 500_000 },
+])(
+  'repeated IOC orders consume one quote only once: %o',
+  async ({ first, second, expectedSecond, askSize, liquidityPpm }) => {
+    const result = await run(
+      Effect.gen(function* () {
+        const thinQuote = observedQuote({ ...quote, askSize })
+        const assumptions = { ...config.assumptions, availableLiquidityPpm: liquidityPpm }
+        const broker = yield* setup({ quoteAt: () => Effect.succeed(thinQuote), assumptions })
+        yield* submit(broker, intent({ quantityMicros: first }))
+        const later = yield* submit(
+          broker,
+          intent({ intentId: '7'.repeat(64), clientOrderId: 'replay-buy-2', quantityMicros: second }),
+        )
+        const checkpoint = yield* broker.checkpoint
+        const restored = yield* makeReplayBroker({
+          ...config,
+          quoteAt: () => Effect.succeed(thinQuote),
+          assumptions,
+          restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+        })
+        return { later, state: yield* broker.snapshot, restored: yield* restored.snapshot }
+      }),
+    )
+    expect(result.later.order.filledQuantityMicros).toBe(expectedSecond)
+    expect(result.state.ledger.positions[0]?.quantityMicros).toBe('2000000')
+    expect(result.restored.ledger).toEqual(result.state.ledger)
+  },
+)
+
+test('a later quote and the opposite side each have their own displayed-liquidity budget', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const thinQuote = { ...quote, askSize: 2, bidSize: 2 }
+      const broker = yield* setup({
+        quoteAt: (_symbol, atMs) =>
+          Effect.succeed(observedQuote(atMs >= startMs + 200 ? { ...thinQuote, sourceOffset: '2' } : thinQuote)),
+      })
+      yield* submit(broker, intent({ quantityMicros: '2000000' }))
+      const laterBuy = yield* submit(
+        broker,
+        intent({ intentId: '7'.repeat(64), clientOrderId: 'replay-buy-2', quantityMicros: '1000000' }),
+      )
+      const sell = yield* submit(
+        broker,
+        intent({
+          intentId: '8'.repeat(64),
+          clientOrderId: 'replay-sell-1',
+          side: OrderSide.Sell,
+          quantityMicros: '2000000',
+          notionalLimitMicros: '200000000',
+        }),
+      )
+      return { laterBuy, sell, state: yield* broker.snapshot }
+    }),
+  )
+  expect(result.laterBuy.order.filledQuantityMicros).toBe('1000000')
+  expect(result.sell.order.filledQuantityMicros).toBe('2000000')
+  expect(result.state.ledger.positions[0]?.quantityMicros).toBe('1000000')
+})
+
+test('simultaneous deliveries cannot spend the same quote budget twice', async () => {
+  const state = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ quoteAt: () => Effect.succeed(observedQuote({ ...quote, askSize: 2 })) })
+      const first = yield* broker.mutation
+        .submit(intent({ quantityMicros: '2000000' }))
+        .pipe(Effect.forkChild({ startImmediately: true }))
+      const second = yield* broker.mutation
+        .submit(intent({ intentId: '7'.repeat(64), clientOrderId: 'replay-buy-2', quantityMicros: '2000000' }))
+        .pipe(Effect.forkChild({ startImmediately: true }))
+      yield* TestClock.adjust(100)
+      yield* Effect.all([Fiber.join(first), Fiber.join(second)])
+      return yield* broker.snapshot
+    }),
+  )
+  expect(state.ledger.fills.reduce((total, fill) => total + BigInt(fill.quantityMicros), 0n)).toBe(2_000_000n)
+  expect(state.orders).toHaveLength(2)
+})
+
 test('round trip cash includes execution fees and broker activities agree with fills', async () => {
   const result = await run(
     Effect.gen(function* () {
