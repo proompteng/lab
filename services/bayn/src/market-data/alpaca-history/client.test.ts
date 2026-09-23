@@ -109,6 +109,24 @@ const credentials = {
 const json = (value: unknown): string => JSON.stringify(value)
 
 describe('Alpaca historical vendor capture', () => {
+  test('orders millisecond and nanosecond query boundaries by instant', () => {
+    const query = sessionQuery(AlpacaHistoricalKind.Quotes, '/tmp/unused-cache')
+    expect(
+      decodeAlpacaHistoricalQuery({
+        ...query,
+        startAt: '2026-06-01T13:30:00.000000000Z',
+        endAt: '2026-06-01T13:31:59.999999999Z',
+      })._tag,
+    ).toBe('Success')
+    expect(
+      decodeAlpacaHistoricalQuery({
+        ...query,
+        startAt: '2026-06-01T13:30:00.000000001Z',
+        endAt: '2026-06-01T13:30:00.000Z',
+      })._tag,
+    ).toBe('Failure')
+  })
+
   test('rejects a regular-session window whose UTC date differs from sessionDate', async () => {
     const invalidQuery = {
       ...sessionQuery(AlpacaHistoricalKind.Bars, '/tmp/unused-cache'),
