@@ -626,6 +626,39 @@ test('missing session close prevents a fabricated next-day equity baseline', asy
   expect(Result.isFailure(result)).toBe(true)
 })
 
+test.each([
+  { kind: 'stale', expected: false },
+  { kind: 'zero-bid', expected: false },
+  { kind: 'fresh', expected: true },
+] as const)('session close reports whether its held-position mark qualifies: %s', async ({ kind, expected }) => {
+  const closeMs = Date.parse('2026-09-04T20:00:00.000Z')
+  const closing = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        quoteAt: (_symbol, atMs) =>
+          Effect.succeed(
+            atMs === closeMs && kind !== 'stale'
+              ? observedQuote(
+                  {
+                    ...quote,
+                    eventAt: new Date(closeMs).toISOString(),
+                    ingestedAt: new Date(closeMs).toISOString(),
+                    bidSize: kind === 'zero-bid' ? 0 : quote.bidSize,
+                    sourceOffset: '2',
+                  },
+                  closeMs,
+                )
+              : observedQuote(quote),
+          ),
+      })
+      yield* submit(broker, intent())
+      yield* TestClock.setTime(closeMs)
+      return yield* broker.completeSession('2026-09-04')
+    }),
+  )
+  expect(closing.valuationQualified).toBe(expected)
+})
+
 test('position evidence retains the valuation timestamp across asynchronous quote lookup', async () => {
   const result = await run(
     Effect.gen(function* () {

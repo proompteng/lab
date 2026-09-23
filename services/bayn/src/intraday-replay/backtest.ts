@@ -466,7 +466,8 @@ export const runBacktest = (
           )
           const closingEquity = yield* broker.completeSession(session.date)
           const closingNetEquity = markedNetEquity(closingEquity.equityMicros)
-          observeEquity(closingNetEquity)
+          if (closingEquity.valuationQualified) observeEquity(closingNetEquity)
+          else valuationFailureCount++
           yield* advanceTo(Math.max(yield* Clock.currentTimeMillis, Date.parse(session.closeAt) + 1))
           const reconciliation = yield* timing.run(runtime.reconcile)
           const state = yield* broker.snapshot
