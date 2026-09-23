@@ -13,13 +13,25 @@ import {
   type JevBatchResult,
 } from '../jev/batch'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
+import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest } from '../jev/evidence'
 import { JevEvaluationStore } from '../jev/evaluation'
-import { makeJevResolution, JevResolutionStatus } from '../jev/resolution'
+import {
+  decodeJevResolution,
+  makeJevResolution,
+  JevResolutionStatus,
+  type JevEvaluationEvidence,
+} from '../jev/resolution'
 import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 
 const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
+const StoredEvaluationRow = Schema.Struct({
+  request_id: Sha256Schema,
+  request: Schema.Unknown,
+  receipt: Schema.NullOr(Schema.Unknown),
+  resolution: Schema.NullOr(Schema.Unknown),
+})
 const OneBatch = Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })])
 
 export const makeJevBatchStore = Effect.gen(function* () {
@@ -114,11 +126,57 @@ export const makeJevBatchStore = Effect.gen(function* () {
           const saved = yield* read(batchId)
           if (saved === null) return yield* persistError('Jev batch plan is missing during finalization')
           if (saved.result !== null) return saved
+          const observations = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]),
+            strictParseOptions,
+          )(
+            yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${saved.plan.observationHash}`,
+          )
+          if ((yield* Effect.fromResult(canonicalHashV1Result(observations[0].payload))) !== saved.plan.observationHash)
+            return yield* persistError('Jev batch observation bytes differ from their stored hash')
+          const requestIds = saved.plan.candidates.flatMap((candidate) =>
+            candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request.requestId] : [],
+          )
+          const rows =
+            requestIds.length === 0
+              ? []
+              : yield* Effect.gen(function* () {
+                  yield* sql`
+                    SELECT request_id FROM jev_evaluation_requests
+                    WHERE request_id IN ${sql.in(requestIds)} FOR UPDATE
+                  `
+                  return yield* Schema.decodeUnknownEffect(
+                    Schema.Array(StoredEvaluationRow),
+                    strictParseOptions,
+                  )(
+                    yield* sql`
+                    SELECT request.request_id, request.payload AS request, receipt.payload AS receipt,
+                      resolution.payload AS resolution
+                    FROM jev_evaluation_requests AS request
+                    LEFT JOIN jev_evaluation_receipts AS receipt USING (request_id)
+                    LEFT JOIN jev_evaluation_resolutions AS resolution USING (request_id)
+                    WHERE request.request_id IN ${sql.in(requestIds)}
+                  `,
+                  )
+                })
+          const evidenceByRequestId = new Map<string, JevEvaluationEvidence>()
+          for (const row of rows) {
+            const request = yield* Effect.fromResult(decodeJevEvaluationRequest(row.request))
+            if (request.requestId !== row.request_id) return yield* persistError('Stored Jev request identity differs')
+            const receipt =
+              row.receipt === null ? null : yield* Effect.fromResult(decodeJevEvaluationReceipt(request, row.receipt))
+            const resolution =
+              row.resolution === null
+                ? null
+                : yield* Effect.fromResult(decodeJevResolution(request, receipt, row.resolution))
+            if (receipt !== null && resolution === null)
+              return yield* persistError('A Jev receipt has no committed resolution')
+            evidenceByRequestId.set(request.requestId, { request, receipt, resolution })
+          }
           const pending = []
           for (const planned of saved.plan.candidates) {
             if (planned.status === JevCandidatePlanStatus.Excluded) continue
-            yield* sql`SELECT request_id FROM jev_evaluation_requests WHERE request_id = ${planned.request.requestId} FOR UPDATE`
-            const evidence = yield* evaluations.read(planned.request.requestId)
+            const evidence = evidenceByRequestId.get(planned.request.requestId) ?? null
             pending.push({ planned, evidence })
           }
           const now = yield* Clock.currentTimeMillis
