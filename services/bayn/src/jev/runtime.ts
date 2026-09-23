@@ -186,7 +186,7 @@ export const evaluateJevObservation = (input: Parameters<typeof recordJevObserva
         expiresAt: utcInstantFromEpochMillis(
           Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
         ),
-        planVersion: JevBatchPlanVersion.V1,
+        planVersion: JevBatchPlanVersion.V2,
       }),
     )
     const saved = yield* evaluateJevBatch(batchPlan)

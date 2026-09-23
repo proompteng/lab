@@ -24,7 +24,7 @@ import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
-import { JevBatchPlanVersion } from '../jev/batch'
+import { JevBatchPlanVersion, JevEntryExclusion } from '../jev/batch'
 import { decideJevEntry, decideJevManagement, JevManagementAction } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
@@ -331,6 +331,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }
           const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
           expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
+          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V2)
           expect(calls).toBe(purpose === JevPurpose.Entry ? 15 : 1)
         }).pipe(
           Effect.provideService(JevClient, {
@@ -352,7 +353,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     },
   )
 
-  test('a stale optional candidate does not block fresh candidates in the same entry batch', async () => {
+  test('stale source and verified wide entry quotes do not call Jev for those candidates', async () => {
     let calls = 0
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -380,7 +381,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const staleEvidence = {
           ...raw,
           quotes: raw.quotes.map((quote) =>
-            quote.symbol === 'AMD' ? { ...quote, eventAt: staleAt, ingestedAt: staleAt } : quote,
+            quote.symbol === 'AMD'
+              ? { ...quote, eventAt: staleAt, ingestedAt: staleAt }
+              : quote.symbol === 'AAPL'
+                ? { ...quote, askPrice: quote.bidPrice * 1.01 }
+                : quote,
           ),
           trades: raw.trades.map((trade) =>
             trade.symbol === 'AMD' ? { ...trade, eventAt: staleAt, ingestedAt: staleAt } : trade,
@@ -391,10 +396,14 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V2)
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
         )
-        expect(calls).toBe(fixture.protocol.candidateSymbols.length - 1)
+        expect(result.batchPlan.candidates).toContainEqual(
+          expect.objectContaining({ symbol: 'AAPL', status: 'EXCLUDED', reason: JevEntryExclusion.Spread }),
+        )
+        expect(calls).toBe(fixture.protocol.candidateSymbols.length - 2)
       }).pipe(
         Effect.provideService(JevClient, {
           evaluate: (request) =>
