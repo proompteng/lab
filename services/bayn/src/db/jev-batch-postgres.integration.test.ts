@@ -174,6 +174,20 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
+  test('rejects a forged matching candidate observation before sealing the batch', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* batches.begin(plan)
+        yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+          VALUES (${'f'.repeat(64)}, ${plan.cycleId}, ${plan.observedAt}::timestamptz, ${sql.json(fixture.observation.payload)})`
+        expect(Result.isFailure(yield* batches.finish(plan.batchId).pipe(Effect.result))).toBe(true)
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
+      }).pipe(atObservation),
+    )
+  })
+
   test('rejects omitted candidates, unrelated source identities and a second deadline for the same observation', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {

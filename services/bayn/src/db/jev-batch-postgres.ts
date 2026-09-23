@@ -22,7 +22,7 @@ import {
   type JevEvaluationEvidence,
 } from '../jev/resolution'
 import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 
 const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
@@ -134,9 +134,52 @@ export const makeJevBatchStore = Effect.gen(function* () {
           )
           if ((yield* Effect.fromResult(canonicalHashV1Result(observations[0].payload))) !== saved.plan.observationHash)
             return yield* persistError('Jev batch observation bytes differ from their stored hash')
-          const requestIds = saved.plan.candidates.flatMap((candidate) =>
-            candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request.requestId] : [],
+          const requested = saved.plan.candidates.flatMap((candidate) =>
+            candidate.status === JevCandidatePlanStatus.Requested
+              ? [{ requestId: candidate.request.requestId, symbol: candidate.symbol }]
+              : [],
           )
+          const requestIds = requested.map((candidate) => candidate.requestId)
+          if (requested.length > 0) {
+            const rows = yield* Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  content_hash: Sha256Schema,
+                  payload: Schema.Unknown,
+                  matching_symbols: Schema.Array(SymbolSchema),
+                }),
+              ),
+              strictParseOptions,
+            )(
+              yield* sql`
+                SELECT observation.content_hash, observation.payload,
+                  ARRAY(
+                    SELECT candidate.symbol
+                    FROM jsonb_array_elements_text(observation.payload->'manifest'->'candidateSymbols') AS candidate(symbol)
+                    WHERE candidate.symbol IN ${sql.in(requested.map((candidate) => candidate.symbol))}
+                      AND NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(observation.payload->'manifest'->'candidateExclusions') AS excluded
+                        WHERE excluded->>'symbol' = candidate.symbol
+                      )
+                  ) AS matching_symbols
+                FROM intraday_candidate_observations AS observation
+                WHERE observation.cycle_id = ${saved.plan.cycleId}
+                  AND observation.payload->>'authorityGenerationHash' = ${saved.plan.authorityGenerationHash}
+                  AND observation.payload->>'observedAt' = ${saved.plan.observedAt}
+                  AND observation.payload->'manifest'->>'observedAt' = ${saved.plan.observedAt}
+                  AND observation.payload->'manifest'->>'snapshotId' = ${saved.plan.snapshotId}
+              `,
+            )
+            const matched = new Set<string>()
+            for (const row of rows) {
+              if (row.matching_symbols.length === 0) continue
+              if ((yield* Effect.fromResult(canonicalHashV1Result(row.payload))) !== row.content_hash)
+                return yield* persistError('Jev candidate observation content differs from its committed identity')
+              for (const symbol of row.matching_symbols) matched.add(symbol)
+            }
+            if (requested.some((candidate) => !matched.has(candidate.symbol)))
+              return yield* persistError('Jev batch request has no matching persisted candidate observation')
+          }
           const rows =
             requestIds.length === 0
               ? []
