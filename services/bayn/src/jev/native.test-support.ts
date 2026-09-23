@@ -23,7 +23,13 @@ import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { jevBehaviorHash } from './protocol'
 import { prepareJevRequest, decodeJevResponse, type JevResponse } from './contract'
-import { JevCandidatePlanStatus, JevCandidateResultStatus, makeJevBatchResult, type JevBatchPlan } from './batch'
+import {
+  JevBatchPlanVersion,
+  JevCandidatePlanStatus,
+  JevCandidateResultStatus,
+  makeJevBatchResult,
+  type JevBatchPlan,
+} from './batch'
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { makeJevTradingSignalBatch } from './trading-signals'
@@ -52,7 +58,11 @@ export const nativeJevFixture = (
           candidateSymbols: protocol.candidateSymbols,
         }
       : { ...timedQuery, symbols: ['AAPL', 'SPY'], candidateSymbols: ['AAPL'] }
-  const { snapshot } = streamingFixtureFromRaw(
+  const {
+    cut,
+    query: snapshotQuery,
+    snapshot,
+  } = streamingFixtureFromRaw(
     makeIntradayMomentumTestSnapshot(
       protocol,
       { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
@@ -187,7 +197,7 @@ export const nativeJevFixture = (
       snapshot,
     }),
   )
-  return { protocol, portfolio, observation, snapshot, entryFills, draft }
+  return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft }
 }
 
 export const nativeJevInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {
@@ -233,6 +243,7 @@ export const nativeJevDecisionEvidence = (fixture = nativeJevFixture(), action =
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.V1,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)

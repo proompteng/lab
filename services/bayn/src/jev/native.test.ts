@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { JevCandidatePlanStatus } from './batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import {
   decideJevEntry,
@@ -23,6 +23,7 @@ const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
       expiresAt: new Date(
         Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
       ).toISOString(),
+      planVersion: JevBatchPlanVersion.V1,
     }),
   )
 
@@ -193,6 +194,7 @@ describe('native Jev entry and position observations', () => {
         makeJevTradingSignalBatch({
           observation: payload,
           expiresAt: new Date(Date.parse(payload.observedAt) + 6000).toISOString(),
+          planVersion: JevBatchPlanVersion.V1,
         }),
       ),
     ).toBe(true)

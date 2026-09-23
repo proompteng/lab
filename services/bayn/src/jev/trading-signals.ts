@@ -9,13 +9,31 @@ import type { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
-import { decodeJevBatchPlan, JevCandidatePlanStatus, makeJevBatchPlan } from './batch'
+import {
+  decodeJevBatchPlan,
+  JevBatchPlanVersion,
+  JevCandidatePlanStatus,
+  JevEntryExclusion,
+  makeJevBatchPlan,
+} from './batch'
 import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
+
+export const jevEntryQuoteExclusion = (
+  quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>,
+  maximumSpreadBps: number,
+) =>
+  Result.gen(function* () {
+    const bid = yield* numberToMicros(quote.bidPrice)
+    const ask = yield* numberToMicros(quote.askPrice)
+    if ((ask - bid) * 20_000n > BigInt(maximumSpreadBps) * (ask + bid)) return JevEntryExclusion.Spread
+    if (quote.bidSize <= 0 || quote.askSize <= 0) return JevEntryExclusion.DisplayedSize
+    return null
+  })
 
 const latestSignalTrade = (snapshot: StrategyMarketSnapshot, symbol: string) =>
   snapshot.trades
@@ -339,6 +357,7 @@ export const reproduceJevRequestFromVerifiedObservation = (
 const batchFromObservation = (
   observation: Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>,
   expiresAt: string,
+  planVersion: JevBatchPlanVersion,
 ) =>
   Result.gen(function* () {
     const { snapshot, protocol } = observation
@@ -363,6 +382,28 @@ const batchFromObservation = (
         protocol.benchmarkSymbol,
         observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
       )
+      if (
+        planVersion === JevBatchPlanVersion.V2 &&
+        observation.schemaVersion === 'bayn.jev-observation.v1' &&
+        observation.portfolio.purpose === JevPurpose.Entry
+      ) {
+        const quote = snapshot.latestQuotes[symbol]
+        if (quote !== undefined) {
+          const entryExclusion = yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)
+          if (entryExclusion !== null) {
+            candidates.push({
+              symbol,
+              status: JevCandidatePlanStatus.Excluded,
+              reason: entryExclusion,
+              message:
+                entryExclusion === JevEntryExclusion.Spread
+                  ? 'Verified entry quote exceeds the maximum spread'
+                  : 'Verified entry quote has no two-sided displayed size',
+            })
+            continue
+          }
+        }
+      }
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
         cycleId: observation.cycleId,
@@ -377,7 +418,7 @@ const batchFromObservation = (
       candidates.push({ symbol, status: JevCandidatePlanStatus.Requested, request })
     }
     return yield* makeJevBatchPlan({
-      schemaVersion: 'bayn.jev-batch-plan.v1',
+      schemaVersion: planVersion,
       cycleId: observation.cycleId,
       authorityGenerationHash: observation.authorityGenerationHash,
       observationHash: observation.contentHash,
@@ -401,16 +442,20 @@ const batchFromObservation = (
     })
   })
 
-export const makeJevTradingSignalBatch = (input: { readonly observation: unknown; readonly expiresAt: string }) =>
+export const makeJevTradingSignalBatch = (input: {
+  readonly observation: unknown
+  readonly expiresAt: string
+  readonly planVersion: JevBatchPlanVersion
+}) =>
   reproduceJevCandidateObservation(input.observation).pipe(
-    Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt)),
+    Result.flatMap((observation) => batchFromObservation(observation, input.expiresAt, input.planVersion)),
   )
 
 export const reproduceJevTradingSignalBatchEvidence = (inputObservation: unknown, input: unknown) =>
   Result.gen(function* () {
     const plan = yield* decodeJevBatchPlan(input)
     const observation = yield* reproduceJevCandidateObservation(inputObservation)
-    const reproduced = yield* batchFromObservation(observation, plan.expiresAt)
+    const reproduced = yield* batchFromObservation(observation, plan.expiresAt, plan.schemaVersion)
     if (reproduced.batchId !== plan.batchId)
       return yield* unavailable('Jev batch requests or candidate universe differ from the reproduced source')
     return { observation, plan: reproduced }
