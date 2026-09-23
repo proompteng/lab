@@ -480,8 +480,11 @@ read-only ClickHouse access. See `tools/history.ts` for the strict job schema.
    `schemaVersion: "bayn.alpaca-backfill.v1"`, `startDate`, `endDate`, `symbols`, and `executionSessions`.
    `BAYN_ALPACA_KEY_ID` and `BAYN_ALPACA_SECRET_KEY` use the existing integration. The tool requests raw IEX minute
    bars for every completed broker-calendar session and quotes/trades for each execution session. It follows all
-   pagination, caches original response bytes and receipts, and resumes identical requests. Changed requests require
-   a new immutable dataset. Missing minutes remain missing and appear in per-symbol/session coverage.
+   pagination, caches original response bytes and receipts, and resumes identical requests. Quote and trade queries
+   use disjoint windows of at most one hour, with the inclusive end set to the final nanosecond before the next
+   window. Coverage combines those windows per symbol and session. This bounds the capture size before canonical
+   hashing and JSON retention. Changed requests require a new immutable dataset. Missing minutes remain missing and
+   appear in per-symbol/session coverage.
 2. **Publish:** provide `operation: "publish"`, `datasetDirectory`, pinned `datasetId`, and `receiptPath`.
    Configure `BAYN_HISTORY_CLICKHOUSE_URL`, `BAYN_HISTORY_CLICKHOUSE_USERNAME`, and
    `BAYN_HISTORY_CLICKHOUSE_PASSWORD` for the existing offline data administrator. The GitOps schema hook must have
