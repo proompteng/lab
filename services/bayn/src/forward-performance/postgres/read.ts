@@ -114,6 +114,7 @@ export const readForwardPerformanceMarketVolumeBindings = (
       AND cycle.state = 'COMPLETED'
       AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
       AND cycle.terminal_at <= latest_reconciliation.reconciled_at
+      AND cycle.execution_close_at <= latest_reconciliation.reconciled_at
     ORDER BY cycle.submission_open_at, cycle.cycle_id COLLATE "C"
   `.pipe(Effect.flatMap(decodeMarketVolumeBindings))
 
