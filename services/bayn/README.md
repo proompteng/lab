@@ -356,6 +356,8 @@ Native archive requests use durable intent symbols independently of decision val
 Completed native intraday cycles bind performance evidence to `streaming_snapshot_references` or older
 `intraday_snapshot_references`. Streaming receipts preserve the original input cut and content hash. Their retrospective
 archive request retains every decision lineage offset and verifies that each precedes its consumed partition position.
+Full-session volume is requested only after the reconciliation cutoff reaches the exchange session close, even when
+the trade completed earlier. Intraday reports retain those fills and accounting while full-session volume is unavailable.
 The reader uses the
 same universe, IEX feed and exchange calendar as the decision, with the complete regular-session window, a fixed
 reconciliation cutoff, and captured Kafka partition offsets. Legacy daily SIP publications remain supported.
