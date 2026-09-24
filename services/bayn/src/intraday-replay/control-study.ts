@@ -36,7 +36,7 @@ export const ControlStudyInputSchema = Schema.Struct({
 })
 
 export const controlStudyDefinition = {
-  schemaVersion: 'bayn.control-study-definition.v1',
+  schemaVersion: 'bayn.control-study-definition.v2',
   policies: {
     RETAINED_BREAKOUT_CLOSE:
       'Six retained candidates, retained breakout thresholds, 10 percent allocation, hold until the close window.',
@@ -52,7 +52,7 @@ export const controlStudyDefinition = {
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   valuation:
-    'Retain session boundaries, one-minute marks, each poll, decision completion and before/after order outcomes. Every valid mark updates carried peak equity, drawdown and session loss before subsequent entry risk checks.',
+    'Retain session boundaries, one-minute marks, each poll, decision completion and before/after order outcomes. Broker equity and its carried peak govern risk. Net equity deducts cumulative external costs only for reported performance, drawdown and session loss, matching native replay. External costs never change broker cash, sizing or risk.',
   limitations: [
     'DEVELOPMENT_CONTROL_PORTFOLIOS. Not the frozen matched-control acceptance experiment or a prospective qualification.',
     'No model calls or invented Jev decisions. Repeated controls use deterministic management and therefore are not management-matched to the deployed Jev strategy.',
@@ -75,6 +75,13 @@ export interface ControlMarket {
   >
 }
 
+export interface ControlCapital {
+  readonly cashMicros: string
+  readonly peakBrokerEquityMicros: string
+  readonly peakNetEquityMicros: string
+  readonly accruedExternalCostMicros: string
+}
+
 const failureDetails = (cause: unknown) =>
   Result.try({
     try: () => JSON.stringify(cause),
@@ -93,8 +100,7 @@ export const runControlSession = (input: {
   readonly risk: Policy
   readonly session: MarketCalendarSession
   readonly calendar: MarketCalendarObservation
-  readonly openingCashMicros: string
-  readonly openingPeakEquityMicros: string
+  readonly openingCapital: ControlCapital
   readonly dataCostMicros: string
   readonly targetWeight: number
   readonly decisionLatencyMs: number
@@ -110,12 +116,13 @@ export const runControlSession = (input: {
     const closeMs = Date.parse(session.closeAt)
     const cutoffMs = closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
     const warmupMs = openMs + protocol.lookbackMinutes * 60_000 + protocol.decisionDelaySeconds * 1000
-    const openingCash = BigInt(input.openingCashMicros)
+    const openingCash = BigInt(input.openingCapital.cashMicros)
     const dataCost = BigInt(input.dataCostMicros)
-    if (dataCost > openingCash)
-      return yield* new ControlStudyFailure({ message: 'Allocated data cost exceeds available control cash' })
-    let portfolio = yield* Effect.fromResult(createControlPortfolio(String(openingCash - dataCost)))
-    let peakEquity = BigInt(input.openingPeakEquityMicros)
+    const openingNetEquity = openingCash - BigInt(input.openingCapital.accruedExternalCostMicros)
+    const accruedExternalCost = BigInt(input.openingCapital.accruedExternalCostMicros) + dataCost
+    let portfolio = yield* Effect.fromResult(createControlPortfolio(String(openingCash)))
+    let peakBrokerEquity = BigInt(input.openingCapital.peakBrokerEquityMicros)
+    let peakNetEquity = BigInt(input.openingCapital.peakNetEquityMicros)
     let maximumDrawdown = 0n
     let maximumSessionLoss = dataCost
     let lastWindow = -1
@@ -135,8 +142,13 @@ export const runControlSession = (input: {
       requestedQuantityMicros: string
       outcome: unknown
     }[] = []
-    const marks: { observedAt: string; equityMicros: string | null; quoteHash: string | null; cause: string | null }[] =
-      []
+    const marks: {
+      observedAt: string
+      brokerEquityMicros: string | null
+      netEquityAfterKnownCostsMicros: string | null
+      quoteHash: string | null
+      cause: string | null
+    }[] = []
     let missingDecisions = 0
     let missingExecutionQuotes = 0
     let nextMarkMs = openMs
@@ -154,24 +166,28 @@ export const runControlSession = (input: {
         if (rejection !== null) {
           marks.push({
             observedAt: utcInstantFromEpochMillis(atMs),
-            equityMicros: null,
+            brokerEquityMicros: null,
+            netEquityAfterKnownCostsMicros: null,
             quoteHash: quote?.recordHash ?? null,
             cause: rejection,
           })
           return
         }
-        const equity =
+        const brokerEquity =
           BigInt(portfolio.ledger.cashMicros) +
           (position !== undefined && quote !== undefined
             ? (BigInt(position.quantityMicros) * (yield* Effect.fromResult(numberToMicros(quote.value.bidPrice)))) /
               1_000_000n
             : 0n)
-        if (equity > peakEquity) peakEquity = equity
-        if (peakEquity - equity > maximumDrawdown) maximumDrawdown = peakEquity - equity
-        if (openingCash - equity > maximumSessionLoss) maximumSessionLoss = openingCash - equity
+        const netEquity = brokerEquity - accruedExternalCost
+        if (brokerEquity > peakBrokerEquity) peakBrokerEquity = brokerEquity
+        if (netEquity > peakNetEquity) peakNetEquity = netEquity
+        if (peakNetEquity - netEquity > maximumDrawdown) maximumDrawdown = peakNetEquity - netEquity
+        if (openingNetEquity - netEquity > maximumSessionLoss) maximumSessionLoss = openingNetEquity - netEquity
         marks.push({
           observedAt: utcInstantFromEpochMillis(atMs),
-          equityMicros: String(equity),
+          brokerEquityMicros: String(brokerEquity),
+          netEquityAfterKnownCostsMicros: String(netEquity),
           quoteHash: quote?.recordHash ?? null,
           cause: null,
         })
@@ -280,7 +296,7 @@ export const runControlSession = (input: {
             side === OrderSide.Buy &&
             (!input.eligibleSymbols.has(symbol) ||
               openingCash - BigInt(portfolio.ledger.cashMicros) > BigInt(risk.maxDailyLossMicros) ||
-              peakEquity - BigInt(portfolio.ledger.cashMicros) > BigInt(risk.maxDrawdownMicros))
+              peakBrokerEquity - BigInt(portfolio.ledger.cashMicros) > BigInt(risk.maxDrawdownMicros))
           const quantity = riskBlocked
             ? 0n
             : side === OrderSide.Sell
@@ -337,11 +353,13 @@ export const runControlSession = (input: {
     const issues = [
       ...(missingDecisions > 0 ? ['MISSING_DECISION_DATA'] : []),
       ...(missingExecutionQuotes > 0 ? ['MISSING_EXECUTION_QUOTES'] : []),
-      ...(marks.some((entry) => entry.equityMicros === null) ? ['MISSING_VALUATION'] : []),
+      ...(marks.some((entry) => entry.netEquityAfterKnownCostsMicros === null) ? ['MISSING_VALUATION'] : []),
       ...(portfolio.ledger.positions.length > 0 ? ['UNCLOSED_POSITION'] : []),
     ]
     const netPnl =
-      portfolio.ledger.positions.length === 0 ? String(BigInt(portfolio.ledger.cashMicros) - openingCash) : null
+      portfolio.ledger.positions.length === 0
+        ? String(BigInt(portfolio.ledger.cashMicros) - accruedExternalCost - openingNetEquity)
+        : null
     return {
       sessionDate: session.date,
       policy: input.policy,
@@ -358,7 +376,12 @@ export const runControlSession = (input: {
       dataCostMicros: input.dataCostMicros,
       maximumMarkedDrawdownMicros: String(maximumDrawdown),
       maximumMarkedSessionLossMicros: String(maximumSessionLoss),
-      peakEquityMicros: String(peakEquity),
+      closingCapital: {
+        cashMicros: portfolio.ledger.cashMicros,
+        peakBrokerEquityMicros: String(peakBrokerEquity),
+        peakNetEquityMicros: String(peakNetEquity),
+        accruedExternalCostMicros: String(accruedExternalCost),
+      } satisfies ControlCapital,
       missingDecisions,
       missingExecutionQuotes,
       ledger: portfolio.ledger,
@@ -414,8 +437,12 @@ export const runControlStudy = (raw: unknown, arrivalsPath: string, receipt: Bac
             ),
         }
         const results = []
-        let cash = prepared.input.openingCashMicros
-        let peak = cash
+        let capital: ControlCapital = {
+          cashMicros: prepared.input.openingCashMicros,
+          peakBrokerEquityMicros: prepared.input.openingCashMicros,
+          peakNetEquityMicros: prepared.input.openingCashMicros,
+          accruedExternalCostMicros: '0',
+        }
         for (const session of prepared.sessions) {
           const result = yield* runControlSession({
             policy,
@@ -423,8 +450,7 @@ export const runControlStudy = (raw: unknown, arrivalsPath: string, receipt: Bac
             risk,
             session,
             calendar,
-            openingCashMicros: cash,
-            openingPeakEquityMicros: peak,
+            openingCapital: capital,
             dataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
             targetWeight: policy === ControlPolicy.RetainedBreakout ? 0.1 : input.repeatedTargetWeightPpm / 1_000_000,
             decisionLatencyMs: input.decisionLatencyMs,
@@ -442,8 +468,7 @@ export const runControlStudy = (raw: unknown, arrivalsPath: string, receipt: Bac
             return yield* new ControlStudyFailure({
               message: 'Cannot reset an unresolved control position between sessions',
             })
-          cash = result.ledger.cashMicros
-          peak = result.peakEquityMicros
+          capital = result.closingCapital
         }
         yield* source.finish
         return results
@@ -451,7 +476,7 @@ export const runControlStudy = (raw: unknown, arrivalsPath: string, receipt: Bac
       sessions.push(...results)
     }
     const report = {
-      schemaVersion: 'bayn.control-study-report.v1',
+      schemaVersion: 'bayn.control-study-report.v2',
       classification: 'DEVELOPMENT_CONTROL_PORTFOLIOS',
       runId,
       definition: controlStudyDefinition,
