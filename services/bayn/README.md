@@ -29,14 +29,14 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
-The runtime writes version-two Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
-exclusions without a Jev call. A version-two observation where every candidate is excluded for a verified entry-quote
-reason can yield a no-entry decision; missing source evidence cannot. Retained version-one batches keep their original
-identity. Position management still evaluates its held symbol. A complete version-two batch must finish within its
-ten-second evidence lifetime. After the batch is accepted, entry risk uses the fresh execution quote's event time and
-ten-second maximum age; the earlier batch deadline does not shorten that quote deadline. Retained version-one batches
-keep their original deadline binding. These parameters have not established an economic advantage under the frozen
-qualification protocol.
+The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
+exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
+yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
+original identity and quote-deadline binding. Position management still evaluates its held symbol. A complete
+version-three batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
+the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
+quote deadline for version-three decisions. These parameters have not established an economic advantage under the
+frozen qualification protocol.
 
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
@@ -73,8 +73,9 @@ finality, and premature data still fail the whole observation. Raw candidate row
 hashed snapshot for revalidation.
 
 Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
-alone cannot authorize a no-entry decision. A version-two entry batch with every candidate excluded by a verified
-spread or displayed-size rule can. Execution pricing requires fresh quotes for positive targets and reconciled holdings.
+alone cannot authorize a no-entry decision. A version-two or version-three entry batch with every candidate excluded by
+a verified spread or displayed-size rule can. Execution pricing requires fresh quotes for positive targets and
+reconciled holdings.
 Historical momentum targets remain readable for audit.
 
 Entry and position-management observations each commit at most once per completed signal window within a cycle.

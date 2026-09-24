@@ -134,9 +134,9 @@ export const jevEntryQuoteMaximumAgeMs = (
   quoteEventAt: string,
   quoteAgeLimitMs: number,
 ): number =>
-  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V1
-    ? Math.min(quoteAgeLimitMs, Date.parse(target.evidence.batchPlan.expiresAt) - Date.parse(quoteEventAt))
-    : quoteAgeLimitMs
+  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V3
+    ? quoteAgeLimitMs
+    : Math.min(quoteAgeLimitMs, Date.parse(target.evidence.batchPlan.expiresAt) - Date.parse(quoteEventAt))
 
 export enum JevManagementAction {
   Hold = 'HOLD',

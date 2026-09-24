@@ -331,7 +331,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }
           const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
           expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
-          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V2)
+          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
           expect(calls).toBe(purpose === JevPurpose.Entry ? 15 : 1)
         }).pipe(
           Effect.provideService(JevClient, {
@@ -396,7 +396,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
-        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V2)
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
         )
@@ -982,7 +982,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         )
         if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v1')
           throw new Error('Expected native Jev entry target')
-        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V2)
+        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
         expect(Date.parse(document.deltaRisk[0].evaluation.decision.expiresAt)).toBeGreaterThan(
           Date.parse(document.strategyDecision.evidence.batchPlan.expiresAt),
         )

@@ -75,7 +75,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(observed + 10_000).toISOString(),
-        planVersion: JevBatchPlanVersion.V2,
+        planVersion: JevBatchPlanVersion.V3,
       }),
     )
     const decidedAt = new Date(observed + 7_000).toISOString()
@@ -101,6 +101,35 @@ describe('native Jev entry and position observations', () => {
         maximumAgeMs: jevEntryQuoteMaximumAgeMs(historical, historicalQuoteAt, fixture.protocol.maximumQuoteAgeMs),
       }),
     ).toBe(Date.parse(historical.evidence.batchPlan.expiresAt))
+  })
+
+  test('retained version-two entry decisions keep their original batch-bound quote deadline', () => {
+    const fixture = nativeJevFixture()
+    const observation = fixture.observation.payload
+    const observed = Date.parse(observation.observedAt)
+    const batchPlan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation,
+        expiresAt: new Date(observed + 10_000).toISOString(),
+        planVersion: JevBatchPlanVersion.V2,
+      }),
+    )
+    const decidedAt = new Date(observed + 7_000).toISOString()
+    const target = Result.getOrThrow(
+      decideJevEntry({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt),
+        decidedAt,
+      }),
+    )
+    expect(
+      Result.getOrThrow(Schema.decodeUnknownResult(JevEntryTargetSchema)(JSON.parse(JSON.stringify(target)))),
+    ).toEqual(target)
+    const quoteEventAt = new Date(observed + 7_100).toISOString()
+    const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
+    expect(maximumAgeMs).toBe(2_900)
+    expect(entryQuoteExpiresAtMillis({ eventAt: quoteEventAt, maximumAgeMs })).toBe(observed + 10_000)
   })
 
   test('the held position can request an exit, while weaker or hold evidence retains it', () => {
