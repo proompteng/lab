@@ -161,11 +161,10 @@ export const backtestSourcePartitions = (manifest: BacktestSourceManifest) =>
               ? 1
               : topic === manifest.universe.topics.quotes
                 ? 13
-                : (topic === manifest.universe.topics.features ||
-                      topic === manifest.universe.topics.technicalFeatures) &&
-                    (manifest.regeneratedFeaturesRecordedAtMs !== undefined ||
-                      (topic === manifest.universe.topics.technicalFeatures &&
-                        manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined))
+                : (topic === manifest.universe.topics.features &&
+                      manifest.regeneratedFeaturesRecordedAtMs !== undefined) ||
+                    (topic === manifest.universe.topics.technicalFeatures &&
+                      manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined)
                   ? 1
                   : 3,
         },
