@@ -1459,6 +1459,8 @@ const executionMaterialIssues = (
             other.streaming.runId !== binding.streaming.runId ||
             other.streaming.sourceManifestHash !== binding.streaming.sourceManifestHash ||
             other.streaming.regeneratedFeaturesRecordedAtMs !== binding.streaming.regeneratedFeaturesRecordedAtMs ||
+            other.streaming.regeneratedTechnicalFeaturesRecordedAtMs !==
+              binding.streaming.regeneratedTechnicalFeaturesRecordedAtMs ||
             other.streaming.featureTopic !== binding.streaming.featureTopic ||
             other.streaming.deliveryModel.description !== binding.streaming.deliveryModel.description),
       )
