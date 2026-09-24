@@ -1467,14 +1467,14 @@ for (const phase of [
   'grant lock',
   'broker refresh',
   'risk context',
-  'source advancement',
+  'clock synchronization',
   'clock unavailable',
   'unexpired',
 ] as const) {
   test(`measured replay time governs final submission after ${phase}`, async () => {
     const fixture = finalLiveFixture()
     if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
-    const expiresAt = phase === 'source advancement' ? '2026-07-28T08:00:11.000Z' : '2026-07-28T08:00:10.000Z'
+    const expiresAt = phase === 'clock synchronization' ? '2026-07-28T08:00:11.000Z' : '2026-07-28T08:00:10.000Z'
     const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
     const base = dependencies('measured-replay-final-authorization')
     let posts = 0
@@ -1496,7 +1496,9 @@ for (const phase of [
               ? Effect.fail(new ReplayBrokerFailure({ message: 'Timeline source unavailable' }))
               : marketClock
                   .setTime(atMs)
-                  .pipe(Effect.andThen(phase === 'source advancement' ? providerClock.adjust(2000) : Effect.void)),
+                  .pipe(Effect.andThen(phase === 'clock synchronization' ? providerClock.adjust(2000) : Effect.void)),
+          advanceDeadlineTo: (atMs) => marketClock.setTime(atMs),
+          excludedSourceMillis: Effect.succeed(0),
           retain: () => Effect.void,
         }).pipe(Effect.provideService(Clock.Clock, marketClock))
         const testDependencies: ExecutionProgramDependencies = {

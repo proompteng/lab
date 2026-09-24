@@ -1,9 +1,17 @@
-import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
+import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
+import { Clock, Config, Context, Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { sha256 } from '../src/hash'
 import { ControlStudyFailure } from '../src/intraday-replay/control-portfolio'
-import { runControlStudy } from '../src/intraday-replay/control-study'
+import {
+  ControlManagementMode,
+  ControlStudyInputSchema,
+  runControlStudy,
+  type ControlStudyManagement,
+} from '../src/intraday-replay/control-study'
+import { prepareBacktest } from '../src/intraday-replay/backtest'
+import { JevClient, JevClientLive } from '../src/jev/client'
 import { validateBacktestSourceReceipt } from '../src/intraday-replay/source'
 
 const main = Effect.gen(function* () {
@@ -22,8 +30,9 @@ const main = Effect.gen(function* () {
   const receiptPath = flags.get('--source-receipt')
   const receiptHash = flags.get('--source-receipt-sha256')
   const outputPath = flags.get('--output')
+  const evidenceDirectory = flags.get('--evidence-directory')
   if (
-    flags.size !== 6 ||
+    (flags.size !== 6 && !(flags.size === 7 && evidenceDirectory !== undefined)) ||
     inputPath === undefined ||
     inputHash === undefined ||
     arrivals === undefined ||
@@ -33,16 +42,42 @@ const main = Effect.gen(function* () {
   )
     return yield* new ControlStudyFailure({
       message:
-        'Usage: bun tools/control-study.ts --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json>',
+        'Usage: bun tools/control-study.ts --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> [--evidence-directory <new-directory-required-for-JEV>]',
     })
   const fs = yield* FileSystem.FileSystem
+  if (yield* fs.exists(outputPath)) return yield* new ControlStudyFailure({ message: 'Control output already exists' })
   const inputText = yield* fs.readFileString(inputPath)
   if (sha256(inputText) !== inputHash) return yield* new ControlStudyFailure({ message: 'Study input hash differs' })
-  const input = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(inputText)
+  const input = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ControlStudyInputSchema))(inputText)
   const receipt = yield* Effect.fromResult(
     validateBacktestSourceReceipt(yield* fs.readFileString(receiptPath), receiptHash),
   )
-  const report = yield* runControlStudy(input, arrivals, receipt)
+  let management: ControlStudyManagement
+  if (input.management === ControlManagementMode.Jev) {
+    if (evidenceDirectory === undefined)
+      return yield* new ControlStudyFailure({ message: 'JEV controls require a new evidence directory' })
+    const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
+    const providerClock = yield* Clock.clockWith(Effect.succeed)
+    const providerContext = yield* Layer.build(
+      JevClientLive(yield* Config.redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs).pipe(
+        Layer.provide(NodeHttpClient.layerNodeHttp),
+      ),
+    )
+    management = {
+      mode: ControlManagementMode.Jev,
+      evidenceDirectory,
+      providerClock,
+      provider: Context.get(providerContext, JevClient),
+    }
+  } else {
+    if (evidenceDirectory !== undefined)
+      return yield* new ControlStudyFailure({ message: 'Mechanical controls do not use a Jev evidence directory' })
+    management = { mode: ControlManagementMode.Mechanical }
+  }
+  const report = yield* runControlStudy(input, arrivals, receipt, management).pipe(
+    // @effect-diagnostics-next-line strictEffectProvide:off -- command isolates market time from provider deadlines
+    Effect.provide(TestClock.layer()),
+  )
   yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
   const stdio = yield* Stdio.Stdio
   yield* Stream.run(
