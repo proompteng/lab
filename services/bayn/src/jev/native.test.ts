@@ -12,10 +12,13 @@ import {
   JevManagementDecisionSchema,
 } from './decision'
 import { entryQuoteExpiresAtMillis } from '../risk'
+import { makeStrategyProtocolHashResult } from '../contracts'
+import { canonicalHashV1, sha256 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
+import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
 import { reproduceJevCandidateObservation } from './observation'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
-import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
+import { decodeJevProtocol, defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 import { makeJevTradingSignalBatch, reproduceJevTradingSignalBatch } from './trading-signals'
 
 const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
@@ -130,6 +133,39 @@ describe('native Jev entry and position observations', () => {
     const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
     expect(maximumAgeMs).toBe(2_900)
     expect(entryQuoteExpiresAtMillis({ eventAt: quoteEventAt, maximumAgeMs })).toBe(observed + 10_000)
+  })
+
+  test('durable Jev protocol identities select the archived or active behavior by batch version', () => {
+    const retained = Result.getOrThrow(decodeJevProtocol({ ...defaultJevProtocolDocument, inferenceValidityMs: 5_000 }))
+    const priorIdentity = Result.getOrThrow(
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: sha256('bayn.jev.behavior.v1'),
+        parameterHash: canonicalHashV1(retained),
+        parameterSchemaVersion: retained.schemaVersion,
+      }),
+    )
+    const active = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
+    const activeIdentity = Result.getOrThrow(
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: jevBehaviorHash,
+        parameterHash: canonicalHashV1(active),
+        parameterSchemaVersion: active.schemaVersion,
+      }),
+    )
+    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V1)).toBe(true)
+    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V2)).toBe(true)
+    expect(jevProtocolIdentityMatches(retained, priorIdentity)).toBe(true)
+    expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V3)).toBe(true)
+    expect(jevProtocolIdentityMatches(active, activeIdentity)).toBe(true)
+    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V3)).toBe(false)
+    expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
+    expect(jevProtocolIdentityMatches(retained, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
+    expect(jevProtocolIdentityMatches(active, priorIdentity, JevBatchPlanVersion.V3)).toBe(false)
+    expect(
+      jevProtocolIdentityMatches({ ...retained, maximumSpreadBps: retained.maximumSpreadBps + 1 }, priorIdentity),
+    ).toBe(false)
   })
 
   test('the held position can request an exit, while weaker or hold evidence retains it', () => {
