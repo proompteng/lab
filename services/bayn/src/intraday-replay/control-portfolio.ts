@@ -31,6 +31,7 @@ export enum ControlPolicy {
 }
 
 export enum ControlExit {
+  Model = 'JEV_EXIT',
   SessionClose = 'SESSION_CLOSE',
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
