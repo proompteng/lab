@@ -285,8 +285,10 @@ cycle references a retired decision or snapshot and that broker orders, position
 If an earlier release still owns such work, let that release finish recovery before the cutover. Retain terminal
 financial documents unchanged for audit; do not rewrite their hashes or restore legacy runtime decoders.
 
-Do not deploy directly or submit a broker order manually. A code release does not change the sealed research request
-or grant live capital authority.
+Do not deploy directly or submit a broker order manually. A code-only release cannot change the sealed research request
+or grant live capital authority. When the strategy identity changes, rotate and review the sealed PAPER research mandate
+with the same broker identity and risk limits before promotion; Kargo then carries that request into the new build
+lineage. Image publication alone does not authorize the revised strategy.
 
 ## Endpoints
 
