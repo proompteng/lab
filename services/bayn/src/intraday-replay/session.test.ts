@@ -6,6 +6,39 @@ import { utcInstantFromEpochMillis } from '../time'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { RetainedAutonomousCyclePassObservation } from '../cycle/runner/pass-observation'
 
+test('deadline advancement leaves arrivals unpublished until the next source boundary', async () => {
+  const sourceTimes: number[] = []
+  const sqlTimes: string[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const timeline = yield* makeReplayTimeline(
+        {
+          advanceTo: (at) =>
+            Effect.sync(() => {
+              sourceTimes.push(at)
+            }),
+        },
+        {
+          advanceTo: (at) =>
+            Effect.sync(() => {
+              sqlTimes.push(at)
+            }),
+        },
+        200,
+      )
+      yield* timeline.advanceDeadlineTo(150)
+      expect(yield* Clock.currentTimeMillis).toBe(150)
+      expect(sourceTimes).toEqual([])
+      expect(sqlTimes).toEqual([utcInstantFromEpochMillis(150)])
+      yield* timeline.advanceTo(150)
+      expect(sourceTimes).toEqual([150])
+      expect((yield* Effect.exit(timeline.advanceDeadlineTo(149)))._tag).toBe('Failure')
+      expect((yield* Effect.exit(timeline.advanceDeadlineTo(201)))._tag).toBe('Failure')
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+})
+
 test('every market hour and final boundary run at production cadence with delivery latency', async () => {
   const open = Date.parse('2026-09-04T13:30:00Z')
   const close = Date.parse('2026-09-04T20:00:00Z')
@@ -15,7 +48,7 @@ test('every market hour and final boundary run at production cadence with delive
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(open - 1)
-      const advance = yield* makeReplayTimeline(
+      const { advanceTo: advance } = yield* makeReplayTimeline(
         {
           advanceTo: (at) =>
             Effect.sync(() => {
@@ -68,7 +101,7 @@ test('source advancement failure cannot advance SQL or Effect clocks', async () 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(100)
-      const advance = yield* makeReplayTimeline(
+      const { advanceTo: advance } = yield* makeReplayTimeline(
         { advanceTo: () => Effect.fail(new Error('source failed')) },
         {
           advanceTo: () =>

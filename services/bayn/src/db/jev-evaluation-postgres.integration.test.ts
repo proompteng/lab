@@ -9,6 +9,7 @@ import resolutionMigration from '../../migrations/0077_jev_evaluation_resolution
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
+import { JevBatchPlanVersion } from '../jev/batch'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
 import { JevClient } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
@@ -71,7 +72,11 @@ const receipt = Result.getOrThrow(
   }),
 )
 const batch = Result.getOrThrow(
-  makeJevTradingSignalBatch({ observation: fixture.observation.payload, expiresAt: request.expiresAt }),
+  makeJevTradingSignalBatch({
+    observation: fixture.observation.payload,
+    expiresAt: request.expiresAt,
+    planVersion: JevBatchPlanVersion.V1,
+  }),
 )
 const recorded = Result.getOrThrow(
   makeJevResolution(request, receipt, {

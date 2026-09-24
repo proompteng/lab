@@ -118,7 +118,7 @@ export const defaultJevProtocolDocument = Object.freeze({
   maximumGrossWeight: 0.2,
   maximumSymbolWeight: 0.2,
   maximumSpreadBps: 5,
-  inferenceValidityMs: 5000,
+  inferenceValidityMs: 10_000,
   horizonMinutes: 15,
   maximumHoldingMinutes: 15,
   protectiveStopBps: 50,
@@ -136,6 +136,6 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.behavior.v2')
 export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
   [...candidates, protocol.benchmarkSymbol].sort()

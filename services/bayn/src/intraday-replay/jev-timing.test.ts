@@ -42,7 +42,109 @@ const fixture = Effect.gen(function* () {
       calls.push(call)
     })
   const measureDatabaseTime = <A, E, R>(operation: Effect.Effect<A, E, R>) => operation
-  return { providerClock, marketClock, calls, marketArrivals, advanceTo, retain, measureDatabaseTime }
+  return {
+    providerClock,
+    marketClock,
+    calls,
+    marketArrivals,
+    advanceTo,
+    advanceDeadlineTo: advanceTo,
+    excludedSourceMillis: Effect.succeed(0),
+    retain,
+    measureDatabaseTime,
+  }
+})
+
+test('provider receipts start after measured clock synchronization', async () => {
+  const calls = await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture
+      const timing = yield* makeReplayJevTiming({
+        ...f,
+        advanceDeadlineTo: (atMs) => f.advanceDeadlineTo(atMs).pipe(Effect.andThen(f.providerClock.adjust(30))),
+        provider: {
+          evaluate: (raw) =>
+            Effect.gen(function* () {
+              const prepared = Result.getOrThrow(prepareJevRequest(raw))
+              const startedAt = yield* Clock.currentTimeMillis
+              yield* f.providerClock.adjust(50)
+              return {
+                requestHash: prepared.requestHash,
+                responseHash: canonicalHashV1OrThrow(response),
+                startedAt: utcInstantFromEpochMillis(startedAt),
+                completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
+                response,
+              }
+            }),
+        },
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      const inference = yield* timing.run(timing.client.evaluate(request('AAPL').request))
+      expect(inference.startedAt).toBe(utcInstantFromEpochMillis(marketAt + 30))
+      return f.calls
+    }).pipe(Effect.scoped),
+  )
+  expect(calls[0]?.providerStartedAt).toBe(utcInstantFromEpochMillis(providerAt + 30))
+  expect(calls[0]?.providerCompletedAt).toBe(utcInstantFromEpochMillis(providerAt + 80))
+  expect(calls[0]?.simulatedStartedAt).toBe(utcInstantFromEpochMillis(marketAt + 30))
+})
+
+test.each([-1, 1.5, 101])('invalid source exclusion %sms fails the replay', async (excludedMs) => {
+  const exit = await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture
+      let excluded = 0
+      const timing = yield* makeReplayJevTiming({
+        ...f,
+        excludedSourceMillis: Effect.sync(() => excluded),
+        provider: { evaluate: () => Effect.die('This clock regression does not infer') },
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      return yield* timing
+        .run(
+          Effect.gen(function* () {
+            yield* f.providerClock.adjust(100)
+            excluded = excludedMs
+            return yield* timing.currentUtcInstant
+          }),
+        )
+        .pipe(Effect.exit)
+    }).pipe(Effect.scoped),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+})
+
+test('source parsing cannot consume native decision time while persistence work still does', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* fixture
+      let excludedSourceMillis = 0
+      const timing = yield* makeReplayJevTiming({
+        ...f,
+        provider: { evaluate: () => Effect.die('This clock regression does not infer') },
+        excludedSourceMillis: Effect.sync(() => excludedSourceMillis),
+        advanceTo: (atMs) =>
+          f.advanceTo(atMs).pipe(
+            Effect.andThen(f.providerClock.adjust(5000)),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                excludedSourceMillis += 5000
+              }),
+            ),
+          ),
+      }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
+      return yield* timing.run(
+        Effect.gen(function* () {
+          yield* f.providerClock.adjust(20)
+          const before = yield* timing.currentUtcInstant
+          yield* f.providerClock.adjust(30)
+          const after = yield* timing.currentUtcInstant
+          return { before, after, sourceCut: f.marketArrivals.at(-1) }
+        }),
+      )
+    }).pipe(Effect.scoped),
+  )
+  expect(result.before).toBe(utcInstantFromEpochMillis(marketAt + 20))
+  expect(result.after).toBe(utcInstantFromEpochMillis(marketAt + 50))
+  expect(result.sourceCut).toBe(marketAt + 50)
 })
 
 test('reconciliation timestamps stay on the published source clock when advancing arrivals consumes time', async () => {
@@ -122,13 +224,17 @@ test('concurrent inference advances source time by elapsed batch time and preser
         const fast = yield* Deferred.make<void>()
         const requests = [request('AAPL'), request('AMZN')]
         let startedCount = 0
+        let activeCalls = 0
+        let sourceAdvancedDuringInference = false
         const provider: JevClient['Service'] = {
           evaluate: (raw) =>
             Effect.gen(function* () {
               const prepared = yield* Effect.fromResult(prepareJevRequest(raw)).pipe(Effect.orDie)
               const startedAt = yield* Clock.currentTimeMillis
+              activeCalls++
               if (++startedCount === 2) yield* Deferred.succeed(bothStarted, undefined)
               yield* Deferred.await(prepared.requestHash === requests[0]?.requestHash ? slow : fast)
+              activeCalls--
               return {
                 requestHash: prepared.requestHash,
                 responseHash: canonicalHashV1OrThrow(response),
@@ -138,9 +244,14 @@ test('concurrent inference advances source time by elapsed batch time and preser
               }
             }),
         }
-        const timing = yield* makeReplayJevTiming({ ...f, provider }).pipe(
-          Effect.provideService(Clock.Clock, f.marketClock),
-        )
+        const timing = yield* makeReplayJevTiming({
+          ...f,
+          provider,
+          advanceTo: (atMs) =>
+            Effect.sync(() => {
+              if (activeCalls > 0) sourceAdvancedDuringInference = true
+            }).pipe(Effect.andThen(f.advanceTo(atMs))),
+        }).pipe(Effect.provideService(Clock.Clock, f.marketClock))
         const fiber = yield* timing
           .run(
             Effect.gen(function* () {
@@ -158,6 +269,10 @@ test('concurrent inference advances source time by elapsed batch time and preser
           )
           .pipe(Effect.forkChild)
         yield* Deferred.await(bothStarted)
+        expect(yield* timing.currentUtcInstant.pipe(Effect.result)).toMatchObject({
+          _tag: 'Failure',
+          failure: { message: 'Cannot publish replay source while inference is active' },
+        })
         yield* f.providerClock.setTime(providerAt + 700)
         yield* Deferred.succeed(fast, undefined)
         yield* Deferred.await(fastFinished)
@@ -165,7 +280,13 @@ test('concurrent inference advances source time by elapsed batch time and preser
         yield* f.providerClock.setTime(providerAt + 1000)
         yield* Deferred.succeed(slow, undefined)
         const values = yield* Fiber.join(fiber)
-        return { values, calls: f.calls, marketArrivals: f.marketArrivals, now: yield* f.marketClock.currentTimeMillis }
+        return {
+          values,
+          calls: f.calls,
+          marketArrivals: f.marketArrivals,
+          now: yield* f.marketClock.currentTimeMillis,
+          sourceAdvancedDuringInference,
+        }
       }),
     ),
   )
@@ -174,6 +295,7 @@ test('concurrent inference advances source time by elapsed batch time and preser
     [marketAt + 1000, marketAt + 700].map(utcInstantFromEpochMillis),
   )
   expect(result.now).toBe(marketAt + 1150)
+  expect(result.sourceAdvancedDuringInference).toBeFalse()
   expect(result.calls.map((call) => call.providerCompletedAt)).toEqual(
     [providerAt + 700, providerAt + 1000].map(utcInstantFromEpochMillis),
   )
