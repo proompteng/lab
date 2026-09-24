@@ -442,10 +442,13 @@ Every replay reconciliation, including those inside the cycle driver, uses that 
 During measured operations, the replay account's transaction-acceptance clock advances with PostgreSQL wall time,
 including evidence queries, insertions and work in the enclosing transaction. Recorded observation timestamps retain
 their synchronized replay time. Reconciliation returns that published source timestamp; it cannot stamp evidence
-ahead of the account and market-data clocks. Time spent publishing arrivals is retained for the next synchronization
-and the measured scope's completion. Pausing measurement retains elapsed time and advances the market clock. The
-runtime then consumes arrivals through that timestamp before returning to scheduling or valuation. Deferred
-exit deadlines therefore see time spent before transaction acceptance.
+ahead of the account and market-data clocks. Provider synchronization advances deadlines without parsing historical
+arrivals. Source publication waits until inference has finished; its file-processing time is excluded from both
+elapsed-time and PostgreSQL measurements. Native operation timers pause at that same boundary and resume with their
+remaining duration; provider request timers retain their independent wall clock. The database clock resumes even
+when parsing fails or is interrupted. Provider, persistence and clock-synchronization work remain measured. Completing
+the measured scope retains elapsed time and publishes arrivals through that timestamp before scheduling or valuation.
+Deferred exit deadlines therefore still include native work before transaction acceptance.
 Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
 Initialization starts one minute before the first registered open and retains its measured start, completion and
 elapsed time in the report. If initialization misses that open, the run fails without rewinding or omitting opening

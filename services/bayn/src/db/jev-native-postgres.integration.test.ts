@@ -625,6 +625,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               measureDatabaseTime: (operation) => operation,
               providerClock,
               advanceTo: (atMs) => TestClock.setTime(atMs),
+              advanceDeadlineTo: (atMs) => TestClock.setTime(atMs),
+              excludedSourceMillis: Effect.succeed(0),
               retain: (call) =>
                 Effect.sync(() => {
                   calls.push(call)
@@ -857,7 +859,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64))
+        const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+        const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64), providerClock)
         const entered = yield* Deferred.make<void>()
         const worker = yield* clock
           .measure(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)))
@@ -1118,7 +1121,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           yield* TestClock.setTime(
             Date.parse(exitTarget.commitDeadlineAt) - (scenario === 'measured-on-time' ? 2000 : 300),
           )
-          const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64))
+          const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64), providerClock)
           const timing = yield* makeReplayJevTiming({
             measureDatabaseTime: clock.measure,
             providerClock,
@@ -1127,6 +1130,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               clock
                 .advanceTo(utcInstantFromEpochMillis(atMs))
                 .pipe(Effect.andThen(TestClock.setTime(atMs)), Effect.orDie),
+            advanceDeadlineTo: (atMs) =>
+              clock
+                .advanceTo(utcInstantFromEpochMillis(atMs))
+                .pipe(Effect.andThen(TestClock.setTime(atMs)), Effect.orDie),
+            excludedSourceMillis: clock.excludedSourceMillis,
             retain: () => Effect.die('Exit persistence must not infer'),
           })
           if (scenario === 'measured-expires-during-insert') {
