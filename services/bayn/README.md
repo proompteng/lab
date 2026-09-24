@@ -381,13 +381,17 @@ backtest or satisfy the migration's economic acceptance protocol.
 The separate [control portfolio command](../../docs/bayn/control-portfolios.md) evaluates full-session deterministic
 development portfolios with independent cash and positions, repeated entries, partial exits, and shared execution
 accounting. External data expenses reduce reported net equity without changing broker cash, sizing or risk, as in
-native replay. Its mechanical management and declared latency scenarios require further matching before acceptance.
+native replay. Select `MECHANICAL` management explicitly to remove model decisions, or `JEV` to manage each repeated
+control's own position through native Jev evaluation. The retained close control remains mechanical. Timing and
+execution assumptions still require calibration before the frozen acceptance experiment.
 
 `src/intraday-replay/control-management.ts` constructs native Jev management inputs from a control's simulated IOC
 fill, cost basis, fees and verified held-symbol snapshot. A recorded management decision must match that control's
 ledger and expected batch and commit within its original deadline. An accepted model exit keeps its trigger through
-partial fills and later IOC retries. The deterministic control command does not call this module yet. Provider
-timing, response persistence and model-cost accounting remain required for the full matched comparison.
+partial fills and later IOC retries. In `JEV` mode the control command records requests before inference in a new
+exclusive simulation journal, retains paid responses before advancing deadlines, and includes known and unresolved
+model charges in its report. An interrupted directory cannot be restarted or overwritten. These records represent
+simulated controls and never supply production authority or replace production persistence checks.
 
 Production execution and simulation use `makeTradingEngine`. The engine constructs the execution program and
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
