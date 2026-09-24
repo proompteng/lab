@@ -111,9 +111,10 @@ const incorporateDecodedRecord = (
   availableAtMs: number,
   decodedEvent?: RawMarketEvent,
   featureRecordedAtMs = availableAtMs,
+  technicalRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
   if (universe.topics.technicalFeatures !== undefined && record.topic === universe.topics.technicalFeatures)
-    return incorporateTechnicalRecord(previous, record, universe, availableAtMs)
+    return incorporateTechnicalRecord(previous, record, universe, availableAtMs, technicalRecordedAtMs)
   if (
     !Number.isSafeInteger(record.partition) ||
     record.partition < 0 ||
@@ -299,6 +300,7 @@ export const incorporateSimulatedMarketRecord = (
   universe: StreamingUniverse,
   availableAtMs: number,
   featureRecordedAtMs = availableAtMs,
+  technicalRecordedAtMs = availableAtMs,
 ): StreamingProjection =>
   incorporateDecodedRecord(
     { ...previous, availabilityMode: 'simulated' },
@@ -307,6 +309,7 @@ export const incorporateSimulatedMarketRecord = (
     availableAtMs,
     undefined,
     featureRecordedAtMs,
+    technicalRecordedAtMs,
   )
 
 /** Recorded-decision replay passes decoded archived rows through the same reducer without re-encoding binary64 values. */

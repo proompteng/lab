@@ -276,6 +276,7 @@ export const constructSimulatedSnapshot = (
       cursor.universe.topics.trades !== request.sourceTopics.trades ||
       cursor.universe.symbols.join(',') !== request.universe.join(',') ||
       cursor.regeneratedFeaturesRecordedAtMs !== provenance.regeneratedFeaturesRecordedAtMs ||
+      cursor.regeneratedTechnicalFeaturesRecordedAtMs !== provenance.regeneratedTechnicalFeaturesRecordedAtMs ||
       state.minimumObservationMs > observedAtMs ||
       (cursor.lastArrival !== null && cursor.lastArrival.availableAtMs > observedAtMs) ||
       Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
