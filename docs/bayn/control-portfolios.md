@@ -56,14 +56,23 @@ measure full runtime latency. A scenario value cannot be presented as observed p
 
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid
-mark updates peak equity, drawdown, and session loss before subsequent entry risk checks. Intermediate peaks remain
-binding after the position closes, and the peak carries into later sessions.
+mark records broker equity and net equity after cumulative external expenses separately. Broker equity and its
+carried peak govern entry risk checks. Intermediate broker peaks remain binding after the position closes and
+carry into later sessions. Net equity and its own carried peak determine reported drawdown and session loss.
 A zero-size bid produces a missing mark even if liquidity returns and the position closes later. Positive displayed
 size does not prove that the full position could be liquidated at that price. Missing observations,
 execution quotes, or marks make the session `INCOMPLETE`. Canceled IOC orders remain recorded. Unclosed positions
 retain a null realized result. Model charges are zero because controls make no model calls. Allocated data costs
-are charged once per policy per session, including zero-trade sessions. Reports also subtract an additional 10 bp
+are charged once per policy per session, including zero-trade sessions. As in native replay, these external expenses
+reduce reported net equity; they never debit broker cash, shrink position sizes, or consume broker loss limits.
+Each policy carries broker cash, its broker and net equity peaks, and cumulative external expenses independently.
+A session's net result deducts only that session's expense, without charging prior expenses again. Reports also subtract an additional 10 bp
 from each filled dollar of turnover as a cost stress.
+
+The report uses `bayn.control-study-report.v2` and definition `bayn.control-study-definition.v2`. Marks now expose
+`brokerEquityMicros` and `netEquityAfterKnownCostsMicros`; `closingCapital` contains the carried state. Previous v1
+reports charged external expenses to broker cash and are not comparable at nonzero allocated data cost. Retain
+their original evidence and generate a new report with the corrected executable when comparing net performance.
 
 Displayed quote sizes retain their source units. Those units and market impact still need independent calibration.
 A completed development replay does not prove executable capacity or live profitability.

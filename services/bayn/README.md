@@ -380,7 +380,8 @@ backtest or satisfy the migration's economic acceptance protocol.
 
 The separate [control portfolio command](../../docs/bayn/control-portfolios.md) evaluates full-session deterministic
 development portfolios with independent cash and positions, repeated entries, partial exits, and shared execution
-accounting. Its mechanical management and declared latency scenarios require further matching before acceptance.
+accounting. External data expenses reduce reported net equity without changing broker cash, sizing or risk, as in
+native replay. Its mechanical management and declared latency scenarios require further matching before acceptance.
 
 `src/intraday-replay/control-management.ts` constructs native Jev management inputs from a control's simulated IOC
 fill, cost basis, fees and verified held-symbol snapshot. A recorded management decision must match that control's
