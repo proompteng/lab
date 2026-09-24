@@ -348,18 +348,24 @@ export const runBacktest = (
     yield* prepareFreshReplayDatabase(databases.operationTimeoutMs)
     const initializationStartedAtMs = prepared.openMs - 60_000
     yield* TestClock.setTime(initializationStartedAtMs)
-    const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash)
-    const advanceTo = yield* makeReplayTimeline(source, clock, prepared.closeMs + databases.operationTimeoutMs + 10_000)
-    yield* advanceTo(initializationStartedAtMs)
     const providerClock = yield* OperationDeadlineClock
     if (providerClock === undefined)
       return yield* new ReplayBrokerFailure({ message: 'Native Jev backtest requires its measured provider clock' })
+    const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash, providerClock)
+    const { advanceTo, advanceDeadlineTo } = yield* makeReplayTimeline(
+      { advanceTo: (atMs) => clock.excludeSourceTime(source.advanceTo(atMs)) },
+      clock,
+      prepared.closeMs + databases.operationTimeoutMs + 10_000,
+    )
+    yield* advanceTo(initializationStartedAtMs)
     const inferenceCalls: ReplayJevCall[] = []
     const timing = yield* makeReplayJevTiming({
       measureDatabaseTime: clock.measure,
       provider: yield* JevClient,
       providerClock,
       advanceTo,
+      advanceDeadlineTo,
+      excludedSourceMillis: clock.excludedSourceMillis,
       retain: (call) =>
         recordInference(call).pipe(
           Effect.andThen(
