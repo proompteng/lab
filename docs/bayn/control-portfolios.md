@@ -64,6 +64,9 @@ measure full runtime latency. A scenario value cannot be presented as observed p
 provider and simulation-journal work against an independent clock. Its elapsed time advances the market source,
 and expired responses cannot authorize model exits. This measures the offline persistence implementation, not the
 production PostgreSQL/controller path; the frozen comparison still requires common calibrated timing assumptions.
+The management pass advances its deadline clock without reading historical source records. After measurement ends,
+the source and equity marks catch up to that clock, including on failure. Replay parsing time never becomes model
+latency or changes the management deadline.
 
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid

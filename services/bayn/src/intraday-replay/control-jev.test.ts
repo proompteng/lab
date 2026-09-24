@@ -14,7 +14,7 @@ import { makeControlJevManagement } from './control-jev'
 import { controlJevFixture } from './control-jev.test-support'
 import { JevClaim } from '../jev/evaluation'
 import { JevCandidatePlanStatus } from '../jev/batch'
-import { ControlExit, ControlPolicy } from './control-portfolio'
+import { ControlExit, ControlPolicy, ControlStudyFailure } from './control-portfolio'
 import { runControlSession, type ControlMarket } from './control-study'
 
 const fixture = nativeJevFixture()
@@ -23,7 +23,13 @@ if (session === undefined) throw new Error('Expected fixture calendar')
 const openMs = Date.parse(session.openAt)
 const closeMs = openMs + 60 * 60_000
 const simulate = (
-  options: { action?: 'hold' | 'exit'; latencyMs?: number; failed?: boolean; partial?: boolean } = {},
+  options: {
+    action?: 'hold' | 'exit'
+    latencyMs?: number
+    sourceLatencyMs?: number
+    failed?: boolean
+    partial?: boolean
+  } = {},
 ) =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -57,6 +63,7 @@ const simulate = (
             expect(atMs).toBeGreaterThanOrEqual(currentMs)
             currentMs = atMs
             yield* marketClock.setTime(atMs)
+            yield* providerClock.adjust(options.sourceLatencyMs ?? 0)
           }),
         quoteAt: (symbol, atMs) =>
           Effect.sync(() => {
@@ -139,6 +146,54 @@ test('a control manages its own partial entry, retries its model exit, and charg
     String(BigInt(report.ledger.cashMicros) - 1_000_000n - BigInt(requests.length * 5)),
   )
 }, 30_000)
+
+test('source parsing time cannot change management deadlines, fills, or costs', async () => {
+  const baseline = await simulate()
+  const delayed = await simulate({ sourceLatencyMs: 6000 })
+  expect(delayed.report.completion).toBe('COMPLETE')
+  expect(delayed.report).toEqual(baseline.report)
+  expect(delayed.calls).toHaveLength(baseline.calls.length)
+  for (const call of delayed.calls)
+    expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBe(125)
+}, 30_000)
+
+test('failed source catch-up rejects management while retaining its paid response', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fixture = controlJevFixture()
+      const fs = yield* FileSystem.FileSystem
+      const journal = yield* makeControlJevJournal(
+        `${yield* fs.makeTempDirectoryScoped()}/journal`,
+        fixture.input.runId,
+      )
+      const providerClock = yield* TestClock.make()
+      const marketClock = yield* TestClock.make()
+      yield* providerClock.setTime(Date.parse('2026-09-24T21:00:00Z'))
+      yield* marketClock.setTime(fixture.atMs)
+      const manager = yield* makeControlJevManagement(
+        {
+          journal,
+          providerClock,
+          provider: {
+            evaluate: (input) =>
+              providerClock.currentTimeMillis.pipe(
+                Effect.map((atMs) => nativeJevInference(input, new Date(atMs).toISOString(), 'exit')),
+              ),
+          },
+        },
+        () => Effect.fail(new ControlStudyFailure({ message: 'Fixture source unavailable' })),
+      ).pipe(Effect.provideService(Clock.Clock, marketClock))
+      const outcome = yield* manager
+        .evaluate(fixture.input, fixture.prepared.controlPortfolio)
+        .pipe(Effect.provideService(Clock.Clock, marketClock), Effect.result)
+      expect(outcome).toMatchObject({
+        _tag: 'Failure',
+        failure: { cause: { message: 'Fixture source unavailable' } },
+      })
+      expect((yield* journal.calls).map((call) => call.outcome.status)).toEqual(['RECEIVED'])
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
 
 test('interruption cancels the provider once, retains its unknown cost, and forbids another call for the pending request', async () => {
   await Effect.runPromise(

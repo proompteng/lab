@@ -1,4 +1,5 @@
 import { Clock, Effect } from 'effect'
+import { TestClock } from 'effect/testing'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { decideJevManagement } from '../jev/decision'
@@ -22,15 +23,11 @@ export const makeControlJevManagement = (
   advanceTo: (atMs: number) => Effect.Effect<void, ControlStudyFailure>,
 ) =>
   Effect.gen(function* () {
+    const marketClock = yield* TestClock.testClockWith(Effect.succeed)
     const timing = yield* makeReplayJevTiming({
       provider: binding.provider,
       providerClock: binding.providerClock,
-      advanceTo: (atMs) =>
-        advanceTo(atMs).pipe(
-          Effect.mapError(
-            (cause) => new ReplayBrokerFailure({ message: 'Cannot advance control management time', cause }),
-          ),
-        ),
+      advanceTo: (atMs) => marketClock.setTime(atMs),
       retain: (call) =>
         binding.journal
           .retainCall(call)
@@ -82,6 +79,7 @@ export const makeControlJevManagement = (
           ),
         )
         .pipe(
+          Effect.onExit(() => marketClock.currentTimeMillis.pipe(Effect.flatMap(advanceTo))),
           Effect.mapError((cause) => new ControlStudyFailure({ message: 'Native control management failed', cause })),
         )
     return { evaluate }
