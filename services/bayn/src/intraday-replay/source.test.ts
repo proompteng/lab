@@ -41,7 +41,7 @@ test('a delayed source tail is consumed after trading stops without advancing ex
       yield* fs.writeFile(path, gzipSync(data.body))
       const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
       yield* TestClock.setTime(closeMs - 1)
-      const advance = yield* makeReplayTimeline(
+      const { advanceTo: advance } = yield* makeReplayTimeline(
         source,
         {
           advanceTo: (at) =>

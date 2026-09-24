@@ -28,6 +28,8 @@ export const makeControlJevManagement = (
       provider: binding.provider,
       providerClock: binding.providerClock,
       advanceTo: (atMs) => marketClock.setTime(atMs),
+      advanceDeadlineTo: (atMs) => marketClock.setTime(atMs),
+      excludedSourceMillis: Effect.succeed(0),
       retain: (call) =>
         binding.journal
           .retainCall(call)
