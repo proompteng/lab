@@ -2,14 +2,16 @@ import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
-import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import {
   decideJevEntry,
   decideJevManagement,
+  jevEntryQuoteMaximumAgeMs,
   JevEntryTargetSchema,
   JevManagementAction,
   JevManagementDecisionSchema,
 } from './decision'
+import { entryQuoteExpiresAtMillis } from '../risk'
 import { reconciledStateHash } from '../reconciliation'
 import { reproduceJevCandidateObservation } from './observation'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
@@ -63,6 +65,42 @@ describe('native Jev entry and position observations', () => {
     expect(
       Result.isFailure(decideJevEntry(nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold'))),
     ).toBe(true)
+  })
+
+  test('a completed Jev batch leaves time to price and submit against a fresh quote', () => {
+    const fixture = nativeJevFixture()
+    const observation = fixture.observation.payload
+    const observed = Date.parse(observation.observedAt)
+    const batchPlan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation,
+        expiresAt: new Date(observed + 10_000).toISOString(),
+        planVersion: JevBatchPlanVersion.V2,
+      }),
+    )
+    const decidedAt = new Date(observed + 7_000).toISOString()
+    const target = Result.getOrThrow(
+      decideJevEntry({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt),
+        decidedAt,
+      }),
+    )
+    expect(target.selectedSymbols).toEqual(['AAPL'])
+    const quoteEventAt = new Date(observed + 7_100).toISOString()
+    const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
+    expect(maximumAgeMs).toBe(10_000)
+    expect(entryQuoteExpiresAtMillis({ eventAt: quoteEventAt, maximumAgeMs })).toBe(observed + 17_100)
+
+    const historical = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence()))
+    const historicalQuoteAt = historical.decidedAt
+    expect(
+      entryQuoteExpiresAtMillis({
+        eventAt: historicalQuoteAt,
+        maximumAgeMs: jevEntryQuoteMaximumAgeMs(historical, historicalQuoteAt, fixture.protocol.maximumQuoteAgeMs),
+      }),
+    ).toBe(Date.parse(historical.evidence.batchPlan.expiresAt))
   })
 
   test('the held position can request an exit, while weaker or hold evidence retains it', () => {
