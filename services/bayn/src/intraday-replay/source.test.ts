@@ -81,6 +81,10 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
         { body: data.body, manifest: { ...data.manifest, firstAvailableAtMs: data.manifest.firstAvailableAtMs - 1 } },
         { body: data.body, manifest: { ...data.manifest, lastAvailableAtMs: data.manifest.lastAvailableAtMs + 1 } },
         { body: data.body, manifest: { ...data.manifest, positions: [] } },
+        {
+          body: data.body,
+          manifest: { ...data.manifest, regeneratedTechnicalFeaturesRecordedAtMs: data.manifest.lastAvailableAtMs },
+        },
         { body: data.body, manifest: { ...data.manifest, positions: [...data.manifest.positions].reverse() } },
         { body: reversed, manifest: { ...data.manifest, dataSha256: sha256(gzipSync(reversed)) } },
         {
