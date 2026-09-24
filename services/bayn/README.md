@@ -382,6 +382,12 @@ The separate [control portfolio command](../../docs/bayn/control-portfolios.md) 
 development portfolios with independent cash and positions, repeated entries, partial exits, and shared execution
 accounting. Its mechanical management and declared latency scenarios require further matching before acceptance.
 
+`src/intraday-replay/control-management.ts` constructs native Jev management inputs from a control's simulated IOC
+fill, cost basis, fees and verified held-symbol snapshot. A recorded management decision must match that control's
+ledger and expected batch and commit within its original deadline. An accepted model exit keeps its trigger through
+partial fills and later IOC retries. The deterministic control command does not call this module yet. Provider
+timing, response persistence and model-cost accounting remain required for the full matched comparison.
+
 Production execution and simulation use `makeTradingEngine`. The engine constructs the execution program and
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
