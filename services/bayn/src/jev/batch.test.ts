@@ -5,8 +5,10 @@ import { canonicalHashV1 } from '../hash'
 import {
   decodeJevBatchPlan,
   decodeJevBatchResult,
+  JevBatchPlanVersion,
   JevCandidatePlanStatus,
   JevCandidateResultStatus,
+  JevEntryExclusion,
   JevSourceExclusion,
   makeJevBatchPlan,
   makeJevBatchResult,
@@ -87,6 +89,36 @@ describe('complete Jev batch evidence', () => {
     expect(inferences.map((value) => value.symbol)).toEqual(['AAPL', 'AMZN'])
     expect(inferences.map((value) => value.requestId)).toEqual([request.requestId, second.requestId])
     expect(result.candidates[2]).toEqual({ symbol: 'NVDA', status: JevCandidateResultStatus.Excluded })
+  })
+
+  test('only quote-ineligible candidates can justify a zero-inference entry batch', () => {
+    const candidates = [
+      {
+        symbol: 'AAPL',
+        status: JevCandidatePlanStatus.Excluded,
+        reason: JevEntryExclusion.Spread,
+        message: 'Verified wide entry quote',
+      },
+      {
+        symbol: 'AMZN',
+        status: JevCandidatePlanStatus.Excluded,
+        reason: JevSourceExclusion.NotReady,
+        message: 'Missing complete source window',
+      },
+    ]
+    expect(
+      Result.isFailure(makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V1, candidates })),
+    ).toBe(true)
+    const mixed = Result.getOrThrow(
+      makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V2, candidates }),
+    )
+    const result = Result.getOrThrow(makeJevBatchResult(mixed, resultMaterial(mixed)))
+    expect(Result.isFailure(usableJevBatchInferences(mixed, result, 450))).toBe(true)
+    const versionThree = Result.getOrThrow(
+      makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V3, candidates }),
+    )
+    const versionThreeResult = Result.getOrThrow(makeJevBatchResult(versionThree, resultMaterial(versionThree)))
+    expect(Result.isFailure(usableJevBatchInferences(versionThree, versionThreeResult, 450))).toBe(true)
   })
 
   test('rejects mixed observations, generation, time, questions and duplicate or reordered candidates', () => {

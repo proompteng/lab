@@ -326,6 +326,9 @@ export type BacktestPass = Parameters<RecordAutonomousCyclePass>[0] & {
   readonly valuationFailure: Readonly<Record<string, string>> | null
 }
 
+export const qualifiesReplayValuation = (valuation: ReplayValuationEvidence) =>
+  valuation.marks.every((mark) => !mark.staleForExecution && mark.bidLiquidityAvailable)
+
 /** One engine, broker, portfolio, and durable account span every declared calendar session. */
 export const runBacktest = (
   prepared: PreparedBacktest,
@@ -345,18 +348,24 @@ export const runBacktest = (
     yield* prepareFreshReplayDatabase(databases.operationTimeoutMs)
     const initializationStartedAtMs = prepared.openMs - 60_000
     yield* TestClock.setTime(initializationStartedAtMs)
-    const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash)
-    const advanceTo = yield* makeReplayTimeline(source, clock, prepared.closeMs + databases.operationTimeoutMs + 10_000)
-    yield* advanceTo(initializationStartedAtMs)
     const providerClock = yield* OperationDeadlineClock
     if (providerClock === undefined)
       return yield* new ReplayBrokerFailure({ message: 'Native Jev backtest requires its measured provider clock' })
+    const clock = yield* makeSimulatedExecutionClock(prepared.runId, source.source.sourceManifestHash, providerClock)
+    const { advanceTo, advanceDeadlineTo } = yield* makeReplayTimeline(
+      { advanceTo: (atMs) => clock.excludeSourceTime(source.advanceTo(atMs)) },
+      clock,
+      prepared.closeMs + databases.operationTimeoutMs + 10_000,
+    )
+    yield* advanceTo(initializationStartedAtMs)
     const inferenceCalls: ReplayJevCall[] = []
     const timing = yield* makeReplayJevTiming({
       measureDatabaseTime: clock.measure,
       provider: yield* JevClient,
       providerClock,
       advanceTo,
+      advanceDeadlineTo,
+      excludedSourceMillis: clock.excludedSourceMillis,
       retain: (call) =>
         recordInference(call).pipe(
           Effect.andThen(
@@ -438,15 +447,20 @@ export const runBacktest = (
                     const valued = yield* Effect.result(
                       Effect.all({ account: broker.read.account, valuation: broker.valuation }),
                     )
-                    if (Result.isSuccess(valued))
-                      observeEquity(markedNetEquity(valued.success.account.value.equityMicros))
+                    const usableValuation =
+                      Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
+                    if (usableValuation) observeEquity(markedNetEquity(valued.success.account.value.equityMicros))
                     else valuationFailureCount++
                     yield* recordPass({
                       ...pass.observation,
                       cycleResult: pass.result ?? null,
                       brokerState: yield* broker.snapshot,
                       valuation: Result.isSuccess(valued) ? valued.success.valuation : null,
-                      valuationFailure: Result.isFailure(valued) ? causeSummary(valued.failure) : null,
+                      valuationFailure: Result.isFailure(valued)
+                        ? causeSummary(valued.failure)
+                        : usableValuation
+                          ? null
+                          : { reason: 'unexecutable-held-position-mark' },
                     })
                   }),
                 ),
@@ -458,7 +472,8 @@ export const runBacktest = (
           )
           const closingEquity = yield* broker.completeSession(session.date)
           const closingNetEquity = markedNetEquity(closingEquity.equityMicros)
-          observeEquity(closingNetEquity)
+          if (closingEquity.valuationQualified) observeEquity(closingNetEquity)
+          else valuationFailureCount++
           yield* advanceTo(Math.max(yield* Clock.currentTimeMillis, Date.parse(session.closeAt) + 1))
           const reconciliation = yield* timing.run(runtime.reconcile)
           const state = yield* broker.snapshot

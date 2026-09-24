@@ -816,9 +816,11 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   }
   const unusedAccounting = Effect.die(new Error('empty exact reconciliation must not account a fill'))
   const executionStore = {
+    completeHistory: () => Effect.succeed(new Set()),
     ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
     ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
     account: () => unusedAccounting,
+    verifyCompleted: () => Effect.void,
     value: () =>
       Effect.succeed({
         schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -4290,9 +4292,11 @@ describe('OBSERVE runtime composition', () => {
       AuthorityGenerationStoreShape &
       AuthorityRestrictionStoreShape
     const executionStore: TestStore = {
+      completeHistory: () => unused,
       ingest: () => unused,
       ingestPositions: () => unused,
       account: () => unused,
+      verifyCompleted: () => unused,
       value: () => unused,
       hasAccountBaseline: () => unused,
       bindings: () => unused,
@@ -4512,9 +4516,11 @@ describe('OBSERVE runtime composition', () => {
               Parameters<Parameters<ReturnType<typeof makeObserveAutonomousCycleStartup>>[0]['recordPass']>[0]
             >()
           const executionStore = {
+            completeHistory: () => Effect.succeed(new Set()),
             ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
             ingestPositions: () => Effect.succeed({ snapshotId: '2'.repeat(64), eventIds: [], deduplicated: false }),
             account: () => unusedAccounting,
+            verifyCompleted: () => Effect.void,
             value: () =>
               Effect.succeed({
                 schemaVersion: 'bayn.paper-valuation.v1' as const,
@@ -4659,14 +4665,14 @@ describe('OBSERVE runtime composition', () => {
   })
 })
 
-test('persists the pricing quote event and its shorter approval deadline for every entry target', async () => {
+test('persists the pricing quote event and its full freshness deadline for every entry target', async () => {
   const fixture = await executionLifecycleFixture()
   expect(fixture.document.entryLimitSlippageBps).toBe(10)
   expect(Result.isSuccess(decodeExecutionDecisionDocument(fixture.document))).toBeTrue()
   expect(fixture.document.deltaRisk.length).toBeGreaterThan(0)
   for (const risk of fixture.document.deltaRisk) {
-    expect(risk.facts?.state.entryQuote).toEqual({ eventAt: '2020-05-01T12:45:01.000Z', maximumAgeMs: 6000 })
-    expect(risk.evaluation.decision.expiresAt).toBe('2020-05-01T12:45:07.000Z')
+    expect(risk.facts?.state.entryQuote).toEqual({ eventAt: '2020-05-01T12:45:01.000Z', maximumAgeMs: 10_000 })
+    expect(risk.evaluation.decision.expiresAt).toBe('2020-05-01T12:45:11.000Z')
     expect(risk.evaluation.input.freshUntil).toBe(risk.evaluation.decision.expiresAt)
     const facts = risk.facts
     if (facts === undefined) throw new Error('entry is missing durable risk facts')

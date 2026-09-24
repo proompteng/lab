@@ -1,4 +1,5 @@
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
@@ -7,6 +8,7 @@ import { Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema 
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
 import {
   CycleState,
   CycleTerminalReason,
@@ -19,6 +21,7 @@ import {
   makeIntradayCycleWindow,
 } from '../../cycle'
 import { CycleStore, CycleStoreLive } from '../../cycle/store'
+import { Authority, KillState } from '../../execution/contracts'
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { canonicalHashV1 } from '../../hash'
@@ -36,6 +39,14 @@ const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : des
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const accountId = 'preopen-authority-recovery-test'
 const planHash = '1'.repeat(64)
+const brokerIdentity = Result.getOrThrow(
+  makeBrokerIdentity({
+    schemaVersion: 'bayn.broker-identity.v2',
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    accountId,
+  }),
+)
 const config = {
   ...fixtureConfig,
   operationTimeoutMs: 5_000,
@@ -142,7 +153,7 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
         ${'2'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'3'.repeat(64)}`},
         'intraday-momentum', ${'4'.repeat(64)}, ${'5'.repeat(64)},
         ${defaultIntradayMomentumProtocolDocument.schemaVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
-        'bayn.broker-identity.v2', ${'6'.repeat(64)}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
+        'bayn.broker-identity.v2', ${brokerIdentity.identityHash}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
         ${planHash}, ${reconciliationId}, ${reconciliationHash}, ${planHash},
         ${fixture.generationActivatedAt}
       )
@@ -328,6 +339,58 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
       blockedCycleCount: 0,
     })
     expect(result.expired).toEqual({ _tag: 'NoTerminalGeneration' })
+    expect(Option.getOrThrow(result.cycle).state).toBe(CycleState.Active)
+  })
+
+  test('rotates a failed generation with an untouched open-session cycle before cutoff', async () => {
+    const fixture = makeFixture(true)
+    const successorHash = canonicalHashV1({ generation: 'open-session-successor' })
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const cycles = yield* CycleStore
+        const blocked = yield* BlockedCycleIntentStore
+        yield* seedExecutionAuthority(sql, fixture)
+        yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+        yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          reason = 'execution cycle loop restricted effective authority: pass timeout',
+          version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+        const settlement = yield* blocked.settleCurrentTerminalGeneration({
+          accountId,
+          observedAt: fixture.reconciledAt,
+        })
+        if (settlement._tag !== 'TerminalGenerationSettled') return yield* Effect.die('expected settlement')
+        const preserveCyclePlanHash = settlement.preserveCyclePlanHash
+        if (preserveCyclePlanHash === undefined) return yield* Effect.die('expected preserved cycle')
+        const exactHash = canonicalHashV1({ reconciliation: 'post-settlement-exact' })
+        const reconciledAt = instant(Date.parse(fixture.reconciledAt) + 1_000)
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${canonicalHashV1({ reconciliation: 'post-settlement' })}, 'bayn.paper-reconciliation.v1',
+            ${accountId}, ${exactHash}, ${exactHash},
+            ${canonicalHashV1({ reconciliation: 'post-settlement-content' })},
+            'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+          )
+        `
+        const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+        const rotated = yield* authority.ensureAuthorityGeneration({
+          generationHash: successorHash,
+          maximum: Authority.Observe,
+          preserveCyclePlanHash,
+        })
+        return { rotated, cycle: yield* cycles.read(fixture.cycle.identity.cycleId) }
+      }),
+    )
+    expect(result.rotated).toMatchObject({
+      generationHash: successorHash,
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
+    })
     expect(Option.getOrThrow(result.cycle).state).toBe(CycleState.Active)
   })
 

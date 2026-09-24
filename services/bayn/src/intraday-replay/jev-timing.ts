@@ -43,6 +43,8 @@ export const makeReplayJevTiming = (input: {
   readonly provider: JevClient['Service']
   readonly providerClock: Clock.Clock
   readonly advanceTo: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
+  readonly advanceDeadlineTo: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
+  readonly excludedSourceMillis: Effect.Effect<number>
   readonly retain: (call: ReplayJevCall) => Effect.Effect<void, ReplayBrokerFailure>
   readonly measureDatabaseTime: <A, E, R>(
     operation: Effect.Effect<A, E, R>,
@@ -54,67 +56,108 @@ export const makeReplayJevTiming = (input: {
       return yield* new ReplayBrokerFailure({ message: 'Jev replay requires independent provider and market clocks' })
     const permit = yield* Semaphore.make(1)
     const passPermit = yield* Semaphore.make(1)
-    let measurement: { readonly providerAt: number; readonly marketAt: number } | undefined
+    let measurement:
+      | { readonly providerAt: number; readonly marketAt: number; readonly excludedSourceMillis: number }
+      | undefined
+    let activeCalls = 0
     const failure = yield* Ref.make<ReplayBrokerFailure | undefined>(undefined)
 
-    const synchronizeUnlocked = Effect.gen(function* () {
+    const elapsed = Effect.gen(function* () {
       const providerAt = yield* input.providerClock.currentTimeMillis
-      const marketAt = yield* marketClock.currentTimeMillis
-      if (measurement === undefined || providerAt < measurement.providerAt)
+      const excludedSourceMillis = yield* input.excludedSourceMillis
+      if (
+        measurement === undefined ||
+        providerAt < measurement.providerAt ||
+        !Number.isSafeInteger(excludedSourceMillis) ||
+        excludedSourceMillis < measurement.excludedSourceMillis ||
+        excludedSourceMillis - measurement.excludedSourceMillis > providerAt - measurement.providerAt
+      )
         return yield* new ReplayBrokerFailure({ message: 'Jev replay clock is unbound or moved backwards' })
-      const atMs = Math.max(marketAt, measurement.marketAt) + providerAt - measurement.providerAt
-      yield* input.advanceTo(atMs)
-      measurement = { providerAt, marketAt: atMs }
-      return measurement
+      return {
+        providerAt,
+        excludedSourceMillis,
+        marketAt: measurement.marketAt,
+        elapsedMs: providerAt - measurement.providerAt - (excludedSourceMillis - measurement.excludedSourceMillis),
+      }
     })
-    const synchronize = Effect.uninterruptible(permit.withPermit(synchronizeUnlocked))
+    const synchronizeUnlocked = (advance: typeof input.advanceTo) =>
+      Effect.gen(function* () {
+        const current = yield* elapsed
+        const atMs = Math.max(yield* marketClock.currentTimeMillis, current.marketAt) + current.elapsedMs
+        yield* advance(atMs)
+        measurement = {
+          providerAt: current.providerAt,
+          excludedSourceMillis: current.excludedSourceMillis,
+          marketAt: atMs,
+        }
+        return measurement
+      })
+    const synchronize = Effect.uninterruptible(permit.withPermit(synchronizeUnlocked(input.advanceDeadlineTo)))
 
     const client: JevClient['Service'] = {
       evaluate: (raw) =>
-        Effect.gen(function* () {
-          const prepared = yield* Effect.fromResult(prepareJevRequest(raw)).pipe(
-            Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Invalid replay Jev request', cause })),
-          )
-          const started = yield* synchronize
-          const received = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            activeCalls++
+          }),
+          () =>
             Effect.gen(function* () {
-              const exit = yield* restore(
-                input.provider.evaluate(prepared.request).pipe(Effect.provideService(Clock.Clock, input.providerClock)),
-              ).pipe(Effect.exit)
-              const providerCompletedAt = yield* input.providerClock.currentTimeMillis
-              const call: ReplayJevCall = {
-                schemaVersion: 'bayn.replay-jev-call.v1',
-                request: prepared.request,
-                requestHash: prepared.requestHash,
-                simulatedStartedAt: utcInstantFromEpochMillis(started.marketAt),
-                providerStartedAt: utcInstantFromEpochMillis(started.providerAt),
-                providerCompletedAt: utcInstantFromEpochMillis(providerCompletedAt),
-                outcome: recordedOutcome(exit),
+              const prepared = yield* Effect.fromResult(prepareJevRequest(raw)).pipe(
+                Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Invalid replay Jev request', cause })),
+              )
+              const started = yield* synchronize
+              const providerStartedAt = yield* input.providerClock.currentTimeMillis
+              if (providerStartedAt < started.providerAt)
+                return yield* new ReplayBrokerFailure({ message: 'Jev provider clock moved backwards before dispatch' })
+              const simulatedStartedAt = started.marketAt + providerStartedAt - started.providerAt
+              const received = yield* Effect.uninterruptibleMask((restore) =>
+                Effect.gen(function* () {
+                  const exit = yield* restore(
+                    input.provider
+                      .evaluate(prepared.request)
+                      .pipe(Effect.provideService(Clock.Clock, input.providerClock)),
+                  ).pipe(Effect.exit)
+                  const providerCompletedAt = yield* input.providerClock.currentTimeMillis
+                  const call: ReplayJevCall = {
+                    schemaVersion: 'bayn.replay-jev-call.v1',
+                    request: prepared.request,
+                    requestHash: prepared.requestHash,
+                    simulatedStartedAt: utcInstantFromEpochMillis(simulatedStartedAt),
+                    providerStartedAt: utcInstantFromEpochMillis(providerStartedAt),
+                    providerCompletedAt: utcInstantFromEpochMillis(providerCompletedAt),
+                    outcome: recordedOutcome(exit),
+                  }
+                  // Retain paid responses before advancing deadlines can interrupt their native evaluation.
+                  yield* input.retain(call)
+                  return { exit, providerCompletedAt }
+                }),
+              )
+              const completed = yield* synchronize
+              const inference = yield* received.exit
+              const responseHash = yield* Effect.fromResult(canonicalHashV1Result(inference.response)).pipe(
+                Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Invalid replay Jev response', cause })),
+              )
+              if (
+                inference.requestHash !== prepared.requestHash ||
+                inference.responseHash !== responseHash ||
+                Date.parse(inference.startedAt) < providerStartedAt ||
+                Date.parse(inference.completedAt) < Date.parse(inference.startedAt) ||
+                Date.parse(inference.completedAt) > received.providerCompletedAt
+              )
+                return yield* new ReplayBrokerFailure({
+                  message: 'Jev provider evidence differs from the measured call',
+                })
+              return {
+                ...inference,
+                startedAt: utcInstantFromEpochMillis(simulatedStartedAt),
+                completedAt: utcInstantFromEpochMillis(completed.marketAt),
               }
-              // Retain paid responses before advancing deadlines can interrupt their native evaluation.
-              yield* input.retain(call)
-              return { exit, providerCompletedAt }
             }),
-          )
-          const completed = yield* synchronize
-          const inference = yield* received.exit
-          const responseHash = yield* Effect.fromResult(canonicalHashV1Result(inference.response)).pipe(
-            Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Invalid replay Jev response', cause })),
-          )
-          if (
-            inference.requestHash !== prepared.requestHash ||
-            inference.responseHash !== responseHash ||
-            Date.parse(inference.startedAt) < started.providerAt ||
-            Date.parse(inference.completedAt) < Date.parse(inference.startedAt) ||
-            Date.parse(inference.completedAt) > received.providerCompletedAt
-          )
-            return yield* new ReplayBrokerFailure({ message: 'Jev provider evidence differs from the measured call' })
-          return {
-            ...inference,
-            startedAt: utcInstantFromEpochMillis(started.marketAt),
-            completedAt: utcInstantFromEpochMillis(completed.marketAt),
-          }
-        }).pipe(
+          () =>
+            Effect.sync(() => {
+              activeCalls--
+            }),
+        ).pipe(
           Effect.catchTag('ReplayBrokerFailure', (cause) =>
             Ref.set(failure, cause).pipe(
               Effect.andThen(
@@ -136,6 +179,7 @@ export const makeReplayJevTiming = (input: {
               measurement = {
                 providerAt: yield* input.providerClock.currentTimeMillis,
                 marketAt: yield* marketClock.currentTimeMillis,
+                excludedSourceMillis: yield* input.excludedSourceMillis,
               }
               const result = yield* Effect.result(operation)
               yield* synchronize
@@ -158,13 +202,17 @@ export const makeReplayJevTiming = (input: {
       currentUtcInstant: Effect.uninterruptible(
         permit.withPermit(
           Effect.gen(function* () {
-            const synchronized = yield* synchronizeUnlocked
-            const providerAt = yield* input.providerClock.currentTimeMillis
-            if (providerAt < synchronized.providerAt)
+            if (activeCalls !== 0)
               return yield* new ReplayBrokerFailure({
-                message: 'Jev replay clock moved backwards during source advancement',
+                message: 'Cannot publish replay source while inference is active',
               })
-            measurement = { providerAt, marketAt: synchronized.marketAt + providerAt - synchronized.providerAt }
+            const synchronized = yield* synchronizeUnlocked(input.advanceTo)
+            const current = yield* elapsed
+            measurement = {
+              providerAt: current.providerAt,
+              excludedSourceMillis: current.excludedSourceMillis,
+              marketAt: synchronized.marketAt + current.elapsedMs,
+            }
             yield* input.advanceTo(measurement.marketAt)
             return utcInstantFromEpochMillis(measurement.marketAt)
           }),

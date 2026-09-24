@@ -58,7 +58,7 @@ durableTest(
         const sql = yield* PgClient.PgClient
         const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
         yield* TestClock.setTime(startMs)
-        const clock = yield* makeSimulatedExecutionClock(runId, sourceHash)
+        const clock = yield* makeSimulatedExecutionClock(runId, sourceHash, providerClock)
         const universe = {
           universeId: protocol.universeId,
           universeSymbolHash: protocol.universeSymbolHash,
@@ -73,31 +73,33 @@ durableTest(
         let projection = emptyStreamingProjection('measured-closing-cut')
         let consumed = 0
         let sourceCut = startMs
-        const advanceTo = yield* makeReplayTimeline(
+        const { advanceTo, advanceDeadlineTo } = yield* makeReplayTimeline(
           {
             advanceTo: (atMs) =>
-              Effect.sync(() => {
-                for (; consumed < quotes.length; consumed++) {
-                  const next = quotes[consumed]
-                  if (next === undefined || next[0] > atMs) break
-                  projection = incorporateRecordedMarketValue(
-                    projection,
-                    {
-                      ...original,
-                      sourceOffset: String(BigInt(original.sourceOffset) + BigInt(consumed)),
-                      eventAt: new Date(next[0]).toISOString(),
-                      ingestedAt: new Date(next[0]).toISOString(),
-                      bidPrice: next[1],
-                      askPrice: next[1],
-                      bidSize: 100,
-                      askSize: 100,
-                    },
-                    universe,
-                    next[0],
-                  )
-                }
-                sourceCut = atMs
-              }),
+              clock.excludeSourceTime(
+                Effect.sync(() => {
+                  for (; consumed < quotes.length; consumed++) {
+                    const next = quotes[consumed]
+                    if (next === undefined || next[0] > atMs) break
+                    projection = incorporateRecordedMarketValue(
+                      projection,
+                      {
+                        ...original,
+                        sourceOffset: String(BigInt(original.sourceOffset) + BigInt(consumed)),
+                        eventAt: new Date(next[0]).toISOString(),
+                        ingestedAt: new Date(next[0]).toISOString(),
+                        bidPrice: next[1],
+                        askPrice: next[1],
+                        bidSize: 100,
+                        askSize: 100,
+                      },
+                      universe,
+                      next[0],
+                    )
+                  }
+                  sourceCut = atMs
+                }),
+              ),
           },
           clock,
           closeMs + 60_000,
@@ -156,6 +158,8 @@ durableTest(
           provider: { evaluate: () => Effect.die('Closing-cut regression does not infer') },
           providerClock,
           advanceTo,
+          advanceDeadlineTo,
+          excludedSourceMillis: clock.excludedSourceMillis,
           retain: () => Effect.void,
           measureDatabaseTime: (operation) =>
             clock.measure(

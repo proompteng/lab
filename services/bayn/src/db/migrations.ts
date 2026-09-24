@@ -6,6 +6,10 @@ import jevBatches from '../../migrations/0078_jev_batches'
 import jevNativeStrategy from '../../migrations/0079_jev_native_strategy'
 import jevExitCommitDeadline from '../../migrations/0080_jev_exit_commit_deadline'
 import measuredSimulationClock from '../../migrations/0081_measured_simulation_clock'
+import openSessionFailureRearm from '../../migrations/0082_open_session_failure_rearm'
+import jevEntryBatchPlanV2 from '../../migrations/0083_jev_entry_batch_plan_v2'
+import jevEntryBatchPlanV3 from '../../migrations/0084_jev_entry_batch_plan_v3'
+import replaySourceClock from '../../migrations/0085_replay_source_clock'
 import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
 import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
 import pacedIntradayEntryAttempts from '../../migrations/0073_paced_intraday_entry_attempts'
@@ -83,6 +87,10 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '84_jev_entry_batch_plan_v3': jevEntryBatchPlanV3,
+  '85_replay_source_clock': replaySourceClock,
+  '83_jev_entry_batch_plan_v2': jevEntryBatchPlanV2,
+  '82_open_session_failure_rearm': openSessionFailureRearm,
   '81_measured_simulation_clock': measuredSimulationClock,
   '80_jev_exit_commit_deadline': jevExitCommitDeadline,
   '79_jev_native_strategy': jevNativeStrategy,
