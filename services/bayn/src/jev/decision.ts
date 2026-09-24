@@ -11,7 +11,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import type { StrategyDefinition } from '../strategy/core'
-import { JevBatchPlanSchema, JevBatchResultSchema, usableJevBatchInferences } from './batch'
+import { JevBatchPlanSchema, JevBatchPlanVersion, JevBatchResultSchema, usableJevBatchInferences } from './batch'
 import { JevContractError } from './contract'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
@@ -133,7 +133,10 @@ export const jevEntryQuoteMaximumAgeMs = (
   target: JevEntryTarget,
   quoteEventAt: string,
   quoteAgeLimitMs: number,
-): number => Math.min(quoteAgeLimitMs, Date.parse(target.evidence.batchPlan.expiresAt) - Date.parse(quoteEventAt))
+): number =>
+  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V1
+    ? Math.min(quoteAgeLimitMs, Date.parse(target.evidence.batchPlan.expiresAt) - Date.parse(quoteEventAt))
+    : quoteAgeLimitMs
 
 export enum JevManagementAction {
   Hold = 'HOLD',

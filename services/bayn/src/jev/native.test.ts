@@ -231,7 +231,9 @@ describe('native Jev entry and position observations', () => {
       Result.isFailure(
         makeJevTradingSignalBatch({
           observation: payload,
-          expiresAt: new Date(Date.parse(payload.observedAt) + 6000).toISOString(),
+          expiresAt: new Date(
+            Date.parse(payload.observedAt) + fixture.protocol.inferenceValidityMs + 1000,
+          ).toISOString(),
           planVersion: JevBatchPlanVersion.V1,
         }),
       ),

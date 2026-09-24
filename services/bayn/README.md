@@ -32,8 +32,11 @@ and net exposure caps retain their reference-price basis. Buy-limit rounding sta
 The runtime writes version-two Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
 exclusions without a Jev call. A version-two observation where every candidate is excluded for a verified entry-quote
 reason can yield a no-entry decision; missing source evidence cannot. Retained version-one batches keep their original
-identity. Position management still evaluates its held symbol. A complete batch must remain valid within its five-second
-evidence lifetime. These parameters have not established an economic advantage under the frozen qualification protocol.
+identity. Position management still evaluates its held symbol. A complete version-two batch must finish within its
+ten-second evidence lifetime. After the batch is accepted, entry risk uses the fresh execution quote's event time and
+ten-second maximum age; the earlier batch deadline does not shorten that quote deadline. Retained version-one batches
+keep their original deadline binding. These parameters have not established an economic advantage under the frozen
+qualification protocol.
 
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
@@ -100,7 +103,7 @@ batch to remain valid after completion and persistence; it cannot use only the f
 
 The batch store commits the full plan before any candidate request can be claimed. It finalizes results from the
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
-Requested candidates start concurrently across the complete source-verified batch, within the existing five-second
+Requested candidates start concurrently across the complete source-verified batch, within its ten-second
 validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
