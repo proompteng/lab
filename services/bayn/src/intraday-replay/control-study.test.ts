@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
-import { Effect, FileSystem, Result } from 'effect'
+import { Effect, FileSystem, Layer, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { OrderSide } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
@@ -11,7 +12,13 @@ import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/
 import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
 import { ControlPolicy } from './control-portfolio'
-import { runControlSession, runControlStudy, type ControlCapital, type ControlMarket } from './control-study'
+import {
+  ControlManagementMode,
+  runControlSession,
+  runControlStudy,
+  type ControlCapital,
+  type ControlMarket,
+} from './control-study'
 
 const fixture = nativeJevFixture()
 const openMs = Date.parse(fixture.snapshot.manifest.calendar.sessions[0]?.openAt ?? '')
@@ -117,6 +124,7 @@ const simulate = async (
       assumptions,
       eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
       market,
+      management: null,
     }),
   )
   return { report, snapshots, observations }
@@ -339,7 +347,8 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
   }
   const { verification: _verification, ...build } = config.build
   const input = {
-    schemaVersion: 'bayn.control-study-input.v1',
+    schemaVersion: 'bayn.control-study-input.v2',
+    management: ControlManagementMode.Mechanical,
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
@@ -389,8 +398,8 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       const directory = yield* fs.makeTempDirectoryScoped()
       const arrivals = `${directory}/arrivals.ndjson.gz`
       yield* fs.writeFile(arrivals, gzipSync(retained.body))
-      const report = yield* runControlStudy(input, arrivals, receipt)
-      expect(report.schemaVersion).toBe('bayn.control-study-report.v2')
+      const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
+      expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
       expect(report.sessions).toHaveLength(6)
       for (const session of report.sessions) {
         expect(session.completion).toBe('INCOMPLETE')
@@ -411,6 +420,37 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       }
       const { reportHash, ...material } = report
       expect(canonicalHashV1(material)).toBe(reportHash)
+      const providerClock = yield* TestClock.make()
+      const evidenceDirectory = `${directory}/managed-evidence`
+      const managedInput = { ...input, management: ControlManagementMode.Jev }
+      const management = {
+        mode: ControlManagementMode.Jev as const,
+        evidenceDirectory,
+        providerClock,
+        provider: { evaluate: () => Effect.die('A missing-signal source must never call a provider') },
+      }
+      const managed = yield* runControlStudy(managedInput, arrivals, receipt, management)
+      expect(managed.sessions).toHaveLength(6)
+      expect(managed.sessions.every((session) => session.modelCallCount === 0)).toBeTrue()
+      for (const session of managed.sessions)
+        expect(session.managementMode).toBe(
+          session.policy === ControlPolicy.RetainedBreakout
+            ? ControlManagementMode.Mechanical
+            : ControlManagementMode.Jev,
+        )
+      expect(yield* fs.exists(`${evidenceDirectory}/registration.json`)).toBeTrue()
+      expect(yield* fs.exists(`${evidenceDirectory}/${ControlPolicy.RelativeMomentum}`)).toBeTrue()
+      expect(yield* fs.exists(`${evidenceDirectory}/${ControlPolicy.RepeatedBreakout}`)).toBeTrue()
+      expect(
+        Result.isFailure(yield* Effect.result(runControlStudy(managedInput, arrivals, receipt, management))),
+      ).toBeTrue()
+      expect(
+        Result.isFailure(
+          yield* Effect.result(
+            runControlStudy(managedInput, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
+          ),
+        ),
+      ).toBeTrue()
       const inputText = JSON.stringify(input)
       const receiptText = JSON.stringify({
         schemaVersion: 'bayn.replay-source-capture.v1',
@@ -452,8 +492,10 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       const written = yield* fs.readFileString(`${directory}/report.json`)
       expect(written).toBe(`${JSON.stringify(report, null, 2)}\n`)
       yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
-      const corrupt = yield* Effect.result(runControlStudy(input, arrivals, receipt))
+      const corrupt = yield* Effect.result(
+        runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
+      )
       expect(Result.isFailure(corrupt)).toBeTrue()
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
   )
 }, 30_000)

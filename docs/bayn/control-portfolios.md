@@ -6,9 +6,10 @@ It evaluates opportunities from its own position state, including periods when t
 position. It never synthesizes Jev responses or supplies production trading authority.
 
 This command produces development evidence. It does not satisfy the frozen
-[Jev acceptance protocol](jev-migration-acceptance-v2.json). In particular, mechanical exits in these controls
-are not matched to the deployed candidate's model-driven management. The full acceptance experiment still needs
-registered controls with common management, verified execution assumptions, and untouched prospective sessions.
+[Jev acceptance protocol](jev-migration-acceptance-v2.json). Management must be selected explicitly: `MECHANICAL`
+removes model decisions, while `JEV` gives each repeated control its own native Jev management. The retained close
+control always uses its original close lifecycle. The full acceptance experiment still needs frozen control
+definitions, calibrated timing and execution assumptions, and untouched prospective sessions.
 
 ## Fixed policies
 
@@ -17,6 +18,13 @@ registered controls with common management, verified execution assumptions, and 
 | `RETAINED_BREAKOUT_CLOSE`    | Retained six-symbol breakout thresholds                                                              | 10% of bounded allocation             | Close window                                                |
 | `REPEATED_BREAKOUT`          | Retained breakout thresholds across Jev's candidate universe                                         | Explicit research weight, at most 20% | 15-minute maximum hold, 50 bp protective stop, close window |
 | `REPEATED_RELATIVE_MOMENTUM` | Exact positive 30-minute and benchmark-relative return, with the native spread and liquidity filters | Same research weight                  | Same mechanical management                                  |
+
+The table describes the mechanical lifecycles. In `JEV` mode, native model exits are also available to the two
+repeated controls. Existing exit triggers, protective stops, maximum holding time and the close window take
+precedence over a new inference. Each management request contains the control's own actual simulated fill quantity,
+cost basis, fees, entry time and current market evidence. Candidate strategy decisions are never reused as control
+management decisions. Entry and management track completed windows independently; partial exit retries preserve
+the original model trigger and require no new inference.
 
 The source-controlled Jev protocol supplies the universe, rolling window, freshness rules, close window, and
 mechanical holding limits. Breakout policies call the retained decision core, including its breakout-strength and
@@ -52,7 +60,13 @@ budget. Native replay applies the same per-quote consumption rule. Counterfactua
 
 The declared `decisionLatencyMs` covers the research scenario's full construction, evaluation, and persistence
 delay. Routing delay comes from the native replay assumptions and is added separately. The command does not
-measure full runtime latency. A scenario value cannot be presented as observed p95 latency.
+measure full runtime latency. A scenario value cannot be presented as observed p95 latency. Jev management measures
+provider and simulation-journal work against an independent clock. Its elapsed time advances the market source,
+and expired responses cannot authorize model exits. This measures the offline persistence implementation, not the
+production PostgreSQL/controller path; the frozen comparison still requires common calibrated timing assumptions.
+The management pass advances its deadline clock without reading historical source records. After measurement ends,
+the source and equity marks catch up to that clock, including on failure. Replay parsing time never becomes model
+latency or changes the management deadline.
 
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid
@@ -62,17 +76,28 @@ carry into later sessions. Net equity and its own carried peak determine reporte
 A zero-size bid produces a missing mark even if liquidity returns and the position closes later. Positive displayed
 size does not prove that the full position could be liquidated at that price. Missing observations,
 execution quotes, or marks make the session `INCOMPLETE`. Canceled IOC orders remain recorded. Unclosed positions
-retain a null realized result. Model charges are zero because controls make no model calls. Allocated data costs
+retain a null realized result. Mechanical controls have zero model calls and charges. In `JEV` mode, known usage
+is priced with the frozen native replay tariff, including usable billing evidence from failed or late responses.
+Unresolved usage makes the session incomplete and leaves `modelCostMicros` null; `knownModelCostMicros` and
+`netPnlAfterKnownCostsMicros` retain only the known charges. Allocated data costs
 are charged once per policy per session, including zero-trade sessions. As in native replay, these external expenses
 reduce reported net equity; they never debit broker cash, shrink position sizes, or consume broker loss limits.
 Each policy carries broker cash, its broker and net equity peaks, and cumulative external expenses independently.
 A session's net result deducts only that session's expense, without charging prior expenses again. Reports also subtract an additional 10 bp
 from each filled dollar of turnover as a cost stress.
 
-The report uses `bayn.control-study-report.v2` and definition `bayn.control-study-definition.v2`. Marks now expose
+The report uses `bayn.control-study-report.v3` and definition `bayn.control-study-definition.v3`. Marks expose
 `brokerEquityMicros` and `netEquityAfterKnownCostsMicros`; `closingCapital` contains the carried state. Previous v1
 reports charged external expenses to broker cash and are not comparable at nonzero allocated data cost. Retain
 their original evidence and generate a new report with the corrected executable when comparing net performance.
+
+Jev mode requires a new evidence directory. Its registration binds the input, source receipt, policy definitions
+and risk policy before inference. Each policy has separate source observations, native batches, request claims,
+terminal receipts and resolutions, and provider call records. Files are flushed before a request can proceed or a
+response can be used. A pending request cannot trigger another provider call; a late receipt cannot reverse an
+abandoned request. Reusing an existing directory is rejected, including after interruption. Preserve an interrupted
+attempt and its unknown charges; this command does not resume it. These simulation records do not satisfy or weaken
+the production stores' authority, reconciliation and order-source checks.
 
 Displayed quote sizes retain their source units. Those units and market impact still need independent calibration.
 A completed development replay does not prove executable capacity or live profitability.
@@ -85,7 +110,8 @@ claim that controls made Jev calls or executed the production interpreter.
 
 ```json
 {
-  "schemaVersion": "bayn.control-study-input.v1",
+  "schemaVersion": "bayn.control-study-input.v2",
+  "management": "MECHANICAL",
   "backtest": {},
   "decisionLatencyMs": 1000,
   "repeatedTargetWeightPpm": 100000
@@ -108,3 +134,7 @@ bun services/bayn/tools/control-study.ts \
 The command refuses duplicate or incomplete flags, hash mismatches, and an existing output file. Keep the exact
 executable Git commit, input hashes, command, exit status, and report hash in the experiment receipt. A report
 records the source and policy definitions but does not independently prove which Git commit executed the command.
+
+For a separately registered managed study, set `management` to `JEV`, bind `BAYN_JEV_API_KEY` through the existing
+secret path, and add `--evidence-directory /absolute/path/new-evidence-directory`. That mode makes paid provider
+calls. It fails when the key or evidence directory is missing; it never silently switches to mechanical management.
