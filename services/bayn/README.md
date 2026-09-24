@@ -154,6 +154,9 @@ no unresolved mutations or open orders before creating a clear OBSERVE successor
 A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
 accounting and flatness checks. A bound pending or active cycle keeps its existing generation while recovery manages
 the position; it cannot attempt authority rollover until the cycle is terminal.
+An automatic failure before a research generation records any decision or intent can also settle that unused
+generation when its plan has no pending or active cycle. Recovery still requires fresh exact reconciliation and the
+existing OBSERVE successor and grant checks; operator restrictions remain held.
 The existing activation path then verifies the grant before publishing the next execution driver. This transition
 does not require a worker restart. An untouched, unbound cycle retains its plan until the session's entry cutoff,
 including restrictions after market open. Its snapshot, decision and intent history must remain empty. Partially
