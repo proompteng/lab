@@ -428,41 +428,49 @@ test('lost submit response does not cancel an accepted broker order', async () =
   expect(result.state.ledger.fills).toHaveLength(1)
 })
 
-test.each(['stale', 'future', 'crossed', 'other-feed'] as const)('%s quote cannot fill an order', async (kind) => {
-  const result = await run(
-    Effect.gen(function* () {
-      const broker = yield* setup({
-        quoteAt: () =>
-          Effect.succeed(
-            observedQuote(
-              {
-                ...quote,
-                eventAt: kind === 'stale' ? '2026-09-04T14:30:00.000Z' : observedAt,
-                bidPrice: kind === 'crossed' ? 102 : 100,
-                feed: kind === 'other-feed' ? 'sip' : 'iex',
-              },
-              kind === 'future' ? startMs + 1000 : startMs,
+test.each(['stale', 'future', 'crossed', 'zero-bid', 'zero-ask', 'other-feed'] as const)(
+  '%s quote cannot fill an order',
+  async (kind) => {
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          quoteAt: () =>
+            Effect.succeed(
+              observedQuote(
+                {
+                  ...quote,
+                  eventAt: kind === 'stale' ? '2026-09-04T14:30:00.000Z' : observedAt,
+                  bidPrice: kind === 'crossed' ? 102 : kind === 'zero-bid' ? 0 : 100,
+                  bidSize: kind === 'zero-bid' ? 0 : quote.bidSize,
+                  askPrice: kind === 'zero-ask' ? 0 : quote.askPrice,
+                  askSize: kind === 'zero-ask' ? 0 : quote.askSize,
+                  feed: kind === 'other-feed' ? 'sip' : 'iex',
+                },
+                kind === 'future' ? startMs + 1000 : startMs,
+              ),
             ),
-          ),
-      })
-      const receipt = yield* submit(broker, intent())
-      return { receipt, checkpoint: yield* broker.checkpoint }
-    }),
-  )
-  expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
-  expect(result.receipt.order.filledQuantityMicros).toBe('0')
-  const reasons = {
-    stale: ReplayQuoteRejection.Stale,
-    future: ReplayQuoteRejection.Unavailable,
-    crossed: ReplayQuoteRejection.Price,
-    'other-feed': ReplayQuoteRejection.Identity,
-  }
-  expect(result.checkpoint.state.orders[0]?.execution?.outcome).toEqual({
-    status: 'canceled',
-    reason: reasons[kind],
-    adversePriceMicros: null,
-  })
-})
+        })
+        const receipt = yield* submit(broker, intent())
+        return { receipt, checkpoint: yield* broker.checkpoint }
+      }),
+    )
+    expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
+    expect(result.receipt.order.filledQuantityMicros).toBe('0')
+    const reasons = {
+      stale: ReplayQuoteRejection.Stale,
+      future: ReplayQuoteRejection.Unavailable,
+      crossed: ReplayQuoteRejection.Price,
+      'zero-bid': ReplayQuoteRejection.Price,
+      'zero-ask': ReplayQuoteRejection.Price,
+      'other-feed': ReplayQuoteRejection.Identity,
+    }
+    expect(result.checkpoint.state.orders[0]?.execution?.outcome).toEqual({
+      status: 'canceled',
+      reason: reasons[kind],
+      adversePriceMicros: null,
+    })
+  },
+)
 
 test.each(['oversell', 'cash'] as const)('%s rejection is terminal and recoverable by client ID', async (kind) => {
   const result = await run(
