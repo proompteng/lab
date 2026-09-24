@@ -506,6 +506,8 @@ read-only ClickHouse access. See `tools/history.ts` for the strict job schema.
    window. Coverage combines those windows per symbol and session. This bounds the capture size before canonical
    hashing and JSON retention. Changed requests require a new immutable dataset. Missing minutes remain missing and
    appear in per-symbol/session coverage.
+   One-sided quotes retain the provider's zero price and size, including an absent ask. Native replay records these
+   quotes as rejected input, so they cannot supply executable prices or qualify an affected observation window.
 2. **Publish:** provide `operation: "publish"`, `datasetDirectory`, pinned `datasetId`, and `receiptPath`.
    Configure `BAYN_HISTORY_CLICKHOUSE_URL`, `BAYN_HISTORY_CLICKHOUSE_USERNAME`, and
    `BAYN_HISTORY_CLICKHOUSE_PASSWORD` for the existing offline data administrator. The GitOps schema hook must have
