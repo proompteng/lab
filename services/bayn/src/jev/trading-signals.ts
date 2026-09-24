@@ -383,7 +383,7 @@ const batchFromObservation = (
         observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
       )
       if (
-        planVersion === JevBatchPlanVersion.V2 &&
+        planVersion !== JevBatchPlanVersion.V1 &&
         observation.schemaVersion === 'bayn.jev-observation.v1' &&
         observation.portfolio.purpose === JevPurpose.Entry
       ) {

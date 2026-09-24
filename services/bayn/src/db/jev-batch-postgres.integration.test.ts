@@ -136,18 +136,20 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  test('persists a version-two batch plan under the expanded database constraint', async () => {
-    const { batchId: _, ...material } = plan
-    const versionTwo = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: JevBatchPlanVersion.V2 }))
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const store = yield* JevBatchStore
-        const saved = yield* store.begin(versionTwo)
-        expect(saved).toEqual({ plan: versionTwo, result: null })
-        expect(yield* store.read(versionTwo.batchId)).toEqual(saved)
-      }).pipe(atObservation),
-    )
-  })
+  for (const planVersion of [JevBatchPlanVersion.V2, JevBatchPlanVersion.V3]) {
+    test(`persists ${planVersion} under the expanded database constraint`, async () => {
+      const { batchId: _, ...material } = plan
+      const versioned = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: planVersion }))
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* JevBatchStore
+          const saved = yield* store.begin(versioned)
+          expect(saved).toEqual({ plan: versioned, result: null })
+          expect(yield* store.read(versioned.batchId)).toEqual(saved)
+        }).pipe(atObservation),
+      )
+    })
+  }
 
   test('a candidate can claim a planned request while another claim holds the batch share lock', async () => {
     await runtime.runPromise(

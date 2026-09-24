@@ -231,7 +231,7 @@ test('small exit liquidity retries the same inventory and counts only completed 
 })
 
 test('expired decisions and ineligible assets cannot submit entries', async () => {
-  const expired = (await simulate({ decisionLatencyMs: 6000 })).report
+  const expired = (await simulate({ decisionLatencyMs: fixture.protocol.inferenceValidityMs + 1000 })).report
   expect(expired.orders).toHaveLength(0)
   expect(expired.decisions.some((decision) => decision.status === 'DECISION_EXPIRED')).toBeTrue()
   const ineligible = (await simulate({ emptyAssets: true })).report
@@ -240,9 +240,9 @@ test('expired decisions and ineligible assets cannot submit entries', async () =
 })
 
 test.each([
-  [4999, true],
-  [5000, false],
-  [5001, false],
+  [fixture.protocol.inferenceValidityMs - 1, true],
+  [fixture.protocol.inferenceValidityMs, false],
+  [fixture.protocol.inferenceValidityMs + 1, false],
 ] as const)('control decision latency %d ms obeys the native half-open deadline', async (decisionLatencyMs, usable) => {
   const { report } = await simulate({ decisionLatencyMs })
   expect(report.orders.some((order) => order.side === OrderSide.Buy)).toBe(usable)
