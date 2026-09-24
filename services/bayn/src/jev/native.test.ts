@@ -1,19 +1,24 @@
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { JevCandidatePlanStatus } from './batch'
-import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
+import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import {
   decideJevEntry,
   decideJevManagement,
+  jevEntryQuoteMaximumAgeMs,
   JevEntryTargetSchema,
   JevManagementAction,
   JevManagementDecisionSchema,
 } from './decision'
+import { entryQuoteExpiresAtMillis } from '../risk'
+import { makeStrategyProtocolHashResult } from '../contracts'
+import { canonicalHashV1, sha256 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
+import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
 import { reproduceJevCandidateObservation } from './observation'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
-import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
+import { decodeJevProtocol, defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 import { makeJevTradingSignalBatch, reproduceJevTradingSignalBatch } from './trading-signals'
 
 const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
@@ -23,6 +28,7 @@ const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
       expiresAt: new Date(
         Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
       ).toISOString(),
+      planVersion: JevBatchPlanVersion.V1,
     }),
   )
 
@@ -62,6 +68,104 @@ describe('native Jev entry and position observations', () => {
     expect(
       Result.isFailure(decideJevEntry(nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold'))),
     ).toBe(true)
+  })
+
+  test('a completed Jev batch leaves time to price and submit against a fresh quote', () => {
+    const fixture = nativeJevFixture()
+    const observation = fixture.observation.payload
+    const observed = Date.parse(observation.observedAt)
+    const batchPlan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation,
+        expiresAt: new Date(observed + 10_000).toISOString(),
+        planVersion: JevBatchPlanVersion.V3,
+      }),
+    )
+    const decidedAt = new Date(observed + 7_000).toISOString()
+    const target = Result.getOrThrow(
+      decideJevEntry({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt),
+        decidedAt,
+      }),
+    )
+    expect(target.selectedSymbols).toEqual(['AAPL'])
+    const quoteEventAt = new Date(observed + 7_100).toISOString()
+    const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
+    expect(maximumAgeMs).toBe(10_000)
+    expect(entryQuoteExpiresAtMillis({ eventAt: quoteEventAt, maximumAgeMs })).toBe(observed + 17_100)
+
+    const historical = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence()))
+    const historicalQuoteAt = historical.decidedAt
+    expect(
+      entryQuoteExpiresAtMillis({
+        eventAt: historicalQuoteAt,
+        maximumAgeMs: jevEntryQuoteMaximumAgeMs(historical, historicalQuoteAt, fixture.protocol.maximumQuoteAgeMs),
+      }),
+    ).toBe(Date.parse(historical.evidence.batchPlan.expiresAt))
+  })
+
+  test('retained version-two entry decisions keep their original batch-bound quote deadline', () => {
+    const fixture = nativeJevFixture()
+    const observation = fixture.observation.payload
+    const observed = Date.parse(observation.observedAt)
+    const batchPlan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation,
+        expiresAt: new Date(observed + 10_000).toISOString(),
+        planVersion: JevBatchPlanVersion.V2,
+      }),
+    )
+    const decidedAt = new Date(observed + 7_000).toISOString()
+    const target = Result.getOrThrow(
+      decideJevEntry({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt),
+        decidedAt,
+      }),
+    )
+    expect(
+      Result.getOrThrow(Schema.decodeUnknownResult(JevEntryTargetSchema)(JSON.parse(JSON.stringify(target)))),
+    ).toEqual(target)
+    const quoteEventAt = new Date(observed + 7_100).toISOString()
+    const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
+    expect(maximumAgeMs).toBe(2_900)
+    expect(entryQuoteExpiresAtMillis({ eventAt: quoteEventAt, maximumAgeMs })).toBe(observed + 10_000)
+  })
+
+  test('durable Jev protocol identities select the archived or active behavior by batch version', () => {
+    const retained = Result.getOrThrow(decodeJevProtocol({ ...defaultJevProtocolDocument, inferenceValidityMs: 5_000 }))
+    const priorIdentity = Result.getOrThrow(
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: sha256('bayn.jev.behavior.v1'),
+        parameterHash: canonicalHashV1(retained),
+        parameterSchemaVersion: retained.schemaVersion,
+      }),
+    )
+    const active = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
+    const activeIdentity = Result.getOrThrow(
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: jevBehaviorHash,
+        parameterHash: canonicalHashV1(active),
+        parameterSchemaVersion: active.schemaVersion,
+      }),
+    )
+    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V1)).toBe(true)
+    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V2)).toBe(true)
+    expect(jevProtocolIdentityMatches(retained, priorIdentity)).toBe(true)
+    expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V3)).toBe(true)
+    expect(jevProtocolIdentityMatches(active, activeIdentity)).toBe(true)
+    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V3)).toBe(false)
+    expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
+    expect(jevProtocolIdentityMatches(retained, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
+    expect(jevProtocolIdentityMatches(active, priorIdentity, JevBatchPlanVersion.V3)).toBe(false)
+    expect(
+      jevProtocolIdentityMatches({ ...retained, maximumSpreadBps: retained.maximumSpreadBps + 1 }, priorIdentity),
+    ).toBe(false)
   })
 
   test('the held position can request an exit, while weaker or hold evidence retains it', () => {
@@ -192,7 +296,10 @@ describe('native Jev entry and position observations', () => {
       Result.isFailure(
         makeJevTradingSignalBatch({
           observation: payload,
-          expiresAt: new Date(Date.parse(payload.observedAt) + 6000).toISOString(),
+          expiresAt: new Date(
+            Date.parse(payload.observedAt) + fixture.protocol.inferenceValidityMs + 1000,
+          ).toISOString(),
+          planVersion: JevBatchPlanVersion.V1,
         }),
       ),
     ).toBe(true)

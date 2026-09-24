@@ -29,8 +29,14 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
-A complete batch must remain valid within its five-second evidence lifetime. These parameters have not established
-an economic advantage under the frozen qualification protocol.
+The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
+exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
+yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
+original identity and quote-deadline binding. Position management still evaluates its held symbol. A complete
+version-three batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
+the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
+quote deadline for version-three decisions. These parameters have not established an economic advantage under the
+frozen qualification protocol.
 
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
@@ -60,14 +66,17 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
-Entry observations evaluate candidate availability independently. Missing or late candidate bars, quotes, or trades
-exclude that candidate with an explicit reason while other candidates remain eligible for evaluation. SPY is the
-mandatory benchmark. Source identity, canonical ordering, watermarks, finality, and premature data still fail the
-whole observation. Raw candidate rows and their exclusions remain in the hashed snapshot for revalidation.
+Entry observations evaluate candidate availability independently. Missing or late candidate bars, and missing, late,
+or decision-time-stale candidate quotes or trades exclude that candidate with an explicit reason while other candidates
+remain eligible for evaluation. SPY is the mandatory benchmark. Source identity, canonical ordering, watermarks,
+finality, and premature data still fail the whole observation. Raw candidate rows and their exclusions remain in the
+hashed snapshot for revalidation.
 
-Native Jev targets retain every candidate result and source exclusion with the exact full-batch evidence. An
-observation with every candidate excluded remains unavailable. Execution pricing requires fresh quotes for positive
-targets and reconciled holdings. Historical momentum targets remain readable for audit.
+Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
+alone cannot authorize a no-entry decision. A version-two or version-three entry batch with every candidate excluded by
+a verified spread or displayed-size rule can. Execution pricing requires fresh quotes for positive targets and
+reconciled holdings.
+Historical momentum targets remain readable for audit.
 
 Entry and position-management observations each commit at most once per completed signal window within a cycle.
 Later polls and process restarts consult the retained observation before creating another inference batch. The next
@@ -95,6 +104,8 @@ batch to remain valid after completion and persistence; it cannot use only the f
 
 The batch store commits the full plan before any candidate request can be claimed. It finalizes results from the
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
+Requested candidates start concurrently across the complete source-verified batch, within its ten-second
+validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
@@ -275,8 +286,10 @@ cycle references a retired decision or snapshot and that broker orders, position
 If an earlier release still owns such work, let that release finish recovery before the cutover. Retain terminal
 financial documents unchanged for audit; do not rewrite their hashes or restore legacy runtime decoders.
 
-Do not deploy directly or submit a broker order manually. A code release does not change the sealed research request
-or grant live capital authority.
+Do not deploy directly or submit a broker order manually. A code-only release cannot change the sealed research request
+or grant live capital authority. When the strategy identity changes, rotate and review the sealed PAPER research mandate
+with the same broker identity and risk limits before promotion; Kargo then carries that request into the new build
+lineage. Image publication alone does not authorize the revised strategy.
 
 ## Endpoints
 
@@ -360,6 +373,26 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
+[signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
+15-minute hypothetical outcomes. It is a signal screen, and its overlapping hypotheses do not form a portfolio
+backtest or satisfy the migration's economic acceptance protocol.
+
+The separate [control portfolio command](../../docs/bayn/control-portfolios.md) evaluates full-session deterministic
+development portfolios with independent cash and positions, repeated entries, partial exits, and shared execution
+accounting. External data expenses reduce reported net equity without changing broker cash, sizing or risk, as in
+native replay. Select `MECHANICAL` management explicitly to remove model decisions, or `JEV` to manage each repeated
+control's own position through native Jev evaluation. The retained close control remains mechanical. Timing and
+execution assumptions still require calibration before the frozen acceptance experiment.
+
+`src/intraday-replay/control-management.ts` constructs native Jev management inputs from a control's simulated IOC
+fill, cost basis, fees and verified held-symbol snapshot. A recorded management decision must match that control's
+ledger and expected batch and commit within its original deadline. An accepted model exit keeps its trigger through
+partial fills and later IOC retries. In `JEV` mode the control command records requests before inference in a new
+exclusive simulation journal, retains paid responses before advancing deadlines, and includes known and unresolved
+model charges in its report. An interrupted directory cannot be restarted or overwritten. These records represent
+simulated controls and never supply production authority or replace production persistence checks.
+
 Production execution and simulation use `makeTradingEngine`. The engine constructs the execution program and
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
@@ -409,10 +442,13 @@ Every replay reconciliation, including those inside the cycle driver, uses that 
 During measured operations, the replay account's transaction-acceptance clock advances with PostgreSQL wall time,
 including evidence queries, insertions and work in the enclosing transaction. Recorded observation timestamps retain
 their synchronized replay time. Reconciliation returns that published source timestamp; it cannot stamp evidence
-ahead of the account and market-data clocks. Time spent publishing arrivals is retained for the next synchronization
-and the measured scope's completion. Pausing measurement retains elapsed time and advances the market clock. The
-runtime then consumes arrivals through that timestamp before returning to scheduling or valuation. Deferred
-exit deadlines therefore see time spent before transaction acceptance.
+ahead of the account and market-data clocks. Provider synchronization advances deadlines without parsing historical
+arrivals. Source publication waits until inference has finished; its file-processing time is excluded from both
+elapsed-time and PostgreSQL measurements. Native operation timers pause at that same boundary and resume with their
+remaining duration; provider request timers retain their independent wall clock. The database clock resumes even
+when parsing fails or is interrupted. Provider, persistence and clock-synchronization work remain measured. Completing
+the measured scope retains elapsed time and publishes arrivals through that timestamp before scheduling or valuation.
+Deferred exit deadlines therefore still include native work before transaction acceptance.
 Bootstrap advances the persisted account clock after reconciliation before activating its capital grant.
 Initialization starts one minute before the first registered open and retains its measured start, completion and
 elapsed time in the report. If initialization misses that open, the run fails without rewinding or omitting opening
@@ -448,11 +484,13 @@ The final `bayn.backtest-report.v2`
 retains every session's schedule, closing broker equity, net equity after known model and allocated data costs,
 and reconciliation, plus cumulative net equity change, observed peak
 and drawdown, final broker orders/fills/positions, durable accounting counts, and input identities. The output keeps
-the exact input, source receipt, pass log, decoded entry and closing decisions, accounting rows with full integer precision, and hashes. Valuations retain the last observed valid bid and its age; that accounting mark never relaxes executable-quote freshness. Preserve the source file and both databases with the report.
+the exact input, source receipt, pass log, decoded entry and closing decisions, accounting rows with full integer precision, and hashes. Valuations retain the last observed valid bid, its age, and whether displayed bid liquidity was positive; that accounting mark never relaxes executable-quote freshness. A stale or zero-liquidity held-position mark stays in the pass log for diagnosis but counts as a missing qualifying valuation, so the session cannot report complete economics. The same check applies at session close: an unqualified closing mark remains visible in closing equity but cannot update reported peak or drawdown. Preserve the source file and both databases with the report.
 
 Simulation accounts are isolated from production. The command cannot acquire Alpaca trading credentials, target a
 remote production database, overwrite a populated replay database, or change capital authority. Missing data,
 failed passes, unresolved orders/positions, or accounting mismatches remain visible and prevent acceptance.
+Repeated simulated orders consume each quote's declared displayed-liquidity budget once per symbol and side; a new
+quote identity starts a new budget. Checkpoint restoration replays the same consumption before accepting fills.
 The session schedule counts unavailable required decision observations separately from successful no-trade and
 expected lifecycle waits. Failed or expired entry inference is unavailable decision data even when its token usage
 can be fully priced. Only a complete valid decision can report no eligible candidate. Close-only market sells support
@@ -471,8 +509,13 @@ read-only ClickHouse access. See `tools/history.ts` for the strict job schema.
    `schemaVersion: "bayn.alpaca-backfill.v1"`, `startDate`, `endDate`, `symbols`, and `executionSessions`.
    `BAYN_ALPACA_KEY_ID` and `BAYN_ALPACA_SECRET_KEY` use the existing integration. The tool requests raw IEX minute
    bars for every completed broker-calendar session and quotes/trades for each execution session. It follows all
-   pagination, caches original response bytes and receipts, and resumes identical requests. Changed requests require
-   a new immutable dataset. Missing minutes remain missing and appear in per-symbol/session coverage.
+   pagination, caches original response bytes and receipts, and resumes identical requests. Quote and trade queries
+   use disjoint windows of at most one hour, with the inclusive end set to the final nanosecond before the next
+   window. Coverage combines those windows per symbol and session. This bounds the capture size before canonical
+   hashing and JSON retention. Changed requests require a new immutable dataset. Missing minutes remain missing and
+   appear in per-symbol/session coverage.
+   One-sided quotes retain the provider's zero price and size, including an absent ask. Native replay records these
+   quotes as rejected input, so they cannot supply executable prices or qualify an affected observation window.
 2. **Publish:** provide `operation: "publish"`, `datasetDirectory`, pinned `datasetId`, and `receiptPath`.
    Configure `BAYN_HISTORY_CLICKHOUSE_URL`, `BAYN_HISTORY_CLICKHOUSE_USERNAME`, and
    `BAYN_HISTORY_CLICKHOUSE_PASSWORD` for the existing offline data administrator. The GitOps schema hook must have

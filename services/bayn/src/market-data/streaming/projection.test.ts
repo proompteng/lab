@@ -1,10 +1,11 @@
+import { jevStalePricingSymbols } from '../../jev/trading-signals'
 import { replayHistoricalMarketArrivals } from './historical'
 import { featureAvailabilityMeasurement, projectionCoverageMeasurements } from './telemetry'
 import { reproduceStreamingSnapshot } from './replay'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { constructStreamingSnapshot } from './snapshot'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
@@ -393,6 +394,52 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test('Dorvud latest REST samples retain event time and reproduce the immutable decision snapshot', () => {
+    const fixture = Schema.decodeUnknownSync(Schema.Struct({ envelopes: Schema.Array(Schema.Unknown) }))(
+      JSON.parse(readFileSync(new URL('../../../../dorvud/fixtures/alpaca-latest-v1.json', import.meta.url), 'utf8')),
+    )
+    const records = fixture.envelopes.flatMap((value): KafkaMarketRecord[] => {
+      const sample = Schema.decodeUnknownSync(
+        Schema.Struct({ symbol: Schema.String, channel: Schema.Literals(['quotes', 'trades']) }),
+      )(value)
+      return sample.symbol === 'AAPL'
+        ? [
+            {
+              topic: universe.topics[sample.channel],
+              partition: 0,
+              offset: '1',
+              timestampMs: end + 3000,
+              value: JSON.stringify(value),
+            },
+          ]
+        : []
+    })
+    const bars = Array.from({ length: 30 }, (_, index) => barRecord(index))
+    const state = incorporate([...bars, ...records, featureRecord])
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), query))
+    expect(snapshot.latestQuotes['AAPL']?.eventAt).toBe('2026-09-11T14:00:02.123456789Z')
+    const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+    expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
+    expect(
+      snapshot.manifest.streaming.records.filter((record) =>
+        [universe.topics.quotes, universe.topics.trades].includes(record.sourceTopic),
+      ),
+    ).toHaveLength(2)
+    for (const missing of ['quotes', 'trades'] as const) {
+      const incomplete = incorporate([
+        ...bars,
+        ...records.filter((record) => record.topic !== universe.topics[missing]),
+        featureRecord,
+      ])
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(incomplete), query))).toBe(true)
+    }
+    const stale = { ...query, observedAt: new Date(end + 30_000).toISOString() }
+    expect(jevStalePricingSymbols(snapshot)).toEqual([])
+    expect(jevStalePricingSymbols(Result.getOrThrow(constructStreamingSnapshot(cutFor(state), stale)))).toEqual([
+      'AAPL',
+    ])
+  })
+
   test.each([IntradaySnapshotPurpose.EntryPricing, IntradaySnapshotPurpose.Liquidation])(
     '%s waits for a current quote when the latest received quote predates the requested range',
     (purpose) => {

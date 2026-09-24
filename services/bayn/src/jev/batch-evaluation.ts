@@ -38,7 +38,7 @@ export const evaluateJevBatch = (input: unknown) =>
                 Effect.asVoid,
                 Effect.catchTag('JevEvidenceError', () => Effect.void),
               ),
-        { concurrency: 4, discard: true },
+        { concurrency: plan.candidates.length, discard: true },
       )
     }
     return yield* store.finish(plan.batchId)

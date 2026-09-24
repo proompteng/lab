@@ -920,6 +920,8 @@ export const candidateAvailability = (
     for (const quote of quotes) latest[quote.symbol] = quote
     for (const symbol of intradaySnapshotSymbols(request)) {
       const symbolRequest = { ...request, symbols: [symbol] }
+      const symbolQuotes = quotes.filter((quote) => quote.symbol === symbol)
+      const symbolTrades = trades.filter((trade) => trade.symbol === symbol)
       const available = Result.flatMap(
         validateBarCoverage(
           symbolRequest,
@@ -927,15 +929,27 @@ export const candidateAvailability = (
           clockSkewMs,
           publicationPolicy,
         ),
-        () =>
-          latestQuotes(
-            symbolRequest,
-            quotes.filter((quote) => quote.symbol === symbol),
-            trades.filter((trade) => trade.symbol === symbol),
-            clockSkewMs,
-          ),
+        () => latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
       )
-      if (Result.isSuccess(available)) continue
+      if (Result.isSuccess(available)) {
+        if (!candidates.has(symbol)) continue
+        const stale = [available.success[symbol], symbolTrades.at(-1)].find(
+          (evidence) =>
+            evidence !== undefined &&
+            intradayAgeNanos(request.observedAt, evidence.eventAt) > millisecondsAsNanos(request.maximumQuoteAgeMs),
+        )
+        if (stale !== undefined) {
+          const cause = failure('freshness', 'intraday quote or trade exceeds the decision-time freshness bound', {
+            symbol,
+            sourceTopic: stale.sourceTopic,
+            eventAt: stale.eventAt,
+            observedAt: request.observedAt,
+            maximumQuoteAgeMs: request.maximumQuoteAgeMs,
+          })
+          exclusions.push(Object.freeze({ symbol, reason: 'freshness', message: cause.message }))
+        }
+        continue
+      }
       const cause = available.failure
       if (
         candidates.has(symbol) &&

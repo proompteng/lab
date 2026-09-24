@@ -134,6 +134,31 @@ describe('immutable intraday market snapshot', () => {
     },
   )
 
+  test.each(['quote', 'trade'] as const)(
+    'excludes a promptly ingested candidate with a %s older than its decision-time bound',
+    (staleKind) => {
+      const freshAt = '2026-08-18T13:35:25.000Z'
+      const staleAt = '2026-08-18T13:35:19.000Z'
+      const rows = makeRows()
+      const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'], maximumQuoteAgeMs: 10_000 }
+      const observedRows = {
+        ...rows,
+        quotes: rows.quotes.map((row) => {
+          const at = row.symbol === 'AMD' && staleKind === 'quote' ? staleAt : freshAt
+          return { ...row, event_at: at, ingested_at: at }
+        }),
+        trades: rows.trades.map((row) => {
+          const at = row.symbol === 'AMD' && staleKind === 'trade' ? staleAt : freshAt
+          return { ...row, event_at: at, ingested_at: at }
+        }),
+      }
+      const snapshot = success(verifyIntradaySnapshot(candidateRequest, observedRows))
+      expect(snapshot.manifest.candidateExclusions).toMatchObject([{ symbol: 'AMD', reason: 'freshness' }])
+      expect(snapshot.latestQuotes['NVDA']).toBeDefined()
+      expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+    },
+  )
+
   test('binds a complete opening range, fresh quotes, trades, and Kafka lineage deterministically', () => {
     const rows = makeRows()
     const snapshot = success(verifyIntradaySnapshot(request, rows))

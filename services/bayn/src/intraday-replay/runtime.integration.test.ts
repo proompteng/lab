@@ -100,7 +100,7 @@ durableTest.each([
   'measured-exit',
   'measured-bootstrap-delay',
   'measured-partial-entry-reentry',
-  'measured-source-delay-reentry',
+  'measured-clock-delay-reentry',
   'measured-slipped-exit-reentry',
   'measured-entry-expired',
   'measured-zero-fill-reentry',
@@ -121,9 +121,9 @@ durableTest.each([
     )
       throw new Error('Replay acceptance requires isolated local test databases')
     const protocol = fixtureProtocol
-    const sourceDelay = scenario === 'measured-source-delay-reentry'
+    const clockDelay = scenario === 'measured-clock-delay-reentry'
     const slippedExit = scenario === 'measured-slipped-exit-reentry'
-    const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || sourceDelay || slippedExit
+    const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || clockDelay || slippedExit
     const noTrade = scenario === 'no-trade' || scenario === 'no-trade-finalization'
     const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
@@ -264,7 +264,8 @@ durableTest.each([
     const config: RuntimeConfig = {
       ...baseConfig,
       build: { ...baseConfig.build, strategyParameterHash: strategyRuntime.provenance.strategy.parameterHash },
-      operationTimeoutMs: 10000,
+      operationTimeoutMs:
+        scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry' ? 20_000 : 10_000,
       execution: {
         brokerIdentity: Result.getOrThrow(
           makeBrokerIdentity({
@@ -302,13 +303,14 @@ durableTest.each([
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
-        const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash)
+        const providerClock = yield* TestClock.make()
+        const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash, providerClock)
         const wrongAccount = yield* Effect.exit(
           sql`INSERT INTO simulated_execution_clocks VALUES ('paper-account-1', ${source.sourceManifestHash}, clock_timestamp())`,
         )
         const missingClock = yield* Effect.exit(sql`SELECT execution_account_now(${'replay-' + '0'.repeat(64)})`)
         const rewind = yield* Effect.exit(clock.advanceTo(utcInstantFromEpochMillis(initialMs - 1)))
-        const wrongSource = yield* Effect.exit(makeSimulatedExecutionClock(runId, 'f'.repeat(64)))
+        const wrongSource = yield* Effect.exit(makeSimulatedExecutionClock(runId, 'f'.repeat(64), providerClock))
         const deletedClock = yield* Effect.exit(sql`DELETE FROM simulated_execution_clocks`)
         const truncatedClock = yield* Effect.exit(sql`TRUNCATE simulated_execution_clocks`)
         const wallClock = yield* sql<
@@ -336,7 +338,6 @@ durableTest.each([
             yield* TestClock.setTime(atMs)
           })
         const provider = yield* JevClient
-        const providerClock = yield* TestClock.make()
         measuredProviderClock = providerClock
         yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
         const timing = measured
@@ -347,17 +348,28 @@ durableTest.each([
               advanceTo: (atMs) =>
                 advanceMarketTo(atMs).pipe(
                   Effect.tap(() =>
-                    scenario === 'measured-bootstrap-delay' || sourceDelay ? providerClock.adjust(5) : Effect.void,
+                    scenario === 'measured-bootstrap-delay' || clockDelay ? providerClock.adjust(5) : Effect.void,
                   ),
                   Effect.mapError(
-                    (cause) => new ReplayBrokerFailure({ message: 'Measured source advance failed', cause }),
+                    (cause) => new ReplayBrokerFailure({ message: 'Measured clock advance failed', cause }),
                   ),
                 ),
+              advanceDeadlineTo: (atMs) =>
+                clock.advanceTo(utcInstantFromEpochMillis(atMs)).pipe(
+                  Effect.andThen(TestClock.setTime(atMs)),
+                  Effect.andThen(
+                    scenario === 'measured-bootstrap-delay' || clockDelay ? providerClock.adjust(5) : Effect.void,
+                  ),
+                  Effect.mapError(
+                    (cause) => new ReplayBrokerFailure({ message: 'Measured clock advance failed', cause }),
+                  ),
+                ),
+              excludedSourceMillis: Effect.succeed(0),
               retain: (call) =>
                 Effect.gen(function* () {
                   measuredCalls.push(call)
                   if (scenario === 'measured-entry-expired' && measuredCalls.length === 15)
-                    yield* providerClock.adjust(6000)
+                    yield* providerClock.adjust(11_000)
                 }),
             })
           : undefined
@@ -455,7 +467,7 @@ durableTest.each([
               const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
               if (started.length > 0) {
                 expiredStartedSubmit = true
-                yield* providerClock.adjust(6000)
+                yield* providerClock.adjust(11_000)
               }
             }
             return yield* timing?.currentUtcInstant ?? currentUtcInstant
