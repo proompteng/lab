@@ -264,7 +264,8 @@ durableTest.each([
     const config: RuntimeConfig = {
       ...baseConfig,
       build: { ...baseConfig.build, strategyParameterHash: strategyRuntime.provenance.strategy.parameterHash },
-      operationTimeoutMs: 10000,
+      operationTimeoutMs:
+        scenario === 'measured-entry-expired' || scenario === 'measured-submit-expired-reentry' ? 20_000 : 10_000,
       execution: {
         brokerIdentity: Result.getOrThrow(
           makeBrokerIdentity({
@@ -357,7 +358,7 @@ durableTest.each([
                 Effect.gen(function* () {
                   measuredCalls.push(call)
                   if (scenario === 'measured-entry-expired' && measuredCalls.length === 15)
-                    yield* providerClock.adjust(6000)
+                    yield* providerClock.adjust(11_000)
                 }),
             })
           : undefined
@@ -455,7 +456,7 @@ durableTest.each([
               const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
               if (started.length > 0) {
                 expiredStartedSubmit = true
-                yield* providerClock.adjust(6000)
+                yield* providerClock.adjust(11_000)
               }
             }
             return yield* timing?.currentUtcInstant ?? currentUtcInstant

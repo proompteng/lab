@@ -105,12 +105,17 @@ describe('Jev trading batch source reproduction', () => {
       const observation = nativeObservationWithWideQuotes(native, ['AAPL'], futurePricing)
       const material = {
         observation: observation.payload,
-        expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
+        expiresAt: new Date(
+          Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
+        ).toISOString(),
       }
       expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V1 }))).toBe(
         true,
       )
       expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V2 }))).toBe(
+        true,
+      )
+      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V3 }))).toBe(
         true,
       )
     }
@@ -122,12 +127,14 @@ describe('Jev trading batch source reproduction', () => {
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation: observation.payload,
-        expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
-        planVersion: JevBatchPlanVersion.V2,
+        expiresAt: new Date(
+          Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
+        ).toISOString(),
+        planVersion: JevBatchPlanVersion.V3,
       }),
     )
     const excluded = plan.candidates.find((candidate) => candidate.symbol === 'AAPL')
-    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V2)
+    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V3)
     expect(excluded?.status).toBe(JevCandidatePlanStatus.Excluded)
     if (excluded?.status !== JevCandidatePlanStatus.Excluded) throw new Error('Missing spread exclusion')
     expect(excluded.reason).toBe(JevEntryExclusion.Spread)
@@ -173,8 +180,10 @@ describe('Jev trading batch source reproduction', () => {
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation: observation.payload,
-        expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
-        planVersion: JevBatchPlanVersion.V2,
+        expiresAt: new Date(
+          Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
+        ).toISOString(),
+        planVersion: JevBatchPlanVersion.V3,
       }),
     )
     expect(plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)).toBe(true)
@@ -192,8 +201,10 @@ describe('Jev trading batch source reproduction', () => {
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation: observation.payload,
-        expiresAt: new Date(Date.parse(observation.payload.observedAt) + 5000).toISOString(),
-        planVersion: JevBatchPlanVersion.V2,
+        expiresAt: new Date(
+          Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
+        ).toISOString(),
+        planVersion: JevBatchPlanVersion.V3,
       }),
     )
     expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
@@ -216,7 +227,9 @@ describe('Jev trading batch source reproduction', () => {
     const current = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation: native.observation.payload,
-        expiresAt: new Date(Date.parse(native.observation.payload.observedAt) + 5000).toISOString(),
+        expiresAt: new Date(
+          Date.parse(native.observation.payload.observedAt) + native.protocol.inferenceValidityMs,
+        ).toISOString(),
         planVersion: JevBatchPlanVersion.V1,
       }),
     )

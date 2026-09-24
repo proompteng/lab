@@ -114,6 +114,11 @@ describe('complete Jev batch evidence', () => {
     )
     const result = Result.getOrThrow(makeJevBatchResult(mixed, resultMaterial(mixed)))
     expect(Result.isFailure(usableJevBatchInferences(mixed, result, 450))).toBe(true)
+    const versionThree = Result.getOrThrow(
+      makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V3, candidates }),
+    )
+    const versionThreeResult = Result.getOrThrow(makeJevBatchResult(versionThree, resultMaterial(versionThree)))
+    expect(Result.isFailure(usableJevBatchInferences(versionThree, versionThreeResult, 450))).toBe(true)
   })
 
   test('rejects mixed observations, generation, time, questions and duplicate or reordered candidates', () => {
