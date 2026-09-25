@@ -260,6 +260,10 @@ Alpaca WebSocket events enter the existing raw Kafka topics. Each execution work
 features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
 candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
 
+The projection yields to the Node event loop every 256 consumed records, including records discarded after an
+assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
+cancellation wait. Incorporation order and committed offsets retain the same rules.
+
 The worker joins a completed feature window to its exact raw bar revisions and independently fresh quotes/trades.
 Corrections invalidate an old feature until its replacement matches. Missing candidates produce exclusions;
 missing benchmark data or absence of every candidate makes the observation unavailable. Streaming failures never

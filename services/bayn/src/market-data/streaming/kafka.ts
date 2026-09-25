@@ -315,11 +315,16 @@ export const makeKafkaMarketProjection = (
           ),
         )
         const terminals = new Map<string, KafkaConsumedRecord>()
+        let recordsSinceYield = 0
         const consume = Stream.fromAsyncIterable(source, (cause) =>
           failure('consume', 'Kafka consumption failed', cause),
         ).pipe(
           Stream.runForEach((record) =>
             Effect.gen(function* () {
+              if (++recordsSinceYield === 256) {
+                recordsSinceYield = 0
+                yield* Effect.yieldNow
+              }
               if (invalidation !== undefined) return
               const previousSequence = projection.sequence
               projection = incorporateMarketRecord(projection, record, universe, clock.currentTimeMillisUnsafe())
