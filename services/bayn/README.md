@@ -154,6 +154,9 @@ no unresolved mutations or open orders before creating a clear OBSERVE successor
 A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
 accounting and flatness checks. A bound pending or active cycle keeps its existing generation while recovery manages
 the position; it cannot attempt authority rollover until the cycle is terminal.
+An automatic failure before a research generation records any decision or intent can also settle that unused
+generation when its plan has no pending or active cycle. Recovery still requires fresh exact reconciliation and the
+existing OBSERVE successor and grant checks; operator restrictions remain held.
 The existing activation path then verifies the grant before publishing the next execution driver. This transition
 does not require a worker restart. An untouched, unbound cycle retains its plan until the session's entry cutoff,
 including restrictions after market open. Its snapshot, decision and intent history must remain empty. Partially
@@ -256,6 +259,10 @@ Alpaca WebSocket events enter the existing raw Kafka topics. Each execution work
 `@platformatic/kafka` projection for the 16-symbol core universe. Dorvud/Flink independently publishes rolling
 features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
 candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
+
+The projection yields to the Node event loop every 256 consumed records, including records discarded after an
+assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
+cancellation wait. Incorporation order and committed offsets retain the same rules.
 
 The worker joins a completed feature window to its exact raw bar revisions and independently fresh quotes/trades.
 Corrections invalidate an old feature until its replacement matches. Missing candidates produce exclusions;
