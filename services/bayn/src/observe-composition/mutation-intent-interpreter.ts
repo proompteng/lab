@@ -1,4 +1,5 @@
 import { Effect, Option, Result } from 'effect'
+import { withObservedStage } from '../telemetry'
 
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
@@ -16,7 +17,7 @@ import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { TargetPlanStatus } from '../target-planner'
 import type { CycleExecutionModel } from '../execution-model-contract'
 import {
-  decideExecutionCycleCompletion,
+  decideExecutionPhaseCompletion,
   decideExecutionIntentTerminalDisposition,
   countOpenPositions,
   decidePreparedCloseIntentAdmission,
@@ -187,6 +188,7 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
 
 const validateCurrentMutationExecutionTerms = (
   preparation: MutationPreparation,
+  limitSlippageBps: number,
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
@@ -198,6 +200,7 @@ const validateCurrentMutationExecutionTerms = (
     quantityMicros: BigInt(targetIntent.quantityMicros),
     referencePriceMicros: BigInt(target.referencePriceMicros),
     executionModel: preparation.executionModel,
+    limitSlippageBps: BigInt(limitSlippageBps),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -387,7 +390,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               intentId: prepared.intent.intentId,
               observedAt: recoveryObservedAt,
             }
-          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
       }
       if (recovery._tag === 'ObservePending' && pendingRecovery === undefined) {
         pendingRecovery = { intentId: prepared.intent.intentId, event: recovery.event }
@@ -403,7 +406,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               intentId: pendingRecovery.intentId,
               observedAt: recoveryObservedAt,
             }
-          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
       }
       return {
         _tag: 'Block',
@@ -422,7 +425,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
               intentId: pendingRecovery.intentId,
               observedAt: recoveryObservedAt,
             }
-          : { _tag: 'Wait', observedAt: recoveryObservedAt }
+          : { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'MUTATION_RECOVERY_BACKOFF' }
       }
       return yield* policyValidation.failure
     }
@@ -454,7 +457,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
     if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
-      return { _tag: 'Wait', observedAt: recoveryObservedAt }
+      return { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
     }
     if (allowSubmit) {
       for (const prepared of preparedIntents) {
@@ -465,6 +468,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         yield* Effect.fromResult(
           validateCurrentMutationExecutionTerms(
             preparation,
+            document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0,
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
@@ -491,11 +495,14 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           Effect.mapError((cause) =>
             mutationRunnerError({ message: 'durable execution intent-set commit failed', cause, failure: 'store' }),
           ),
+          withObservedStage('bayn.execution.intent.commit'),
         ),
       { concurrency: 1, discard: true },
     )
 
-    const facts = yield* dependencies.readFacts({ input, preparation, policy, cycle, document, reconcile })
+    const facts = yield* dependencies
+      .readFacts({ input, preparation, policy, cycle, document, reconcile })
+      .pipe(withObservedStage('bayn.execution.intent.reconcile'))
     if (
       document.bindings.snapshotContentHash !== facts.snapshot.contentHash ||
       document.bindings.snapshotFinalizedAt !== facts.snapshot.finalizedAt
@@ -545,13 +552,12 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     })
     const hasOpenPosition = countOpenPositions(facts.reconciliation.brokerState.positions) > 0
     for (const prepared of preparedIntentsToInspect) {
-      const stored = yield* intentStore
-        .read(prepared.intent.intentId)
-        .pipe(
-          Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'committed execution intent readback failed', cause, failure: 'store' }),
-          ),
-        )
+      const stored = yield* intentStore.read(prepared.intent.intentId).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'committed execution intent readback failed', cause, failure: 'store' }),
+        ),
+        withObservedStage('bayn.execution.intent.read'),
+      )
       const record = Option.getOrUndefined(stored)
       if (record === undefined) {
         return yield* mutationRunnerError({
@@ -560,13 +566,12 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           failure: 'contract',
         })
       }
-      const latest = yield* mutationStore
-        .latest(prepared.intent.intentId, MutationOperation.Submit)
-        .pipe(
-          Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'durable submit state refresh failed', cause, failure: 'store' }),
-          ),
-        )
+      const latest = yield* mutationStore.latest(prepared.intent.intentId, MutationOperation.Submit).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'durable submit state refresh failed', cause, failure: 'store' }),
+        ),
+        withObservedStage('bayn.execution.mutation.latest'),
+      )
       const decision = yield* Effect.fromResult(decidePreparedMutationIntent(record.intent, latest)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
@@ -583,7 +588,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             ...(record.intent.terminalOutcome === undefined ? {} : { terminalOutcome: record.intent.terminalOutcome }),
             updatedAt: record.updatedAt,
             ...(latest === undefined ? {} : { latestMutationAt: latest.occurredAt }),
-            ...(disposition === 'BENIGN_ZERO_FILL_IOC' ? { benignZeroFillIoc: true as const } : {}),
+            terminalDisposition: disposition,
           })
           if (disposition === 'UNSUCCESSFUL') {
             if (!drainOpenOrders) {
@@ -622,7 +627,11 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
                 intentId: prepared.intent.intentId,
                 observedAt: facts.evaluatedAt,
               }
-            : { _tag: 'Wait', observedAt: facts.evaluatedAt }
+            : {
+                _tag: 'Wait',
+                observedAt: facts.evaluatedAt,
+                waitReason: latest === undefined ? 'MUTATION_EVIDENCE_PENDING' : 'MUTATION_RECOVERY_BACKOFF',
+              }
         }
         case 'Recover':
           return latest !== undefined && mutationRecoveryIsDue(latest, facts.evaluatedAt)
@@ -632,11 +641,15 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
                 intentId: prepared.intent.intentId,
                 observedAt: facts.evaluatedAt,
               }
-            : { _tag: 'Wait', observedAt: facts.evaluatedAt }
+            : {
+                _tag: 'Wait',
+                observedAt: facts.evaluatedAt,
+                waitReason: latest === undefined ? 'MUTATION_EVIDENCE_PENDING' : 'MUTATION_RECOVERY_BACKOFF',
+              }
         case 'Submit': {
           if (drainOpenOrders) continue
           if (entryHasTerminalUnsuccessfulIntent) continue
-          if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+          if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
           const submitExpiresAt = executionSubmitExpiresAt(
             submissionCutoffAt,
             prepared.riskBinding.evaluation.decision.expiresAt,
@@ -701,7 +714,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           }),
         )
       }
-      return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+      return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'intent-nonterminal' }
     }
 
     if (unsuccessfulIntentFound) {
@@ -711,7 +724,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         recoveryDeadline !== undefined &&
         facts.evaluatedAt < recoveryDeadline
       ) {
-        return { _tag: 'Wait', observedAt: facts.evaluatedAt }
+        return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'intent-unsuccessful' }
       }
       return {
         _tag: 'Block',
@@ -728,7 +741,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       }
     }
 
-    const completion = decideExecutionCycleCompletion(document.createdAt, terminalEvidence, {
+    const completion = decideExecutionPhaseCompletion(mutationPhase, document.createdAt, terminalEvidence, {
       status: facts.reconciliation.brokerState.reconciliation.status,
       reconciledAt: facts.reconciliation.brokerState.reconciliation.reconciledAt,
       accountingExact: facts.reconciliation.report.metrics.accountingExact,

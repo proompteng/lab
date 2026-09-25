@@ -104,7 +104,12 @@ export interface CycleExecutionFunnelObservation {
   readonly latestIntentAt: string | null
   readonly latestOrderAt: string | null
   readonly latestFillAt: string | null
+  readonly maximumIntentToSubmitLatencyMs: number | null
   readonly maximumOrderAcknowledgementLatencyMs: number | null
+  readonly maximumOrderObservationLatencyMs: number | null
+  readonly maximumIntentToBrokerFillLatencyMs: number | null
+  readonly maximumFillIngestionLatencyMs: number | null
+  readonly latencyClockRegressionCount: number
   readonly maximumFillLatencyMs: number | null
   /** Null means no complete broker position snapshot has been observed. */
   readonly positionSnapshotObservedAt: string | null
@@ -286,7 +291,9 @@ const lifecycleCondition = (
   if (current === null) {
     if (projection.last?.phase === CycleState.Blocked) {
       return [
-        projection.last.terminalReason === CycleTerminalReason.Authority || maximumAuthority !== Authority.Execution
+        maximumAuthority !== Authority.Execution ||
+        (projection.last.terminalReason === CycleTerminalReason.Authority &&
+          nowMs >= Date.parse(projection.last.executionCloseAt))
           ? CycleOperationsCondition.Waiting
           : CycleOperationsCondition.Failed,
         CycleOperationsReason.LastCycleBlocked,

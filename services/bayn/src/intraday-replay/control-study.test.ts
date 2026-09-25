@@ -1,0 +1,501 @@
+import { expect, test } from 'bun:test'
+import { NodeServices } from '@effect/platform-node'
+import { gzipSync } from 'node:zlib'
+import { Effect, FileSystem, Layer, Result } from 'effect'
+import { TestClock } from 'effect/testing'
+
+import { OrderSide } from '../execution/contracts'
+import { canonicalHashV1, sha256 } from '../hash'
+import { nativeJevFixture } from '../jev/native.test-support'
+import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
+import { config } from '../testing/runtime-fixtures'
+import { jevModel } from '../jev/contract'
+import { ControlPolicy } from './control-portfolio'
+import {
+  ControlManagementMode,
+  runControlSession,
+  runControlStudy,
+  type ControlCapital,
+  type ControlMarket,
+} from './control-study'
+
+const fixture = nativeJevFixture()
+const openMs = Date.parse(fixture.snapshot.manifest.calendar.sessions[0]?.openAt ?? '')
+const closeMs = openMs + 90 * 60_000
+const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const simulate = async (
+  options: {
+    missingSnapshot?: boolean
+    missingExitQuotes?: boolean
+    decisionLatencyMs?: number
+    pollIntervalMs?: number
+    emptyAssets?: boolean
+    tinyExit?: boolean
+    dataCostMicros?: string
+    openingCapital?: ControlCapital
+    maximumLossMicros?: string
+    maximumDrawdownMicros?: string
+    zeroBidAtMs?: number
+    bidPriceAtMs?: (atMs: number, referencePrice: number) => number
+  } = {},
+) => {
+  let clock = openMs - 1
+  let snapshots = 0
+  const observations: { atMs: number; rangeEndMs: number }[] = []
+  const market: ControlMarket = {
+    advanceTo: (atMs) =>
+      Effect.sync(() => {
+        expect(atMs).toBeGreaterThanOrEqual(clock)
+        clock = atMs
+      }),
+    quoteAt: (symbol, atMs) =>
+      Effect.sync(() => {
+        expect(atMs).toBe(clock)
+        const original = fixture.snapshot.latestQuotes[symbol]
+        if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 44 * 60_000))
+          return undefined
+        const at = new Date(atMs).toISOString()
+        const bidPrice = options.bidPriceAtMs?.(atMs, original.bidPrice) ?? original.bidPrice
+        const value = {
+          ...original,
+          bidPrice,
+          askPrice: original.askPrice + (bidPrice - original.bidPrice),
+          eventAt: at,
+          ingestedAt: at,
+          bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
+          askSize: 1000,
+        }
+        return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+      }),
+    snapshot: (query) =>
+      Effect.sync(() => {
+        snapshots += 1
+        expect(Date.parse(query.observedAt)).toBe(clock)
+        observations.push({ atMs: clock, rangeEndMs: Date.parse(query.rangeEndAt) })
+        if (options.missingSnapshot === true)
+          return { status: 'UNAVAILABLE' as const, cause: { reason: 'fixture-missing-benchmark' } }
+        const snapshot = {
+          ...fixture.snapshot,
+          manifest: { ...fixture.snapshot.manifest, observedAt: query.observedAt },
+          latestQuotes: Object.fromEntries(
+            Object.entries(fixture.snapshot.latestQuotes).map(([symbol, value]) => [
+              symbol,
+              { ...value, eventAt: query.observedAt, ingestedAt: query.observedAt },
+            ]),
+          ),
+          trades: fixture.snapshot.trades.map((value) => ({
+            ...value,
+            eventAt: query.observedAt,
+            ingestedAt: query.observedAt,
+          })),
+        }
+        return { status: 'AVAILABLE' as const, snapshot }
+      }),
+  }
+  const risk = await Effect.runPromise(
+    loadQuoteBoundExecutionRiskPolicy('control-session-test', fixture.protocol.universe),
+  )
+  const report = await Effect.runPromise(
+    runControlSession({
+      policy: ControlPolicy.RelativeMomentum,
+      protocol: fixture.protocol,
+      risk: {
+        ...risk,
+        maxDailyLossMicros: options.maximumLossMicros ?? risk.maxDailyLossMicros,
+        maxDrawdownMicros: options.maximumDrawdownMicros ?? risk.maxDrawdownMicros,
+      },
+      session: {
+        date: fixture.snapshot.manifest.sessionDate,
+        openAt: new Date(openMs).toISOString(),
+        closeAt: new Date(closeMs).toISOString(),
+      },
+      calendar: fixture.snapshot.manifest.calendar,
+      openingCapital: options.openingCapital ?? {
+        cashMicros: '100000000000',
+        peakBrokerEquityMicros: '100000000000',
+        peakNetEquityMicros: '100000000000',
+        accruedExternalCostMicros: '0',
+      },
+      dataCostMicros: options.dataCostMicros ?? '0',
+      targetWeight: 0.1,
+      decisionLatencyMs: options.decisionLatencyMs ?? 1000,
+      pollIntervalMs: options.pollIntervalMs ?? 30_000,
+      assumptions,
+      eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
+      market,
+      management: null,
+    }),
+  )
+  return { report, snapshots, observations }
+}
+
+test('chronological controls reuse flat cash, respect full decision and route latency, and mark open through close', async () => {
+  const { report, snapshots } = await simulate({ dataCostMicros: '1000000' })
+  expect(report.completion).toBe('COMPLETE')
+  expect(report.completedEpisodes).toBeGreaterThanOrEqual(3)
+  expect(report.ledger.positions).toHaveLength(0)
+  expect(snapshots).toBe(report.orders.filter((order) => order.side === OrderSide.Buy).length)
+  for (const [index, episode] of report.episodes.entries()) {
+    const prior = report.episodes[index - 1]
+    if (prior !== undefined) expect(episode.enteredAtMs).toBeGreaterThan(prior.exitedAtMs)
+    expect(episode.exitedAtMs).toBeLessThan(closeMs)
+  }
+  const firstDecision = report.decisions.find((decision) => decision.status === 'SELECTED')
+  const firstOrder = report.orders[0]
+  if (firstDecision === undefined || firstOrder === undefined) throw new Error('Expected first decision and order')
+  expect(Date.parse(firstOrder.submittedAt) - Date.parse(firstDecision.observedAt)).toBe(1000)
+  expect(Date.parse(firstOrder.arrivedAt) - Date.parse(firstOrder.submittedAt)).toBe(100)
+  expect(report.marks.filter((mark) => (Date.parse(mark.observedAt) - openMs) % 60_000 === 0)).toHaveLength(91)
+  expect(report.marks[0]?.brokerEquityMicros).toBe('100000000000')
+  expect(report.marks[0]?.netEquityAfterKnownCostsMicros).toBe('99999000000')
+  expect(report.marks.at(-1)?.observedAt).toBe(new Date(closeMs).toISOString())
+  expect(report.marks.at(-1)?.brokerEquityMicros).toBe(report.ledger.cashMicros)
+  expect(report.marks.at(-1)?.netEquityAfterKnownCostsMicros).toBe(
+    String(BigInt(report.ledger.cashMicros) - 1_000_000n),
+  )
+  expect(BigInt(report.netPnlAfterKnownCostsMicros ?? '0')).toBe(
+    BigInt(report.ledger.netRealizedPnlAfterCostsMicros ?? '0') - 1_000_000n,
+  )
+  expect(report.episodes.reduce((sum, episode) => sum + BigInt(episode.netExecutionPnlMicros), 0n)).toBe(
+    BigInt(report.ledger.netRealizedPnlAfterCostsMicros ?? '0'),
+  )
+})
+
+test('external data costs change net performance without changing broker fills, sizing or risk decisions', async () => {
+  const limits = { maximumLossMicros: '1000000', maximumDrawdownMicros: '1000000' }
+  const baseline = (await simulate(limits)).report
+  const charged = (await simulate({ ...limits, dataCostMicros: '2000000000' })).report
+  expect(baseline.completedEpisodes).toBeGreaterThan(0)
+  expect(charged.orders).toEqual(baseline.orders)
+  expect(charged.ledger).toEqual(baseline.ledger)
+  expect(charged.decisions).toEqual(baseline.decisions)
+  expect(BigInt(charged.netPnlAfterKnownCostsMicros ?? '0')).toBe(
+    BigInt(baseline.netPnlAfterKnownCostsMicros ?? '0') - 2_000_000_000n,
+  )
+})
+
+test('external expenses may exceed broker cash without preventing an otherwise valid control session', async () => {
+  const { report } = await simulate({ emptyAssets: true, dataCostMicros: '100000000001' })
+  expect(report.completion).toBe('COMPLETE')
+  expect(report.ledger.cashMicros).toBe('100000000000')
+  expect(report.netPnlAfterKnownCostsMicros).toBe('-100000000001')
+  expect(report.marks.at(-1)?.netEquityAfterKnownCostsMicros).toBe('-1')
+})
+
+test('successive sessions carry broker cash and cumulative net expenses separately without double charging', async () => {
+  const first = (await simulate({ dataCostMicros: '2000000' })).report
+  const second = (await simulate({ openingCapital: first.closingCapital, dataCostMicros: '3000000' })).report
+  expect(second.closingCapital.accruedExternalCostMicros).toBe('5000000')
+  expect(second.marks[0]?.brokerEquityMicros).toBe(first.ledger.cashMicros)
+  expect(second.marks[0]?.netEquityAfterKnownCostsMicros).toBe(String(BigInt(first.ledger.cashMicros) - 5_000_000n))
+  expect(BigInt(second.netPnlAfterKnownCostsMicros ?? '0')).toBe(
+    BigInt(second.ledger.netRealizedPnlAfterCostsMicros ?? '0') - 3_000_000n,
+  )
+  expect(BigInt(first.netPnlAfterKnownCostsMicros ?? '0') + BigInt(second.netPnlAfterKnownCostsMicros ?? '0')).toBe(
+    BigInt(second.ledger.cashMicros) - 100_000_000_000n - 5_000_000n,
+  )
+})
+
+test('carried broker drawdown blocks entries independently of the net peak and prior external costs', async () => {
+  const openingCapital: ControlCapital = {
+    cashMicros: '99998000000',
+    peakBrokerEquityMicros: '100000000000',
+    peakNetEquityMicros: '90000000000',
+    accruedExternalCostMicros: '10000000000',
+  }
+  const { report } = await simulate({ openingCapital, maximumDrawdownMicros: '1000000' })
+  expect(report.orders).toHaveLength(0)
+  expect(report.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
+  expect(report.closingCapital).toEqual(openingCapital)
+})
+
+test('reported drawdown and session loss include external expenses', async () => {
+  const { report } = await simulate({ emptyAssets: true, dataCostMicros: '2000000' })
+  expect(report.maximumMarkedDrawdownMicros).toBe('2000000')
+  expect(report.maximumMarkedSessionLossMicros).toBe('2000000')
+  expect(report.closingCapital.peakBrokerEquityMicros).toBe('100000000000')
+  expect(report.closingCapital.peakNetEquityMicros).toBe('100000000000')
+})
+
+test('decision latency does not accumulate into skipped signal windows while flat', async () => {
+  const { report, observations } = await simulate({ emptyAssets: true, pollIntervalMs: 60_000 })
+  expect(report.orders).toHaveLength(0)
+  expect(observations.map(({ rangeEndMs }) => rangeEndMs)).toEqual(
+    Array.from({ length: 54 }, (_, index) => openMs + (30 + index) * 60_000),
+  )
+  expect(observations.every(({ atMs }) => (atMs - openMs) % 60_000 === 0)).toBeTrue()
+})
+
+test('a decision longer than the poll interval resumes at the first available scheduled poll', async () => {
+  const pollIntervalMs = 17_000
+  const decisionLatencyMs = 60_000
+  const { report, observations } = await simulate({ emptyAssets: true, pollIntervalMs, decisionLatencyMs })
+  expect(report.orders).toHaveLength(0)
+  expect(observations.length).toBeGreaterThan(40)
+  for (const [index, observation] of observations.entries()) {
+    expect((observation.atMs - openMs) % pollIntervalMs).toBe(0)
+    const previous = observations[index - 1]
+    if (previous !== undefined) {
+      expect(observation.atMs).toBeGreaterThanOrEqual(previous.atMs + decisionLatencyMs)
+      expect(observation.atMs).toBeLessThan(previous.atMs + decisionLatencyMs + pollIntervalMs)
+    }
+  }
+})
+
+test('an equity peak between minute marks blocks re-entry after the drawdown limit is exceeded', async () => {
+  const peakStartMs = openMs + 40 * 60_000 + 20_000
+  const peakEndMs = openMs + 40 * 60_000 + 45_000
+  const { report } = await simulate({
+    maximumDrawdownMicros: '100000000',
+    bidPriceAtMs: (atMs, referencePrice) => referencePrice + (atMs >= peakStartMs && atMs < peakEndMs ? 100 : 0),
+  })
+  expect(report.completion).toBe('COMPLETE')
+  expect(BigInt(report.closingCapital.peakNetEquityMicros)).toBeGreaterThan(100_100_000_000n)
+  expect(BigInt(report.maximumMarkedDrawdownMicros)).toBeGreaterThan(100_000_000n)
+  expect(report.completedEpisodes).toBe(1)
+  expect(report.orders.filter((order) => order.side === OrderSide.Buy)).toHaveLength(1)
+  expect(report.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
+})
+
+test('missing observations retain zero-trade sessions as incomplete instead of inventing entries', async () => {
+  const { report, snapshots } = await simulate({ missingSnapshot: true })
+  expect(snapshots).toBeGreaterThan(50)
+  expect(report.completion).toBe('INCOMPLETE')
+  expect(report.issues).toEqual(['MISSING_DECISION_DATA'])
+  expect(report.missingDecisions).toBe(snapshots)
+  expect(report.orders).toHaveLength(0)
+  expect(report.completedEpisodes).toBe(0)
+  expect(canonicalHashV1(report)).toHaveLength(64)
+})
+
+test('missing exit prices retain the position and missing marks through close', async () => {
+  const { report } = await simulate({ missingExitQuotes: true })
+  expect(report.completion).toBe('INCOMPLETE')
+  expect(report.issues).toContain('UNCLOSED_POSITION')
+  expect(report.issues).toContain('MISSING_EXECUTION_QUOTES')
+  expect(report.issues).toContain('MISSING_VALUATION')
+  expect(report.completedEpisodes).toBe(0)
+  expect(report.netPnlAfterKnownCostsMicros).toBeNull()
+  expect(report.ledger.positions).toHaveLength(1)
+})
+
+test('a zero-size bid leaves a missing valuation even when the position later closes', async () => {
+  const zeroBidAtMs = openMs + 40 * 60_000
+  const { report } = await simulate({ zeroBidAtMs })
+  expect(report.ledger.positions).toHaveLength(0)
+  expect(report.completedEpisodes).toBeGreaterThan(0)
+  expect(report.completion).toBe('INCOMPLETE')
+  expect(report.issues).toContain('MISSING_VALUATION')
+  expect(report.marks.find((mark) => Date.parse(mark.observedAt) === zeroBidAtMs)).toMatchObject({
+    brokerEquityMicros: null,
+    netEquityAfterKnownCostsMicros: null,
+    cause: 'no-displayed-bid-liquidity',
+  })
+})
+
+test('small exit liquidity retries the same inventory and counts only completed episodes', async () => {
+  const { report } = await simulate({ tinyExit: true })
+  const sells = report.ledger.fills.filter((fill) => fill.side === 'sell')
+  expect(sells.length).toBeGreaterThan(report.completedEpisodes)
+  expect(sells.every((fill) => fill.quantityMicros === '1000000')).toBeTrue()
+  expect(report.ledger.fills.filter((fill) => fill.side === 'buy').length).toBe(
+    report.completedEpisodes + report.ledger.positions.length,
+  )
+})
+
+test('expired decisions and ineligible assets cannot submit entries', async () => {
+  const expired = (await simulate({ decisionLatencyMs: fixture.protocol.inferenceValidityMs + 1000 })).report
+  expect(expired.orders).toHaveLength(0)
+  expect(expired.decisions.some((decision) => decision.status === 'DECISION_EXPIRED')).toBeTrue()
+  const ineligible = (await simulate({ emptyAssets: true })).report
+  expect(ineligible.orders).toHaveLength(0)
+  expect(ineligible.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
+})
+
+test.each([
+  [fixture.protocol.inferenceValidityMs - 1, true],
+  [fixture.protocol.inferenceValidityMs, false],
+  [fixture.protocol.inferenceValidityMs + 1, false],
+] as const)('control decision latency %d ms obeys the native half-open deadline', async (decisionLatencyMs, usable) => {
+  const { report } = await simulate({ decisionLatencyMs })
+  expect(report.orders.some((order) => order.side === OrderSide.Buy)).toBe(usable)
+  expect(report.decisions.some((decision) => decision.status === 'DECISION_EXPIRED')).toBe(!usable)
+})
+
+test.each(['maximumLossMicros', 'maximumDrawdownMicros'] as const)(
+  'entries at the native %s boundary are allowed, and a one-micro excess is blocked',
+  async (limit) => {
+    const baseline = (await simulate()).report
+    const firstEpisode = baseline.episodes[0]
+    if (firstEpisode === undefined) throw new Error('Expected first completed episode')
+    const firstLoss = -BigInt(firstEpisode.netExecutionPnlMicros)
+    expect(firstLoss).toBeGreaterThan(0n)
+    const atBoundary = (await simulate({ dataCostMicros: '1000000', [limit]: String(firstLoss) })).report
+    expect(atBoundary.orders.filter((order) => order.side === OrderSide.Buy)).toHaveLength(2)
+    const exceeded = (await simulate({ dataCostMicros: '1000000', [limit]: String(firstLoss - 1n) })).report
+    expect(exceeded.orders.filter((order) => order.side === OrderSide.Buy)).toHaveLength(1)
+  },
+)
+
+test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
+  const retained = retainedReplayFixture()
+  const source = {
+    ...retained.manifest,
+    coverageStartMs: Date.parse('2026-09-04T13:30:00Z'),
+    coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
+  }
+  const { verification: _verification, ...build } = config.build
+  const input = {
+    schemaVersion: 'bayn.control-study-input.v2',
+    management: ControlManagementMode.Mechanical,
+    decisionLatencyMs: 1000,
+    repeatedTargetWeightPpm: 100000,
+    backtest: {
+      schemaVersion: 'bayn.backtest.v3',
+      inference: {
+        mode: 'measured-provider',
+        model: jevModel,
+        inputDefinition: 'bayn.jev-trading-signal-state.v2',
+        costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+      },
+      allocatedDataCostPerSessionMicros: '1000000',
+      replicate: 'control-source-fixture',
+      sessionDates: ['2026-09-04', '2026-09-08'],
+      source,
+      openingCashMicros: '100000000000',
+      fractionalTrading: false,
+      calendar: [
+        ...retained.input.input.calendar,
+        { date: '2026-09-08', open: '09:30', close: '16:00' },
+        { date: '2026-09-09', open: '09:30', close: '16:00' },
+      ],
+      assets: retained.input.protocol.universe.map((symbol, index) => ({
+        id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
+        symbol,
+        class: 'us_equity',
+        exchange: 'NASDAQ',
+        status: 'active',
+        tradable: true,
+        fractionable: true,
+      })),
+      assetObservationAt: '2026-09-04T13:29:00.000Z',
+      assetObservationPolicy: 'retained-as-of-session',
+      build,
+      assumptions,
+      cadence: {
+        pollIntervalMs: 30000,
+        reconciliationIntervalMs: 30000,
+        reconciliationPassTimeoutMs: 30000,
+        reconciliationStaleThresholdMs: 120000,
+      },
+    },
+  }
+  const receipt = retainedReplayCaptureFixture(source)
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const arrivals = `${directory}/arrivals.ndjson.gz`
+      yield* fs.writeFile(arrivals, gzipSync(retained.body))
+      const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
+      expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
+      expect(report.sessions).toHaveLength(6)
+      for (const session of report.sessions) {
+        expect(session.completion).toBe('INCOMPLETE')
+        expect(session.completedEpisodes).toBe(0)
+        expect(session.netPnlAfterKnownCostsMicros).toBe('-1000000')
+        expect(session.marks.filter((mark) => Date.parse(mark.observedAt) % 60_000 === 0)).toHaveLength(391)
+        expect(session.missingDecisions).toBeGreaterThan(0)
+        const cumulativeCost = session.sessionDate === '2026-09-04' ? '1000000' : '2000000'
+        expect(session.closingCapital).toEqual({
+          cashMicros: input.backtest.openingCashMicros,
+          peakBrokerEquityMicros: input.backtest.openingCashMicros,
+          peakNetEquityMicros: input.backtest.openingCashMicros,
+          accruedExternalCostMicros: cumulativeCost,
+        })
+        expect(session.marks.at(-1)?.netEquityAfterKnownCostsMicros).toBe(
+          String(BigInt(input.backtest.openingCashMicros) - BigInt(cumulativeCost)),
+        )
+      }
+      const { reportHash, ...material } = report
+      expect(canonicalHashV1(material)).toBe(reportHash)
+      const providerClock = yield* TestClock.make()
+      const evidenceDirectory = `${directory}/managed-evidence`
+      const managedInput = { ...input, management: ControlManagementMode.Jev }
+      const management = {
+        mode: ControlManagementMode.Jev as const,
+        evidenceDirectory,
+        providerClock,
+        provider: { evaluate: () => Effect.die('A missing-signal source must never call a provider') },
+      }
+      const managed = yield* runControlStudy(managedInput, arrivals, receipt, management)
+      expect(managed.sessions).toHaveLength(6)
+      expect(managed.sessions.every((session) => session.modelCallCount === 0)).toBeTrue()
+      for (const session of managed.sessions)
+        expect(session.managementMode).toBe(
+          session.policy === ControlPolicy.RetainedBreakout
+            ? ControlManagementMode.Mechanical
+            : ControlManagementMode.Jev,
+        )
+      expect(yield* fs.exists(`${evidenceDirectory}/registration.json`)).toBeTrue()
+      expect(yield* fs.exists(`${evidenceDirectory}/${ControlPolicy.RelativeMomentum}`)).toBeTrue()
+      expect(yield* fs.exists(`${evidenceDirectory}/${ControlPolicy.RepeatedBreakout}`)).toBeTrue()
+      expect(
+        Result.isFailure(yield* Effect.result(runControlStudy(managedInput, arrivals, receipt, management))),
+      ).toBeTrue()
+      expect(
+        Result.isFailure(
+          yield* Effect.result(
+            runControlStudy(managedInput, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
+          ),
+        ),
+      ).toBeTrue()
+      const inputText = JSON.stringify(input)
+      const receiptText = JSON.stringify({
+        schemaVersion: 'bayn.replay-source-capture.v1',
+        capturedAt: new Date(source.coverageEndMs + 1).toISOString(),
+        origin: 'Independently frozen deterministic capture fixture',
+        coverageStartMs: source.coverageStartMs,
+        coverageEndMs: source.coverageEndMs,
+        universe: source.universe,
+        positions: source.positions,
+      })
+      yield* fs.writeFileString(`${directory}/input.json`, inputText)
+      yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
+      const args = [
+        'bun',
+        new URL('../../tools/control-study.ts', import.meta.url).pathname,
+        '--input',
+        `${directory}/input.json`,
+        '--input-sha256',
+        sha256(inputText),
+        '--arrivals',
+        arrivals,
+        '--source-receipt',
+        `${directory}/receipt.json`,
+        '--source-receipt-sha256',
+        sha256(receiptText),
+        '--output',
+        `${directory}/report.json`,
+      ]
+      const child = yield* Effect.acquireRelease(
+        Effect.sync(() => Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe' })),
+        (process) =>
+          Effect.sync(() => {
+            process.kill()
+          }),
+      )
+      const status = yield* Effect.promise(() => child.exited)
+      const error = yield* Effect.promise(() => new Response(child.stderr).text())
+      expect({ status, error }).toEqual({ status: 0, error: '' })
+      const written = yield* fs.readFileString(`${directory}/report.json`)
+      expect(written).toBe(`${JSON.stringify(report, null, 2)}\n`)
+      yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+      const corrupt = yield* Effect.result(
+        runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
+      )
+      expect(Result.isFailure(corrupt)).toBeTrue()
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
+  )
+}, 30_000)

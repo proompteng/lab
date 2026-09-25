@@ -2,8 +2,16 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
-import { makeIntradayPerformanceFixture } from './intraday-cycle.test-support'
-import { makeIntradayPerformanceVolumeEvidence, validIntradayPerformanceVolumeEvidence } from './intraday-volume'
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
+import {
+  intradayPerformanceDecisionRequest,
+  makeIntradayPerformanceVolumeEvidence,
+  validIntradayPerformanceVolumeEvidence,
+} from './intraday-volume'
 import { bindForwardPerformanceTerminalReferencePrices } from './program'
 
 test('reads a complete native session with exact microshares and an explicit IEX terminal mark', () => {
@@ -55,6 +63,119 @@ test('reads a complete native session with exact microshares and an explicit IEX
     priceMicros: '218690000',
     sourceEvidenceHash: evidence.contentHash,
   })
+})
+
+test('binds a streaming partial fill to a verified session close without changing the decision manifest', () => {
+  const { request, archive, bars } = makeStreamingPerformanceFixture()
+  const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
+  expect(evidence).toMatchObject({
+    decisionManifest: request.decisionManifest,
+    decisionSnapshotId: request.decisionSnapshotId,
+    quantityMicros: '39000000000',
+    closePriceMicros: '218690000',
+    missingMinutes: [],
+  })
+  if (evidence === undefined) throw new Error('expected streaming session evidence')
+  expect(validIntradayPerformanceVolumeEvidence(evidence)).toBe(true)
+  const original = Result.getOrThrow(intradayPerformanceDecisionRequest(request))
+  expect(original.archiveWatermarks).toEqual(
+    request.decisionManifest.lineage.map((source) => ({
+      sourceTopic: source.sourceTopic,
+      sourcePartition: source.sourcePartition,
+      inclusiveLastOffset: source.lastOffset,
+    })),
+  )
+  const execution = {
+    cycleId: request.cycleId,
+    decisionDocumentHash: 'b'.repeat(64),
+    decisionHash: 'c'.repeat(64),
+    decisionCreatedAt: request.decisionManifest.observedAt,
+    intentId: 'd'.repeat(64),
+    accountId: 'test-account',
+    symbol: request.symbol,
+    side: 'BUY' as const,
+    fills: [],
+    terminalOrder: {
+      eventId: 'e'.repeat(64),
+      brokerOrderId: 'streaming-order',
+      clientOrderId: 'streaming-client',
+      intentId: 'd'.repeat(64),
+      accountId: 'test-account',
+      symbol: request.symbol,
+      side: 'BUY' as const,
+      quantityMicros: '39000000',
+      filledQuantityMicros: '18000000',
+      status: 'CANCELED' as const,
+      occurredAt: '2026-09-04T14:30:04.000Z',
+      observedAt: '2026-09-04T14:30:05.000Z',
+    },
+  }
+  const bound = Result.getOrThrow(bindForwardPerformanceTerminalReferencePrices([execution], [evidence]))
+  expect(bound[0]?.terminalReferencePrice).toMatchObject({
+    priceMicros: '218690000',
+    sourceEvidenceHash: evidence.contentHash,
+  })
+  expect(Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(0, -1)))).toBeUndefined()
+  const missing = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars.slice(1)))
+  expect(missing?.missingMinutes).toEqual([request.windowOpenedAt])
+})
+
+test('retains session archive partitions that supplied no decision-window records', () => {
+  const { request, archive, bars } = makeStreamingPartitionPerformanceFixture()
+  expect(request.decisionManifest.lineage.some((source) => source.sourcePartition === 1)).toBe(false)
+  const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
+  if (evidence === undefined) throw new Error('expected a complete session across both bar partitions')
+  expect(evidence).toMatchObject({ archiveRequest: archive, barCount: 390, quantityMicros: '39000000000' })
+  expect(validIntradayPerformanceVolumeEvidence(evidence)).toBe(true)
+  expect(
+    Result.isFailure(
+      makeIntradayPerformanceVolumeEvidence(
+        request,
+        { ...archive, archiveWatermarks: archive.archiveWatermarks.filter((item) => item.sourcePartition !== 1) },
+        bars,
+      ),
+    ),
+  ).toBe(true)
+})
+
+test('rejects streaming cut tampering and an archive that has not retained the consumed decision rows', () => {
+  const { request, archive, bars } = makeStreamingPerformanceFixture()
+  const manifest = request.decisionManifest
+  if (manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1') throw new Error('expected streaming fixture')
+  const { contentHash: _contentHash, snapshotId: _snapshotId, ...material } = manifest
+  const changed = {
+    ...material,
+    streaming: {
+      ...manifest.streaming,
+      positions: manifest.streaming.positions.map((position) => ({ ...position, offset: '0' })),
+    },
+  }
+  const withHash = { ...changed, contentHash: canonicalHashV1(changed) }
+  const tampered = { ...withHash, snapshotId: canonicalHashV1(withHash) }
+  expect(
+    Result.isFailure(
+      intradayPerformanceDecisionRequest({
+        ...request,
+        decisionManifest: tampered,
+        decisionSnapshotId: tampered.snapshotId,
+      }),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isFailure(
+      makeIntradayPerformanceVolumeEvidence(
+        request,
+        {
+          ...archive,
+          archiveWatermarks: archive.archiveWatermarks.map((watermark) => ({
+            ...watermark,
+            inclusiveLastOffset: '0',
+          })),
+        },
+        bars,
+      ),
+    ),
+  ).toBe(true)
 })
 
 test('preserves an observed closing mark while reporting missing minutes and withholding absent or provisional closes', () => {

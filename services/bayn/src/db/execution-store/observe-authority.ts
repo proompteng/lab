@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
+import { withObservedStage } from '../../telemetry'
 
 import {
   BrokerEnvironment,
@@ -522,14 +523,26 @@ const makeObserveAuthorityInterpreterDataFirst = (
       ),
     )
 
-  const readAuthorityState = runExecutionOperation(
-    'authority',
-    sql<Record<string, unknown>>`
+  const authorityStateQuery = sql`
         SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
           version::text AS version, updated_at
         FROM authority_state
         WHERE singleton
-      `.pipe(
+      `
+  const readAuthorityState = runExecutionOperation(
+    'authority',
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transaction = yield* Effect.serviceOption(sql.transactionService)
+        const connection = Option.isSome(transaction)
+          ? transaction.value[0]
+          : yield* sql.reserve.pipe(withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }))
+        const [statement, parameters] = authorityStateQuery.compile()
+        return yield* connection
+          .execute(statement, parameters, undefined)
+          .pipe(withObservedStage('bayn.postgres.authority-query', { dependency: 'postgresql' }))
+      }),
+    ).pipe(
       Effect.flatMap(decodeAuthorityStateRows),
       Effect.flatMap((rows) =>
         rows[0] === undefined

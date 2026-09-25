@@ -1,6 +1,7 @@
 import { Effect, Option, pipe } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca'
+import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { CycleState, type AutonomousCycle } from '../model'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
@@ -11,11 +12,13 @@ import {
   finishRecoveryResult,
   makeIntradayCycleDraft,
   marketCalendarQueryFromSession,
+  nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
   selectCyclePassContinuation,
   type CyclePassProgress,
 } from './decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
+import { DecisionReadinessReason } from './readiness'
 
 const currentIsoTime = currentUtcInstant
 
@@ -23,7 +26,7 @@ const discoverIntradayCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
   const candidate =
-    context.strategyName === 'intraday-momentum' &&
+    (context.strategyName === 'intraday-momentum' || context.strategyName === 'jev') &&
     context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
       ? {
           cycleBindingId: context.cycleBindingId,
@@ -66,7 +69,9 @@ const discoverIntradayCyclePass = <R>(
         message: 'broker calendar has no session whose intraday entry cutoff remains open',
       })
     }
-    const draft = yield* Effect.fromResult(makeIntradayCycleDraft(candidate, calendar.value, executionSession)).pipe(
+    const firstAttemptDraft = yield* Effect.fromResult(
+      makeIntradayCycleDraft(candidate, calendar.value, executionSession, 1),
+    ).pipe(
       Effect.mapError((cause) =>
         runnerError({
           operation: 'build-cycle',
@@ -81,7 +86,7 @@ const discoverIntradayCyclePass = <R>(
       .readAuthoritySlot({
         qualificationRunId: context.cycleBindingId,
         accountId: context.accountId,
-        executionSessionDate: draft.identity.executionSessionDate,
+        executionSessionDate: firstAttemptDraft.identity.executionSessionDate,
       })
       .pipe(
         Effect.mapError((cause) =>
@@ -93,11 +98,51 @@ const discoverIntradayCyclePass = <R>(
           }),
         ),
       )
-    if (Option.isSome(existing)) {
+    let recoveredBlockedCycle = false
+    if (
+      Option.isSome(existing) &&
+      existing.value.state === CycleState.Blocked &&
+      context.authorityGenerationHash !== undefined
+    ) {
+      const prior = yield* store.readDecisionDocument(existing.value.identity.cycleId).pipe(
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'read-authority-slot',
+            failure: 'store',
+            message: 'blocked cycle authority binding read failed',
+            cause,
+          }),
+        ),
+      )
+      recoveredBlockedCycle =
+        Option.isSome(prior) &&
+        prior.value.mode === Authority.Execution &&
+        prior.value.contentHash === existing.value.bindings.decisionHash &&
+        prior.value.bindings.authorityGenerationHash !== context.authorityGenerationHash
+    }
+    const entryAttemptOrdinal = Option.isSome(existing)
+      ? nextIntradayEntryAttemptOrdinal(existing.value, observedAt, recoveredBlockedCycle)
+      : 1
+    if (Option.isSome(existing) && entryAttemptOrdinal === undefined) {
       return isTerminalCycleState(existing.value.state)
         ? ({ outcome: 'ALREADY_TERMINAL', observedAt, cycle: existing.value } as const)
         : ({ outcome: 'ALREADY_ACQUIRED', observedAt, cycle: existing.value } as const)
     }
+    const draft =
+      entryAttemptOrdinal === 1
+        ? firstAttemptDraft
+        : yield* Effect.fromResult(
+            makeIntradayCycleDraft(candidate, calendar.value, executionSession, entryAttemptOrdinal),
+          ).pipe(
+            Effect.mapError((cause) =>
+              runnerError({
+                operation: 'build-cycle',
+                failure: 'contract',
+                message: 'intraday autonomous cycle rearm construction failed',
+                cause,
+              }),
+            ),
+          )
     const receipt = yield* store.acquire(draft, observedAt).pipe(
       Effect.mapError((cause) =>
         runnerError({
@@ -188,6 +233,7 @@ const recoverCycle = <R>(
       return Effect.succeed({
         outcome: 'RECOVERED',
         action: 'WAITING',
+        waitReason: 'AWAITING_SUBMISSION_OPEN',
         observedAt: selection.observedAt,
         cycle: selection.cycle,
       })
@@ -200,6 +246,10 @@ const recoverCycle = <R>(
                   Effect.map((observedAt) => ({
                     outcome: 'RECOVERED' as const,
                     action: 'WAITING' as const,
+                    readiness: cause.readiness ?? {
+                      reason: DecisionReadinessReason.DecisionPending,
+                      message: cause.message,
+                    },
                     observedAt,
                     cycle: selection.cycle,
                   })),

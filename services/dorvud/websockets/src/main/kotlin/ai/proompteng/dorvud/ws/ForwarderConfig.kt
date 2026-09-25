@@ -85,6 +85,7 @@ data class ForwarderConfig(
   val marketDataChannelFreshnessMaxMs: Long = 180_000,
   val marketDataChannelFreshnessWarmupMs: Long = 120_000,
   val marketDataReadIdleTimeoutMs: Long = 180_000,
+  val latestMarketData: LatestMarketDataConfig? = null,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -198,6 +199,39 @@ data class ForwarderConfig(
         }
       }
       val alpacaMarketDataSymbolOverrides = configuredSymbolOverrides
+      val latestSymbols = mergedEnv["ALPACA_LATEST_SYMBOLS"]?.split(",")?.map { it.trim().uppercase() }
+      val latestMarketData =
+        latestSymbols?.let { symbols ->
+          require(symbols.isNotEmpty() && symbols.size <= 100 && symbols.distinct() == symbols && symbols.all { it in staticSymbolSet }) {
+            "ALPACA_LATEST_SYMBOLS must contain 1 to 100 unique symbols present in SYMBOLS"
+          }
+          require(
+            alpacaMarketType == AlpacaMarketType.EQUITY && alpacaFeed == "iex" && shardCount == 1 &&
+              mergedEnv["JANGAR_SYMBOLS_URL"].isNullOrBlank(),
+          ) {
+            "ALPACA_LATEST_SYMBOLS requires one static equity IEX shard"
+          }
+          for (channel in listOf("quotes", "trades")) {
+            val streamed = if (channel in alpacaMarketDataChannels) configuredSymbolOverrides[channel] ?: staticSymbolSet else emptySet()
+            require(symbols.none { it in streamed }) { "ALPACA_LATEST_SYMBOLS must not overlap WebSocket $channel symbols" }
+          }
+          val interval =
+            mergedEnv["ALPACA_LATEST_POLL_INTERVAL_MS"]?.let {
+              requireNotNull(
+                it.toLongOrNull(),
+              ) { "invalid ALPACA_LATEST_POLL_INTERVAL_MS" }
+            }
+              ?: 2_000
+          val maximumAge =
+            mergedEnv["ALPACA_LATEST_MAX_AGE_MS"]?.let { requireNotNull(it.toLongOrNull()) { "invalid ALPACA_LATEST_MAX_AGE_MS" } }
+              ?: 10_000
+          require(interval in 2_000..60_000) { "ALPACA_LATEST_POLL_INTERVAL_MS must be within [2000, 60000]" }
+          require(maximumAge in 1_000..10_000) { "ALPACA_LATEST_MAX_AGE_MS must be within [1000, 10000]" }
+          LatestMarketDataConfig(symbols, interval, maximumAge)
+        }
+      require(latestSymbols != null || listOf("ALPACA_LATEST_POLL_INTERVAL_MS", "ALPACA_LATEST_MAX_AGE_MS").none { it in mergedEnv }) {
+        "latest observation settings require ALPACA_LATEST_SYMBOLS"
+      }
       val optionsMarketHolidays = parseIsoDateSet(mergedEnv["OPTIONS_MARKET_HOLIDAYS"])
 
       val jangarSymbolsUrl =
@@ -399,6 +433,7 @@ data class ForwarderConfig(
         marketDataChannelFreshnessMaxMs = marketDataChannelFreshnessMaxMs,
         marketDataChannelFreshnessWarmupMs = marketDataChannelFreshnessWarmupMs,
         marketDataReadIdleTimeoutMs = marketDataReadIdleTimeoutMs.coerceAtLeast(30_000),
+        latestMarketData = latestMarketData,
       )
     }
 

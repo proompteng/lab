@@ -115,19 +115,47 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
         if (joined) invalidated(new Error('Kafka partitions reassigned'))
       })
       consumer.on('consumer:heartbeat:stalled', () => invalidated(new Error('Kafka heartbeat stalled')))
-      const source = await consumer.consume({
-        topics: [...new Set(positions.map((position) => position.topic))],
-        mode: MessagesStreamModes.MANUAL,
-        fallbackMode: MessagesStreamFallbackModes.FAIL,
-        offsets: positions.map((position) => ({ ...position, offset: BigInt(position.offset) })),
-        autocommit: false,
-        isolationLevel: 1,
-        highWaterMark: 256,
-        maxBytes: 1_048_576,
-        maxBytesPerPartition: 262_144,
-        maxWaitTime: 250,
+      const source = await new Promise<MessagesStream<string, string, string, string>>((resolve, reject) => {
+        if (closePromise !== undefined) {
+          reject(new Error('Kafka consumer is closed'))
+          return
+        }
+        consumer.consume(
+          {
+            topics: [...new Set(positions.map((position) => position.topic))],
+            mode: MessagesStreamModes.MANUAL,
+            fallbackMode: MessagesStreamFallbackModes.FAIL,
+            offsets: positions.map((position) => ({ ...position, offset: BigInt(position.offset) })),
+            autocommit: false,
+            isolationLevel: 1,
+            highWaterMark: 256,
+            maxBytes: 1_048_576,
+            maxBytesPerPartition: 262_144,
+            maxWaitTime: 250,
+          },
+          (error, stream) => {
+            if (error !== null && error !== undefined) {
+              reject(error)
+              return
+            }
+            if (stream === undefined) {
+              reject(new Error('Kafka consumer returned no stream'))
+              return
+            }
+            // Node can run _construct and emit an error before a Promise continuation attaches the iterator.
+            stream.on('error', (cause) => {
+              if (closePromise === undefined) invalidated(cause)
+            })
+            if (closePromise !== undefined) {
+              stream.destroy()
+              reject(new Error('Kafka consumer closed during stream acquisition'))
+              return
+            }
+            active = stream
+            resolve(stream)
+          },
+        )
       })
-      active = source
       let pending = false
       return {
         queuedRecords: () => source.readableLength,
@@ -210,7 +238,6 @@ export const makeKafkaMarketProjection = (
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
     const owner = yield* Effect.scope
-    let restartAfterMs: number | undefined
     let projection = emptyStreamingProjection('starting', universe.topics.technicalFeatures)
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
@@ -416,23 +443,15 @@ export const makeKafkaMarketProjection = (
         Effect.gen(function* () {
           if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)
           ready = false
-          restartAfterMs = clock.currentTimeMillisUnsafe() + 30_000
           lastFailure ??= failure('consume', 'Kafka market projection stopped', cause)
           yield* Effect.logError('Kafka market projection stopped', cause)
+          yield* Effect.sleep('30 seconds')
         }),
       ),
     )
-    const start = Effect.gen(function* () {
-      restartAfterMs = undefined
-      yield* supervision.pipe(Effect.forkIn(owner))
-    })
-    yield* start
+    yield* supervision.pipe(Effect.forever, Effect.forkIn(owner))
     return {
       read: Effect.suspend(() => {
-        if (restartAfterMs !== undefined && clock.currentTimeMillisUnsafe() >= restartAfterMs)
-          return start.pipe(
-            Effect.andThen(Effect.fail(failure('read', 'Kafka projection is rebuilding after connection recovery'))),
-          )
         return ready && bootstrap !== undefined
           ? Effect.succeed({
               projection,

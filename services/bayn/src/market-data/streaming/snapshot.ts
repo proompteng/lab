@@ -1,6 +1,8 @@
+import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result, Schema } from 'effect'
 import {
   SimulatedSnapshotSourceSchema,
+  type StreamingSnapshotEvidenceSchema,
   type SimulatedSnapshotEvidenceSchema,
   type TechnicalSnapshotEvidenceSchema,
 } from './evidence-schema'
@@ -15,7 +17,7 @@ import type {
   IntradaySnapshotQuery,
 } from '../intraday/model'
 import { IntradaySnapshotFailure } from '../intraday/model'
-import { compareRecords, lineageOf, verifyIntradaySnapshotQuery } from '../intraday/verification'
+import { compareRecords, lineageOf, replayedBarRow, verifyIntradaySnapshotQuery } from '../intraday/verification'
 import type { RollingMarketFeature } from '../features/contract'
 import type { KafkaProjectionCut } from './kafka'
 import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap'
@@ -41,11 +43,13 @@ export interface StreamingFeatureReceipt<A = RollingMarketFeature> {
 }
 export interface StreamingSnapshotEvidence {
   readonly schemaVersion: 'bayn.streaming-input-cut.v1'
+  readonly barPublicationPolicy?: BarPublicationPolicy.TimelyEquivalentRevision
   readonly bootstrap: KafkaBootstrapEvidence
   readonly positions: readonly KafkaPartitionPosition[]
   readonly sequence: number
   readonly records: readonly StreamingRecordReceipt[]
   readonly features: readonly StreamingFeatureReceipt[]
+  readonly barPublications?: (typeof StreamingSnapshotEvidenceSchema.Type)['barPublications']
   readonly technical?: typeof TechnicalSnapshotEvidenceSchema.Type
 }
 export interface StreamingSnapshotManifest extends Omit<
@@ -99,6 +103,7 @@ const recordReceipt = (entry: ObservedMarketValue<IntradayRecordIdentity>) =>
 export const constructStreamingSnapshot = (
   cut: KafkaProjectionCut,
   query: IntradaySnapshotQuery,
+  publicationPolicy = BarPublicationPolicy.TimelyEquivalentRevision,
 ): Result.Result<StreamingVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const request = yield* verifyIntradaySnapshotQuery(query)
@@ -115,10 +120,16 @@ export const constructStreamingSnapshot = (
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
       )
-    const snapshot = yield* constructSnapshotMaterial(state, request, cut.positions, {
-      schemaVersion: 'bayn.streaming-market-snapshot.v1',
-      streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: cut.bootstrap },
-    })
+    const snapshot = yield* constructSnapshotMaterial(
+      state,
+      request,
+      cut.positions,
+      {
+        schemaVersion: 'bayn.streaming-market-snapshot.v1',
+        streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: cut.bootstrap },
+      },
+      publicationPolicy,
+    )
     return Object.freeze({ ...snapshot, [StreamingVerifiedSnapshotTypeId]: true as const })
   })
 
@@ -139,14 +150,26 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
   request: IntradaySnapshotQuery,
   positions: readonly KafkaPartitionPosition[],
   provenance: P,
+  publicationPolicy: BarPublicationPolicy,
 ) =>
   Result.gen(function* () {
-    const { symbols, entries, featureReceipts, technical, bars, quotes, trades, availability, exclusions, excluded } =
-      yield* selectStreamingInputs(state, request)
+    const {
+      symbols,
+      entries,
+      featureReceipts,
+      barPublications,
+      technical,
+      bars,
+      quotes,
+      trades,
+      availability,
+      exclusions,
+      excluded,
+    } = yield* selectStreamingInputs(state, request, publicationPolicy)
     const sourcePositions = new Map(
       positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
     )
-    for (const entry of entries) {
+    for (const entry of [...entries, ...barPublications]) {
       const maximum = sourcePositions.get(topicPartitionKey(entry.value.sourceTopic, entry.value.sourcePartition))
       if (entry.sequence > state.sequence || maximum === undefined || BigInt(entry.value.sourceOffset) >= maximum)
         return yield* Result.fail(failure('watermark', 'Streaming row is outside the incorporated source cut'))
@@ -194,7 +217,19 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       lineage: yield* lineageOf([...bars, ...quotes, ...trades].toSorted(compareRecords)),
       streaming: {
         ...streaming,
+        ...(publicationPolicy === BarPublicationPolicy.LegacyQuoteAge
+          ? {}
+          : { barPublicationPolicy: publicationPolicy }),
         ...(technical === undefined ? {} : { technical }),
+        ...(barPublications.length === 0
+          ? {}
+          : {
+              barPublications: yield* Result.all(
+                barPublications
+                  .toSorted((a, b) => a.sequence - b.sequence)
+                  .map((entry) => Result.all({ row: replayedBarRow(entry.value), receipt: recordReceipt(entry) })),
+              ),
+            }),
         positions,
         sequence: state.sequence,
         records: (yield* Result.all(entries.map(recordReceipt))).toSorted((a, b) => a.sequence - b.sequence),
@@ -217,6 +252,7 @@ export const constructSimulatedSnapshot = (
   cursor: HistoricalMarketCursor,
   source: typeof SimulatedSnapshotSourceSchema.Type,
   query: IntradaySnapshotQuery,
+  publicationPolicy = BarPublicationPolicy.TimelyEquivalentRevision,
 ): Result.Result<SimulatedVerifiedMarketSnapshot, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const provenance = yield* Schema.decodeUnknownResult(
@@ -240,6 +276,7 @@ export const constructSimulatedSnapshot = (
       cursor.universe.topics.trades !== request.sourceTopics.trades ||
       cursor.universe.symbols.join(',') !== request.universe.join(',') ||
       cursor.regeneratedFeaturesRecordedAtMs !== provenance.regeneratedFeaturesRecordedAtMs ||
+      cursor.regeneratedTechnicalFeaturesRecordedAtMs !== provenance.regeneratedTechnicalFeaturesRecordedAtMs ||
       state.minimumObservationMs > observedAtMs ||
       (cursor.lastArrival !== null && cursor.lastArrival.availableAtMs > observedAtMs) ||
       Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
@@ -252,9 +289,15 @@ export const constructSimulatedSnapshot = (
         offset: String(BigInt(offset) + 1n),
       }))
       .toSorted((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition)
-    const snapshot = yield* constructSnapshotMaterial(state, request, positions, {
-      schemaVersion: 'bayn.simulated-market-snapshot.v1',
-      streaming: { schemaVersion: 'bayn.simulated-input-cut.v1', ...provenance },
-    })
+    const snapshot = yield* constructSnapshotMaterial(
+      state,
+      request,
+      positions,
+      {
+        schemaVersion: 'bayn.simulated-market-snapshot.v1',
+        streaming: { schemaVersion: 'bayn.simulated-input-cut.v1', ...provenance },
+      },
+      publicationPolicy,
+    )
     return Object.freeze({ ...snapshot, [SimulatedVerifiedSnapshotTypeId]: true as const })
   })

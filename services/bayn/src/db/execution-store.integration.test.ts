@@ -159,6 +159,20 @@ const order = () => ({
   observedAt,
 })
 
+const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => {
+  const observedOrder = order()
+  return {
+    _tag: 'Order',
+    broker: Broker.Alpaca,
+    accountId,
+    sourceEventId: 'order-observation-1',
+    contentHash: canonicalHashV1(observedOrder),
+    occurredAt,
+    observedAt,
+    order: observedOrder,
+  }
+}
+
 const positionEvent = (
   sourceHash: string,
   symbol: string,
@@ -285,7 +299,22 @@ describePostgres('PostgreSQL execution persistence', () => {
           `${executionMandateFailureRestrictionPrefix} permanent failure`,
           '2026-08-28T14:34:00.000Z',
         )
-        return { initial, replay, lineage, restricted, promoted: yield* authority.readAuthorityState }
+        const promoted = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority('operator hold', '2026-08-28T14:35:00.000Z')
+        const held = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority(
+          `${executionMandateFailureRestrictionPrefix} later automatic failure`,
+          '2026-08-28T14:36:00.000Z',
+        )
+        return {
+          initial,
+          replay,
+          lineage,
+          restricted,
+          promoted,
+          held,
+          afterLaterFailure: yield* authority.readAuthorityState,
+        }
       }),
     )
 
@@ -315,6 +344,13 @@ describePostgres('PostgreSQL execution persistence', () => {
       reason: `${executionMandateFailureRestrictionPrefix} permanent failure`,
       version: 4,
     })
+    expect(result.held).toMatchObject({
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: 'operator hold',
+      version: 5,
+    })
+    expect(result.afterLaterFailure).toEqual(result.held)
   })
 
   test('deduplicates broker observations and derives valuation from one complete position snapshot', async () => {
@@ -448,6 +484,51 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(journalControl.postCount).toBe(3)
   })
 
+  test('batches completed broker history while retaining conflicts and incomplete fill recovery', async () => {
+    const observedOrder = orderEvent()
+    const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000', '100000000')
+    const preparedFill = fillEvent('fill-pending', OrderSide.Buy, '1000000', '101000000')
+    const unaccountedFill = fillEvent('fill-unaccounted', OrderSide.Buy, '1000000', '101000000')
+    const newOrder = { ...observedOrder, sourceEventId: 'order-observation-2' }
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const accounting = yield* FillAccountingStore
+        yield* events.ingest(observedOrder)
+        yield* accounting.account(accountedFill)
+        yield* events.ingest(unaccountedFill)
+        journalControl.failPosts = true
+        const postingFailure = yield* accounting.account(preparedFill).pipe(Effect.flip)
+        journalControl.failPosts = false
+
+        const history = [observedOrder, accountedFill, preparedFill, unaccountedFill, newOrder]
+        const completed = yield* events.completeHistory(history)
+        yield* accounting.verifyCompleted([accountedFill])
+        const accountingMismatch = yield* accounting
+          .verifyCompleted([{ ...accountedFill, fill: { ...accountedFill.fill, quantityMicros: '2000000' } }])
+          .pipe(Effect.flip)
+        yield* accounting.account(preparedFill)
+        const completedAfterRecovery = yield* events.completeHistory(history)
+        yield* accounting.verifyCompleted([accountedFill, preparedFill])
+        const conflict = yield* events
+          .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
+          .pipe(Effect.flip)
+        return { completed, completedAfterRecovery, postingFailure, accountingMismatch, conflict }
+      }),
+    )
+
+    expect([...result.completed].sort()).toEqual([accountedFill.sourceEventId, observedOrder.sourceEventId])
+    expect([...result.completedAfterRecovery].sort()).toEqual([
+      accountedFill.sourceEventId,
+      preparedFill.sourceEventId,
+      observedOrder.sourceEventId,
+    ])
+    expect(result.postingFailure).toMatchObject({ operation: 'account', failure: 'ledger' })
+    expect(result.accountingMismatch).toMatchObject({ operation: 'account', failure: 'conflict' })
+    expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
+  })
+
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
     await runtime.runPromise(Effect.flatMap(BrokerEventStore, (events) => events.ingest(flatAccountEvent())))
     const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
@@ -541,12 +622,20 @@ describePostgres('PostgreSQL execution persistence', () => {
         const rows = yield* sql<{ status: string }>`
           SELECT status FROM reconciliations ORDER BY reconciled_at, reconciliation_id COLLATE "C"
         `
+        const readAuthority = authority.readAuthorityState
+        const transactionalAuthority = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* sql.reserve
+            return yield* sql.withTransaction(readAuthority)
+          }),
+        )
         return {
           exact,
           discrepant,
           resolved,
           bindings: yield* reconciliation.bindings(accountId),
           authority: yield* authority.readAuthorityState,
+          transactionalAuthority,
           rows,
         }
       }),
@@ -560,6 +649,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.discrepant.reconciliation.status).toBe(ReconciliationStatus.Discrepancy)
     expect(result.discrepant.reconciliation.discrepancies).toHaveLength(1)
     expect(result.resolved.reconciliation).toMatchObject({ status: ReconciliationStatus.Exact, discrepancies: [] })
+    expect(result.transactionalAuthority).toEqual(result.authority)
     expect(result.bindings).toEqual([])
     expect(result.authority).toMatchObject({
       generationHash,

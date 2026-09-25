@@ -1,4 +1,6 @@
-import { operationTimeoutOrElse } from '../operation-timeout'
+import type { ReconciliationRuntime } from './model'
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
+import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
 import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
@@ -53,7 +55,7 @@ import {
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
 
 const verifyDecisionBindingEvidence = (
@@ -144,22 +146,66 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   timeoutMs: number,
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  operationPermit.withPermit(lifecycleAdvance).pipe(
-    operationTimeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => onTimeout(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* operationCurrentTimeMillis
+    const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
+    let interruptionRequestedAt = startedAt
+    return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
+      withObservedStage('bayn.execution.advance'),
+      Effect.provideService(ActiveExecutionStages, activeStages),
+      operationTimeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        onDeadline: operationCurrentTimeMillis.pipe(
+          Effect.flatMap((requestedAt) => {
+            interruptionRequestedAt = requestedAt
+            return Effect.logWarning('Bayn execution pass interruption requested').pipe(
+              Effect.annotateLogs({
+                service: 'bayn',
+                timeoutMs,
+                executionElapsedMs: Math.max(0, requestedAt - startedAt),
+                activeStages: [...activeStages.values()].map(({ startedAt: stageStartedAt, ...stage }) => ({
+                  ...stage,
+                  elapsedMs: Math.max(0, requestedAt - stageStartedAt),
+                })),
+              }),
+            )
+          }),
+        ),
+        orElse: () =>
+          operationCurrentTimeMillis.pipe(
+            Effect.flatMap((finishedAt) =>
+              Effect.logError('Bayn execution pass deadline exceeded').pipe(
+                Effect.annotateLogs({
+                  service: 'bayn',
+                  timeoutMs,
+                  elapsedMs: Math.max(0, finishedAt - startedAt),
+                  deadlineOverrunMs: Math.max(0, finishedAt - startedAt - timeoutMs),
+                  executionElapsedMs: Math.max(0, interruptionRequestedAt - startedAt),
+                  cancellationElapsedMs: Math.max(0, finishedAt - interruptionRequestedAt),
+                }),
+                Effect.andThen(
+                  onTimeout(mutationCyclePassTimeoutError(timeoutMs)).pipe(
+                    withObservedStage('bayn.execution.timeout-recovery', {
+                      slowAfterMs: 1_000,
+                      recordCompletion: true,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      }),
+    )
+  })
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+): Effect.Effect<ReconciliationPassResult, CycleRunnerError, ObserveDecisionRuntime> =>
   Clock.currentTimeNanos.pipe(
     Effect.tap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })),
     Effect.andThen(
       reconcile.pipe(
-        Effect.asVoid,
         Effect.mapError(reconciliationRunnerError),
         Effect.tapError((lastFailure) =>
           Clock.currentTimeNanos.pipe(
@@ -173,14 +219,15 @@ const attemptMutationIdleReconciliation = (
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
-): Effect.Effect<void, CycleRunnerError, ObserveDecisionRuntime> =>
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+): Effect.Effect<ReconciliationPassResult | undefined, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const nowNanos = yield* Clock.currentTimeNanos
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-    if (decision._tag === 'RECONCILE') yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    if (decision._tag === 'RECONCILE') return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
+    return undefined
   })
 
 const observeMutationCycleResult = (
@@ -223,7 +270,13 @@ const makeRecoveryFirstCycleDriverEffect = (
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
-        ? restrictMutationLoopFailure(error)
+        ? restrictMutationLoopFailure(error).pipe(
+            withObservedStage('bayn.execution.restriction-persistence', {
+              dependency: 'postgresql',
+              slowAfterMs: 1_000,
+              recordCompletion: true,
+            }),
+          )
         : Effect.void
       ).pipe(
         Effect.catch((restrictionError: CycleRunnerError) =>
@@ -238,45 +291,51 @@ const makeRecoveryFirstCycleDriverEffect = (
         Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
         Effect.map((observation) => ({ observation })),
       )
-    const advanceCycle = Effect.gen(function* () {
-      const context: CycleRunContext<ObserveDecisionRuntime> = {
-        cycleBindingId: startup.cycleBindingId,
-        strategyName: 'intraday-momentum',
-        strategyProtocolHash: preparation.strategyProtocolHash,
-        accountId: input.accountId,
-        executionPolicy: preparation.executionPolicy,
-        buildDecision: (cycle) => buildDecision(cycle, reconcile),
-        buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
-      }
-      const result = yield* runMutationPassWithinTimeout(
-        runRecoveryFirstCyclePass(input, policy, context, reconcile, capability),
-        cyclePassTimeoutMs,
-      )
-      if (isPostMutationReconciliation(result)) {
-        // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
-        // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
-        // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
-        // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
-        yield* Ref.set(cadence, {})
-        return {
-          result: deferPostMutationReconciliation(result),
-          ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
+    const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
+      Effect.gen(function* () {
+        const pendingPreflight = yield* Ref.make(preflight)
+        const reconcileForAdvance = Ref.getAndSet(pendingPreflight, undefined).pipe(
+          Effect.flatMap((available) => (available === undefined ? reconcile : Effect.succeed(available))),
+        )
+        const context: CycleRunContext<ObserveDecisionRuntime> = {
+          cycleBindingId: startup.cycleBindingId,
+          strategyName: 'jev',
+          strategyProtocolHash: preparation.strategyProtocolHash,
+          accountId: input.accountId,
+          authorityGenerationHash: input.authorityGenerationHash,
+          executionPolicy: preparation.executionPolicy,
+          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance),
+          buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
-      }
-      return { result }
-    }).pipe(
-      Effect.matchEffect({
-        onFailure: observeCycleFailure,
-        onSuccess: ({ result, nextDelayMs }) =>
-          observeMutationCycleResult(startup, cadence, result).pipe(
-            Effect.map((observation) => ({
-              observation,
-              result,
-              ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
-            })),
-          ),
-      }),
-    )
+        const result = yield* runMutationPassWithinTimeout(
+          runRecoveryFirstCyclePass(input, policy, context, reconcileForAdvance, capability),
+          cyclePassTimeoutMs,
+        )
+        if (isPostMutationReconciliation(result)) {
+          // The broker mutation is already durably journaled. Do not hold this Restate command open while waiting for
+          // broker consistency. Reset the in-process cadence so the next command performs a reconciliation preflight;
+          // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
+          // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
+          yield* Ref.set(cadence, {})
+          return {
+            result: deferPostMutationReconciliation(result),
+            ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
+          }
+        }
+        return { result }
+      }).pipe(
+        Effect.matchEffect({
+          onFailure: observeCycleFailure,
+          onSuccess: ({ result, nextDelayMs }) =>
+            observeMutationCycleResult(startup, cadence, result).pipe(
+              Effect.map((observation) => ({
+                observation,
+                result,
+                ...(nextDelayMs === undefined ? {} : { nextDelayMs }),
+              })),
+            ),
+        }),
+      )
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
     const runCycleAdvance = reconciliationPreflight.pipe(
       Effect.matchEffect({
@@ -285,17 +344,41 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
             Effect.map((observation) => ({ observation })),
           ),
-        onSuccess: () => advanceCycle,
+        onSuccess: (preflight) =>
+          advanceCycle(preflight).pipe(
+            Effect.flatMap((advanced) =>
+              capability._tag !== 'Mutation' ||
+              input.intradayMarketData === undefined ||
+              advanced.observation.result === 'FAILURE'
+                ? Effect.succeed(advanced)
+                : input.intradayMarketData.check.pipe(
+                    Effect.matchEffect({
+                      onFailure: (cause) =>
+                        observeCycleFailure(
+                          new CycleRunnerError({
+                            operation: 'build-decision',
+                            failure: 'market-data',
+                            message: 'Execution worker market projection is unavailable',
+                            cause,
+                          }),
+                        ).pipe(Effect.map((failed) => ({ ...advanced, ...failed }))),
+                      onSuccess: () => Effect.succeed(advanced),
+                    }),
+                  ),
+            ),
+          ),
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(
       operationPermit,
-      runCycleAdvance,
+      runCycleAdvance.pipe(withObservedStage('bayn.execution.cycle-pass')),
       cyclePassTimeoutMs,
       observeCycleFailure,
     )
     return {
       advance,
+      timeoutMs: cyclePassTimeoutMs,
+      onTimeout: observeCycleFailure,
       nextDelayMs,
     }
   })

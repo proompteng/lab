@@ -247,7 +247,6 @@ describe('execution reconciliation', () => {
         DiscrepancyKind.Accounting,
         DiscrepancyKind.Position,
         DiscrepancyKind.Cash,
-        DiscrepancyKind.Valuation,
       ]),
     )
     expect(first.metrics).toMatchObject({
@@ -420,23 +419,26 @@ describe('execution reconciliation', () => {
     ).toBeGreaterThan(0)
   })
 
-  test('reports moving equity marks from separate observations without treating them as ledger discrepancies', () => {
-    const result = successOf(
-      compareReconciliation(
-        snapshot({
-          account: { ...account, equityMicros: '1000170000' },
-          positions: [{ ...position, observedAt: '2026-07-22T15:30:00.002Z' }],
-        }),
-      ),
-    )
+  test.each([observedAt, '2026-07-22T15:30:00.002Z'])(
+    'reports independent equity marks even when receipt timestamps coincide: %s',
+    (positionObservedAt) => {
+      const result = successOf(
+        compareReconciliation(
+          snapshot({
+            account: { ...account, equityMicros: '1000170000' },
+            positions: [{ ...position, observedAt: positionObservedAt }],
+          }),
+        ),
+      )
 
-    expect(result.discrepancies).toEqual([])
-    expect(result.metrics.equityDifferenceMicros).toBe('170000')
-    const flat = successOf(
-      compareReconciliation(snapshot({ positions: [], valuation: { ...valuation, equityMicros: '0' } })),
-    )
-    expect(flat.discrepancies.some(({ kind }) => kind === DiscrepancyKind.Valuation)).toBe(true)
-  })
+      expect(result.discrepancies).toEqual([])
+      expect(result.metrics.equityDifferenceMicros).toBe('170000')
+      const flat = successOf(
+        compareReconciliation(snapshot({ positions: [], valuation: { ...valuation, equityMicros: '0' } })),
+      )
+      expect(flat.discrepancies.some(({ kind }) => kind === DiscrepancyKind.Valuation)).toBe(true)
+    },
+  )
 
   test('compares the complete order contract, lifecycle, and aggregate fill quantity', () => {
     const result = successOf(

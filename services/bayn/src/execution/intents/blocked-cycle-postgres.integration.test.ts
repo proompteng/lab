@@ -1,4 +1,5 @@
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
@@ -6,17 +7,21 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
+import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
 import {
   CycleState,
   CycleTerminalReason,
   isIntradayCycleDraft,
   makeCycleDraft,
+  makeCycleExecutionPolicy,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
 } from '../../cycle'
 import { CycleStore, CycleStoreLive } from '../../cycle/store'
+import { Authority, KillState } from '../../execution/contracts'
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { canonicalHashV1 } from '../../hash'
@@ -34,6 +39,14 @@ const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : des
 const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const accountId = 'preopen-authority-recovery-test'
 const planHash = '1'.repeat(64)
+const brokerIdentity = Result.getOrThrow(
+  makeBrokerIdentity({
+    schemaVersion: 'bayn.broker-identity.v2',
+    provider: BrokerProvider.Alpaca,
+    environment: BrokerEnvironment.Sandbox,
+    accountId,
+  }),
+)
 const config = {
   ...fixtureConfig,
   operationTimeoutMs: 5_000,
@@ -47,20 +60,30 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 
 const instant = (epochMillis: number): string => new Date(epochMillis).toISOString()
 
-const makeFixture = () => {
+const makeFixture = (openSession = false) => {
   const now = Date.now()
-  const session = new Date(now + 24 * 60 * 60_000)
+  const session = new Date(now + (openSession ? 0 : 24 * 60 * 60_000))
   const executionSessionDate = session.toISOString().slice(0, 10)
   const calendar = value(
     makeExecutionCalendarObservation({
       schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
       source: 'alpaca-v2-calendar',
       date: executionSessionDate,
-      openAt: `${executionSessionDate}T13:30:00.000Z`,
-      closeAt: `${executionSessionDate}T20:00:00.000Z`,
+      openAt: `${executionSessionDate}T${openSession ? '00:00:00.000' : '13:30:00.000'}Z`,
+      closeAt: `${executionSessionDate}T${openSession ? '23:59:59.999' : '20:00:00.000'}Z`,
     }),
   )
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+  const sessionPolicy = openSession
+    ? value(
+        makeCycleExecutionPolicy({
+          schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
+          strategyExecutionModelHash: executionPolicy.strategyExecutionModelHash,
+          warmupAfterOpenMs: 0,
+          submissionCutoffBeforeCloseMs: 0,
+        }),
+      )
+    : executionPolicy
   const identity = value(
     makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v3',
@@ -72,10 +95,10 @@ const makeFixture = () => {
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
       executionCalendarSource: calendar.executionCalendarSource,
       executionCalendarHash: calendar.executionCalendarHash,
-      executionPolicy,
+      executionPolicy: sessionPolicy,
     }),
   )
-  const cycle = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, executionPolicy))))
+  const cycle = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, sessionPolicy))))
   if (!isIntradayCycleDraft(cycle)) throw new Error('expected an intraday cycle')
   return {
     cycle,
@@ -130,7 +153,7 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
         ${'2'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'3'.repeat(64)}`},
         'intraday-momentum', ${'4'.repeat(64)}, ${'5'.repeat(64)},
         ${defaultIntradayMomentumProtocolDocument.schemaVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
-        'bayn.broker-identity.v2', ${'6'.repeat(64)}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
+        'bayn.broker-identity.v2', ${brokerIdentity.identityHash}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
         ${planHash}, ${reconciliationId}, ${reconciliationHash}, ${planHash},
         ${fixture.generationActivatedAt}
       )
@@ -203,7 +226,7 @@ const resetDatabase = Effect.gen(function* () {
   yield* postgresMigrations
 })
 
-describePostgres('PostgreSQL preopen authority recovery', () => {
+describePostgres('PostgreSQL authority cycle recovery', () => {
   let runtime: ReturnType<typeof makeRuntime>
 
   beforeAll(() => {
@@ -238,17 +261,23 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
-  test('settles a restricted generation without destroying its untouched same-plan cycle', async () => {
-    const fixture = makeFixture()
-    const result = await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const cycles = yield* CycleStore
-        const blockedCycles = yield* BlockedCycleIntentStore
-        yield* seedExecutionAuthority(sql, fixture)
-        yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
-        yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
-        yield* sql`
+  test.each(['before', 'after'] as const)(
+    'preserves an untouched same-plan cycle created %s the restriction',
+    async (timing) => {
+      const fixture = makeFixture()
+      if (timing === 'after') {
+        fixture.acquiredAt = instant(Date.parse(fixture.restrictedAt) + 1_000)
+        fixture.cycleActivatedAt = instant(Date.parse(fixture.restrictedAt) + 2_000)
+      }
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const cycles = yield* CycleStore
+          const blockedCycles = yield* BlockedCycleIntentStore
+          yield* seedExecutionAuthority(sql, fixture)
+          yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+          yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+          yield* sql`
           UPDATE authority_state
           SET
             effective = 'OBSERVE',
@@ -258,27 +287,149 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
             updated_at = ${fixture.restrictedAt}
           WHERE singleton
         `
-        const settlement = yield* blockedCycles.settleCurrentTerminalGeneration({
+          const settlement = yield* blockedCycles.settleCurrentTerminalGeneration({
+            accountId,
+            observedAt: fixture.reconciledAt,
+          })
+          return { settlement, cycle: yield* cycles.read(fixture.cycle.identity.cycleId) }
+        }),
+      )
+
+      expect(result.settlement).toEqual({
+        _tag: 'TerminalGenerationSettled',
+        authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+        preserveCyclePlanHash: planHash,
+        blockedCycleCount: 0,
+        blockedIntentCount: 0,
+        expiredIntentCount: 0,
+        intentCount: 0,
+        terminalIntentCount: 0,
+      })
+      const preserved = Option.getOrThrow(result.cycle)
+      expect(preserved.state).toBe(CycleState.Active)
+      expect(preserved.terminalReason).toBeUndefined()
+    },
+  )
+
+  test('preserves an untouched cycle after open while a failed generation settles', async () => {
+    const fixture = makeFixture()
+    const observedAt = instant(Date.parse(fixture.cycle.window.submissionOpenAt) + 60_000)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const cycles = yield* CycleStore
+        const blocked = yield* BlockedCycleIntentStore
+        yield* seedExecutionAuthority(sql, fixture)
+        yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+        yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+        reason = 'execution cycle loop restricted effective authority: pass timeout',
+        version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+        const settled = yield* blocked.settleCurrentTerminalGeneration({ accountId, observedAt })
+        const expired = yield* blocked.settleCurrentTerminalGeneration({
+          accountId,
+          observedAt: fixture.cycle.window.submissionCutoffAt,
+        })
+        return { settled, expired, cycle: yield* cycles.read(fixture.cycle.identity.cycleId) }
+      }),
+    )
+    expect(result.settled).toMatchObject({
+      _tag: 'TerminalGenerationSettled',
+      preserveCyclePlanHash: planHash,
+      blockedCycleCount: 0,
+    })
+    expect(result.expired).toEqual({ _tag: 'NoTerminalGeneration' })
+    expect(Option.getOrThrow(result.cycle).state).toBe(CycleState.Active)
+  })
+
+  test('rotates a failed generation with an untouched open-session cycle before cutoff', async () => {
+    const fixture = makeFixture(true)
+    const successorHash = canonicalHashV1({ generation: 'open-session-successor' })
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const cycles = yield* CycleStore
+        const blocked = yield* BlockedCycleIntentStore
+        yield* seedExecutionAuthority(sql, fixture)
+        yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+        yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          reason = 'execution cycle loop restricted effective authority: pass timeout',
+          version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+        const settlement = yield* blocked.settleCurrentTerminalGeneration({
           accountId,
           observedAt: fixture.reconciledAt,
         })
-        return { settlement, cycle: yield* cycles.read(fixture.cycle.identity.cycleId) }
+        if (settlement._tag !== 'TerminalGenerationSettled') return yield* Effect.die('expected settlement')
+        const preserveCyclePlanHash = settlement.preserveCyclePlanHash
+        if (preserveCyclePlanHash === undefined) return yield* Effect.die('expected preserved cycle')
+        const exactHash = canonicalHashV1({ reconciliation: 'post-settlement-exact' })
+        const reconciledAt = instant(Date.parse(fixture.reconciledAt) + 1_000)
+        yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${canonicalHashV1({ reconciliation: 'post-settlement' })}, 'bayn.paper-reconciliation.v1',
+            ${accountId}, ${exactHash}, ${exactHash},
+            ${canonicalHashV1({ reconciliation: 'post-settlement-content' })},
+            'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+          )
+        `
+        const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+        const rotated = yield* authority.ensureAuthorityGeneration({
+          generationHash: successorHash,
+          maximum: Authority.Observe,
+          preserveCyclePlanHash,
+        })
+        return { rotated, cycle: yield* cycles.read(fixture.cycle.identity.cycleId) }
       }),
     )
-
-    expect(result.settlement).toEqual({
-      _tag: 'TerminalGenerationSettled',
-      authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
-      preserveCyclePlanHash: planHash,
-      blockedCycleCount: 0,
-      blockedIntentCount: 0,
-      expiredIntentCount: 0,
-      intentCount: 0,
-      terminalIntentCount: 0,
+    expect(result.rotated).toMatchObject({
+      generationHash: successorHash,
+      maximum: Authority.Observe,
+      effective: Authority.Observe,
+      kill: KillState.Clear,
     })
-    const preserved = Option.getOrThrow(result.cycle)
-    expect(preserved.state).toBe(CycleState.Active)
-    expect(preserved.terminalReason).toBeUndefined()
+    expect(Option.getOrThrow(result.cycle).state).toBe(CycleState.Active)
+  })
+
+  test('concurrent repairs reopen an untouched session once and leave its lifecycle trigger enabled', async () => {
+    const fixture = makeFixture(true)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const cycles = yield* CycleStore
+        yield* seedRepairableCycle(sql, cycles, fixture)
+        const before = yield* cycles.read(fixture.cycle.identity.cycleId)
+        yield* Effect.all([recoverIntradayAuthorityCycle, recoverIntradayAuthorityCycle], { concurrency: 2 })
+        const first = yield* cycles.read(fixture.cycle.identity.cycleId)
+        yield* recoverIntradayAuthorityCycle
+        const triggers = yield* sql`SELECT tgenabled FROM pg_trigger
+        WHERE tgrelid = 'autonomous_cycles'::regclass AND tgname = 'autonomous_cycle_lifecycle'`
+        return { before, first, repeated: yield* cycles.read(fixture.cycle.identity.cycleId), triggers }
+      }),
+    )
+    expect(Option.getOrThrow(result.first).state).toBe(CycleState.Active)
+    expect(Option.getOrThrow(result.first).stateVersion).toBe(Option.getOrThrow(result.before).stateVersion + 1)
+    expect(result.repeated).toEqual(result.first)
+    expect(result.triggers).toEqual([{ tgenabled: 'O' }])
+  })
+
+  test('does not repair an open session with an active manual restriction', async () => {
+    const fixture = makeFixture(true)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const cycles = yield* CycleStore
+        yield* seedRepairableCycle(sql, cycles, fixture)
+        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+        reason = 'operator stop', version = version + 1, updated_at = clock_timestamp() WHERE singleton`
+        yield* recoverIntradayAuthorityCycle
+        return yield* cycles.read(fixture.cycle.identity.cycleId)
+      }),
+    )
+    expect(Option.getOrThrow(result).state).toBe(CycleState.Blocked)
   })
 
   test('repairs one clear, flat, reconciled cycle that was blocked by authority before its window', async () => {
@@ -302,7 +453,11 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
     expect(result.replayed).toEqual(result.repaired)
   })
 
-  test('waits for the execution writer fence before repairing a cycle', async () => {
+  test.each([
+    { name: 'preopen writer fence', repair: recoverPreopenAuthorityCycle, tableLock: false },
+    { name: 'intraday writer fence', repair: recoverIntradayAuthorityCycle, tableLock: false },
+    { name: 'intraday table lock', repair: recoverIntradayAuthorityCycle, tableLock: true },
+  ])('rechecks the window after waiting for the $name', async ({ repair, tableLock }) => {
     const fixture = makeFixture()
     await runtime.runPromise(
       Effect.scoped(
@@ -333,18 +488,22 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
           const writer = yield* sql.reserve
           yield* writer.executeUnprepared('BEGIN', [], undefined)
           yield* Effect.addFinalizer(() => writer.executeUnprepared('ROLLBACK', [], undefined).pipe(Effect.ignore))
-          yield* writer.executeValues('SELECT pg_advisory_xact_lock($1::integer, $2::integer)', [1_111_578_958, 1])
+          if (tableLock) {
+            yield* writer.executeUnprepared('LOCK TABLE autonomous_cycles IN SHARE ROW EXCLUSIVE MODE', [], undefined)
+          } else {
+            yield* writer.executeValues('SELECT pg_advisory_xact_lock($1::integer, $2::integer)', [1_111_578_958, 1])
+          }
 
-          const repair = yield* recoverPreopenAuthorityCycle.pipe(Effect.forkScoped({ startImmediately: true }))
-          yield* Effect.sleep('250 millis')
-          expect(repair.pollUnsafe()).toBeUndefined()
+          const repairing = yield* repair.pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.sleep('650 millis')
+          expect(repairing.pollUnsafe()).toBeUndefined()
           const blockedRows = yield* writer.executeValues('SELECT state FROM autonomous_cycles WHERE cycle_id = $1', [
             fixture.cycle.identity.cycleId,
           ])
           expect(blockedRows).toEqual([['BLOCKED']])
 
           yield* writer.executeUnprepared('ROLLBACK', [], undefined)
-          yield* Fiber.join(repair)
+          yield* Fiber.join(repairing)
           const afterRepairRows = yield* sql<{ readonly state: string }>`
             SELECT state
             FROM autonomous_cycles
@@ -356,8 +515,11 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
     )
   })
 
-  test('keeps blocked history when no fresh flat reconciliation proves repair is safe', async () => {
-    const fixture = makeFixture()
+  test.each([
+    { name: 'preopen', repair: recoverPreopenAuthorityCycle, openSession: false },
+    { name: 'intraday', repair: recoverIntradayAuthorityCycle, openSession: true },
+  ])('keeps $name blocked history without fresh flat reconciliation', async ({ repair, openSession }) => {
+    const fixture = makeFixture(openSession)
     const stored = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -366,7 +528,7 @@ describePostgres('PostgreSQL preopen authority recovery', () => {
         yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
         yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
         yield* cycles.block(fixture.cycle.identity.cycleId, CycleTerminalReason.Authority, fixture.restrictedAt)
-        yield* recoverPreopenAuthorityCycle
+        yield* repair
         return yield* cycles.read(fixture.cycle.identity.cycleId)
       }),
     )

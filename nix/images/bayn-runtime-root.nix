@@ -27,6 +27,7 @@ let
   isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
   sourcePaths = [
     "services/bayn"
+    "docs/bayn/jev-migration-acceptance-v2.json"
   ];
   runtimeSource = lib.cleanSourceWith {
     src = repoRoot;
@@ -115,6 +116,7 @@ let
       }
 
       run_bun_install
+      bash ${./prune-bun-dependency-metadata.sh} "$out"
 
       runHook postInstall
     '';
@@ -143,6 +145,8 @@ pkgs.stdenvNoCC.mkDerivation {
     export BUN_CONFIG_CACHE_DIR="$BUN_INSTALL_CACHE_DIR"
     mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$TMPDIR/work"
     cp -R ${deps}/. "$TMPDIR/work/"
+    chmod -R u+w "$TMPDIR/work"
+    cp -R ${dependencySource}/. "$TMPDIR/work/"
     chmod -R u+w "$TMPDIR/work"
     cp -R . "$TMPDIR/work/"
     cd "$TMPDIR/work"

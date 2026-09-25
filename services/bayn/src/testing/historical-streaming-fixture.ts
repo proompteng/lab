@@ -2,10 +2,11 @@ import { canonicalHashV1 } from '../hash'
 import { intradayMomentumBehaviorHash } from '../strategy/intraday-momentum/decision'
 import { streamingFixture } from './streaming-market-fixture'
 
-export const historicalStreamingFixture = () => {
-  const { cut, snapshot, protocol, query } = streamingFixture()
-  const observedAtMs = Date.parse(snapshot.manifest.observedAt)
-  const raw = [...snapshot.bars, ...snapshot.quotes, ...snapshot.trades].map((row) => ({
+export const historicalRawArrivals = (
+  snapshot: Pick<ReturnType<typeof streamingFixture>['snapshot'], 'bars' | 'quotes' | 'trades'>,
+  observedAtMs: number,
+) =>
+  [...snapshot.bars, ...snapshot.quotes, ...snapshot.trades].map((row) => ({
     availableAtMs: observedAtMs,
     record: {
       topic: row.sourceTopic,
@@ -41,6 +42,11 @@ export const historicalStreamingFixture = () => {
       }),
     },
   }))
+
+export const historicalStreamingFixture = (returns?: Readonly<Record<string, number>>) => {
+  const { cut, snapshot, protocol, query } = streamingFixture(returns)
+  const observedAtMs = Date.parse(snapshot.manifest.observedAt)
+  const raw = historicalRawArrivals(snapshot, observedAtMs)
   const features = [...cut.projection.features.values()].flat().map((feature, partition) => ({
     availableAtMs: observedAtMs,
     record: { topic: feature.topic, partition, offset: feature.offset, value: JSON.stringify(feature.value) },

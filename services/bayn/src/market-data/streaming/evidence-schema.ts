@@ -1,3 +1,5 @@
+import { BarPublicationPolicy } from '../intraday/bar-publication'
+import { IntradayBarRowSchema } from '../intraday/rows'
 import { Schema } from 'effect'
 
 import {
@@ -41,21 +43,29 @@ export const TechnicalSnapshotEvidenceSchema = Schema.Struct({
   ),
   unavailableSymbols: Schema.Array(StrictNonEmptyStringSchema),
 })
+const StreamingRecordReceiptSchema = Schema.Struct({
+  sourceTopic: StrictNonEmptyStringSchema,
+  sourcePartition: NonNegativeIntegerSchema,
+  sourceOffset: UnsignedMicrosSchema,
+  availableAtMs: Timestamp,
+  sequence: PositiveIntegerSchema,
+  contentHash: Sha256Schema,
+})
 const CutFields = {
+  barPublicationPolicy: Schema.optionalKey(Schema.Literal(BarPublicationPolicy.TimelyEquivalentRevision)),
   technical: Schema.optionalKey(TechnicalSnapshotEvidenceSchema),
   positions: Schema.Array(Schema.Struct({ ...PositionFields, offset: UnsignedMicrosSchema })).check(
     Schema.isMinLength(1),
   ),
   sequence: NonNegativeIntegerSchema,
-  records: Schema.Array(
-    Schema.Struct({
-      sourceTopic: StrictNonEmptyStringSchema,
-      sourcePartition: NonNegativeIntegerSchema,
-      sourceOffset: UnsignedMicrosSchema,
-      availableAtMs: Timestamp,
-      sequence: PositiveIntegerSchema,
-      contentHash: Sha256Schema,
-    }),
+  records: Schema.Array(StreamingRecordReceiptSchema),
+  barPublications: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        row: IntradayBarRowSchema,
+        receipt: StreamingRecordReceiptSchema,
+      }),
+    ).check(Schema.isMinLength(1)),
   ),
   features: Schema.Array(
     Schema.Struct({
@@ -85,6 +95,7 @@ export const SimulatedSnapshotSourceSchema = Schema.Struct({
   featureTopic: StrictNonEmptyStringSchema,
   technicalFeatureTopic: Schema.optionalKey(StrictNonEmptyStringSchema),
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
+  regeneratedTechnicalFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
 })
 export const SimulatedSnapshotEvidenceSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.simulated-input-cut.v1'),

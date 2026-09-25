@@ -1,6 +1,7 @@
 import { NodeHttpClient } from '@effect/platform-node'
-import { Config, Effect, Layer, Logger, Option } from 'effect'
+import { Cause, Config, Context, Effect, Exit, Layer, Logger, Option } from 'effect'
 import { OtlpSerialization, OtlpTracer } from 'effect/unstable/observability'
+import { operationCurrentTimeMillis } from './operation-timeout'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -25,6 +26,17 @@ interface TelemetryEnvironment {
 }
 
 type SpanAttributes = Readonly<Record<string, string | number | boolean>>
+
+export interface ActiveExecutionStage {
+  readonly stage: string
+  readonly dependency?: string
+  readonly startedAt: number
+}
+
+export const ActiveExecutionStages = Context.Reference<Map<symbol, ActiveExecutionStage> | undefined>(
+  'bayn/ActiveExecutionStages',
+  { defaultValue: () => undefined },
+)
 
 const tracePath = '/v1/traces'
 
@@ -133,3 +145,50 @@ export const withObservedSpan =
       name,
       attributes === undefined ? undefined : { attributes },
     )
+
+export const withObservedStage =
+  (
+    stage: string,
+    options: { readonly dependency?: string; readonly slowAfterMs?: number; readonly recordCompletion?: boolean } = {},
+  ) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.gen(function* () {
+      const startedAt = yield* operationCurrentTimeMillis
+      const activeStages = yield* ActiveExecutionStages
+      const stageId = Symbol(stage)
+      activeStages?.set(stageId, {
+        stage,
+        ...(options.dependency === undefined ? {} : { dependency: options.dependency }),
+        startedAt,
+      })
+      return yield* effect.pipe(
+        Effect.onExit((exit) =>
+          operationCurrentTimeMillis.pipe(
+            Effect.flatMap((finishedAt) => {
+              const elapsedMs = Math.max(0, finishedAt - startedAt)
+              const slow = elapsedMs >= (options.slowAfterMs ?? 1_000)
+              if (Exit.isSuccess(exit) && !slow && options.recordCompletion !== true) return Effect.void
+              const log = Exit.isFailure(exit)
+                ? Effect.logWarning('Bayn execution stage did not complete')
+                : slow
+                  ? Effect.logWarning('Bayn operation exceeded its diagnostic threshold')
+                  : Effect.logInfo('Bayn execution stage completed')
+              return log.pipe(
+                Effect.annotateLogs({
+                  service: 'bayn',
+                  stage,
+                  ...(options.dependency === undefined ? {} : { dependency: options.dependency }),
+                  elapsedMs,
+                  outcome: Exit.isSuccess(exit)
+                    ? 'succeeded'
+                    : exit.cause.reasons.some(Cause.isInterruptReason)
+                      ? 'interrupted'
+                      : 'failed',
+                }),
+              )
+            }),
+          ),
+        ),
+        Effect.ensuring(Effect.sync(() => activeStages?.delete(stageId))),
+      )
+    }).pipe(withObservedSpan(stage))

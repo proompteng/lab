@@ -1,3 +1,4 @@
+import { sameBarMarketValues } from '../intraday/bar-publication'
 import { createHash } from 'node:crypto'
 import { Result } from 'effect'
 import type { RawMarketEvent } from './raw-events'
@@ -21,6 +22,9 @@ export interface ObservedMarketValue<A> {
   readonly sequence: number
   readonly recordHash: string
 }
+export interface ObservedBar extends ObservedMarketValue<IntradayBar> {
+  readonly firstPublication?: ObservedMarketValue<IntradayBar>
+}
 export interface ObservedFeature<A = RollingMarketFeature> extends ObservedMarketValue<A> {
   readonly topic: string
   readonly partition: number
@@ -31,7 +35,7 @@ export interface StreamingProjection {
   readonly epoch: string
   readonly sequence: number
   readonly offsets: ReadonlyMap<string, string>
-  readonly bars: ReadonlyMap<string, readonly ObservedMarketValue<IntradayBar>[]>
+  readonly bars: ReadonlyMap<string, readonly ObservedBar[]>
   readonly quotes: ReadonlyMap<string, ObservedMarketValue<IntradayQuote>>
   readonly trades: ReadonlyMap<string, ObservedMarketValue<IntradayTrade>>
   readonly quoteHistory: ReadonlyMap<string, readonly ObservedMarketValue<IntradayQuote>[]>
@@ -107,9 +111,10 @@ const incorporateDecodedRecord = (
   availableAtMs: number,
   decodedEvent?: RawMarketEvent,
   featureRecordedAtMs = availableAtMs,
+  technicalRecordedAtMs = availableAtMs,
 ): StreamingProjection => {
   if (universe.topics.technicalFeatures !== undefined && record.topic === universe.topics.technicalFeatures)
-    return incorporateTechnicalRecord(previous, record, universe, availableAtMs)
+    return incorporateTechnicalRecord(previous, record, universe, availableAtMs, technicalRecordedAtMs)
   if (
     !Number.isSafeInteger(record.partition) ||
     record.partition < 0 ||
@@ -204,11 +209,27 @@ const incorporateDecodedRecord = (
       const existing = state.bars.get(bar.symbol) ?? []
       const current = existing.find((entry) => compareIntradayInstants(entry.value.eventAt, bar.eventAt) === 0)
       if (current !== undefined && compareBarRevisions(bar, current.value) <= 0) return state
-      const revisions = [...existing, { value: bar, availableAtMs, sequence, recordHash }].toSorted(
+      const firstPublication =
+        current !== undefined && sameBarMarketValues(current.value, bar)
+          ? (current.firstPublication ?? {
+              value: current.value,
+              availableAtMs: current.availableAtMs,
+              sequence: current.sequence,
+              recordHash: current.recordHash,
+            })
+          : undefined
+      const revision: ObservedBar = {
+        value: bar,
+        availableAtMs,
+        sequence,
+        recordHash,
+        ...(firstPublication === undefined ? {} : { firstPublication }),
+      }
+      const revisions = [...existing, revision].toSorted(
         (a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt) || compareBarRevisions(b.value, a.value),
       )
       const minuteCounts = new Map<string, number>()
-      const bars: ObservedMarketValue<IntradayBar>[] = []
+      const bars: ObservedBar[] = []
       let minimumObservationMs = state.minimumObservationMs
       for (const entry of revisions) {
         // Raw timestamps have nine fractional digits; recorded rows may have three.
@@ -279,6 +300,7 @@ export const incorporateSimulatedMarketRecord = (
   universe: StreamingUniverse,
   availableAtMs: number,
   featureRecordedAtMs = availableAtMs,
+  technicalRecordedAtMs = availableAtMs,
 ): StreamingProjection =>
   incorporateDecodedRecord(
     { ...previous, availabilityMode: 'simulated' },
@@ -287,6 +309,7 @@ export const incorporateSimulatedMarketRecord = (
     availableAtMs,
     undefined,
     featureRecordedAtMs,
+    technicalRecordedAtMs,
   )
 
 /** Recorded-decision replay passes decoded archived rows through the same reducer without re-encoding binary64 values. */
@@ -324,14 +347,17 @@ export interface StreamingSymbolInputs {
 }
 
 /** Choose the winning revision that had arrived at the observation, preserving earlier cuts across corrections. */
+export const observedQuoteAt = (state: StreamingProjection, symbol: string, observedAtMs: number) =>
+  state.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
+
 export const observedBarsAt = (
   state: StreamingProjection,
   symbol: string,
   startNanos: bigint,
   endNanos: bigint,
   observedAtMs: number,
-): readonly ObservedMarketValue<IntradayBar>[] => {
-  const selected = new Map<bigint, ObservedMarketValue<IntradayBar>>()
+): readonly ObservedBar[] => {
+  const selected = new Map<bigint, ObservedBar>()
   for (const entry of state.bars.get(symbol) ?? []) {
     const minute = intradayInstantNanos(entry.value.eventAt)
     if (entry.availableAtMs > observedAtMs || minute < startNanos || minute >= endNanos) continue
@@ -360,7 +386,7 @@ export const selectStreamingSymbolInputs = (
     if (observedAtMs < state.minimumObservationMs) return yield* fail('observation precedes retained arrival history')
     if (windowStartMs <= state.discardedRejectionsThroughMs)
       return yield* fail('requested window precedes retained rejection history')
-    const quote = state.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
+    const quote = observedQuoteAt(state, symbol, observedAtMs)
     const trade = state.tradeHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
     if (
       quote === undefined ||

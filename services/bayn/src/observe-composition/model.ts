@@ -21,8 +21,15 @@ import type { IntradayMarketDataService } from '../market-data'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
+import { CandidateObservationStore } from './candidate-observation'
+import type { IntradayExitTiming } from '../strategy/intraday-momentum/research'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClient } from '../jev/client'
+import { JevPositionStore } from '../jev/portfolio'
 
-export type ObserveDecisionRuntime =
+export type ReconciliationRuntime =
+  | CandidateObservationStore
   | BrokerRead
   | BrokerEventStore
   | FillAccountingStore
@@ -31,6 +38,13 @@ export type ObserveDecisionRuntime =
   | AuthorityGenerationStore
   | AuthorityRestrictionStore
   | WriterFence
+
+export type ObserveDecisionRuntime =
+  | ReconciliationRuntime
+  | JevBatchStore
+  | JevEvaluationStore
+  | JevClient
+  | JevPositionStore
 
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 
@@ -52,15 +66,17 @@ export type RecoveryFirstCycleAdvance = {
   readonly nextDelayMs?: number
 }
 
-export type RecoveryFirstCycleDriver = {
-  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, RecoveryFirstRuntime>
+export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
+  readonly timeoutMs: number
+  readonly onTimeout: (error: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
   /** Restate must schedule the next production command no later than either the cycle or reconciliation cadence. */
   readonly nextDelayMs: number
 }
 
-export type RecoveryFirstCycleDriverOwner = (
-  driver: RecoveryFirstCycleDriver,
-) => Effect.Effect<void, never, RecoveryFirstRuntime>
+export type RecoveryFirstCycleDriverOwner<R = RecoveryFirstRuntime> = (
+  driver: RecoveryFirstCycleDriver<R>,
+) => Effect.Effect<void, never, R>
 
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
@@ -69,6 +85,7 @@ export type ObserveAutonomousCycleInput = {
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  readonly simulation?: { readonly runId: string; readonly exitTiming: IntradayExitTiming }
   /** Explicit archive dependency; required only for an INTRADAY strategy. */
   readonly intradayMarketData?: IntradayMarketDataService
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'

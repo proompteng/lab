@@ -17,6 +17,8 @@ import {
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../hash'
+import { ReplayBrokerFailure } from '../intraday-replay/broker'
+import { makeReplayJevTiming } from '../intraday-replay/jev-timing'
 import { BrokerMode, type Policy } from '../risk'
 import {
   BrokerAccess,
@@ -614,13 +616,20 @@ describe('same-code execution program composition', () => {
     if (sandboxAuthority.brokerAccess !== BrokerAccess.Mutation) {
       throw new Error('fixture requires sandbox mutation authority')
     }
-    const brokerObservedAt = '2026-07-28T08:00:00.010Z'
     const expiresAt = '2026-07-28T08:00:00.020Z'
-    const instants = [observedAt, brokerObservedAt, expiresAt]
-    let instantReads = 0
+    let measuredNow = observedAt
+    let brokerReads = 0
     let posts = 0
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('execution-window-expiry-during-refresh'),
+      brokerRead: {
+        ...stableBrokerRead(),
+        account: Effect.sync(() => {
+          brokerReads += 1
+          measuredNow = expiresAt
+          return readResult(brokerAccount())
+        }),
+      },
       intentStore: {
         read: () => Effect.succeed(Option.some(fixture.stored)),
       } as unknown as ExecutionProgramDependencies['intentStore'],
@@ -628,7 +637,7 @@ describe('same-code execution program composition', () => {
         authorizeSubmit: () => Effect.void,
       } as unknown as ExecutionProgramDependencies['mutationStore'],
       writerFence: { check: Effect.void, transaction: (effect) => effect },
-      currentUtcInstant: Effect.sync(() => instants[instantReads++] ?? expiresAt),
+      currentUtcInstant: Effect.sync(() => measuredNow),
       entrySubmitExpiresAt: expiresAt,
       isCloseOnlyIntent: () => Effect.succeed(false),
     }
@@ -645,7 +654,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(finalAuthorizationFailureTag(exit)).toBe('ExecutionWindowExpired')
-    expect(instantReads).toBe(3)
+    expect(brokerReads).toBe(1)
     expect(posts).toBe(0)
   })
 
@@ -1103,7 +1112,7 @@ describe('same-code execution program composition', () => {
             locks += 1
           }).pipe(Effect.andThen(TestClock.setTime(Date.parse(expiresAt))), Effect.as(grantedCapitalAuthority(grant))),
       },
-      currentUtcInstant: Effect.succeed(observedAt),
+      currentUtcInstant: Clock.currentTimeMillis.pipe(Effect.map((instant) => new Date(instant).toISOString())),
     }
 
     const exit = await Effect.runPromise(
@@ -1407,5 +1416,141 @@ for (const delay of ['writer fence', 'broker read', 'restart'] as const) {
     expect(finalAuthorizationFailureTag(exit)).toBe('ExpiredRiskDecision')
     expect(posts).toBe(0)
     expect(brokerReads).toBe(delay === 'broker read' ? 1 : 0)
+  })
+}
+
+test('final risk authorization uses the measured execution time after inference processing', async () => {
+  const fixture = finalLiveFixture()
+  if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
+  const expiresAt = '2026-07-28T08:00:10.000Z'
+  const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
+  let posts = 0
+  let measuredNow = observedAt
+  const base = dependencies('measured-final-authorization')
+  const testDependencies: ExecutionProgramDependencies = {
+    ...base,
+    intentStore: { ...base.intentStore, read: () => Effect.succeed(Option.some(stored)) },
+    mutationStore: { ...base.mutationStore, authorizeSubmit: () => Effect.void },
+    writerFence: {
+      check: Effect.void,
+      transaction: (effect) =>
+        Effect.sync(() => {
+          measuredNow = expiresAt
+        }).pipe(Effect.andThen(effect)),
+    },
+    persistedCapitalGrants: {
+      read: () => Effect.die('expected locked grant read'),
+      lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+    },
+    currentUtcInstant: Effect.sync(() => measuredNow),
+    entrySubmitExpiresAt: '2026-07-28T08:01:00.000Z',
+  }
+  const exit = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(observedAt))
+      return yield* authorizeFinalBrokerSubmit(
+        fixture.authority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts++
+        }),
+        testDependencies,
+      ).pipe(Effect.exit)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(posts).toBe(0)
+  expect(finalAuthorizationFailureTag(exit)).toBe('ExpiredRiskDecision')
+})
+
+for (const phase of [
+  'writer fence',
+  'grant lock',
+  'broker refresh',
+  'risk context',
+  'clock synchronization',
+  'clock unavailable',
+  'unexpired',
+] as const) {
+  test(`measured replay time governs final submission after ${phase}`, async () => {
+    const fixture = finalLiveFixture()
+    if (fixture.stored.decision === undefined) throw new Error('expected stored approval')
+    const expiresAt = phase === 'clock synchronization' ? '2026-07-28T08:00:11.000Z' : '2026-07-28T08:00:10.000Z'
+    const stored: StoredIntent = { ...fixture.stored, decision: { ...fixture.stored.decision, expiresAt } }
+    const base = dependencies('measured-replay-final-authorization')
+    let posts = 0
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const providerClock = yield* TestClock.make()
+        const marketClock = yield* TestClock.make()
+        const providerStart = Date.parse('2026-09-21T12:00:00.000Z')
+        yield* providerClock.setTime(providerStart)
+        yield* marketClock.setTime(Date.parse(observedAt))
+        let clockUnavailable = false
+        const delay = (at: typeof phase) => (phase === at ? providerClock.setTime(providerStart + 10_000) : Effect.void)
+        const timing = yield* makeReplayJevTiming({
+          measureDatabaseTime: (operation) => operation,
+          providerClock,
+          provider: { evaluate: () => Effect.die('final authorization must not call Jev') },
+          advanceTo: (atMs) =>
+            clockUnavailable
+              ? Effect.fail(new ReplayBrokerFailure({ message: 'Timeline source unavailable' }))
+              : marketClock
+                  .setTime(atMs)
+                  .pipe(Effect.andThen(phase === 'clock synchronization' ? providerClock.adjust(2000) : Effect.void)),
+          advanceDeadlineTo: (atMs) => marketClock.setTime(atMs),
+          excludedSourceMillis: Effect.succeed(0),
+          retain: () => Effect.void,
+        }).pipe(Effect.provideService(Clock.Clock, marketClock))
+        const testDependencies: ExecutionProgramDependencies = {
+          ...base,
+          intentStore: { ...base.intentStore, read: () => Effect.succeed(Option.some(stored)) },
+          mutationStore: { ...base.mutationStore, authorizeSubmit: () => Effect.void },
+          writerFence: {
+            check: Effect.void,
+            transaction: (effect) =>
+              Effect.sync(() => {
+                clockUnavailable = phase === 'clock unavailable'
+              }).pipe(Effect.andThen(delay('writer fence')), Effect.andThen(effect)),
+          },
+          persistedCapitalGrants: {
+            read: () => Effect.die('expected locked grant read'),
+            lockForSubmit: () => delay('grant lock').pipe(Effect.as(grantedCapitalAuthority(fixture.grant))),
+          },
+          brokerRead: {
+            ...base.brokerRead,
+            account: delay('broker refresh').pipe(Effect.andThen(base.brokerRead.account)),
+          },
+          readFinalExecutionRiskContext: (at) =>
+            delay('risk context').pipe(Effect.andThen(base.readFinalExecutionRiskContext(at))),
+          currentUtcInstant: timing.currentUtcInstant,
+          entrySubmitExpiresAt: '2026-07-28T08:01:00.000Z',
+        }
+        const exit = yield* timing
+          .run(
+            authorizeFinalBrokerSubmit(
+              fixture.authority,
+              fixture.intent,
+              Effect.sync(() => {
+                posts += 1
+              }),
+              testDependencies,
+            ),
+          )
+          .pipe(Effect.exit)
+        return { exit, marketNow: yield* marketClock.currentTimeMillis }
+      }).pipe(Effect.scoped),
+    )
+    if (phase === 'unexpired') {
+      expect(Exit.isSuccess(result.exit)).toBe(true)
+      expect(posts).toBe(1)
+      expect(result.marketNow).toBe(Date.parse(observedAt))
+    } else if (phase === 'clock unavailable') {
+      expect(finalAuthorizationFailureTag(result.exit)).toBe('ReplayBrokerFailure')
+      expect(posts).toBe(0)
+    } else {
+      expect(finalAuthorizationFailureTag(result.exit)).toBe('ExpiredRiskDecision')
+      expect(posts).toBe(0)
+      expect(result.marketNow).toBeGreaterThanOrEqual(Date.parse(expiresAt))
+    }
   })
 }

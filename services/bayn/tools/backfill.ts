@@ -42,6 +42,59 @@ export const historicalCoverage = (capture: VendorHistoricalCapture) => {
   })
 }
 
+const mergeHistoricalCoverage = (rows: ReturnType<typeof historicalCoverage>) => {
+  const merged = new Map<string, (typeof rows)[number]>()
+  for (const row of rows) {
+    const key = `${row.sessionDate}:${row.symbol}:${row.kind}`
+    const previous = merged.get(key)
+    if (previous === undefined) {
+      merged.set(key, row)
+      continue
+    }
+    const records = previous.records + row.records
+    const missingMinutes = [...new Set([...previous.missingMinutes, ...row.missingMinutes])].sort()
+    merged.set(key, {
+      ...previous,
+      records,
+      firstEventAt:
+        previous.firstEventAt === null
+          ? row.firstEventAt
+          : row.firstEventAt === null || previous.firstEventAt < row.firstEventAt
+            ? previous.firstEventAt
+            : row.firstEventAt,
+      lastEventAt:
+        previous.lastEventAt === null
+          ? row.lastEventAt
+          : row.lastEventAt === null || previous.lastEventAt > row.lastEventAt
+            ? previous.lastEventAt
+            : row.lastEventAt,
+      missingMinutes,
+      coverage:
+        records === 0
+          ? 'EMPTY'
+          : missingMinutes.length > 0
+            ? 'GAPPED'
+            : row.kind === 'bars'
+              ? 'COMPLETE_MINUTE_GRID'
+              : 'RETURNED_EVENT_STREAM',
+      paginationComplete: previous.paginationComplete && row.paginationComplete,
+    })
+  }
+  return [...merged.values()]
+}
+
+const historicalEventWindows = (openAt: string, closeAt: string) => {
+  const close = Date.parse(closeAt)
+  const windows: { startAt: string; endAt: string }[] = []
+  for (let start = Date.parse(openAt); start < close; start += 60 * 60_000) {
+    const end = Math.min(start + 60 * 60_000, close)
+    // Alpaca includes both endpoints. The last nanosecond before the next window keeps them disjoint.
+    const endAt = end === close ? closeAt : `${new Date(end - 1).toISOString().slice(0, -1)}999999Z`
+    windows.push({ startAt: new Date(start).toISOString(), endAt })
+  }
+  return windows
+}
+
 export const writeImmutableDatasetFile = (path: string, contents: string) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -154,12 +207,18 @@ export const backfillAlpacaHistory = (input: unknown, directory: string) =>
     for (const session of sessions) {
       if (session === undefined) return yield* new HistoricalDatasetFailure({ message: 'Calendar session is absent' })
       const sessionDate = yield* Schema.decodeUnknownEffect(IsoDateSchema)(session.date)
+      const eventWindows = historicalEventWindows(session.openAt, session.closeAt)
       const queries = [
-        { kind: AlpacaHistoricalKind.Bars, symbols: request.symbols },
+        {
+          kind: AlpacaHistoricalKind.Bars,
+          symbols: request.symbols,
+          startAt: session.openAt,
+          endAt: session.closeAt,
+        },
         ...(request.executionSessions.includes(sessionDate)
           ? request.symbols.flatMap((symbol) => [
-              { kind: AlpacaHistoricalKind.Quotes, symbols: [symbol] },
-              { kind: AlpacaHistoricalKind.Trades, symbols: [symbol] },
+              ...eventWindows.map((window) => ({ kind: AlpacaHistoricalKind.Quotes, symbols: [symbol], ...window })),
+              ...eventWindows.map((window) => ({ kind: AlpacaHistoricalKind.Trades, symbols: [symbol], ...window })),
             ])
           : []),
       ]
@@ -169,8 +228,8 @@ export const backfillAlpacaHistory = (input: unknown, directory: string) =>
           sessionDate,
           sessionOpenAt: session.openAt,
           sessionCloseAt: session.closeAt,
-          startAt: session.openAt,
-          endAt: session.closeAt,
+          startAt: query.startAt,
+          endAt: query.endAt,
           cacheDirectory: `${directory}/pages`,
         })
         const file = `chunks/${capture.queryHash}.json`
@@ -202,7 +261,8 @@ export const backfillAlpacaHistory = (input: unknown, directory: string) =>
         }),
       )
     }
-    const coverageText = yield* encode(coverage)
+    const completeCoverage = mergeHistoricalCoverage(coverage)
+    const coverageText = yield* encode(completeCoverage)
     yield* writeImmutableDatasetFile(`${directory}/coverage.json`, coverageText)
     const manifest = {
       schemaVersion: 'bayn.alpaca-history-dataset.v1',
@@ -214,7 +274,7 @@ export const backfillAlpacaHistory = (input: unknown, directory: string) =>
       originalStreamAvailability: 'NOT_OBSERVED',
       revisionKnowledge: 'REST_AS_OF_RETRIEVAL',
       calendar: { path: 'calendar.json', sha256: sha256(calendarText) },
-      coverage: { path: 'coverage.json', sha256: sha256(coverageText), rows: coverage.length },
+      coverage: { path: 'coverage.json', sha256: sha256(coverageText), rows: completeCoverage.length },
       chunks,
       recordCount: chunks.reduce((total, chunk) => total + chunk.rowCount, 0),
     }

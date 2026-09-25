@@ -1,3 +1,4 @@
+import { BarPublicationPolicy, maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
@@ -674,10 +675,16 @@ export const validateBarCoverage = (
   request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
   clockSkewMs = 0,
+  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<void, IntradaySnapshotFailure> => {
-  const feedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
-  const maximumAvailabilityDelay = millisecondsAsNanos(feedDelayMs + minuteMs + request.maximumQuoteAgeMs + clockSkewMs)
   for (const bar of bars) {
+    const maximumAvailabilityDelay = millisecondsAsNanos(
+      (publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision
+        ? maximumBarPublicationDelayMs(bar)
+        : (request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0) +
+          minuteMs +
+          request.maximumQuoteAgeMs) + clockSkewMs,
+    )
     if (intradayAgeNanos(bar.ingestedAt, bar.eventAt) > maximumAvailabilityDelay) {
       return Result.fail(
         new IntradaySnapshotFailure({
@@ -898,6 +905,7 @@ export const candidateAvailability = (
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
   clockSkewMs = 0,
+  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<
   {
     readonly latest: Readonly<Record<string, IntradayQuote>>
@@ -912,21 +920,36 @@ export const candidateAvailability = (
     for (const quote of quotes) latest[quote.symbol] = quote
     for (const symbol of intradaySnapshotSymbols(request)) {
       const symbolRequest = { ...request, symbols: [symbol] }
+      const symbolQuotes = quotes.filter((quote) => quote.symbol === symbol)
+      const symbolTrades = trades.filter((trade) => trade.symbol === symbol)
       const available = Result.flatMap(
         validateBarCoverage(
           symbolRequest,
           bars.filter((bar) => bar.symbol === symbol),
           clockSkewMs,
+          publicationPolicy,
         ),
-        () =>
-          latestQuotes(
-            symbolRequest,
-            quotes.filter((quote) => quote.symbol === symbol),
-            trades.filter((trade) => trade.symbol === symbol),
-            clockSkewMs,
-          ),
+        () => latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
       )
-      if (Result.isSuccess(available)) continue
+      if (Result.isSuccess(available)) {
+        if (!candidates.has(symbol)) continue
+        const stale = [available.success[symbol], symbolTrades.at(-1)].find(
+          (evidence) =>
+            evidence !== undefined &&
+            intradayAgeNanos(request.observedAt, evidence.eventAt) > millisecondsAsNanos(request.maximumQuoteAgeMs),
+        )
+        if (stale !== undefined) {
+          const cause = failure('freshness', 'intraday quote or trade exceeds the decision-time freshness bound', {
+            symbol,
+            sourceTopic: stale.sourceTopic,
+            eventAt: stale.eventAt,
+            observedAt: request.observedAt,
+            maximumQuoteAgeMs: request.maximumQuoteAgeMs,
+          })
+          exclusions.push(Object.freeze({ symbol, reason: 'freshness', message: cause.message }))
+        }
+        continue
+      }
       const cause = available.failure
       if (
         candidates.has(symbol) &&
@@ -1110,7 +1133,7 @@ const replaySnapshotEnvelope = (snapshot: unknown): Result.Result<IntradayMarket
     ),
   )
 
-const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, IntradaySnapshotFailure> =>
+export const replayedBarRow = (bar: IntradayBar): Result.Result<IntradayBarRow, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const candidate = yield* Result.try({
       try: () => ({

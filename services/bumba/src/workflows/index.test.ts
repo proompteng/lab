@@ -28,6 +28,7 @@ const makeExecutor = () => {
 const execute = async (executor: WorkflowExecutor, overrides: ExecuteOverrides): Promise<WorkflowExecutionOutput> =>
   await executor.execute({
     workflowType: overrides.workflowType,
+    activations: overrides.activations,
     arguments: overrides.arguments,
     workflowId: overrides.workflowId ?? 'test-workflow-id',
     runId: overrides.runId ?? 'test-run-id',
@@ -214,6 +215,36 @@ test('reconcileAtlasRepository consumes the legacy failed upsert before correcti
       error: 'Workflow blocked: Activity activity-1 pending',
     },
   ])
+
+  const legacyUpsertFinished = await execute(executor, {
+    workflowType: 'reconcileAtlasRepository',
+    arguments: input,
+    determinismState: legacyPending.determinismState,
+    activations: [
+      { jobs: [] },
+      {
+        jobs: [
+          {
+            type: 'activity',
+            id: 'activity-0',
+            resolution: { status: 'completed', value: { ingestionId: 'ingestion-legacy' } },
+          },
+        ],
+      },
+      {
+        jobs: [
+          {
+            type: 'activity',
+            id: 'activity-2',
+            resolution: { status: 'completed', value: { ingestionId: 'ingestion-legacy' } },
+          },
+        ],
+      },
+    ],
+  })
+  expect(legacyUpsertFinished.completion).toBe('pending')
+  expect(legacyUpsertFinished.commands).toEqual([])
+  expect(legacyUpsertFinished.determinismState.commandHistory).toHaveLength(3)
 
   const reconciliationResult = { repository: input.repository, ref: input.ref, commit: input.commit }
   const legacyCorrecting = await execute(executor, {

@@ -3,14 +3,30 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { prepareBacktest as prepareWithCapture, assessBacktestSession, BacktestIssue } from './backtest'
+import {
+  prepareBacktest as prepareWithCapture,
+  assessBacktestSession,
+  BacktestIssue,
+  qualifiesReplayValuation,
+} from './backtest'
+import { jevModel } from '../jev/contract'
+import { prepareObserveStartup } from '../observe-composition/startup'
 import { validateBacktestSourceReceipt } from './source'
 import { sha256 } from '../hash'
+import { validateResearchCapitalGrantProof } from '../execution/capital-grant-algebra'
+import { makeStrategyProtocolHashResult } from '../contracts'
 const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v1',
+    schemaVersion: 'bayn.backtest.v3',
+    inference: {
+      mode: 'measured-provider',
+      model: jevModel,
+      inputDefinition: 'bayn.jev-trading-signal-state.v2',
+      costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+    },
+    allocatedDataCostPerSessionMicros: '0',
     replicate: 'validation-test',
     sessionDates: ['2026-09-04'],
     source: {
@@ -52,6 +68,84 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.identity.accountId).toBe(`replay-${first.runId}`)
   expect(first.runId).toBe(Result.getOrThrow(prepareBacktest(input)).runId)
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
+})
+
+test('native backtest binds Jev identity, provider cost assumptions and the unchanged financial grant', () => {
+  const input = fixture()
+  const prepared = Result.getOrThrow(prepareBacktest(input))
+  expect(prepared.strategy.provenance.strategy.name).toBe('jev')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v1')
+  expect(prepared.protocol.model).toBe(jevModel)
+  expect(prepared.runtimeBuild).toMatchObject(input.build)
+  const strategy = prepared.strategy.provenance.strategy
+  const proof = {
+    schemaVersion: 'bayn.research-paper-grant-proof.v1' as const,
+    grant: { _tag: 'Research' as const, planHash: '0'.repeat(64) },
+    activationSourceRevision: input.build.sourceRevision,
+    activationImageRepository: input.build.imageRepository,
+    activationImageDigest: input.build.imageDigest,
+    strategyName: strategy.name,
+    strategyBehaviorHash: strategy.behaviorHash,
+    strategyParameterHash: strategy.parameterHash,
+    strategyParameterSchemaVersion: strategy.parameterSchemaVersion,
+    strategyProtocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(strategy)),
+    accountId: prepared.identity.accountId,
+    brokerIdentityHash: prepared.identity.identityHash,
+    riskPolicyHash: '0'.repeat(64),
+    proofPlanHash: '0'.repeat(64),
+  }
+  expect(
+    Result.isSuccess(
+      validateResearchCapitalGrantProof({
+        proof,
+        sourceGenerationHash: '0'.repeat(64),
+        accountId: prepared.identity.accountId,
+        brokerIdentityHash: prepared.identity.identityHash,
+        build: prepared.runtimeBuild,
+      }),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isSuccess(
+      prepareObserveStartup({
+        accountId: prepared.identity.accountId,
+        authorityGenerationHash: '0'.repeat(64),
+        strategy: prepared.strategy,
+        ...input.cadence,
+      }),
+    ),
+  ).toBe(true)
+  expect(Result.getOrThrow(prepareBacktest({ ...input, allocatedDataCostPerSessionMicros: '1000000' })).runId).not.toBe(
+    prepared.runId,
+  )
+  expect(
+    Result.getOrThrow(
+      prepareBacktest({
+        ...input,
+        inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '84000' } },
+      }),
+    ).runId,
+  ).not.toBe(prepared.runId)
+})
+
+test('native backtest rejects retired momentum inputs, missing inference provenance and arbitrary parameters', () => {
+  const input = fixture()
+  for (const invalid of [
+    { ...input, schemaVersion: 'bayn.backtest.v1' },
+    { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: 'current' },
+    { ...input, exitTiming: 'current' },
+    { ...input, inference: undefined },
+    { ...input, inference: { ...input.inference, mode: 'constant-response' } },
+    { ...input, inference: { ...input.inference, model: 'unverified' } },
+    {
+      ...input,
+      inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '0' } },
+    },
+    { ...input, protocol: { minimumLookbackReturnBps: 0 } },
+    { ...input, build: { ...input.build, strategyParameterHash: '0'.repeat(64) } },
+    { ...input, build: { ...input.build, strategyBehaviorHash: '0'.repeat(64) } },
+  ])
+    expect(Result.isFailure(prepareBacktest(invalid))).toBe(true)
 })
 
 test('calendar must include a successor session before a backtest can start', () => {
@@ -224,6 +318,7 @@ test('run identity binds the independent capture receipt as well as the session 
 test('a completed schedule only qualifies economics with exact accounting and no unresolved exposure', () => {
   const exact = {
     failedPassCount: 0,
+    unavailableDecisionPassCount: 0,
     valuationFailureCount: 0,
     remainingPositionCount: 0,
     reconciliation: {
@@ -242,6 +337,10 @@ test('a completed schedule only qualifies economics with exact accounting and no
     },
   }
   expect(assessBacktestSession(exact)).toEqual({ completion: 'COMPLETE', issues: [] })
+  expect(assessBacktestSession({ ...exact, unavailableDecisionPassCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.MissingDecisionData],
+  })
   expect(assessBacktestSession({ ...exact, valuationFailureCount: 1 })).toEqual({
     completion: 'INCOMPLETE',
     issues: [BacktestIssue.MissingValuation],
@@ -273,4 +372,25 @@ test('a completed schedule only qualifies economics with exact accounting and no
       completion: 'INCOMPLETE',
       issues: [BacktestIssue.UnresolvedMutation],
     })
+})
+
+test('stale held-position marks do not qualify replay economics', () => {
+  const mark = {
+    symbol: 'AAPL',
+    priceMicros: '100000000',
+    eventAt: '2026-09-08T13:30:00.000Z',
+    availableAtMs: Date.parse('2026-09-08T13:30:00.000Z'),
+    ageNanos: '1000000000',
+    staleForExecution: false,
+    bidLiquidityAvailable: true,
+    topic: 'quotes',
+    partition: 0,
+    offset: '1',
+    recordHash: 'a'.repeat(64),
+  }
+  const valuation = { model: 'last-observed-bid' as const, observedAt: '2026-09-08T13:30:01.000Z' }
+  expect(qualifiesReplayValuation({ ...valuation, marks: [] })).toBe(true)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [mark] })).toBe(true)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, staleForExecution: true }] })).toBe(false)
+  expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, bidLiquidityAvailable: false }] })).toBe(false)
 })

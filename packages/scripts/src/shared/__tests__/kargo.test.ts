@@ -148,6 +148,25 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  restate: {
+    creationCriteria: 'single',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('restate')],
+    apps: ['restate'],
+    includePaths: [
+      'services/restate',
+      'packages/scripts/src/restate',
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/src/shared/docker.ts',
+      'packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts',
+      '.github/workflows/restate-images.yml',
+      'argocd/applications/restate',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/platform.yaml',
+      'bun.lock',
+    ],
+  },
   bayn: {
     creationCriteria: 'single',
     images: [imageRepo('bayn')],
@@ -160,6 +179,7 @@ const expected = {
       'nix/images/bun-workspace-service.nix',
       'nix/images/bun-workspace-deps-source.nix',
       'nix/images/bun-workspace-deps-source.test.sh',
+      'nix/images/prune-bun-dependency-metadata.sh',
       'nix/packages.nix',
       'nix/cache-push.sh',
       'nix/ci-nix-oci-summary.sh',
@@ -253,6 +273,7 @@ const expected = {
       'nix/images/bun-workspace-service.nix',
       'nix/images/bun-workspace-deps-source.nix',
       'nix/images/bun-workspace-deps-source.test.sh',
+      'nix/images/prune-bun-dependency-metadata.sh',
       'bun.lock',
       'glob:**/package.json',
       'bunfig.toml',
@@ -278,6 +299,7 @@ const expected = {
       'nix/images/bun-workspace-service.nix',
       'nix/images/bun-workspace-deps-source.nix',
       'nix/images/bun-workspace-deps-source.test.sh',
+      'nix/images/prune-bun-dependency-metadata.sh',
       'bun.lock',
       'glob:**/package.json',
       'bunfig.toml',
@@ -306,6 +328,7 @@ const expected = {
       'nix/images/bun-workspace-service.nix',
       'nix/images/bun-workspace-deps-source.nix',
       'nix/images/bun-workspace-deps-source.test.sh',
+      'nix/images/prune-bun-dependency-metadata.sh',
       'bun.lock',
       'glob:**/package.json',
       'bunfig.toml',

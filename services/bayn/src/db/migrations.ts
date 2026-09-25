@@ -1,3 +1,18 @@
+import executionWaitingStatus from '../../migrations/0074_execution_waiting_status'
+import candidateObservations from '../../migrations/0075_candidate_observations'
+import jevEvaluationEvidence from '../../migrations/0076_jev_evaluation_evidence'
+import jevEvaluationResolution from '../../migrations/0077_jev_evaluation_resolution'
+import jevBatches from '../../migrations/0078_jev_batches'
+import jevNativeStrategy from '../../migrations/0079_jev_native_strategy'
+import jevExitCommitDeadline from '../../migrations/0080_jev_exit_commit_deadline'
+import measuredSimulationClock from '../../migrations/0081_measured_simulation_clock'
+import openSessionFailureRearm from '../../migrations/0082_open_session_failure_rearm'
+import jevEntryBatchPlanV2 from '../../migrations/0083_jev_entry_batch_plan_v2'
+import jevEntryBatchPlanV3 from '../../migrations/0084_jev_entry_batch_plan_v3'
+import replaySourceClock from '../../migrations/0085_replay_source_clock'
+import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
+import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
+import pacedIntradayEntryAttempts from '../../migrations/0073_paced_intraday_entry_attempts'
 import simulatedBrokerCheckpoints from '../../migrations/0070_simulated_broker_checkpoints'
 import simulatedExecutionClock from '../../migrations/0069_simulated_execution_clock'
 import simulatedSnapshotReferences from '../../migrations/0068_simulated_snapshot_references'
@@ -72,6 +87,16 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '84_jev_entry_batch_plan_v3': jevEntryBatchPlanV3,
+  '85_replay_source_clock': replaySourceClock,
+  '83_jev_entry_batch_plan_v2': jevEntryBatchPlanV2,
+  '82_open_session_failure_rearm': openSessionFailureRearm,
+  '81_measured_simulation_clock': measuredSimulationClock,
+  '80_jev_exit_commit_deadline': jevExitCommitDeadline,
+  '79_jev_native_strategy': jevNativeStrategy,
+  '78_jev_batches': jevBatches,
+  '77_jev_evaluation_resolution': jevEvaluationResolution,
+  '76_jev_evaluation_evidence': jevEvaluationEvidence,
   '67_position_cost_basis': positionCostBasis,
   '1_initial_schema': initialSchema,
   '2_paper_contracts': paperContracts,
@@ -142,4 +167,9 @@ export const migrationLoader = PgMigrator.fromRecord({
   '69_simulated_execution_clock': simulatedExecutionClock,
   '70_simulated_broker_checkpoints': simulatedBrokerCheckpoints,
   '66_streaming_authority_protocol': streamingAuthorityProtocol,
+  '71_recover_intraday_authority_cycle': recoverIntradayAuthorityCycle,
+  '72_intraday_zero_fill_rearm': intradayZeroFillRearm,
+  '73_paced_intraday_entry_attempts': pacedIntradayEntryAttempts,
+  '74_execution_waiting_status': executionWaitingStatus,
+  '75_candidate_observations': candidateObservations,
 })

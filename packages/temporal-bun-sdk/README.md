@@ -66,6 +66,19 @@ configure worker versioning and build IDs.
 
 ## Production readiness
 
+Durable waits suspend workflow execution without entering Effect error handlers
+or running finalizers. Replay resumes results and signals at their original
+workflow task boundaries. See [workflow execution](docs/workflow-execution.md)
+for supported waits, upgrade validation, and the pinned Effect runtime contract.
+
+Async local activities must finish within the current workflow task budget. The
+worker reserves half the task window for recording their result or timeout
+failure, and bounds response RPCs and retry delays by the remaining task budget.
+Use a remote activity for longer work. A local timeout does not cancel I/O that
+the handler already started. Local activities have at-least-once execution:
+a worker crash or failed task commit can cause replay to invoke them again.
+Make external side effects idempotent.
+
 This package is a Bun-native Temporal worker/client SDK, not a wrapper around the
 official Node.js worker runtime. The worker path does not depend on
 `@temporalio/worker`, Node-API native modules, `process.dlopen()`, or
@@ -113,6 +126,7 @@ on Node.js.
 
 ## Docs
 
+- Maintainer releases: [publish and verify a version with one command](docs/releasing.md)
 - Main guide: <https://docs.proompteng.ai/docs/temporal-bun-sdk>
 - Temporal Cloud and TLS: <https://docs.proompteng.ai/docs/temporal-bun-sdk-cloud-tls>
 - Bun SDK vs official TypeScript SDK: <https://docs.proompteng.ai/docs/temporal-bun-sdk-comparison>
