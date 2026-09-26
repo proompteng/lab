@@ -141,6 +141,6 @@
     "@effect/sql-clickhouse@4.0.0-beta.99": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.99.patch",
     "@effect/sql-clickhouse@4.0.0-beta.102": "patches/@effect%2Fsql-clickhouse@4.0.0-beta.102.patch",
     "@effect/sql-pg@4.0.0-beta.102": "patches/@effect%2Fsql-pg@4.0.0-beta.102.patch",
-    "@platformatic/kafka@2.11.0": "patches/@platformatic%2Fkafka@2.11.0.patch"
+    "@platformatic/kafka@2.12.1": "patches/@platformatic%2Fkafka@2.12.1.patch"
   }
 }
