@@ -9,4 +9,4 @@ metadata:
 spec:
   annotations:
     osd:
-      ops.proompteng.ai/osd-config-revision: scrub-auto-repair-v1
+      ops.proompteng.ai/osd-config-revision: scrub-window-v1
