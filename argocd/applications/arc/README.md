@@ -3,6 +3,10 @@
 ARC separates architecture-specific runner pods from architecture-neutral control-plane pods.
 
 - Chart version pinned in `application.yaml` is `0.14.2` for both the controller and the runner scale set.
+- The custom image pins Actions runner `2.337.0` in `nix/images/arc-runner.nix`, independently of the ARC chart version.
+  Update its upstream index digest and both platform archive hashes together. Confirm the repository's accepted
+  runner version with `gh api repos/proompteng/lab/actions/runners/downloads`, then verify `Runner.Listener --version`
+  in the delivered runner. Restarting the controller does not update that binary.
 - The architecture-neutral controller and listener pods run on AMD64 capacity; runner pods retain their scale set's
   explicit AMD64 or ARM64 selector.
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
@@ -55,6 +59,12 @@ checks with the Actions service before deleting a runner. Do not delete runner P
 GitHub's [official ARC scale-set documentation](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets#example-jobs-queue-draining)
 documents strict queue draining as setting both `minRunners` and `maxRunners` to `0`. Reserve that mode for an explicitly
 coordinated emergency drain because the ordinary ARC image/Kargo workflow also requires an AMD64 runner.
+
+GitHub can reject an outdated runner binary and ARC then marks its scale set `Outdated`, removes its listener, and
+stops scheduling jobs. A successful controller health check does not prove runner capacity. If every build runner
+is stopped, the runner image workflow cannot rebuild itself. An explicitly authorized bootstrap must first restore
+enough runner capacity to execute the existing reviewed build and Kargo path. Keep the original desired state and
+record the temporary changes and their restoration. Do not publish an operator-built image or bypass PR checks.
 
 For current node placement and taint operations, start with `devices/galactic/README.md` and verify the target Talos node
 before changing scheduling state.

@@ -4,10 +4,35 @@ import { Effect, Fiber, Ref } from 'effect'
 
 import { prepareAutonomousApplication, recordAutonomousCyclePass, type AutonomousRuntime } from './app'
 import { initialState } from './runtime-state'
+import { OperationalError } from './errors'
 
 const bindingId = 'a'.repeat(64)
 
 describe('Bayn autonomous application', () => {
+  test('propagates activation failure so native initialization can retry without publishing an OBSERVE driver', async () => {
+    const failure = new OperationalError({
+      component: 'strategy',
+      operation: 'activate',
+      retryable: true,
+      message: 'activation reconciliation is not yet exact',
+    })
+    let started = false
+    const runtime: AutonomousRuntime<never, never> = {
+      _tag: 'AutonomousRead',
+      cycleBindingId: bindingId,
+      startCycle: () =>
+        Effect.sync(() => {
+          started = true
+          return Effect.never
+        }),
+      resolveAfterStartup: () => Effect.fail(failure),
+    }
+    expect(await Effect.runPromise(prepareAutonomousApplication(runtime).pipe(Effect.flip, Effect.scoped))).toBe(
+      failure,
+    )
+    expect(started).toBe(false)
+  })
+
   test('starts exactly the resolver-selected durable cycle', async () => {
     let startedBinding: string | undefined
     const resolved: AutonomousRuntime<never, never> = {
