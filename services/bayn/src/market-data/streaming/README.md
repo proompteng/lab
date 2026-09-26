@@ -29,10 +29,15 @@ The transport owns each SDK stream in the consume callback, before Node can run 
 error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
 the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption
 after close, and normal shutdown using the real Kafka SDK streams.
-The pinned Kafka 2.11.0 package patch incrementally deserializes fetched responses into the Readable queue, stopping
+The pinned Kafka 2.12.1 package patch incrementally deserializes fetched responses into the Readable queue, stopping
 at its high-water mark. A broker's response remains in flight until drained, so buffer pressure cannot trigger more
 fetches for that broker. Offsets advance after the batch is delivered, including control-only batches. Node tests
 exercise multiple brokers, oversized responses, duplicate offsets, control markers, interruption and decoder errors.
+The bounded response fix is submitted as [upstream PR #426](https://github.com/platformatic/kafka/pull/426).
+Remove the patch when a published release contains both changes and passes the retained Node regressions.
+The patch also backports upstream [offset-refresh invalidation](https://github.com/platformatic/kafka/pull/422).
+Responses suspended by backpressure retain their fetch epoch; a rebalance discards their undelivered records.
+Delayed deserialization hooks release their broker and resume fetching from the restored offsets.
 Kafka still returns atomic compressed record batches; this bounds queued message expansion, not the size of an
 individual broker batch. The memory regression uses the real stream with generated broker responses, not a live broker.
 The execution worker checks projection availability on successful mutation-capable passes, including waiting
