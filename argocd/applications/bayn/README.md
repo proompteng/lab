@@ -7,6 +7,10 @@ hashes require a matching sealed research mandate; image promotion alone cannot 
 The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
 subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
 
+The candidate quote/window-trade policy is bound to Jev behavior v3 and its parameter identity. Its build hashes,
+sealed mandate, and all three runtime lineages change together. The mandate keeps the existing authored build anchor,
+sandbox account, Research authority type, risk policy, and limits; broker and model credentials are unchanged.
+
 The Jev mandate preserves the existing published build as its lineage anchor and binds the new strategy explicitly.
 Kargo writes the exact newly published source and image into the activation endpoint of every runtime lineage. The
 previous strategy cannot execute against the Jev mandate. The activation hook still requires compatible durable

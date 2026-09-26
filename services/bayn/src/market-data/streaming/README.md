@@ -46,7 +46,10 @@ This check preserves reconciliation and close recovery. A blocked current sessio
 until its close instead of being classified as historical waiting.
 
 Snapshots bind the consumer epoch, local receipt sequence, transport positions, raw rows and selected feature
-payloads. Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
+payloads. Jev's `quote-window-trade.v1` candidate policy retains matched rolling and technical feature receipts even
+when raw evidence excludes their candidate. The exclusion still prevents a signal request. A missing receipt in an
+older cut may reflect that older filtering contract, so it cannot prove that the worker never received the feature.
+Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
 immutable references in the decision transaction. Restart verification requires the exact committed reference.
 Flink failure does not disable broker reconciliation or the existing close-window recovery path. Migration 0066
 adds intraday protocol v3 to the durable authority contracts while preserving v1/v2 history.

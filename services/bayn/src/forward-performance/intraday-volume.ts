@@ -77,6 +77,9 @@ export const intradayPerformanceDecisionRequest = (
       symbols: manifest.symbols,
       ...(manifest.purpose === undefined ? {} : { purpose: manifest.purpose }),
       ...(manifest.candidateSymbols === undefined ? {} : { candidateSymbols: manifest.candidateSymbols }),
+      ...(manifest.candidateEvidencePolicy === undefined
+        ? {}
+        : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
       feed: manifest.feed,
       delayClass: manifest.delayClass,
       sourceTopics: manifest.sourceTopics,

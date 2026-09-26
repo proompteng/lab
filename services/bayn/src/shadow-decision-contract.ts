@@ -1154,6 +1154,8 @@ const reconstructProposedPositionSequence = (
 // These immutable hashes identify the five-second Jev protocol and behavior used before V3 batches.
 const retainedJevParameterHash = 'a75bb665c325a3c905e3e95246da279fd4314eb00009f3caef842ab015b056f1'
 const retainedJevStrategyProtocolHash = '628d8354ed9f4ae6152a5ca03078c761fca53598bfb581d647035bc5a4edf12a'
+const retainedJevV3ParameterHash = 'ec39d233bfbaed8f88ab130b5b4cfda316c3f5bab7f48e17ee377db69eb1a444'
+const retainedJevV3StrategyProtocolHash = 'f52bbd44648727b798a0b1ee312722c119279770aeceb6a25f5d8ad52f79d94d'
 
 export const jevProtocolIdentityMatches = (
   protocol: JevProtocol,
@@ -1181,8 +1183,10 @@ export const jevProtocolIdentityMatches = (
     parameterHash.success === activeParameterHash.success &&
     Result.isSuccess(activeStrategyProtocolHash) &&
     activeStrategyProtocolHash.success === strategyProtocolHash
-  if (batchVersion === JevBatchPlanVersion.V3) return active
-  return batchVersion === undefined && (retained || active)
+  const retainedV3 =
+    parameterHash.success === retainedJevV3ParameterHash && strategyProtocolHash === retainedJevV3StrategyProtocolHash
+  if (batchVersion === JevBatchPlanVersion.V3) return retainedV3 || active
+  return batchVersion === undefined && (retained || retainedV3 || active)
 }
 
 const jevEntryEvidenceIssues = (
