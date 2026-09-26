@@ -801,6 +801,7 @@ export const latestQuotes = (
   const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs + clockSkewMs)
   // Bind complete post-range evidence here. Executable freshness is symbol-local and is enforced by the strategy
   // before selection; sparse IEX activity for one symbol must not invalidate fresh evidence for another symbol.
+  const relaxedCandidates = request.candidateSymbols === undefined ? undefined : new Set(request.candidateSymbols)
   for (const symbol of intradaySnapshotSymbols(request)) {
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
@@ -811,8 +812,14 @@ export const latestQuotes = (
         }),
       )
     }
+    // Candidate-selection snapshots rely on the verified post-range quote plus the downstream
+    // entry-quote defenses (freshness bound, maximum spread, two-sided displayed size); requiring a
+    // post-range trade print would exclude thinly-traded symbols whose quotes remain executable.
+    // The relaxation applies only to actual candidates: the benchmark and snapshots outside
+    // candidate selection keep the strict trade requirement for replay fidelity.
     if (
       request.purpose === undefined &&
+      relaxedCandidates?.has(symbol) !== true &&
       (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
     ) {
       return Result.fail(
@@ -947,6 +954,18 @@ export const candidateAvailability = (
             maximumQuoteAgeMs: request.maximumQuoteAgeMs,
           })
           exclusions.push(Object.freeze({ symbol, reason: 'freshness', message: cause.message }))
+          continue
+        }
+        // The downstream signal contract requires a trade for every requested candidate; admitting a
+        // candidate with no trade rows at all would abort the whole batch, so it stays excluded here.
+        if (symbolTrades.length === 0) {
+          exclusions.push(
+            Object.freeze({
+              symbol,
+              reason: 'not-ready',
+              message: 'intraday snapshot lacks a trade for candidate symbol',
+            }),
+          )
         }
         continue
       }
