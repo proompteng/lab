@@ -22,6 +22,8 @@ import { OperationalError, operationalError } from '../errors'
 import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
+import { AuthorityGenerationStore } from '../db/execution-store'
+import { ReconciliationStatus, type AuthorityState } from '../execution/contracts'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
@@ -57,6 +59,62 @@ type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
+
+/** Owned by one serialized pass, discarded before its post-mutation continuation. Transmission still refreshes at the writer fence. */
+export const reconciliationForPreparation = <R>(
+  initial: ReconciliationPassResult | undefined,
+  refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
+  readAuthority: Effect.Effect<AuthorityState | undefined, ReconciliationPassError, R>,
+  maximumAgeMs: number,
+) =>
+  Effect.gen(function* () {
+    const previous = yield* Ref.make(initial)
+    const preflightAvailable = yield* Ref.make(initial !== undefined)
+    return {
+      read: Effect.gen(function* () {
+        const cached = yield* Ref.get(previous)
+        const firstUse = yield* Ref.getAndSet(preflightAvailable, false)
+        const now = yield* Clock.currentTimeMillis
+        const authority = yield* readAuthority
+        if (
+          cached !== undefined &&
+          firstUse &&
+          (authority === undefined ||
+            (cached.riskContext.authority?.generationHash === authority.generationHash &&
+              cached.riskContext.authority.version === authority.version))
+        )
+          return cached
+        if (cached !== undefined && authority !== undefined) {
+          const state = cached.brokerState
+          const observations = [
+            state.account.observedAt,
+            state.positionsObservedAt,
+            state.ordersObservedAt,
+            cached.report.reconciliation.reconciledAt,
+            cached.riskContext.authorityObservedAt,
+          ]
+          if (
+            cached.riskContext.authority?.generationHash === authority.generationHash &&
+            cached.riskContext.authority.version === authority.version &&
+            cached.report.reconciliation.status === ReconciliationStatus.Exact &&
+            cached.report.metrics.accountingExact &&
+            cached.riskContext.unknownMutationCount === 0 &&
+            observations.every(
+              (at) =>
+                at !== null &&
+                Number.isFinite(Date.parse(at)) &&
+                Date.parse(at) <= now &&
+                now - Date.parse(at) < maximumAgeMs,
+            )
+          )
+            return cached
+        }
+        const current = yield* refresh
+        yield* Ref.set(previous, current)
+        return current
+      }),
+    }
+  })
 
 const verifyDecisionBindingEvidence = (
   marketData: IntradayMarketDataService | undefined,
@@ -293,9 +351,12 @@ const makeRecoveryFirstCycleDriverEffect = (
       )
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
-        const pendingPreflight = yield* Ref.make(preflight)
-        const reconcileForAdvance = Ref.getAndSet(pendingPreflight, undefined).pipe(
-          Effect.flatMap((available) => (available === undefined ? reconcile : Effect.succeed(available))),
+        const authorityStore = yield* AuthorityGenerationStore
+        const { read: reconcileForAdvance } = yield* reconciliationForPreparation(
+          preflight,
+          reconcile,
+          authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
+          Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
         )
         const context: CycleRunContext<ObserveDecisionRuntime> = {
           cycleBindingId: startup.cycleBindingId,

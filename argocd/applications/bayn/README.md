@@ -69,6 +69,17 @@ readiness does not collapse back onto a single proxy pod. This gives the status/
 independently of the singleton execution owner and also continuously exercises the same immutable image on whatever
 supported architecture the scheduler selects.
 
+Squid runs in the foreground as the container's PID 1, with Kubernetes managing its lifecycle. Its PID file is disabled
+so a retained `/run/squid` volume cannot make the restarted process mistake its own reused PID for another instance.
+Validate startup with a stale PID file and recovery after an abrupt process kill using the pinned image:
+
+```sh
+bash packages/scripts/src/bayn/verify-egress-proxy-restart.sh
+```
+
+This Docker regression runs without external networking and also verifies that an unlisted CONNECT destination remains
+denied before and after restart.
+
 Before merging this layer, require the `restate-operator-crds`, `restate-operator`, and `restate` Argo applications to
 be `Synced` and `Healthy`, and verify the Restate request-identity foundation described in
 `argocd/applications/restate/README.md`. The bootstrap `SealedSecret` uses sync wave `-2` and the repository's
