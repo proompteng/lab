@@ -357,7 +357,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
             AND reconciliation.reconciled_at > state.updated_at
             AND reconciliation.reconciled_at < ${activatedAt}
             AND observe_recovery_account_settled(
-              state.generation_hash, reconciliation.reconciled_at
+              state.generation_hash, ${identity.accountId}, reconciliation.reconciled_at
             ) AS eligible
           FROM authority_state AS state
           JOIN authority_generations AS previous_generation

@@ -7,6 +7,7 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE FUNCTION observe_recovery_account_settled(
       current_generation_hash text,
+      broker_account_id text,
       reconciled_at timestamptz
     )
     RETURNS boolean
@@ -17,6 +18,7 @@ export default Effect.gen(function* () {
         SELECT generation.*
         FROM authority_generations AS generation
         WHERE generation.generation_hash = current_generation_hash
+          AND (generation.account_id = broker_account_id OR generation.account_id IS NULL)
         UNION ALL
         SELECT parent.*
         FROM authority_generations AS parent
@@ -30,14 +32,16 @@ export default Effect.gen(function* () {
       SELECT EXISTS (
         SELECT 1 FROM authority_generations AS generation
         WHERE generation.generation_hash = current_generation_hash
+          AND (generation.account_id = broker_account_id OR generation.account_id IS NULL)
           AND (
             NOT EXISTS (
               SELECT 1 FROM mutation_events AS mutation
               JOIN intents AS intent ON intent.intent_id = mutation.intent_id
-              WHERE intent.account_id = generation.account_id
+              WHERE intent.account_id = broker_account_id
             )
             OR (
               generation.broker_environment = 'sandbox'
+              AND generation.account_id = broker_account_id
               AND EXISTS (
                 SELECT 1 FROM lineage AS research
                 WHERE research.maximum = 'PAPER'
@@ -103,7 +107,7 @@ export default Effect.gen(function* () {
                   WHERE intent.account_id = generation.account_id
                 )$guard$;
       settled_guard constant text := $guard$AND observe_recovery_account_settled(
-                  OLD.generation_hash, reconciliation.reconciled_at
+                  OLD.generation_hash, generation.account_id, reconciliation.reconciled_at
                 )$guard$;
     BEGIN
       IF (length(definition) - length(replace(definition, previous_guard, ''))) <> length(previous_guard) THEN

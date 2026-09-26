@@ -440,6 +440,16 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           expect(yield* sql`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([
             { count: scenario === 'unresolved' ? 3 : 2 },
           ])
+          expect(
+            yield* sql`SELECT observe_recovery_account_settled(
+              ${canonicalHashV1({ generation: 'observe' })}, ${accountId}, ${fixture.reconciledAt}
+            ) AS settled`,
+          ).toEqual([{ settled: false }])
+          expect(
+            yield* sql`SELECT observe_recovery_account_settled(
+              ${recovered.generationHash}, 'different-account', ${fixture.reconciledAt}
+            ) AS settled`,
+          ).toEqual([{ settled: false }])
         }),
       )
     },
