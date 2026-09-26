@@ -109,7 +109,7 @@ const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(resu
 const error = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
 
 describe('immutable intraday market snapshot', () => {
-  test.each(['quote', 'trade', 'completion-bar'] as const)(
+  test.each(['quote', 'completion-bar'] as const)(
     'retains an unavailable candidate without blocking its required benchmark: %s',
     (missing) => {
       const rows = makeRows()
@@ -118,7 +118,6 @@ describe('immutable intraday market snapshot', () => {
         verifyIntradaySnapshot(candidateRequest, {
           ...rows,
           quotes: missing === 'quote' ? rows.quotes.filter((row) => row.symbol !== 'AMD') : rows.quotes,
-          trades: missing === 'trade' ? rows.trades.filter((row) => row.symbol !== 'AMD') : rows.trades,
           bars:
             missing === 'completion-bar'
               ? rows.bars.filter((row) => row.symbol !== 'AMD' || row.event_at !== '2026-08-18T13:34:00.000Z')
@@ -133,6 +132,33 @@ describe('immutable intraday market snapshot', () => {
       expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
     },
   )
+
+  test('admits a candidate with a verified post-range quote but no post-range trade', () => {
+    const rows = makeRows()
+    const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
+    const snapshot = success(
+      verifyIntradaySnapshot(candidateRequest, {
+        ...rows,
+        trades: rows.trades.filter((row) => row.symbol !== 'AMD'),
+      }),
+    )
+    expect(snapshot.manifest.candidateExclusions).toEqual([])
+    expect(snapshot.latestQuotes['AMD']).toBeDefined()
+    expect(snapshot.latestQuotes['NVDA']).toBeDefined()
+    expect(success(reverifyIntradayMarketSnapshot(snapshot))).toEqual(snapshot)
+  })
+
+  test('still requires a post-range trade outside candidate selection', () => {
+    const rows = makeRows()
+    expect(
+      error(
+        verifyIntradaySnapshot(
+          { ...request, symbols },
+          { ...rows, trades: rows.trades.filter((row) => row.symbol !== 'AMD') },
+        ),
+      ),
+    ).toMatchObject({ reason: 'not-ready', facts: { symbol: 'AMD' } })
+  })
 
   test.each(['quote', 'trade'] as const)(
     'excludes a promptly ingested candidate with a %s older than its decision-time bound',

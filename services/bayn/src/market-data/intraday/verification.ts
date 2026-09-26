@@ -811,8 +811,13 @@ export const latestQuotes = (
         }),
       )
     }
+    // Candidate-selection snapshots rely on the verified post-range quote plus the downstream
+    // entry-quote defenses (freshness bound, maximum spread, two-sided displayed size); requiring a
+    // post-range trade print would exclude thinly-traded symbols whose quotes remain executable.
+    // Snapshots outside candidate selection keep the strict trade requirement.
     if (
       request.purpose === undefined &&
+      request.candidateSymbols === undefined &&
       (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
     ) {
       return Result.fail(
