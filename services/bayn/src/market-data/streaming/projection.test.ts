@@ -11,7 +11,7 @@ import { constructStreamingSnapshot } from './snapshot'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../intraday/model'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1, sha256 } from '../../hash'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
 import {
@@ -43,6 +43,7 @@ const rawRecord = (
   offset: number,
   at: number,
   payload: object,
+  symbol = 'AAPL',
 ): KafkaMarketRecord => ({
   topic: universe.topics[channel],
   partition: 0,
@@ -53,7 +54,7 @@ const rawRecord = (
     delayClass: 'real_time_exchange_only',
     marketSession: 'regular',
     channel,
-    symbol: 'AAPL',
+    symbol,
     eventTs: new Date(at).toISOString(),
     ingestTs: new Date(channel === 'bars' ? at + 61_000 : at).toISOString(),
     version: 2,
@@ -394,6 +395,41 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test('unheld symbol quote eviction does not invalidate a retained held-symbol liquidation quote', () => {
+    const symbols = ['AAPL', 'MSFT']
+    const multiple = { ...universe, symbols, universeSymbolHash: sha256(symbols.join(',')) }
+    let state = incorporateMarketRecord(emptyStreamingProjection('test-epoch'), quote, multiple, end + 2000)
+    state = incorporateMarketRecord(
+      state,
+      rawRecord('quotes', 2, end + 2000, { bp: 230, ap: 231, bs: 100, as: 100 }, 'MSFT'),
+      multiple,
+      end + 2000,
+    )
+    const liquidation = {
+      ...query,
+      universe: symbols,
+      universeSymbolHash: multiple.universeSymbolHash,
+      purpose: IntradaySnapshotPurpose.Liquidation,
+    }
+    expect(Result.isSuccess(constructStreamingSnapshot(cutFor(state), { ...liquidation, symbols }))).toBe(true)
+    for (let index = 0; index < 514; index++) {
+      state = incorporateMarketRecord(
+        state,
+        rawRecord('quotes', 1000 + index, end + 2001 + index, { bp: 230, ap: 231, bs: 100, as: 100 }, 'MSFT'),
+        multiple,
+        end + 4000 + index,
+      )
+    }
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), liquidation))
+    expect(snapshot.latestQuotes['AAPL']?.eventAt).toBe('2026-09-11T14:00:02.000000000Z')
+    expect(
+      Result.getOrThrow(
+        reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+      ),
+    ).toEqual(snapshot)
+    expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), { ...liquidation, symbols }))).toBe(true)
+  })
+
   test.each(['bars', 'trades'] as const)(
     'discarded valid %s history does not invalidate a retained liquidation quote',
     (channel) => {

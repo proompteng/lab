@@ -52,12 +52,13 @@ export const selectStreamingInputs = (
     const observedAtMs = Date.parse(request.observedAt)
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
-    const minimumObservationMs =
+    const symbols = request.symbols ?? request.universe
+    const observationEvicted =
       request.purpose === IntradaySnapshotPurpose.Liquidation
-        ? state.minimumQuoteObservationMs
-        : state.minimumObservationMs
+        ? symbols.some((symbol) => (state.minimumQuoteObservationMs.get(symbol) ?? 0) > observedAtMs)
+        : state.minimumObservationMs > observedAtMs
     if (
-      minimumObservationMs > observedAtMs ||
+      observationEvicted ||
       discardedRejectionsOverlap(
         state,
         Date.parse(request.rangeStartAt),
@@ -70,7 +71,6 @@ export const selectStreamingInputs = (
     const session = request.calendar.sessions.find((entry) => entry.date === request.sessionDate)
     if (session === undefined)
       return yield* Result.fail(failure('request', 'Streaming snapshot has no bound exchange session'))
-    const symbols = request.symbols ?? request.universe
     const candidates = new Set(request.candidateSymbols)
     const entries: ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTrade>[] = []
     const featureReceipts: StreamingFeatureReceipt[] = []
