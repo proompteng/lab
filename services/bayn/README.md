@@ -154,6 +154,9 @@ no unresolved mutations or open orders before creating a clear OBSERVE successor
 A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
 accounting and flatness checks. A bound pending or active cycle keeps its existing generation while recovery manages
 the position; it cannot attempt authority rollover until the cycle is terminal.
+An automatic failure before a research generation records any decision or intent can also settle that unused
+generation when its plan has no pending or active cycle. Recovery still requires fresh exact reconciliation and the
+existing OBSERVE successor and grant checks; operator restrictions remain held.
 The existing activation path then verifies the grant before publishing the next execution driver. This transition
 does not require a worker restart. An untouched, unbound cycle retains its plan until the session's entry cutoff,
 including restrictions after market open. Its snapshot, decision and intent history must remain empty. Partially
@@ -172,6 +175,14 @@ it. An expired entry follows the existing durable no-send path. Close-only recov
 Broker-session startup verifies account identity and permissions, account configuration, positions, orders, fills,
 and order lookup access. It does not require the calendar endpoint, so an outage cannot prevent a replacement worker
 from starting recovery of a bound decision.
+Capital activation uses the current exact reconciliation for flatness, rather than the session's startup position
+and order counts. A failed activation remains a typed initialization failure; the native controller reacquires its
+scoped runtime on a subsequent durable tick instead of publishing a permanently passive OBSERVE driver.
+Migration 0086 permits recovery of an OBSERVE successor restricted by an incomplete reconciliation after earlier
+research trading has settled. It requires matching sandbox research ancestry, a fresh exact flat account cut after
+the restriction, terminal intents, no bound active cycle, and no unresolved mutations or open orders. Both the
+application selector and PostgreSQL authority trigger enforce the same settlement predicate. Operator holds remain
+restricted and historical trading records are retained.
 
 Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
@@ -257,6 +268,10 @@ Alpaca WebSocket events enter the existing raw Kafka topics. Each execution work
 features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
 candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
 
+The projection yields to the Node event loop every 256 consumed records, including records discarded after an
+assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
+cancellation wait. Incorporation order and committed offsets retain the same rules.
+
 The worker joins a completed feature window to its exact raw bar revisions and independently fresh quotes/trades.
 Corrections invalidate an old feature until its replacement matches. Missing candidates produce exclusions;
 missing benchmark data or absence of every candidate makes the observation unavailable. Streaming failures never
@@ -327,8 +342,10 @@ It replaces the previous acknowledgement metric's intent-to-order-observation ca
 order without a recorded acceptance does not invent an acknowledgement sample. Missing samples are omitted;
 negative differences are excluded and counted in `bayn_cycle_latency_clock_regressions`.
 
-Decision building can reuse a reconciliation completed by the same pass's preflight. The result does not survive
-that pass, and submission preparation retains its separate reconciliation and final mutation-authority checks.
+Decision building and close preparation share the current pass's reconciliation. Additional uses check its age and
+current authority version; stale evidence or changed authority requires another reconciliation. The result does not
+survive the serialized pass or its broker mutation. Transmission retains its independent broker refresh, current
+grant and risk checks under the writer fence.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
@@ -356,6 +373,8 @@ Native archive requests use durable intent symbols independently of decision val
 Completed native intraday cycles bind performance evidence to `streaming_snapshot_references` or older
 `intraday_snapshot_references`. Streaming receipts preserve the original input cut and content hash. Their retrospective
 archive request retains every decision lineage offset and verifies that each precedes its consumed partition position.
+Full-session volume is requested only after the reconciliation cutoff reaches the exchange session close, even when
+the trade completed earlier. Intraday reports retain those fills and accounting while full-session volume is unavailable.
 The reader uses the
 same universe, IEX feed and exchange calendar as the decision, with the complete regular-session window, a fixed
 reconciliation cutoff, and captured Kafka partition offsets. Legacy daily SIP publications remain supported.

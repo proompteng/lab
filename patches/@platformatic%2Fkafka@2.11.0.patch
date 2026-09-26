@@ -1,0 +1,238 @@
+diff --git a/dist/clients/consumer/messages-stream.js b/dist/clients/consumer/messages-stream.js
+index aa4da614cd0cd8eed5e6a2af40ec7a09f838a7e5..4805f96303574633934d5a812a080b4ca5f1303b 100644
+--- a/dist/clients/consumer/messages-stream.js
++++ b/dist/clients/consumer/messages-stream.js
+@@ -67,6 +67,8 @@ export class MessagesStream extends Readable {
+     #onConsumerGroupJoin;
+     #onBrokerDisconnect;
+     #pushRecordsOperation;
++    #pendingRecords = [];
++    #pumpingRecords = false;
+     [kInstance];
+     /*
+       The following requests are blocking in Kafka:
+@@ -273,7 +275,7 @@ export class MessagesStream extends Readable {
+         // setup, where resume() is called before _construct() completes.
+         if (wasPaused) {
+             process.nextTick(() => {
+-                this.#fetch();
++                this.#drainRecords();
+             });
+         }
+         return result;
+@@ -320,6 +322,11 @@ export class MessagesStream extends Readable {
+         });
+     }
+     _destroy(error, callback) {
++        for (let index = 0; index < this.#pendingRecords.length; index++) {
++            // The active generator unwinds itself when deserialization destroys the stream.
++            if (!this.#pumpingRecords || index > 0) this.#pendingRecords[index].return();
++        }
++        this.#pendingRecords = [];
+         if (this.#autocommitInterval) {
+             clearInterval(this.#autocommitInterval);
+         }
+@@ -330,7 +337,26 @@ export class MessagesStream extends Readable {
+         });
+     }
+     _read() {
+-        this.#fetch();
++        process.nextTick(() => this.#drainRecords());
++    }
++    #drainRecords() {
++        if (this.#pumpingRecords || this.destroyed || this.#closed) return;
++        this.#pumpingRecords = true;
++        try {
++            while (this.#pendingRecords.length > 0 && this.readableLength < this.readableHighWaterMark && !this.#paused && !this.destroyed) {
++                const record = this.#pendingRecords[0].next();
++                if (record.done) this.#pendingRecords.shift();
++                else this.push(record.value);
++            }
++        } catch (error) {
++            this.destroy(error);
++        } finally {
++            this.#pumpingRecords = false;
++        }
++        if (this.#pendingRecords.length === 0 && !this.destroyed) {
++            if (this.#maxFetches > 0 && this.#fetches >= this.#maxFetches && this.#inflightNodes.size === 0) this.push(null);
++            else if (this.readableLength < this.readableHighWaterMark) process.nextTick(() => this.#fetch());
++        }
+     }
+     #fetch() {
+         /* c8 ignore next 4 - Hard to test */
+@@ -338,6 +364,8 @@ export class MessagesStream extends Readable {
+             this.push(null);
+             return;
+         }
++        if (this.#pendingRecords.length > 0 || this.readableLength >= this.readableHighWaterMark ||
++            (this.#maxFetches > 0 && this.#fetches >= this.#maxFetches)) return;
+         // No need to fetch if nobody is consuming the data
+         if (this.readableFlowing === null || this.#paused || this.#refreshOffsetsInflight || this.#refreshOffsetsPending) {
+             return;
+@@ -415,9 +443,9 @@ export class MessagesStream extends Readable {
+             for (const [node, nodeRequests] of requests) {
+                 this.#inflightNodes.set(node, Date.now());
+                 this.#consumer.fetch({ ...this.#options, node, topics: nodeRequests, connectionPool: this[kConnections] }, (error, response) => {
+-                    this.#inflightNodes.delete(node);
+                     this.emit('fetch');
+                     if (error) {
++                        this.#inflightNodes.delete(node);
+                         // The stream has been closed, ignore the error
+                         /* c8 ignore next 4 - Hard to test */
+                         if (this.#closed || this.closed || this.destroyed) {
+@@ -447,6 +475,7 @@ export class MessagesStream extends Readable {
+                         return;
+                     }
+                     if (this.#closed || this.closed || this.destroyed) {
++                        this.#inflightNodes.delete(node);
+                         // When it's the last inflight, we finally close the stream.
+                         // This is done to avoid the user exiting from consmuming metrics like for-await and still see the process up.
+                         if (this.#inflightNodes.size === 0) {
+@@ -454,7 +483,7 @@ export class MessagesStream extends Readable {
+                         }
+                         return;
+                     }
+-                    this.#pushRecordsOperation(metadata, topicIds, response, requestedOffsets);
++                    this.#pushRecordsOperation(metadata, topicIds, response, requestedOffsets, () => this.#inflightNodes.delete(node));
+                 });
+             }
+         });
+@@ -543,14 +572,17 @@ export class MessagesStream extends Readable {
+         }
+         return recoveredOffsets.length > 0;
+     }
+-    #pushRecords(metadata, topicIds, response, requestedOffsets) {
++    #pushRecords(metadata, topicIds, response, requestedOffsets, complete) {
++        this.#pendingRecords.push(this.#records(metadata, topicIds, response, requestedOffsets, complete));
++        this.#drainRecords();
++    }
++    *#records(metadata, topicIds, response, requestedOffsets, complete) {
+         const autocommit = this.#autocommitEnabled;
+         const keyDeserializer = this.#keyDeserializer;
+         const valueDeserializer = this.#valueDeserializer;
+         const headerKeyDeserializer = this.#headerKeyDeserializer;
+         const headerValueDeserializer = this.#headerValueDeserializer;
+         let diagnosticContext;
+-        let canPush = true;
+         const messageMetadata = {
+             consumer: {
+                 groupId: this.#consumer.groupId,
+@@ -577,27 +609,8 @@ export class MessagesStream extends Readable {
+                     const firstOffset = batch.firstOffset;
+                     const leaderEpoch = metadata.topics.get(topic).partitions[partition].leaderEpoch;
+                     this.#partitionsEpochs.set(key, leaderEpoch);
+-                    // Track offsets
+-                    if (batch === recordsBatches[recordsBatches.length - 1]) {
+-                        // Track the last read offset
+-                        const lastOffset = batch.firstOffset + BigInt(batch.lastOffsetDelta);
+-                        this.#offsetsToFetch.set(key, lastOffset + 1n);
+-                        // Autocommit if needed
+-                        if (autocommit) {
+-                            this.#offsetsToCommit.set(key, {
+-                                topic,
+-                                partition,
+-                                offset: lastOffset + 1n,
+-                                leaderEpoch
+-                            });
+-                        }
+-                    }
+-                    // Filter control markers
+-                    if (batch.attributes & IS_CONTROL) {
+-                        continue;
+-                    }
+                     // Process messages
+-                    for (const record of batch.records) {
++                    for (const record of (batch.attributes & IS_CONTROL) ? [] : batch.records) {
+                         const messageToConsume = { ...record, topic, partition };
+                         const offset = batch.firstOffset + BigInt(record.offsetDelta);
+                         if (offset < requestedOffsets.get(key)) {
+@@ -725,7 +738,7 @@ export class MessagesStream extends Readable {
+                             };
+                             diagnosticContext.result = message;
+                             consumerReceivesChannel.asyncStart.publish(diagnosticContext);
+-                            canPush = this.push(message);
++                            yield message;
+                             consumerReceivesChannel.asyncEnd.publish(diagnosticContext);
+                         }
+                         catch (error) {
+@@ -738,36 +751,29 @@ export class MessagesStream extends Readable {
+                             consumerReceivesChannel.end.publish(diagnosticContext);
+                         }
+                     }
++                    // Track offsets
++                    if (batch === recordsBatches[recordsBatches.length - 1]) {
++                        // Track the last read offset
++                        const lastOffset = batch.firstOffset + BigInt(batch.lastOffsetDelta);
++                        this.#offsetsToFetch.set(key, lastOffset + 1n);
++                        // Autocommit if needed
++                        if (autocommit) {
++                            this.#offsetsToCommit.set(key, {
++                                topic,
++                                partition,
++                                offset: lastOffset + 1n,
++                                leaderEpoch
++                            });
++                        }
++                    }
+                 }
+             }
+         }
+         if (this.#autocommitEnabled && !this.#autocommitInterval) {
+             this[kAutocommit]();
+         }
+-        // Schedule the next fetch only when the readable buffer still has room.
+-        // When push() returns false, the buffer is above highWaterMark —
+-        // continuing to fetch would defeat Node.js backpressure and cause
+-        // unbounded memory growth (see #260).
+-        //
+-        // When canPush is false, the fetch loop restarts via two mechanisms:
+-        //  1. _read() — called by Node.js when the buffer drains below
+-        //     highWaterMark in both pull and flowing modes.
+-        //  2. resume() — when pipeline()/pipe() transitions from paused to
+-        //     unpaused after downstream backpressure releases, resume()
+-        //     explicitly schedules process.nextTick(#fetch) (see #254).
+-        //
+-        // process.nextTick yields control back to the event loop between fetch
+-        // cycles, ensuring heartbeats, commits, and other I/O are not starved
+-        // by a tight fetch loop. It also avoids growing the call stack if
+-        // metadata/fetch callbacks fire synchronously.
+-        if (canPush) {
+-            process.nextTick(() => {
+-                this.#fetch();
+-            });
+-        }
+-        if (this.#maxFetches > 0 && ++this.#fetches >= this.#maxFetches) {
+-            this.push(null);
+-        }
++        this.#fetches++;
++        complete?.();
+     }
+     #updateCommittedOffset(topic, partition, offset) {
+         const key = partitionKey(topic, partition);
+@@ -968,7 +974,7 @@ export class MessagesStream extends Readable {
+     [kInspect](...args) {
+         this.#consumer[kInspect](...args);
+     }
+-    #beforeDeserialization(hook, metadata, topicIds, response, requestedOffsets) {
++    #beforeDeserialization(hook, metadata, topicIds, response, requestedOffsets, complete) {
+         const requests = [];
+         // Create the pre-deserialization requests
+         for (const topicResponse of response.responses) {
+@@ -1003,7 +1009,7 @@ export class MessagesStream extends Readable {
+             }
+         }
+         if (requests.length === 0) {
+-            this.#pushRecords(metadata, topicIds, response, requestedOffsets);
++            this.#pushRecords(metadata, topicIds, response, requestedOffsets, complete);
+             return;
+         }
+         runAsyncSeries((request, cb) => {
+@@ -1031,7 +1037,7 @@ export class MessagesStream extends Readable {
+                 this.destroy(error);
+                 return;
+             }
+-            this.#pushRecords(metadata, topicIds, response, requestedOffsets);
++            this.#pushRecords(metadata, topicIds, response, requestedOffsets, complete);
+         });
+     }
+ }

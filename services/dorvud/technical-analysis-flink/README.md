@@ -163,6 +163,8 @@ arrival or window end, plus the configured delay. Raw revisions and actual `comp
 model a continuously running feature job; they are not evidence that historical Bayn received those features. All
 symbols share the source's arrival order, and corrections publish when their raw revision becomes available. Neither
 missing bars nor technical indicators are fabricated. No Kafka, ClickHouse, or broker connection is acquired.
+Feature payloads use the live wire encoding, including explicit null values for unavailable technical scalars, so
+their published material reproduces the original feature hash. Optional envelope timestamps remain omitted.
 
 The new output directory contains `arrivals.ndjson`, the exact `config.json`, and a terminal `receipt.json` with input
 and output hashes, counts, skipped nonregular/nonfinal bars, and actual computation time. A directory without the
