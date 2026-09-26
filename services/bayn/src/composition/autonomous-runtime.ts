@@ -1,4 +1,4 @@
-import { Effect, Layer, Ref, Result, Scope } from 'effect'
+import { Effect, Layer, Result, Scope } from 'effect'
 import {
   makeApplicationPlan,
   recordAutonomousCyclePass,
@@ -14,7 +14,6 @@ import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
 import { readFinalExecutionRiskContext } from '../db/reconciliation'
 import { Authority, type ResearchCapitalGrantGeneration } from '../execution/contracts'
-import { type ResearchCapitalActivationRequest } from '../execution/configuration'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { OperationalError } from '../errors'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
@@ -26,7 +25,6 @@ import {
 import { runOnce } from '../reconciler'
 import { boundedReconciliationPass } from '../observe-composition/decision-builder'
 import { currentUtcInstant } from '../time'
-import type { RuntimeState } from '../runtime-state'
 import { scopedAcquisition } from '../resource-boundary'
 import { autonomousRuntimeServices, makeAutonomousCycleResources } from './autonomous-runtime-resources'
 import { AutonomousRuntimeResourcesLive, applicationDependencies } from './resources'
@@ -46,16 +44,6 @@ import {
 export interface AutonomousServiceRuntimeOptions {
   readonly ownCycleDriver: RecoveryFirstCycleDriverOwner
 }
-
-export const recoverPendingCapitalActivationToObserve = (
-  state: Ref.Ref<RuntimeState>,
-  request: ResearchCapitalActivationRequest,
-  currentObserveRuntime: Effect.Effect<AutonomousRuntime<never, never>, OperationalError>,
-  unavailableRuntime: AutonomousRuntime<never, never>,
-): Effect.Effect<AutonomousRuntime<never, never>> =>
-  pendingCapitalActivation(state, request, 'PREPARATION_FAILED').pipe(
-    Effect.andThen(currentObserveRuntime.pipe(Effect.orElseSucceed(() => unavailableRuntime))),
-  )
 
 const ownCycleDriverStartup =
   <StartupR, DriverR>(
@@ -196,7 +184,7 @@ export const makeAutonomousServiceRuntime = (
                           Effect.provide(cycleResources),
                         ),
                         observePlan.config.operationTimeoutMs,
-                      ),
+                      ).pipe(Effect.asVoid),
                     })
                     if (request === null) {
                       return recoverBlockedGeneration.pipe(Effect.andThen(readCurrentObserveRuntime()))
@@ -206,7 +194,6 @@ export const makeAutonomousServiceRuntime = (
                       request,
                       buildContinuation,
                       buildLineage,
-                      runtimeServices.session,
                       runtimeServices.authorityGenerationStore,
                       runtimeServices.capitalGrantLifecycleStore,
                       runOnce.pipe(
@@ -295,6 +282,7 @@ export const makeAutonomousServiceRuntime = (
                                     },
                                     executionMode: restricted ? 'CloseOnly' : 'Mutation',
                                     execution: {
+                                      currentUtcInstant,
                                       brokerRead: runtimeServices.session.read,
                                       brokerMutation,
                                       persistedCapitalGrants: runtimeServices.persistedCapitalGrants,
@@ -381,26 +369,7 @@ export const makeAutonomousServiceRuntime = (
                         }),
                       )
                     }
-                    return prepareOrRecover.pipe(
-                      Effect.flatMap(resolvePrepared),
-                      Effect.catch((cause) =>
-                        Effect.logWarning('Bayn capital activation remains in OBSERVE').pipe(
-                          Effect.annotateLogs({
-                            service: 'bayn',
-                            activation: 'PENDING',
-                            reason: cause instanceof Error ? cause.message : String(cause),
-                          }),
-                          Effect.andThen(
-                            recoverPendingCapitalActivationToObserve(
-                              state,
-                              request,
-                              readCurrentObserveRuntime(),
-                              readRuntime(),
-                            ),
-                          ),
-                        ),
-                      ),
-                    )
+                    return prepareOrRecover.pipe(Effect.flatMap(resolvePrepared))
                   }),
                   Effect.provide(runtimeContext),
                 ),
@@ -419,7 +388,15 @@ export const makeAutonomousServiceRuntime = (
             Effect.andThen(
               request === null
                 ? Effect.succeed(pendingRuntime())
-                : pendingCapitalActivation(state, request, 'PREPARATION_FAILED').pipe(Effect.as(pendingRuntime())),
+                : pendingCapitalActivation(state, request, 'PREPARATION_FAILED').pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        cause instanceof OperationalError
+                          ? cause
+                          : capitalActivationOperationalError('capital runtime preparation failed', cause),
+                      ),
+                    ),
+                  ),
             ),
           ),
         ),

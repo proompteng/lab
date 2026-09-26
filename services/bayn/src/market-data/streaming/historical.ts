@@ -117,6 +117,7 @@ export interface HistoricalMarketCursor {
   readonly runId: string
   readonly universe: StreamingUniverse
   readonly regeneratedFeaturesRecordedAtMs?: number
+  readonly regeneratedTechnicalFeaturesRecordedAtMs?: number
   readonly projection: ReturnType<typeof emptyStreamingProjection>
   readonly processedRecords: number
   readonly suppliedOffsets: ReadonlyMap<string, string>
@@ -143,7 +144,9 @@ export const createHistoricalMarketCursor = (
                   value.runId === runId &&
                   value.featureTopic === universe.topics.features &&
                   value.technicalFeatureTopic === universe.topics.technicalFeatures &&
-                  value.regeneratedFeaturesRecordedAtMs === regeneratedFeaturesRecordedAtMs,
+                  value.regeneratedFeaturesRecordedAtMs === regeneratedFeaturesRecordedAtMs &&
+                  (value.regeneratedTechnicalFeaturesRecordedAtMs === undefined ||
+                    value.technicalFeatureTopic !== undefined),
               ),
             ),
             strictParseOptions,
@@ -153,6 +156,9 @@ export const createHistoricalMarketCursor = (
       runId,
       universe,
       ...(regeneratedFeaturesRecordedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs }),
+      ...(provenance?.regeneratedTechnicalFeaturesRecordedAtMs === undefined
+        ? {}
+        : { regeneratedTechnicalFeaturesRecordedAtMs: provenance.regeneratedTechnicalFeaturesRecordedAtMs }),
       projection: {
         ...emptyStreamingProjection(`historical-${runId}`, universe.topics.technicalFeatures),
         availabilityMode: 'simulated',
@@ -188,6 +194,7 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
         cursor.universe,
         event.availableAtMs,
         cursor.regeneratedFeaturesRecordedAtMs ?? event.availableAtMs,
+        cursor.regeneratedTechnicalFeaturesRecordedAtMs ?? event.availableAtMs,
       ),
       processedRecords: cursor.processedRecords + 1,
       suppliedOffsets: new Map(cursor.suppliedOffsets).set(partitionKey, record.offset),

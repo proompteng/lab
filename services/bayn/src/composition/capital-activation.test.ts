@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Redacted, Result } from 'effect'
+import { Effect, Redacted, Result } from 'effect'
 
 import type { ApplicationPlanFor } from '../app'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
@@ -12,7 +12,13 @@ import {
   type ResearchCapitalActivationRequest,
 } from '../execution/configuration'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
-import { configuredCapitalActivation } from './capital-activation'
+import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
+import type { ReconciledBrokerState } from '../reconciliation'
+import {
+  configuredCapitalActivation,
+  refreshResearchCapitalActivationReconciliation,
+  validateResearchCapitalPreflight,
+} from './capital-activation'
 
 const accountId = '123e4567-e89b-42d3-a456-426614174000'
 const identity = Result.getOrThrow(
@@ -119,4 +125,72 @@ test('requires a mandate for mutation access while allowing an unconfigured read
       },
     }),
   ).toEqual(Result.fail('configured granted capital requires an immutable execution mandate request'))
+})
+
+test('activation consumes the current reconciliation rather than the startup position count', async () => {
+  const at = '2026-09-25T15:10:15.000Z'
+  const flat: ReconciledBrokerState = {
+    account: {
+      schemaVersion: 'bayn.paper-account-snapshot.v1',
+      accountId,
+      status: AccountStatus.Active,
+      currency: 'USD',
+      cashMicros: '100000000000',
+      equityMicros: '100000000000',
+      buyingPowerMicros: '100000000000',
+      observedAt: at,
+    },
+    positions: [],
+    orders: [],
+    positionsObservedAt: at,
+    ordersObservedAt: at,
+    accountingHash: '1'.repeat(64),
+    unknownOrderCount: 0,
+    reconciliation: {
+      schemaVersion: 'bayn.paper-reconciliation.v1',
+      accountId,
+      reconciliationId: '2'.repeat(64),
+      contentHash: '3'.repeat(64),
+      expectedHash: '4'.repeat(64),
+      observedHash: '4'.repeat(64),
+      status: ReconciliationStatus.Exact,
+      discrepancies: [],
+      reconciledAt: at,
+    },
+  }
+  const occupied: ReconciledBrokerState = {
+    ...flat,
+    positions: [
+      {
+        schemaVersion: 'bayn.paper-position.v1',
+        accountId,
+        symbol: 'AAPL',
+        quantityMicros: '6000000',
+        averageEntryPriceMicros: '335970000',
+        marketPriceMicros: '335970000',
+        marketValueMicros: '2015820000',
+        unrealizedPnlMicros: '0',
+        observedAt: at,
+      },
+    ],
+  }
+  let current = occupied
+  const reconcile = Effect.sync(() => ({ report: { reconciliation: current.reconciliation }, brokerState: current }))
+  const activate = refreshResearchCapitalActivationReconciliation(reconcile, 1000).pipe(
+    Effect.map((result) => validateResearchCapitalPreflight(request(), result.brokerState)),
+  )
+  expect(Result.isFailure(await Effect.runPromise(activate))).toBe(true)
+  current = flat
+  expect(await Effect.runPromise(activate)).toEqual(Result.succeed(undefined))
+  current = occupied
+  expect(Result.isFailure(await Effect.runPromise(activate))).toBe(true)
+  expect(Result.isFailure(validateResearchCapitalPreflight(request(), { ...flat, unknownOrderCount: 1 }))).toBe(true)
+  expect(
+    Result.isFailure(
+      validateResearchCapitalPreflight(request(), {
+        ...flat,
+        account: { ...flat.account, accountId: 'different-account' },
+      }),
+    ),
+  ).toBe(true)
 })
