@@ -16,7 +16,8 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1, sha256 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
 import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
-import { reproduceJevCandidateObservation } from './observation'
+import { makeJevObservation, reproduceJevCandidateObservation } from './observation'
+import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
 import { decodeJevProtocol, defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 import { makeJevTradingSignalBatch, reproduceJevTradingSignalBatch } from './trading-signals'
@@ -136,7 +137,8 @@ describe('native Jev entry and position observations', () => {
   })
 
   test('durable Jev protocol identities select the archived or active behavior by batch version', () => {
-    const retained = Result.getOrThrow(decodeJevProtocol({ ...defaultJevProtocolDocument, inferenceValidityMs: 5_000 }))
+    const { candidateEvidencePolicy: _policy, ...priorProtocol } = defaultJevProtocolDocument
+    const retained = Result.getOrThrow(decodeJevProtocol({ ...priorProtocol, inferenceValidityMs: 5_000 }))
     const priorIdentity = Result.getOrThrow(
       makeStrategyProtocolHashResult({
         name: 'jev',
@@ -159,6 +161,20 @@ describe('native Jev entry and position observations', () => {
     expect(jevProtocolIdentityMatches(retained, priorIdentity)).toBe(true)
     expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V3)).toBe(true)
     expect(jevProtocolIdentityMatches(active, activeIdentity)).toBe(true)
+    const priorV3 = Result.getOrThrow(decodeJevProtocol(priorProtocol))
+    const priorV3Identity = Result.getOrThrow(
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: sha256('bayn.jev.behavior.v2'),
+        parameterHash: canonicalHashV1(priorV3),
+        parameterSchemaVersion: priorV3.schemaVersion,
+      }),
+    )
+    expect(jevProtocolIdentityMatches(priorV3, priorV3Identity, JevBatchPlanVersion.V3)).toBe(true)
+    expect(jevProtocolIdentityMatches(priorV3, priorV3Identity)).toBe(true)
+    expect(jevProtocolIdentityMatches(priorV3, activeIdentity, JevBatchPlanVersion.V3)).toBe(false)
+    expect(jevProtocolIdentityMatches(active, priorV3Identity, JevBatchPlanVersion.V3)).toBe(false)
+    expect(jevProtocolIdentityMatches(priorV3, priorV3Identity, JevBatchPlanVersion.V2)).toBe(false)
     expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V3)).toBe(false)
     expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
     expect(jevProtocolIdentityMatches(retained, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
@@ -312,5 +328,53 @@ describe('native Jev entry and position observations', () => {
     expect(protocol.executionModel.order.timeInForce).toBe('ioc')
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, candidateSymbols: ['AAPL', 'AAPL'] }))).toBe(true)
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, maximumSymbolWeight: 1 }))).toBe(true)
+  })
+
+  test('the protocol and saved observation must select the same candidate evidence policy', () => {
+    const { observation } = nativeJevFixture()
+    const { candidateEvidencePolicy: _policy, ...historicalProtocol } = observation.payload.protocol
+    expect(
+      Result.isFailure(
+        reproduceJevCandidateObservation({
+          ...observation.payload,
+          protocol: historicalProtocol,
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('a native batch requests a quote-ready candidate with only a real pre-range-end trade', () => {
+    const fixture = nativeJevFixture()
+    const { snapshot } = streamingFixtureFromRaw(
+      {
+        ...fixture.snapshot,
+        quotes: fixture.snapshot.quotes.map((quote) =>
+          quote.symbol === 'AAPL'
+            ? { ...quote, eventAt: '2026-09-04T14:29:59.000Z', ingestedAt: '2026-09-04T14:29:59.000Z' }
+            : quote,
+        ),
+        trades: fixture.snapshot.trades.map((trade) =>
+          trade.symbol === 'AAPL'
+            ? { ...trade, eventAt: '2026-09-04T14:20:00.000Z', ingestedAt: '2026-09-04T14:20:00.000Z' }
+            : trade,
+        ),
+      },
+      fixture.query,
+    )
+    const observation = Result.getOrThrow(
+      makeJevObservation({
+        ...fixture.observation.payload,
+        snapshot,
+      }),
+    )
+    const batch = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: observation.payload,
+        expiresAt: '2026-09-04T14:30:12.000Z',
+        planVersion: JevBatchPlanVersion.V3,
+      }),
+    )
+    expect(batch.candidates.find((entry) => entry.symbol === 'AAPL')?.status).toBe(JevCandidatePlanStatus.Requested)
+    expect(Result.getOrThrow(reproduceJevTradingSignalBatch(observation.payload, batch))).toEqual(batch)
   })
 })

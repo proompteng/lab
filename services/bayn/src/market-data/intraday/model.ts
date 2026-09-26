@@ -15,6 +15,10 @@ export enum IntradaySnapshotPurpose {
   Liquidation = 'LIQUIDATION',
 }
 
+export enum IntradayCandidateEvidencePolicy {
+  QuoteWithWindowTrade = 'bayn.candidate-evidence.quote-window-trade.v1',
+}
+
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
   readonly calendar: MarketCalendarObservation
@@ -29,6 +33,7 @@ export interface IntradaySnapshotQuery {
   readonly symbols?: readonly string[]
   /** Decision candidates whose unavailable data is recorded separately from the required benchmark. */
   readonly candidateSymbols?: readonly string[]
+  readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
   /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
@@ -47,6 +52,13 @@ export interface IntradayArchiveWatermark {
   readonly sourcePartition: number
   readonly inclusiveLastOffset: string
 }
+
+export const usesCandidateWindowTrade = (
+  request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy' | 'candidateSymbols'>,
+  symbol: string,
+): boolean =>
+  request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade &&
+  request.candidateSymbols?.includes(symbol) === true
 
 export interface IntradaySnapshotRequest extends IntradaySnapshotQuery {
   /** Exact Kafka-backed archive version captured before this snapshot is loaded. */
@@ -120,6 +132,7 @@ export interface IntradaySnapshotManifest {
   readonly universe?: readonly string[]
   readonly symbols: readonly string[]
   readonly candidateSymbols?: readonly string[]
+  readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
   readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed

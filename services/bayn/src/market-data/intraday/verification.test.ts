@@ -1,3 +1,4 @@
+import { IntradayCandidateEvidencePolicy } from './model'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -136,7 +137,12 @@ describe('immutable intraday market snapshot', () => {
 
   test('admits a candidate with a verified post-range quote but no post-range trade', () => {
     const rows = makeRows()
-    const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
+    const candidateRequest = {
+      ...request,
+      symbols,
+      candidateSymbols: ['AMD'],
+      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+    }
     const snapshot = success(
       verifyIntradaySnapshot(candidateRequest, {
         ...rows,
@@ -155,7 +161,12 @@ describe('immutable intraday market snapshot', () => {
 
   test('excludes a candidate with a verified post-range quote but no trade at all', () => {
     const rows = makeRows()
-    const candidateRequest = { ...request, symbols, candidateSymbols: ['AMD'] }
+    const candidateRequest = {
+      ...request,
+      symbols,
+      candidateSymbols: ['AMD'],
+      candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+    }
     const snapshot = success(
       verifyIntradaySnapshot(candidateRequest, {
         ...rows,

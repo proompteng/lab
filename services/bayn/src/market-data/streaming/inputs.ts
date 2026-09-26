@@ -2,6 +2,7 @@ import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result } from 'effect'
 
 import {
+  IntradayCandidateEvidencePolicy,
   IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   type IntradayBar,
@@ -159,13 +160,20 @@ export const selectStreamingInputs = (
         break
       }
       if (selected !== undefined) featureReceipts.push(selected)
-      else if (candidates.has(symbol))
-        featureExclusions.push({
-          symbol,
-          reason: 'not-ready',
-          message: 'matching complete rolling feature is unavailable',
-        })
-      else
+      else if (candidates.has(symbol)) {
+        let message = 'matching complete rolling feature is unavailable'
+        if (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade) {
+          const present = new Set(bars.map((bar) => intradayInstantNanos(bar.value.eventAt)))
+          const missing: string[] = []
+          for (let at = start; at < end; at += 60_000_000_000n)
+            if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
+          message =
+            missing.length > 0
+              ? `rolling window lacks ${missing.length} of ${Number((end - start) / 60_000_000_000n)} required minute bars: ${missing.join(', ')}`
+              : 'no observed rolling feature matches the complete bar window'
+        }
+        featureExclusions.push({ symbol, reason: 'not-ready', message })
+      } else
         return yield* Result.fail(
           new IntradaySnapshotFailure({
             reason: 'not-ready',
@@ -231,7 +239,10 @@ export const selectStreamingInputs = (
       return yield* Result.fail(
         failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
       )
-    const technicalFeatures = technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
+    const technicalFeatures =
+      request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+        ? technicalReceipts
+        : technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
     const technical =
       state.technicalTopic === undefined
         ? undefined

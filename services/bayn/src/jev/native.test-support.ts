@@ -46,6 +46,9 @@ export const nativeJevFixture = (
     60_000
   const timedQuery = {
     ...base.query,
+    ...(protocol.candidateEvidencePolicy === undefined
+      ? {}
+      : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     observedAt: observedAt ?? base.query.observedAt,
     rangeStartAt: new Date(end - protocol.lookbackMinutes * 60_000).toISOString(),
     rangeEndAt: new Date(end).toISOString(),

@@ -10,7 +10,7 @@ import {
   UnsignedMicrosSchema,
   UtcInstantSchema,
 } from '../../schemas'
-import { IntradaySnapshotPurpose } from '../intraday/model'
+import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../intraday/model'
 import { SimulatedSnapshotEvidenceSchema, StreamingSnapshotEvidenceSchema } from './evidence-schema'
 
 export const SnapshotCalendarSchema = Schema.Struct({
@@ -49,6 +49,7 @@ export const SnapshotManifestFields = {
   symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
   /** Independent entry evidence carries the complete candidate request and its availability result. */
   candidateSymbols: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
+  candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
   candidateExclusions: Schema.optionalKey(Schema.Array(ExecutionCandidateExclusionSchema).check(Schema.isUnique())),
   purpose: Schema.optionalKey(Schema.Enum(IntradaySnapshotPurpose)),
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
