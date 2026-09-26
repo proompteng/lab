@@ -1,6 +1,7 @@
 import { Effect, Option, pipe } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca'
+import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { CycleState, type AutonomousCycle } from '../model'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
@@ -25,7 +26,7 @@ const discoverIntradayCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
   const candidate =
-    context.strategyName === 'intraday-momentum' &&
+    (context.strategyName === 'intraday-momentum' || context.strategyName === 'jev') &&
     context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
       ? {
           cycleBindingId: context.cycleBindingId,
@@ -97,8 +98,30 @@ const discoverIntradayCyclePass = <R>(
           }),
         ),
       )
+    let recoveredBlockedCycle = false
+    if (
+      Option.isSome(existing) &&
+      existing.value.state === CycleState.Blocked &&
+      context.authorityGenerationHash !== undefined
+    ) {
+      const prior = yield* store.readDecisionDocument(existing.value.identity.cycleId).pipe(
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'read-authority-slot',
+            failure: 'store',
+            message: 'blocked cycle authority binding read failed',
+            cause,
+          }),
+        ),
+      )
+      recoveredBlockedCycle =
+        Option.isSome(prior) &&
+        prior.value.mode === Authority.Execution &&
+        prior.value.contentHash === existing.value.bindings.decisionHash &&
+        prior.value.bindings.authorityGenerationHash !== context.authorityGenerationHash
+    }
     const entryAttemptOrdinal = Option.isSome(existing)
-      ? nextIntradayEntryAttemptOrdinal(existing.value, observedAt)
+      ? nextIntradayEntryAttemptOrdinal(existing.value, observedAt, recoveredBlockedCycle)
       : 1
     if (Option.isSome(existing) && entryAttemptOrdinal === undefined) {
       return isTerminalCycleState(existing.value.state)
