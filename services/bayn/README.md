@@ -175,6 +175,14 @@ it. An expired entry follows the existing durable no-send path. Close-only recov
 Broker-session startup verifies account identity and permissions, account configuration, positions, orders, fills,
 and order lookup access. It does not require the calendar endpoint, so an outage cannot prevent a replacement worker
 from starting recovery of a bound decision.
+Capital activation uses the current exact reconciliation for flatness, rather than the session's startup position
+and order counts. A failed activation remains a typed initialization failure; the native controller reacquires its
+scoped runtime on a subsequent durable tick instead of publishing a permanently passive OBSERVE driver.
+Migration 0086 permits recovery of an OBSERVE successor restricted by an incomplete reconciliation after earlier
+research trading has settled. It requires matching sandbox research ancestry, a fresh exact flat account cut after
+the restriction, terminal intents, no bound active cycle, and no unresolved mutations or open orders. Both the
+application selector and PostgreSQL authority trigger enforce the same settlement predicate. Operator holds remain
+restricted and historical trading records are retained.
 
 Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
@@ -334,8 +342,10 @@ It replaces the previous acknowledgement metric's intent-to-order-observation ca
 order without a recorded acceptance does not invent an acknowledgement sample. Missing samples are omitted;
 negative differences are excluded and counted in `bayn_cycle_latency_clock_regressions`.
 
-Decision building can reuse a reconciliation completed by the same pass's preflight. The result does not survive
-that pass, and submission preparation retains its separate reconciliation and final mutation-authority checks.
+Decision building and close preparation share the current pass's reconciliation. Additional uses check its age and
+current authority version; stale evidence or changed authority requires another reconciliation. The result does not
+survive the serialized pass or its broker mutation. Transmission retains its independent broker refresh, current
+grant and risk checks under the writer fence.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
