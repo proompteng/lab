@@ -68,6 +68,20 @@ from new inputs instead of claiming that old truncated history contains a comple
 Subsequent checkpoints restore the complete new state. The restore tests cover open microbar buckets, duplicate
 redelivery, recursive seeds, and session totals. The rolling-price feature state and contract below are unchanged.
 
+## Sampled REST observations
+
+Trade envelopes with `source=rest_latest` contain filtered point samples from Alpaca's latest-trade endpoint. The trade
+parser excludes them before event-time watermarks and volume aggregation. Quote samples can update quote state.
+Kafka retains the original envelopes for its configured retention period. ClickHouse archive rows retain normalized
+values and Kafka coordinates, but omit the `source` discriminator and complete provider payload. Preserve the original
+Kafka envelopes for experiments that need to distinguish REST samples from streaming observations. The minute-bar
+feature branches remain bar-derived.
+
+Deploy this exclusion before enabling the producer's `ALPACA_LATEST_SYMBOLS` setting. No operator IDs or checkpoint
+state schemas change for this exclusion. Disabling polling does not remove retained `rest_latest` records. A rollback
+must retain compatible volume exclusions or verify that restored offsets cannot replay sampled records into an older
+volume consumer. See the [producer contract](../README.md#latest-quote-and-trade-observations).
+
 ## ClickHouse sink batching
 
 The equity TA sinks bound `TA_CLICKHOUSE_BATCH_SIZE` to 1–1,000 rows. The deployed 1,000-row setting reaches the JDBC
@@ -149,6 +163,8 @@ arrival or window end, plus the configured delay. Raw revisions and actual `comp
 model a continuously running feature job; they are not evidence that historical Bayn received those features. All
 symbols share the source's arrival order, and corrections publish when their raw revision becomes available. Neither
 missing bars nor technical indicators are fabricated. No Kafka, ClickHouse, or broker connection is acquired.
+Feature payloads use the live wire encoding, including explicit null values for unavailable technical scalars, so
+their published material reproduces the original feature hash. Optional envelope timestamps remain omitted.
 
 The new output directory contains `arrivals.ndjson`, the exact `config.json`, and a terminal `receipt.json` with input
 and output hashes, counts, skipped nonregular/nonfinal bars, and actual computation time. A directory without the

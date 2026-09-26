@@ -13,6 +13,7 @@ import { verifyFinalizedSnapshot } from '../market-data-verification'
 import type { BrokerIdentity } from '../broker/identity'
 import type { IsoDate } from '../schemas'
 import { makeForwardPerformanceReceipt, type ForwardPerformanceDomainFailure } from './domain'
+import { makeForwardPerformanceReport, type ForwardPerformanceReport } from './report'
 import {
   readForwardPerformancePostgres,
   type ForwardPerformancePostgresEvidence,
@@ -33,6 +34,7 @@ import type {
   ForwardPerformanceMarketVolumeEvidence,
   ForwardPerformanceMarketVolumeRequest,
   ForwardPerformanceReceipt,
+  ForwardPerformanceEvidenceInput,
 } from './model'
 import { Pipeable } from '../pipeable'
 import {
@@ -557,11 +559,11 @@ const requireBrokerIdentity = (
     : Effect.succeed(config as BoundForwardPerformanceConfig)
 }
 
-const runForwardPerformanceDataFirst = (
+const readForwardPerformanceInput = (
   loadedConfig: LoadedRuntimeConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string } = {},
-): Effect.Effect<ForwardPerformanceReceipt, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
+): Effect.Effect<ForwardPerformanceEvidenceInput, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* requireBrokerIdentity(loadedConfig)
     const identity = config.execution.brokerIdentity
@@ -619,52 +621,80 @@ const runForwardPerformanceDataFirst = (
             cashYieldAdjustedExact:
               postgres.reconciliation.cashYieldAdjustedExact && ledger.cashYieldEvidence !== undefined,
           }
-    const receipt = yield* Effect.fromResult(
-      makeForwardPerformanceReceipt({
-        runtime: {
-          sourceRevision: config.build.sourceRevision,
-          imageRepository: config.build.imageRepository,
-          imageDigest: config.build.imageDigest,
-        },
-        account: {
-          accountId: identity.accountId,
-          accountReferenceHash: identity.identityHash,
-          provider: identity.provider,
-          environment: identity.environment,
-        },
-        durableExecutionBindings: postgres.durableExecutionBindings,
-        cycles: postgres.cycles,
-        ...(postgres.strategy === undefined ? {} : { strategy: postgres.strategy }),
-        ...(reconciliation === undefined ? {} : { reconciliation }),
-        ...(postgres.startingCapitalMicros === undefined
-          ? {}
-          : { startingCapitalMicros: postgres.startingCapitalMicros }),
-        transactions: postgres.transactionEvidence,
-        brokerFees: feeRecords
-          .filter((record) => generationFeeIds.has(record.data.activityId))
-          .map((record) => record.data),
-        executionEvidence,
-        ...(postgres.unverifiedDecisionHashes === undefined
-          ? {}
-          : { unverifiedDecisionHashes: postgres.unverifiedDecisionHashes }),
-        marketVolumeEvidence,
-        ledgerTotals: ledger.totals,
-        cashYieldEvidenceRequired: ledger.cashYieldEvidenceRequired,
-        ...(ledger.cashYieldEvidence === undefined ? {} : { cashYieldEvidence: ledger.cashYieldEvidence }),
-        accountingReceiptsExact,
-        ledgerExact: ledger.ledgerExact,
-        missingLedgerAccountCount: ledger.missingLedgerAccountCount,
-        unresolvedMutationCount: postgres.unresolvedMutationCount,
-        unclosedCycleCount: postgres.unclosedCycleCount + postgres.postReconciliationActivityCount,
-        openPositionCount: Math.max(postgres.openPositionCount, ledger.openPositionCount),
-      }),
-    ).pipe(
-      Effect.mapError((cause) =>
-        programError('construct-receipt', 'forward-performance receipt construction failed', cause),
-      ),
-    )
-    return receipt
+    return {
+      runtime: {
+        sourceRevision: config.build.sourceRevision,
+        imageRepository: config.build.imageRepository,
+        imageDigest: config.build.imageDigest,
+      },
+      account: {
+        accountId: identity.accountId,
+        accountReferenceHash: identity.identityHash,
+        provider: identity.provider,
+        environment: identity.environment,
+      },
+      durableExecutionBindings: postgres.durableExecutionBindings,
+      cycles: postgres.cycles,
+      ...(postgres.strategy === undefined ? {} : { strategy: postgres.strategy }),
+      ...(reconciliation === undefined ? {} : { reconciliation }),
+      ...(postgres.startingCapitalMicros === undefined
+        ? {}
+        : { startingCapitalMicros: postgres.startingCapitalMicros }),
+      transactions: postgres.transactionEvidence,
+      ...(Result.isSuccess(ledgerVerification) &&
+      ledgerVerification.success.exactReceipts.size === postgres.ledgerTransactions.length &&
+      [...ledgerVerification.success.exactReceipts.values()].every(Boolean)
+        ? { accountTransactions: postgres.ledgerTransactions }
+        : {}),
+      brokerFees: feeRecords
+        .filter((record) => generationFeeIds.has(record.data.activityId))
+        .map((record) => record.data),
+      executionEvidence,
+      ...(postgres.unverifiedDecisionHashes === undefined
+        ? {}
+        : { unverifiedDecisionHashes: postgres.unverifiedDecisionHashes }),
+      marketVolumeEvidence,
+      ledgerTotals: ledger.totals,
+      cashYieldEvidenceRequired: ledger.cashYieldEvidenceRequired,
+      ...(ledger.cashYieldEvidence === undefined ? {} : { cashYieldEvidence: ledger.cashYieldEvidence }),
+      accountingReceiptsExact,
+      ledgerExact: ledger.ledgerExact,
+      missingLedgerAccountCount: ledger.missingLedgerAccountCount,
+      unresolvedMutationCount: postgres.unresolvedMutationCount,
+      unclosedCycleCount: postgres.unclosedCycleCount + postgres.postReconciliationActivityCount,
+      openPositionCount: Math.max(postgres.openPositionCount, ledger.openPositionCount),
+    }
   })
+
+const runForwardPerformanceDataFirst = (
+  loadedConfig: LoadedRuntimeConfig,
+  readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
+  options: { readonly authorityGenerationHash?: string } = {},
+): Effect.Effect<ForwardPerformanceReceipt, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
+  readForwardPerformanceInput(loadedConfig, readers, options).pipe(
+    Effect.flatMap((input) =>
+      Effect.fromResult(makeForwardPerformanceReceipt(input)).pipe(
+        Effect.mapError((cause) =>
+          programError('construct-receipt', 'forward-performance receipt construction failed', cause),
+        ),
+      ),
+    ),
+  )
+
+export const runForwardPerformanceReport = (
+  loadedConfig: LoadedRuntimeConfig,
+  readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
+  options: { readonly authorityGenerationHash?: string } = {},
+): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
+  readForwardPerformanceInput(loadedConfig, readers, options).pipe(
+    Effect.flatMap((input) =>
+      Effect.fromResult(makeForwardPerformanceReport(input)).pipe(
+        Effect.mapError((cause) =>
+          programError('construct-receipt', 'forward-performance report construction failed', cause),
+        ),
+      ),
+    ),
+  )
 
 export const runForwardPerformance = Pipeable.by<
   (

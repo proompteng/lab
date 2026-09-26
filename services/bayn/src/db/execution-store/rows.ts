@@ -34,6 +34,23 @@ export const EventRow = Schema.Struct({
 })
 export type EventRow = typeof EventRow.Type
 
+export const HistoryEventRow = Schema.Struct({
+  ...EventRow.fields,
+  source_event_id: NonEmptyString,
+  payload_exists: Schema.Boolean,
+  accounting_complete: Schema.Boolean,
+})
+export type HistoryEventRow = typeof HistoryEventRow.Type
+
+export const CompletedAccountingRow = Schema.Struct({
+  ...AccountingTransactionRowSchema.fields,
+  source_event_id: NonEmptyString,
+  event_content_hash: Sha256,
+  prior_quantity_micros: Schema.String,
+  prior_cost_micros: Schema.String,
+})
+export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
+
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
   Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String }),
@@ -136,7 +153,9 @@ export const AuthorityGenerationRow = Schema.Struct({
   activation_source_revision: Schema.NullOr(Schema.String),
   activation_image_repository: Schema.NullOr(NonEmptyString),
   activation_image_digest: Schema.NullOr(Schema.String),
-  strategy_name: Schema.NullOr(Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum'])),
+  strategy_name: Schema.NullOr(
+    Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum', 'jev']),
+  ),
   strategy_behavior_hash: Schema.NullOr(Sha256),
   strategy_parameter_hash: Schema.NullOr(Sha256),
   strategy_parameter_schema_version: Schema.NullOr(
@@ -147,6 +166,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.intraday-momentum.protocol.v1',
       'bayn.intraday-momentum.protocol.v2',
       'bayn.intraday-momentum.protocol.v3',
+      'bayn.jev.protocol.v1',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
@@ -197,6 +217,17 @@ export const decodeValuationInput = Pipeable.dual(1, (input: unknown) => decodeV
 const decodeEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 
 export const decodeEventRows = Pipeable.dual(1, (input: unknown) => decodeEventRowsDataFirst(input))
+const decodeHistoryEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
+
+export const decodeHistoryEventRows = Pipeable.dual(1, (input: unknown) => decodeHistoryEventRowsDataFirst(input))
+const decodeCompletedAccountingRowsDataFirst = Schema.decodeUnknownEffect(
+  Schema.Array(CompletedAccountingRow),
+  strictParseOptions,
+)
+
+export const decodeCompletedAccountingRows = Pipeable.dual(1, (input: unknown) =>
+  decodeCompletedAccountingRowsDataFirst(input),
+)
 const decodeLastSequenceDataFirst = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 
 export const decodeLastSequence = Pipeable.dual(1, (input: unknown) => decodeLastSequenceDataFirst(input))

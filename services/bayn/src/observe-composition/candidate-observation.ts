@@ -1,4 +1,4 @@
-import { Context, Effect, Result } from 'effect'
+import { Context, Effect, Option, Result } from 'effect'
 
 import { operationalError, type OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
@@ -6,6 +6,8 @@ import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
+import { makeJevObservation } from '../jev/observation'
+import type { JevPurpose } from '../jev/portfolio'
 
 interface CandidateObservationInput {
   readonly cycleId: string
@@ -41,29 +43,50 @@ export const makeCandidateObservation = (input: CandidateObservationInput) =>
     ),
   )
 
-export type CandidateObservation = Result.Result.Success<ReturnType<typeof makeCandidateObservation>>
+export type CandidateObservation =
+  | Result.Result.Success<ReturnType<typeof makeCandidateObservation>>
+  | Result.Result.Success<ReturnType<typeof makeJevObservation>>
 
 export class CandidateObservationStore extends Context.Service<
   CandidateObservationStore,
-  { readonly record: (observation: CandidateObservation) => Effect.Effect<void, OperationalError> }
+  {
+    readonly record: (observation: CandidateObservation) => Effect.Effect<void, OperationalError>
+    readonly latestJevWindowEnd: (input: {
+      readonly cycleId: string
+      readonly purpose: JevPurpose
+    }) => Effect.Effect<Option.Option<string>, OperationalError>
+  }
 >()('@proompteng/bayn/observe-composition/CandidateObservationStore') {}
 
-export const candidateObservationLog = ({ contentHash, payload }: CandidateObservation) => ({
-  event: payload.schemaVersion,
-  contentHash,
-  cycleId: payload.cycleId,
-  authorityGenerationHash: payload.authorityGenerationHash,
-  observedAt: payload.observedAt,
-  snapshotId: payload.manifest.snapshotId,
-  snapshotContentHash: payload.manifest.contentHash,
-  selectedSymbols: payload.decision.selectedSymbols,
-  candidates: payload.decision.signals.map(({ symbol, eligible, rejectionReasons }) => ({
-    symbol,
-    eligible,
-    rejectionReasons,
-  })),
-  excludedCandidates: payload.decision.excludedCandidates.map(({ symbol, reason }) => ({ symbol, reason })),
-})
+export const candidateObservationLog = ({ contentHash, payload }: CandidateObservation) =>
+  payload.schemaVersion === 'bayn.jev-observation.v1'
+    ? {
+        event: payload.schemaVersion,
+        contentHash,
+        cycleId: payload.cycleId,
+        authorityGenerationHash: payload.authorityGenerationHash,
+        observedAt: payload.observedAt,
+        snapshotId: payload.manifest.snapshotId,
+        purpose: payload.portfolio.purpose,
+        candidates: payload.manifest.candidateSymbols,
+        excludedCandidates: payload.manifest.candidateExclusions?.map(({ symbol, reason }) => ({ symbol, reason })),
+      }
+    : {
+        event: payload.schemaVersion,
+        contentHash,
+        cycleId: payload.cycleId,
+        authorityGenerationHash: payload.authorityGenerationHash,
+        observedAt: payload.observedAt,
+        snapshotId: payload.manifest.snapshotId,
+        snapshotContentHash: payload.manifest.contentHash,
+        selectedSymbols: payload.decision.selectedSymbols,
+        candidates: payload.decision.signals.map(({ symbol, eligible, rejectionReasons }) => ({
+          symbol,
+          eligible,
+          rejectionReasons,
+        })),
+        excludedCandidates: payload.decision.excludedCandidates.map(({ symbol, reason }) => ({ symbol, reason })),
+      }
 
 export const recordCandidateObservation = (input: CandidateObservationInput) =>
   Effect.gen(function* () {
@@ -71,4 +94,12 @@ export const recordCandidateObservation = (input: CandidateObservationInput) =>
     const store = yield* CandidateObservationStore
     yield* store.record(observation)
     yield* Effect.logInfo(candidateObservationLog(observation))
+  })
+
+export const recordJevObservation = (input: Parameters<typeof makeJevObservation>[0]) =>
+  Effect.gen(function* () {
+    const observation = yield* Effect.fromResult(makeJevObservation(input))
+    yield* (yield* CandidateObservationStore).record(observation)
+    yield* Effect.logInfo(candidateObservationLog(observation))
+    return observation
   })

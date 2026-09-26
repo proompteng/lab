@@ -16,9 +16,10 @@ export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuil
 
 export interface CycleRunContext<R = never> {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum'
+  readonly strategyName: 'intraday-momentum' | 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
+  readonly authorityGenerationHash?: string
   readonly executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
