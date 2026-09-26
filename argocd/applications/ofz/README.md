@@ -11,7 +11,7 @@ The platform ApplicationSet owns its namespace and reconciles these manifests fr
 | PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 20 GiB per instance |
 | Backups | Barman Cloud plugin, continuous WAL archiving, daily base backup at 10:30 UTC, 14-day retention |
 | Playground | Two replicas of upstream `v0.3.1`, pinned to its multi-architecture image digest |
-| Browser endpoint | <https://ofz.k8s.proompteng.ai>, through the lab's private Traefik ingress |
+| Browser endpoint | <https://ofz.ide-newton.ts.net>, through the lab's Tailscale ingress |
 | SpiceDB API | `ofz.ofz.svc.cluster.local:50051` for gRPC and port `8443` for the HTTP gateway |
 
 Playground runs SpiceDB and the `zed` CLI in the browser through WebAssembly. Its schemas, test relationships, and
@@ -31,7 +31,8 @@ verify PostgreSQL's TLS certificate with `ofz-db-ca`. `track_commit_timestamp=on
 
 `ofz-spicedb-key` contains the API preshared key. Its namespace-bound SealedSecret is committed here. The preshared key
 grants access to the whole SpiceDB API; distribute it only to trusted backend services. The API uses plaintext
-transport inside the cluster and has no ingress route. Browser access terminates HTTPS at Traefik.
+transport inside the cluster and has no ingress route. Browser access uses Tailscale HTTPS and requires tailnet access.
+The Tailscale operator provisions the private DNS name and certificate without a separate Pi-hole entry.
 
 The database, its inherited resources, the backup ObjectStore, and the bucket claim are retained during Argo pruning
 or Application deletion. Ceph provides both database storage and the backup bucket. These backups do not protect
@@ -51,8 +52,8 @@ kubeseal --context galactic-tailscale --controller-name sealed-secrets \
 ```
 
 The render contains no Namespace. Validate the `SpiceDBCluster` and CNPG `Cluster` against the installed CRD schemas
-as well as kubeconform. The SpiceDB operator, CNPG operator, Barman Cloud plugin, Sealed Secrets, Ceph, cert-manager,
-and private Traefik ingress must be available before the first reconciliation.
+as well as kubeconform. The SpiceDB operator, CNPG operator, Barman Cloud plugin, Sealed Secrets, Ceph,
+and Tailscale operator must be available before the first reconciliation.
 
 ## Verify the deployed service
 
@@ -62,7 +63,7 @@ credentials before PostgreSQL, then let the SpiceDB operator migrate the datasto
 
 ```bash
 kubectl --context galactic-tailscale -n argocd get application ofz
-kubectl --context galactic-tailscale -n ofz get cluster,spicedbcluster,deployment,pods,backup,certificate
+kubectl --context galactic-tailscale -n ofz get cluster,spicedbcluster,deployment,pods,backup,ingress
 kubectl --context galactic-tailscale -n ofz port-forward service/ofz 18443:8443
 ```
 

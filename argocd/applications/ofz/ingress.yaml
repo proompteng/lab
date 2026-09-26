@@ -1,28 +1,22 @@
-apiVersion: cert-manager.io/v1
-kind: Certificate
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
   name: ofz-playground
+  annotations:
+    tailscale.com/tags: tag:k8s
 spec:
-  secretName: ofz-playground-tls
-  dnsNames:
-    - ofz.k8s.proompteng.ai
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-    group: cert-manager.io
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: ofz-playground
-spec:
-  entryPoints:
-    - websecure
-  routes:
-    - kind: Rule
-      match: Host(`ofz.k8s.proompteng.ai`)
-      services:
-        - name: ofz-playground
-          port: 80
+  ingressClassName: tailscale
+  rules:
+    - host: ofz.ide-newton.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ofz-playground
+                port:
+                  number: 80
   tls:
-    secretName: ofz-playground-tls
+    - hosts:
+        - ofz.ide-newton.ts.net
