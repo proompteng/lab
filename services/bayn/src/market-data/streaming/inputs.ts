@@ -52,8 +52,12 @@ export const selectStreamingInputs = (
     const observedAtMs = Date.parse(request.observedAt)
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
+    const minimumObservationMs =
+      request.purpose === IntradaySnapshotPurpose.Liquidation
+        ? state.minimumQuoteObservationMs
+        : state.minimumObservationMs
     if (
-      state.minimumObservationMs > observedAtMs ||
+      minimumObservationMs > observedAtMs ||
       discardedRejectionsOverlap(
         state,
         Date.parse(request.rangeStartAt),

@@ -41,6 +41,7 @@ export interface StreamingProjection {
   readonly quoteHistory: ReadonlyMap<string, readonly ObservedMarketValue<IntradayQuote>[]>
   readonly tradeHistory: ReadonlyMap<string, readonly ObservedMarketValue<IntradayTrade>[]>
   readonly minimumObservationMs: number
+  readonly minimumQuoteObservationMs: number
   readonly features: ReadonlyMap<string, readonly ObservedFeature[]>
   /** The accepted feature for this disposition, including one too old for retained join history. */
   readonly featureArrival: ObservedFeature | null
@@ -66,6 +67,7 @@ export const emptyStreamingProjection = (epoch: string, technicalTopic?: string)
   quoteHistory: new Map(),
   tradeHistory: new Map(),
   minimumObservationMs: 0,
+  minimumQuoteObservationMs: 0,
   features: new Map(),
   featureArrival: null,
   ...(technicalTopic === undefined ? {} : { technicalTopic }),
@@ -274,6 +276,7 @@ const incorporateDecodedRecord = (
         ...state,
         quoteHistory: new Map(state.quoteHistory).set(event.value.symbol, history.slice(-512)),
         minimumObservationMs: Math.max(state.minimumObservationMs, evicted?.availableAtMs ?? 0),
+        minimumQuoteObservationMs: Math.max(state.minimumQuoteObservationMs, evicted?.availableAtMs ?? 0),
         quotes: new Map(state.quotes).set(event.value.symbol, {
           value: event.value,
           availableAtMs,

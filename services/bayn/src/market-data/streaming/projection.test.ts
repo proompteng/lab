@@ -394,6 +394,45 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test.each(['bars', 'trades'] as const)(
+    'discarded valid %s history does not invalidate a retained liquidation quote',
+    (channel) => {
+      let state = incorporate([...raw(), featureRecord], end + 2000)
+      for (let index = 0; index < 514; index++) {
+        const record = rawRecord(
+          channel,
+          1000 + index,
+          channel === 'bars' ? end - 60_000 : end + 2001 + index,
+          channel === 'bars'
+            ? { o: 129, h: 131, l: 128, c: 130 + index / 1000, v: 100, vw: 130, n: 1 }
+            : { p: 130, s: 100 },
+        )
+        state = incorporateMarketRecord(state, record, universe, end + 4000 + index)
+      }
+      expect(state.minimumObservationMs).toBeGreaterThan(Date.parse(query.observedAt))
+      const liquidation = { ...query, purpose: IntradaySnapshotPurpose.Liquidation }
+      const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), liquidation))
+      expect(snapshot.latestQuotes['AAPL']).toEqual(
+        Result.getOrThrow(constructStreamingSnapshot(cutFor(incorporate([quote])), liquidation)).latestQuotes['AAPL'],
+      )
+      expect(
+        Result.getOrThrow(
+          reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+        ),
+      ).toEqual(snapshot)
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), query))).toBe(true)
+      for (let index = 0; index < 514; index++) {
+        state = incorporateMarketRecord(
+          state,
+          rawRecord('quotes', 1000 + index, end + 2001 + index, { bp: 130, ap: 131, bs: 100, as: 100 }),
+          universe,
+          end + 4000 + index,
+        )
+      }
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), liquidation))).toBe(true)
+    },
+  )
+
   test.each(['bars', 'trades', 'features'] as const)(
     'discarded %s rejections do not block liquidation, but discarded quote rejections do',
     (channel) => {

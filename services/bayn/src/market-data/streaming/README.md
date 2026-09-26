@@ -19,8 +19,8 @@ quotes, and invalidated assignments do. This does not authorize entry pricing du
 Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
-Windows that need the applicable discarded rejection history fail verification. An observation older than retained
-history fails.
+Windows that need the applicable discarded rejection history fail verification. Liquidation also checks quote
+retention independently of bar/trade history; an observation older than its required retained history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
