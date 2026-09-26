@@ -394,6 +394,46 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test.each(['bars', 'trades', 'features'] as const)(
+    'discarded %s rejections do not block liquidation, but discarded quote rejections do',
+    (channel) => {
+      let state = incorporate([...raw(), featureRecord], end + 2000)
+      for (let index = 0; index < 257; index++) {
+        state = incorporateMarketRecord(
+          state,
+          { topic: universe.topics[channel], partition: 0, offset: String(1000 + index), value: '{' },
+          universe,
+          end + 2500,
+        )
+      }
+      const liquidation = { ...query, purpose: IntradaySnapshotPurpose.Liquidation }
+      const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), liquidation))
+      expect(
+        Result.getOrThrow(
+          reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+        ),
+      ).toEqual(snapshot)
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), query))).toBe(true)
+      expect(
+        Result.isFailure(
+          constructStreamingSnapshot(cutFor(state), { ...query, purpose: IntradaySnapshotPurpose.EntryPricing }),
+        ),
+      ).toBe(true)
+      for (let index = 0; index < 257; index++) {
+        state = incorporateMarketRecord(
+          state,
+          { topic: universe.topics.quotes, partition: 0, offset: String(1000 + index), value: '{' },
+          universe,
+          index === 0 ? end + 2500 : end + 4000,
+        )
+      }
+      expect(
+        state.rejections.get(`${universe.topics.quotes}:0`)?.every((entry) => entry.availableAtMs > end + 3000),
+      ).toBe(true)
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), liquidation))).toBe(true)
+    },
+  )
+
   test('liquidation reproduces a complete quote cut while entry history rebuilds', () => {
     const state = incorporate([rawRecord('quotes', 2, end + 2000, { bp: 130, ap: 131, bs: 100, as: 100 })])
     const cut = cutFor(state)
@@ -557,7 +597,7 @@ describe('verified streaming decision snapshot', () => {
     for (let index = 0; index < 256; index++)
       bounded = incorporateMarketRecord(bounded, malformed(String(101 + index)), universe, end + 2600 + index)
     expect(bounded.rejections.get(`${universe.topics.features}:0`)).toHaveLength(256)
-    expect(bounded.discardedRejectionsThroughMs).toBe(end + 2500)
+    expect(bounded.discardedRejectionsThroughMs.get(`${universe.topics.features}:0`)).toBe(end + 2500)
     expect(Result.isFailure(constructStreamingSnapshot(cutFor(bounded), query))).toBe(true)
   })
 

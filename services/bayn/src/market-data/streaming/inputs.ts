@@ -26,7 +26,12 @@ import {
   rollingFeatureDefinitionMaterial,
 } from '../features/contract'
 import { sha256 } from '../../hash'
-import { observedBarsAt, type StreamingProjection, type ObservedMarketValue } from './projection'
+import {
+  discardedRejectionsOverlap,
+  observedBarsAt,
+  type StreamingProjection,
+  type ObservedMarketValue,
+} from './projection'
 import { technicalFeatureMatchesBars, type TechnicalMarketFeature } from '../features/technical-contract'
 import { technicalReceiptAvailableAt } from './technical-projection'
 import type { StreamingFeatureReceipt } from './snapshot'
@@ -49,7 +54,11 @@ export const selectStreamingInputs = (
     const end = intradayInstantNanos(request.rangeEndAt)
     if (
       state.minimumObservationMs > observedAtMs ||
-      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
+      discardedRejectionsOverlap(
+        state,
+        Date.parse(request.rangeStartAt),
+        request.purpose === IntradaySnapshotPurpose.Liquidation ? request.sourceTopics.quotes : undefined,
+      )
     )
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),

@@ -49,7 +49,7 @@ export interface StreamingProjection {
   readonly technicalFeatureArrival: ObservedFeature<TechnicalMarketFeature> | null
   readonly technicalRejections: readonly TechnicalInputRejection[]
   readonly technicalRejectionsDiscardedThrough: Pick<TechnicalInputRejection, 'availableAtMs' | 'sequence'> | null
-  readonly discardedRejectionsThroughMs: number
+  readonly discardedRejectionsThroughMs: ReadonlyMap<string, number>
   readonly rejections: ReadonlyMap<
     string,
     readonly { readonly availableAtMs: number; readonly offset: string; readonly reason: string }[]
@@ -73,10 +73,21 @@ export const emptyStreamingProjection = (epoch: string, technicalTopic?: string)
   technicalFeatureArrival: null,
   technicalRejections: [],
   technicalRejectionsDiscardedThrough: null,
-  discardedRejectionsThroughMs: -1,
+  discardedRejectionsThroughMs: new Map(),
   rejections: new Map(),
 })
 export const topicPartitionKey = (topic: string, partition: number): string => `${topic}:${partition}`
+
+export const discardedRejectionsOverlap = (
+  state: StreamingProjection,
+  windowStartMs: number,
+  topic?: string,
+): boolean => {
+  for (const [key, discardedThroughMs] of state.discardedRejectionsThroughMs) {
+    if ((topic === undefined || key.startsWith(`${topic}:`)) && windowStartMs <= discardedThroughMs) return true
+  }
+  return false
+}
 
 const compareOffsets = (a: string, b: string) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0)
 export const compareBarRevisions = (a: IntradayBar, b: IntradayBar): number =>
@@ -99,7 +110,13 @@ const reject = (
   const discarded = history.length > 256 ? history[history.length - 257] : undefined
   return {
     ...state,
-    discardedRejectionsThroughMs: Math.max(state.discardedRejectionsThroughMs, discarded?.availableAtMs ?? -1),
+    discardedRejectionsThroughMs:
+      discarded === undefined
+        ? state.discardedRejectionsThroughMs
+        : new Map(state.discardedRejectionsThroughMs).set(
+            key,
+            Math.max(state.discardedRejectionsThroughMs.get(key) ?? -1, discarded.availableAtMs),
+          ),
     rejections: new Map(state.rejections).set(key, history.slice(-256)),
   }
 }
@@ -384,7 +401,7 @@ export const selectStreamingSymbolInputs = (
       observedAtMs,
     ).map((entry) => entry.value)
     if (observedAtMs < state.minimumObservationMs) return yield* fail('observation precedes retained arrival history')
-    if (windowStartMs <= state.discardedRejectionsThroughMs)
+    if (discardedRejectionsOverlap(state, windowStartMs))
       return yield* fail('requested window precedes retained rejection history')
     const quote = observedQuoteAt(state, symbol, observedAtMs)
     const trade = state.tradeHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)

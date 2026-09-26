@@ -123,8 +123,7 @@ export const constructStreamingSnapshot = (
         cut.positions.filter((position) => requiredTopics.has(position.topic)),
       ) ||
       cut.bootstrap.observedAtMs > observedAtMs ||
-      state.minimumObservationMs > observedAtMs ||
-      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
+      state.minimumObservationMs > observedAtMs
     )
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
@@ -287,8 +286,7 @@ export const constructSimulatedSnapshot = (
       cursor.regeneratedFeaturesRecordedAtMs !== provenance.regeneratedFeaturesRecordedAtMs ||
       cursor.regeneratedTechnicalFeaturesRecordedAtMs !== provenance.regeneratedTechnicalFeaturesRecordedAtMs ||
       state.minimumObservationMs > observedAtMs ||
-      (cursor.lastArrival !== null && cursor.lastArrival.availableAtMs > observedAtMs) ||
-      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
+      (cursor.lastArrival !== null && cursor.lastArrival.availableAtMs > observedAtMs)
     )
       return yield* Result.fail(failure('not-ready', 'Historical cursor does not match the simulated observation'))
     const positions = [...state.offsets]

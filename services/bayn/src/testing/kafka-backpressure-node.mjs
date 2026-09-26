@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import { mock } from 'node:test'
 import { setImmediate as nextTurn } from 'node:timers/promises'
-import { Consumer, MessagesStreamModes, MessagesStreamFallbackModes, stringDeserializers } from '@platformatic/kafka'
+import {
+  Consumer,
+  MessagesStream,
+  MessagesStreamModes,
+  MessagesStreamFallbackModes,
+  stringDeserializers,
+} from '@platformatic/kafka'
 
 const mode = process.argv[2]
 assert.ok(mode === 'drain' || mode === 'interrupt' || mode === 'invalid' || mode === 'close')
@@ -99,6 +105,7 @@ const stream = await consumer.consume({
           },
         },
 })
+assert.ok(stream instanceof MessagesStream)
 assert.equal(consumer.streamsCount, 1)
 const closed = new Promise((resolve) => stream.once('close', resolve))
 const seen = new Map(partitions.map((partition) => [partition, 0]))
@@ -132,7 +139,7 @@ try {
   assert.match(error.message, /Failed to deserialize a message/)
   rejected = true
 } finally {
-  stream.destroy()
+  void stream.destroy()
   await closed
   assert.equal(stream.closed, true)
   assert.equal(consumer.streamsCount, 0)

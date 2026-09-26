@@ -17,8 +17,10 @@ symbol, independently of bar/feature history catch-up. They preserve the full ca
 through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
 quotes, and invalidated assignments do. This does not authorize entry pricing during bootstrap or change order risk.
 Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
-quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Windows that need
-discarded rejection history fail verification. An observation older than retained history fails.
+quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
+remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
+Windows that need the applicable discarded rejection history fail verification. An observation older than retained
+history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
