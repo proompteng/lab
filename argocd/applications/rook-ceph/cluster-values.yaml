@@ -89,10 +89,11 @@ cephClusterSpec:
       # Keep client fsync latency ahead of maintenance on the shared two-host HDD path.
       # Scrub-debt alerts remain enabled, so deferred work cannot accumulate silently.
       osd_max_scrubs: "1"
-      # Restrict scrubs to 01:00-05:00 America/Los_Angeles (08:00-12:00 UTC;
-      # OSDs run on UTC) so neither daytime client ops nor the trading window
-      # share the dispatch queue with scrub IO. Scrub-debt alerts remain
-      # enabled, so deferred work cannot accumulate silently outside the window.
+      # Restrict scrubs to a fixed 08:00-12:00 UTC window (OSDs run on UTC;
+      # Ceph has no timezone-aware scheduling). That is 01:00-05:00 PDT and
+      # 00:00-04:00 PST -- clear of the trading window and evening hours in
+      # both. Scrub-debt alerts remain enabled, so deferred work cannot
+      # accumulate silently outside the window.
       osd_scrub_begin_hour: "8"
       osd_scrub_end_hour: "12"
       osd_scrub_sleep: "0.1"
