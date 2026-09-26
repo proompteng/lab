@@ -48,9 +48,27 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
               const otherAccount = yield* readForwardPerformanceMarketVolumeBindings(sql, 'another-account')
               yield* sql`UPDATE reconciliations SET reconciled_at = '2026-09-10T21:00:00Z'`
               const beforeSecondClose = yield* readForwardPerformanceMarketVolumeBindings(sql, 'test-account')
+              yield* sql`UPDATE autonomous_cycles SET terminal_at = execution_open_at + interval '45 minutes'`
+              yield* sql`UPDATE reconciliations SET reconciled_at = ${`${streaming.executionSessionDate}T15:00:00Z`}::timestamptz`
+              const duringStreamingSession = yield* readForwardPerformanceMarketVolumeBindings(sql, 'test-account')
+              yield* sql`UPDATE reconciliations SET reconciled_at = '2026-09-11T15:00:00Z'`
+              const duringLastSession = yield* readForwardPerformanceMarketVolumeBindings(sql, 'test-account')
+              yield* sql`UPDATE reconciliations SET reconciled_at = '2026-09-11T19:59:59.999Z'`
+              const beforeSessionClose = yield* readForwardPerformanceMarketVolumeBindings(sql, 'test-account')
+              yield* sql`UPDATE reconciliations SET reconciled_at = '2026-09-11T20:00:00Z'`
+              const atSessionClose = yield* readForwardPerformanceMarketVolumeBindings(sql, 'test-account')
               yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
               const open = yield* readForwardPerformanceMarketVolumeBindings(sql, 'test-account')
-              return { included, otherAccount, beforeSecondClose, open }
+              return {
+                included,
+                otherAccount,
+                beforeSecondClose,
+                duringStreamingSession,
+                duringLastSession,
+                beforeSessionClose,
+                atSessionClose,
+                open,
+              }
             }),
           )
         }),
@@ -72,6 +90,10 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
         streaming.cycleId,
         completedIntradayCycles[0].cycleId,
       ])
+      expect(rows.duringStreamingSession).toHaveLength(0)
+      expect(rows.duringLastSession).toEqual(rows.beforeSecondClose)
+      expect(rows.beforeSessionClose).toEqual(rows.beforeSecondClose)
+      expect(rows.atSessionClose).toEqual(rows.included)
       expect(rows.open).toHaveLength(0)
     } finally {
       await runtime.dispose()

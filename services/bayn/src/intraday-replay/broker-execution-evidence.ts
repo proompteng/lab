@@ -1,8 +1,7 @@
 import { Schema } from 'effect'
-import type { IntradayQuote } from '../market-data/intraday/model'
+import type { IntradayQuote, IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
-import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 import {
   NonNegativeIntegerSchema,
   Sha256Schema,
@@ -22,11 +21,15 @@ export enum ReplayQuoteRejection {
   Stale = 'stale-arrival-quote',
 }
 
+export type ReplayQuoteProtocol = Pick<IntradaySnapshotQuery, 'feed' | 'delayClass'> & {
+  readonly maximumQuoteAgeMs: number
+}
+
 export const replayQuoteRejection = (
   quote: ObservedMarketValue<IntradayQuote> | undefined,
   symbol: string,
   nowMs: number,
-  protocol: IntradayMomentumProtocol,
+  protocol: ReplayQuoteProtocol,
 ): ReplayQuoteRejection | null => {
   if (quote === undefined) return ReplayQuoteRejection.Missing
   if (
