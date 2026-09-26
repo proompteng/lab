@@ -1,25 +1,22 @@
 import assert from 'node:assert/strict'
 import { mock } from 'node:test'
 import { setImmediate as nextTurn } from 'node:timers/promises'
-import {
-  Consumer,
-  MessagesStream,
-  MessagesStreamModes,
-  MessagesStreamFallbackModes,
-  stringDeserializers,
-} from '@platformatic/kafka'
+import { Consumer, MessagesStreamModes, MessagesStreamFallbackModes, stringDeserializers } from '@platformatic/kafka'
 
 const mode = process.argv[2]
-assert.ok(mode === 'drain' || mode === 'interrupt' || mode === 'invalid')
+assert.ok(mode === 'drain' || mode === 'interrupt' || mode === 'invalid' || mode === 'close')
 const recordsPerPartition = 5000
 const partitions = [0, 1, 2, 3]
 const consumer = new Consumer({
   clientId: 'bounded-fixture',
   groupId: 'bounded-fixture',
   bootstrapBrokers: ['127.0.0.1:1'],
-  deserializers: stringDeserializers,
 })
 consumer.assignments = [{ topic: 'quotes', partitions }]
+mock.method(consumer, 'joinGroup', (_options, callback) => {
+  consumer.memberId = 'bounded-fixture-member'
+  setImmediate(() => callback(null, consumer.memberId))
+})
 const metadata = {
   topics: new Map([
     [
@@ -83,7 +80,7 @@ mock.method(consumer, 'fetch', (options, callback) => {
     maxQueue = Math.max(maxQueue, stream.readableLength)
   })
 })
-const stream = new MessagesStream(consumer, {
+const stream = await consumer.consume({
   topics: ['quotes'],
   mode: MessagesStreamModes.MANUAL,
   fallbackMode: MessagesStreamFallbackModes.FAIL,
@@ -102,6 +99,8 @@ const stream = new MessagesStream(consumer, {
           },
         },
 })
+assert.equal(consumer.streamsCount, 1)
+const closed = new Promise((resolve) => stream.once('close', resolve))
 const seen = new Map(partitions.map((partition) => [partition, 0]))
 let received = 0
 let rejected = false
@@ -118,6 +117,10 @@ try {
     if (received === 1) assert.equal(stream.offsetsToFetch.get(`quotes:${message.partition}`), 1n)
     if (received % 32 === 0) await nextTurn()
     if (mode === 'interrupt' && received === 123) break
+    if (mode === 'close' && received === 123) {
+      await stream.close()
+      break
+    }
   }
   if (mode === 'drain') {
     assert.equal(received, recordsPerPartition * partitions.length)
@@ -130,7 +133,11 @@ try {
   rejected = true
 } finally {
   stream.destroy()
+  await closed
+  assert.equal(stream.closed, true)
+  assert.equal(consumer.streamsCount, 0)
   await new Promise((resolve, reject) => consumer.close(true, (error) => (error ? reject(error) : resolve())))
+  assert.equal(consumer.closed, true)
   await nextTurn()
   mock.restoreAll()
 }

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-test.each(['drain', 'interrupt', 'invalid'])(
+test.each(['drain', 'interrupt', 'invalid', 'close'])(
   'real Kafka response expansion is bounded: %s',
   async (mode) => {
     const process = Bun.spawn(['node', join(import.meta.dir, '../../testing/kafka-backpressure-node.mjs'), mode], {
