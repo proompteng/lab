@@ -261,6 +261,96 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
+  test('recovers a generation restricted before its first cycle only after fresh exact reconciliation', async () => {
+    const fixture = makeFixture(true)
+    const successorHash = canonicalHashV1({ generation: 'unused-successor' })
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const blocked = yield* BlockedCycleIntentStore
+        yield* seedExecutionAuthority(sql, fixture)
+        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          reason = 'execution cycle loop restricted effective authority: run-cycle-pass: mutation autonomous cycle pass did not complete or reconcile within 30000ms',
+          version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+        const settlement = yield* blocked.settleCurrentTerminalGeneration({
+          accountId,
+          observedAt: fixture.reconciledAt,
+        })
+        expect(settlement).toMatchObject({
+          _tag: 'TerminalGenerationSettled',
+          authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+          blockedCycleCount: 0,
+          intentCount: 0,
+          terminalIntentCount: 0,
+        })
+
+        const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+        const rotate = authority.ensureAuthorityGeneration({
+          generationHash: successorHash,
+          maximum: Authority.Observe,
+        })
+        const stale = yield* rotate.pipe(Effect.flip)
+        expect(stale.failure).toBe('invariant')
+        expect(yield* authority.readAuthorityState).toMatchObject({
+          generationHash: canonicalHashV1({ generation: 'execution' }),
+          effective: Authority.Observe,
+          kill: KillState.Active,
+        })
+
+        const exactHash = canonicalHashV1({ reconciliation: 'unused-generation-exact' })
+        yield* sql`INSERT INTO reconciliations (
+          reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+          content_hash, status, discrepancies, reconciled_at
+        ) VALUES (
+          ${canonicalHashV1({ reconciliation: 'unused-generation' })}, 'bayn.paper-reconciliation.v1',
+          ${accountId}, ${exactHash}, ${exactHash}, ${exactHash},
+          'EXACT', ${sql.json(encodeSqlJson([]))}, ${fixture.reconciledAt}
+        )`
+        expect(yield* rotate).toMatchObject({
+          generationHash: successorHash,
+          maximum: Authority.Observe,
+          effective: Authority.Observe,
+          kill: KillState.Clear,
+        })
+        expect(yield* blocked.settleCurrentTerminalGeneration({ accountId, observedAt: fixture.reconciledAt })).toEqual(
+          {
+            _tag: 'NoTerminalGeneration',
+          },
+        )
+      }),
+    )
+  })
+
+  test.each([
+    { reason: 'operator kill switch', requestedAccount: accountId },
+    {
+      reason: 'execution cycle loop restricted effective authority: pass timeout',
+      requestedAccount: 'another-account',
+    },
+  ])(
+    'does not recover an unused generation for $reason with account $requestedAccount',
+    async ({ reason, requestedAccount }) => {
+      const fixture = makeFixture(true)
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const blocked = yield* BlockedCycleIntentStore
+          yield* seedExecutionAuthority(sql, fixture)
+          yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          reason = ${reason}, version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+          expect(
+            yield* blocked.settleCurrentTerminalGeneration({
+              accountId: requestedAccount,
+              observedAt: fixture.reconciledAt,
+            }),
+          ).toEqual({
+            _tag: 'NoTerminalGeneration',
+          })
+        }),
+      )
+    },
+  )
+
   test.each(['before', 'after'] as const)(
     'preserves an untouched same-plan cycle created %s the restriction',
     async (timing) => {

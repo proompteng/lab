@@ -42,11 +42,60 @@ const roundTrip = () => ({
   symbol: 'AAPL',
   protocol: fixture.protocol,
   assumptions,
+  holdingIntervalMs: signalStudyDefinition.horizonMs,
+  entryBudgetMicros: signalStudyDefinition.entryBudgetMicros,
   decidedAtMs: at,
   entryDecisionQuote: quote(at),
   entryArrivalQuote: quote(at + 100),
   exitDecisionQuote: quote(at + 100 + signalStudyDefinition.horizonMs, { bidPrice: 101, askPrice: 101.02 }),
   exitArrivalQuote: quote(at + 200 + signalStudyDefinition.horizonMs, { bidPrice: 101, askPrice: 101.02 }),
+})
+
+test('round trip uses the requested holding interval for exit execution', () => {
+  const holdingIntervalMs = 5 * 60_000
+  const result = Result.getOrThrow(
+    studyRoundTrip({
+      ...roundTrip(),
+      holdingIntervalMs,
+      exitDecisionQuote: quote(at + 100 + holdingIntervalMs, { bidPrice: 101, askPrice: 101.02 }),
+      exitArrivalQuote: quote(at + 200 + holdingIntervalMs, { bidPrice: 101, askPrice: 101.02 }),
+    }),
+  )
+  expect(result.outcome.status).toBe('RESOLVED')
+  expect(result.fills[1]?.observedAt).toBe(new Date(at + 200 + holdingIntervalMs).toISOString())
+})
+
+test('round trip rejects an invalid holding interval', () => {
+  expect(Result.isFailure(studyRoundTrip({ ...roundTrip(), holdingIntervalMs: 0 }))).toBeTrue()
+  expect(Result.isFailure(studyRoundTrip({ ...roundTrip(), holdingIntervalMs: 1.5 }))).toBeTrue()
+})
+
+test('round trip sizes the actual requested entry budget', () => {
+  const liquid = { bidSize: 500, askSize: 500 }
+  const result = Result.getOrThrow(
+    studyRoundTrip({
+      ...roundTrip(),
+      entryBudgetMicros: '20000000000',
+      entryDecisionQuote: quote(at, liquid),
+      entryArrivalQuote: quote(at + 100, liquid),
+      exitDecisionQuote: quote(at + 100 + signalStudyDefinition.horizonMs, {
+        ...liquid,
+        bidPrice: 101,
+        askPrice: 101.02,
+      }),
+      exitArrivalQuote: quote(at + 200 + signalStudyDefinition.horizonMs, {
+        ...liquid,
+        bidPrice: 101,
+        askPrice: 101.02,
+      }),
+    }),
+  )
+  expect(result.outcome.status).toBe('RESOLVED')
+  expect(BigInt(result.fills[0]?.notionalMicros ?? '0') > 15_000_000_000n).toBeTrue()
+})
+
+test('round trip rejects a zero entry budget', () => {
+  expect(Result.isFailure(studyRoundTrip({ ...roundTrip(), entryBudgetMicros: '0' }))).toBeTrue()
 })
 
 test('screen reproduces actual Jev selection and fixes deterministic selections from past evidence', () => {

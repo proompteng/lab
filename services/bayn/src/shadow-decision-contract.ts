@@ -1,6 +1,7 @@
 import { makeStrategyProtocolHashResult } from './contracts'
+import { JevBatchPlanVersion } from './jev/batch'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
-import { defaultJevProtocolDocument, jevBehaviorHash } from './jev/protocol'
+import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import { JevExitReason } from './jev/exit'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
@@ -1150,6 +1151,40 @@ const reconstructProposedPositionSequence = (
   return sequence
 }
 
+// These immutable hashes identify the five-second Jev protocol and behavior used before V3 batches.
+const retainedJevParameterHash = 'a75bb665c325a3c905e3e95246da279fd4314eb00009f3caef842ab015b056f1'
+const retainedJevStrategyProtocolHash = '628d8354ed9f4ae6152a5ca03078c761fca53598bfb581d647035bc5a4edf12a'
+
+export const jevProtocolIdentityMatches = (
+  protocol: JevProtocol,
+  strategyProtocolHash: string,
+  batchVersion?: JevBatchPlanVersion,
+): boolean => {
+  const parameterHash = canonicalHashV1Result(protocol)
+  if (Result.isFailure(parameterHash)) return false
+  const retained =
+    parameterHash.success === retainedJevParameterHash && strategyProtocolHash === retainedJevStrategyProtocolHash
+  if (batchVersion === JevBatchPlanVersion.V1 || batchVersion === JevBatchPlanVersion.V2) return retained
+  const activeParameterHash = canonicalHashV1Result(defaultJevProtocolDocument)
+  const activeStrategyProtocolHash = parameterHash.pipe(
+    Result.flatMap((hash) =>
+      makeStrategyProtocolHashResult({
+        name: 'jev',
+        behaviorHash: jevBehaviorHash,
+        parameterHash: hash,
+        parameterSchemaVersion: protocol.schemaVersion,
+      }),
+    ),
+  )
+  const active =
+    Result.isSuccess(activeParameterHash) &&
+    parameterHash.success === activeParameterHash.success &&
+    Result.isSuccess(activeStrategyProtocolHash) &&
+    activeStrategyProtocolHash.success === strategyProtocolHash
+  if (batchVersion === JevBatchPlanVersion.V3) return active
+  return batchVersion === undefined && (retained || active)
+}
+
 const jevEntryEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
@@ -1175,21 +1210,12 @@ const jevEntryEvidenceIssues = (
     const b = canonicalHashV1Result(right)
     return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
   }
-  const parameterHash = canonicalHashV1Result(observation.protocol)
-  const protocolHash = parameterHash.pipe(
-    Result.flatMap((hash) =>
-      makeStrategyProtocolHashResult({
-        name: 'jev',
-        behaviorHash: jevBehaviorHash,
-        parameterHash: hash,
-        parameterSchemaVersion: observation.protocol.schemaVersion,
-      }),
-    ),
-  )
   if (
-    !equal(observation.protocol, defaultJevProtocolDocument) ||
-    Result.isFailure(protocolHash) ||
-    protocolHash.success !== document.bindings.strategyProtocolHash ||
+    !jevProtocolIdentityMatches(
+      observation.protocol,
+      document.bindings.strategyProtocolHash,
+      batchPlan.schemaVersion,
+    ) ||
     observation.cycleId !== document.bindings.cycleId ||
     observation.authorityGenerationHash !== document.bindings.authorityGenerationHash ||
     observation.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
@@ -1262,27 +1288,11 @@ const jevExitEvidenceIssues = (
   const evidence = target.evidence
   const input = document.plannerInput
   const position = evidence.portfolio.brokerState.positions.find(({ quantityMicros }) => BigInt(quantityMicros) > 0n)
-  const protocolHash = canonicalHashV1Result(evidence.protocol).pipe(
-    Result.flatMap((parameterHash) =>
-      makeStrategyProtocolHashResult({
-        name: 'jev',
-        behaviorHash: jevBehaviorHash,
-        parameterHash,
-        parameterSchemaVersion: evidence.protocol.schemaVersion,
-      }),
-    ),
-  )
-  const actualProtocol = canonicalHashV1Result(evidence.protocol)
-  const expectedProtocol = canonicalHashV1Result(defaultJevProtocolDocument)
   if (
     input === undefined ||
     position === undefined ||
     evidence.portfolio.purpose !== 'MANAGE' ||
-    Result.isFailure(protocolHash) ||
-    protocolHash.success !== document.bindings.strategyProtocolHash ||
-    Result.isFailure(actualProtocol) ||
-    Result.isFailure(expectedProtocol) ||
-    actualProtocol.success !== expectedProtocol.success ||
+    !jevProtocolIdentityMatches(evidence.protocol, document.bindings.strategyProtocolHash) ||
     target.cycleId !== document.bindings.cycleId ||
     target.sessionDate !== document.executionSession?.executionSession.date ||
     evidence.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
@@ -1449,6 +1459,8 @@ const executionMaterialIssues = (
             other.streaming.runId !== binding.streaming.runId ||
             other.streaming.sourceManifestHash !== binding.streaming.sourceManifestHash ||
             other.streaming.regeneratedFeaturesRecordedAtMs !== binding.streaming.regeneratedFeaturesRecordedAtMs ||
+            other.streaming.regeneratedTechnicalFeaturesRecordedAtMs !==
+              binding.streaming.regeneratedTechnicalFeaturesRecordedAtMs ||
             other.streaming.featureTopic !== binding.streaming.featureTopic ||
             other.streaming.deliveryModel.description !== binding.streaming.deliveryModel.description),
       )

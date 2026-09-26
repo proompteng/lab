@@ -155,55 +155,70 @@ test('historical arrival scheduler advances data before delivery without a wall-
   expect(result.order.filledAt).toBe('2026-09-04T14:31:00.100Z')
 })
 
-test('measured Jev submission follows final authorization and prices quotes available after source synchronization', async () => {
-  const result = await run(
-    Effect.gen(function* () {
-      yield* TestClock.setTime(startMs)
-      const providerClock = yield* TestClock.make()
-      yield* providerClock.setTime(0)
-      const timing = yield* makeReplayJevTiming({
-        measureDatabaseTime: (operation) => operation,
-        provider: { evaluate: () => Effect.die('This timing case does not need inference') },
-        providerClock,
-        retain: () => Effect.void,
-        advanceTo: (at) => TestClock.setTime(at).pipe(Effect.andThen(providerClock.adjust(100))),
-      })
-      let lastArrival = startMs
-      const broker = yield* setup({
-        submissionTime: timing.currentUtcInstant,
-        assumptions: { ...config.assumptions, latencyMs: 10 },
-        advanceToArrival: (at) =>
-          Effect.sync(() => {
-            lastArrival = at
-          }).pipe(Effect.andThen(TestClock.setTime(at))),
-        quoteAt: (_symbol, at) =>
-          Effect.succeed(
-            observedQuote(
-              { ...quote, askPrice: at >= startMs + 100 ? 100.5 : 100 },
-              at >= startMs + 100 ? startMs + 100 : startMs,
+test.each([0, 100])(
+  'replay parsing cannot expose future quotes while %sms persistence delay remains measured',
+  async (persistenceMs) => {
+    const result = await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(startMs)
+        const providerClock = yield* TestClock.make()
+        yield* providerClock.setTime(0)
+        let excludedSourceMillis = 0
+        const timing = yield* makeReplayJevTiming({
+          measureDatabaseTime: (operation) => operation,
+          provider: { evaluate: () => Effect.die('This timing case does not need inference') },
+          providerClock,
+          retain: () => Effect.void,
+          advanceTo: (at) =>
+            TestClock.setTime(at).pipe(
+              Effect.andThen(providerClock.adjust(5000)),
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  excludedSourceMillis += 5000
+                }),
+              ),
             ),
-          ),
-      })
-      const completed = yield* timing.run(
-        Effect.gen(function* () {
-          const authorizedAt = yield* timing.currentUtcInstant
-          const submitted = yield* broker.mutation.submit(intent())
-          return { authorizedAt, order: submitted.order, checkpoint: yield* broker.checkpoint, lastArrival }
-        }),
-      )
-      return { ...completed, marketAfter: yield* Clock.currentTimeMillis }
-    }),
-  )
-  const submittedAt = result.order.submittedAt
-  if (submittedAt === undefined) throw new Error('Measured replay order is missing its submission time')
-  expect(Date.parse(result.authorizedAt)).toBe(startMs + 100)
-  expect(Date.parse(submittedAt)).toBeGreaterThanOrEqual(Date.parse(result.authorizedAt))
-  expect(Date.parse(submittedAt)).toBe(startMs + 300)
-  expect(result.lastArrival).toBe(Date.parse(submittedAt) + 10)
-  expect(result.marketAfter).toBe(result.lastArrival + 100)
-  expect(result.order.filledAveragePriceMicros).toBe('100500000')
-  expect(result.checkpoint.state.orders[0]?.execution?.quote?.availableAtMs).toBe(startMs + 100)
-})
+          advanceDeadlineTo: (at) => TestClock.setTime(at),
+          excludedSourceMillis: Effect.sync(() => excludedSourceMillis),
+        })
+        let lastArrival = startMs
+        const broker = yield* setup({
+          submissionTime: timing.currentUtcInstant,
+          assumptions: { ...config.assumptions, latencyMs: 10 },
+          advanceToArrival: (at) =>
+            Effect.sync(() => {
+              lastArrival = at
+            }).pipe(Effect.andThen(TestClock.setTime(at))),
+          quoteAt: (_symbol, at) =>
+            Effect.succeed(
+              observedQuote(
+                { ...quote, askPrice: at >= startMs + 100 ? 100.5 : 100 },
+                at >= startMs + 100 ? startMs + 100 : startMs,
+              ),
+            ),
+        })
+        const completed = yield* timing.run(
+          Effect.gen(function* () {
+            const authorizedAt = yield* timing.currentUtcInstant
+            yield* providerClock.adjust(persistenceMs)
+            const submitted = yield* broker.mutation.submit(intent())
+            return { authorizedAt, order: submitted.order, checkpoint: yield* broker.checkpoint, lastArrival }
+          }),
+        )
+        return { ...completed, marketAfter: yield* Clock.currentTimeMillis }
+      }),
+    )
+    const submittedAt = result.order.submittedAt
+    if (submittedAt === undefined) throw new Error('Measured replay order is missing its submission time')
+    expect(Date.parse(result.authorizedAt)).toBe(startMs)
+    expect(Date.parse(submittedAt)).toBeGreaterThanOrEqual(Date.parse(result.authorizedAt))
+    expect(Date.parse(submittedAt)).toBe(startMs + persistenceMs)
+    expect(result.lastArrival).toBe(Date.parse(submittedAt) + 10)
+    expect(result.marketAfter).toBe(result.lastArrival)
+    expect(result.order.filledAveragePriceMicros).toBe(persistenceMs === 0 ? '100000000' : '100500000')
+    expect(result.checkpoint.state.orders[0]?.execution?.quote?.availableAtMs).toBe(startMs + persistenceMs)
+  },
+)
 
 test('an unavailable measured submission clock cannot create a replay order or fill', async () => {
   const result = await run(
@@ -428,41 +443,49 @@ test('lost submit response does not cancel an accepted broker order', async () =
   expect(result.state.ledger.fills).toHaveLength(1)
 })
 
-test.each(['stale', 'future', 'crossed', 'other-feed'] as const)('%s quote cannot fill an order', async (kind) => {
-  const result = await run(
-    Effect.gen(function* () {
-      const broker = yield* setup({
-        quoteAt: () =>
-          Effect.succeed(
-            observedQuote(
-              {
-                ...quote,
-                eventAt: kind === 'stale' ? '2026-09-04T14:30:00.000Z' : observedAt,
-                bidPrice: kind === 'crossed' ? 102 : 100,
-                feed: kind === 'other-feed' ? 'sip' : 'iex',
-              },
-              kind === 'future' ? startMs + 1000 : startMs,
+test.each(['stale', 'future', 'crossed', 'zero-bid', 'zero-ask', 'other-feed'] as const)(
+  '%s quote cannot fill an order',
+  async (kind) => {
+    const result = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          quoteAt: () =>
+            Effect.succeed(
+              observedQuote(
+                {
+                  ...quote,
+                  eventAt: kind === 'stale' ? '2026-09-04T14:30:00.000Z' : observedAt,
+                  bidPrice: kind === 'crossed' ? 102 : kind === 'zero-bid' ? 0 : 100,
+                  bidSize: kind === 'zero-bid' ? 0 : quote.bidSize,
+                  askPrice: kind === 'zero-ask' ? 0 : quote.askPrice,
+                  askSize: kind === 'zero-ask' ? 0 : quote.askSize,
+                  feed: kind === 'other-feed' ? 'sip' : 'iex',
+                },
+                kind === 'future' ? startMs + 1000 : startMs,
+              ),
             ),
-          ),
-      })
-      const receipt = yield* submit(broker, intent())
-      return { receipt, checkpoint: yield* broker.checkpoint }
-    }),
-  )
-  expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
-  expect(result.receipt.order.filledQuantityMicros).toBe('0')
-  const reasons = {
-    stale: ReplayQuoteRejection.Stale,
-    future: ReplayQuoteRejection.Unavailable,
-    crossed: ReplayQuoteRejection.Price,
-    'other-feed': ReplayQuoteRejection.Identity,
-  }
-  expect(result.checkpoint.state.orders[0]?.execution?.outcome).toEqual({
-    status: 'canceled',
-    reason: reasons[kind],
-    adversePriceMicros: null,
-  })
-})
+        })
+        const receipt = yield* submit(broker, intent())
+        return { receipt, checkpoint: yield* broker.checkpoint }
+      }),
+    )
+    expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
+    expect(result.receipt.order.filledQuantityMicros).toBe('0')
+    const reasons = {
+      stale: ReplayQuoteRejection.Stale,
+      future: ReplayQuoteRejection.Unavailable,
+      crossed: ReplayQuoteRejection.Price,
+      'zero-bid': ReplayQuoteRejection.Price,
+      'zero-ask': ReplayQuoteRejection.Price,
+      'other-feed': ReplayQuoteRejection.Identity,
+    }
+    expect(result.checkpoint.state.orders[0]?.execution?.outcome).toEqual({
+      status: 'canceled',
+      reason: reasons[kind],
+      adversePriceMicros: null,
+    })
+  },
+)
 
 test.each(['oversell', 'cash'] as const)('%s rejection is terminal and recoverable by client ID', async (kind) => {
   const result = await run(

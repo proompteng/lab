@@ -91,7 +91,8 @@ const main = Effect.scoped(
         source,
         projection: { ...fixture.cursor.projection, epoch: `historical-${runId}` },
       }
-      const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash)
+      const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+      const clock = yield* makeSimulatedExecutionClock(runId, source.sourceManifestHash, providerClock)
       const advanceTo = (atMs: number) =>
         clock.advanceTo(utcInstantFromEpochMillis(atMs)).pipe(
           Effect.andThen(TestClock.setTime(atMs)),

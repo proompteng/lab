@@ -56,6 +56,7 @@ export const BacktestSourceManifestSchema = Schema.Struct({
   }),
   deliveryModel: SimulatedSnapshotSourceSchema.fields.deliveryModel,
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(NonNegativeIntegerSchema),
+  regeneratedTechnicalFeaturesRecordedAtMs: Schema.optionalKey(NonNegativeIntegerSchema),
 })
 export type BacktestSourceManifest = typeof BacktestSourceManifestSchema.Type
 export class ReplaySourceFailure extends Data.TaggedError('ReplaySourceFailure')<{
@@ -160,9 +161,10 @@ export const backtestSourcePartitions = (manifest: BacktestSourceManifest) =>
               ? 1
               : topic === manifest.universe.topics.quotes
                 ? 13
-                : (topic === manifest.universe.topics.features ||
-                      topic === manifest.universe.topics.technicalFeatures) &&
-                    manifest.regeneratedFeaturesRecordedAtMs !== undefined
+                : (topic === manifest.universe.topics.features &&
+                      manifest.regeneratedFeaturesRecordedAtMs !== undefined) ||
+                    (topic === manifest.universe.topics.technicalFeatures &&
+                      manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined)
                   ? 1
                   : 3,
         },
@@ -177,6 +179,11 @@ export const validateBacktestSourceManifest = (input: unknown) =>
     const topics = Object.values(manifest.universe.topics)
     if (new Set(topics).size !== topics.length)
       return yield* Result.fail(fail('Raw and derived source topics must be distinct'))
+    if (
+      manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined &&
+      manifest.universe.topics.technicalFeatures === undefined
+    )
+      return yield* Result.fail(fail('Technical regeneration requires its bound source topic'))
     const expected = backtestSourcePartitions(manifest)
     if (
       manifest.positions.length !== expected.length ||
@@ -237,6 +244,9 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       ...(manifest.regeneratedFeaturesRecordedAtMs === undefined
         ? {}
         : { regeneratedFeaturesRecordedAtMs: manifest.regeneratedFeaturesRecordedAtMs }),
+      ...(manifest.regeneratedTechnicalFeaturesRecordedAtMs === undefined
+        ? {}
+        : { regeneratedTechnicalFeaturesRecordedAtMs: manifest.regeneratedTechnicalFeaturesRecordedAtMs }),
     }
     let cursor: HistoricalMarketCursor = yield* Effect.fromResult(
       createHistoricalMarketCursor(runId, manifest.universe, manifest.regeneratedFeaturesRecordedAtMs, source),

@@ -61,7 +61,7 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
                   return socket
                 },
                 idleTimeout: '30 seconds',
-                maxConnections: 2,
+                maxConnections: 8,
                 minConnections: 0,
                 transformJson: false,
               }).pipe(Effect.mapError((cause) => classifyDatabaseError('connect', cause))),

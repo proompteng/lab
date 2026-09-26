@@ -28,6 +28,17 @@ export enum JevSourceExclusion {
   Freshness = 'freshness',
 }
 
+export enum JevEntryExclusion {
+  Spread = 'spread',
+  DisplayedSize = 'displayed-size',
+}
+
+export enum JevBatchPlanVersion {
+  V1 = 'bayn.jev-batch-plan.v1',
+  V2 = 'bayn.jev-batch-plan.v2',
+  V3 = 'bayn.jev-batch-plan.v3',
+}
+
 const CandidatePlanSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal(JevCandidatePlanStatus.Requested),
@@ -37,13 +48,13 @@ const CandidatePlanSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal(JevCandidatePlanStatus.Excluded),
     symbol: SymbolSchema,
-    reason: Schema.Enum(JevSourceExclusion),
+    reason: Schema.Union([Schema.Enum(JevSourceExclusion), Schema.Enum(JevEntryExclusion)]),
     message: Schema.NonEmptyString,
   }),
 ])
 
 const PlanMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-batch-plan.v1'),
+  schemaVersion: Schema.Enum(JevBatchPlanVersion),
   cycleId: Sha256Schema,
   authorityGenerationHash: Sha256Schema,
   observationHash: Sha256Schema,
@@ -103,7 +114,14 @@ export const makeJevBatchPlan = (input: unknown) =>
       if (candidate.symbol <= previous || candidate.symbol === material.benchmarkSymbol)
         return yield* invalid('Jev batch candidates must be unique, sorted and distinct from the benchmark')
       previous = candidate.symbol
-      if (candidate.status === JevCandidatePlanStatus.Excluded) continue
+      if (candidate.status === JevCandidatePlanStatus.Excluded) {
+        if (
+          material.schemaVersion === JevBatchPlanVersion.V1 &&
+          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize)
+        )
+          return yield* invalid('Version-one Jev batches cannot contain entry-quote exclusions')
+        continue
+      }
       const request = yield* decodeJevEvaluationRequest(candidate.request)
       if (
         request.symbol !== candidate.symbol ||
@@ -202,6 +220,14 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
       const inference = yield* usableJevInference(planned.request, candidate.receipt, now)
       inferences.push({ symbol: candidate.symbol, requestId: candidate.requestId, inference })
     }
-    if (inferences.length === 0) return yield* invalid('No Jev candidate has usable inference evidence')
+    if (
+      inferences.length === 0 &&
+      !plan.candidates.every(
+        (candidate) =>
+          candidate.status === JevCandidatePlanStatus.Excluded &&
+          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize),
+      )
+    )
+      return yield* invalid('No Jev candidate has usable inference evidence')
     return inferences
   })

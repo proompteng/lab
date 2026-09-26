@@ -65,7 +65,8 @@ decision delay, Bayn evaluates rolling windows until five minutes before the clo
 It supplies verified prices, volume, computed technical indicators, quotes, benchmark relationships and position
 context to `jev-1.13.0`. Bayn owns arithmetic, timing, sizing, risk and accounting. The default development protocol
 requires a reported entry probability of at least 0.65 and a spread no wider than 5 basis points. Complete batch
-evidence must remain inside its five-second lifetime at authorization. These parameters have not established a
+evidence must complete within its ten-second lifetime before authorization. Entry risk then binds a fresh execution
+quote for at most ten seconds from its event time. These parameters have not established a
 profitable trading advantage.
 
 The strategy selects at most one long position and caps it at 20% of account equity. Allocation bounds the actual

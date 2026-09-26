@@ -24,6 +24,7 @@ import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
+import { JevBatchPlanVersion, JevEntryExclusion } from '../jev/batch'
 import { decideJevEntry, decideJevManagement, JevManagementAction } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
@@ -330,6 +331,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }
           const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
           expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
+          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
           expect(calls).toBe(purpose === JevPurpose.Entry ? 15 : 1)
         }).pipe(
           Effect.provideService(JevClient, {
@@ -351,7 +353,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     },
   )
 
-  test('a stale optional candidate does not block fresh candidates in the same entry batch', async () => {
+  test('stale source and verified wide entry quotes do not call Jev for those candidates', async () => {
     let calls = 0
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -379,7 +381,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const staleEvidence = {
           ...raw,
           quotes: raw.quotes.map((quote) =>
-            quote.symbol === 'AMD' ? { ...quote, eventAt: staleAt, ingestedAt: staleAt } : quote,
+            quote.symbol === 'AMD'
+              ? { ...quote, eventAt: staleAt, ingestedAt: staleAt }
+              : quote.symbol === 'AAPL'
+                ? { ...quote, askPrice: quote.bidPrice * 1.01 }
+                : quote,
           ),
           trades: raw.trades.map((trade) =>
             trade.symbol === 'AMD' ? { ...trade, eventAt: staleAt, ingestedAt: staleAt } : trade,
@@ -390,10 +396,14 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
         )
-        expect(calls).toBe(fixture.protocol.candidateSymbols.length - 1)
+        expect(result.batchPlan.candidates).toContainEqual(
+          expect.objectContaining({ symbol: 'AAPL', status: 'EXCLUDED', reason: JevEntryExclusion.Spread }),
+        )
+        expect(calls).toBe(fixture.protocol.candidateSymbols.length - 2)
       }).pipe(
         Effect.provideService(JevClient, {
           evaluate: (request) =>
@@ -615,6 +625,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               measureDatabaseTime: (operation) => operation,
               providerClock,
               advanceTo: (atMs) => TestClock.setTime(atMs),
+              advanceDeadlineTo: (atMs) => TestClock.setTime(atMs),
+              excludedSourceMillis: Effect.succeed(0),
               retain: (call) =>
                 Effect.sync(() => {
                   calls.push(call)
@@ -828,14 +840,15 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const plan = Result.getOrThrow(
           makeJevTradingSignalBatch({
             observation: fixture.observation.payload,
-            expiresAt: new Date(observed + 5000).toISOString(),
+            expiresAt: new Date(observed + fixture.protocol.inferenceValidityMs).toISOString(),
+            planVersion: JevBatchPlanVersion.V1,
           }),
         )
         const store = yield* JevBatchStore
         yield* store.begin(plan)
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([plan.batchId])
         expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toBe(false)
-        yield* TestClock.setTime(observed + 5000)
+        yield* TestClock.setTime(observed + fixture.protocol.inferenceValidityMs)
         expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toBe(true)
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([])
       }).pipe(atObservation),
@@ -846,7 +859,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64))
+        const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
+        const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64), providerClock)
         const entered = yield* Deferred.make<void>()
         const worker = yield* clock
           .measure(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)))
@@ -962,8 +976,19 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v1')
         expect(document.dispatchable).toBe(true)
         expect(document.orderedIntentIds).toHaveLength(1)
-        expect(document.createdAt).toBe(new Date(observed + 500).toISOString())
-        expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe(new Date(observed + 5000).toISOString())
+        expect(document.createdAt).toBe(new Date(observed + 7000).toISOString())
+        const entryQuote = document.deltaRisk[0]?.facts?.state.entryQuote
+        if (entryQuote === undefined) throw new Error('Missing entry quote risk binding')
+        expect(entryQuote.maximumAgeMs).toBe(fixture.protocol.maximumQuoteAgeMs)
+        expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe(
+          new Date(Date.parse(entryQuote.eventAt) + fixture.protocol.maximumQuoteAgeMs).toISOString(),
+        )
+        if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v1')
+          throw new Error('Expected native Jev entry target')
+        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
+        expect(Date.parse(document.deltaRisk[0].evaluation.decision.expiresAt)).toBeGreaterThan(
+          Date.parse(document.strategyDecision.evidence.batchPlan.expiresAt),
+        )
         expect(
           Result.isSuccess(
             Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema)(JSON.parse(JSON.stringify(document))),
@@ -985,7 +1010,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         ).toBe(true)
         const { managed, portfolio } = yield* seedManagedPosition({
           entryDocument: document,
-          observedAt: '2026-09-04T14:33:03.000Z',
+          observedAt: new Date(Date.parse(document.createdAt) + 3 * 60_000 + 2000).toISOString(),
         })
         yield* TestClock.setTime(Date.parse(managed.observation.payload.observedAt))
         const bound = yield* (yield* CycleStore).read(nativeInput.cycleId)
@@ -1083,7 +1108,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${closure.createdAt}
         WHERE account_id = ${replayAccountId}`
         const expired = yield* Effect.gen(function* () {
-          yield* TestClock.setTime(Date.parse(exitTarget.observedAt) + 5000)
+          yield* TestClock.setTime(Date.parse(exitTarget.commitDeadlineAt))
           return yield* store.bind(closure).pipe(Effect.result)
         }).pipe(Effect.provide(TestClock.layer()))
         expect(Result.isFailure(expired)).toBe(true)
@@ -1096,7 +1121,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           yield* TestClock.setTime(
             Date.parse(exitTarget.commitDeadlineAt) - (scenario === 'measured-on-time' ? 2000 : 300),
           )
-          const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64))
+          const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64), providerClock)
           const timing = yield* makeReplayJevTiming({
             measureDatabaseTime: clock.measure,
             providerClock,
@@ -1105,6 +1130,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               clock
                 .advanceTo(utcInstantFromEpochMillis(atMs))
                 .pipe(Effect.andThen(TestClock.setTime(atMs)), Effect.orDie),
+            advanceDeadlineTo: (atMs) =>
+              clock
+                .advanceTo(utcInstantFromEpochMillis(atMs))
+                .pipe(Effect.andThen(TestClock.setTime(atMs)), Effect.orDie),
+            excludedSourceMillis: clock.excludedSourceMillis,
             retain: () => Effect.die('Exit persistence must not infer'),
           })
           if (scenario === 'measured-expires-during-insert') {
@@ -1265,7 +1295,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           evaluate: (request) =>
             Effect.gen(function* () {
               calls += 1
-              if (calls === 15) yield* TestClock.setTime(observed + 500)
+              if (calls === 15) yield* TestClock.setTime(observed + 7000)
               return nativeJevInference(
                 request,
                 new Date(yield* Clock.currentTimeMillis).toISOString(),

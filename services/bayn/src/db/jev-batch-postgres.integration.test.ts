@@ -23,6 +23,7 @@ import { canonicalHashV1 } from '../hash'
 import { Authority } from '../execution/contracts'
 import {
   JevCandidatePlanStatus,
+  JevBatchPlanVersion,
   JevCandidateResultStatus,
   makeJevBatchPlan,
   usableJevBatchInferences,
@@ -30,7 +31,7 @@ import {
 import { evaluateJevBatch, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
-import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { JevResolutionStatus } from '../jev/resolution'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
@@ -52,6 +53,7 @@ const plan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: utcInstantFromEpochMillis(observed + 5000),
+    planVersion: JevBatchPlanVersion.V1,
   }),
 )
 const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
@@ -134,6 +136,52 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
+  for (const planVersion of [JevBatchPlanVersion.V2, JevBatchPlanVersion.V3]) {
+    test(`persists ${planVersion} under the expanded database constraint`, async () => {
+      const { batchId: _, ...material } = plan
+      const versioned = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: planVersion }))
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* JevBatchStore
+          const saved = yield* store.begin(versioned)
+          expect(saved).toEqual({ plan: versioned, result: null })
+          expect(yield* store.read(versioned.batchId)).toEqual(saved)
+        }).pipe(atObservation),
+      )
+    })
+  }
+
+  test('a candidate can claim a planned request while another claim holds the batch share lock', async () => {
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const batches = yield* JevBatchStore
+          const evaluations = yield* JevEvaluationStore
+          yield* batches.begin(plan)
+          const locked = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const holder = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SELECT batch_id FROM jev_batch_plans WHERE batch_id = ${plan.batchId} FOR SHARE`
+                yield* Deferred.succeed(locked, undefined)
+                yield* Deferred.await(release)
+              }),
+            )
+            .pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(locked)
+          expect(yield* evaluations.begin(first.request).pipe(Effect.timeout('2 seconds'))).toEqual({
+            status: JevClaim.Acquired,
+          })
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(holder)
+          expect((yield* batches.finish(plan.batchId)).result).toBeNull()
+        }),
+      ).pipe(atObservation, Effect.timeout('10 seconds')),
+    )
+  })
+
   test('finalizes recorded candidates before the deadline without serial evaluation reads', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -207,6 +255,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           makeJevTradingSignalBatch({
             observation: fixture.observation.payload,
             expiresAt: utcInstantFromEpochMillis(observed + 6000),
+            planVersion: JevBatchPlanVersion.V1,
           }),
         )
         expect(Result.isFailure(yield* store.begin(second).pipe(Effect.result))).toBe(true)
@@ -314,7 +363,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  test('bounds concurrent inference and waits for both waves before finalizing', async () => {
+  test('starts every eligible inference concurrently before finalizing the complete batch', async () => {
     let calls = 0,
       active = 0,
       maximum = 0
@@ -332,7 +381,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                   maximum = Math.max(maximum, active)
                   if (calls === 4) yield* Deferred.succeed(wave, undefined)
                   if (calls === requested.length) yield* Deferred.succeed(all, undefined)
-                  yield* Effect.sleep('100 millis')
+                  yield* Effect.sleep('1 second')
                   return yield* successful.evaluate(request)
                 }).pipe(
                   Effect.ensuring(
@@ -346,14 +395,13 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           )
           yield* Deferred.await(wave)
           expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
-          yield* TestClock.adjust('100 millis')
+          yield* TestClock.adjust('200 millis')
           yield* Deferred.await(all)
-          yield* TestClock.adjust('100 millis')
+          yield* TestClock.adjust('1 second')
           const result = (yield* Fiber.join(fiber)).result
           if (result === null) throw new Error('Complete batch not finalized')
           expect(calls).toBe(requested.length)
-          expect(maximum).toBe(4)
-          expect(result.completedAt).toBe(utcInstantFromEpochMillis(observed + 200))
+          expect(maximum).toBe(requested.length)
           expect(active).toBe(0)
         }),
       ).pipe(atObservation),

@@ -234,6 +234,7 @@ const restoreRecordedProjection = (
           universe,
           feature.availableAtMs,
           simulation?.regeneratedFeaturesRecordedAtMs ?? feature.availableAtMs,
+          simulation?.regeneratedTechnicalFeaturesRecordedAtMs ?? feature.availableAtMs,
         )
       }
     }
@@ -348,6 +349,9 @@ export const reproduceSimulatedSnapshot = (
         ...(source.regeneratedFeaturesRecordedAtMs === undefined
           ? {}
           : { regeneratedFeaturesRecordedAtMs: source.regeneratedFeaturesRecordedAtMs }),
+        ...(source.regeneratedTechnicalFeaturesRecordedAtMs === undefined
+          ? {}
+          : { regeneratedTechnicalFeaturesRecordedAtMs: source.regeneratedTechnicalFeaturesRecordedAtMs }),
       },
       source,
       query,
