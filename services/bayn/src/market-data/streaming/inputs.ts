@@ -3,6 +3,7 @@ import { Result } from 'effect'
 
 import {
   IntradaySnapshotFailure,
+  IntradaySnapshotPurpose,
   type IntradayBar,
   type IntradayQuote,
   type IntradayTrade,
@@ -65,6 +66,8 @@ export const selectStreamingInputs = (
     const technicalReceipts: StreamingFeatureReceipt<TechnicalMarketFeature>[] = []
     const featureExclusions: IntradayCandidateExclusion[] = []
     for (const [key, history] of state.rejections) {
+      if (request.purpose === IntradaySnapshotPurpose.Liquidation && !key.startsWith(`${request.sourceTopics.quotes}:`))
+        continue
       const rejection = history.find(
         (entry) => entry.availableAtMs >= Date.parse(request.rangeStartAt) && entry.availableAtMs <= observedAtMs,
       )

@@ -16,7 +16,7 @@ import type {
   IntradaySnapshotManifest,
   IntradaySnapshotQuery,
 } from '../intraday/model'
-import { IntradaySnapshotFailure } from '../intraday/model'
+import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
 import { compareRecords, lineageOf, replayedBarRow, verifyIntradaySnapshotQuery } from '../intraday/verification'
 import type { RollingMarketFeature } from '../features/contract'
 import type { KafkaProjectionCut } from './kafka'
@@ -109,10 +109,19 @@ export const constructStreamingSnapshot = (
     const request = yield* verifyIntradaySnapshotQuery(query)
     const state = cut.projection
     const observedAtMs = Date.parse(request.observedAt)
+    const requiredPartitions =
+      request.purpose === IntradaySnapshotPurpose.Liquidation
+        ? cut.bootstrap.partitions.filter((partition) => partition.topic === request.sourceTopics.quotes)
+        : cut.bootstrap.partitions
+    const requiredTopics = new Set(requiredPartitions.map((partition) => partition.topic))
     if (
       state.availabilityMode !== 'observed' ||
       cut.bootstrap.epoch !== state.epoch ||
-      !kafkaBootstrapComplete(cut.bootstrap, cut.positions) ||
+      requiredPartitions.length === 0 ||
+      !kafkaBootstrapComplete(
+        { ...cut.bootstrap, partitions: requiredPartitions },
+        cut.positions.filter((position) => requiredTopics.has(position.topic)),
+      ) ||
       cut.bootstrap.observedAtMs > observedAtMs ||
       state.minimumObservationMs > observedAtMs ||
       Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs

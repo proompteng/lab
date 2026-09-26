@@ -394,6 +394,74 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test('liquidation reproduces a complete quote cut while entry history rebuilds', () => {
+    const state = incorporate([rawRecord('quotes', 2, end + 2000, { bp: 130, ap: 131, bs: 100, as: 100 })])
+    const cut = cutFor(state)
+    const rebuilding = {
+      ...cut,
+      bootstrap: {
+        ...cut.bootstrap,
+        partitions: cut.bootstrap.partitions.map((partition) =>
+          partition.topic === universe.topics.quotes ? partition : { ...partition, endOffset: '500' },
+        ),
+      },
+    }
+    const liquidation = { ...query, purpose: IntradaySnapshotPurpose.Liquidation }
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(rebuilding, liquidation))
+    const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+    expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
+    expect(Result.isFailure(constructStreamingSnapshot(rebuilding, query))).toBe(true)
+    expect(
+      Result.isFailure(
+        constructStreamingSnapshot(rebuilding, {
+          ...liquidation,
+          purpose: IntradaySnapshotPurpose.EntryPricing,
+        }),
+      ),
+    ).toBe(true)
+    const incompleteQuotes = {
+      ...rebuilding,
+      positions: rebuilding.positions.map((position) => ({ ...position, offset: '0' })),
+    }
+    expect(Result.isFailure(constructStreamingSnapshot(incompleteQuotes, liquidation))).toBe(true)
+    expect(
+      Result.isFailure(
+        constructStreamingSnapshot(
+          {
+            ...rebuilding,
+            bootstrap: { ...rebuilding.bootstrap, epoch: 'old-assignment' },
+          },
+          liquidation,
+        ),
+      ),
+    ).toBe(true)
+    const rejectedHistory = {
+      ...rebuilding,
+      projection: incorporateMarketRecord(
+        state,
+        { topic: universe.topics.bars, partition: 0, offset: '0', value: '{' },
+        universe,
+        end + 2500,
+      ),
+    }
+    const quoteOnly = Result.getOrThrow(constructStreamingSnapshot(rejectedHistory, liquidation))
+    expect(
+      Result.getOrThrow(
+        reproduceStreamingSnapshot(quoteOnly.manifest, Result.getOrThrow(persistIntradayRecordRows(quoteOnly))),
+      ),
+    ).toEqual(quoteOnly)
+    const rejectedQuote = {
+      ...rebuilding,
+      projection: incorporateMarketRecord(
+        state,
+        { topic: universe.topics.quotes, partition: 0, offset: '3', value: '{' },
+        universe,
+        end + 2500,
+      ),
+    }
+    expect(Result.isFailure(constructStreamingSnapshot(rejectedQuote, liquidation))).toBe(true)
+  })
+
   test('Dorvud latest REST samples retain event time and reproduce the immutable decision snapshot', () => {
     const fixture = Schema.decodeUnknownSync(Schema.Struct({ envelopes: Schema.Array(Schema.Unknown) }))(
       JSON.parse(readFileSync(new URL('../../../../dorvud/fixtures/alpaca-latest-v1.json', import.meta.url), 'utf8')),

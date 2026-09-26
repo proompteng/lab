@@ -17,7 +17,11 @@ import { jevBehaviorHash } from './jev/protocol'
 import type { CycleDecisionDocument } from './shadow-decision-contract'
 import { CycleDecisionBuildError, runAutonomousCyclePass } from './cycle/runner'
 import type { ObserveDecisionRuntime } from './observe-composition/model'
-import { makeRecoveryFirstCycleDriver, mutationDecisionBuilder } from './observe-composition/recovery-driver'
+import {
+  makeRecoveryFirstCycleDriver,
+  mutationDecisionBuilder,
+  reconciliationForPreparation,
+} from './observe-composition/recovery-driver'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { boundedReconciliationPass } from './observe-composition/decision-builder'
 import {
@@ -157,7 +161,7 @@ import { reconciledStateHash } from './reconciliation'
 import type { Policy } from './risk'
 import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
 import { TargetPlanReason, TargetPlanStatus } from './target-planner'
-import { utcInstantFromEpochMillis } from './time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
 import type { IsoDate } from './types'
 
 const signalDate = '2020-04-30'
@@ -706,6 +710,61 @@ const reconciliationResult = (
   }
 }
 
+test('one preparation pass reuses fresh reconciliation and refreshes on age or authority change', async () => {
+  let reads = 0
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(reconciledAt))
+      const initial = reconciliationResult()
+      if (initial.riskContext.authority === null) throw new Error('fixture authority missing')
+      let authority = initial.riskContext.authority
+      const { read } = yield* reconciliationForPreparation(
+        initial,
+        Effect.gen(function* () {
+          reads += 1
+          const now = yield* currentUtcInstant
+          return {
+            ...initial,
+            brokerState: {
+              ...initial.brokerState,
+              account: { ...initial.brokerState.account, observedAt: now },
+              positionsObservedAt: now,
+              ordersObservedAt: now,
+            },
+            report: { ...initial.report, reconciliation: { ...initial.report.reconciliation, reconciledAt: now } },
+            riskContext: { ...initial.riskContext, authority, authorityObservedAt: now },
+          } satisfies ReconciliationPassResult
+        }),
+        Effect.sync(() => authority ?? undefined),
+        1000,
+      )
+      expect(yield* read).toBe(initial)
+      expect(yield* read).toBe(initial)
+      expect(reads).toBe(0)
+      yield* TestClock.adjust(1000)
+      yield* read
+      expect(reads).toBe(1)
+      yield* read
+      expect(reads).toBe(1)
+      if (authority === null) throw new Error('fixture authority missing')
+      authority = { ...authority, version: authority.version + 1, kill: KillState.Active, effective: Authority.Observe }
+      yield* read
+      expect(reads).toBe(2)
+      const { read: nextPass } = yield* reconciliationForPreparation(
+        undefined,
+        Effect.sync(() => {
+          reads += 1
+          return initial
+        }),
+        Effect.sync(() => authority ?? undefined),
+        1000,
+      )
+      yield* nextPass
+      expect(reads).toBe(3)
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+})
+
 const marketData = (requests: unknown[]): MarketDataService => ({
   check: Effect.die(new Error('decision building must not run the static snapshot check')),
   inspect: Effect.die(new Error('decision building must not inspect the static snapshot')),
@@ -837,6 +896,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
     bindings: () => Effect.succeed([]),
     reconcile: () => Effect.succeed(persisted),
     ensureAuthorityGeneration: () => Effect.succeed(authority),
+    readAuthorityState: Effect.succeed(authority),
     restrictAuthority: () => Effect.die(new Error('exact reconciliation unexpectedly restricted authority')),
   } satisfies BrokerEventStoreShape &
     FillAccountingStoreShape &
