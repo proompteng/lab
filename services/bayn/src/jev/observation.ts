@@ -60,6 +60,7 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         manifest.feed !== protocol.feed ||
         manifest.delayClass !== protocol.delayClass ||
         manifest.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
+        manifest.candidateEvidencePolicy !== protocol.candidateEvidencePolicy ||
         manifest.sourceTopics.bars !== protocol.sourceTopics.bars ||
         manifest.sourceTopics.quotes !== protocol.sourceTopics.quotes ||
         manifest.sourceTopics.trades !== protocol.sourceTopics.trades ||

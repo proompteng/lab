@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
+import { IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
 import {
   makeIntradayPerformanceFixture,
   makeStreamingPerformanceFixture,
@@ -13,6 +15,34 @@ import {
   validIntradayPerformanceVolumeEvidence,
 } from './intraday-volume'
 import { bindForwardPerformanceTerminalReferencePrices } from './program'
+
+test.each([
+  ['streaming', makeStreamingPerformanceFixture],
+  ['intraday', makeIntradayPerformanceFixture],
+] as const)('retains the candidate policy through %s performance evidence decoding', (_kind, fixture) => {
+  const { request, archive, bars } = fixture()
+  const { contentHash: _contentHash, snapshotId: _snapshotId, ...original } = request.decisionManifest
+  const material = {
+    ...original,
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+  }
+  const hashed = { ...material, contentHash: canonicalHashV1(material) }
+  const decisionManifest = { ...hashed, snapshotId: canonicalHashV1(hashed) }
+  const currentRequest = { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId }
+  const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(currentRequest, archive, bars))
+  if (evidence === undefined) throw new Error('expected complete policy-bound performance evidence')
+  const decoded = Schema.decodeUnknownSync(IntradayPerformanceVolumeEvidenceSchema)(evidence)
+  expect(evidence).toEqual(decoded)
+  expect(validIntradayPerformanceVolumeEvidence(decoded)).toBe(true)
+  expect(Result.getOrThrow(intradayPerformanceDecisionRequest(decoded))).toMatchObject({
+    candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
+    candidateSymbols: decisionManifest.candidateSymbols,
+  })
+  const { candidateEvidencePolicy: _policy, ...stripped } = decisionManifest
+  const tampered = intradayPerformanceDecisionRequest({ ...currentRequest, decisionManifest: stripped })
+  expect(Result.isFailure(tampered)).toBe(true)
+  if (Result.isFailure(tampered)) expect(tampered.failure.message).toContain('snapshot identity differs')
+})
 
 test('reads a complete native session with exact microshares and an explicit IEX terminal mark', () => {
   const { request, archive, bars } = makeIntradayPerformanceFixture()
