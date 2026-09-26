@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
 import { NodeFileSystem } from '@effect/platform-node'
-import { Duration, Effect, FileSystem, Redacted } from 'effect'
+import { Duration, Effect, FileSystem, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
 
 import { AlpacaHistoricalKind, decodeAlpacaHistoricalQuery, type AlpacaHistoricalQuery } from './model'
 import { makeAlpacaHistoricalClient } from './client'
+import { normalizeAlpacaHistoricalPage } from './normalization'
 
 const sessionQuery = (kind: AlpacaHistoricalKind, cacheDirectory: string): AlpacaHistoricalQuery => ({
   kind,
@@ -411,6 +412,32 @@ describe('Alpaca historical vendor capture', () => {
         tape: 'B',
       })
     })
+  })
+
+  test('rejects an unsafe historical ID before it can become an apparently exact replay string', () => {
+    const response: unknown = JSON.parse(
+      '{"trades":{"AAPL":[{"i":9007199254740993,"p":100,"s":1,"t":"2026-06-01T13:30:00Z","x":"V","z":"C","c":["@"]}]},"next_page_token":null}',
+    )
+    const result = normalizeAlpacaHistoricalPage(
+      AlpacaHistoricalKind.Trades,
+      response,
+      sessionQuery(AlpacaHistoricalKind.Trades, '/unused'),
+    )
+    expect(result).toMatchObject({ _tag: 'Failure', failure: { reason: 'decode', retryable: false } })
+  })
+
+  test('preserves the largest safe historical ID without rounding', () => {
+    const response: unknown = JSON.parse(
+      '{"trades":{"AAPL":[{"i":9007199254740991,"p":100,"s":1,"t":"2026-06-01T13:30:00Z","x":"V","z":"C","c":["@"]}]},"next_page_token":null}',
+    )
+    const result = Result.getOrThrow(
+      normalizeAlpacaHistoricalPage(
+        AlpacaHistoricalKind.Trades,
+        response,
+        sessionQuery(AlpacaHistoricalKind.Trades, '/unused'),
+      ),
+    )
+    expect(result.rows).toMatchObject([{ providerTradeId: '9007199254740991' }])
   })
 
   test('fails closed when a cached raw body checksum changes', async () => {

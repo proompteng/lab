@@ -510,7 +510,14 @@ export const normalizeQuote = (row: IntradayQuoteRow): Result.Result<IntradayQuo
     const askPrice = yield* numberValue(row.ask_price, 'quote ask price', true)
     const askSize = yield* numberValue(row.ask_size, 'quote ask size', false)
     if (bidPrice > askPrice) return yield* Result.fail(failure('rows', 'intraday quote is crossed'))
-    return Object.freeze({ ...identity, bidPrice, bidSize, askPrice, askSize })
+    return Object.freeze({
+      ...identity,
+      bidPrice,
+      bidSize,
+      askPrice,
+      askSize,
+      ...(row.provider_metadata === undefined ? {} : { providerMetadata: row.provider_metadata }),
+    })
   })
 
 export const normalizeTrade = (row: IntradayTradeRow): Result.Result<IntradayTrade, IntradaySnapshotFailure> =>
@@ -518,7 +525,12 @@ export const normalizeTrade = (row: IntradayTradeRow): Result.Result<IntradayTra
     const identity = yield* recordIdentity(row)
     const price = yield* numberValue(row.price, 'trade price', true)
     const size = yield* numberValue(row.size, 'trade size', true)
-    return Object.freeze({ ...identity, price, size })
+    return Object.freeze({
+      ...identity,
+      price,
+      size,
+      ...(row.provider_metadata === undefined ? {} : { providerMetadata: row.provider_metadata }),
+    })
   })
 
 const compareOffsets = (left: string, right: string): number => {
@@ -1182,11 +1194,13 @@ export const persistIntradayRecordRows = (
         bid_size: quote.bidSize,
         ask_price: quote.askPrice,
         ask_size: quote.askSize,
+        ...(quote.providerMetadata === undefined ? {} : { provider_metadata: quote.providerMetadata }),
       })),
       trades: collections.trades.map((trade) => ({
         ...archiveIdentityRow(trade),
         price: trade.price,
         size: trade.size,
+        ...(trade.providerMetadata === undefined ? {} : { provider_metadata: trade.providerMetadata }),
       })),
     }
   })

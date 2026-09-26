@@ -7,6 +7,7 @@ import { Context, Data, Effect } from 'effect'
 import type { OperationalError } from '../../errors'
 import type { IsoDate } from '../../schemas'
 import type { MarketCalendarObservation } from '../../broker/alpaca/model'
+import type { AlpacaQuoteMetadata, AlpacaTradeMetadata } from './alpaca-metadata'
 
 export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
 export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
@@ -94,11 +95,13 @@ export interface IntradayQuote extends IntradayRecordIdentity {
   readonly bidSize: number
   readonly askPrice: number
   readonly askSize: number
+  readonly providerMetadata?: AlpacaQuoteMetadata
 }
 
 export interface IntradayTrade extends IntradayRecordIdentity {
   readonly price: number
   readonly size: number
+  readonly providerMetadata?: AlpacaTradeMetadata
 }
 
 export interface IntradayCandidateExclusion {

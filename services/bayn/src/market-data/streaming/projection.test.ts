@@ -3,6 +3,7 @@ import { replayHistoricalMarketArrivals } from './historical'
 import { featureAvailabilityMeasurement, projectionCoverageMeasurements } from './telemetry'
 import { reproduceStreamingSnapshot } from './replay'
 import { persistIntradayRecordRows } from '../intraday/verification'
+import { decodeIntradayTradeRows } from '../intraday/rows'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { Result, Schema } from 'effect'
@@ -579,6 +580,38 @@ describe('explicit historical delivery model', () => {
 })
 
 describe('recorded streaming cut replay', () => {
+  test('preserves provider metadata in a full snapshot and rejects altered trade identity or conditions', () => {
+    const records = [
+      ...raw(),
+      featureRecord,
+      rawRecord('quotes', 2, end + 2000, { bp: 130, ap: 131, bs: 100, as: 100, bx: 'V', ax: 'V', c: ['R'], z: 'C' }),
+      rawRecord('trades', 2, end + 2000, { p: 131, s: 10, i: 123, x: 'V', c: ['@'], z: 'C' }),
+    ]
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(incorporate(records)), query))
+    const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+    const replay = Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))
+    expect(replay).toEqual(snapshot)
+    expect(replay.trades[0]?.providerMetadata).toEqual({ id: '123', exchange: 'V', conditions: ['@'], tape: 'C' })
+    expect(replay.latestQuotes['AAPL']?.providerMetadata).toEqual({
+      bidExchange: 'V',
+      askExchange: 'V',
+      conditions: ['R'],
+      tape: 'C',
+    })
+    const original = Result.getOrThrow(decodeIntradayTradeRows(rows.trades))[0]
+    if (original === undefined) throw new Error('Expected one persisted trade')
+    for (const alteration of [{ id: '124' }, { conditions: ['Z'] }]) {
+      expect(
+        Result.isFailure(
+          reproduceStreamingSnapshot(snapshot.manifest, {
+            ...rows,
+            trades: [{ ...original, provider_metadata: { ...original.provider_metadata, ...alteration } }],
+          }),
+        ),
+      ).toBe(true)
+    }
+  })
+
   test('replays both raw-first and feature-first receipts to the identical snapshot identity', () => {
     for (const records of [
       [...raw(), featureRecord],

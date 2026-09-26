@@ -279,6 +279,25 @@ removes the exported checkpoint file before the kill and recovers from PostgreSQ
 one fill, one accounting transaction, and exact reconciliation with real TigerBeetle. Export files are not recovery
 authority. The full-session command still requires a fresh database; it does not expose a command-line resume mode.
 
+## Provider quote and trade metadata
+
+Raw Alpaca quote and trade decoding retains the provider's optional exchanges, conditions, tape and trade ID in
+`providerMetadata`. The saved normalized rows retain the same fields. Snapshot hashes bind them, and replay rejects
+changed metadata. A missing field remains missing; it is not replaced with an empty array or a guessed value. Trade
+IDs remain exact decimal strings. Unsafe numeric IDs fail decoding instead of becoming rounded identities.
+Previously saved rows without metadata remain readable with their original hashes. They do not acquire metadata
+from a later provider response. The original raw-message hash and Kafka coordinates remain separate evidence.
+
+Metadata retention does not implement trade-condition eligibility, corrections or cancel/error handling. It also
+does not convert quote sizes. The current numeric quantity assumption remains uncalibrated. Alpaca's
+[stock stream reference](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data) labels quote sizes as round
+lots, and its [historical IEX explanation](https://forum.alpaca.markets/t/bid-and-ask-size-for-iex-data-is-not-as-reported-by-iex/12712/2)
+confirms that instrument lot sizes can differ. Its
+[November 2025 change notice](https://docs.alpaca.markets/us/v1.1/changelog/marketdata-bid-and-ask-size-display-change)
+specifically covers CTA/UTP. An IEX conversion needs a supported provider/feed/date contract and point-in-time
+instrument lot-size evidence. Do not infer that contract from SIP, apply a universal multiplier, or treat a synthetic
+fill fixture as provider verification.
+
 ## Bar publication timing
 
 New live and simulated cuts bind `barPublicationPolicy: timely-equivalent-revision.v1`. Original minute bars allow
