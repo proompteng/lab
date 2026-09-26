@@ -67,16 +67,37 @@ describe('candidate executable quote and window trade evidence', () => {
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })
 
-  test('reports the actual missing minute instead of blaming its necessarily absent rolling feature', () => {
-    const missingAt = '2026-09-04T14:10:00.000Z'
+  test.each(['2026-09-04T14:10:00.000Z', '2026-09-04T14:29:00.000Z'])(
+    'persists and replays the exact missing bar at %s',
+    (missingAt) => {
+      const { snapshot } = streamingFixtureFromRaw(
+        {
+          ...fixture.archive,
+          bars: fixture.archive.bars.filter((bar) => bar.symbol !== 'AAPL' || bar.eventAt !== missingAt),
+        },
+        query,
+      )
+      expect(exclusion(snapshot)?.message).toBe(`rolling window lacks 1 of 30 required minute bars: ${missingAt}`)
+      expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+      expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
+    },
+  )
+
+  test('preserves delayed-bar rejection when the range-completion bar is also missing', () => {
     const { snapshot } = streamingFixtureFromRaw(
       {
         ...fixture.archive,
-        bars: fixture.archive.bars.filter((bar) => bar.symbol !== 'AAPL' || bar.eventAt !== missingAt),
+        bars: fixture.archive.bars
+          .filter((bar) => bar.symbol !== 'AAPL' || bar.eventAt !== '2026-09-04T14:29:00.000Z')
+          .map((bar) =>
+            bar.symbol === 'AAPL' && bar.eventAt === '2026-09-04T14:10:00.000Z'
+              ? { ...bar, ingestedAt: '2026-09-04T14:30:01.000Z' }
+              : bar,
+          ),
       },
       query,
     )
-    expect(exclusion(snapshot)?.message).toBe(`rolling window lacks 1 of 30 required minute bars: ${missingAt}`)
+    expect(exclusion(snapshot)?.reason).toBe('freshness')
     expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })
