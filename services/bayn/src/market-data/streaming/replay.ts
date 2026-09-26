@@ -34,11 +34,36 @@ import {
   type StreamingSnapshotManifest,
 } from './snapshot'
 import type { StreamingUniverse } from './raw-events'
+import { StrategySnapshotManifestSchema } from './manifest-schema'
+import type { StrategyMarketSnapshot } from './snapshot'
 
 const fail = (message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason: 'hash', message, ...(cause === undefined ? {} : { cause }) })
 const coordinate = (topic: string, partition: number, offset: string) =>
   `${topicPartitionKey(topic, partition)}:${offset}`
+
+export const reproduceStrategySnapshot = (
+  input: unknown,
+  rows: PersistedIntradaySnapshotRows,
+): Result.Result<StrategyMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const manifest = yield* Schema.decodeUnknownResult(
+      StrategySnapshotManifestSchema,
+      strictParseOptions,
+    )(input).pipe(Result.mapError((cause) => fail('Recorded market snapshot manifest is invalid', cause)))
+    const snapshot = yield* manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
+      ? reproduceStreamingSnapshot(manifest, rows)
+      : reproduceSimulatedSnapshot(manifest, rows)
+    const supplied = yield* canonicalHashV1Result(manifest).pipe(
+      Result.mapError((cause) => fail('Snapshot manifest is not canonical', cause)),
+    )
+    const reproduced = yield* canonicalHashV1Result(snapshot.manifest).pipe(
+      Result.mapError((cause) => fail('Reproduced snapshot manifest is not canonical', cause)),
+    )
+    if (supplied !== reproduced)
+      return yield* Result.fail(fail('Recorded snapshot metadata differs from its reproduced source'))
+    return snapshot
+  })
 
 /** Reproduces a saved cut; this does not grant a replay document live source authority. */
 export const reproduceStreamingSnapshot = (
@@ -209,6 +234,7 @@ const restoreRecordedProjection = (
           universe,
           feature.availableAtMs,
           simulation?.regeneratedFeaturesRecordedAtMs ?? feature.availableAtMs,
+          simulation?.regeneratedTechnicalFeaturesRecordedAtMs ?? feature.availableAtMs,
         )
       }
     }
@@ -323,6 +349,9 @@ export const reproduceSimulatedSnapshot = (
         ...(source.regeneratedFeaturesRecordedAtMs === undefined
           ? {}
           : { regeneratedFeaturesRecordedAtMs: source.regeneratedFeaturesRecordedAtMs }),
+        ...(source.regeneratedTechnicalFeaturesRecordedAtMs === undefined
+          ? {}
+          : { regeneratedTechnicalFeaturesRecordedAtMs: source.regeneratedTechnicalFeaturesRecordedAtMs }),
       },
       source,
       query,

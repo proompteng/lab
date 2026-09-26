@@ -27,6 +27,7 @@ let
   isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
   sourcePaths = [
     "services/bayn"
+    "docs/bayn/jev-migration-acceptance-v2.json"
   ];
   runtimeSource = lib.cleanSourceWith {
     src = repoRoot;

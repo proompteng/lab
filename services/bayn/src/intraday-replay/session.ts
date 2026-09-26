@@ -5,7 +5,7 @@ import type { RecoveryFirstCycleAdvance } from '../observe-composition/model'
 import { ReplayBrokerFailure } from './broker'
 import { utcInstantFromEpochMillis } from '../time'
 
-/** One owner advances raw arrivals, SQL time, and Effect time; database I/O consumes no modeled market time. */
+/** One owner advances raw arrivals, the account clock and Effect time at each synchronization point. */
 export const makeReplayTimeline = <SourceError, DatabaseError>(
   source: { readonly advanceTo: (atMs: number) => Effect.Effect<void, SourceError> },
   databaseClock: { readonly advanceTo: (instant: string) => Effect.Effect<void, DatabaseError> },
@@ -13,7 +13,7 @@ export const makeReplayTimeline = <SourceError, DatabaseError>(
 ) =>
   Effect.gen(function* () {
     const permit = yield* Semaphore.make(1)
-    return (atMs: number) =>
+    const advance = (atMs: number, publishSource: boolean) =>
       permit
         .withPermit(
           Effect.gen(function* () {
@@ -22,7 +22,7 @@ export const makeReplayTimeline = <SourceError, DatabaseError>(
               return yield* new ReplayBrokerFailure({
                 message: 'Replay time is outside its declared monotonic session interval',
               })
-            yield* source.advanceTo(atMs)
+            if (publishSource) yield* source.advanceTo(atMs)
             yield* databaseClock.advanceTo(utcInstantFromEpochMillis(atMs))
             yield* TestClock.setTime(atMs)
           }),
@@ -30,6 +30,10 @@ export const makeReplayTimeline = <SourceError, DatabaseError>(
         .pipe(
           Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Replay timeline could not advance', cause })),
         )
+    return {
+      advanceTo: (atMs: number) => advance(atMs, true),
+      advanceDeadlineTo: (atMs: number) => advance(atMs, false),
+    }
   })
 
 type SessionRuntime<E> = { readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, E>; readonly nextDelayMs: number }
@@ -65,8 +69,10 @@ export const driveReplaySession = <E>(
         switch (reason) {
           case DecisionReadinessReason.LookbackWarmup:
           case DecisionReadinessReason.NoEligibleCandidate:
+          case DecisionReadinessReason.SignalWindowObserved:
             break
           case DecisionReadinessReason.DecisionPending:
+          case DecisionReadinessReason.InferenceUnavailable:
           case DecisionReadinessReason.SnapshotUnavailable:
           case DecisionReadinessReason.SnapshotCoverage:
           case DecisionReadinessReason.SnapshotStale:

@@ -3,6 +3,7 @@ import { Result } from 'effect'
 
 import {
   IntradaySnapshotFailure,
+  IntradaySnapshotPurpose,
   type IntradayBar,
   type IntradayQuote,
   type IntradayTrade,
@@ -25,7 +26,12 @@ import {
   rollingFeatureDefinitionMaterial,
 } from '../features/contract'
 import { sha256 } from '../../hash'
-import { observedBarsAt, type StreamingProjection, type ObservedMarketValue } from './projection'
+import {
+  discardedRejectionsOverlap,
+  observedBarsAt,
+  type StreamingProjection,
+  type ObservedMarketValue,
+} from './projection'
 import { technicalFeatureMatchesBars, type TechnicalMarketFeature } from '../features/technical-contract'
 import { technicalReceiptAvailableAt } from './technical-projection'
 import type { StreamingFeatureReceipt } from './snapshot'
@@ -46,9 +52,18 @@ export const selectStreamingInputs = (
     const observedAtMs = Date.parse(request.observedAt)
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
+    const symbols = request.symbols ?? request.universe
+    const observationEvicted =
+      request.purpose === IntradaySnapshotPurpose.Liquidation
+        ? symbols.some((symbol) => (state.minimumQuoteObservationMs.get(symbol) ?? 0) > observedAtMs)
+        : state.minimumObservationMs > observedAtMs
     if (
-      state.minimumObservationMs > observedAtMs ||
-      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
+      observationEvicted ||
+      discardedRejectionsOverlap(
+        state,
+        Date.parse(request.rangeStartAt),
+        request.purpose === IntradaySnapshotPurpose.Liquidation ? request.sourceTopics.quotes : undefined,
+      )
     )
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
@@ -56,7 +71,6 @@ export const selectStreamingInputs = (
     const session = request.calendar.sessions.find((entry) => entry.date === request.sessionDate)
     if (session === undefined)
       return yield* Result.fail(failure('request', 'Streaming snapshot has no bound exchange session'))
-    const symbols = request.symbols ?? request.universe
     const candidates = new Set(request.candidateSymbols)
     const entries: ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTrade>[] = []
     const featureReceipts: StreamingFeatureReceipt[] = []
@@ -65,6 +79,8 @@ export const selectStreamingInputs = (
     const technicalReceipts: StreamingFeatureReceipt<TechnicalMarketFeature>[] = []
     const featureExclusions: IntradayCandidateExclusion[] = []
     for (const [key, history] of state.rejections) {
+      if (request.purpose === IntradaySnapshotPurpose.Liquidation && !key.startsWith(`${request.sourceTopics.quotes}:`))
+        continue
       const rejection = history.find(
         (entry) => entry.availableAtMs >= Date.parse(request.rangeStartAt) && entry.availableAtMs <= observedAtMs,
       )
@@ -90,8 +106,9 @@ export const selectStreamingInputs = (
           }
         }
       }
-      if (quote !== undefined) entries.push(quote)
-      if (request.purpose === undefined && trade !== undefined) entries.push(trade)
+      if (quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= start) entries.push(quote)
+      if (request.purpose === undefined && trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start)
+        entries.push(trade)
       if (request.purpose !== undefined) continue
       if (state.technicalTopic !== undefined) {
         for (const candidate of state.technicalFeatures.get(symbol) ?? []) {

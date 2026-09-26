@@ -62,6 +62,21 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: spicedb-operator
+                path: argocd/applications/spicedb-operator
+                namespace: spicedb-operator
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: tigresse
                 path: argocd/applications/tigresse
                 namespace: tigresse-system
