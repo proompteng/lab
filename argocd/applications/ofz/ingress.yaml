@@ -1,0 +1,28 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ofz-playground
+spec:
+  secretName: ofz-playground-tls
+  dnsNames:
+    - ofz.k8s.proompteng.ai
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ofz-playground
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`ofz.k8s.proompteng.ai`)
+      services:
+        - name: ofz-playground
+          port: 80
+  tls:
+    secretName: ofz-playground-tls
