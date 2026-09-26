@@ -269,6 +269,15 @@ export const decideExecutionMandateAuthority = (
     return Result.succeed({ _tag: 'Activate' })
   }
   if (
+    facts.maximum === 'OBSERVE' &&
+    facts.effective === 'OBSERVE' &&
+    facts.kill === 'ACTIVE' &&
+    facts.reason === reconciliationIncompleteRestrictionReason &&
+    facts.generationHash === facts.sourceGenerationHash
+  ) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
+  if (
     facts.maximum === 'PAPER' &&
     facts.effective === 'PAPER' &&
     facts.kill === 'CLEAR' &&

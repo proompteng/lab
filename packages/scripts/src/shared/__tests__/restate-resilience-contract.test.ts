@@ -109,7 +109,48 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   })
 })
 
-test('Restate followers cannot start before singleton snapshot coverage is complete', () => {
+test.each([
+  {
+    scenario: 'seed creates missing snapshots',
+    pod: 'restate-1',
+    snapshots: false,
+    storage: 'empty',
+    seed: true,
+    exit: 0,
+  },
+  {
+    scenario: 'fresh follower refuses missing snapshots',
+    pod: 'restate-2',
+    snapshots: false,
+    storage: 'empty',
+    seed: true,
+    exit: 1,
+  },
+  {
+    scenario: 'fresh follower accepts complete snapshots',
+    pod: 'restate-2',
+    snapshots: true,
+    storage: 'empty',
+    seed: true,
+    exit: 0,
+  },
+  {
+    scenario: 'ext4 scaffolding is not retained state',
+    pod: 'restate-2',
+    snapshots: true,
+    storage: 'ext4',
+    seed: false,
+    exit: 1,
+  },
+  {
+    scenario: 'retained follower survives an unavailable seed',
+    pod: 'restate-2',
+    snapshots: true,
+    storage: 'retained',
+    seed: false,
+    exit: 0,
+  },
+] as const)('Restate snapshot startup gate: $scenario', (scenario) => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const script = statefulSet.spec.template.spec.initContainers[0].command[2] as string
   const tempDir = mkdtempSync('/tmp/restate-follower-snapshot-gate-')
@@ -146,70 +187,39 @@ esac
     chmodSync(restatectl, 0o755)
     chmodSync(sleep, 0o755)
 
-    const run = (podName: string) =>
-      Bun.spawnSync(['/bin/bash', '-ceu', script], {
-        env: {
-          ...process.env,
-          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
-          POD_NAME: podName,
-          RESTATE_DATA_DIR: dataDir,
-        },
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-
-    expect(run('restate-1').exitCode).toBe(0)
-    expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual(['0', '1'])
-
-    rmSync(`${tempDir}/p0`, { force: true })
-    rmSync(`${tempDir}/p1`, { force: true })
-    rmSync(calls, { force: true })
-    const followerWithoutSnapshot = run('restate-2')
-    expect(followerWithoutSnapshot.exitCode).not.toBe(0)
-    expect(followerWithoutSnapshot.stderr.toString()).toContain(
-      'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
-    )
-    expect(Bun.file(calls).size).toBe(0)
-
-    writeFileSync(`${tempDir}/p0`, '')
-    writeFileSync(`${tempDir}/p1`, '')
-    expect(run('restate-2').exitCode).toBe(0)
-
-    rmSync(calls, { force: true })
-    mkdirSync(`${dataDir}/lost+found`)
-    const freshFollowerWithExt4Scaffolding = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+    if (scenario.snapshots) {
+      writeFileSync(`${tempDir}/p0`, '')
+      writeFileSync(`${tempDir}/p1`, '')
+    }
+    if (scenario.storage !== 'empty') mkdirSync(`${dataDir}/lost+found`)
+    if (scenario.storage === 'retained') writeFileSync(`${dataDir}/metadata-store`, 'retained follower state')
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
       env: {
         ...process.env,
         PATH: `${tempDir}:${process.env.PATH ?? ''}`,
-        POD_NAME: 'restate-2',
+        POD_NAME: scenario.pod,
         RESTATE_DATA_DIR: dataDir,
-        SEED_UNAVAILABLE: '1',
+        SEED_UNAVAILABLE: scenario.seed ? '0' : '1',
       },
       stdout: 'pipe',
       stderr: 'pipe',
     })
-    expect(freshFollowerWithExt4Scaffolding.exitCode).not.toBe(0)
-    expect(freshFollowerWithExt4Scaffolding.stderr.toString()).toContain(
-      'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
-    )
-
-    writeFileSync(`${dataDir}/metadata-store`, 'retained follower state')
-    const retainedFollower = Bun.spawnSync(['/bin/bash', '-ceu', script], {
-      env: {
-        ...process.env,
-        PATH: `${tempDir}:${process.env.PATH ?? ''}`,
-        POD_NAME: 'restate-2',
-        RESTATE_DATA_DIR: dataDir,
-        SEED_UNAVAILABLE: '1',
-      },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    expect(retainedFollower.exitCode).toBe(0)
-    expect(retainedFollower.stdout.toString()).toContain(
-      'Retained follower storage is already initialized; skipping first-time snapshot gate',
-    )
-    expect(Bun.file(calls).size).toBe(0)
+    expect(result.exitCode).toBe(scenario.exit)
+    if (scenario.exit === 1) {
+      expect(result.stderr.toString()).toContain(
+        'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
+      )
+    }
+    if (scenario.pod === 'restate-1') {
+      expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual(['0', '1'])
+    } else {
+      expect(Bun.file(calls).size).toBe(0)
+    }
+    if (scenario.storage === 'retained') {
+      expect(result.stdout.toString()).toContain(
+        'Retained follower storage is already initialized; skipping first-time snapshot gate',
+      )
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }

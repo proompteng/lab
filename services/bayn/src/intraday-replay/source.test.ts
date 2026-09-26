@@ -6,8 +6,44 @@ import { TestClock } from 'effect/testing'
 import { makeReplayTimeline } from './session'
 import { canonicalHashV1, sha256 } from '../hash'
 import { retainedReplayFixture as fixture } from '../testing/retained-replay-fixture'
-import { openBacktestSource, validateBacktestSourceReceipt } from './source'
+import { openBacktestSource, validateBacktestSourceManifest, validateBacktestSourceReceipt } from './source'
 import { Result } from 'effect'
+
+for (const { name, rolling, technical } of [
+  { name: 'original features', rolling: false, technical: false },
+  { name: 'regenerated rolling only', rolling: true, technical: false },
+  { name: 'regenerated technical only', rolling: false, technical: true },
+  { name: 'both regenerated feature families', rolling: true, technical: true },
+])
+  test(`captured source binds separate rolling and technical partition counts: ${name}`, () => {
+    const { regeneratedFeaturesRecordedAtMs: _recordedAt, ...base } = fixture().manifest
+    const topics = { ...base.universe.topics, technicalFeatures: 'torghut.technical-features.v1' }
+    const expectedCounts = [
+      [topics.bars, 3],
+      [topics.quotes, 13],
+      [topics.trades, 3],
+      [topics.features, rolling ? 1 : 3],
+      [topics.technicalFeatures, technical ? 1 : 3],
+    ] as const
+    const manifest = {
+      ...base,
+      transport: 'captured-kafka' as const,
+      universe: { ...base.universe, topics },
+      ...(rolling ? { regeneratedFeaturesRecordedAtMs: base.lastAvailableAtMs } : {}),
+      ...(technical ? { regeneratedTechnicalFeaturesRecordedAtMs: base.lastAvailableAtMs } : {}),
+      positions: expectedCounts
+        .flatMap(([topic, count]) =>
+          Array.from({ length: count }, (_, partition) => ({
+            topic,
+            partition,
+            startOffset: '0',
+            endOffsetExclusive: '1',
+          })),
+        )
+        .toSorted((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition),
+    }
+    expect(Result.getOrThrow(validateBacktestSourceManifest(manifest))).toEqual(manifest)
+  })
 
 test('retained source preflights its bytes and advances only available records across the whole file', async () => {
   const data = fixture()
@@ -81,6 +117,10 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
         { body: data.body, manifest: { ...data.manifest, firstAvailableAtMs: data.manifest.firstAvailableAtMs - 1 } },
         { body: data.body, manifest: { ...data.manifest, lastAvailableAtMs: data.manifest.lastAvailableAtMs + 1 } },
         { body: data.body, manifest: { ...data.manifest, positions: [] } },
+        {
+          body: data.body,
+          manifest: { ...data.manifest, regeneratedTechnicalFeaturesRecordedAtMs: data.manifest.lastAvailableAtMs },
+        },
         { body: data.body, manifest: { ...data.manifest, positions: [...data.manifest.positions].reverse() } },
         { body: reversed, manifest: { ...data.manifest, dataSha256: sha256(gzipSync(reversed)) } },
         {
