@@ -47,9 +47,14 @@ older generations and interrupted extractions are removed. Shared home, Nix, and
 Docker state are outside those directories and are not pruned.
 
 If the initialization Job has already failed, its Pod template cannot be updated in place.
-After the corrected revision is merged, stop the uninitialized devbox and recreate only
-the failed Job with the corrected resources, then restore the devbox. Preserve the PVC
-and its initialization token. A completed initialization Job must not be recreated.
+Wait for image publication and for Kargo to write the corrected manifest to
+`kargo/codex-devbox`. Verify that Argo's desired revision renders both initializer memory
+values as `2Gi`; merging the source change alone does not update that deployment branch.
+For an approved recovery, pause only the `codex-devbox` Application with its preserved
+`argocd.argoproj.io/skip-reconcile` annotation, stop the uninitialized devbox, and recreate
+only the failed Job from that promoted manifest. Wait for the Job to complete before
+restoring the devbox and Application reconciliation. Preserve the PVC and its initialization
+token. A completed initialization Job must not be recreated.
 
 ## Install the personal environment
 
