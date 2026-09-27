@@ -8,7 +8,7 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 Hermes is currently stopped through GitOps. The gateway and proxy have zero replicas, backups are suspended, and the
 Application follows `main`. Kargo automatic promotion and Argo Stage authorization are disabled. The data and backup PVCs
 are retained. The procedures below describe the enabled service and must not be used to restart it without a reviewed
-re-enablement that restores the Kargo source, authorization, promotion policy, replicas, schedule, and rollout alert label.
+re-enablement that restores the Kargo source, authorization, promotion policy, replicas, schedule, rollout alert label, and `hermes_rollout_enabled` recording rule.
 
 ## Steady-state reconciliation after re-enablement
 

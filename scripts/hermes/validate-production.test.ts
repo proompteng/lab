@@ -1082,15 +1082,15 @@ test('rejects absent-series alerts that fire before rollout enablement', async (
   )
 })
 
-test('rejects rollout enablement derived from ephemeral Hermes namespace state', async () => {
+test('rejects enabling outage alerts while Hermes is intentionally stopped', async () => {
   const files = await loadProductionFiles()
-  files.mimirRules = files.mimirRules.replaceAll(
-    'kube_argocd_application_deployment_history_info{',
-    'kube_namespace_labels{',
+  files.mimirRules = files.mimirRules.replace(
+    'record: hermes_rollout_enabled\n            expr: vector(0)',
+    'record: hermes_rollout_enabled\n            expr: max(kube_argocd_application_deployment_history_info{application="hermes"})',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.mimirRules}: missing production invariant "kube_argocd_application_deployment_history_info{"`,
+    `${productionPaths.mimirRules}: missing production invariant ${JSON.stringify('record: hermes_rollout_enabled\n            expr: vector(0)')}`,
   )
 })
 

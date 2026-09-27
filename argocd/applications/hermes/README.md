@@ -1,6 +1,6 @@
 # Hermes production
 
-Hermes is disabled. GitOps enforces zero gateway and egress-proxy replicas, suspends scheduled backups, and retains the data and backup PVCs. The Argo Application follows `main` to enforce this stopped state; automatic `hermes-toolchain` promotion and its Argo authorization are disabled. Re-enabling requires a reviewed change that restores the Kargo source and authorization, replicas, backup schedule, and rollout alert label.
+Hermes is disabled. The `hermes_rollout_enabled` recording rule is explicitly zero while stopped. GitOps enforces zero gateway and egress-proxy replicas, suspends scheduled backups, and retains the data and backup PVCs. The Argo Application follows `main` to enforce this stopped state; automatic `hermes-toolchain` promotion and its Argo authorization are disabled. Re-enabling requires a reviewed change that restores the Kargo source and authorization, replicas, backup schedule, rollout alert label, and `hermes_rollout_enabled` recording rule.
 
 The retained Hermes configuration serves the Tuslagch assistant through an authenticated cluster-local Service and private
 Tailscale Ingress when enabled. Neither endpoint currently has a running backend. Before re-enabling, pass the live
