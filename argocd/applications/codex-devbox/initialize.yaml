@@ -35,10 +35,10 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 2Gi
             limits:
               cpu: "1"
-              memory: 256Mi
+              memory: 2Gi
           volumeDevices:
             - name: data
               devicePath: /dev/devbox-data
