@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codex-devbox
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codex-devbox
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 100.100.244.128/25
+      ports:
+        - protocol: TCP
+          port: 22
+  egress:
+    - {}
