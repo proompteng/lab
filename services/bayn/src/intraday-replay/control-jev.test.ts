@@ -81,13 +81,16 @@ const simulate = (
             return { value, recordHash: canonicalHashV1(value), availableAtMs: atMs, sequence: 1 }
           }),
         snapshot: (query) =>
-          Effect.sync(() => ({
-            status: 'AVAILABLE' as const,
-            snapshot: nativeJevFixture(
-              query.candidateSymbols?.length === 1 ? JevPurpose.Manage : JevPurpose.Entry,
-              query.observedAt,
-            ).snapshot,
-          })),
+          Effect.sync(() => {
+            expect(query.candidateEvidencePolicy).toBe(fixture.protocol.candidateEvidencePolicy)
+            return {
+              status: 'AVAILABLE' as const,
+              snapshot: nativeJevFixture(
+                query.candidateSymbols?.length === 1 ? JevPurpose.Manage : JevPurpose.Entry,
+                query.observedAt,
+              ).snapshot,
+            }
+          }),
       }
       const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', fixture.protocol.universe)
       const report = yield* runControlSession({

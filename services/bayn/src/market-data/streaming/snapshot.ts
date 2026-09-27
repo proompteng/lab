@@ -16,7 +16,7 @@ import type {
   IntradaySnapshotManifest,
   IntradaySnapshotQuery,
 } from '../intraday/model'
-import { IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
+import { IntradayCandidateEvidencePolicy, IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
 import { compareRecords, lineageOf, replayedBarRow, verifyIntradaySnapshotQuery } from '../intraday/verification'
 import type { RollingMarketFeature } from '../features/contract'
 import type { KafkaProjectionCut } from './kafka'
@@ -215,6 +215,9 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       },
       maximumQuoteAgeMs: request.maximumQuoteAgeMs,
       minimumWatermarkLagMs: request.minimumWatermarkLagMs,
+      ...(request.candidateEvidencePolicy === undefined
+        ? {}
+        : { candidateEvidencePolicy: request.candidateEvidencePolicy }),
       barCount: bars.length,
       quoteCount: quotes.length,
       tradeCount: trades.length,
@@ -240,7 +243,10 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
         positions,
         sequence: state.sequence,
         records: (yield* Result.all(entries.map(recordReceipt))).toSorted((a, b) => a.sequence - b.sequence),
-        features: featureReceipts.filter((feature) => !excluded.has(feature.value.material.symbol)),
+        features:
+          request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+            ? featureReceipts
+            : featureReceipts.filter((feature) => !excluded.has(feature.value.material.symbol)),
       },
     } as const
     const contentHash = yield* hash(material)
