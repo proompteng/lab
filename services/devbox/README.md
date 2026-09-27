@@ -83,11 +83,14 @@ dependencies, and checked the repository toolchain. Existing checkouts are prese
 `devbox-install-deps` first materializes the frozen dependency graph without scripts.
 It then uses `npm rebuild` for the exact installed package versions reported by
 `bun pm ls --all --trusted`, followed by Bun's normal workspace postinstall pass.
-This keeps native build helpers available throughout compilation: a forced Bun
+Each rebuild runs from the package's physical store entry so npm treats it as an
+installed dependency. Running at the workspace root would treat Bun's symlinks as
+linked source packages and run their package-author `prepare` scripts.
+This keeps native build helpers available throughout compilation. A forced Bun
 reinstall can remove `node-gyp` while a grammar's install script is using it.
 The isolated dependency layout, Bun lockfile, and existing script trust policy
-are preserved. An empty trusted list skips rebuilding, and an unrecognized list
-or failed native build stops setup.
+are preserved. An empty trusted list skips rebuilding, and an unrecognized list,
+missing store entry, or failed native build stops setup.
 
 ## Verify development and persistence
 

@@ -20,6 +20,21 @@ trusted_packages=()
   done
 } <<< "$trusted_output"
 if (( ${#trusted_packages[@]} > 0 )); then
-  npm rebuild --package-lock=false --foreground-scripts --ignore-scripts=false "${trusted_packages[@]}"
+  for package in "${trusted_packages[@]}"; do
+    name="${package%@*}"
+    found=false
+    for prefix in node_modules/.bun/*; do
+      directory="$prefix/node_modules/$name"
+      [[ -f "$directory/package.json" && ! -L "$directory" ]] || continue
+      installed="$(jq -er '.name + "@" + .version' "$directory/package.json")"
+      [[ "$installed" == "$package" ]] || continue
+      npm --prefix "$prefix" rebuild --package-lock=false --foreground-scripts --ignore-scripts=false "$package"
+      found=true
+    done
+    if [[ "$found" != true ]]; then
+      echo "Trusted dependency missing from Bun's isolated store: $package" >&2
+      exit 1
+    fi
+  done
 fi
 bun install --frozen-lockfile --concurrent-scripts=1
