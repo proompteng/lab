@@ -1,18 +1,13 @@
-import { runeModel, type RuneRequest, type RuneResponse } from '../rune/contract'
+import { jevModel, type JevRequest, type JevResponse } from './contract'
 import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
 import { makeJevEvaluationRequest } from './evidence'
 
 export const requestFixture = {
-  model: runeModel,
-  thinking: false,
+  model: jevModel,
   state: { subject: 'ExampleCo', headline: 'ExampleCo raises its revenue outlook.' },
   questions: {
-    relevant: {
-      type: 'noul',
-      instructions: 'Does this contain a fact directly about ExampleCo?',
-      criteria: { true: 'Yes.', false: 'No.' },
-    },
+    relevant: { type: 'noul', instructions: 'Does this contain a fact directly about ExampleCo?' },
     direction: {
       type: 'choice',
       instructions: 'Which outlook direction does the announcement support?',
@@ -23,24 +18,22 @@ export const requestFixture = {
       },
     },
   },
-} satisfies RuneRequest
+} satisfies JevRequest
 
 export const responseFixture = () =>
   ({
-    id: 'dec-test',
-    model: runeModel,
-    provider: 'surogate',
+    model: jevModel,
     answers: {
       relevant: { type: 'noul', noul: 0.95 },
       direction: {
         type: 'choice',
         choice: 'favorable',
-        confidence: 0.85,
+        confidence: 0.82,
         probabilities: { favorable: 0.9, unfavorable: 0.02, unclear: 0.08 },
       },
     },
-    usage: { input_tokens: 250, output_tokens: 2, cost: 0 },
-  }) satisfies RuneResponse
+    usage: { input_tokens: 250, output_tokens: 80 },
+  }) satisfies JevResponse
 
 export const evaluationRequestFixture = () =>
   Result.getOrThrow(

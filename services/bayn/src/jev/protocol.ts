@@ -13,6 +13,7 @@ import {
   intradayUniverse,
 } from '../strategy/intraday-market'
 import { JevContractError, jevModel } from './contract'
+import { runeModel } from '../rune/contract'
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Probability = UnitIntervalSchema.check(Schema.isGreaterThan(0.5))
@@ -20,7 +21,7 @@ const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
 const ProtocolBase = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev.protocol.v1'),
-  model: Schema.Literal(jevModel),
+  model: Schema.Literals([jevModel, runeModel]),
   inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v2'),
   streamingInput: IntradayStreamingInputSchema,
   universeId: Schema.Literal(intradayUniverse.id),
@@ -96,7 +97,7 @@ export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
   schemaVersion: 'bayn.jev.protocol.v1',
-  model: jevModel,
+  model: runeModel,
   inputDefinition: 'bayn.jev-trading-signal-state.v2',
   streamingInput: intradayStreamingContract,
   universeId: intradayUniverse.id,
@@ -139,6 +140,6 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.behavior.v3')
+export const jevBehaviorHash = sha256('bayn.jev.behavior.v4.rune')
 export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
   [...candidates, protocol.benchmarkSymbol].sort()

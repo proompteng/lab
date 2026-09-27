@@ -4,27 +4,27 @@ import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevClient, JevClientLive, JevError } from './client'
-import { JevFailure, jevEndpoint } from './contract'
-import { requestFixture, responseFixture } from './test-support'
+import { RuneClient, RuneClientLive, RuneError } from './client'
+import { JevFailure } from '../jev/contract'
+import { runeEndpoint } from './contract'
+import { requestFixture, responseFixture } from '../jev/test-support'
 
-const key = Redacted.make('test-secret-never-log')
-const run = <A, E>(effect: Effect.Effect<A, E, JevClient>, http: HttpClient.HttpClient, timeout = 1000) =>
-  effect.pipe(Effect.provide(JevClientLive(key, timeout)), Effect.provideService(HttpClient.HttpClient, http))
-const evaluate = JevClient.pipe(Effect.flatMap((client) => client.evaluate(requestFixture)))
+const run = <A, E>(effect: Effect.Effect<A, E, RuneClient>, http: HttpClient.HttpClient, timeout = 1000) =>
+  effect.pipe(Effect.provide(RuneClientLive(timeout)), Effect.provideService(HttpClient.HttpClient, http))
+const evaluate = RuneClient.pipe(Effect.flatMap((client) => client.evaluate(requestFixture)))
 const responseClient = (body: unknown, status = 200) =>
   HttpClient.make((request) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(body), { status }))),
   )
 
-describe('Jev inference transport', () => {
+describe('Rune inference transport', () => {
   test('uses the fixed endpoint and returns replayable hashes with recorded response', async () => {
     let calls = 0
     const http = HttpClient.make((request, url) => {
       calls += 1
-      expect(url.toString()).toBe(jevEndpoint)
+      expect(url.toString()).toBe(runeEndpoint)
       expect(request.method).toBe('POST')
-      expect(request.headers['authorization']).toBe(`Bearer ${Redacted.value(key)}`)
+      expect(request.headers['authorization']).toBeUndefined()
       return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(responseFixture()))))
     })
     const result = await Effect.runPromise(run(evaluate, http))
@@ -43,16 +43,7 @@ describe('Jev inference transport', () => {
     if (Result.isFailure(result)) {
       expect(result.failure.failure).toBe(JevFailure.Status)
       expect(result.failure.status).toBe(status)
-      expect(JSON.stringify(result.failure)).not.toContain(Redacted.value(key))
     }
-  })
-
-  test('retains approximately normalized probabilities and their original response hash', async () => {
-    const body = responseFixture()
-    body.answers.direction.probabilities = { favorable: 0.93, unfavorable: 0.05, unclear: 0.01 }
-    const result = await Effect.runPromise(run(evaluate, responseClient(body)))
-    expect(result.response).toEqual(body)
-    expect(result.responseHash).toBe(Result.getOrThrow(canonicalHashV1Result(body)))
   })
 
   test('preserves rejected raw response and hash for evidence without printing its contents', async () => {
@@ -145,6 +136,6 @@ describe('Jev inference transport', () => {
     const exit = await Effect.runPromiseExit(run(evaluate, http, 0))
     expect(calls).toBe(0)
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(JevError)
+    if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(RuneError)
   })
 })

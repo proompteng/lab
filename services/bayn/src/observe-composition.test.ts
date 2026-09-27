@@ -9,7 +9,7 @@ import type { AutonomousCycleLoop } from './app'
 import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
-import { JevClient } from './jev/client'
+import { RuneClient } from './rune/client'
 import { JevPositionStore } from './jev/portfolio'
 import { nativeJevBatchResult } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
@@ -173,7 +173,7 @@ const accountingHash = 'b'.repeat(64)
 const reconciledAt = '2020-05-01T12:44:59.000Z'
 const evaluatedAt = '2020-05-01T12:45:02.000Z'
 
-type JevTestServices = JevBatchStore | JevEvaluationStore | JevClient | JevPositionStore
+type JevTestServices = JevBatchStore | JevEvaluationStore | RuneClient | JevPositionStore
 
 const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
   const unexpected = Effect.die('Composition fixture uses already committed Jev entry evidence')
@@ -198,7 +198,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
       record: () => unexpected,
       abandon: () => unexpected,
     }),
-    Effect.provideService(JevClient, { evaluate: () => unexpected }),
+    Effect.provideService(RuneClient, { evaluate: () => unexpected }),
     Effect.provideService(JevPositionStore, {
       read: () => unexpected,
     }),

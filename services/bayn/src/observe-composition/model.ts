@@ -25,7 +25,7 @@ import { CandidateObservationStore } from './candidate-observation'
 import type { IntradayExitTiming } from '../strategy/intraday-momentum/research'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { JevPositionStore } from '../jev/portfolio'
 
 export type ReconciliationRuntime =
@@ -43,7 +43,7 @@ export type ObserveDecisionRuntime =
   | ReconciliationRuntime
   | JevBatchStore
   | JevEvaluationStore
-  | JevClient
+  | RuneClient
   | JevPositionStore
 
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime

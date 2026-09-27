@@ -5,11 +5,11 @@ import { TestClock } from 'effect/testing'
 import { canonicalHashV1 } from '../hash'
 import { JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { decideJevManagement, JevManagementAction } from '../jev/decision'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
-import { nativeJevInference } from '../jev/native.test-support'
+import { nativeRuneInference } from '../jev/native.test-support'
 import { JevResolutionStatus } from '../jev/resolution'
 import { evaluateJevObservation } from '../jev/runtime'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
@@ -47,7 +47,7 @@ const receipt = () =>
       completedAt: observation.observedAt,
       outcome: {
         status: JevOutcome.Received,
-        inference: nativeJevInference(request.request, observation.observedAt, 'exit'),
+        inference: nativeRuneInference(request.request, observation.observedAt, 'exit'),
       },
     }),
   )
@@ -57,13 +57,13 @@ test('native management commits source and request before inference, reproduces 
     Effect.gen(function* () {
       const { fs, directory, journal } = yield* setup
       let calls = 0
-      const client: JevClient['Service'] = {
+      const client: RuneClient['Service'] = {
         evaluate: (input) =>
           Effect.gen(function* () {
             calls++
             expect(yield* fs.exists(`${directory}/request-${request.requestId}.json`).pipe(Effect.orDie)).toBeTrue()
             expect(yield* fs.exists(`${directory}/batch-${plan.batchId}.json`).pipe(Effect.orDie)).toBeTrue()
-            return nativeJevInference(input, new Date(yield* Clock.currentTimeMillis).toISOString(), 'exit')
+            return nativeRuneInference(input, new Date(yield* Clock.currentTimeMillis).toISOString(), 'exit')
           }),
       }
       const evaluation = evaluateJevObservation({
@@ -76,7 +76,7 @@ test('native management commits source and request before inference, reproduces 
         Effect.provideService(CandidateObservationStore, journal.observations),
         Effect.provideService(JevBatchStore, journal.batches),
         Effect.provideService(JevEvaluationStore, journal.evaluations),
-        Effect.provideService(JevClient, client),
+        Effect.provideService(RuneClient, client),
       )
       const evidence = yield* evaluation
       expect(Result.getOrThrow(decideJevManagement(evidence)).action).toBe(JevManagementAction.Exit)
@@ -104,7 +104,7 @@ test('a durable pending claim forbids another call, expires once, and preserves 
       const duplicate = yield* Effect.result(
         evaluateJevOnce(request).pipe(
           Effect.provideService(JevEvaluationStore, journal.evaluations),
-          Effect.provideService(JevClient, { evaluate: () => Effect.die('Duplicate provider call') }),
+          Effect.provideService(RuneClient, { evaluate: () => Effect.die('Duplicate provider call') }),
         ),
       )
       expect(Result.isFailure(duplicate) && duplicate.failure._tag).toBe('JevEvidenceError')

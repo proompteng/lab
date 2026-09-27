@@ -1,7 +1,7 @@
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { JevPositionStore } from '../jev/portfolio'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
@@ -28,7 +28,7 @@ import { IntradayMarketData, type IntradayMarketDataService } from '../market-da
 export const autonomousRuntimeServices = Effect.all({
   jevBatchStore: JevBatchStore,
   jevEvaluationStore: JevEvaluationStore,
-  jevClient: JevClient,
+  jevClient: RuneClient,
   jevPositionStore: JevPositionStore,
   candidateObservationStore: CandidateObservationStore,
   pgClient: PgClient.PgClient,
@@ -59,7 +59,7 @@ export const makeAutonomousCycleResources = (
   Layer.mergeAll(
     Layer.succeed(JevBatchStore, runtimeServices.jevBatchStore),
     Layer.succeed(JevEvaluationStore, runtimeServices.jevEvaluationStore),
-    Layer.succeed(JevClient, runtimeServices.jevClient),
+    Layer.succeed(RuneClient, runtimeServices.jevClient),
     Layer.succeed(JevPositionStore, runtimeServices.jevPositionStore),
     Layer.succeed(CandidateObservationStore, runtimeServices.candidateObservationStore),
     Layer.succeed(BrokerRead, runtimeServices.session.read),

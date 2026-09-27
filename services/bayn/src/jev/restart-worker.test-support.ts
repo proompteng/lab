@@ -6,7 +6,7 @@ import { PostgresClientLive } from '../db/postgres-client'
 import { Sha256Schema } from '../schemas'
 import { decodeJevEvaluationRequest, JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevEvaluationStore, recoverExpiredJevEvaluation } from './evaluation'
-import { tradingSignalInferenceFixture } from './trading-signal.test-support'
+import { nativeRuneInference } from './native.test-support'
 
 const main = Effect.gen(function* () {
   const [mode, rawRequestId, requestPath, checkpointPath, resultPath] = process.argv.slice(2)
@@ -56,7 +56,7 @@ const main = Effect.gen(function* () {
             completedAt: request.observedAt,
             outcome: {
               status: JevOutcome.Received,
-              inference: tradingSignalInferenceFixture(request.request, request.observedAt),
+              inference: nativeRuneInference(request.request, request.observedAt),
             },
           }),
         ),

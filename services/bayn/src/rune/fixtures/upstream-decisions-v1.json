@@ -1,0 +1,135 @@
+{
+  "source": "https://github.com/invergent-ai/surogate/blob/4888528abcfdcd36e2f4a6a1ffa0262b67683c66/csrc/src/testing/serve/fixtures/serve/decisions_v1/golden.json",
+  "license": "Apache-2.0",
+  "temperature": 1.0,
+  "cases": [
+    {
+      "name": "ticket",
+      "body": "{\"model\": \"rune\", \"state\": \"Customer wrote: the package arrived late and damaged, I want my money back.\", \"questions\": {\"sentiment\": {\"type\": \"choice\", \"instructions\": \"What is the customer's sentiment?\", \"criteria\": {\"positive\": \"The message is positive\", \"neutral\": \"Neither\", \"negative\": \"The message is negative\"}}, \"refund\": {\"type\": \"noul\", \"instructions\": \"Does the customer ask for a refund?\", \"criteria\": {\"true\": \"A refund is requested\", \"false\": \"No refund is requested\"}}, \"urgency\": {\"type\": \"score\", \"instructions\": \"How urgent is this?\", \"criteria\": [\"Not urgent\", \"Somewhat urgent\", \"Very urgent\"]}}}",
+      "answers": {
+        "sentiment": {
+          "type": "choice",
+          "choice": "negative",
+          "confidence": 0.9993535757059541,
+          "probabilities": {
+            "positive": 3.926170834534708e-7,
+            "neutral": 0.0004305569122805494,
+            "negative": 0.999569050470636
+          }
+        },
+        "refund": {
+          "type": "noul",
+          "noul": 3.535625074174431e-5
+        },
+        "urgency": {
+          "type": "score",
+          "score": 4.850885157983555e-5,
+          "confidence": 0.9999272367226303,
+          "legend": {
+            "0": "Not urgent",
+            "1": "Somewhat urgent",
+            "2": "Very urgent"
+          },
+          "probabilities": {
+            "0": 0.9999557138126833,
+            "1": 4.0063523053685826e-5,
+            "2": 4.222664263074861e-6
+          }
+        }
+      }
+    },
+    {
+      "name": "key-order",
+      "body": "{\"model\": \"rune\", \"state\": {\"zeta\": 1, \"alpha\": 2, \"mid\": {\"b\": [1, 2], \"a\": null}}, \"questions\": {\"zq\": {\"type\": \"choice\", \"instructions\": \"Pick one.\", \"criteria\": {\"zk\": \"last letter\", \"ak\": \"first letter\"}}, \"aq\": {\"type\": \"choice\", \"instructions\": \"Pick again.\", \"criteria\": {\"b\": \"bee\", \"a\": \"ay\", \"c\": \"see\"}}}}",
+      "answers": {
+        "zq": {
+          "type": "choice",
+          "choice": "zk",
+          "confidence": 0.999997580268633,
+          "probabilities": {
+            "zk": 0.9999987901343165,
+            "ak": 1.209865683527418e-6
+          }
+        },
+        "aq": {
+          "type": "choice",
+          "choice": "b",
+          "confidence": 0.9982323564046784,
+          "probabilities": {
+            "b": 0.9988215709364522,
+            "a": 0.0011694998222161184,
+            "c": 8.929241331560039e-6
+          }
+        }
+      }
+    },
+    {
+      "name": "noul-order",
+      "body": "{\"model\": \"rune\", \"state\": [\"an\", \"array\", \"state\", 3], \"questions\": {\"flag\": {\"type\": \"noul\", \"instructions\": \"Is it an array?\", \"criteria\": {\"false\": \"No\", \"true\": \"Yes\"}}, \"flag-reversed\": {\"type\": \"noul\", \"instructions\": \"Is it a string?\", \"criteria\": {\"true\": \"Yes\", \"false\": \"No\"}}}}",
+      "answers": {
+        "flag": {
+          "type": "noul",
+          "noul": 0.9999990577554062
+        },
+        "flag-reversed": {
+          "type": "noul",
+          "noul": 0.9999999990263799
+        }
+      }
+    },
+    {
+      "name": "ties",
+      "body": "{\"model\": \"rune\", \"state\": \"Customer wrote: the package arrived late and damaged, I want my money back.\", \"questions\": {\"sentiment\": {\"type\": \"choice\", \"instructions\": \"What is the customer's sentiment?\", \"criteria\": {\"positive\": \"The message is positive\", \"neutral\": \"Neither\", \"negative\": \"The message is negative\"}}, \"refund\": {\"type\": \"noul\", \"instructions\": \"Does the customer ask for a refund?\", \"criteria\": {\"true\": \"A refund is requested\", \"false\": \"No refund is requested\"}}, \"urgency\": {\"type\": \"score\", \"instructions\": \"How urgent is this?\", \"criteria\": [\"Not urgent\", \"Somewhat urgent\", \"Very urgent\"]}, \"urgency5\": {\"type\": \"score\", \"instructions\": \"How urgent, 0 to 4?\", \"criteria\": [\"none\", \"low\", \"mid\", \"high\", \"top\"]}}}",
+      "answers": {
+        "sentiment": {
+          "type": "choice",
+          "choice": "positive",
+          "confidence": 0.13347819737727729,
+          "probabilities": {
+            "positive": 0.4223187982515182,
+            "neutral": 0.4223187982515182,
+            "negative": 0.15536240349696362
+          }
+        },
+        "refund": {
+          "type": "noul",
+          "noul": 0.5
+        },
+        "urgency": {
+          "type": "score",
+          "score": 1.0,
+          "confidence": 0.0,
+          "legend": {
+            "0": "Not urgent",
+            "1": "Somewhat urgent",
+            "2": "Very urgent"
+          },
+          "probabilities": {
+            "0": 0.5,
+            "1": 6.497907125037516e-25,
+            "2": 0.5
+          }
+        },
+        "urgency5": {
+          "type": "score",
+          "score": 1.0728666930377897,
+          "confidence": 0.10594442246850855,
+          "legend": {
+            "0": "none",
+            "1": "low",
+            "2": "mid",
+            "3": "high",
+            "4": "top"
+          },
+          "probabilities": {
+            "0": 0.4878555511603684,
+            "1": 6.340080123748123e-25,
+            "2": 0.4878555511603684,
+            "3": 6.340080123748123e-25,
+            "4": 0.024288897679263205
+          }
+        }
+      }
+    }
+  ]
+}

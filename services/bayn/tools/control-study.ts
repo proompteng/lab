@@ -1,5 +1,6 @@
-import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Clock, Config, Context, Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
+import { RuneHttpClientLive } from '../src/rune/http'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { Clock, Context, Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { sha256 } from '../src/hash'
@@ -11,7 +12,7 @@ import {
   type ControlStudyManagement,
 } from '../src/intraday-replay/control-study'
 import { prepareBacktest } from '../src/intraday-replay/backtest'
-import { JevClient, JevClientLive } from '../src/jev/client'
+import { RuneClient, RuneClientLive } from '../src/rune/client'
 import { validateBacktestSourceReceipt } from '../src/intraday-replay/source'
 
 const main = Effect.gen(function* () {
@@ -59,15 +60,13 @@ const main = Effect.gen(function* () {
     const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
     const providerClock = yield* Clock.clockWith(Effect.succeed)
     const providerContext = yield* Layer.build(
-      JevClientLive(yield* Config.redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs).pipe(
-        Layer.provide(NodeHttpClient.layerNodeHttp),
-      ),
+      RuneClientLive(prepared.protocol.inferenceValidityMs).pipe(Layer.provide(RuneHttpClientLive())),
     )
     management = {
       mode: ControlManagementMode.Jev,
       evidenceDirectory,
       providerClock,
-      provider: Context.get(providerContext, JevClient),
+      provider: Context.get(providerContext, RuneClient),
     }
   } else {
     if (evidenceDirectory !== undefined)

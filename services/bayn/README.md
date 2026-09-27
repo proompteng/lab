@@ -9,16 +9,21 @@ rows remain decodable for audit and reconciliation, but they are not runtime fal
 
 ## Active strategy
 
-Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified prices, volume, computed technical
+Bayn supplies the pinned native `rune-v3-c6b360d47895` model with verified prices, volume, computed technical
 indicators, quotes, benchmark relationships and actual position context. Bayn computes quantities, cost basis,
-holding time, returns, sizing and risk. The model returns typed probability distributions for entry or management.
+holding time, returns, sizing and risk. Rune returns typed probability distributions for entry or management through
+its internal `/v1/decisions` endpoint. Requests use one pass with `thinking: false` and explicit `noul` criteria.
+The [Rune service](../rune/README.md) pins the engine, checkpoint, native conversion and serving configuration.
 
-The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/types/responses#typesafe_sdk.ChoiceAnswer)
-describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
-each reported probability, so the total allowance scales with the number of choices. These are Bayn validation bounds, not a
-provider precision guarantee. Score answers must also fit the same distribution bounds and a 0.005 score allowance.
-Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
-discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
+Bayn validates the complete native response: pinned model/provider, request question identities, finite unit-mass
+probabilities, selected maximum, score legend, derived score/confidence and one readout per question. It retains
+responses without normalization. HTTP failures, malformed output and responses outside the ten-second request
+deadline cannot authorize an entry. Cancellation closes the HTTP request; no hosted provider is a fallback.
+
+The durable `jev` strategy family and evidence schema names remain stable. Historical TypeSafe requests and responses
+keep their exact decoder, values and hashes for accounting and audit, including the old approximate-probability
+contract. New evaluations accept only the pinned Rune model. The model change binds a new behavior and parameter
+identity; its matching PAPER mandate preserves the existing sandbox account, grant type, risk policy and limits.
 
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
@@ -30,7 +35,7 @@ bounding the target; the target weight is applied once. Exposure-reducing closes
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
 The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
-exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
+exclusions without an inference call. An entry batch where every candidate is excluded for a verified entry-quote reason can
 yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
 original identity and quote-deadline binding. Position management still evaluates its held symbol. A complete
 version-three batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
@@ -41,7 +46,7 @@ frozen qualification protocol.
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
 50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
-quote's event time. The immutable exit target binds that deadline. These deterministic exits do not require Jev.
+quote's event time. The immutable exit target binds that deadline. These deterministic exits do not require model inference.
 PostgreSQL checks the initial exit deadline in a deferred constraint at transaction commitment, after evidence reads
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
@@ -105,7 +110,7 @@ embeds and verifies the source revision and the behavior, parameter, protocol, a
 
 ## Execution contract
 
-The Jev implementation lives under `src/jev`. The trading-signal batch constructor requires the complete retained
+The strategy and retained evidence live under `src/jev`; active inference lives under `src/rune`. The trading-signal batch constructor requires the complete retained
 observation, derives its observation and protocol hashes, reproduces the live or simulated snapshot once, and freezes
 the complete candidate universe, source exclusions, exact requests and common deadline. Batch results bind every
 planned candidate, including failed, abandoned and unattempted evaluations.
@@ -450,22 +455,22 @@ source manifest, native Jev build and strategy identities, opening cash, asset m
 controller cadence, and cost assumptions. Retired momentum backtest inputs cannot start the native runtime.
 Historical artifacts remain available for comparison and audit.
 
-Set `BAYN_JEV_API_KEY` through the existing protected environment. The command requires an
-`inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v2"`. Its `costs` object contains
-`inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
-`allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
+The command requires an `inference` object with `mode: "measured-provider"`,
+`model: "rune-v3-c6b360d47895"`, and `inputDefinition: "bayn.jev-trading-signal-state.v2"`.
+Its `costs` object contains `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings.
+These are declared resource-allocation assumptions; they are not a measured GPU operating cost. The input also
+requires `allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity. Native
+`usage.cost: 0` is API billing only and cannot establish zero total model cost or after-cost profitability.
 
 The provider uses an independent live clock. Replay retains original provider requests, responses and timestamps
 in `jev-calls.ndjson` before advancing market and database time. Concurrent calls share elapsed time. Native
 PostgreSQL batch and evaluation stores retain the mapped evidence and enforce the original inference deadline.
-Failed or interrupted calls with unresolved charges make the cost result incomplete. Known charges use the declared
-tariff with each call rounded upward to one micro-dollar. Invoice verification remains required for qualification.
+Failed or interrupted calls with unresolved usage make the cost result incomplete. The declared token allocation
+rounds each call upward to one micro-dollar. Full GPU and data cost calibration remains required for qualification.
 
-This local replay command connects directly to TypeSafe through Node HTTP. Production inference uses the dedicated
-CONNECT proxy. Development replay latency therefore includes the local host and network path; it does not prove
-production proxy latency or connectivity. Record that transport difference with the run and measure the deployed
-path before claiming production timing parity.
+Replay and production use the same direct internal Rune client without credentials or a hosted fallback. Run replay
+where the fixed cluster service name and NetworkPolicy allow access. A laptop without that route fails closed.
+Measure the deployed path before claiming production timing parity from a replay environment.
 
 Final authorization samples measured elapsed time after provider, persistence, writer-lock, grant and broker reads.
 Every replay reconciliation, including those inside the cycle driver, uses that measured clock after ingestion.

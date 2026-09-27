@@ -27,7 +27,7 @@ import { canonicalHashV1 } from '../hash'
 import { JevBatchPlanVersion, JevEntryExclusion } from '../jev/batch'
 import { decideJevEntry, decideJevManagement, JevManagementAction } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
-import { JevClient, JevError } from '../jev/client'
+import { RuneClient, RuneError } from '../rune/client'
 import { JevFailure } from '../jev/contract'
 import { decodeJevPortfolio, JevPositionStore, JevPurpose } from '../jev/portfolio'
 import { clientOrderIdForIntentId } from '../execution/intents/domain'
@@ -39,7 +39,7 @@ import { reconciledStateHash } from '../reconciliation'
 import { makeExecutionCycleClosure, ExecutionCycleClosureStore } from './execution-cycle-closure'
 import type { IntradayMarketDataService } from '../market-data'
 import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgres'
-import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
+import { nativeJevFixture as fixtureForAccount, nativeRuneInference } from '../jev/native.test-support'
 import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
 import { JevExitReason } from '../jev/exit'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -334,12 +334,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
           expect(calls).toBe(purpose === JevPurpose.Entry ? 15 : 1)
         }).pipe(
-          Effect.provideService(JevClient, {
+          Effect.provideService(RuneClient, {
             evaluate: (request) =>
               Clock.currentTimeMillis.pipe(
                 Effect.map((now) => {
                   calls += 1
-                  return nativeJevInference(
+                  return nativeRuneInference(
                     request,
                     utcInstantFromEpochMillis(now),
                     purpose === JevPurpose.Entry ? 'enter' : 'hold',
@@ -405,12 +405,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         )
         expect(calls).toBe(fixture.protocol.candidateSymbols.length - 2)
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Clock.currentTimeMillis.pipe(
               Effect.map((now) => {
                 calls += 1
-                return nativeJevInference(request, utcInstantFromEpochMillis(now), 'enter')
+                return nativeRuneInference(request, utcInstantFromEpochMillis(now), 'enter')
               }),
             ),
         }),
@@ -455,7 +455,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           })
           expect(target).toMatchObject({ _tag: 'Exit', target: { reason } })
         }).pipe(
-          Effect.provideService(JevClient, {
+          Effect.provideService(RuneClient, {
             evaluate: () => Effect.die('Deterministic exit unexpectedly called Jev'),
           }),
           atObservation,
@@ -512,11 +512,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         })
         expect(calls).toBe(1)
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Effect.sync(() => {
               calls += 1
-              return nativeJevInference(request, fixture.observation.payload.observedAt, 'hold')
+              return nativeRuneInference(request, fixture.observation.payload.observedAt, 'hold')
             }),
         }),
         atObservation,
@@ -540,12 +540,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(Result.getOrThrow(decideJevManagement(evidence)).action).toBe(JevManagementAction.Exit)
         expect(calls).toBe(1)
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Clock.currentTimeMillis.pipe(
               Effect.map((now) => {
                 calls += 1
-                return nativeJevInference(request, new Date(now).toISOString(), 'exit')
+                return nativeRuneInference(request, new Date(now).toISOString(), 'exit')
               }),
             ),
         }),
@@ -578,11 +578,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect(Result.isFailure(evaluation)).toBe(true)
           expect(calls).toBe(0)
         }).pipe(
-          Effect.provideService(JevClient, {
+          Effect.provideService(RuneClient, {
             evaluate: (request) =>
               Effect.sync(() => {
                 calls += 1
-                return nativeJevInference(request, fixture.observation.payload.observedAt, 'exit')
+                return nativeRuneInference(request, fixture.observation.payload.observedAt, 'exit')
               }),
           }),
           atObservation,
@@ -636,12 +636,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                   Effect.gen(function* () {
                     const started = yield* Clock.currentTimeMillis
                     yield* providerClock.setTime(started + latencyMs)
-                    return nativeJevInference(request, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
+                    return nativeRuneInference(request, utcInstantFromEpochMillis(yield* Clock.currentTimeMillis))
                   }),
               },
             })
             const result = yield* timing.run(
-              evaluateJevObservation(nativeInput).pipe(Effect.provideService(JevClient, timing.client), Effect.result),
+              evaluateJevObservation(nativeInput).pipe(Effect.provideService(RuneClient, timing.client), Effect.result),
             )
             expect(calls.length).toBeGreaterThan(0)
             expect(yield* Clock.currentTimeMillis).toBeGreaterThanOrEqual(observed + latencyMs)
@@ -685,12 +685,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           [],
         )
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Clock.currentTimeMillis.pipe(
               Effect.map((now) => {
                 calls += 1
-                return nativeJevInference(request, new Date(now).toISOString())
+                return nativeRuneInference(request, new Date(now).toISOString())
               }),
             ),
         }),
@@ -722,12 +722,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           snapshot: next.snapshot,
         }).pipe(Effect.result)
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Clock.currentTimeMillis.pipe(
               Effect.map((now) => {
                 calls += 1
-                return nativeJevInference(request, utcInstantFromEpochMillis(now), 'wait')
+                return nativeRuneInference(request, utcInstantFromEpochMillis(now), 'wait')
               }),
             ),
         }),
@@ -815,17 +815,17 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           { count: 0 },
         ])
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Effect.gen(function* () {
               calls += 1
               if (calls === 1)
-                return yield* new JevError({
+                return yield* new RuneError({
                   failure: JevFailure.Status,
                   status: 429,
                   message: 'Fixture provider rejected one request',
                 })
-              return nativeJevInference(request, new Date(yield* Clock.currentTimeMillis).toISOString())
+              return nativeRuneInference(request, new Date(yield* Clock.currentTimeMillis).toISOString())
             }),
         }),
         atObservation,
@@ -1291,12 +1291,12 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(calls).toBe(16)
       }).pipe(
         Effect.provideService(BrokerRead, broker),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Effect.gen(function* () {
               calls += 1
               if (calls === 15) yield* TestClock.setTime(observed + 7000)
-              return nativeJevInference(
+              return nativeRuneInference(
                 request,
                 new Date(yield* Clock.currentTimeMillis).toISOString(),
                 calls > 15 ? 'exit' : 'enter',

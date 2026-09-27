@@ -2,23 +2,27 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1OrThrow } from '../hash'
-import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
+import { JevFailure } from '../jev/contract'
+import { runeModel, prepareRuneRequest, type RuneResponse } from '../rune/contract'
 import { calculateReplayJevCosts } from './jev-costs'
 import type { ReplayJevCall } from './jev-timing'
 
 const costs = { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
 const call = (inputTokens: number, outputTokens = 0): ReplayJevCall => {
   const prepared = Result.getOrThrow(
-    prepareJevRequest({
-      model: jevModel,
+    prepareRuneRequest({
+      model: runeModel,
+      thinking: false,
       state: { symbol: 'AAPL' },
-      questions: { enter: { type: 'noul', instructions: 'Assess entry.' } },
+      questions: { enter: { type: 'noul', instructions: 'Assess entry.', criteria: { true: 'Yes.', false: 'No.' } } },
     }),
   )
-  const response: JevResponse = {
-    model: jevModel,
+  const response: RuneResponse = {
+    id: 'dec-timing-fixture',
+    provider: 'surogate',
+    model: runeModel,
     answers: { enter: { type: 'noul', noul: 0.7 } },
-    usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+    usage: { input_tokens: inputTokens, output_tokens: outputTokens, cost: 0 },
   }
   return {
     schemaVersion: 'bayn.replay-jev-call.v1',
@@ -79,9 +83,9 @@ test('failed, interrupted and defective calls remain unresolved instead of recei
 
 test('charges verified provider usage even when answers are rejected or the response arrives late', () => {
   const response = {
-    model: jevModel,
+    model: runeModel,
     answers: { enter: { type: 'noul', noul: 1.5 } },
-    usage: { input_tokens: 7858, output_tokens: 150 },
+    usage: { input_tokens: 7858, output_tokens: 150, cost: 0 },
   }
   const calls = [rejectedCall(response), rejectedCall(response, JevFailure.Timeout)]
   expect(calculateReplayJevCosts(calls, costs)).toMatchObject({
@@ -95,13 +99,13 @@ test('charges verified provider usage even when answers are rejected or the resp
 })
 
 test('does not infer charges from missing, changed, mismatched or malformed usage receipts', () => {
-  const response = { model: jevModel, usage: { input_tokens: 7858, output_tokens: 150 } }
+  const response = { model: runeModel, usage: { input_tokens: 7858, output_tokens: 150, cost: 0 } }
   const calls = [
     rejectedCall(response, JevFailure.Response, null),
     rejectedCall(response, JevFailure.Response, '0'.repeat(64)),
     rejectedCall(response, JevFailure.Transport),
     rejectedCall({ ...response, model: 'unrecognized-model' }),
-    rejectedCall({ model: jevModel }),
+    rejectedCall({ model: runeModel }),
     ...[-1, 1.5, '7858', Number.MAX_SAFE_INTEGER + 1].map((input_tokens) =>
       rejectedCall({ ...response, usage: { ...response.usage, input_tokens } }),
     ),

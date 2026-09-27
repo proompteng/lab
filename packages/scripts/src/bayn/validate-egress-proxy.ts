@@ -1,9 +1,4 @@
-const requiredTradingHosts = new Set([
-  'paper-api.alpaca.markets',
-  'api.alpaca.markets',
-  'data.alpaca.markets',
-  'api.typesafe.ai',
-])
+const requiredTradingHosts = new Set(['paper-api.alpaca.markets', 'api.alpaca.markets', 'data.alpaca.markets'])
 
 export interface BaynEgressProxyContract {
   readonly aclName: string
@@ -39,9 +34,7 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
     new Set(allowedHosts).size !== requiredTradingHosts.size ||
     allowedHosts.some((host) => !requiredTradingHosts.has(host))
   ) {
-    throw new Error(
-      'destination-domain ACL must contain exactly the Alpaca trading, market-data, and TypeSafe API hosts',
-    )
+    throw new Error('destination-domain ACL must contain exactly the Alpaca trading and market-data API hosts')
   }
 
   const denyNonConnect = lines.indexOf('http_access deny !CONNECT')

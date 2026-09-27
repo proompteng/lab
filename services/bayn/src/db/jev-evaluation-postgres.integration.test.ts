@@ -9,17 +9,16 @@ import resolutionMigration from '../../migrations/0077_jev_evaluation_resolution
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
-import { JevBatchPlanVersion } from '../jev/batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
-import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
-import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from '../jev/trading-signals'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
+import { evaluationRequestFixture, inferenceFixture } from '../jev/retained.test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
+import { nativeJevFixture, nativeRuneInference } from '../jev/native.test-support'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
@@ -42,23 +41,22 @@ const makeRuntime = () =>
       Layer.provideMerge(NodeServices.layer),
     ),
   )
-const fixture = candidateObservationFixture()
-const prepared = Result.getOrThrow(
-  makeJevTradingSignalRequest(fixture.snapshot, 'AAPL', fixture.protocol.benchmarkSymbol),
-)
-const request = Result.getOrThrow(
-  makeJevEvaluationRequest({
-    schemaVersion: 'bayn.jev-evaluation-request.v1',
-    symbol: 'AAPL',
-    authorityGenerationHash: fixture.input.authorityGenerationHash,
-    requestHash: prepared.requestHash,
-    request: prepared.request,
-    cycleId: fixture.draft.identity.cycleId,
-    snapshotId: fixture.snapshot.manifest.snapshotId,
-    observedAt: fixture.input.observedAt,
-    expiresAt: new Date(Date.parse(fixture.input.observedAt) + 5000).toISOString(),
+const fixture = nativeJevFixture()
+const batch = Result.getOrThrow(
+  makeJevTradingSignalBatch({
+    observation: fixture.observation.payload,
+    expiresAt: new Date(
+      Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
+    ).toISOString(),
+    planVersion: JevBatchPlanVersion.V1,
   }),
 )
+const first = batch.candidates.find(
+  (candidate) => candidate.status === JevCandidatePlanStatus.Requested && candidate.symbol === 'AAPL',
+)
+if (first === undefined || first.status !== JevCandidatePlanStatus.Requested)
+  throw new Error('Native evaluation fixture requires AAPL')
+const request = first.request
 const receipt = Result.getOrThrow(
   makeJevEvaluationReceipt(request, {
     schemaVersion: 'bayn.jev-evaluation-receipt.v1',
@@ -67,15 +65,8 @@ const receipt = Result.getOrThrow(
     completedAt: request.observedAt,
     outcome: {
       status: JevOutcome.Received,
-      inference: tradingSignalInferenceFixture(request.request, request.observedAt),
+      inference: nativeRuneInference(request.request, request.observedAt),
     },
-  }),
-)
-const batch = Result.getOrThrow(
-  makeJevTradingSignalBatch({
-    observation: fixture.observation.payload,
-    expiresAt: request.expiresAt,
-    planVersion: JevBatchPlanVersion.V1,
   }),
 )
 const recorded = Result.getOrThrow(
@@ -104,10 +95,16 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.cycle.createdAt)
-        yield* (yield* CandidateObservationStore).record(fixture.observation)
         yield* sql`INSERT INTO authority_generations (
         generation_hash, schema_version, maximum, authority_version, activated_at
       ) VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${request.observedAt})`
+        const r = fixture.portfolio.brokerState.reconciliation
+        yield* sql`INSERT INTO reconciliations (
+          reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+          content_hash, status, discrepancies, reconciled_at
+        ) VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash},
+          ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+        yield* (yield* CandidateObservationStore).record(fixture.observation)
         yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen((yield* JevBatchStore).begin(batch)),
           Effect.provide(TestClock.layer()),
@@ -157,7 +154,12 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const { requestId: _, ...material } = request
         for (const payload of [
           { ...request.request, state: { fabricated: 'unrelated favorable market' } },
-          { ...request.request, questions: { changed: { type: 'noul', instructions: 'Is this favorable?' } } },
+          {
+            ...request.request,
+            questions: {
+              changed: { type: 'noul', instructions: 'Is this favorable?', criteria: { true: 'Yes.', false: 'No.' } },
+            },
+          },
         ]) {
           const substituted = Result.getOrThrow(
             makeJevEvaluationRequest({ ...material, request: payload, requestHash: canonicalHashV1(payload) }),
@@ -297,11 +299,11 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen(sql.withTransaction(evaluateJevOnce(request))),
           Effect.result,
-          Effect.provideService(JevClient, {
+          Effect.provideService(RuneClient, {
             evaluate: () =>
               Effect.sync(() => {
                 calls += 1
-                return tradingSignalInferenceFixture(request.request, request.observedAt)
+                return nativeRuneInference(request.request, request.observedAt)
               }),
           }),
           Effect.provide(TestClock.layer()),

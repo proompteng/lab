@@ -137,7 +137,8 @@ describe('native Jev entry and position observations', () => {
   })
 
   test('durable Jev protocol identities select the archived or active behavior by batch version', () => {
-    const { candidateEvidencePolicy: _policy, ...priorProtocol } = defaultJevProtocolDocument
+    const retainedWindowTrade = { ...defaultJevProtocolDocument, model: 'jev-1.13.0' as const }
+    const { candidateEvidencePolicy: _policy, ...priorProtocol } = retainedWindowTrade
     const retained = Result.getOrThrow(decodeJevProtocol({ ...priorProtocol, inferenceValidityMs: 5_000 }))
     const priorIdentity = Result.getOrThrow(
       makeStrategyProtocolHashResult({
@@ -161,6 +162,12 @@ describe('native Jev entry and position observations', () => {
     expect(jevProtocolIdentityMatches(retained, priorIdentity)).toBe(true)
     expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V3)).toBe(true)
     expect(jevProtocolIdentityMatches(active, activeIdentity)).toBe(true)
+    const windowTradeIdentity = '131371357a091ac5d09f5a3dd1585b84cb5509e334beef99ee9d5f14600cf908'
+    expect(jevProtocolIdentityMatches(retainedWindowTrade, windowTradeIdentity, JevBatchPlanVersion.V3)).toBe(true)
+    expect(jevProtocolIdentityMatches(retainedWindowTrade, windowTradeIdentity)).toBe(true)
+    expect(jevProtocolIdentityMatches(retainedWindowTrade, activeIdentity)).toBe(false)
+    expect(jevProtocolIdentityMatches(active, windowTradeIdentity)).toBe(false)
+    expect(jevProtocolIdentityMatches(retainedWindowTrade, windowTradeIdentity, JevBatchPlanVersion.V2)).toBe(false)
     const priorV3 = Result.getOrThrow(decodeJevProtocol(priorProtocol))
     const priorV3Identity = Result.getOrThrow(
       makeStrategyProtocolHashResult({

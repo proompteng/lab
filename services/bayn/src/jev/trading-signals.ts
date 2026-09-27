@@ -8,7 +8,9 @@ import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { usesCandidateWindowTrade, type IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
-import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
+import { JevContractError, jevModel, type JevRequest } from './contract'
+import { prepareRetainedDecisionRequest } from './model-evidence'
+import { runeModel, type RuneRequest } from '../rune/contract'
 import {
   decodeJevBatchPlan,
   JevBatchPlanVersion,
@@ -221,6 +223,28 @@ export const jevManagementQuestions = {
   },
 } satisfies JevRequest['questions']
 
+export const runeTradingQuestions = {
+  ...jevTradingQuestions,
+  exhaustion: {
+    ...jevTradingQuestions.exhaustion,
+    criteria: { true: 'Yes.', false: 'No.' },
+  },
+} satisfies RuneRequest['questions']
+
+export const runeManagementQuestions = {
+  ...jevManagementQuestions,
+  exhaustion: runeTradingQuestions.exhaustion,
+} satisfies RuneRequest['questions']
+
+const questionsFor = (model: JevProtocol['model'], purpose?: JevPurpose) =>
+  model === runeModel
+    ? purpose === JevPurpose.Manage
+      ? runeManagementQuestions
+      : runeTradingQuestions
+    : purpose === JevPurpose.Manage
+      ? jevManagementQuestions
+      : jevTradingQuestions
+
 const requestFromSnapshot = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
@@ -266,8 +290,10 @@ const requestFromSnapshot = (
           Number(native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n)) / 1_000_000,
       }
     }
-    return yield* prepareJevRequest({
-      model: jevModel,
+    const model = native?.protocol.model ?? jevModel
+    return yield* prepareRetainedDecisionRequest({
+      model,
+      ...(model === runeModel ? { thinking: false } : {}),
       state: {
         schemaVersion: native === undefined ? 'bayn.jev-trading-signal-state.v1' : native.protocol.inputDefinition,
         task: {
@@ -305,7 +331,7 @@ const requestFromSnapshot = (
         benchmark: benchmark.state,
         relativeSignals: metrics,
       },
-      questions: native?.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
+      questions: questionsFor(model, native?.portfolio.purpose),
     })
   })
 
@@ -435,11 +461,11 @@ const batchFromObservation = (
       expiresAt,
       benchmarkSymbol: protocol.benchmarkSymbol,
       questionSetHash: yield* canonicalHashV1Result({
-        model: jevModel,
-        questions:
-          observation.schemaVersion === 'bayn.jev-observation.v1' && observation.portfolio.purpose === JevPurpose.Manage
-            ? jevManagementQuestions
-            : jevTradingQuestions,
+        model: observation.schemaVersion === 'bayn.jev-observation.v1' ? observation.protocol.model : jevModel,
+        questions: questionsFor(
+          observation.schemaVersion === 'bayn.jev-observation.v1' ? observation.protocol.model : jevModel,
+          observation.schemaVersion === 'bayn.jev-observation.v1' ? observation.portfolio.purpose : undefined,
+        ),
       }).pipe(
         Result.mapError((cause) => new JevContractError({ message: 'Jev question set cannot be hashed', cause })),
       ),

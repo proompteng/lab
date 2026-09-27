@@ -1,7 +1,8 @@
+import { RuneResponseSchema, type RuneResponse } from '../rune/contract'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevFailure, JevResponseSchema, type JevResponse } from '../jev/contract'
+import { JevFailure } from '../jev/contract'
 import { PositiveMicrosSchema, UnsignedMicrosSchema } from '../schemas'
 import type { ReplayJevCall } from './jev-timing'
 
@@ -11,11 +12,11 @@ export const ReplayJevCostModelSchema = Schema.Struct({
 })
 
 const UsageReceiptSchema = Schema.Struct({
-  model: JevResponseSchema.fields.model,
-  usage: JevResponseSchema.fields.usage,
+  model: RuneResponseSchema.fields.model,
+  usage: RuneResponseSchema.fields.usage,
 })
 
-const verifiedUsage = (call: ReplayJevCall): JevResponse['usage'] | undefined => {
+const verifiedUsage = (call: ReplayJevCall): RuneResponse['usage'] | undefined => {
   const outcome = call.outcome
   if (outcome.status === 'RECEIVED') return outcome.inference.response.usage
   if (
@@ -58,6 +59,6 @@ export const calculateReplayJevCosts = (
     outputTokens: outputTokens.toString(),
     knownCostMicros: knownCostMicros.toString(),
     rounding: 'ceil-each-call-to-one-micro' as const,
-    basis: 'declared-tariff-pending-invoice-verification' as const,
+    basis: 'declared-token-allocation-pending-gpu-cost-calibration' as const,
   }
 }
