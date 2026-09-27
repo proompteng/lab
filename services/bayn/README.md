@@ -66,11 +66,21 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
-Entry observations evaluate candidate availability independently. Missing or late candidate bars, and missing, late,
-or decision-time-stale candidate quotes or trades exclude that candidate with an explicit reason while other candidates
-remain eligible for evaluation. SPY is the mandatory benchmark. Source identity, canonical ordering, watermarks,
-finality, and premature data still fail the whole observation. Raw candidate rows and their exclusions remain in the
-hashed snapshot for revalidation.
+Entry observations evaluate candidate availability independently. The active Jev protocol binds
+`bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
+at or after the lookback start and available by observation, and 30 consecutive minute bars with their matching rolling feature.
+The quote may precede the completed bar boundary. Neither a post-range trade nor a trade within the quote-age limit
+is required. Jev receives the trade's actual age as context, not as an executable price. Quote and trade ingestion
+delays still obey the feed bound. Missing input, a stale quote, or late input excludes that candidate.
+SPY retains the mandatory benchmark evidence contract. Source identity, canonical ordering, watermarks, finality,
+and premature data still fail the whole observation. Raw candidate rows, exclusions, and all observed matching
+feature receipts remain in the hashed snapshot, including features for rejected candidates.
+
+Missing minute bars are reported with their timestamps. A complete raw window without a matching observed feature
+has a separate reason. The IEX feed can omit a minute when its trades do not qualify for a bar; see Alpaca's
+[minute-bar rules](https://alpaca.markets/learn/stock-minute-bars). Bayn neither creates substitute bars nor combines
+30 nonconsecutive bars into a 30-minute feature. Stored observations without the new evidence policy reproduce
+their original contract. The active runtime selects the new policy explicitly.
 
 Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
 alone cannot authorize a no-entry decision. A version-two or version-three entry batch with every candidate excluded by
@@ -175,6 +185,14 @@ it. An expired entry follows the existing durable no-send path. Close-only recov
 Broker-session startup verifies account identity and permissions, account configuration, positions, orders, fills,
 and order lookup access. It does not require the calendar endpoint, so an outage cannot prevent a replacement worker
 from starting recovery of a bound decision.
+Capital activation uses the current exact reconciliation for flatness, rather than the session's startup position
+and order counts. A failed activation remains a typed initialization failure; the native controller reacquires its
+scoped runtime on a subsequent durable tick instead of publishing a permanently passive OBSERVE driver.
+Migration 0086 permits recovery of an OBSERVE successor restricted by an incomplete reconciliation after earlier
+research trading has settled. It requires matching sandbox research ancestry, a fresh exact flat account cut after
+the restriction, terminal intents, no bound active cycle, and no unresolved mutations or open orders. Both the
+application selector and PostgreSQL authority trigger enforce the same settlement predicate. Operator holds remain
+restricted and historical trading records are retained.
 
 Broker reconciliation recaptures changing history or lagging fill activities at most twice, 500 milliseconds apart,
 before persisting a snapshot. A broker terminal fill may precede local acknowledged-intent recovery; recorded terminal
@@ -264,7 +282,8 @@ The projection yields to the Node event loop every 256 consumed records, includi
 assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
 cancellation wait. Incorporation order and committed offsets retain the same rules.
 
-The worker joins a completed feature window to its exact raw bar revisions and independently fresh quotes/trades.
+The worker joins a completed feature window to its exact raw bar revisions, a fresh executable quote, and the
+trade evidence required by the bound candidate policy.
 Corrections invalidate an old feature until its replacement matches. Missing candidates produce exclusions;
 missing benchmark data or absence of every candidate makes the observation unavailable. Streaming failures never
 silently switch to the archive path. Reconciliation and the existing close-window recovery remain available.
@@ -334,8 +353,10 @@ It replaces the previous acknowledgement metric's intent-to-order-observation ca
 order without a recorded acceptance does not invent an acknowledgement sample. Missing samples are omitted;
 negative differences are excluded and counted in `bayn_cycle_latency_clock_regressions`.
 
-Decision building can reuse a reconciliation completed by the same pass's preflight. The result does not survive
-that pass, and submission preparation retains its separate reconciliation and final mutation-authority checks.
+Decision building and close preparation share the current pass's reconciliation. Additional uses check its age and
+current authority version; stale evidence or changed authority requires another reconciliation. The result does not
+survive the serialized pass or its broker mutation. Transmission retains its independent broker refresh, current
+grant and risk checks under the writer fence.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the

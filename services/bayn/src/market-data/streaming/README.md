@@ -11,10 +11,17 @@ adapter blocks observations. ClickHouse remains the historical archive and does 
 
 The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
 
-A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving inputs.
+A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving entry inputs.
+Liquidation snapshots require the quote topic's complete partition cut and a fresh verified quote for each held
+symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
+through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
+quotes, and invalidated assignments do. This does not authorize entry pricing during bootstrap or change order risk.
 Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
-quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Windows that need
-discarded rejection history fail verification. An observation older than retained history fails.
+quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
+remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
+Windows that need the applicable discarded rejection history fail verification. Liquidation checks quote retention
+for its requested held symbols independently of other symbols and bar/trade history; an observation older than a
+required symbol's retained quote history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
@@ -22,13 +29,27 @@ The transport owns each SDK stream in the consume callback, before Node can run 
 error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
 the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption
 after close, and normal shutdown using the real Kafka SDK streams.
+The pinned Kafka 2.12.1 package patch incrementally deserializes fetched responses into the Readable queue, stopping
+at its high-water mark. A broker's response remains in flight until drained, so buffer pressure cannot trigger more
+fetches for that broker. Offsets advance after the batch is delivered, including control-only batches. Node tests
+exercise multiple brokers, oversized responses, duplicate offsets, control markers, interruption and decoder errors.
+The bounded response fix is submitted as [upstream PR #426](https://github.com/platformatic/kafka/pull/426).
+Remove the patch when a published release contains both changes and passes the retained Node regressions.
+The patch also backports upstream [offset-refresh invalidation](https://github.com/platformatic/kafka/pull/422).
+Responses suspended by backpressure retain their fetch epoch; a rebalance discards their undelivered records.
+Delayed deserialization hooks release their broker and resume fetching from the restored offsets.
+Kafka still returns atomic compressed record batches; this bounds queued message expansion, not the size of an
+individual broker batch. The memory regression uses the real stream with generated broker responses, not a live broker.
 The execution worker checks projection availability on successful mutation-capable passes, including waiting
 before the first strategy window. The persisted pass reports an unavailable projection to public readiness.
 This check preserves reconciliation and close recovery. A blocked current session also reports failed readiness
 until its close instead of being classified as historical waiting.
 
 Snapshots bind the consumer epoch, local receipt sequence, transport positions, raw rows and selected feature
-payloads. Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
+payloads. Jev's `quote-window-trade.v1` candidate policy retains matched rolling and technical feature receipts even
+when raw evidence excludes their candidate. The exclusion still prevents a signal request. A missing receipt in an
+older cut may reflect that older filtering contract, so it cannot prove that the worker never received the feature.
+Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
 immutable references in the decision transaction. Restart verification requires the exact committed reference.
 Flink failure does not disable broker reconciliation or the existing close-window recovery path. Migration 0066
 adds intraday protocol v3 to the durable authority contracts while preserving v1/v2 history.

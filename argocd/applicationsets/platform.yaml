@@ -77,6 +77,21 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: ofz
+                path: argocd/applications/ofz
+                namespace: ofz
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: tigresse
                 path: argocd/applications/tigresse
                 namespace: tigresse-system
@@ -166,6 +181,22 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
+              - name: codex-devbox
+                path: argocd/applications/codex-devbox
+                namespace: codex-devbox
+                targetRevision: kargo/codex-devbox
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:codex-devbox
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: tengri
                 path: argocd/applications/tengri
                 namespace: tengri

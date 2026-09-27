@@ -321,6 +321,140 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     )
   })
 
+  test.each(['settled', 'stale', 'position', 'unresolved', 'operator'] as const)(
+    'recovers restricted OBSERVE after historical trading only with settled fresh evidence: %s',
+    async (scenario) => {
+      const fixture = makeFixture(true)
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* seedExecutionAuthority(sql, fixture)
+          const executionHash = canonicalHashV1({ generation: 'execution' })
+          const intentId = canonicalHashV1({ intent: 'prior-trade' })
+          const riskId = canonicalHashV1({ risk: 'prior-trade' })
+          const mutationId = canonicalHashV1({ mutation: 'prior-trade' })
+          const occurredAt = instant(Date.parse(fixture.generationActivatedAt) + 1_000)
+          yield* sql`INSERT INTO intents (
+          intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
+          decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
+          quantity_micros, notional_limit_micros, state, state_version, created_at, updated_at
+        ) VALUES (
+          ${intentId}, 'bayn.paper-intent.v3', ${executionHash}, NULL, 'intraday-momentum',
+          ${fixture.cycle.identity.cycleId}, ${'0'.repeat(64)}, ${'7'.repeat(64)}, ${accountId}, 'prior-trade',
+          'AAPL', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000000, 'PLANNED', 1, ${occurredAt}, ${occurredAt}
+        )`
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO risk_decisions (
+            decision_id, schema_version, input_hash, intent_id, policy_hash, outcome, reason_codes, decided_at, expires_at
+          ) VALUES (
+            ${riskId}, 'bayn.paper-risk-decision.v1', ${'b'.repeat(64)}, ${intentId}, ${'7'.repeat(64)},
+            'APPROVED', ARRAY[]::text[], ${occurredAt}, '2099-01-01T00:00:00Z'
+          )`
+              yield* sql`UPDATE intents SET risk_decision_id = ${riskId}, state = 'APPROVED', state_version = 2, updated_at = updated_at + interval '1 millisecond'
+            WHERE intent_id = ${intentId}`
+            }),
+          )
+          yield* sql`UPDATE intents SET state = 'IO_STARTED', state_version = 3, updated_at = updated_at + interval '1 millisecond' WHERE intent_id = ${intentId}`
+          yield* sql`INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+          request_hash, consistency_delay_ms, occurred_at
+        ) VALUES (
+          ${canonicalHashV1({ event: 1 })}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 1,
+          'SUBMIT', 'SUBMIT_STARTED', ${'8'.repeat(64)}, 1000, ${occurredAt}
+        )`
+          yield* sql`INSERT INTO mutation_events (
+          event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+          request_hash, consistency_delay_ms, broker_order_id, request_id, response_status, response_content_hash, occurred_at
+        ) VALUES (
+          ${canonicalHashV1({ event: 2 })}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 2,
+          'SUBMIT', 'SUBMIT_ACCEPTED', ${'8'.repeat(64)}, 1000, 'prior-order', 'prior-request', 200, ${'9'.repeat(64)}, ${occurredAt}
+        )`
+          yield* sql`UPDATE intents SET state = 'ACKNOWLEDGED', state_version = 4, updated_at = updated_at + interval '1 millisecond' WHERE intent_id = ${intentId}`
+          yield* sql`UPDATE intents SET state = 'TERMINAL', terminal_outcome = 'CANCELED', state_version = 5, updated_at = updated_at + interval '1 millisecond'
+          WHERE intent_id = ${intentId}`
+          yield* sql`INSERT INTO position_snapshots (
+          snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+        ) VALUES (
+          ${canonicalHashV1({ snapshot: 'prior-flat' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
+          ${'a'.repeat(64)}, ${fixture.positionsObservedAt}, 0, ${'a'.repeat(64)}
+        )`
+          yield* sql`INSERT INTO reconciliations (
+          reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash,
+          status, discrepancies, reconciled_at
+        ) VALUES (
+          ${canonicalHashV1({ reconciliation: 'prior-flat' })}, 'bayn.paper-reconciliation.v1', ${accountId},
+          ${'a'.repeat(64)}, ${'a'.repeat(64)}, ${'a'.repeat(64)}, 'EXACT', '[]'::jsonb, ${fixture.reconciledAt}
+        )`
+          const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+          const successor = yield* authority.ensureAuthorityGeneration({
+            generationHash: canonicalHashV1({ generation: 'settled-observe' }),
+            maximum: Authority.Observe,
+          })
+          expect(successor.kill).toBe(KillState.Clear)
+          yield* sql`UPDATE authority_state SET kill_state = 'ACTIVE', effective = 'OBSERVE',
+          reason = ${scenario === 'operator' ? 'operator hold' : 'reconciliation pass incomplete'},
+          version = version + 1, updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond')
+          WHERE singleton`
+          if (scenario === 'position') {
+            yield* sql`INSERT INTO position_snapshots (
+            snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+          ) VALUES (
+            ${canonicalHashV1({ snapshot: 'still-held' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
+            ${'b'.repeat(64)}, clock_timestamp(), 1, ${'b'.repeat(64)}
+          )`
+          }
+          if (scenario === 'unresolved') {
+            yield* sql`INSERT INTO mutation_events (
+            event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
+            request_hash, consistency_delay_ms, broker_order_id, occurred_at
+          ) VALUES (
+            ${canonicalHashV1({ event: 3 })}, 'bayn.paper-mutation-event.v1',
+            ${canonicalHashV1({ mutation: 'unknown' })}, ${intentId}, 1,
+            'CANCEL', 'CANCEL_STARTED', ${'8'.repeat(64)}, 1000, 'prior-order', clock_timestamp()
+          )`
+          }
+          if (scenario !== 'stale') {
+            if (scenario !== 'position') {
+              yield* sql`INSERT INTO position_snapshots (
+              snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
+            ) VALUES (
+              ${canonicalHashV1({ snapshot: 'after-restriction' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
+              ${'c'.repeat(64)}, clock_timestamp(), 0, ${'c'.repeat(64)}
+            )`
+            }
+            yield* sql`INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash,
+            status, discrepancies, reconciled_at
+          ) VALUES (
+            ${canonicalHashV1({ reconciliation: 'after-restriction' })}, 'bayn.paper-reconciliation.v1', ${accountId},
+            ${'b'.repeat(64)}, ${'b'.repeat(64)}, ${'b'.repeat(64)}, 'EXACT', '[]'::jsonb, clock_timestamp()
+          )`
+          }
+          const recovered = yield* authority.ensureAuthorityGeneration({
+            generationHash: canonicalHashV1({ generation: 'recovered-observe' }),
+            maximum: Authority.Observe,
+          })
+          expect(recovered.kill).toBe(scenario === 'settled' ? KillState.Clear : KillState.Active)
+          expect(recovered.effective).toBe(Authority.Observe)
+          expect(yield* sql`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([
+            { count: scenario === 'unresolved' ? 3 : 2 },
+          ])
+          expect(
+            yield* sql`SELECT observe_recovery_account_settled(
+              ${canonicalHashV1({ generation: 'observe' })}, ${accountId}, ${fixture.reconciledAt}
+            ) AS settled`,
+          ).toEqual([{ settled: false }])
+          expect(
+            yield* sql`SELECT observe_recovery_account_settled(
+              ${recovered.generationHash}, 'different-account', ${fixture.reconciledAt}
+            ) AS settled`,
+          ).toEqual([{ settled: false }])
+        }),
+      )
+    },
+  )
+
   test.each([
     { reason: 'operator kill switch', requestedAccount: accountId },
     {

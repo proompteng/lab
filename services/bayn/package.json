@@ -31,7 +31,7 @@
     "@opentelemetry/exporter-trace-otlp-proto": "0.221.0",
     "@opentelemetry/resources": "2.10.0",
     "@opentelemetry/sdk-trace-node": "2.10.0",
-    "@platformatic/kafka": "2.11.0",
+    "@platformatic/kafka": "2.12.1",
     "@restatedev/restate-sdk": "1.16.5",
     "@restatedev/restate-sdk-opentelemetry": "1.16.5",
     "effect": "4.0.0-beta.102",

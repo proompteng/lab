@@ -1,0 +1,63 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: cnpg-ofz-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  bucketName: cnpg-ofz
+  storageClassName: rook-ceph-bucket
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: ofz-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-9"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  retentionPolicy: 14d
+  instanceSidecarConfiguration:
+    logLevel: info
+    retentionPolicyIntervalSeconds: 1800
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  configuration:
+    destinationPath: s3://cnpg-ofz/
+    endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+    s3Credentials:
+      accessKeyId:
+        name: cnpg-ofz-db
+        key: AWS_ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-ofz-db
+        key: AWS_SECRET_ACCESS_KEY
+    data:
+      compression: snappy
+      jobs: 1
+    wal:
+      compression: snappy
+      maxParallel: 2
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: ofz-db-daily
+  annotations:
+    argocd.argoproj.io/sync-wave: "-7"
+spec:
+  schedule: "0 30 10 * * *"
+  immediate: true
+  backupOwnerReference: cluster
+  target: prefer-standby
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: ofz-db

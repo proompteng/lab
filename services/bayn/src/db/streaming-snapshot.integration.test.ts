@@ -315,6 +315,7 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
           Layer.provide(
             Layer.succeed(KafkaMarketProjection, {
               read: Effect.succeed(fixture.cut),
+              readForLiquidation: Effect.succeed(fixture.cut),
               status: Effect.succeed({
                 epoch: 'fixture-epoch',
                 ready: true,
