@@ -352,7 +352,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [
     'kind: CronJob',
-    'suspend: false',
+    'suspend: true',
     'concurrencyPolicy: Forbid',
     'backoffLimit: 3',
     'restartPolicy: OnFailure',
@@ -1166,20 +1166,20 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- .spec.volumeClaimTemplates[].spec.volumeMode',
     '- .spec.volumeClaimTemplates[].status',
     'external-secrets.proompteng.ai/enabled: "true"',
-    'observability.proompteng.ai/hermes-rollout-enabled: "true"',
+    'observability.proompteng.ai/hermes-rollout-enabled: "false"',
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
   ])
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, ['  replicas: 0\n'])
+  requireTerms(failures, productionPaths.egressProxy, files.egressProxy, ['  replicas: 0\n'])
   const hermesAutomation = hermesApplication.match(/^\s+automation: ([^\r\n]+)$/m)?.[1]?.trim()
   if (hermesAutomation === 'auto') {
-    requireTerms(failures, productionPaths.platform, hermesApplication, [
-      'targetRevision: kargo/hermes-toolchain',
-      'kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
-    ])
+    requireTerms(failures, productionPaths.platform, hermesApplication, ['targetRevision: main'])
   } else if (hermesAutomation !== 'manual') {
     failures.push(`${productionPaths.platform}: Hermes automation must be exactly auto or manual`)
   }
   forbidTerms(failures, productionPaths.platform, hermesApplication, [
+    'kargo.akuity.io/authorized-stage:',
     'group: coordination.k8s.io',
     'kind: Lease',
     'name: hermes-maintenance',

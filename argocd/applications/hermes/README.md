@@ -1,5 +1,7 @@
 # Hermes production
 
+Hermes is disabled. GitOps enforces zero gateway and egress-proxy replicas, suspends scheduled backups, and retains the data and backup PVCs. The Argo Application follows `main` to enforce this stopped state; automatic `hermes-toolchain` promotion and its Argo authorization are disabled. Re-enabling requires a reviewed change that restores the Kargo source and authorization, replicas, backup schedule, and rollout alert label.
+
 Hermes is the production runtime for the Tuslagch assistant. GitOps exposes its authenticated API through the cluster-local
 Service and a private Tailscale Ingress; neither path bypasses bearer authentication. Keep the manual application unsynced
 until the live NetworkPolicy enforcement probe passes. Hermes and OpenClaw must never use the Discord token concurrently.

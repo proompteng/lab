@@ -1,5 +1,7 @@
 # Flamingo
 
+Flamingo is disabled. GitOps enforces zero Deployment replicas and retains the model-cache PVC. Argo automatic reconciliation keeps the workload stopped. The Blackwell allocation is released for Rune. The configuration below is retained for reference; re-enabling this service requires a reviewed GPU allocation change.
+
 `flamingo` is the Turin Blackwell GPU model-serving application for coding
 agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 

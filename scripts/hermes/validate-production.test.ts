@@ -854,19 +854,33 @@ test('allows manual Hermes reconciliation for a reviewed maintenance phase', asy
   expect(validateProductionContent(files)).toEqual([])
 })
 
-test('rejects automatic Hermes reconciliation from an unpromoted source', async () => {
+test('keeps disabled Hermes on main instead of an old deployment branch', async () => {
   const files = await loadProductionFiles()
-  files.platform = files.platform.replace('targetRevision: kargo/hermes-toolchain', 'targetRevision: main')
+  files.platform = files.platform.replace(
+    /(\n\s+- name: hermes\n[\s\S]*?targetRevision:) main/,
+    '$1 kargo/hermes-toolchain',
+  )
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.platform}: missing production invariant "targetRevision: kargo/hermes-toolchain"`,
+    `${productionPaths.platform}: missing production invariant "targetRevision: main"`,
   )
 })
 
-test('rejects automatic Hermes reconciliation without the authorized Stage', async () => {
+test('rejects reauthorizing promotion into disabled Hermes', async () => {
   const files = await loadProductionFiles()
-  files.platform = files.platform.replace('kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain', '')
+  files.platform = files.platform.replace(
+    /(\n\s+- name: hermes\n[\s\S]*?annotations:)/,
+    '$1\n                  kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
+  )
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.platform}: missing production invariant "kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain"`,
+    `${productionPaths.platform}: contains forbidden production term "kargo.akuity.io/authorized-stage:"`,
+  )
+})
+
+test.each(['statefulSet', 'egressProxy'] as const)('rejects restarting disabled Hermes %s', async (path) => {
+  const files = await loadProductionFiles()
+  files[path] = files[path].replace('  replicas: 0\n', '  replicas: 1\n')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths[path]}: missing production invariant ${JSON.stringify('  replicas: 0\n')}`,
   )
 })
 
@@ -938,12 +952,12 @@ test('rejects a backup CronJob without independent retry behavior', async () => 
   )
 })
 
-test('rejects a backup CronJob that cannot be suspended deterministically', async () => {
+test('rejects restarting scheduled backups for disabled Hermes', async () => {
   const files = await loadProductionFiles()
-  files.backupCronJob = files.backupCronJob.replace('suspend: false', 'suspend: true')
+  files.backupCronJob = files.backupCronJob.replace('suspend: true', 'suspend: false')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.backupCronJob}: missing production invariant "suspend: false"`,
+    `${productionPaths.backupCronJob}: missing production invariant "suspend: true"`,
   )
 })
 
