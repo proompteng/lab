@@ -10,6 +10,7 @@ import openSessionFailureRearm from '../../migrations/0082_open_session_failure_
 import jevEntryBatchPlanV2 from '../../migrations/0083_jev_entry_batch_plan_v2'
 import jevEntryBatchPlanV3 from '../../migrations/0084_jev_entry_batch_plan_v3'
 import replaySourceClock from '../../migrations/0085_replay_source_clock'
+import settledObserveRecovery from '../../migrations/0086_settled_observe_recovery'
 import recoverIntradayAuthorityCycle from '../../migrations/0071_recover_intraday_authority_cycle'
 import intradayZeroFillRearm from '../../migrations/0072_intraday_zero_fill_rearm'
 import pacedIntradayEntryAttempts from '../../migrations/0073_paced_intraday_entry_attempts'
@@ -87,6 +88,7 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '86_settled_observe_recovery': settledObserveRecovery,
   '84_jev_entry_batch_plan_v3': jevEntryBatchPlanV3,
   '85_replay_source_clock': replaySourceClock,
   '83_jev_entry_batch_plan_v2': jevEntryBatchPlanV2,

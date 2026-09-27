@@ -1,0 +1,146 @@
+name: Codex devbox
+
+on:
+  pull_request:
+    paths:
+      - services/devbox/**
+      - argocd/applications/codex-devbox/**
+      - .github/workflows/codex-devbox.yml
+      - flake.nix
+      - flake.lock
+      - nix/packages.nix
+      - nix/toolchain-doctor.sh
+  push:
+    branches: [main]
+    paths:
+      - services/devbox/**
+      - argocd/applications/codex-devbox/**
+      - .github/workflows/codex-devbox.yml
+      - flake.nix
+      - flake.lock
+      - nix/packages.nix
+      - nix/toolchain-doctor.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-devbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: arc-amd64
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate bootstrap and GitOps configuration
+        run: |
+          set -euo pipefail
+          bash -n services/devbox/*.sh
+          python3 -m unittest discover -s services/devbox/tests -v
+          kubectl kustomize argocd/applications/codex-devbox > /tmp/devbox.yaml
+          kubectl kustomize argocd/applications/kargo > /tmp/kargo.yaml
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [amd64, arm64]
+        target: [launcher, rootfs]
+    runs-on: arc-${{ matrix.architecture }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - name: Resolve immutable build metadata
+        id: meta
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          image=registry.ide-newton.ts.net/lab/codex-devbox
+          if [[ "$TARGET" == rootfs ]]; then image="$image-rootfs"; fi
+          {
+            printf 'image=%s\n' "$image"
+            printf 'tag=build-%s-run-%s-%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$ARCH"
+            printf 'created=%s\n' "$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/devbox/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/proompteng/lab
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+          cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:cache-${{ matrix.architecture }}
+      - name: Exercise the native image
+        shell: bash
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == rootfs ]]; then
+            docker run --rm --entrypoint /bin/bash "$IMAGE" -lc '
+              set -euo pipefail
+              source /etc/profile.d/devbox.sh
+              export NIX_REMOTE=local
+              cd /opt/lab-seed
+              nix develop /opt/lab-toolchain --command toolchain-doctor
+              codex --version
+              rustc --version
+              cargo --version
+              bun run --filter @proompteng/codex build
+              cd services/nanoagent
+              GOWORK=off go test ./...
+            '
+          else
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends e2fsprogs
+            container="$(docker create "$IMAGE")"
+            work="$(mktemp -d)"
+            trap 'docker rm "$container" >/dev/null; sudo rm -rf "$work"' EXIT
+            docker export "$container" | sudo tar -xpf - -C "$work"
+            sudo bash services/nanoagent/validate-rootfs.sh "$work" /tmp/devbox-rootfs-receipt.txt
+          fi
+      - name: Publish validated preparation image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+        run: docker push "$IMAGE"
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [validate, build]
+    runs-on: arc-amd64
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Publish and verify both immutable indexes
+        env:
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/codex-devbox.yml@refs/heads/main
+        run: bash services/devbox/publish.sh prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-devbox-release-contract
+          path: .artifacts/codex-devbox/
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Make the complete release discoverable
+        run: bash services/devbox/publish.sh expose

@@ -7,6 +7,10 @@ hashes require a matching sealed research mandate; image promotion alone cannot 
 The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
 subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
 
+The candidate quote/window-trade policy is bound to Jev behavior v3 and its parameter identity. Its build hashes,
+sealed mandate, and all three runtime lineages change together. The mandate keeps the existing authored build anchor,
+sandbox account, Research authority type, risk policy, and limits; broker and model credentials are unchanged.
+
 The Jev mandate preserves the existing published build as its lineage anchor and binds the new strategy explicitly.
 Kargo writes the exact newly published source and image into the activation endpoint of every runtime lineage. The
 previous strategy cannot execute against the Jev mandate. The activation hook still requires compatible durable
@@ -68,6 +72,17 @@ CONNECT-only trading API egress proxy uses the same two-replica, hostname-spread
 readiness does not collapse back onto a single proxy pod. This gives the status/readiness plane node-failure tolerance
 independently of the singleton execution owner and also continuously exercises the same immutable image on whatever
 supported architecture the scheduler selects.
+
+Squid runs in the foreground as the container's PID 1, with Kubernetes managing its lifecycle. Its PID file is disabled
+so a retained `/run/squid` volume cannot make the restarted process mistake its own reused PID for another instance.
+Validate startup with a stale PID file and recovery after an abrupt process kill using the pinned image:
+
+```sh
+bash packages/scripts/src/bayn/verify-egress-proxy-restart.sh
+```
+
+This Docker regression runs without external networking and also verifies that an unlisted CONNECT destination remains
+denied before and after restart.
 
 Before merging this layer, require the `restate-operator-crds`, `restate-operator`, and `restate` Argo applications to
 be `Synced` and `Healthy`, and verify the Restate request-identity foundation described in

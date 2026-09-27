@@ -445,4 +445,24 @@ describe('execution mandate decisions', () => {
     })
     expect(result).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
   })
+
+  test('rearms a matching OBSERVE generation only for an incomplete reconciliation', () => {
+    const facts = {
+      generationHash: 'a'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'OBSERVE' as const,
+      effective: 'OBSERVE' as const,
+      kill: 'ACTIVE' as const,
+      currentGenerationMatchesRequest: false,
+      reason: reconciliationIncompleteRestrictionReason,
+    }
+    expect(decideExecutionMandateAuthority(facts)).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    for (const change of [
+      { reason: 'operator hold' },
+      { reason: 'unknown restriction' },
+      { sourceGenerationHash: 'b'.repeat(64) },
+    ]) {
+      expect(decideExecutionMandateAuthority({ ...facts, ...change })).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    }
+  })
 })
