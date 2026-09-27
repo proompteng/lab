@@ -41,6 +41,12 @@ inference. The image does not install Surogate's training stack or rely on a rel
 different engine code.
 The two Linux Torch wheels use explicit publisher URLs. All other Python packages come from
 PyPI, so the installer cannot substitute a different index's same-version wheel.
+The build and runtime share that locked Python environment. Upstream's CMake configuration
+requires Torch and ICU for its speech targets even when only the decision server is compiled.
+
+`patches/cpu-expert-architecture.patch` limits upstream's x86 AVX compiler flags to x86 hosts.
+The existing architecture guards select upstream's scalar implementation on arm64. This changes
+the build configuration only; decision logic and model kernels retain the pinned upstream code.
 
 The build pins NCCL development headers to `2.28.3-1+cuda13.0`, matching the base image's runtime.
 It also pins the upstream build's otherwise floating Minja dependency to

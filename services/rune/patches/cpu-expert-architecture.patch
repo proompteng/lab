@@ -1,0 +1,15 @@
+diff --git a/csrc/CMakeLists.txt b/csrc/CMakeLists.txt
+--- a/csrc/CMakeLists.txt
++++ b/csrc/CMakeLists.txt
+@@ -1482,7 +1482,9 @@ set(SINFER_CUTLASS_INCLUDE "${cutlass_SOURCE_DIR}/include")
+ # The CPU expert-compute kernels carry their own AVX-512 code path (runtime-detected); the
+ # rest of the engine stays generic x86-64.
+-set_source_files_properties(${SERVE_ROOT}/ops/cpu_expert_compute/cpu_expert_compute.cpp PROPERTIES
+-  COMPILE_OPTIONS "-mavx512f;-mavx512bw;-mavx512vl;-mavx512dq;-mavx512vnni;-mf16c;-mfma")
++if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
++  set_source_files_properties(${SERVE_ROOT}/ops/cpu_expert_compute/cpu_expert_compute.cpp PROPERTIES
++    COMPILE_OPTIONS "-mavx512f;-mavx512bw;-mavx512vl;-mavx512dq;-mavx512vnni;-mf16c;-mfma")
++endif()
+ sinfer_cuda_archive(sinfer_ops)
+ target_link_libraries(sinfer_ops PUBLIC sinfer_core PRIVATE sinfer_nvfp4_tma sinfer_nvfp4_cutlass sinfer_trtllm_moe CUDA::cublasLt)
+ 
