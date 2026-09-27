@@ -9,7 +9,7 @@ RUN apt-get update \
 COPY requirements.txt /opt/rune/requirements.txt
 RUN /opt/venv/bin/pip install --no-cache-dir --require-hashes -r /opt/rune/requirements.txt
 
-FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01 AS builder
+FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01 AS compiled
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential cmake ninja-build git curl ca-certificates \
        libnccl-dev=2.28.3-1+cuda13.0 libcurl4-openssl-dev libicu-dev pkg-config python3 python3-venv \
@@ -46,6 +46,8 @@ RUN git apply --check /tmp/decisions-fp-contract.patch \
     && git apply /tmp/decisions-fp-contract.patch \
     && cmake --build csrc/build-serve --parallel 4 --target sinfer-serve \
        sinfer_decisions_test sinfer_decisions_v1_test sinfer_decisions_thinking_test sinfer_cpu_expert_compute_test
+
+FROM compiled AS builder
 RUN mkdir /tmp/cuda-test-stubs \
     && ln -s /usr/local/cuda/lib64/stubs/libcuda.so /tmp/cuda-test-stubs/libcuda.so.1 \
     && (LD_LIBRARY_PATH=/tmp/cuda-test-stubs:$LD_LIBRARY_PATH \

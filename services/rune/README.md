@@ -50,8 +50,9 @@ existing scalar arithmetic. The image checks generic host compilation before the
 runs upstream's CPU expert numerical tests on both architectures. The patch changes architecture
 selection; it does not change expert arithmetic or GPU kernels.
 
-`patches/decisions-fp-contract.patch` disables fused multiply-add contraction only in the host
-decision-protocol source. Its score accumulation must preserve the separate multiplication and
+`patches/decisions-fp-contract.patch` disables fused multiply-add contraction in the host
+decision-protocol source and the independent arithmetic reference in its temperature test.
+Their score accumulation must preserve the separate multiplication and
 addition rounding used by the independent Python reference. ARM64 otherwise differs by one bit
 on two golden scores. The existing exact protocol assertions and golden answers remain unchanged;
 GPU kernel compilation is unaffected.
@@ -103,7 +104,9 @@ thinking-contract and CPU expert numerical tests. A CUDA driver stub is used onl
 those CPU tests during the build. It is not installed as a runtime driver. The final image also tests model-cache failure
 handling and imports the actual checkpoint converters. These checks do not prove GPU inference.
 
-The `Rune images` workflow tests amd64 and arm64 images. On `main`, it publishes and signs the
+The `Rune images` workflow first exports the compiled native targets to the build cache, then
+runs all native and runtime tests on amd64 and arm64. A test failure retains the compilation cache
+but still blocks the tested image and every release step. On `main`, the workflow publishes and signs the
 immutable index, uploads validation receipts, then exposes the run-qualified Kargo discovery tag.
 The `rune` Warehouse and Stage promote that digest to `kargo/rune`. Argo consumes only that branch.
 The `unpromoted` image in the source manifests cannot serve requests before the first promotion.
