@@ -735,7 +735,9 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('points every enrolled Argo Application at its exact authorized Kargo branch', () => {
     const applications = new Map(applicationSetElements.map((element) => [element.name as string, element]))
-    const expectedApplications = Object.values(expected)
+    const expectedApplications = Object.entries(expected)
+      .filter(([stageName]) => stageName !== 'hermes-toolchain')
+      .map(([, contract]) => contract)
       .flatMap((contract) => contract.apps)
       .sort()
     const kargoApplications = applicationSetElements
@@ -744,7 +746,11 @@ describe('Kargo direct-push GitOps contract', () => {
       .sort()
     expect(kargoApplications).toEqual(expectedApplications)
 
+    expect(applications.get('hermes')?.targetRevision).toBe('main')
+    expect(applications.get('hermes')?.annotations?.['kargo.akuity.io/authorized-stage']).toBeUndefined()
+
     for (const [stageName, contract] of Object.entries(expected)) {
+      if (stageName === 'hermes-toolchain') continue
       for (const applicationName of contract.apps) {
         expect(applications.get(applicationName)?.targetRevision).toBe(`kargo/${stageName}`)
         expect(applications.get(applicationName)?.annotations?.['kargo.akuity.io/authorized-stage']).toBe(
@@ -887,7 +893,9 @@ describe('Kargo direct-push GitOps contract', () => {
 
     const projectPolicies = projectConfig.spec?.promotionPolicies as Array<Record<string, any>>
     expect(projectPolicies.map((policy) => policy.stageSelector?.name).sort()).toEqual(expectedStageNames)
-    expect(projectPolicies.every((policy) => policy.autoPromotionEnabled === true)).toBe(true)
+    for (const policy of projectPolicies) {
+      expect(policy.autoPromotionEnabled).toBe(policy.stageSelector?.name !== 'hermes-toolchain')
+    }
 
     for (const stageName of expectedStageNames) {
       const contract = expected[stageName as keyof typeof expected]
