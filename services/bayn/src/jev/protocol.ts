@@ -1,3 +1,4 @@
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result, Schema } from 'effect'
 
 import { ExecutionModelV5Schema } from '../execution-model-contract'
@@ -39,6 +40,7 @@ const ProtocolBase = Schema.Struct({
   decisionDelaySeconds: Schema.Literal(2),
   maximumDecisionLagMs: PositiveIntegerSchema,
   maximumQuoteAgeMs: Schema.Literal(10_000),
+  candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
   warmupMinutesAfterOpen: Schema.Literal(0),
   entryCutoffMinutesBeforeClose: Schema.Literal(5),
   flattenBeforeCloseMinutes: Schema.Literal(5),
@@ -110,6 +112,7 @@ export const defaultJevProtocolDocument = Object.freeze({
   decisionDelaySeconds: 2,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 10_000,
+  candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 5,
   flattenBeforeCloseMinutes: 5,
@@ -136,6 +139,6 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.behavior.v2')
+export const jevBehaviorHash = sha256('bayn.jev.behavior.v3')
 export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
   [...candidates, protocol.benchmarkSymbol].sort()

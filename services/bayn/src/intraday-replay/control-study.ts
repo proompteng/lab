@@ -60,7 +60,7 @@ export const ControlStudyInputSchema = Schema.Struct({
 })
 
 export const controlStudyDefinition = {
-  schemaVersion: 'bayn.control-study-definition.v3',
+  schemaVersion: 'bayn.control-study-definition.v4',
   policies: {
     RETAINED_BREAKOUT_CLOSE:
       'Six retained candidates, retained breakout thresholds, 10 percent allocation, hold until the close window.',
@@ -71,6 +71,8 @@ export const controlStudyDefinition = {
   },
   opportunityClock:
     'Polls are anchored to session open. After decision and routing work, resume at the first scheduled poll at or after completion; never replay missed polls. Each flat portfolio evaluates the latest eligible completed signal window once successfully observed. Breakout policies use native momentum ranking including all tie-breaks. Relative momentum ranks by exact relative return, then symbol.',
+  candidateEvidence:
+    'Entry and management snapshots use the bound Jev candidate evidence policy. Relative momentum applies its quote/window-trade freshness contract. Breakout controls retain their independent native trade-confirmation freshness and breakout thresholds.',
   sizing:
     'Bayn target allocation and order/symbol/turnover bounds, whole shares, cash reserved for cumulative fees at the adverse buy limit.',
   execution:
@@ -298,6 +300,9 @@ export const runControlSession = (input: {
           universe: protocol.universe,
           symbols: [held.symbol, protocol.benchmarkSymbol].sort(),
           candidateSymbols: [held.symbol],
+          ...(protocol.candidateEvidencePolicy === undefined
+            ? {}
+            : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
           feed: protocol.feed,
           delayClass: protocol.delayClass,
           sourceTopics: protocol.sourceTopics,
@@ -373,6 +378,9 @@ export const runControlSession = (input: {
             universe: protocol.universe,
             symbols: [...candidates, protocol.benchmarkSymbol].sort(),
             candidateSymbols: candidates,
+            ...(protocol.candidateEvidencePolicy === undefined
+              ? {}
+              : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
             feed: protocol.feed,
             delayClass: protocol.delayClass,
             sourceTopics: protocol.sourceTopics,
