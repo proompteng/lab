@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - services/devbox/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/docker.ts
       - argocd/applications/codex-devbox/**
       - .github/workflows/codex-devbox.yml
       - flake.nix
@@ -14,6 +16,8 @@ on:
     branches: [main]
     paths:
       - services/devbox/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/docker.ts
       - argocd/applications/codex-devbox/**
       - .github/workflows/codex-devbox.yml
       - flake.nix
@@ -119,7 +123,9 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           IMAGE: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-        run: docker push "$IMAGE"
+          DOCKER_COMMAND_RETRY_ATTEMPTS: '12'
+          DOCKER_COMMAND_RETRY_DELAY_SECONDS: '30'
+        run: bun packages/scripts/src/shared/docker.ts push "$IMAGE"
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

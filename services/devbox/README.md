@@ -21,6 +21,9 @@ It checks the launcher's populated 512 MiB filesystem and exercises the developm
 toolchain before publication. Main builds publish signed immutable indexes.
 Both images must finish validation and the release artifact must upload before
 either Kargo discovery tag is exposed.
+Publication uses the shared Docker retry helper to wait through the registry's
+single-writer queue. Retries are bounded by the job timeout; authentication and
+other nonretryable errors still fail the release immediately.
 
 The `codex-devbox` Warehouse binds the two images to one source commit and workflow
 run. Its Stage writes their digests into the Kustomize inputs on
