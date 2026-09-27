@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - services/devbox/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/docker.ts
       - argocd/applications/codex-devbox/**
       - .github/workflows/codex-devbox.yml
       - flake.nix
@@ -14,6 +16,8 @@ on:
     branches: [main]
     paths:
       - services/devbox/**
+      - packages/scripts/src/shared/cli.ts
+      - packages/scripts/src/shared/docker.ts
       - argocd/applications/codex-devbox/**
       - .github/workflows/codex-devbox.yml
       - flake.nix

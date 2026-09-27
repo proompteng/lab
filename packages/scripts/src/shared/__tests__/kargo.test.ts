@@ -156,6 +156,8 @@ const expected = {
     apps: ['codex-devbox'],
     includePaths: [
       'services/devbox',
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/src/shared/docker.ts',
       'argocd/applications/codex-devbox',
       '.github/workflows/codex-devbox.yml',
       'flake.nix',
