@@ -25,6 +25,10 @@ required symbol's retained quote history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+Invalidation belongs to its consumer epoch. A delayed callback from a closed consumer cannot invalidate its replacement;
+an invalidation without a cause still revokes reads and triggers the same bounded rebuild. Readiness requires both
+completed bootstrap and no retained failure. Measurements report bootstrap completion and read availability separately,
+and failed worker checks retain the epoch and bounded failure reason without transport credentials or raw exception data.
 The transport owns each SDK stream in the consume callback, before Node can run stream construction. It installs an
 error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
 the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption

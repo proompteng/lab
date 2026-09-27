@@ -326,6 +326,61 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
+  test('late invalidation from a closed consumer cannot poison its replacement', async () => {
+    const transports: FakeTransport[] = []
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('2 seconds')
+        const first = transports[0]
+        if (first === undefined) throw new Error('first transport missing')
+        first.invalidated?.(new Error('connection lost'))
+        yield* TestClock.adjust('3 seconds')
+        const replacement = yield* projection.read
+        expect(first.closed).toBe(true)
+        first.invalidated?.(new Error('delayed heartbeat from closed consumer'))
+        expect((yield* projection.read).projection.epoch).toBe(replacement.projection.epoch)
+        yield* TestClock.adjust('2 seconds')
+        expect((yield* projection.status).failure).toBeUndefined()
+        expect((yield* projection.readForLiquidation).projection.epoch).toBe(replacement.projection.epoch)
+        expect(transports).toHaveLength(2)
+        transports[1]?.invalidated?.(new Error('current consumer invalidation'))
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        expect(Exit.isFailure(yield* Effect.exit(projection.readForLiquidation))).toBe(true)
+      }),
+    )
+    expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+  })
+
+  test('invalidation without a cause still revokes the epoch and rebuilds', async () => {
+    const transports: FakeTransport[] = []
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('2 seconds')
+        const prior = yield* projection.read
+        const first = transports[0]
+        if (first === undefined) throw new Error('first transport missing')
+        first.invalidated?.(undefined)
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        yield* TestClock.adjust('3 seconds')
+        const replacement = yield* projection.read
+        expect(replacement.projection.epoch).not.toBe(prior.projection.epoch)
+        expect((yield* projection.status).failure).toBeUndefined()
+        expect(first.closed).toBe(true)
+        expect(transports).toHaveLength(2)
+      }),
+    )
+  })
+
   test('rebuilds after bounded connection failure and cooldown without a read', async () => {
     let attempts = 0
     let recovered = false
