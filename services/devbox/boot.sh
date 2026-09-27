@@ -27,6 +27,7 @@ if [[ ! -f "$root/.image-complete" ]]; then
   trap - EXIT
 fi
 [[ "$(cat "$root/.image-complete")" == "$DEVBOX_ROOTFS_IMAGE" ]]
+chmod 0755 "$root"
 
 rsync -a --ignore-existing "$root/nix/" "$state/nix/"
 if [[ ! -d "$state/home" ]]; then
