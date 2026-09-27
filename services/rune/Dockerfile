@@ -4,7 +4,7 @@ FROM rust:1.96.1-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f
 FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:e071e85c52ad91fc9ea24158ff5330876b2d1a5c4ac83ccc6066976835873c01 AS builder
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential cmake ninja-build git curl ca-certificates \
-       libnccl-dev libcurl4-openssl-dev pkg-config python3 python3-venv \
+       libnccl-dev=2.28.3-1+cuda13.0 libcurl4-openssl-dev pkg-config python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=rust /usr/local/cargo /usr/local/cargo
@@ -14,8 +14,14 @@ RUN curl --fail --location --retry 3 https://codeload.github.com/invergent-ai/su
     && echo '8c37dfa3b1695fcd60ca9374a8e17bf3a2c224220db2401867f9829442be33fa  /tmp/source.tar.gz' | sha256sum --check \
     && tar -xzf /tmp/source.tar.gz --strip-components=1 \
     && rm /tmp/source.tar.gz
+RUN curl --fail --location --retry 3 https://codeload.github.com/ochafik/minja/tar.gz/143465ab2f924f7729a8ca5313a12fb83a106d6d -o /tmp/minja.tar.gz \
+    && echo '8f9951345f77d4474826b9b4fedcd7ea3bd521d7c086cd78233e7ecdfec8bc87  /tmp/minja.tar.gz' | sha256sum --check \
+    && mkdir /opt/minja && tar -xzf /tmp/minja.tar.gz -C /opt/minja --strip-components=1 \
+    && cd /opt/minja && bash /opt/surogate/csrc/cmake/patch_minja.sh \
+    && rm /tmp/minja.tar.gz
 RUN cmake -S csrc -B csrc/build-serve -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DPYTHON_BINDING=OFF \
+    -DFETCHCONTENT_SOURCE_DIR_MINJA=/opt/minja \
     -DSUROGATE_BUILD_SERVE=ON -DSUROGATE_REQUIRE_SERVE=ON -DSUROGATE_SERVE_TESTS=ON \
     -DSUROGATE_SERVE_CUDA_ARCHS=120a -DCMAKE_CUDA_ARCHITECTURES=120a -DSINFER_ENABLE_FFMPEG=OFF
 RUN cmake --build csrc/build-serve --parallel 4 --target sinfer-serve \

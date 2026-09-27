@@ -55,6 +55,19 @@ class ModelCacheTest(unittest.TestCase):
         fetch.assert_not_called()
         self.assertEqual((model / "config.json").read_bytes(), corrupt)
 
+    def test_restart_reclaims_interrupted_download_with_or_without_final_file(self):
+        model = self.cache / self.lock["revision"]
+        model.mkdir()
+        staging = model / ".download-config.json"
+        for final_exists in (False, True):
+            with self.subTest(final_exists=final_exists):
+                staging.write_bytes(b"partial checkpoint from a terminated process")
+                fetch = Mock(return_value=io.BytesIO(self.content))
+                self.assertEqual(self.prepare(fetch), model)
+                self.assertFalse(staging.exists())
+                self.assertEqual((model / "config.json").read_bytes(), self.content)
+                self.assertEqual(fetch.call_count, 0 if final_exists else 1)
+
     def test_invalid_downloads_never_publish_a_cache_entry(self):
         for payload in [
             b"",

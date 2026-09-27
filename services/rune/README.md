@@ -40,6 +40,11 @@ Python's CPU Torch wheel performs checkpoint preparation. The compiled CUDA engi
 inference. The image does not install Surogate's training stack or rely on a released wheel with
 different engine code.
 
+The build pins NCCL development headers to `2.28.3-1+cuda13.0`, matching the base image's runtime.
+It also pins the upstream build's otherwise floating Minja dependency to
+`143465ab2f924f7729a8ca5313a12fb83a106d6d` and verifies its archive SHA-256 before applying
+Surogate's own template-parser patches.
+
 ## Runtime and API
 
 The process verifies its model files, prepares the pinned engine's artifact on CPU, and replaces

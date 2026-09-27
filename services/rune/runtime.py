@@ -4,7 +4,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -44,15 +43,15 @@ def prepare(lock, cache, fetch=urlopen):
     model.mkdir(parents=True, exist_ok=True)
     for item in lock["files"]:
         path = model / item["name"]
+        temporary = model / f".download-{item['name']}"
+        temporary.unlink(missing_ok=True)
         if not path.exists():
             url = (
                 f"https://huggingface.co/{lock['repository']}/resolve/"
                 f"{lock['revision']}/{item['name']}"
             )
-            temporary = None
             try:
-                with tempfile.NamedTemporaryFile(dir=model, delete=False) as output:
-                    temporary = Path(output.name)
+                with temporary.open("xb") as output:
                     with fetch(url, timeout=60) as response:
                         count = 0
                         while block := response.read(8 * 1024 * 1024):
@@ -67,8 +66,7 @@ def prepare(lock, cache, fetch=urlopen):
                     f"Model download failed verification: {item['name']}"
                 ) from None
             finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
+                temporary.unlink(missing_ok=True)
         verify_file(path, item)
         print(
             json.dumps({"verified": item["name"], "sha256": item["sha256"]}), flush=True
