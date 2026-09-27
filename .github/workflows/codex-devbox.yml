@@ -105,6 +105,7 @@ jobs:
               sleep 0.1
             done
             runuser -l codex -c "nix develop /opt/lab-toolchain --command toolchain-doctor"
+            runuser -l codex -c "codex app-server daemon bootstrap && codex app-server daemon start && codex app-server daemon stop"
             codex --version
             rustc --version
             cargo --version

@@ -23,9 +23,11 @@ RUN mkdir -p /etc/nix /opt/devbox && \
     printf 'experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root codex\n' > /etc/nix/nix.conf && \
     NIX_REMOTE=local nix build --no-link --print-out-paths /opt/lab-toolchain#ciToolchain > /opt/devbox/toolchain-path && \
     ln -s "$(cat /opt/devbox/toolchain-path)" /opt/devbox/toolchain
-ENV PATH=/opt/devbox/toolchain/bin:/opt/devbox/npm/bin:/opt/devbox/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/opt/devbox/toolchain/bin:/home/codex/.local/bin:/opt/devbox/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV RUSTUP_HOME=/opt/devbox/rustup CARGO_HOME=/opt/devbox/cargo
-RUN npm install --global --prefix /opt/devbox/npm "@openai/codex@${CODEX_VERSION}" && \
+RUN curl --fail --location --retry 3 https://chatgpt.com/codex/install.sh -o /tmp/codex-install.sh && \
+    runuser -u codex -- env CODEX_NON_INTERACTIVE=1 sh /tmp/codex-install.sh --release "${CODEX_VERSION}" && \
+    rm /tmp/codex-install.sh && \
     case "$(dpkg --print-architecture)" in amd64) rust_arch=x86_64 ;; arm64) rust_arch=aarch64 ;; *) exit 1 ;; esac && \
     curl --fail --location --retry 3 "https://static.rust-lang.org/rustup/archive/1.28.2/${rust_arch}-unknown-linux-gnu/rustup-init" -o /tmp/rustup-init && \
     curl --fail --location --retry 3 "https://static.rust-lang.org/rustup/archive/1.28.2/${rust_arch}-unknown-linux-gnu/rustup-init.sha256" -o /tmp/rustup-init.sha256 && \

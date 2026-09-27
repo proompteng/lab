@@ -43,28 +43,35 @@ pruning and Application deletion.
 
 ## Migrate the existing workstation
 
-Use the reviewed main commit and its successful immutable image publication. Keep
-the existing namespace, PVC UID, access Secret, and Service address throughout:
+Install the migration hold before merging the rename. The root manifest enables
+automatic pruning even when the live root has been paused. Keep the existing
+namespace, PVC UID, access Secret, and Service address throughout:
 
-1. Pause reconciliation of the old `codex-devbox` Application and terminate its
-   pending operation. Scale its StatefulSet to zero and wait for the old Pod to
-   terminate before the initializer can mount and check the same ext4 disk.
-   Remove only its Application resource-deletion finalizer so
-   ApplicationSet removal orphans its workloads rather than deleting them.
-2. Sync the reviewed Kargo configuration and only the `platform` ApplicationSet
-   from the root Application. They replace the old delivery target with `devbox`.
-3. Let Kargo discover the new image and promote it to `kargo/devbox`. Verify the
+1. Confirm root automatic sync is disabled before the merge. Record its original
+   setting if a pause is needed. Add a temporary `ignoreApplicationDifferences`
+   rule to `platform`, scoped by name to `codex-devbox`, for `/metadata/finalizers`,
+   `/spec/syncPolicy/automated`, and the `argocd.argoproj.io/skip-reconcile`
+   annotation. This prevents ApplicationSet from undoing the migration hold.
+2. Set that annotation to `true`, disable the old Application's automatic sync,
+   terminate its pending operation, and remove its resource-deletion finalizer.
+   Scale its StatefulSet to zero and wait for the old Pod to terminate. Recheck
+   that the hold survives ApplicationSet reconciliation before merging.
+3. After the reviewed merge, sync the Kargo configuration and only the `platform`
+   ApplicationSet from the root Application. The committed ApplicationSet replaces
+   the old entry with `devbox` and removes the temporary ignore rule. The old
+   Application now has no deletion finalizer and leaves its workloads intact.
+4. Let Kargo discover the successfully published image and promote it to `kargo/devbox`. Verify the
    generated revision, image digest, and `kata-dragonball` runtime before Argo sync.
    If the Application was recreated after promotion, re-promote the same Freight.
-4. Replace the failed old Pod after its StatefulSet template has changed. The new
-   initializer checks the retained ext4 disk using its original provisioning token.
+5. The new initializer checks the retained ext4 disk using its original provisioning token.
    Verify the PVC UID and SSH identity before and after replacement.
-5. After the workstation passes development and persistence checks, delete the old
+6. After the workstation passes development and persistence checks, delete the old
    completed `codex-turin-initialize` Job, orphaned release ConfigMaps, obsolete
    controller revisions, and old `codex-devbox` delivery objects. Delete only the
    retired `/persist/roots` extraction cache after checking it has no mounts.
    Preserve `/persist/home`, `/persist/nix`, `/persist/docker`, `/persist/ssh`,
    `/persist/machine`, `/persist/containerd`, and `/persist/metadata`.
+   Restore the root's original automatic-sync setting if it was paused for migration.
 
 The old launcher, rootfs image subscription, archive extraction, chroot exec
 wrapper, and root-generation pruning are removed. Rollback uses a previously
@@ -103,9 +110,12 @@ The reusable images and Git repository never contain this personal state.
 Codex authentication uses the desktop's supported remote sign-in flow.
 
 Add `codex-turin` in the desktop app's Connections settings and open
-`/home/codex/src/lab`. The first-boot service has already initialized the Codex daemon,
-cloned the source revision used to build the image, installed the workspace
-dependencies, and checked the repository toolchain. Existing checkouts are preserved.
+`/home/codex/src/lab`.
+The image contains the version-pinned official standalone Codex installation under
+the user's persistent home. It can bootstrap the daemon without a device login.
+The first-boot service initializes the daemon, clones the source revision used to
+build the image, installs workspace dependencies, and checks the repository toolchain.
+Existing checkouts are preserved.
 `devbox-install-deps` first materializes the frozen dependency graph without scripts.
 It then uses `npm rebuild` for the exact installed package versions reported by
 `bun pm ls --all --trusted`, followed by Bun's normal workspace postinstall pass.
