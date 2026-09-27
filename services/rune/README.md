@@ -56,8 +56,13 @@ Surogate's own template-parser patches.
 ## Runtime and API
 
 The process verifies its model files, prepares the pinned engine's artifact on CPU, and replaces
-itself with `surogate-engine`. Model data and prepared artifacts are stored on a retained 192 GiB
-local-path volume on Turin. The Deployment uses `Recreate` so two processes do not write that
+itself with `surogate-engine`. Model data and prepared artifacts are stored on a retained 128 GiB
+volume using Turin's existing `local-path-turin-nvme-intel` class. The default local-path class can
+also select the disk used by CI scratch volumes. The pinned source and native tensor layouts total
+about 75 GiB before artifact headers and frontend resources. The 128 GiB claim and existing 100 GiB
+ledger claim fit the Intel disk's measured 237 GiB filesystem. Local-path does not enforce quotas;
+check free space before retaining another model or engine revision.
+The Deployment uses `Recreate` so two processes do not write that
 volume or compete for model memory during rollout. The native memory limit is 85,000 MiB.
 
 The initial configuration has a 32,768-token context ceiling and total KV capacity, eight active

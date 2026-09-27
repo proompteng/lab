@@ -6,7 +6,7 @@ metadata:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: local-path
+  storageClassName: local-path-turin-nvme-intel
   resources:
     requests:
-      storage: 192Gi
+      storage: 128Gi
