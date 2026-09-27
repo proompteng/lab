@@ -24,8 +24,10 @@ Main builds publish signed immutable indexes.
 Both images must finish validation and the release artifact must upload before
 either Kargo discovery tag is exposed.
 Publication uses the shared Docker retry helper to wait through the registry's
-single-writer queue. Each build job allows three hours because the two compressed
-development filesystems total about 7 GiB and uploads share a 1 MiB/s writer.
+single-writer queue. The two compressed development filesystems total about 7 GiB
+and share a 5 MiB/s writer, giving a transfer floor of about 24 minutes before
+queueing and overhead. Each build job retains a three-hour allowance for native
+builds, shared-registry queueing, and retries.
 The 24 retry attempts remain bounded by that timeout; authentication and other
 nonretryable errors still fail the release immediately.
 
