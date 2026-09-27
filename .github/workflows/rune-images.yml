@@ -4,22 +4,18 @@ on:
   pull_request:
     paths:
       - 'services/rune/**'
-      - 'packages/scripts/src/shared/docker.ts'
       - '.github/workflows/rune-images.yml'
       - 'argocd/applications/rune/**'
       - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/platform.yaml'
-      - 'bun.lock'
   push:
     branches: [main]
     paths:
       - 'services/rune/**'
-      - 'packages/scripts/src/shared/docker.ts'
       - '.github/workflows/rune-images.yml'
       - 'argocd/applications/rune/**'
       - 'argocd/applications/kargo/**'
       - 'argocd/applicationsets/platform.yaml'
-      - 'bun.lock'
 
 concurrency:
   group: rune-images-${{ github.ref }}
@@ -46,11 +42,6 @@ jobs:
             runner: arc-arm64
     steps:
       - uses: actions/checkout@v6
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-      - name: Install script dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
       - name: Resolve source metadata
         id: source
         run: |
@@ -104,14 +95,28 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rune-proof-${{ matrix.architecture }}-${{ github.run_id }}
+          name: rune-proof-${{ matrix.architecture }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: .artifacts/rune
           if-no-files-found: error
       - name: Publish tested platform image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
-        run: bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"
+          REGCTL_CONFIG: ${{ runner.temp }}/rune-regctl-${{ matrix.architecture }}.json
+        run: |
+          set -euo pipefail
+          reference="${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"
+          archive="${RUNNER_TEMP}/rune-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ARCHITECTURE}.tar"
+          trap 'rm -f "$archive" "$REGCTL_CONFIG"' EXIT
+          regctl version
+          regctl registry set "${IMAGE%%/*}" --tls enabled \
+            --blob-chunk 4194304 --blob-max 4194304 --req-concurrent 1
+          docker image save --output "$archive" "$reference"
+          config_path="$(tar -xOf "$archive" manifest.json | jq -er 'if length == 1 then .[0].Config else error("expected one saved image") end')"
+          config_digest="sha256:$(tar -xOf "$archive" "$config_path" | sha256sum | cut -d ' ' -f 1)"
+          regctl image import "$reference" "$archive"
+          regctl manifest get "$reference" --platform "linux/${ARCHITECTURE}" --format raw-body \
+            | jq -e --arg config "$config_digest" '.config.digest == $config' >/dev/null
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -165,7 +170,7 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: rune-release-${{ github.run_id }}
+          name: rune-release-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: .artifacts/rune
           if-no-files-found: error
       - name: Expose the validated digest to Kargo

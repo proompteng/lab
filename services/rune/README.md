@@ -106,8 +106,16 @@ handling and imports the actual checkpoint converters. These checks do not prove
 
 The `Rune images` workflow first exports the compiled native targets to the build cache, then
 runs all native and runtime tests on amd64 and arm64. A test failure retains the compilation cache
-but still blocks the tested image and every release step. On `main`, the workflow publishes and signs the
+but still blocks the tested image and every release step. Proof and release artifacts include the workflow
+run and attempt, so failed-job retries retain earlier evidence without colliding with immutable artifacts.
+Image tags and Kargo discovery remain bound to the source revision and workflow run. On `main`, the workflow publishes and signs the
 immutable index, uploads validation receipts, then exposes the run-qualified Kargo discovery tag.
+Platform uploads use the runner's existing `regctl`, with one request at a time and 4 MiB chunks.
+The registry serializes blob writes and limits each upload to 1 MiB/s; concurrent whole-layer
+uploads can leave another architecture's upload initiation waiting beyond its client deadline.
+Bounded chunks release the writer between requests. The job uses a temporary client configuration,
+preserves verified TLS and existing Docker credentials, and checks the published platform's config
+digest against the tested local image before proceeding. Shared registry limits remain unchanged.
 The `rune` Warehouse and Stage promote that digest to `kargo/rune`. Argo consumes only that branch.
 The `unpromoted` image in the source manifests cannot serve requests before the first promotion.
 Follow [release automation](../../docs/release-automation.md); do not deploy a locally built image.

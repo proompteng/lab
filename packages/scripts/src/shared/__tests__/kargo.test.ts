@@ -174,12 +174,10 @@ const expected = {
     apps: ['rune'],
     includePaths: [
       'services/rune',
-      'packages/scripts/src/shared/docker.ts',
       '.github/workflows/rune-images.yml',
       'argocd/applications/rune',
       'argocd/applications/kargo',
       'argocd/applicationsets/platform.yaml',
-      'bun.lock',
     ],
   },
   restate: {
@@ -868,6 +866,17 @@ describe('Kargo direct-push GitOps contract', () => {
       const warehousePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
       const buildPaths = buildFilters[product]?.map((path) => path.replace(/\/\*\*$/, ''))
       expect(warehousePaths).toEqual(buildPaths)
+    }
+  })
+
+  it('aligns Rune source discovery with both image build triggers', () => {
+    const warehouse = byName(warehouses).get('rune')
+    const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
+      .includePaths
+    const workflow = YAML.parse(readFileSync('.github/workflows/rune-images.yml', 'utf8'))
+    for (const event of ['pull_request', 'push']) {
+      const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+      expect(sourcePaths).toEqual(buildPaths)
     }
   })
 
