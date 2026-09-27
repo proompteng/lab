@@ -1150,12 +1150,10 @@ spec:
         strictSemvers: true
         includePaths:
           - services/rune
-          - packages/scripts/src/shared/docker.ts
           - .github/workflows/rune-images.yml
           - argocd/applications/rune
           - argocd/applications/kargo
           - argocd/applicationsets/platform.yaml
-          - bun.lock
     - image:
         repoURL: registry.ide-newton.ts.net/lab/rune
         imageSelectionStrategy: NewestBuild
