@@ -36,6 +36,8 @@ The source template on `main` uses inert unpublished image references. Only Karg
 rendered branch supplies runnable digests; the launcher rejects mutable rootfs references.
 
 The initialization Job alone carries the one-use filesystem initialization token.
+It reserves 2 GiB for Firecracker and filesystem creation; a 256 MiB workload limit
+caused the host memory cgroup to kill Firecracker before the 500 GiB disk was initialized.
 Its completed record is retained. Normal devbox Pods omit that token and cannot
 format a missing or damaged filesystem. The PVC and namespace are excluded from
 Argo pruning and Application deletion. The root image, persistent home, Nix store,
@@ -43,6 +45,11 @@ Docker data, SSH host keys, and machine identity remain on the PVC.
 Boot retains the selected root filesystem and the last one that completed setup;
 older generations and interrupted extractions are removed. Shared home, Nix, and
 Docker state are outside those directories and are not pruned.
+
+If the initialization Job has already failed, its Pod template cannot be updated in place.
+After the corrected revision is merged, stop the uninitialized devbox and recreate only
+the failed Job with the corrected resources, then restore the devbox. Preserve the PVC
+and its initialization token. A completed initialization Job must not be recreated.
 
 ## Install the personal environment
 
