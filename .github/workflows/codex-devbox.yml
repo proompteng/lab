@@ -98,7 +98,7 @@ jobs:
               source /etc/profile.d/devbox.sh
               export NIX_REMOTE=local
               cd /opt/lab-seed
-              nix develop --command toolchain-doctor
+              nix develop /opt/lab-toolchain --command toolchain-doctor
               codex --version
               rustc --version
               cargo --version

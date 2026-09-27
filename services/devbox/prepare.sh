@@ -32,4 +32,8 @@ if [[ ! -f /home/codex/.devbox-initialized ]]; then
   chown codex:codex /home/codex/.devbox-initialized
 fi
 runuser -l codex -c 'export XDG_RUNTIME_DIR=/run/user/1000; codex app-server daemon bootstrap && codex app-server daemon start'
+digest="$(cat /etc/devbox-generation)"
+[[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+printf '%s\n' "$digest" > /var/lib/devbox/last-ready.tmp
+mv /var/lib/devbox/last-ready.tmp /var/lib/devbox/last-ready
 touch /run/devbox-ready

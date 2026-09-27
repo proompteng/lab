@@ -11,6 +11,10 @@ mountpoint -q "$state" || { echo 'Persistent block filesystem is not mounted' >&
 digest="${DEVBOX_ROOTFS_IMAGE##*@sha256:}"
 root="$state/roots/$digest"
 install -d -m 0700 "$state/roots" "$state/nix" "$state/ssh"
+for pending in "$state/roots"/.extract.*; do
+  [[ -d "$pending" && ! -L "$pending" ]] || continue
+  rm -rf -- "$pending"
+done
 if [[ ! -f "$root/.image-complete" ]]; then
   stage="$(mktemp -d "$state/roots/.extract.XXXXXX")"
   trap 'rm -rf -- "$stage"' EXIT
@@ -28,7 +32,9 @@ rsync -a --ignore-existing "$root/nix/" "$state/nix/"
 if [[ ! -d "$state/home" ]]; then
   cp -a "$root/home" "$state/home"
 fi
-install -d "$state/docker" "$state/machine" "$state/home/codex/.ssh" "$root/run" "$root/dev" "$root/proc" "$root/sys"
+install -d "$state/docker" "$state/machine" "$state/metadata" "$state/home/codex/.ssh" "$root/run" "$root/dev" "$root/proc" "$root/sys"
+/usr/local/bin/devbox-prune-roots "$state" "$digest"
+printf '%s\n' "$digest" > "$root/etc/devbox-generation"
 chmod 0700 "$state/home/codex/.ssh"
 install -m 0600 /bootstrap/authorized_keys "$state/home/codex/.ssh/authorized_keys"
 chown -R 1000:1000 "$state/home/codex/.ssh"
@@ -40,6 +46,7 @@ bind() {
 bind "$state/nix" "$root/nix"
 bind "$state/home" "$root/home"
 bind "$state/docker" "$root/var/lib/docker"
+bind "$state/metadata" "$root/var/lib/devbox"
 for path in dev proc sys run; do
   mount --rbind "/$path" "$root/$path"
   mount --make-rslave "$root/$path"
@@ -59,6 +66,8 @@ for type in ed25519 rsa; do
   cp -a "$state/ssh/ssh_host_${type}_key"* "$root/etc/ssh/"
 done
 chroot "$root" /usr/bin/env NIX_REMOTE=local /opt/devbox/toolchain/bin/nix-store --load-db < "$root/opt/devbox/nix-registration"
+install -d "$state/nix/var/nix/gcroots"
+ln -sfn "$(cat "$root/opt/devbox/toolchain-path")" "$state/nix/var/nix/gcroots/devbox-toolchain"
 ln -sfn "$root" /run/devbox-root
 export container=kata
 exec chroot "$root" /sbin/init

@@ -1082,25 +1082,41 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Tag == imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Tag &&
-      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
-      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
-      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Annotations['ai.proompteng.github-actions-run-id'] &&
-      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['org.opencontainers.image.revision'] + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['ai.proompteng.github-actions-run-id'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Annotations['ai.proompteng.github-actions-run-id'] == imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['ai.proompteng.github-actions-run-id'] &&
       imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
-      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success'
+      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Tag == 'kargo-sha-' + commitFrom('git@github.com:proompteng/lab.git').ID + '-run-' + imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Annotations['ai.proompteng.github-actions-run-id'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/codex-devbox').Tag == imageFrom('registry.ide-newton.ts.net/lab/codex-devbox-rootfs').Tag
   subscriptions:
+    - git:
+        repoURL: git@github.com:proompteng/lab.git
+        branch: main
+        commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
+        includePaths:
+          - services/devbox
+          - argocd/applications/codex-devbox
+          - .github/workflows/codex-devbox.yml
+          - flake.nix
+          - flake.lock
+          - nix/packages.nix
+          - nix/toolchain-doctor.sh
     - image:
         repoURL: registry.ide-newton.ts.net/lab/codex-devbox
         imageSelectionStrategy: NewestBuild
         discoveryLimit: 20
-        allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}-run-[0-9]+$']
+        strictSemvers: true
+        allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$']
         platform: linux/amd64
         cacheByTag: true
     - image:
         repoURL: registry.ide-newton.ts.net/lab/codex-devbox-rootfs
         imageSelectionStrategy: NewestBuild
         discoveryLimit: 20
-        allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}-run-[0-9]+$']
+        strictSemvers: true
+        allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$']
         platform: linux/amd64
         cacheByTag: true

@@ -27,12 +27,17 @@ run. Its Stage writes their digests into the Kustomize inputs on
 `kargo/codex-devbox`. Argo owns the namespace, initialization Job, PVC, StatefulSet,
 and LAN SSH Service. Image updates restart the devbox, so schedule source changes
 when its running development commands can be interrupted.
+The source template on `main` uses inert unpublished image references. Only Kargo's
+rendered branch supplies runnable digests; the launcher rejects mutable rootfs references.
 
 The initialization Job alone carries the one-use filesystem initialization token.
 Its completed record is retained. Normal devbox Pods omit that token and cannot
 format a missing or damaged filesystem. The PVC and namespace are excluded from
 Argo pruning and Application deletion. The root image, persistent home, Nix store,
 Docker data, SSH host keys, and machine identity remain on the PVC.
+Boot retains the selected root filesystem and the last one that completed setup;
+older generations and interrupted extractions are removed. Shared home, Nix, and
+Docker state are outside those directories and are not pruned.
 
 ## Install the personal environment
 

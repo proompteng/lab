@@ -1,7 +1,7 @@
 [Unit]
 Description=Prepare the persistent lab development workspace
-After=network.target nix-daemon.socket user@1000.service
-Requires=nix-daemon.socket
+After=network.target nix-daemon.socket user@1000.service ssh.service docker.service
+Requires=nix-daemon.socket ssh.service docker.service
 Wants=user@1000.service
 
 [Service]

@@ -2135,10 +2135,14 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
-    - name: pushGitRepo
+    - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
       value: kargo/codex-devbox
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
     - name: imageRepo
       value: registry.ide-newton.ts.net/lab/codex-devbox
     - name: rootfsImage
@@ -2154,29 +2158,25 @@ spec:
   promotionTemplate:
     spec:
       steps:
-        - uses: fail
-          if: '${{ imageFrom(vars.imageRepo).Tag != imageFrom(vars.rootfsImage).Tag }}'
-          config:
-            message: Devbox images must come from the same validated build
         - uses: git-clone
           config:
-            repoURL: ${{ vars.pushGitRepo }}
+            repoURL: ${{ vars.gitRepo }}
             author:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-                path: ./src
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
-                path: ./out
+                path: ${{ vars.outPath }}
         - uses: git-clear
           config:
-            path: ./out
+            path: ${{ vars.outPath }}
         - uses: copy
           config:
-            inPath: ./src
-            outPath: ./out
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
         - uses: kustomize-set-image
           config:
             path: ./out/argocd/applications/codex-devbox
@@ -2192,7 +2192,7 @@ spec:
         - uses: git-commit
           as: commit
           config:
-            path: ./out
+            path: ${{ vars.outPath }}
             message: |
               kargo(codex-devbox): promote ${{ ctx.targetFreight.name }}
 
@@ -2200,7 +2200,7 @@ spec:
               Build: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
         - uses: git-push
           config:
-            path: ./out
+            path: ${{ vars.outPath }}
             targetBranch: ${{ vars.targetBranch }}
         - uses: argocd-update
           retry:

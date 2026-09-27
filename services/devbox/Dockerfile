@@ -20,11 +20,11 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     printf 'codex ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/codex && \
     chmod 0440 /etc/sudoers.d/codex && \
     locale-gen en_US.UTF-8
-COPY flake.nix flake.lock /opt/lab-seed/
-COPY nix /opt/lab-seed/nix
+COPY flake.nix flake.lock /opt/lab-toolchain/
+COPY nix /opt/lab-toolchain/nix
 RUN mkdir -p /etc/nix /opt/devbox && \
     printf 'experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root codex\n' > /etc/nix/nix.conf && \
-    NIX_REMOTE=local nix build --no-link --print-out-paths /opt/lab-seed#ciToolchain > /opt/devbox/toolchain-path && \
+    NIX_REMOTE=local nix build --no-link --print-out-paths /opt/lab-toolchain#ciToolchain > /opt/devbox/toolchain-path && \
     ln -s "$(cat /opt/devbox/toolchain-path)" /opt/devbox/toolchain
 ENV PATH=/opt/devbox/toolchain/bin:/opt/devbox/npm/bin:/opt/devbox/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV RUSTUP_HOME=/opt/devbox/rustup CARGO_HOME=/opt/devbox/cargo
@@ -44,8 +44,9 @@ RUN devbox-install-deps && \
     bunx --no-install playwright install --with-deps chromium && \
     test -n "${SOURCE_REVISION}" && \
     printf '%s\n' "${SOURCE_REVISION}" > /opt/devbox/source-revision && \
-    NIX_REMOTE=local nix develop --command toolchain-doctor && \
-    NIX_REMOTE=local nix-store --dump-db > /opt/devbox/nix-registration
+    NIX_REMOTE=local nix develop /opt/lab-toolchain --command toolchain-doctor && \
+    NIX_REMOTE=local nix-store --dump-db > /opt/devbox/nix-registration && \
+    rm -rf /root/.bun/install/cache /root/.npm /var/lib/apt/lists/*
 COPY services/devbox/prepare.sh /usr/local/sbin/devbox-prepare
 COPY services/devbox/verify.sh /usr/local/bin/devbox-verify
 COPY services/devbox/profile.sh /etc/profile.d/devbox.sh
@@ -67,6 +68,7 @@ RUN apk add --no-cache bash ca-certificates coreutils util-linux rsync
 COPY --from=registry-client /out/crane /usr/local/bin/crane
 COPY services/devbox/boot.sh /usr/local/bin/devbox-boot
 COPY services/devbox/exec.sh /usr/local/bin/devbox-exec
-RUN chmod 0755 /usr/local/bin/devbox-boot /usr/local/bin/devbox-exec
+COPY services/devbox/prune-roots.sh /usr/local/bin/devbox-prune-roots
+RUN chmod 0755 /usr/local/bin/devbox-boot /usr/local/bin/devbox-exec /usr/local/bin/devbox-prune-roots
 STOPSIGNAL 37
 ENTRYPOINT ["/usr/local/bin/devbox-boot"]

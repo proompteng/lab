@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 : "${GITHUB_SHA:?}" "${GITHUB_RUN_ID:?}"
-[[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+[[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] || exit 1
 [[ "${GITHUB_REF:-}" == refs/heads/main ]]
 tag="kargo-sha-$GITHUB_SHA-run-$GITHUB_RUN_ID"
 artifacts=.artifacts/codex-devbox

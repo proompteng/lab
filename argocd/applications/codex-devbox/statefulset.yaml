@@ -30,7 +30,7 @@ spec:
         runtime.proompteng.ai/kata-fc-persistent-block: ready
       containers:
         - name: devbox
-          image: registry.ide-newton.ts.net/lab/codex-devbox
+          image: registry.ide-newton.ts.net/lab/codex-devbox:unpublished
           env:
             - name: DEVBOX_ROOTFS_IMAGE
               valueFrom:
@@ -58,7 +58,7 @@ spec:
             timeoutSeconds: 5
           readinessProbe:
             exec:
-              command: [/usr/local/bin/devbox-exec, /bin/sh, -ec, 'test -f /run/devbox-ready && systemctl is-active --quiet ssh docker']
+              command: [/usr/local/bin/devbox-exec, /bin/sh, -ec, 'test -f /run/devbox-ready && systemctl is-active --quiet ssh && systemctl is-active --quiet docker']
             periodSeconds: 10
             timeoutSeconds: 5
           volumeDevices:
