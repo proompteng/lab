@@ -80,10 +80,14 @@ Add `codex-turin` in the desktop app's Connections settings and open
 `/home/codex/src/lab`. The first-boot service has already initialized the Codex daemon,
 cloned the source revision used to build the image, installed the workspace
 dependencies, and checked the repository toolchain. Existing checkouts are preserved.
-`devbox-install-deps` first materializes the frozen dependency graph, then forces a
-normal install with serialized lifecycle scripts. This avoids a cold-install race
-in the pinned Bun release while retaining the workspace's isolated dependency
-layout and running its trusted native builds and postinstall commands.
+`devbox-install-deps` first materializes the frozen dependency graph without scripts.
+It then uses `npm rebuild` for the exact installed package versions reported by
+`bun pm ls --all --trusted`, followed by Bun's normal workspace postinstall pass.
+This keeps native build helpers available throughout compilation: a forced Bun
+reinstall can remove `node-gyp` while a grammar's install script is using it.
+The isolated dependency layout, Bun lockfile, and existing script trust policy
+are preserved. An empty trusted list skips rebuilding, and an unrecognized list
+or failed native build stops setup.
 
 ## Verify development and persistence
 
