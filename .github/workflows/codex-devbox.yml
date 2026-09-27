@@ -112,6 +112,7 @@ jobs:
               GOWORK=off go test ./...
             '
           else
+            docker run --rm --interactive --entrypoint /bin/bash "$IMAGE" < services/devbox/tests/test-launcher.sh
             sudo apt-get update
             sudo apt-get install --yes --no-install-recommends e2fsprogs
             container="$(docker create "$IMAGE")"
