@@ -3,7 +3,14 @@
 This runbook deploys Hermes as Tuslagch's production runtime, migrates non-secret OpenClaw user data, transfers the Discord
 channel without dual writers, and retains a tested rollback path. All `kubectl` commands use an explicit namespace.
 
-## Steady-state reconciliation
+## Disabled state
+
+Hermes is currently stopped through GitOps. The gateway and proxy have zero replicas, backups are suspended, and the
+Application follows `main`. Kargo automatic promotion and Argo Stage authorization are disabled. The data and backup PVCs
+are retained. The procedures below describe the enabled service and must not be used to restart it without a reviewed
+re-enablement that restores the Kargo source, authorization, promotion policy, replicas, schedule, and rollout alert label.
+
+## Steady-state reconciliation after re-enablement
 
 The completed production cutover uses `automation: auto` on the verified
 `kargo/hermes-toolchain` branch. Kargo remains the only image promotion owner.

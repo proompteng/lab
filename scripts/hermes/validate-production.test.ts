@@ -854,8 +854,9 @@ test('allows manual Hermes reconciliation for a reviewed maintenance phase', asy
   expect(validateProductionContent(files)).toEqual([])
 })
 
-test('keeps disabled Hermes on main instead of an old deployment branch', async () => {
+test.each(['auto', 'manual'])('keeps disabled Hermes on main in %s mode', async (mode) => {
   const files = await loadProductionFiles()
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) auto/, `$1 ${mode}`)
   files.platform = files.platform.replace(
     /(\n\s+- name: hermes\n[\s\S]*?targetRevision:) main/,
     '$1 kargo/hermes-toolchain',

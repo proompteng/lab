@@ -1173,9 +1173,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.statefulSet, files.statefulSet, ['  replicas: 0\n'])
   requireTerms(failures, productionPaths.egressProxy, files.egressProxy, ['  replicas: 0\n'])
   const hermesAutomation = hermesApplication.match(/^\s+automation: ([^\r\n]+)$/m)?.[1]?.trim()
-  if (hermesAutomation === 'auto') {
-    requireTerms(failures, productionPaths.platform, hermesApplication, ['targetRevision: main'])
-  } else if (hermesAutomation !== 'manual') {
+  requireTerms(failures, productionPaths.platform, hermesApplication, ['targetRevision: main'])
+  if (hermesAutomation !== 'auto' && hermesAutomation !== 'manual') {
     failures.push(`${productionPaths.platform}: Hermes automation must be exactly auto or manual`)
   }
   forbidTerms(failures, productionPaths.platform, hermesApplication, [
