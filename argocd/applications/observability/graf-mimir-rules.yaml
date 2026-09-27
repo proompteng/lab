@@ -176,13 +176,7 @@ data:
       - name: hermes-production.rules
         rules:
           - record: hermes_rollout_enabled
-            expr: |
-              max(
-                kube_argocd_application_deployment_history_info{
-                  namespace="argocd",
-                  application="hermes"
-                }
-              )
+            expr: vector(0)
           - alert: HermesGatewayUnavailable
             expr: |
               (
