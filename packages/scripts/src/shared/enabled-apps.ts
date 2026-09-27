@@ -117,7 +117,7 @@ const appToDeployScriptPath = new Map<string, string>([
 
 const appToWorkflowPaths = new Map<string, string[]>([
   ['rune', ['.github/workflows/rune-images.yml', 'argocd/applications/kargo']],
-  ['codex-devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
+  ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
@@ -169,19 +169,12 @@ const kargoImageApps = new Map<string, KargoImageContract>([
     },
   ],
   [
-    'codex-devbox',
+    'devbox',
     {
       kind: 'promotion-template',
-      bootstrapReferences: [
-        'registry.ide-newton.ts.net/lab/codex-devbox:unpublished',
-        'registry.ide-newton.ts.net/lab/codex-devbox-rootfs:unpublished',
-      ],
-      reason:
-        'The Firecracker launcher and development filesystem are built and signed together, then promoted by Kargo',
-      repositories: [
-        'registry.ide-newton.ts.net/lab/codex-devbox',
-        'registry.ide-newton.ts.net/lab/codex-devbox-rootfs',
-      ],
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/codex-devbox:unpublished'],
+      reason: 'The Dragonball development image is built and signed in CI, then promoted by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/codex-devbox'],
       workflowPaths: ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo'],
     },
   ],

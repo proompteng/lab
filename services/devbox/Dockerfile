@@ -1,8 +1,5 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1.7
-FROM mirror.gcr.io/golang:1.25.5-alpine AS registry-client
-RUN GOBIN=/out CGO_ENABLED=0 go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
-
-FROM mirror.gcr.io/ubuntu:24.04 AS rootfs
+FROM mirror.gcr.io/ubuntu:24.04
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
 ARG CODEX_VERSION=0.153.4
 ARG RUST_VERSION=1.90.0
@@ -47,9 +44,12 @@ RUN devbox-install-deps && \
     NIX_REMOTE=local nix develop /opt/lab-toolchain --command toolchain-doctor && \
     NIX_REMOTE=local nix-store --dump-db > /opt/devbox/nix-registration && \
     rm -rf /root/.bun/install/cache /root/.npm /var/lib/apt/lists/*
+COPY --chmod=0755 services/devbox/boot.sh /usr/local/bin/devbox-boot
 COPY services/devbox/prepare.sh /usr/local/sbin/devbox-prepare
 COPY services/devbox/verify.sh /usr/local/bin/devbox-verify
 COPY services/devbox/profile.sh /etc/profile.d/devbox.sh
+COPY services/devbox/health.py /usr/local/lib/devbox-health.py
+COPY services/devbox/devbox-health.service /etc/systemd/system/devbox-health.service
 COPY services/devbox/devbox-prepare.service /etc/systemd/system/devbox-prepare.service
 RUN chmod 0755 /usr/local/sbin/devbox-prepare /usr/local/bin/devbox-verify && \
     sed -e '/^export /!d' -e 's/^export //' -e 's|\$HOME|/home/codex|g' /etc/profile.d/devbox.sh > /etc/environment && \
@@ -57,18 +57,9 @@ RUN chmod 0755 /usr/local/sbin/devbox-prepare /usr/local/bin/devbox-verify && \
     printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers codex\n' > /etc/ssh/sshd_config.d/devbox.conf && \
     printf '[Service]\nExecStart=\nExecStart=/opt/devbox/toolchain/bin/nix-daemon --daemon\n' > /etc/systemd/system/nix-daemon.service.d/devbox.conf && \
     touch /var/lib/systemd/linger/codex && \
-    systemctl enable ssh docker nix-daemon.socket devbox-prepare && \
+    systemctl enable ssh docker nix-daemon.socket devbox-prepare devbox-health && \
     systemctl mask systemd-resolved.service systemd-networkd.service systemd-networkd-wait-online.service && \
     rm -f /etc/ssh/ssh_host_* /etc/machine-id && touch /etc/machine-id
 ENV CARGO_HOME=/home/codex/.cargo HOME=/home/codex
-CMD ["/sbin/init"]
-
-FROM mirror.gcr.io/alpine:3.22 AS launcher
-RUN apk add --no-cache bash ca-certificates coreutils util-linux rsync tar
-COPY --from=registry-client /out/crane /usr/local/bin/crane
-COPY services/devbox/boot.sh /usr/local/bin/devbox-boot
-COPY services/devbox/exec.sh /usr/local/bin/devbox-exec
-COPY services/devbox/prune-roots.sh /usr/local/bin/devbox-prune-roots
-RUN chmod 0755 /usr/local/bin/devbox-boot /usr/local/bin/devbox-exec /usr/local/bin/devbox-prune-roots
-STOPSIGNAL 37
+STOPSIGNAL SIGRTMIN+3
 ENTRYPOINT ["/usr/local/bin/devbox-boot"]
