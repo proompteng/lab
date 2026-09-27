@@ -4253,6 +4253,7 @@ describe('OBSERVE runtime composition', () => {
                       ...cut,
                       projection: {
                         ...cut.projection,
+                        quoteHistory: new Map([...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY')),
                         tradeHistory: new Map([...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY')),
                       },
                     },

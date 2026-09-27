@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: codex-devbox
+resources:
+  - storage.yaml
+  - initialize.yaml
+  - access-sealed-secret.yaml
+  - statefulset.yaml
+  - service.yaml
+  - network-policy.yaml
+  - resource-quota.yaml
+configMapGenerator:
+  - name: codex-devbox-release
+    literals:
+      - ROOTFS_IMAGE=registry.ide-newton.ts.net/lab/codex-devbox-rootfs:unpublished
+images:
+  - name: registry.ide-newton.ts.net/lab/codex-devbox
+    newName: registry.ide-newton.ts.net/lab/codex-devbox
+    newTag: unpublished
