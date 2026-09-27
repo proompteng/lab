@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     rm -rf /var/lib/apt/lists/* && \
     if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi && \
     groupadd --gid 1000 codex && \
-    useradd --uid 1000 --gid 1000 --groups sudo,docker --create-home --shell /bin/bash codex && \
+    useradd --uid 1000 --gid 1000 --groups sudo,docker,nix-users --create-home --shell /bin/bash codex && \
     printf 'codex ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/codex && \
     chmod 0440 /etc/sudoers.d/codex && \
     locale-gen en_US.UTF-8

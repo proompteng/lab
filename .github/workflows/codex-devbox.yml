@@ -97,6 +97,14 @@ jobs:
             export NIX_REMOTE=local
             cd /opt/lab-seed
             nix develop /opt/lab-toolchain --command toolchain-doctor
+            nix-daemon --daemon &
+            daemon_pid=$!
+            trap "kill $daemon_pid" EXIT
+            for attempt in {1..50}; do
+              test ! -S /nix/var/nix/daemon-socket/socket || break
+              sleep 0.1
+            done
+            runuser -l codex -c "nix develop /opt/lab-toolchain --command toolchain-doctor"
             codex --version
             rustc --version
             cargo --version
