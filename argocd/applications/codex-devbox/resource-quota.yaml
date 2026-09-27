@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: codex-devbox
+spec:
+  hard:
+    requests.cpu: "10"
+    limits.cpu: "10"
+    requests.memory: 70Gi
+    limits.memory: 70Gi
+    requests.storage: 500Gi
+    persistentvolumeclaims: "1"
+    pods: "4"

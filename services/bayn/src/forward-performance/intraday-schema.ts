@@ -1,5 +1,5 @@
 import { Schema } from 'effect'
-import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import { IsoDateSchema, NonNegativeIntegerSchema, Sha256Schema, UtcInstantSchema } from '../schemas'
 import { marketCalendarSchemaVersion, marketCalendarSource } from '../broker/alpaca/model'
 import { StreamingSnapshotEvidenceSchema } from '../market-data/streaming/evidence-schema'
@@ -22,6 +22,7 @@ const ManifestFields = {
   universe: Schema.optionalKey(Schema.Array(Schema.String)),
   symbols: Schema.Array(Schema.String),
   candidateSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
+  candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
   candidateExclusions: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

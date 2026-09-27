@@ -158,6 +158,38 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
+  it('recognizes the inert devbox promotion template without accepting arbitrary mutable images', () => {
+    const template = {
+      name: 'codex-devbox',
+      path: 'argocd/applications/codex-devbox',
+      repoURL: 'https://github.com/proompteng/lab.git',
+      sourceFile: 'argocd/applicationsets/platform.yaml',
+      sourceKind: 'applicationset-element',
+      class: 'deferred',
+      enabled: true,
+      hasHelmChart: false,
+      repoImages: [
+        'registry.ide-newton.ts.net/lab/codex-devbox:unpublished',
+        'registry.ide-newton.ts.net/lab/codex-devbox-rootfs:unpublished',
+      ],
+      workflowPaths: ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo'],
+    } satisfies EnabledAppInventoryEntry
+    expect(classifyEnabledApp(template).class).toBe('workflow-image')
+    expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')
+    for (const reference of [
+      'registry.ide-newton.ts.net/lab/codex-devbox-rootfs:latest',
+      'registry.ide-newton.ts.net/lab/codex-devbox-rootfs:unreviewed',
+      `registry.ide-newton.ts.net/lab/codex-devbox-rootfs@sha256:${'0'.repeat(64)}`,
+    ]) {
+      expect(
+        classifyEnabledApp({
+          ...template,
+          repoImages: ['registry.ide-newton.ts.net/lab/codex-devbox:unpublished', reference],
+        }).class,
+      ).toBe('deferred')
+    }
+  })
+
   it('classifies Tengri as a Kargo-owned workflow image only with complete ownership evidence', () => {
     const tengri = {
       name: 'tengri',

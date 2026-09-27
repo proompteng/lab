@@ -96,6 +96,9 @@ export const jevObservationQuery = (
     universe: protocol.universe,
     symbols: jevSnapshotSymbols(protocol, candidates),
     candidateSymbols: candidates,
+    ...(protocol.candidateEvidencePolicy === undefined
+      ? {}
+      : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     feed: protocol.feed,
     delayClass: protocol.delayClass,
     sourceTopics: protocol.sourceTopics,
