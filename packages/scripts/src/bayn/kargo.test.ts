@@ -11,6 +11,45 @@ const stage = stages.find((document) => document.getIn(['metadata', 'name']) ===
 const steps = stage.spec.promotionTemplate.spec.steps
 const build = read('.github/workflows/bayn-build-push.yml')
 
+test('delivers the sealed Jev credential only to the worker without blocking independent recovery when absent', () => {
+  const secret = read('argocd/applications/bayn/jev-sealedsecret.yaml')
+  expect(secret.metadata).toMatchObject({
+    name: 'bayn-jev-auth',
+    namespace: 'bayn',
+    annotations: {
+      'argocd.argoproj.io/sync-wave': '-2',
+      'argocd.proompteng.ai/wait-for-sealed-secret': 'true',
+    },
+  })
+  expect(Object.keys(secret.spec.encryptedData)).toEqual(['api-key'])
+  expect(secret.spec.encryptedData['api-key'].length).toBeGreaterThan(100)
+  expect(read('argocd/applications/bayn/kustomization.yaml').resources).toContain('jev-sealedsecret.yaml')
+  for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
+    const environment = read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env
+    const key = environment.filter((entry: { name: string }) => entry.name === 'BAYN_JEV_API_KEY')
+    expect(key).toEqual(
+      file === 'execution-controller'
+        ? [
+            {
+              name: 'BAYN_JEV_API_KEY',
+              valueFrom: { secretKeyRef: { name: 'bayn-jev-auth', key: 'api-key', optional: true } },
+            },
+          ]
+        : [],
+    )
+    const brokerKeys = environment.filter((entry: { name: string }) =>
+      ['BAYN_ALPACA_KEY_ID', 'BAYN_ALPACA_SECRET_KEY'].includes(entry.name),
+    )
+    expect(brokerKeys).toHaveLength(2)
+    expect(
+      brokerKeys.every(
+        (entry: { valueFrom: { secretKeyRef: { optional?: boolean } } }) =>
+          entry.valueFrom.secretKeyRef.optional !== true,
+      ),
+    ).toBe(true)
+  }
+})
+
 test('requires the sealed mandate to match the reviewed strategy and every runtime lineage', () => {
   const secret = read('argocd/applications/bayn/alpaca-sealedsecret.yaml')
   const encodedIdentity = secret.metadata.annotations?.['proompteng.ai/bayn.mandate-identity']

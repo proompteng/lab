@@ -1,6 +1,6 @@
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 import { OperationDeadlineClock } from './operation-timeout'
-import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import {
   Cause,
   Clock,
@@ -13,6 +13,7 @@ import {
   Path,
   Redacted,
   Schema,
+  Semaphore,
   Stdio,
   Stream,
 } from 'effect'
@@ -27,6 +28,8 @@ import { PersistedCapitalGrantStoreLive } from './db/persisted-capital-grant'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
 import { operationalError } from './errors'
 import { prepareBacktest, runBacktest, type ReplayDatabaseConfig } from './intraday-replay/backtest'
+import { JevClientLive } from './jev/client'
+import { ReplayBrokerFailure } from './intraday-replay/broker'
 
 const usage =
   'Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help'
@@ -101,6 +104,7 @@ const main = Effect.scoped(
       validateBacktestSourceReceipt(sourceReceiptText, args.sourceReceiptHash),
     )
     const prepared = yield* Effect.fromResult(prepareBacktest(parsed, sourceReceipt))
+    const jevKey = yield* Config.redacted('BAYN_JEV_API_KEY')
     const databaseInput = yield* Config.all({
       postgresUrl: Config.redacted('BAYN_BACKTEST_POSTGRES_URL'),
       tigerBeetleAddress: Config.string('BAYN_BACKTEST_TIGERBEETLE_ADDRESS'),
@@ -124,6 +128,8 @@ const main = Effect.scoped(
     yield* fs.writeFileString(path.join(args.outputPath, 'input.json'), raw, { flag: 'wx' })
     yield* fs.writeFileString(path.join(args.outputPath, 'source-receipt.json'), sourceReceiptText, { flag: 'wx' })
     const passesPath = path.join(args.outputPath, 'passes.ndjson')
+    const inferencePath = path.join(args.outputPath, 'jev-calls.ndjson')
+    const inferenceWrite = yield* Semaphore.make(1)
     const base = Layer.mergeAll(WriterFenceLive, JournalLive(databases)).pipe(
       Layer.provideMerge(PostgresClientLive(databases)),
     )
@@ -135,21 +141,42 @@ const main = Effect.scoped(
       PersistedCapitalGrantStoreLive,
     ).pipe(Layer.provideMerge(base))
     const deadlineClock = yield* Clock.clockWith(Effect.succeed)
-    const report = yield* runBacktest(prepared, args.arrivalsPath, databases, (pass) =>
-      Effect.fromResult(canonicalJsonV1Result(pass)).pipe(
-        Effect.flatMap((line) => fs.writeFileString(passesPath, `${line}\n`, { flag: 'a' })),
-        Effect.mapError((cause) =>
-          operationalError({
-            component: 'strategy',
-            operation: 'replay-pass',
-            message: 'Cannot retain execution pass',
-            cause,
-          }),
+    const report = yield* runBacktest(
+      prepared,
+      args.arrivalsPath,
+      databases,
+      (pass) =>
+        Effect.fromResult(canonicalJsonV1Result(pass)).pipe(
+          Effect.flatMap((line) => fs.writeFileString(passesPath, `${line}\n`, { flag: 'a' })),
+          Effect.mapError((cause) =>
+            operationalError({
+              component: 'strategy',
+              operation: 'replay-pass',
+              message: 'Cannot retain execution pass',
+              cause,
+            }),
+          ),
         ),
-      ),
+      (call) =>
+        inferenceWrite.withPermit(
+          Effect.fromResult(canonicalJsonV1Result(call)).pipe(
+            Effect.flatMap((line) => fs.writeFileString(inferencePath, `${line}\n`, { flag: 'a' })),
+            Effect.mapError(
+              (cause) => new ReplayBrokerFailure({ message: 'Cannot retain provider inference receipt', cause }),
+            ),
+          ),
+        ),
     ).pipe(
       // @effect-diagnostics-next-line strictEffectProvide:off -- isolated replay command owns its database and virtual clock resources
-      Effect.provide(Layer.mergeAll(stores, TestClock.layer())),
+      Effect.provide(
+        Layer.mergeAll(
+          stores,
+          TestClock.layer(),
+          JevClientLive(jevKey, prepared.protocol.inferenceValidityMs).pipe(
+            Layer.provide(NodeHttpClient.layerNodeHttp),
+          ),
+        ),
+      ),
       Effect.provideService(OperationDeadlineClock, deadlineClock),
       Effect.tapCause((cause) =>
         Effect.gen(function* () {

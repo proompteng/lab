@@ -66,6 +66,11 @@ configure worker versioning and build IDs.
 
 ## Production readiness
 
+Durable waits suspend workflow execution without entering Effect error handlers
+or running finalizers. Replay resumes results and signals at their original
+workflow task boundaries. See [workflow execution](docs/workflow-execution.md)
+for supported waits, upgrade validation, and the pinned Effect runtime contract.
+
 Async local activities must finish within the current workflow task budget. The
 worker reserves half the task window for recording their result or timeout
 failure, and bounds response RPCs and retry delays by the remaining task budget.

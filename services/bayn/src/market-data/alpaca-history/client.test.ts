@@ -109,6 +109,24 @@ const credentials = {
 const json = (value: unknown): string => JSON.stringify(value)
 
 describe('Alpaca historical vendor capture', () => {
+  test('orders millisecond and nanosecond query boundaries by instant', () => {
+    const query = sessionQuery(AlpacaHistoricalKind.Quotes, '/tmp/unused-cache')
+    expect(
+      decodeAlpacaHistoricalQuery({
+        ...query,
+        startAt: '2026-06-01T13:30:00.000000000Z',
+        endAt: '2026-06-01T13:31:59.999999999Z',
+      })._tag,
+    ).toBe('Success')
+    expect(
+      decodeAlpacaHistoricalQuery({
+        ...query,
+        startAt: '2026-06-01T13:30:00.000000001Z',
+        endAt: '2026-06-01T13:30:00.000Z',
+      })._tag,
+    ).toBe('Failure')
+  })
+
   test('rejects a regular-session window whose UTC date differs from sessionDate', async () => {
     const invalidQuery = {
       ...sessionQuery(AlpacaHistoricalKind.Bars, '/tmp/unused-cache'),
@@ -286,6 +304,68 @@ describe('Alpaca historical vendor capture', () => {
         exactDuplicateClient.capture(sessionQuery(AlpacaHistoricalKind.Quotes, `${cacheDirectory}/exact-duplicate`)),
       )
       expect(exactDuplicateExit._tag).toBe('Failure')
+    })
+  })
+
+  test('retains one-sided quotes and original page bytes across a cached restart', async () => {
+    await withTempDirectory(async (cacheDirectory) => {
+      const body = ` ${json({
+        quotes: {
+          AAPL: [
+            { ...quote('2026-06-01T13:30:00.208475662Z', 223.25, 100, 0), as: 0 },
+            { ...quote('2026-06-01T13:30:01.000000001Z', 0, 0, 223.3), as: 100 },
+            { ...quote('2026-06-01T13:30:02.000000001Z', 0, 0, 0), as: 0 },
+            quote('2026-06-01T13:30:03.000000001Z', 223.25, 100, 223.3),
+          ],
+        },
+        next_page_token: null,
+      })}\n`
+      const scripted = makeScriptedClient([{ body }])
+      const client = await Effect.runPromise(makeAlpacaHistoricalClient(scripted.client, credentials))
+      const query = sessionQuery(AlpacaHistoricalKind.Quotes, cacheDirectory)
+      const captured = await runCapture(client.capture(query))
+      expect(captured.kind).toBe(AlpacaHistoricalKind.Quotes)
+      expect(captured.rows).toMatchObject([
+        { bidPrice: 223.25, bidSize: 100, askPrice: 0, askSize: 0 },
+        { bidPrice: 0, bidSize: 0, askPrice: 223.3, askSize: 100 },
+        { bidPrice: 0, bidSize: 0, askPrice: 0, askSize: 0 },
+        { bidPrice: 223.25, bidSize: 100, askPrice: 223.3, askSize: 2 },
+      ])
+      expect(captured.provenance.rowCountsBySymbol).toEqual({ AAPL: 4, MSFT: 0 })
+      const retainedBody = await runWithFileSystem(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem
+          return yield* fs.readFileString(`${cacheDirectory}/${captured.queryHash}/page-00000000.body.json`)
+        }),
+      )
+      expect(retainedBody).toBe(body)
+
+      const restarted = makeScriptedClient([])
+      const restartedClient = await Effect.runPromise(makeAlpacaHistoricalClient(restarted.client, credentials))
+      expect(await runCapture(restartedClient.capture(query))).toEqual(captured)
+      expect(restarted.requests).toHaveLength(0)
+    })
+  })
+
+  test.each([
+    { name: 'crossed positive prices', askPrice: 99, askSize: 2 },
+    { name: 'a zero ask with displayed size', askPrice: 0, askSize: 2 },
+  ])('rejects $name', async ({ askPrice, askSize }) => {
+    await withTempDirectory(async (cacheDirectory) => {
+      const scripted = makeScriptedClient([
+        {
+          body: json({
+            quotes: {
+              AAPL: [{ ...quote('2026-06-01T13:30:00.123456789Z', 100, 100, askPrice), as: askSize }],
+            },
+            next_page_token: null,
+          }),
+        },
+      ])
+      const client = await Effect.runPromise(makeAlpacaHistoricalClient(scripted.client, credentials))
+      const result = await runCaptureExit(client.capture(sessionQuery(AlpacaHistoricalKind.Quotes, cacheDirectory)))
+      expect(result._tag).toBe('Failure')
+      if (result._tag === 'Failure') expect(String(result.cause)).toContain('bid above its ask')
     })
   })
 

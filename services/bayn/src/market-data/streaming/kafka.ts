@@ -220,6 +220,7 @@ export class KafkaMarketProjection extends Context.Service<
   KafkaMarketProjection,
   {
     readonly read: Effect.Effect<KafkaProjectionCut, KafkaMarketFailure>
+    readonly readForLiquidation: Effect.Effect<KafkaProjectionCut, KafkaMarketFailure>
     readonly status: Effect.Effect<{
       readonly epoch: string
       readonly ready: boolean
@@ -311,15 +312,21 @@ export const makeKafkaMarketProjection = (
             (cause) => {
               invalidation = cause
               ready = false
+              lastFailure = failure('consume', 'Kafka assignment invalidated', cause)
             },
           ),
         )
         const terminals = new Map<string, KafkaConsumedRecord>()
+        let recordsSinceYield = 0
         const consume = Stream.fromAsyncIterable(source, (cause) =>
           failure('consume', 'Kafka consumption failed', cause),
         ).pipe(
           Stream.runForEach((record) =>
             Effect.gen(function* () {
+              if (++recordsSinceYield === 256) {
+                recordsSinceYield = 0
+                yield* Effect.yieldNow
+              }
               if (invalidation !== undefined) return
               const previousSequence = projection.sequence
               projection = incorporateMarketRecord(projection, record, universe, clock.currentTimeMillisUnsafe())
@@ -450,9 +457,9 @@ export const makeKafkaMarketProjection = (
       ),
     )
     yield* supervision.pipe(Effect.forever, Effect.forkIn(owner))
-    return {
-      read: Effect.suspend(() => {
-        return ready && bootstrap !== undefined
+    const readCut = (requireHistory: boolean) =>
+      Effect.suspend(() => {
+        return (!requireHistory || ready) && bootstrap !== undefined && lastFailure === undefined
           ? Effect.succeed({
               projection,
               bootstrap,
@@ -464,7 +471,10 @@ export const makeKafkaMarketProjection = (
               }),
             })
           : Effect.fail(lastFailure ?? failure('read', 'Kafka projection is rebuilding required history'))
-      }),
+      })
+    return {
+      read: readCut(true),
+      readForLiquidation: readCut(false),
       status: Effect.sync(() => ({
         epoch: projection.epoch,
         ready,

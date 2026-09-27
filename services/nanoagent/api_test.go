@@ -342,6 +342,10 @@ func TestFileAPIReadResponseDoesNotHoldMutationLockWhileWriting(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("read response did not reach the blocked writer")
 	}
+	if !server.fileMutationMu.TryLock() {
+		t.Fatal("stalled read response still holds the mutation lock")
+	}
+	server.fileMutationMu.Unlock()
 
 	body, err := json.Marshal(writeFileRequest{
 		Path:             "/write.txt",
@@ -351,21 +355,13 @@ func TestFileAPIReadResponseDoesNotHoldMutationLockWhileWriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal write request: %v", err)
 	}
-	writeDone := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		writeDone <- performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
-	}()
-	select {
-	case response := <-writeDone:
-		if response.Code != http.StatusOK {
-			t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
-		}
-		content, readErr := os.ReadFile(filepath.Join(server.workspace.root, "write.txt"))
-		if readErr != nil || string(content) != "write completed" {
-			t.Fatalf("write state = %q err=%v, want completed while read response is blocked", content, readErr)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("write remained blocked by stalled read response")
+	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodPut, "/v1/files/content", body)
+	if response.Code != http.StatusOK {
+		t.Fatalf("write status = %d body = %s", response.Code, response.Body.String())
+	}
+	content, readErr := os.ReadFile(filepath.Join(server.workspace.root, "write.txt"))
+	if readErr != nil || string(content) != "write completed" {
+		t.Fatalf("write state = %q err=%v, want completed while read response is blocked", content, readErr)
 	}
 	releaseRead()
 	select {

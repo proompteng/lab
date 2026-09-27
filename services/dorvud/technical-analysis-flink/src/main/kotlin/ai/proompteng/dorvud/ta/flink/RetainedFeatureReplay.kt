@@ -57,6 +57,7 @@ private val replayJson =
     encodeDefaults = true
     explicitNulls = false
   }
+private val featureJson = Json { encodeDefaults = true }
 private val sha256Pattern = Regex("[0-9a-f]{64}")
 
 internal fun retainedBytesHash(bytes: ByteArray): String =
@@ -228,10 +229,10 @@ private fun replayRetainedFeatureLines(
     rollingStates[key] = rolling.state
     technicalStates[key] = technical.state
     rolling.feature?.let { feature ->
-      publish(config.rollingFeaturesTopic, replayJson.encodeToString(feature), arrival.availableAtMs, feature.material.windowEndMs)
+      publish(config.rollingFeaturesTopic, featureJson.encodeToString(feature), arrival.availableAtMs, feature.material.windowEndMs)
     }
     technical.feature?.let { feature ->
-      publish(config.technicalFeaturesTopic, replayJson.encodeToString(feature), arrival.availableAtMs, feature.material.windowEndMs)
+      publish(config.technicalFeaturesTopic, featureJson.encodeToString(feature), arrival.availableAtMs, feature.material.windowEndMs)
     }
   }
   flush()

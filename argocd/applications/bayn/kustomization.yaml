@@ -22,6 +22,7 @@ resources:
   - service.yaml
   - status-pdb.yaml
   - networkpolicy.yaml
+  - jev-sealedsecret.yaml
 configMapGenerator:
   - name: bayn-egress-proxy
     files:

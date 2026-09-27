@@ -42,7 +42,11 @@ const receiptMaterial = {
     netRealizedReturn: null,
   },
   counts: { cycleCount: 0, completedExecutionCount: 0, realizedCloseCount: 0 },
-  evidence: { status: 'INSUFFICIENT_EVIDENCE' as const, reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'], cashYield: null },
+  evidence: {
+    status: 'INSUFFICIENT_EVIDENCE' as const,
+    reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'] as const,
+    cashYield: null,
+  },
   reconciliationProof: {
     accountingReceiptsExact: false,
     ledgerExact: false,
@@ -53,13 +57,13 @@ const receiptMaterial = {
   },
   executionQuality: {
     status: 'NOT_ELIGIBLE' as const,
-    reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+    reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'] as const,
     evidenceHash: null,
     implementationShortfall: null,
   },
   observedCapacity: {
     status: 'NOT_ELIGIBLE' as const,
-    reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+    reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'] as const,
     evidenceHash: null,
     observations: [],
     boundedObservedReferenceNotionalMicros: null,
@@ -83,6 +87,12 @@ const envelopeMaterial = {
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
 
 describe('forward-performance receipt persistence contract', () => {
+  test('preserves legacy receipts and hashes without inserting episode evidence', () => {
+    const decoded = Result.getOrThrow(decodeForwardPerformanceReceiptEnvelopeResult(envelope))
+    expect(decoded).toEqual(envelope)
+    expect(decoded.receipt).not.toHaveProperty('positionEpisodes')
+  })
+
   test('retains unverified decision hashes only with undetermined execution quality', () => {
     for (const status of ['UNDETERMINED', 'MEASURED'] as const) {
       const unverifiedDecisionHashes = ['9'.repeat(64)]

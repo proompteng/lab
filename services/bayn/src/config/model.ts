@@ -21,6 +21,7 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
 }
 
 export interface RuntimeConfig {
+  readonly jevKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -79,6 +80,7 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase & {
 export const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
 
 export interface ParsedRuntimeConfig {
+  readonly jevKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined

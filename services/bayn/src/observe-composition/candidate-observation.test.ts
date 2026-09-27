@@ -31,7 +31,10 @@ test('fails the observation if its durable audit write fails', async () => {
   })
   const exit = await Effect.runPromiseExit(
     recordCandidateObservation(input).pipe(
-      Effect.provideService(CandidateObservationStore, { record: () => Effect.fail(failure) }),
+      Effect.provideService(CandidateObservationStore, {
+        record: () => Effect.fail(failure),
+        latestJevWindowEnd: () => Effect.die('Unexpected observation read'),
+      }),
     ),
   )
   expect(Exit.isFailure(exit)).toBe(true)

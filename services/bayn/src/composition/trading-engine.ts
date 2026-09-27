@@ -8,7 +8,6 @@ import { makeExecutionProgram, type ExecutionProgramDependencies } from '../exec
 import type { IntradayMarketDataService } from '../market-data'
 import type { MutationCycleExecutionMode, ObserveAutonomousCycleInput } from '../observe-composition/model'
 import { loadStrategyExecutionRiskPolicy, makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
-import { currentUtcInstant } from '../time'
 
 export interface TradingEngineInput {
   readonly authority: ExecutionAuthority
@@ -17,7 +16,7 @@ export interface TradingEngineInput {
     readonly executionCycleClosureStore: ExecutionCycleClosureStoreShape
     readonly blockedCycleIntentStore: BlockedCycleIntentStoreShape
   }
-  readonly execution: Omit<ExecutionProgramDependencies, 'riskPolicy' | 'currentUtcInstant' | 'isCloseOnlyIntent'>
+  readonly execution: Omit<ExecutionProgramDependencies, 'riskPolicy' | 'isCloseOnlyIntent'>
   readonly executionMode: MutationCycleExecutionMode
 }
 
@@ -34,7 +33,6 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
       makeExecutionProgram(input.authority, {
         ...input.execution,
         riskPolicy,
-        currentUtcInstant,
         isCloseOnlyIntent: (intentId) => input.cycle.executionCycleClosureStore.containsIntent(intentId),
       }),
     ).pipe(

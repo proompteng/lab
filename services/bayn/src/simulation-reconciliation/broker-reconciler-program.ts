@@ -7,13 +7,13 @@ import { withObservedSpan, withObservedStage } from '../telemetry'
 import { containRuntimeFailure } from './broker-containment'
 import { readStableBrokerSnapshot } from './broker-history'
 import { persistStableSnapshot } from './broker-persistence'
-import type { ReconciliationPassError, ReconciliationPassResult } from './broker-reconciler-model'
+import type { ReconciliationError, ReconciliationPassError, ReconciliationPassResult } from './broker-reconciler-model'
 
 export interface ReconciliationDependencies {
   readonly read: BrokerReadShape
   readonly store: ReconciliationPersistence
   readonly fence: WriterFenceService
-  readonly now: Effect.Effect<string>
+  readonly now: Effect.Effect<string, ReconciliationError>
 }
 
 const run = (

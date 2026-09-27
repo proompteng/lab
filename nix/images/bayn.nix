@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.intraday-momentum.behavior.v15, verified by the production executable.
-  strategyBehaviorHash = "3da39b009a0cb2052b007ae9ba51f448c16b69281a37cf5ffe122314f1d801af";
-  # Canonical hash of the compiled bayn.intraday-momentum.protocol.v3 document.
-  strategyParameterHash = "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f";
-  strategyName = "intraday-momentum";
+  # SHA-256 identity for bayn.jev.behavior.v3, verified by the production executable.
+  strategyBehaviorHash = "a63b43489d8d386319e0816157766da9225ced9482cef51f547beb6cee3254c0";
+  # Canonical hash of the compiled bayn.jev.protocol.v1 document.
+  strategyParameterHash = "86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd";
+  strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "f38c7d47dc0b8eedb13da1ae7e29faa3da2ce8983fee05f4a2c89dc0ec59eb97";
+  strategyProtocolHash = "131371357a091ac5d09f5a3dd1585b84cb5509e334beef99ee9d5f14600cf908";
   # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
   # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
   executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
@@ -32,8 +32,8 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-6QtJftiUs06mYWX4uXq/6owrkFL2HzBZpal2fQt8lKo=";
-    aarch64-linux = "sha256-OtS04OMVTmP4Llnm9tOYlz3Ngen8rzfFMo4GWCUbyjU=";
+    x86_64-linux = "sha256-E1eWfKcndCEpFyIJU1jKPcsUQhUk2e5rpvCOPYBmg4Q=";
+    aarch64-linux = "sha256-AhXhmEx068otyjCOW67RUO87wpuZknsyHuNgedo0Tp8=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"

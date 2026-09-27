@@ -2024,6 +2024,9 @@ spec:
               Source commit: ${{ commitFrom(vars.gitRepo).ID }}
         - uses: git-push
           as: push
+          retry:
+            timeout: 20m0s
+            errorThreshold: 5
           config:
             path: ${{ vars.outPath }}
             targetBranch: ${{ vars.targetBranch }}
@@ -2118,6 +2121,94 @@ spec:
           config:
             apps:
               - name: restate
+                namespace: argocd
+                sources:
+                  - repoURL: https://github.com/proompteng/lab.git
+                    desiredRevision: ${{ outputs.commit.commit }}
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: codex-devbox
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  vars:
+    - name: gitRepo
+      value: git@github.com:proompteng/lab.git
+    - name: targetBranch
+      value: kargo/codex-devbox
+    - name: srcPath
+      value: ./src
+    - name: outPath
+      value: ./out
+    - name: imageRepo
+      value: registry.ide-newton.ts.net/lab/codex-devbox
+    - name: rootfsImage
+      value: registry.ide-newton.ts.net/lab/codex-devbox-rootfs
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: codex-devbox
+      sources:
+        direct: true
+        autoPromotionOptions:
+          selectionPolicy: NewestFreight
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clone
+          config:
+            repoURL: ${{ vars.gitRepo }}
+            author:
+              name: Kargo
+              email: kargo@proompteng.ai
+            checkout:
+              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+                path: ${{ vars.srcPath }}
+              - branch: ${{ vars.targetBranch }}
+                create: true
+                path: ${{ vars.outPath }}
+        - uses: git-clear
+          config:
+            path: ${{ vars.outPath }}
+        - uses: copy
+          config:
+            inPath: ${{ vars.srcPath }}
+            outPath: ${{ vars.outPath }}
+        - uses: kustomize-set-image
+          config:
+            path: ./out/argocd/applications/codex-devbox
+            images:
+              - image: ${{ vars.imageRepo }}
+                digest: ${{ imageFrom(vars.imageRepo).Digest }}
+        - uses: yaml-update
+          config:
+            path: ./out/argocd/applications/codex-devbox/kustomization.yaml
+            updates:
+              - key: configMapGenerator.0.literals.0
+                value: "ROOTFS_IMAGE=${{ vars.rootfsImage }}@${{ imageFrom(vars.rootfsImage).Digest }}"
+        - uses: git-commit
+          as: commit
+          config:
+            path: ${{ vars.outPath }}
+            message: |
+              kargo(codex-devbox): promote ${{ ctx.targetFreight.name }}
+
+              Source: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+              Build: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+        - uses: git-push
+          config:
+            path: ${{ vars.outPath }}
+            targetBranch: ${{ vars.targetBranch }}
+        - uses: argocd-update
+          retry:
+            timeout: 45m0s
+            errorThreshold: 3
+          config:
+            apps:
+              - name: codex-devbox
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git

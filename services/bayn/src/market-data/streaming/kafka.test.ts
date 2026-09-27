@@ -98,6 +98,27 @@ const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
 describe('Kafka bootstrap and scoped consumption', () => {
+  test('exposes a liquidation cut during history rebuild and invalidates it immediately on reassignment', async () => {
+    const transport = new FakeTransport()
+    transport.offsets = async (_topics, timestamp) =>
+      positions('0').map((position) => ({
+        ...position,
+        offset: timestamp === -1n && position.topic !== universe.topics.quotes ? '100' : '0',
+      }))
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        yield* TestClock.adjust('2 seconds')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        const cut = yield* projection.readForLiquidation
+        expect(kafkaBootstrapComplete(cut.bootstrap, cut.positions)).toBe(false)
+        transport.invalidated?.(new Error('assignment changed'))
+        expect(Exit.isFailure(yield* Effect.exit(projection.readForLiquidation))).toBe(true)
+      }),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
   test('periodic measurements report lookup failure as unknown and close with their consumer scope', async () => {
     const logs: unknown[] = []
     const logger = Logger.make(({ message }) => logs.push(message))

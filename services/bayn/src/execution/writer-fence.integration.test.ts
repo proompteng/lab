@@ -90,11 +90,11 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const fence = yield* WriterFence
+        const poolConnections = 8
         const occupied = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
         const borrowers = yield* Effect.gen(function* () {
-          yield* sql.reserve
-          yield* sql.reserve
+          for (let index = 0; index < poolConnections; index += 1) yield* sql.reserve
           yield* Deferred.succeed(occupied, undefined)
           yield* Deferred.await(release)
         }).pipe(Effect.scoped, Effect.forkChild({ startImmediately: true }))
@@ -116,8 +116,7 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
         yield* Fiber.join(borrowers)
         expect(mutated).toBe(false)
         const reacquired = yield* Effect.gen(function* () {
-          yield* sql.reserve
-          yield* sql.reserve
+          for (let index = 0; index < poolConnections; index += 1) yield* sql.reserve
         }).pipe(Effect.scoped, Effect.timeoutOption('500 millis'))
         expect(Option.isSome(reacquired)).toBe(true)
         yield* fence.transaction(sql`INSERT INTO writer_fence_test VALUES (3)`)

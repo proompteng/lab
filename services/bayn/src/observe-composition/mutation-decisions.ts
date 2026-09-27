@@ -7,7 +7,7 @@ import {
   orderRequestNotionalMicros,
 } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
-import type { CycleCompletionWaitReason, CycleWaitReason } from '../cycle/runner/readiness'
+import type { CycleCompletionWaitReason, CycleWaitingDetails } from '../cycle/runner/readiness'
 import {
   Authority,
   IntentState,
@@ -482,7 +482,7 @@ export interface ExecutionCycleIntentTerminalEvidence {
   readonly terminalOutcome?: TerminalOutcome
   readonly updatedAt: string
   readonly latestMutationAt?: string
-  readonly benignZeroFillIoc?: true
+  readonly terminalDisposition?: ExecutionIntentTerminalDisposition
 }
 
 export interface ExecutionCycleReconciliationEvidence {
@@ -491,26 +491,34 @@ export interface ExecutionCycleReconciliationEvidence {
   readonly accountingExact: boolean
   readonly unknownMutationCount: number
   readonly unknownOrderCount: number
-  readonly openPositionCount?: number
+  readonly openPositionCount: number
 }
 
-export type ExecutionCycleCompletionDecision =
+export type ExecutionPhaseCompletionDecision =
   | { readonly _tag: 'Complete' }
   | {
       readonly _tag: 'Wait'
       readonly reason: CycleCompletionWaitReason
     }
 
-const decideExecutionCycleCompletionDataFirst = (
+const decideExecutionPhaseCompletionDataFirst = (
+  phase: 'ENTRY' | 'CLOSE',
   documentCreatedAt: string,
   intents: readonly ExecutionCycleIntentTerminalEvidence[],
   reconciliation: ExecutionCycleReconciliationEvidence,
-): ExecutionCycleCompletionDecision => {
+): ExecutionPhaseCompletionDecision => {
   if (intents.some((intent) => intent.state !== IntentState.Terminal)) {
     return { _tag: 'Wait', reason: 'intent-nonterminal' }
   }
   if (
-    intents.some((intent) => intent.terminalOutcome !== TerminalOutcome.Filled && intent.benignZeroFillIoc !== true)
+    intents.some(
+      (intent) =>
+        intent.terminalOutcome !== TerminalOutcome.Filled &&
+        !(
+          phase === 'ENTRY' &&
+          (intent.terminalDisposition === 'BENIGN_ZERO_FILL_IOC' || intent.terminalDisposition === 'PARTIAL_FILL_IOC')
+        ),
+    )
   ) {
     return { _tag: 'Wait', reason: 'intent-unsuccessful' }
   }
@@ -520,7 +528,6 @@ const decideExecutionCycleCompletionDataFirst = (
   if (!reconciliation.accountingExact) return { _tag: 'Wait', reason: 'accounting-inexact' }
   if (reconciliation.unknownMutationCount !== 0) return { _tag: 'Wait', reason: 'unknown-mutation' }
   if (reconciliation.unknownOrderCount !== 0) return { _tag: 'Wait', reason: 'unknown-order' }
-  if ((reconciliation.openPositionCount ?? 0) !== 0) return { _tag: 'Wait', reason: 'open-position' }
   const latestEvidenceAt = Math.max(
     Date.parse(documentCreatedAt),
     ...intents.flatMap((intent) => [
@@ -531,10 +538,11 @@ const decideExecutionCycleCompletionDataFirst = (
   if (Date.parse(reconciliation.reconciledAt) <= latestEvidenceAt) {
     return { _tag: 'Wait', reason: 'reconciliation-not-later' }
   }
+  if (phase === 'CLOSE' && reconciliation.openPositionCount !== 0) return { _tag: 'Wait', reason: 'open-position' }
   return { _tag: 'Complete' }
 }
 
-export const decideExecutionCycleCompletion = Pipeable.dual(3, decideExecutionCycleCompletionDataFirst)
+export const decideExecutionPhaseCompletion = Pipeable.dual(4, decideExecutionPhaseCompletionDataFirst)
 
 export type PreparedMutationRecoveryDecision =
   | { readonly _tag: 'NoRecovery' }
@@ -635,7 +643,7 @@ export type PreparedMutationCycleStep =
         | CycleTerminalReason.Risk
       readonly observedAt: string
     }
-  | { readonly _tag: 'Wait'; readonly observedAt: string; readonly waitReason: CycleWaitReason }
+  | ({ readonly _tag: 'Wait'; readonly observedAt: string } & CycleWaitingDetails)
   | { readonly _tag: 'Complete'; readonly observedAt: string }
 
 export type BoundMutationCycleOutcome = Exclude<PreparedMutationCycleStep, { readonly _tag: 'Execute' }>

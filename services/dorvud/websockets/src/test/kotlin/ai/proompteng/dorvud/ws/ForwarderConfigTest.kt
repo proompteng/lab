@@ -10,6 +10,37 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class ForwarderConfigTest {
+  @Test
+  fun `latest observations require explicit missing symbols and a bounded single IEX producer`() {
+    val base =
+      mapOf(
+        "ALPACA_KEY_ID" to "key",
+        "ALPACA_SECRET_KEY" to "secret",
+        "SYMBOLS" to "AMD,SPY",
+        "ALPACA_MARKET_DATA_QUOTES_SYMBOLS" to "SPY",
+        "ALPACA_MARKET_DATA_TRADES_SYMBOLS" to "SPY",
+      )
+    assertEquals(null, ForwarderConfig.fromEnv(base).latestMarketData)
+    val enabled = base + ("ALPACA_LATEST_SYMBOLS" to "AMD")
+    assertEquals(LatestMarketDataConfig(listOf("AMD"), 2000, 10_000), ForwarderConfig.fromEnv(enabled).latestMarketData)
+    for (invalid in listOf(
+      mapOf("ALPACA_LATEST_SYMBOLS" to ""),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "AMD,AMD"),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "MSFT"),
+      mapOf("ALPACA_LATEST_SYMBOLS" to "SPY"),
+      mapOf("ALPACA_FEED" to "sip"),
+      mapOf("SHARD_COUNT" to "2"),
+      mapOf("JANGAR_SYMBOLS_URL" to "https://example.test"),
+      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "100"),
+      mapOf("ALPACA_LATEST_POLL_INTERVAL_MS" to "bad"),
+      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "10001"),
+      mapOf("ALPACA_LATEST_MAX_AGE_MS" to "0"),
+    )) {
+      assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(enabled + invalid) }
+    }
+    assertFailsWith<IllegalArgumentException> { ForwarderConfig.fromEnv(base + ("ALPACA_LATEST_MAX_AGE_MS" to "1000")) }
+  }
+
   private val authoritativeUniverse =
     mapOf(
       "SYMBOLS" to "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY",
