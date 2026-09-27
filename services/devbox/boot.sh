@@ -7,8 +7,8 @@ export HOME=/root
 mountpoint -q "$state" || { echo 'Persistent block filesystem is not mounted' >&2; exit 1; }
 install -d -m 0700 "$state/nix" "$state/ssh" "$state/machine" "$state/metadata" "$state/docker" "$state/containerd"
 rsync -a --ignore-existing /nix/ "$state/nix/"
-rsync -a --ignore-existing /home/ "$state/home/"
-chmod 0755 "$state/home"
+install -d -m 0755 "$state/home"
+devbox-seed-home /home/codex "$state/home/codex"
 
 bind() {
   install -d "$2"

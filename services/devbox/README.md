@@ -5,6 +5,11 @@ The Argo Application `devbox` owns its StatefulSet using `kata-dragonball`.
 The Kubernetes namespace remains `codex-devbox` to preserve the existing 500 GiB
 raw-block PVC, access Secret, and LAN SSH address.
 
+Scheduling also requires `runtime.proompteng.ai/kata-dragonball-persistent-block=ready`.
+Apply that capability only after the patched r5 agent passes Dragonball disk
+initialization and a new-Pod persistence check. The general Dragonball runtime
+label alone does not prove persistent block support.
+
 Dragonball runs the development image directly through inline virtio-fs. The Kata
 agent mounts the persistent ext4 disk at `/persist`. The entrypoint binds persistent
 home, Nix store, Docker and containerd data, and workstation metadata before starting systemd as
@@ -58,8 +63,9 @@ namespace, PVC UID, access Secret, and Service address throughout:
    that the hold survives ApplicationSet reconciliation before merging.
 3. After the reviewed merge, sync the Kargo configuration and only the `platform`
    ApplicationSet from the root Application. The committed ApplicationSet replaces
-   the old entry with `devbox` and removes the temporary ignore rule. The old
-   Application now has no deletion finalizer and leaves its workloads intact.
+   the old entry with `devbox`. The old Application now has no deletion finalizer
+   and leaves its workloads intact. Remove the temporary ignore rule after the
+   old entry is absent from the live ApplicationSet.
 4. Let Kargo discover the successfully published image and promote it to `kargo/devbox`. Verify the
    generated revision, image digest, and `kata-dragonball` runtime before Argo sync.
    If the Application was recreated after promotion, re-promote the same Freight.
@@ -113,6 +119,8 @@ Add `codex-turin` in the desktop app's Connections settings and open
 `/home/codex/src/lab`.
 The image contains the version-pinned official standalone Codex installation under
 the user's persistent home. It can bootstrap the daemon without a device login.
+On boot, the image refreshes its managed standalone package and command links while
+preserving personal configuration, skills, memories, credentials, and workspaces.
 The first-boot service initializes the daemon, clones the source revision used to
 build the image, installs workspace dependencies, and checks the repository toolchain.
 Existing checkouts are preserved.

@@ -28,6 +28,7 @@ spec:
         kubernetes.io/hostname: turin
         kubernetes.io/arch: amd64
         runtime.proompteng.ai/kata-dragonball: ready
+        runtime.proompteng.ai/kata-dragonball-persistent-block: ready
       containers:
         - name: devbox
           image: registry.ide-newton.ts.net/lab/codex-devbox:unpublished
