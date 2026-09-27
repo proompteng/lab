@@ -44,9 +44,11 @@ PyPI, so the installer cannot substitute a different index's same-version wheel.
 The build and runtime share that locked Python environment. Upstream's CMake configuration
 requires Torch and ICU for its speech targets even when only the decision server is compiled.
 
-`patches/cpu-expert-architecture.patch` limits upstream's x86 AVX compiler flags to x86 hosts.
-The existing architecture guards select upstream's scalar implementation on arm64. This changes
-the build configuration only; decision logic and model kernels retain the pinned upstream code.
+`patches/cpu-expert-architecture.patch` limits upstream's x86 AVX compiler flags to x86 hosts and
+guards four Q4/Q5 dispatch calls whose VNNI implementations exist only on x86. Arm64 uses the
+existing scalar arithmetic. The image checks generic host compilation before the CUDA build and
+runs upstream's CPU expert numerical tests on both architectures. The patch changes architecture
+selection; it does not change expert arithmetic or GPU kernels.
 
 The build pins NCCL development headers to `2.28.3-1+cuda13.0`, matching the base image's runtime.
 It also pins the upstream build's otherwise floating Minja dependency to
@@ -91,8 +93,8 @@ docker build --target test -t rune-proof .
 ```
 
 The image build compiles the pinned engine and runs its model-free decisions, decisions-v1 golden,
-and thinking-contract tests. A CUDA driver stub is used only for loading those CPU tests during
-the build. It is not installed as a runtime driver. The final image also tests model-cache failure
+thinking-contract and CPU expert numerical tests. A CUDA driver stub is used only for loading
+those CPU tests during the build. It is not installed as a runtime driver. The final image also tests model-cache failure
 handling and imports the actual checkpoint converters. These checks do not prove GPU inference.
 
 The `Rune images` workflow tests amd64 and arm64 images. On `main`, it publishes and signs the

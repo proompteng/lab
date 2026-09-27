@@ -13,3 +13,66 @@ diff --git a/csrc/CMakeLists.txt b/csrc/CMakeLists.txt
  sinfer_cuda_archive(sinfer_ops)
  target_link_libraries(sinfer_ops PUBLIC sinfer_core PRIVATE sinfer_nvfp4_tma sinfer_nvfp4_cutlass sinfer_trtllm_moe CUDA::cublasLt)
  
+diff --git a/csrc/src/serve/ops/cpu_expert_compute/cpu_expert_compute.cpp b/csrc/src/serve/ops/cpu_expert_compute/cpu_expert_compute.cpp
+--- a/csrc/src/serve/ops/cpu_expert_compute/cpu_expert_compute.cpp
++++ b/csrc/src/serve/ops/cpu_expert_compute/cpu_expert_compute.cpp
+@@ -761,10 +761,13 @@
+     const std::int8_t* xqa, const float* xsa, const std::int32_t* xca, const std::int8_t* xqb,
+     const float* xsb, const std::int32_t* xcb, int k, float& out0a, float& out1a, float& out0b,
+     float& out1b) {
++#if defined(__x86_64__) && defined(__AVX512BW__)
+     if (kUseVnni && k % 64 == 0) {
+         dot_two_rows_two_tokens_q4_vnni(codes0, scales0, mins0, codes1, scales1, mins1, xqa, xsa,
+                                         xca, xqb, xsb, xcb, k, out0a, out1a, out0b, out1b);
+-    } else {
++    } else
++#endif
++    {
+         out0a = dot_row_q4_scalar(codes0, scales0, mins0, xqa, xsa, k);
+         out1a = dot_row_q4_scalar(codes1, scales1, mins1, xqa, xsa, k);
+         out0b = dot_row_q4_scalar(codes0, scales0, mins0, xqb, xsb, k);
+@@ -777,10 +780,13 @@
+                             const std::uint16_t* scales1, const std::uint16_t* mins1,
+                             const std::int8_t* xq, const float* xs, const std::int32_t* xc, int k,
+                             float& out0, float& out1) {
++#if defined(__x86_64__) && defined(__AVX512BW__)
+     if (kUseVnni && k % 64 == 0) {
+         dot_two_rows_q4_vnni(codes0, scales0, mins0, codes1, scales1, mins1, xq, xs, xc, k, out0,
+                              out1);
+-    } else {
++    } else
++#endif
++    {
+         out0 = dot_row_q4_scalar(codes0, scales0, mins0, xq, xs, k);
+         out1 = dot_row_q4_scalar(codes1, scales1, mins1, xq, xs, k);
+     }
+@@ -792,10 +798,13 @@
+     const std::int8_t* xqa, const float* xsa, const std::int32_t* xca, const std::int8_t* xqb,
+     const float* xsb, const std::int32_t* xcb, int k, float& out0a, float& out1a, float& out0b,
+     float& out1b) {
++#if defined(__x86_64__) && defined(__AVX512BW__)
+     if (kUseVnni && k % 64 == 0) {
+         dot_two_rows_two_tokens_q5_vnni(codes0, scales0, mins0, codes1, scales1, mins1, xqa, xsa,
+                                         xca, xqb, xsb, xcb, k, out0a, out1a, out0b, out1b);
+-    } else {
++    } else
++#endif
++    {
+         out0a = dot_row_q5_scalar(codes0, scales0, mins0, xqa, xsa, k);
+         out1a = dot_row_q5_scalar(codes1, scales1, mins1, xqa, xsa, k);
+         out0b = dot_row_q5_scalar(codes0, scales0, mins0, xqb, xsb, k);
+@@ -808,10 +817,13 @@
+                             const std::uint16_t* scales1, const std::uint16_t* mins1,
+                             const std::int8_t* xq, const float* xs, const std::int32_t* xc, int k,
+                             float& out0, float& out1) {
++#if defined(__x86_64__) && defined(__AVX512BW__)
+     if (kUseVnni && k % 64 == 0) {
+         dot_two_rows_q5_vnni(codes0, scales0, mins0, codes1, scales1, mins1, xq, xs, xc, k, out0,
+                              out1);
+-    } else {
++    } else
++#endif
++    {
+         out0 = dot_row_q5_scalar(codes0, scales0, mins0, xq, xs, k);
+         out1 = dot_row_q5_scalar(codes1, scales1, mins1, xq, xs, k);
+     }

@@ -25,7 +25,9 @@ RUN curl --fail --location --retry 3 https://codeload.github.com/invergent-ai/su
     && rm /tmp/source.tar.gz
 COPY patches/cpu-expert-architecture.patch /tmp/cpu-expert-architecture.patch
 RUN git apply --check /tmp/cpu-expert-architecture.patch \
-    && git apply /tmp/cpu-expert-architecture.patch
+    && git apply /tmp/cpu-expert-architecture.patch \
+    && c++ -std=c++20 -fsyntax-only -I csrc/src/serve -I /usr/local/cuda/include \
+       csrc/src/serve/ops/cpu_expert_compute/cpu_expert_compute.cpp
 RUN curl --fail --location --retry 3 https://codeload.github.com/ochafik/minja/tar.gz/143465ab2f924f7729a8ca5313a12fb83a106d6d -o /tmp/minja.tar.gz \
     && echo '8f9951345f77d4474826b9b4fedcd7ea3bd521d7c086cd78233e7ecdfec8bc87  /tmp/minja.tar.gz' | sha256sum --check \
     && mkdir /opt/minja && tar -xzf /tmp/minja.tar.gz -C /opt/minja --strip-components=1 \
@@ -38,11 +40,11 @@ RUN cmake -S csrc -B csrc/build-serve -G Ninja \
     -DSUROGATE_BUILD_SERVE=ON -DSUROGATE_REQUIRE_SERVE=ON -DSUROGATE_SERVE_TESTS=ON \
     -DSUROGATE_SERVE_CUDA_ARCHS=120a -DCMAKE_CUDA_ARCHITECTURES=120a -DSINFER_ENABLE_FFMPEG=OFF
 RUN cmake --build csrc/build-serve --parallel 4 --target sinfer-serve \
-    sinfer_decisions_test sinfer_decisions_v1_test sinfer_decisions_thinking_test
+    sinfer_decisions_test sinfer_decisions_v1_test sinfer_decisions_thinking_test sinfer_cpu_expert_compute_test
 RUN mkdir /tmp/cuda-test-stubs \
     && ln -s /usr/local/cuda/lib64/stubs/libcuda.so /tmp/cuda-test-stubs/libcuda.so.1 \
     && (LD_LIBRARY_PATH=/tmp/cuda-test-stubs:$LD_LIBRARY_PATH \
-        ctest --test-dir csrc/build-serve --output-on-failure -R '^sinfer_decisions(_v1|_thinking)?_test$' --no-tests=error > /tmp/native-tests.log 2>&1 \
+        ctest --test-dir csrc/build-serve --output-on-failure -R '^sinfer_(decisions(_v1|_thinking)?|cpu_expert_compute)_test$' --no-tests=error > /tmp/native-tests.log 2>&1 \
         || { cat /tmp/native-tests.log; exit 1; }) \
     && cat /tmp/native-tests.log \
     && rm -r /tmp/cuda-test-stubs
