@@ -166,6 +166,22 @@ const expected = {
       'nix/toolchain-doctor.sh',
     ],
   },
+  rune: {
+    creationCriteria: 'single',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('rune')],
+    apps: ['rune'],
+    includePaths: [
+      'services/rune',
+      'packages/scripts/src/shared/docker.ts',
+      '.github/workflows/rune-images.yml',
+      'argocd/applications/rune',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/platform.yaml',
+      'bun.lock',
+    ],
+  },
   restate: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -980,7 +996,9 @@ describe('Kargo direct-push GitOps contract', () => {
               ? '1h15m0s'
               : ['forgejo', 'codex-devbox'].includes(stageName)
                 ? '45m0s'
-                : '20m0s',
+                : stageName === 'rune'
+                  ? '4h0m0s'
+                  : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>

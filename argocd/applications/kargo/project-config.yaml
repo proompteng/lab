@@ -76,3 +76,6 @@ spec:
     - stageSelector:
         name: restate
       autoPromotionEnabled: true
+    - stageSelector:
+        name: rune
+      autoPromotionEnabled: true

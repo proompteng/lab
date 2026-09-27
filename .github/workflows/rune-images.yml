@@ -1,0 +1,183 @@
+name: Rune images
+
+on:
+  pull_request:
+    paths:
+      - 'services/rune/**'
+      - 'packages/scripts/src/shared/docker.ts'
+      - '.github/workflows/rune-images.yml'
+      - 'argocd/applications/rune/**'
+      - 'argocd/applications/kargo/**'
+      - 'argocd/applicationsets/platform.yaml'
+      - 'bun.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'services/rune/**'
+      - 'packages/scripts/src/shared/docker.ts'
+      - '.github/workflows/rune-images.yml'
+      - 'argocd/applications/rune/**'
+      - 'argocd/applications/kargo/**'
+      - 'argocd/applicationsets/platform.yaml'
+      - 'bun.lock'
+
+concurrency:
+  group: rune-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: registry.ide-newton.ts.net/lab/rune
+
+jobs:
+  build:
+    name: Rune build and native contract tests (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install script dependencies
+        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/scripts
+      - name: Resolve source metadata
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "timestamp=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - name: Compile native targets and retain cache
+        uses: docker/build-push-action@v6
+        with:
+          context: services/rune
+          target: compiled
+          platforms: linux/${{ matrix.architecture }}
+          provenance: false
+          cache-from: |
+            type=gha,scope=rune-compiled-${{ matrix.architecture }}
+            type=gha,scope=rune-runtime-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=rune-compiled-${{ matrix.architecture }}
+      - name: Build runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: services/rune
+          target: test
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          provenance: false
+          tags: ${{ env.IMAGE }}:prepare-sha-${{ github.sha }}-run-${{ github.run_id }}-${{ matrix.architecture }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.source.outputs.timestamp }}
+          cache-from: |
+            type=gha,scope=rune-runtime-${{ matrix.architecture }}
+            type=gha,scope=rune-compiled-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=rune-runtime-${{ matrix.architecture }}
+      - name: Retain native and Python contract results
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/rune
+          reference="${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"
+          docker run --rm --entrypoint python3 "$reference" -m unittest -v test_runtime.py 2>&1 | tee .artifacts/rune/model-cache-tests.log
+          docker run --rm --entrypoint python3 "$reference" -c 'import surogate.serve.convert.gemma_vl.convert; import surogate.serve.convert.gemma4_moe.convert; from runtime import read_lock; from pathlib import Path; print(read_lock(Path("model-lock.json"))["revision"])' > .artifacts/rune/imports.log
+          proof="$(docker create --entrypoint python3 "$reference")"
+          trap 'docker rm -v "$proof" >/dev/null' EXIT
+          docker cp "$proof:/opt/rune/native-tests.log" .artifacts/rune/
+          docker image inspect "$reference" > .artifacts/rune/runtime-image.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rune-proof-${{ matrix.architecture }}-${{ github.run_id }}
+          path: .artifacts/rune
+          if-no-files-found: error
+      - name: Publish tested platform image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build]
+    runs-on: arc-arm64
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: sigstore/cosign-installer@v3.10.0
+      - name: Assemble and validate the immutable release index
+        id: release
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/rune
+          source_timestamp="$(git show -s --format=%cI HEAD)"
+          for architecture in amd64 arm64; do
+            reference="${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${architecture}"
+            crane config --platform "linux/${architecture}" "$reference" | jq -e --arg sha "$GITHUB_SHA" --arg time "$source_timestamp" \
+              --arg arch "$architecture" \
+              '.architecture == $arch and .config.Labels["org.opencontainers.image.revision"] == $sha and
+               .config.Labels["org.opencontainers.image.created"] == $time' >/dev/null
+          done
+          reference="${IMAGE}:sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          docker buildx imagetools create --tag "$reference" \
+            --annotation "index:org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "index:ai.proompteng.github-actions-run-id=${GITHUB_RUN_ID}" \
+            --annotation 'index:ai.proompteng.github-actions-build-conclusion=success' \
+            "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-amd64" \
+            "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-arm64"
+          crane manifest "$reference" > .artifacts/rune/index.json
+          jq -e --arg sha "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
+            --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            '.annotations["org.opencontainers.image.revision"] == $sha and
+             .annotations["org.opencontainers.image.source"] == $source and
+             .annotations["ai.proompteng.github-actions-run-id"] == $run and
+             .annotations["ai.proompteng.github-actions-build-conclusion"] == "success" and
+             ([.manifests[].platform | .os + "/" + .architecture] | sort) == ["linux/amd64", "linux/arm64"]' \
+            .artifacts/rune/index.json >/dev/null
+          digest="$(crane digest "$reference")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign sign --yes "${IMAGE}@${digest}"
+          cosign verify --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/rune-images.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "${IMAGE}@${digest}" \
+            > .artifacts/rune/signature.json
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rune-release-${{ github.run_id }}
+          path: .artifacts/rune
+          if-no-files-found: error
+      - name: Expose the validated digest to Kargo
+        env:
+          DIGEST: ${{ steps.release.outputs.digest }}
+        run: |
+          set -euo pipefail
+          alias="${IMAGE}:kargo-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          if existing="$(crane digest "$alias" 2>/tmp/rune-alias-error)"; then
+            test "$existing" = "$DIGEST"
+          else
+            grep -Eiq 'manifest[[:space:]_-]+(unknown|not[[:space:]]+found)|manifest[^[:cntrl:]]*404|404[^[:cntrl:]]*(manifest|not[[:space:]]+found)' /tmp/rune-alias-error
+            crane tag "${IMAGE}@${DIGEST}" "kargo-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          fi
+          test "$(crane digest "$alias")" = "$DIGEST"
