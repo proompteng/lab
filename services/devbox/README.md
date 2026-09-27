@@ -70,6 +70,10 @@ Add `codex-turin` in the desktop app's Connections settings and open
 `/home/codex/src/lab`. The first-boot service has already initialized the Codex daemon,
 cloned the source revision used to build the image, installed the workspace
 dependencies, and checked the repository toolchain. Existing checkouts are preserved.
+`devbox-install-deps` first materializes the frozen dependency graph, then forces a
+normal install with serialized lifecycle scripts. This avoids a cold-install race
+in the pinned Bun release while retaining the workspace's isolated dependency
+layout and running its trusted native builds and postinstall commands.
 
 ## Verify development and persistence
 

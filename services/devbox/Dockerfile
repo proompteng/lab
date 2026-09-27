@@ -4,7 +4,6 @@ RUN GOBIN=/out CGO_ENABLED=0 go install github.com/google/go-containerregistry/c
 
 FROM mirror.gcr.io/ubuntu:24.04 AS rootfs
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
-ARG SOURCE_REVISION
 ARG CODEX_VERSION=0.153.4
 ARG RUST_VERSION=1.90.0
 ENV DEBIAN_FRONTEND=noninteractive container=kata
@@ -37,9 +36,11 @@ RUN npm install --global --prefix /opt/devbox/npm "@openai/codex@${CODEX_VERSION
     ./rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_VERSION}" --component rustfmt,clippy && \
     rm /tmp/rustup-init /tmp/rustup-init.sha256
 COPY . /opt/lab-seed
+COPY --chmod=0755 services/devbox/install-deps.sh /usr/local/bin/devbox-install-deps
 WORKDIR /opt/lab-seed
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/devbox/playwright
-RUN bun install --frozen-lockfile --linker=hoisted && \
+ARG SOURCE_REVISION
+RUN devbox-install-deps && \
     bunx --no-install playwright install --with-deps chromium && \
     test -n "${SOURCE_REVISION}" && \
     printf '%s\n' "${SOURCE_REVISION}" > /opt/devbox/source-revision && \

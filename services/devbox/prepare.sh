@@ -26,7 +26,7 @@ if [[ ! -f /home/codex/.codex/AGENTS.md ]]; then
   chown codex:codex /home/codex/.codex/AGENTS.md
 fi
 if [[ ! -f /home/codex/.devbox-initialized ]]; then
-  runuser -l codex -c 'cd ~/src/lab && bun install --frozen-lockfile --linker=hoisted'
+  runuser -l codex -c 'cd ~/src/lab && devbox-install-deps'
   runuser -l codex -c 'cd ~/src/lab && nix develop --command toolchain-doctor'
   touch /home/codex/.devbox-initialized
   chown codex:codex /home/codex/.devbox-initialized
