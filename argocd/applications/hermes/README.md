@@ -33,8 +33,8 @@ zero replicas. Publishing a new image does not restart Hermes.
 
 After a reviewed re-enablement restores `kargo/hermes-toolchain`, its Stage authorization, and automatic promotion, Kargo
 again copies the selected source into that deployment branch and updates the immutable toolchain reference. Freight,
-Stage, and the resulting branch commit are the deployment record. Do not bypass image delivery with a digest bump PR,
-release PR, manual SHA edit, or manual Argo sync.
+Stage, and the resulting branch commit are the deployment record.
+There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.
 
 The StatefulSet is the only committed surface that owns the current Hermes toolchain digest. Do not copy that ephemeral
 digest into documentation, scripts, or PR descriptions; derive it from the Kargo-managed StatefulSet or Freight when
