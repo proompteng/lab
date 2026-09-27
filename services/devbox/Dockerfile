@@ -64,7 +64,7 @@ ENV CARGO_HOME=/home/codex/.cargo HOME=/home/codex
 CMD ["/sbin/init"]
 
 FROM mirror.gcr.io/alpine:3.22 AS launcher
-RUN apk add --no-cache bash ca-certificates coreutils util-linux rsync
+RUN apk add --no-cache bash ca-certificates coreutils util-linux rsync tar
 COPY --from=registry-client /out/crane /usr/local/bin/crane
 COPY services/devbox/boot.sh /usr/local/bin/devbox-boot
 COPY services/devbox/exec.sh /usr/local/bin/devbox-exec

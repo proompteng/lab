@@ -18,7 +18,9 @@ workload; the developer connects over key-only SSH from the provider LAN.
 
 The `Codex devbox` workflow validates both native architectures and both images.
 It checks the launcher's populated 512 MiB filesystem and exercises the development
-toolchain before publication. Main builds publish signed immutable indexes.
+toolchain before publication. The launcher also extracts an archive with its installed
+tar and verifies file contents, executable permissions, ownership, and symlinks.
+Main builds publish signed immutable indexes.
 Both images must finish validation and the release artifact must upload before
 either Kargo discovery tag is exposed.
 Publication uses the shared Docker retry helper to wait through the registry's
