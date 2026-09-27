@@ -50,6 +50,12 @@ existing scalar arithmetic. The image checks generic host compilation before the
 runs upstream's CPU expert numerical tests on both architectures. The patch changes architecture
 selection; it does not change expert arithmetic or GPU kernels.
 
+`patches/decisions-fp-contract.patch` disables fused multiply-add contraction only in the host
+decision-protocol source. Its score accumulation must preserve the separate multiplication and
+addition rounding used by the independent Python reference. ARM64 otherwise differs by one bit
+on two golden scores. The existing exact protocol assertions and golden answers remain unchanged;
+GPU kernel compilation is unaffected.
+
 The build pins NCCL development headers to `2.28.3-1+cuda13.0`, matching the base image's runtime.
 It also pins the upstream build's otherwise floating Minja dependency to
 `143465ab2f924f7729a8ca5313a12fb83a106d6d` and verifies its archive SHA-256 before applying

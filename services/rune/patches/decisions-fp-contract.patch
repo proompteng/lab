@@ -1,0 +1,14 @@
+diff --git a/csrc/CMakeLists.txt b/csrc/CMakeLists.txt
+--- a/csrc/CMakeLists.txt
++++ b/csrc/CMakeLists.txt
+@@ -1604,6 +1604,10 @@ if(SINFER_BUILD_SERVE)
+     ${SERVE_ROOT}/serve/http_server.cpp
+     ${SERVE_ROOT}/serve/responses_http.cpp
+     ${SERVE_ROOT}/serve/serve_options.cpp)
++  # Decisions v1 pins Python's separate multiply/add rounding, including on ARM64.
++  set_source_files_properties(${SERVE_ROOT}/serve/decisions_schema.cpp PROPERTIES
++    COMPILE_OPTIONS "-ffp-contract=off")
++
+   sinfer_internal_includes(sinfer_serve)
+   target_include_directories(sinfer_serve PRIVATE
+     ${SUROGATE_VENDOR_DIR}/cpp-httplib)

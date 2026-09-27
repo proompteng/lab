@@ -41,6 +41,11 @@ RUN cmake -S csrc -B csrc/build-serve -G Ninja \
     -DSUROGATE_SERVE_CUDA_ARCHS=120a -DCMAKE_CUDA_ARCHITECTURES=120a -DSINFER_ENABLE_FFMPEG=OFF
 RUN cmake --build csrc/build-serve --parallel 4 --target sinfer-serve \
     sinfer_decisions_test sinfer_decisions_v1_test sinfer_decisions_thinking_test sinfer_cpu_expert_compute_test
+COPY patches/decisions-fp-contract.patch /tmp/decisions-fp-contract.patch
+RUN git apply --check /tmp/decisions-fp-contract.patch \
+    && git apply /tmp/decisions-fp-contract.patch \
+    && cmake --build csrc/build-serve --parallel 4 --target sinfer-serve \
+       sinfer_decisions_test sinfer_decisions_v1_test sinfer_decisions_thinking_test sinfer_cpu_expert_compute_test
 RUN mkdir /tmp/cuda-test-stubs \
     && ln -s /usr/local/cuda/lib64/stubs/libcuda.so /tmp/cuda-test-stubs/libcuda.so.1 \
     && (LD_LIBRARY_PATH=/tmp/cuda-test-stubs:$LD_LIBRARY_PATH \
