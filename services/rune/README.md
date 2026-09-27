@@ -32,13 +32,15 @@ Regenerate the manifests and dependency lock from the repository root:
 ```sh
 python3 services/rune/lock_model.py
 uv pip compile services/rune/requirements.in --python-version 3.12 --universal \
-  --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match \
-  --emit-index-url --generate-hashes -o services/rune/requirements.txt
+  --index-url https://pypi.org/simple --emit-index-url --generate-hashes --no-cache \
+  -o services/rune/requirements.txt
 ```
 
 Python's CPU Torch wheel performs checkpoint preparation. The compiled CUDA engine performs
 inference. The image does not install Surogate's training stack or rely on a released wheel with
 different engine code.
+The two Linux Torch wheels use explicit publisher URLs. All other Python packages come from
+PyPI, so the installer cannot substitute a different index's same-version wheel.
 
 The build pins NCCL development headers to `2.28.3-1+cuda13.0`, matching the base image's runtime.
 It also pins the upstream build's otherwise floating Minja dependency to
