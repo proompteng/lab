@@ -22,8 +22,10 @@ toolchain before publication. Main builds publish signed immutable indexes.
 Both images must finish validation and the release artifact must upload before
 either Kargo discovery tag is exposed.
 Publication uses the shared Docker retry helper to wait through the registry's
-single-writer queue. Retries are bounded by the job timeout; authentication and
-other nonretryable errors still fail the release immediately.
+single-writer queue. Each build job allows three hours because the two compressed
+development filesystems total about 7 GiB and uploads share a 1 MiB/s writer.
+The 24 retry attempts remain bounded by that timeout; authentication and other
+nonretryable errors still fail the release immediately.
 
 The `codex-devbox` Warehouse binds the two images to one source commit and workflow
 run. Its Stage writes their digests into the Kustomize inputs on
