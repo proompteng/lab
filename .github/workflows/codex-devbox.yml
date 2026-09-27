@@ -107,6 +107,7 @@ jobs:
               rustc --version
               cargo --version
               bun run --filter @proompteng/codex build
+              (cd services/bumba && node -e "require(\"tree-sitter-json\")")
               cd services/nanoagent
               GOWORK=off go test ./...
             '
