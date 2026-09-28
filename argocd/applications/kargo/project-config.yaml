@@ -8,7 +8,7 @@ metadata:
 spec:
   promotionPolicies:
     - stageSelector:
-        name: codex-devbox
+        name: devbox
       autoPromotionEnabled: true
     - stageSelector:
         name: proompteng

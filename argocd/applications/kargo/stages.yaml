@@ -2129,7 +2129,7 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
-  name: codex-devbox
+  name: devbox
   namespace: lab-delivery
   labels:
     delivery.proompteng.ai/managed-by: kargo
@@ -2138,19 +2138,17 @@ spec:
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
-      value: kargo/codex-devbox
+      value: kargo/devbox
     - name: srcPath
       value: ./src
     - name: outPath
       value: ./out
     - name: imageRepo
       value: registry.ide-newton.ts.net/lab/codex-devbox
-    - name: rootfsImage
-      value: registry.ide-newton.ts.net/lab/codex-devbox-rootfs
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: codex-devbox
+        name: devbox
       sources:
         direct: true
         autoPromotionOptions:
@@ -2179,22 +2177,16 @@ spec:
             outPath: ${{ vars.outPath }}
         - uses: kustomize-set-image
           config:
-            path: ./out/argocd/applications/codex-devbox
+            path: ./out/argocd/applications/devbox
             images:
               - image: ${{ vars.imageRepo }}
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: yaml-update
-          config:
-            path: ./out/argocd/applications/codex-devbox/kustomization.yaml
-            updates:
-              - key: configMapGenerator.0.literals.0
-                value: "ROOTFS_IMAGE=${{ vars.rootfsImage }}@${{ imageFrom(vars.rootfsImage).Digest }}"
         - uses: git-commit
           as: commit
           config:
             path: ${{ vars.outPath }}
             message: |
-              kargo(codex-devbox): promote ${{ ctx.targetFreight.name }}
+              kargo(devbox): promote ${{ ctx.targetFreight.name }}
 
               Source: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
               Build: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
@@ -2208,7 +2200,7 @@ spec:
             errorThreshold: 3
           config:
             apps:
-              - name: codex-devbox
+              - name: devbox
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git

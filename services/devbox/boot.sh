@@ -1,74 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo "devbox boot failed at line $LINENO" >&2' ERR
 
-: "${DEVBOX_ROOTFS_IMAGE:?Set the immutable root filesystem image}"
-if [[ ! "$DEVBOX_ROOTFS_IMAGE" =~ ^registry\.ide-newton\.ts\.net/lab/codex-devbox-rootfs@sha256:[a-f0-9]{64}$ ]]; then
-  echo 'DEVBOX_ROOTFS_IMAGE must be an immutable devbox root filesystem reference' >&2
-  exit 1
-fi
 state=/persist
+export HOME=/root
 mountpoint -q "$state" || { echo 'Persistent block filesystem is not mounted' >&2; exit 1; }
-digest="${DEVBOX_ROOTFS_IMAGE##*@sha256:}"
-root="$state/roots/$digest"
-install -d -m 0700 "$state/roots" "$state/nix" "$state/ssh"
-for pending in "$state/roots"/.extract.*; do
-  [[ -d "$pending" && ! -L "$pending" ]] || continue
-  rm -rf -- "$pending"
-done
-if [[ ! -f "$root/.image-complete" ]]; then
-  stage="$(mktemp -d "$state/roots/.extract.XXXXXX")"
-  trap 'rm -rf -- "$stage"' EXIT
-  crane export "$DEVBOX_ROOTFS_IMAGE" - | tar --extract --preserve-permissions --file - --directory "$stage"
-  test -x "$stage/sbin/init"
-  test -x "$stage/usr/local/sbin/devbox-prepare"
-  test -f "$stage/opt/devbox/nix-registration"
-  printf '%s\n' "$DEVBOX_ROOTFS_IMAGE" > "$stage/.image-complete"
-  mv "$stage" "$root"
-  trap - EXIT
-fi
-[[ "$(cat "$root/.image-complete")" == "$DEVBOX_ROOTFS_IMAGE" ]]
-chmod 0755 "$root"
-
-rsync -a --ignore-existing "$root/nix/" "$state/nix/"
-if [[ ! -d "$state/home" ]]; then
-  cp -a "$root/home" "$state/home"
-fi
-install -d "$state/docker" "$state/machine" "$state/metadata" "$state/home/codex/.ssh" "$root/run" "$root/dev" "$root/proc" "$root/sys"
-/usr/local/bin/devbox-prune-roots "$state" "$digest"
-printf '%s\n' "$digest" > "$root/etc/devbox-generation"
-chmod 0700 "$state/home/codex/.ssh"
-install -m 0600 /bootstrap/authorized_keys "$state/home/codex/.ssh/authorized_keys"
-chown -R 1000:1000 "$state/home/codex/.ssh"
+install -d -m 0700 "$state/nix" "$state/ssh" "$state/machine" "$state/metadata" "$state/docker" "$state/containerd"
+rsync -a --ignore-existing /nix/ "$state/nix/"
+install -d -m 0755 "$state/home"
+devbox-seed-home /home/codex "$state/home/codex"
 
 bind() {
   install -d "$2"
   mount --bind "$1" "$2"
 }
-bind "$state/nix" "$root/nix"
-bind "$state/home" "$root/home"
-bind "$state/docker" "$root/var/lib/docker"
-bind "$state/metadata" "$root/var/lib/devbox"
-for path in dev proc sys run; do
-  mount --rbind "/$path" "$root/$path"
-  mount --make-rslave "$root/$path"
-done
-mount -o remount,rw "$root/sys/fs/cgroup"
-rm -f "$root/etc/resolv.conf"
-install -m 0644 /etc/resolv.conf "$root/etc/resolv.conf"
+bind "$state/nix" /nix
+bind "$state/home" /home
+bind "$state/docker" /var/lib/docker
+bind "$state/containerd" /var/lib/containerd
+bind "$state/metadata" /var/lib/devbox
+mount -o remount,rw /sys/fs/cgroup
+
+install -d -m 0700 -o 1000 -g 1000 /home/codex/.ssh
+install -m 0600 -o 1000 -g 1000 /bootstrap/authorized_keys /home/codex/.ssh/authorized_keys
 if [[ ! -s "$state/machine/id" ]]; then
   tr -d '-' < /proc/sys/kernel/random/uuid > "$state/machine/id"
 fi
-install -m 0444 "$state/machine/id" "$root/etc/machine-id"
+install -m 0444 "$state/machine/id" /etc/machine-id
 for type in ed25519 rsa; do
-  if [[ ! -f "$state/ssh/ssh_host_${type}_key" ]]; then
-    chroot "$root" /usr/bin/ssh-keygen -q -N '' -t "$type" -f "/etc/ssh/ssh_host_${type}_key"
-    cp -a "$root/etc/ssh/ssh_host_${type}_key"* "$state/ssh/"
+  key="$state/ssh/ssh_host_${type}_key"
+  if [[ ! -f "$key" ]]; then
+    ssh-keygen -q -N '' -t "$type" -f "$key"
   fi
-  cp -a "$state/ssh/ssh_host_${type}_key"* "$root/etc/ssh/"
+  install -m 0600 "$key" "/etc/ssh/ssh_host_${type}_key"
+  install -m 0644 "$key.pub" "/etc/ssh/ssh_host_${type}_key.pub"
 done
-chroot "$root" /usr/bin/env NIX_REMOTE=local /opt/devbox/toolchain/bin/nix-store --load-db < "$root/opt/devbox/nix-registration"
-install -d "$state/nix/var/nix/gcroots"
-ln -sfn "$(cat "$root/opt/devbox/toolchain-path")" "$state/nix/var/nix/gcroots/devbox-toolchain"
-ln -sfn "$root" /run/devbox-root
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+NIX_REMOTE=local /opt/devbox/toolchain/bin/nix-store --load-db < /opt/devbox/nix-registration
+install -d /nix/var/nix/gcroots
+ln -sfn "$(cat /opt/devbox/toolchain-path)" /nix/var/nix/gcroots/devbox-toolchain
 export container=kata
-exec chroot "$root" /sbin/init
+exec /sbin/init
