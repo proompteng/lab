@@ -72,6 +72,7 @@ const simulate = async (
       Effect.sync(() => {
         snapshots += 1
         expect(Date.parse(query.observedAt)).toBe(clock)
+        expect(query.candidateEvidencePolicy).toBe(fixture.protocol.candidateEvidencePolicy)
         observations.push({ atMs: clock, rangeEndMs: Date.parse(query.rangeEndAt) })
         if (options.missingSnapshot === true)
           return { status: 'UNAVAILABLE' as const, cause: { reason: 'fixture-missing-benchmark' } }

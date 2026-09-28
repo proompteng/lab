@@ -139,6 +139,9 @@ export const reproduceStreamingSnapshot = (
       sourceTopics: manifest.sourceTopics,
       maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
       minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
+      ...(manifest.candidateEvidencePolicy === undefined
+        ? {}
+        : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
     }
     const reproduced = yield* constructStreamingSnapshot(
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
@@ -327,6 +330,9 @@ export const reproduceSimulatedSnapshot = (
       sourceTopics: manifest.sourceTopics,
       maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
       minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
+      ...(manifest.candidateEvidencePolicy === undefined
+        ? {}
+        : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
     }
 
     const reproduced = yield* constructSimulatedSnapshot(

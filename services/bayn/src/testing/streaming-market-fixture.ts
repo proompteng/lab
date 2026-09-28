@@ -85,7 +85,7 @@ export const streamingFixture = (returns: Readonly<Record<string, number>> = { A
 }
 
 export const streamingFixtureFromRaw = (
-  raw: ReturnType<typeof makeIntradayMomentumTestSnapshot>,
+  raw: Pick<ReturnType<typeof makeIntradayMomentumTestSnapshot>, 'bars' | 'quotes' | 'trades'>,
   request: IntradaySnapshotQuery,
 ) => {
   const universe = {

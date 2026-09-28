@@ -66,11 +66,21 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
-Entry observations evaluate candidate availability independently. Missing or late candidate bars, and missing, late,
-or decision-time-stale candidate quotes or trades exclude that candidate with an explicit reason while other candidates
-remain eligible for evaluation. SPY is the mandatory benchmark. Source identity, canonical ordering, watermarks,
-finality, and premature data still fail the whole observation. Raw candidate rows and their exclusions remain in the
-hashed snapshot for revalidation.
+Entry observations evaluate candidate availability independently. The active Jev protocol binds
+`bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
+at or after the lookback start and available by observation, and 30 consecutive minute bars with their matching rolling feature.
+The quote may precede the completed bar boundary. Neither a post-range trade nor a trade within the quote-age limit
+is required. Jev receives the trade's actual age as context, not as an executable price. Quote and trade ingestion
+delays still obey the feed bound. Missing input, a stale quote, or late input excludes that candidate.
+SPY retains the mandatory benchmark evidence contract. Source identity, canonical ordering, watermarks, finality,
+and premature data still fail the whole observation. Raw candidate rows, exclusions, and all observed matching
+feature receipts remain in the hashed snapshot, including features for rejected candidates.
+
+Missing minute bars are reported with their timestamps. A complete raw window without a matching observed feature
+has a separate reason. The IEX feed can omit a minute when its trades do not qualify for a bar; see Alpaca's
+[minute-bar rules](https://alpaca.markets/learn/stock-minute-bars). Bayn neither creates substitute bars nor combines
+30 nonconsecutive bars into a 30-minute feature. Stored observations without the new evidence policy reproduce
+their original contract. The active runtime selects the new policy explicitly.
 
 Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
 alone cannot authorize a no-entry decision. A version-two or version-three entry batch with every candidate excluded by
@@ -272,7 +282,8 @@ The projection yields to the Node event loop every 256 consumed records, includi
 assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
 cancellation wait. Incorporation order and committed offsets retain the same rules.
 
-The worker joins a completed feature window to its exact raw bar revisions and independently fresh quotes/trades.
+The worker joins a completed feature window to its exact raw bar revisions, a fresh executable quote, and the
+trade evidence required by the bound candidate policy.
 Corrections invalidate an old feature until its replacement matches. Missing candidates produce exclusions;
 missing benchmark data or absence of every candidate makes the observation unavailable. Streaming failures never
 silently switch to the archive path. Reconciliation and the existing close-window recovery remain available.
