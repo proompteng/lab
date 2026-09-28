@@ -869,6 +869,14 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
+  it('preserves an active Rune main publication when another source arrives', () => {
+    const workflow = YAML.parse(readFileSync('.github/workflows/rune-images.yml', 'utf8'))
+    expect(workflow.concurrency).toEqual({
+      group: 'rune-images-${{ github.ref }}',
+      'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+    })
+  })
+
   it('aligns Rune source discovery with both image build triggers', () => {
     const warehouse = byName(warehouses).get('rune')
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
