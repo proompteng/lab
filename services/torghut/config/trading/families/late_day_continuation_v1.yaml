@@ -1,0 +1,56 @@
+schema_version: torghut.family-template.v1
+family_id: late_day_continuation_v1
+economic_mechanism: Late-session continuation in liquid large-cap equities when opening-drive strength, cross-sectional breadth, and recent order-flow/microprice confirmation persist into the close.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - opening_drive_bps
+  - cross_section_continuation_breadth
+  - order_flow_imbalance
+  - recent_microprice_bias_bps
+  - quote_quality
+allowed_normalizations:
+  - price_scaled
+  - opening_window_scaled
+entry_motifs:
+  - late_day_continuation
+  - vwap_close_continuation
+exit_motifs:
+  - vwap_ladder_exit
+  - trailing_stop
+  - close_flatten
+risk_controls:
+  - quote_quality_veto
+  - long_stop_loss_bps
+  - trailing_stop
+  - daily_loss_cap
+activity_model:
+  min_active_day_ratio: '0.60'
+  min_daily_notional: '250000'
+liquidity_assumptions:
+  max_spread_bps: '22'
+  min_quote_valid_ratio: '0.92'
+regime_activation_rules:
+  - metric: information_arrival
+    comparator: gte
+    threshold: '0.40'
+  - metric: market_breadth
+    comparator: gte
+    threshold: '0.35'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.60'
+  required_min_daily_notional: '250000'
+  required_max_best_day_share: '0.40'
+  required_max_worst_day_loss: '350'
+  required_max_drawdown: '900'
+  required_min_regime_slice_pass_rate: '0.40'
+default_selection_objectives:
+  target_net_pnl_per_day: '300'
+  require_positive_day_ratio: '0.60'
+runtime_harness:
+  family: late_day_continuation_consistent
+  strategy_name: late-day-continuation-long-v1
+  disable_other_strategies: true

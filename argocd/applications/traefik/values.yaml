@@ -1,0 +1,46 @@
+deployment:
+  replicas: 2
+
+service:
+  type: LoadBalancer
+  annotations:
+    metallb.io/address-pool: metallb-ip-pool
+    metallb.io/allow-shared-ip: ingress-edge
+    metallb.io/loadBalancerIPs: 100.100.244.181
+
+# Keep the RGW entrypoint out of the chart-managed LoadBalancer Service. The
+# dedicated ClusterIP Service targets this named port.
+ports:
+  web:
+    asDefault: true
+  websecure:
+    asDefault: true
+  rgws3:
+    # The chart omits an explicit false flag; the two true defaults above keep
+    # this entrypoint out of routers that do not name their entrypoint.
+    asDefault: false
+    port: 9443
+    expose:
+      default: false
+    exposedPort: 9443
+    protocol: TCP
+    http:
+      tls:
+        enabled: true
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 180s
+      lifeCycle:
+        requestAcceptGraceTimeout: 5s
+        graceTimeOut: 50s
+
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+  name: traefik
+
+providers:
+  kubernetesGateway:
+    enabled: false

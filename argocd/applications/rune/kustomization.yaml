@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rune
+resources:
+- deployment.yaml
+- service.yaml
+- pvc.yaml
+- network-policy.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/rune
+  newName: registry.ide-newton.ts.net/lab/rune
+  digest: sha256:196a73a0d0a9a2888dc42cc5c4b637d4bc552d9cbf645f23a42830bc11a37a69

@@ -1,0 +1,197 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graf-graf-dashboard
+  namespace: observability
+data:
+  graf-graf-dashboard.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 0,
+      "id": null,
+      "iteration": 1,
+      "links": [],
+      "panels": [
+        {
+          "datasource": null,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 5,
+          "options": {
+            "content": "### Quick links\n- [Bumba traces](\/explore?left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22query%22%3A%22%7Bservice.name%3D%5C%22bumba%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)\n- [Bumba metrics](\/explore?left=%7B%22datasource%22%3A%22prom%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22sum%28rate%28temporal_worker_poll_latency_ms_count%7Bjob%3D%5C%22jangar%2Fbumba%5C%22%7D%5B5m%5D%29%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)\n- [Bumba logs](\/explore?left=%7B%22datasource%22%3A%22loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bjob%3D%5C%22bumba%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)\n- [Jangar traces](\/explore?left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22query%22%3A%22%7Bservice.name%3D%5C%22jangar%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)\n- [Jangar metrics](\/explore?left=%7B%22datasource%22%3A%22prom%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22sum%28rate%28temporal_client_interceptor_operation_latency_ms_count%7Bjob%3D%5C%22jangar%2Fjangar%5C%22%7D%5B5m%5D%29%29%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)\n- [Jangar logs](\/explore?left=%7B%22datasource%22%3A%22loki%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22expr%22%3A%22%7Bjob%3D%5C%22jangar%5C%22%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D)",
+            "mode": "markdown"
+          },
+          "title": "Quick Links",
+          "type": "text"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 6
+          },
+          "id": 1,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(graf_http_server_requests_count[5m]))",
+              "legendFormat": "requests",
+              "refId": "A"
+            }
+          ],
+          "title": "Graf Request Rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 6
+          },
+          "id": 2,
+          "options": {
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(graf_neo4j_write_duration_ms_bucket[5m])) by (le))",
+              "legendFormat": "95th percentile",
+              "refId": "A"
+            }
+          ],
+          "title": "Neo4j Write Latency (95th)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "prom",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 0,
+            "y": 14
+          },
+          "id": 3,
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(graf_codex_workflows_started[5m]))",
+              "legendFormat": "workflows/min",
+              "refId": "A"
+            }
+          ],
+          "title": "Codex Workflows Started",
+          "type": "stat"
+        },
+        {
+          "datasource": "loki",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 6,
+            "y": 14
+          },
+          "id": 4,
+          "options": {},
+          "targets": [
+            {
+              "expr": "sum(count_over_time({job=\"graf\"} |= \"ERROR\"[5m]))",
+              "refId": "A"
+            }
+          ],
+          "title": "Graf Error Logs (Loki)",
+          "type": "logs"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": [
+        "graf"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Graf Observability",
+      "uid": "graf-observability",
+      "version": 2
+    }

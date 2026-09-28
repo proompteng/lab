@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: reestr-tailscale
+  namespace: registry
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: reestr
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    serving.knative.dev/service: reestr
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4173

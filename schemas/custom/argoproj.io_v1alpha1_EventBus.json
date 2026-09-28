@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:argoproj.io:v1alpha1:EventBus",
+  "type": "object",
+  "properties": {
+    "apiVersion": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "spec": {
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
+    },
+    "status": {
+      "type": "object",
+      "x-kubernetes-preserve-unknown-fields": true
+    }
+  },
+  "required": [
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": true,
+  "definitions": {}
+}

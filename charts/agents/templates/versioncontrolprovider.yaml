@@ -1,0 +1,116 @@
+{{- if .Values.versionControlProvider.enabled -}}
+{{- $vcp := .Values.versionControlProvider -}}
+{{- $namespace := $vcp.namespace | default (.Values.namespaceOverride | default .Release.Namespace) -}}
+apiVersion: agents.proompteng.ai/v1alpha1
+kind: VersionControlProvider
+metadata:
+  name: {{ $vcp.name | default "github" }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+spec:
+  provider: {{ required "versionControlProvider.provider is required when versionControlProvider.enabled=true" $vcp.provider }}
+  {{- with $vcp.apiBaseUrl }}
+  apiBaseUrl: {{ . | quote }}
+  {{- end }}
+  {{- with $vcp.cloneBaseUrl }}
+  cloneBaseUrl: {{ . | quote }}
+  {{- end }}
+  {{- with $vcp.webBaseUrl }}
+  webBaseUrl: {{ . | quote }}
+  {{- end }}
+  {{- with $vcp.cloneProtocol }}
+  cloneProtocol: {{ . | quote }}
+  {{- end }}
+  {{- with $vcp.sshHost }}
+  sshHost: {{ . | quote }}
+  {{- end }}
+  {{- with $vcp.sshUser }}
+  sshUser: {{ . | quote }}
+  {{- end }}
+  {{- with $vcp.auth }}
+  auth:
+    {{- with .method }}
+    method: {{ . | quote }}
+    {{- end }}
+    {{- with .username }}
+    username: {{ . | quote }}
+    {{- end }}
+    {{- with .token }}
+    token:
+      {{- with .secretRef }}
+      secretRef:
+        {{- with .name }}
+        name: {{ . | quote }}
+        {{- end }}
+        {{- with .key }}
+        key: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .type }}
+      type: {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    {{- with .app }}
+    app:
+      {{- with .appId }}
+      appId: {{ . | quote }}
+      {{- end }}
+      {{- with .installationId }}
+      installationId: {{ . | quote }}
+      {{- end }}
+      {{- with .privateKeySecretRef }}
+      privateKeySecretRef:
+        {{- with .name }}
+        name: {{ . | quote }}
+        {{- end }}
+        {{- with .key }}
+        key: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if .tokenTtlSeconds }}
+      tokenTtlSeconds: {{ .tokenTtlSeconds }}
+      {{- end }}
+    {{- end }}
+    {{- with .ssh }}
+    ssh:
+      {{- with .privateKeySecretRef }}
+      privateKeySecretRef:
+        {{- with .name }}
+        name: {{ . | quote }}
+        {{- end }}
+        {{- with .key }}
+        key: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .knownHostsConfigMapRef }}
+      knownHostsConfigMapRef:
+        {{- with .name }}
+        name: {{ . | quote }}
+        {{- end }}
+        {{- with .key }}
+        key: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- with $vcp.repositoryPolicy }}
+  repositoryPolicy:
+    {{- with .allow }}
+    allow:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .deny }}
+    deny:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  {{- with $vcp.capabilities }}
+  capabilities:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $vcp.defaults }}
+  defaults:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

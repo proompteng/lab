@@ -1,0 +1,53 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-rf3-cassandra-0
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3-backup
+    temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: '-12'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    temporal.proompteng.ai/backup-generation: cassandra-rf3-before-alter-v1
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-0
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-rf3-cassandra-1
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3-backup
+    temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: '-12'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    temporal.proompteng.ai/backup-generation: cassandra-rf3-before-alter-v1
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-1
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-rf3-cassandra-2
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3-backup
+    temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: '-12'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    temporal.proompteng.ai/backup-generation: cassandra-rf3-before-alter-v1
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-2

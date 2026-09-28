@@ -1,0 +1,16 @@
+[Unit]
+Description=Prepare the persistent lab development workspace
+After=network.target nix-daemon.socket user@1000.service ssh.service docker.service
+Requires=nix-daemon.socket ssh.service docker.service
+Wants=user@1000.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/devbox-prepare
+RemainAfterExit=yes
+TimeoutStartSec=1800
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

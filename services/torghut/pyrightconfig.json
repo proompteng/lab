@@ -1,0 +1,7 @@
+{
+  "include": ["app"],
+  "exclude": ["app/trading/alpha"],
+  "typeCheckingMode": "strict",
+  "venvPath": ".",
+  "venv": ".venv"
+}

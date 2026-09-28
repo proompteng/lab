@@ -1,0 +1,11 @@
+apiVersion: budgets.proompteng.ai/v1alpha1
+kind: Budget
+metadata:
+  name: sample-budget
+  namespace: agents
+spec:
+  limits:
+    tokens: "1000"
+    dollars: "5"
+    cpu: "1"
+    memory: "1Gi"

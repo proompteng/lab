@@ -1,0 +1,49 @@
+replicaCount: 1
+
+image:
+  repository: agents-control-plane-local
+  tag: kind
+
+controllers:
+  image:
+    repository: agents-controller-local
+
+runner:
+  image:
+    repository: agents-codex-runner-local
+    tag: kind
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+rbac:
+  clusterScoped: true
+
+readinessProbe:
+  path: /health
+
+env:
+  vars:
+    OTEL_METRICS_EXPORTER: none
+
+database:
+  secretRef:
+    name: agents-db-app
+    key: uri
+
+controller:
+  namespaces:
+    - agents
+  vcsProviders:
+    enabled: false
+
+agentComms:
+  enabled: false
+
+grpc:
+  enabled: true
+  port: 50051
+  servicePort: 50051
+  serviceType: ClusterIP

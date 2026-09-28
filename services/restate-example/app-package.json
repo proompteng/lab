@@ -1,0 +1,25 @@
+{
+  "name": "@proompteng/restate-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end Restate durable execution example service.",
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/server.ts",
+    "start": "bun src/server.ts",
+    "lint": "bunx oxfmt --check src",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
+    "test": "bun test",
+    "tsc": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@restatedev/restate-sdk": "1.16.4",
+    "effect": "4.0.0-beta.102"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "bun@1.4.0"
+}

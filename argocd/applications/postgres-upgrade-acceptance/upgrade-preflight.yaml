@@ -1,0 +1,137 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres-major-upgrade-ready
+  namespace: postgres-upgrade-acceptance
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: '-33'
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: postgres-major-upgrade-ready
+  namespace: postgres-upgrade-acceptance
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: '-33'
+rules:
+- apiGroups:
+  - postgresql.cnpg.io
+  resources:
+  - clusters
+  resourceNames:
+  - app-pg18-source
+  - bilig-pg18-source
+  - coder-pg18-source
+  - forgejo-pg18-source
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: postgres-major-upgrade-ready
+  namespace: postgres-upgrade-acceptance
+  labels:
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: '-32'
+subjects:
+- kind: ServiceAccount
+  name: postgres-major-upgrade-ready
+  namespace: postgres-upgrade-acceptance
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: postgres-major-upgrade-ready
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-major-upgrade-ready
+  namespace: postgres-upgrade-acceptance
+  labels: &id001
+    app.kubernetes.io/part-of: postgres-upgrade-acceptance
+    postgres.proompteng.ai/rehearsal: 18-6-v1
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: '-30'
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 960
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      serviceAccountName: postgres-major-upgrade-ready
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: ready
+        image: mirror.gcr.io/python:3.14-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc
+        command:
+        - python3
+        - /scripts/upgrade-ready.py
+        env:
+        - name: PYTHONDONTWRITEBYTECODE
+          value: '1'
+        resources:
+          requests:
+            cpu: 25m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 96Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: api
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+      volumes:
+      - name: scripts
+        configMap:
+          name: postgres-major-upgrade-ready
+      - name: api
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 1800
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+          - downwardAPI:
+              items:
+              - path: namespace
+                fieldRef:
+                  fieldPath: metadata.namespace

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: torghut-ta-metrics
+  namespace: torghut
+  labels:
+    app: torghut-ta
+    app.kubernetes.io/part-of: torghut
+spec:
+  type: ClusterIP
+  selector:
+    app: torghut-ta
+    component: jobmanager
+    type: flink-native-kubernetes
+  ports:
+    - name: metrics
+      port: 9249
+      protocol: TCP
+      targetPort: metrics

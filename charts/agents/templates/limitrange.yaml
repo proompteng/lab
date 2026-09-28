@@ -1,0 +1,19 @@
+{{- if .Values.limitRange.enabled }}
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ .Values.limitRange.name | default (include "agents.fullname" .) }}
+  namespace: {{ .Values.namespaceOverride | default .Release.Namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    {{- with .Values.limitRange.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.limitRange.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  limits:
+    {{- toYaml .Values.limitRange.limits | nindent 4 }}
+{{- end }}

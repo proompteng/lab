@@ -1,0 +1,19 @@
+{
+  "name": "@proompteng/backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "codegen": "convex codegen",
+    "deploy": "convex deploy --typecheck enable",
+    "dev": "convex dev",
+    "dev:setup": "convex dev --configure --until-success",
+    "seed:models": "convex run models:seed"
+  },
+  "dependencies": {
+    "convex": "^1.37.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,195 @@
+# Tengri control plane
+
+Tengri is the standalone Rust owner of `runtime.proompteng.ai/v1alpha1 MicroVM` resources. It accepts only signed,
+authenticated internal gRPC calls, derives one deterministic MicroVM name per GitHub subject, and projects each CR into
+an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
+
+The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
+the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
+
+Terminal creation has one protocol: every client supplies a stable 16-to-128-character `creation_id`, and Nanoagent
+returns that exact identity with the session. Retries reuse the same identity and are idempotent. Tengri rejects
+id-less requests instead of generating a compatibility identity or negotiating with an older guest.
+
+Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
+the same verification code and original expiry instead of silently starting and invalidating another attempt.
+
+Workspace file reads are revision-aware when the guest supports the contract: Nanoagent returns the bounded file bytes
+with a strong quoted SHA-256 `ETag`, and Tengri forwards the unquoted revision alongside the content. A missing ETag
+keeps legacy reads usable with an empty revision so clients can present the file read-only; a malformed or mismatched
+ETag fails closed. File writes require `expectedRevision` to be a lowercase 64-character SHA-256 revision or `missing`,
+and Tengri rejects omitted or malformed preconditions before contacting the guest. Nanoagent rejects stale revisions
+with HTTP 409. Successful writes return the new path, size, and revision.
+
+Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
+`thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
+that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
+cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 256 pages, and 10 MiB, and any failed
+page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
+single full-history snapshot and cursor contract required by their reconstructed item identities.
+
+The guest pins Codex 0.153.4 in `services/nanoagent/bootstrap-codex.sh`. Its
+[item-page contract](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1743-L1760)
+returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
+protocol authority. Verify changes against the pinned binary with
+`codex app-server generate-json-schema --experimental --out <temporary-directory>`.
+
+Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
+the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
+superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
+nonce-authorized navigation bridge into uncompressed HTML responses; the desktop accepts navigation and shortcut
+events only from the exact issued preview origin and iframe. This keeps the virtual address bar, history, reload, and
+Chrome shortcuts synchronized without exposing the session token to guest applications.
+
+Public HTTP traffic is split across two listeners with separate routers and Kubernetes Services. Port `8080` exposes
+only Tengri-owned control routes such as terminal WebSockets, preview-session opening, probes, and metrics. Port `8081`
+exposes only session-host bootstrap assets and the authenticated guest preview proxy. Traefik routes
+`tengri.proompteng.ai` control paths to `tengri-gateway:8080` and session hosts to `tengri-preview:8081`; observability
+can reach only the control listener. A guest application may therefore own paths such as `/metrics` or `/healthz`
+without those requests reaching Tengri's own handlers.
+
+`/livez` reports process liveness. `/readyz` and the compatibility `/healthz` alias report success only while the
+Kubernetes control path and in-process ticket state are usable; deployment probes do not advertise an isolated process
+as ready to accept agent operations.
+
+`TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
+authentication outage by sealing `new,current` into both namespace-scoped manifests in the same commit: the BFF signs
+with both keys and the controller accepts either while the two SealedSecrets reconcile independently. After both
+workloads observe the bundle, reseal both manifests with only the new key. More than two keys are rejected.
+
+The Deployment also mounts `tengri-runtime` as a projected Secret. Tengri compares those files with the values loaded
+into its environment and, without logging either value, deletes only its own control-plane Pod when the SealedSecrets
+controller updates the generated Secret. The Deployment then creates a replacement Pod with the refreshed environment;
+no manual restart or cluster-wide reloader is required.
+
+Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
+`tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
+controller restarts. The singleton serializes nonce updates before entering the Kubernetes compare-and-swap loop, and
+bounded exponential retry absorbs an external write conflict without rejecting an ordinary burst of valid requests.
+Only live receipts are retained and the bounded store fails closed. The deployment RBAC grants only `get` and `update`
+on that named ConfigMap.
+
+## GitOps rollout and rollback
+
+Tengri is a singleton `Recreate` Deployment. A GitOps rollout terminates the old control-plane Pod before the new Pod
+becomes ready, so gRPC, event streams, PTY WebSockets, and preview proxy connections are briefly unavailable. Clients
+reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a truthful
+service-unavailable response and must be retried.
+
+The replacement controller keeps every MicroVM CR, bootstrap Secret, and PVC until the owner explicitly deletes the
+agent. The legacy four-hour `spec.expiresAt` field remains valid for old CRs but is ignored for lifecycle decisions;
+new agents leave it empty and the gRPC `Agent.expiresAt` field is empty for retained workspaces. Idle sleep still
+deletes only the guest Pod and preserves the workspace for resume.
+
+Release changes preserve a running guest's image and processes. When the configured Nanoagent digest differs, the
+controller reports it as `Agent.pendingImage` while the owned guest is running. It adopts the digest only after the
+guest has been safely slept or there is no running owned guest, then creates the next Pod from the configured image.
+Previously initiated image updates and agents with no Pod converge through the same safe boundary. The migration never
+changes Kata, Talos, node scheduling, or any cluster node.
+
+Before opening its public listeners, a replacement controller recovers durable provisional-terminal leases from
+Kubernetes. Transient transport failures, HTTP 408/429 responses, and API server 5xx responses use a bounded
+eight-attempt exponential retry with a five-second maximum delay. Authorization, validation, and other permanent
+failures still stop startup immediately, so the retry absorbs a brief Kubernetes Service race without masking broken
+RBAC or configuration.
+
+Roll out through the `Tengri images` publisher, Kargo, and Argo reconciliation. On `main`, `Tengri images` validates
+both services, builds native `linux/amd64` and `linux/arm64` images, publishes signed multi-architecture indexes at
+`registry.ide-newton.ts.net/lab/{tengri,nanoagent}:kargo-sha-<40>` only after each final index succeeds; the images
+carry `org.opencontainers.image.created` (source commit RFC3339 time) and `org.opencontainers.image.revision` (full
+source SHA), and their immutable digests are uploaded in the `tengri-release-contract` artifact. The Kargo `tengri` Stage consumes the controller and Nanoagent Freight together,
+copies the exact source commit and full digest/build metadata to `kargo/tengri`, and pushes that branch without a pull
+request. The Argo Applications track the generated branch; no promotion PR or manifest SHA bump is required:
+
+1. Merge the controller or guest source and wait for `Tengri images` validation, both native builds, index publication,
+   and keyless signature verification to pass.
+2. In `lab-delivery`, verify that Kargo discovered both immutable images, created the matching Freight, and promoted the
+   exact automatic `tengri` Stage. Verify that `kargo/tengri` contains the complete source commit, digests, and build
+   provenance, and that the Argo Applications track it at `Synced`/`Healthy`.
+3. Confirm Argo starts one `tengri` Deployment replacement. Record every `MicroVM`, guest Pod, and PVC UID before the
+   rollout. Confirm running guests keep their Pod UID and report `pendingImage` when the promoted digest is newer;
+   after an owner-requested or idle sleep/resume, confirm the next Pod uses that digest. Confirm every PVC UID remains
+   unchanged and no node is mutated.
+4. From a configured `galactic-lan` client, verify the replacement and its control path:
+
+   ```bash
+   set -euo pipefail
+
+   kubectl --context galactic-lan -n tengri rollout status deployment/tengri --timeout=5m
+   kubectl --context galactic-lan -n tengri get pods -l app.kubernetes.io/name=tengri -o wide
+   kubectl --context galactic-lan -n tengri get endpointslice -l kubernetes.io/service-name=tengri-grpc
+   kubectl --context galactic-lan -n tengri port-forward service/tengri-gateway 18080:8080 &
+   tengri_port_forward_pid=$!
+   trap 'kill "$tengri_port_forward_pid" 2>/dev/null || true' EXIT INT TERM
+   for tengri_attempt in {1..30}; do
+     if curl --fail --silent --output /dev/null http://127.0.0.1:18080/livez; then
+       break
+     fi
+     sleep 1
+   done
+   curl --fail --silent --show-error http://127.0.0.1:18080/livez
+   curl --fail --silent --show-error http://127.0.0.1:18080/readyz
+   kill "$tengri_port_forward_pid"
+   wait "$tengri_port_forward_pid" 2>/dev/null || true
+   trap - EXIT INT TERM
+   ```
+
+5. Confirm the pre-rollout `MicroVM` count is unchanged, wait for running agents to return to `Ready`, then exercise one
+   authenticated read-only control-plane request and verify persistent workspace contents. Do not create a canary
+   DaemonSet or mutate node scheduling to verify this rollout.
+
+If the replacement cannot become ready, inspect the Kargo Stage, Freight, generated `kargo/tengri` branch, and Argo
+Applications and correct the source-owned failure. Re-promote a previously proven controller/guest Freight pair through
+Kargo; never use `kubectl rollout undo`, directly apply manifests, or create a digest promotion PR. Never revert to a controller predating
+`home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those guests. Delete v2 agents
+through their owner-scoped lifecycle, verify that no v2 CR remains, and only then re-promote the matching known-good pair.
+Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands above.
+
+Tengri supports one storage layout:
+`runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation and one 16 GiB
+`volumeMode: Block` PVC. The Pod exposes it as `/dev/tengri-home`; the reviewed Kata persistent-block contract formats
+a provably new device once, mounts it at `/home/nanoagent`, applies GID 1000, and reuses the same filesystem on later
+boots. Nanoagent exposes the persistent `workspace/` subdirectory through `/workspace`. There is one application
+container and no init container.
+
+The Pod requires both `runtime.proompteng.ai/kata-fc=ready` and
+`runtime.proompteng.ai/kata-fc-persistent-block=ready`. The second capability must be applied only after the signed r5
+Kata extension is installed and its raw-block persistence acceptance passes on that node. Stock r4 nodes are
+deliberately ineligible rather than receiving a Pod whose PVC would be copied into Firecracker's 512 MiB rootfs.
+
+The failed `home-workspace-v1` experiment never produced a working guest and is not a compatibility contract. A CR with
+any other layout is rejected and must be deleted and recreated; Tengri does not migrate or fall back to the broken
+topology. A v2 CR backed by a legacy filesystem-mode claim is also rejected and must be deleted and recreated; the
+controller never mutates or reformats that claim. Never roll back past the v2 controller while a v2 CR exists.
+
+## Local validation
+
+```bash
+cargo fmt --manifest-path services/tengri/Cargo.toml --check
+cargo clippy --manifest-path services/tengri/Cargo.toml --locked --all-targets -- -D warnings
+cargo test --manifest-path services/tengri/Cargo.toml --locked --all-targets
+cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen \
+  > /tmp/tengri-crd.yaml
+diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
+diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
+```
+
+Runtime configuration is documented in [`../../docs/tengri/operations.md`](../../docs/tengri/operations.md). The
+protobuf contract is [`proto/proompteng/runtime/v1/microvm.proto`](proto/proompteng/runtime/v1/microvm.proto).
+
+## Editor sessions
+
+`IssueEditorSession(agent_id, window_id)` authorizes the owner, starts the guest workbench, and returns an ordinary
+preview launch ticket for virtual port 13337. Its DNS-safe origin derives from owner, agent, CR UID, and desktop window
+identity, so reload restores the native workspace and backups while another owner, incarnation, or window gets another
+origin. Session cookies expire after 24 hours. The one-use launch token is also the revocation generation: a delayed
+cleanup cannot revoke a replacement session on the same origin. Generic preview revocation retains its existing behavior.
+Before sign-out clears authentication, `RevokeEditorSessions` removes every pending and active editor lease for the
+authenticated owner. A revocation failure blocks sign-out so it can be retried. The gateway also closes established
+preview WebSockets within one second of session revocation or expiry.
+
+The gateway injects the desktop integration script only into the workbench document. Native Markdown and extension
+webviews retain their own HTML and CSP; editor frame ancestors allow both the issued origin and desktop origin.
+Packaged assets under an exact upstream revision are compressed and privately cached. Workspace resources, HTML,
+tickets, and integration scripts remain uncached. The private extension bridge binds its session query to the
+cookie-authenticated preview origin. Ordinary preview sessions cannot select either reserved editor port.

@@ -1,0 +1,80 @@
+# openclaw VM bootstrap notes
+
+## Disabled state and recovery
+
+OpenClaw is disabled with `enabled: "false"` in `argocd/applicationsets/platform.yaml`. Argo removes the Application,
+VM, SSH Service, cloud-init Secret, and VM service account/RBAC. The namespace and existing `openclaw-rootdisk-rbd`
+DataVolume/PVC are retained so the VM can be restored later.
+
+Before deploying a change that disables the ApplicationSet entry, verify `Prune=false,Delete=false` on the live
+namespace, DataVolume, and PVC. Preserve any other sync options already present. The DataVolume and managed namespace
+metadata declare this retention policy in Git, but disabling the entry removes the Application before it can sync
+child manifest changes. Retention must therefore be present and verified before the disable commit reaches `main`.
+The DataVolume must remain because it owns the PVC. Do not delete either storage object during disablement.
+
+After reconciliation, verify that the Application and VM are absent, there are no OpenClaw pods, and the retained PVC
+has the same UID and bound volume as before disablement.
+
+To restore OpenClaw, enable its ApplicationSet entry and sync the recreated Application to adopt the retained disk.
+The VM remains `Halted` until its `runStrategy` is explicitly changed to start it. The original clone source PVC
+`openclaw-rootdisk` no longer exists, so recreating the DataVolume cannot recover the retained disk's contents.
+
+See [Argo resource retention](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/#no-resource-deletion).
+
+## Bootstrap
+
+The `openclaw` VM consumes `cloud-init-secret.yaml` as a **SealedSecret**.
+
+> This repo intentionally does **not** store plaintext cloud-init userdata.
+
+Because the payload is encrypted, update flow is:
+
+1. Prepare a local `cloud-init-userdata.yaml` file (temporary, do not commit).
+2. Seal it with `kubeseal`.
+3. Overwrite `argocd/applications/openclaw/cloud-init-secret.yaml` with the sealed output.
+
+## Baseline bootstrap expectations
+
+Cloud-init should ensure:
+
+- CLI tools installed on the VM:
+  - `kubectl`
+  - `argocd`
+  - `kubeseal`
+- OpenClaw workspace default set to:
+  - `/home/ubuntu/github.com/lab/services/tuslagch`
+- in-VM Kubernetes access is bootstrapped by mounting the `serviceAccount` disk
+  (`K8S_SA_DISK`) and writing `/home/ubuntu/.kube/config`.
+
+## Scheduling notes
+
+- The root disk is the existing `openclaw-rootdisk-rbd` PVC on `rook-ceph-block` storage.
+- The VM requires an amd64 node with capacity for its CPU and memory requests. Check node capacity before changing
+  storage or recreating the disk.
+
+## VM access model
+
+- ServiceAccount: `openclaw-vm` (namespace `openclaw`)
+- RBAC scope:
+  - can `create/delete/get/list/patch/update/watch` Argo CD `applications`
+  - can `create/delete/get/list/watch` `agents.proompteng.ai/AgentRun`
+  - can `get/list/watch` `Agent`, `ImplementationSpec`, and `VersionControlProvider` in `agents`
+  - can `get` the allowlisted AgentRun Secrets `codex-github-token` and `codex-openai-key`
+  - can `get/list/watch` Jobs, Pods, and ConfigMaps plus `get` Pod logs for AgentRun inspection
+- Implementation note:
+  - these permissions are bound with `ClusterRole`/`ClusterRoleBinding` because the OpenClaw app applies `namespace: openclaw`, which would rewrite namespaced RBAC objects into the wrong namespace during GitOps sync
+
+## Re-seal command (example)
+
+Run from repo root (`~/github.com/lab`):
+
+```bash
+kubectl create secret generic openclaw-cloud-init \
+  --namespace openclaw \
+  --from-file=userdata=./cloud-init-userdata.yaml \
+  --dry-run=client -o yaml \
+| kubeseal --format yaml --namespace openclaw --name openclaw-cloud-init \
+> argocd/applications/openclaw/cloud-init-secret.yaml
+```
+
+Then commit and let ArgoCD sync the app.

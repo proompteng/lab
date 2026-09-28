@@ -1,0 +1,35 @@
+---
+title: Spells Reference
+description: Spell evaluation by combat role, mana value, timing, and army preservation.
+---
+
+import { spellEntries } from '@/src/data/olden/encyclopedia'
+
+# Spells Reference
+
+A spell is worth casting when it changes the fight or route. The visible effect matters less than the army saved, target killed, action denied, or movement unlocked.
+
+## Spell roles
+
+- Buff: makes your stack survive or kill at the right time.
+- Debuff: makes the enemy miss a power spike.
+- Damage: removes a dangerous stack or softens it for a clean kill.
+- Control: denies movement, spellcasting, retaliation, or an ability window.
+- Utility: changes map tempo, recovery, or scouting.
+
+## Mana value
+
+Do not spend mana just because a spell is available. Spend it when the current fight would otherwise cost important army or when the map reward is decisive.
+
+## Spell index
+
+<EncyclopediaEntryTable
+  entries={spellEntries}
+  title="Spell index"
+  description="All public spell rows grouped by magic school."
+  groupBy="Magic School"
+  defaultOpenGroups={8}
+  sourceLabel="Spell page"
+/>
+
+<SourceNote ids={['community-olden-era-spells', 'official-wiki-main-page']} />
