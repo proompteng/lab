@@ -116,6 +116,12 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
+The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The Rook application owns a read-only host Alloy DaemonSet (`node-storage` job) for disk latency/queue depth,
+NIC throughput/link speed/drops, CPU, memory, and pressure. It pushes to the same Mimir gateway without exposing
+a listener on the provider LAN. See the [Ceph telemetry runbook](../../../docs/runbooks/ceph-performance-telemetry.md)
+for ingestion acceptance, recording-rule units, missing-data alerts, and the bounded recovery-override cleanup.
+
 Validate the Mimir tenant after sync:
 
 ```bash
