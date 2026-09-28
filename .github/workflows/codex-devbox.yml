@@ -42,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n services/devbox/*.sh
-          python3 -m unittest discover -s services/devbox/tests -v
+          nix shell --inputs-from . nixpkgs#rsync --command python3 -m unittest discover -s services/devbox/tests -v
           kubectl kustomize argocd/applications/devbox > /tmp/devbox.yaml
           kubectl kustomize argocd/applications/kargo > /tmp/kargo.yaml
 
