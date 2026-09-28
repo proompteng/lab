@@ -181,13 +181,13 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
-              - name: codex-devbox
-                path: argocd/applications/codex-devbox
+              - name: devbox
+                path: argocd/applications/devbox
                 namespace: codex-devbox
-                targetRevision: kargo/codex-devbox
+                targetRevision: kargo/devbox
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                  kargo.akuity.io/authorized-stage: lab-delivery:codex-devbox
+                  kargo.akuity.io/authorized-stage: lab-delivery:devbox
                 automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:

@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: codex-turin-initialize
+  name: devbox-initialize
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
@@ -16,12 +16,13 @@ spec:
         io.katacontainers.volume.devbox-data.initialization_token: codex-turin-977bdced-bd7f-4680-bebc-c30c8cf31423
     spec:
       restartPolicy: Never
-      runtimeClassName: kata-fc
+      runtimeClassName: kata-dragonball
       automountServiceAccountToken: false
       nodeSelector:
         kubernetes.io/hostname: turin
         kubernetes.io/arch: amd64
-        runtime.proompteng.ai/kata-fc-persistent-block: ready
+        runtime.proompteng.ai/kata-dragonball: ready
+        runtime.proompteng.ai/kata-dragonball-persistent-block: ready
       containers:
         - name: initialize
           image: mirror.gcr.io/busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e

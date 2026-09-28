@@ -148,17 +148,17 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
-  'codex-devbox': {
-    creationCriteria: 'all',
+  devbox: {
+    creationCriteria: 'single',
     requiresBuildReceipt: true,
     tagRegex: runQualifiedTagRegex,
-    images: [imageRepo('codex-devbox'), imageRepo('codex-devbox-rootfs')],
-    apps: ['codex-devbox'],
+    images: [imageRepo('codex-devbox')],
+    apps: ['devbox'],
     includePaths: [
       'services/devbox',
       'packages/scripts/src/shared/cli.ts',
       'packages/scripts/src/shared/docker.ts',
-      'argocd/applications/codex-devbox',
+      'argocd/applications/devbox',
       '.github/workflows/codex-devbox.yml',
       'flake.nix',
       'flake.lock',
@@ -1003,7 +1003,7 @@ describe('Kargo direct-push GitOps contract', () => {
             ? '1h45m0s'
             : stageName === 'bilig'
               ? '1h15m0s'
-              : ['forgejo', 'codex-devbox'].includes(stageName)
+              : ['forgejo', 'devbox'].includes(stageName)
                 ? '45m0s'
                 : stageName === 'rune'
                   ? '4h0m0s'

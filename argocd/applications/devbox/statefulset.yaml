@@ -20,26 +20,23 @@ spec:
         io.katacontainers.volume.devbox-data.mount_path: /persist
         io.katacontainers.volume.devbox-data.fs_type: ext4
     spec:
-      runtimeClassName: kata-fc
+      runtimeClassName: kata-dragonball
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 90
       nodeSelector:
         kubernetes.io/hostname: turin
         kubernetes.io/arch: amd64
-        runtime.proompteng.ai/kata-fc-persistent-block: ready
+        runtime.proompteng.ai/kata-dragonball: ready
+        runtime.proompteng.ai/kata-dragonball-persistent-block: ready
       containers:
         - name: devbox
           image: registry.ide-newton.ts.net/lab/codex-devbox:unpublished
-          env:
-            - name: DEVBOX_ROOTFS_IMAGE
-              valueFrom:
-                configMapKeyRef:
-                  name: codex-devbox-release
-                  key: ROOTFS_IMAGE
           ports:
             - name: ssh
               containerPort: 22
+            - name: health
+              containerPort: 8080
           securityContext:
             runAsUser: 0
             privileged: true
@@ -51,14 +48,16 @@ spec:
               cpu: "8"
               memory: 64Gi
           startupProbe:
-            exec:
-              command: [/usr/local/bin/devbox-exec, /usr/bin/test, -f, /run/devbox-ready]
+            httpGet:
+              path: /healthz
+              port: health
             periodSeconds: 10
             failureThreshold: 180
             timeoutSeconds: 5
           readinessProbe:
-            exec:
-              command: [/usr/local/bin/devbox-exec, /bin/sh, -ec, 'test -f /run/devbox-ready && systemctl is-active --quiet ssh && systemctl is-active --quiet docker']
+            httpGet:
+              path: /healthz
+              port: health
             periodSeconds: 10
             timeoutSeconds: 5
           volumeDevices:

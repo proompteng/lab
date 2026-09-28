@@ -9,10 +9,6 @@ resources:
   - service.yaml
   - network-policy.yaml
   - resource-quota.yaml
-configMapGenerator:
-  - name: codex-devbox-release
-    literals:
-      - ROOTFS_IMAGE=registry.ide-newton.ts.net/lab/codex-devbox-rootfs:unpublished
 images:
   - name: registry.ide-newton.ts.net/lab/codex-devbox
     newName: registry.ide-newton.ts.net/lab/codex-devbox
