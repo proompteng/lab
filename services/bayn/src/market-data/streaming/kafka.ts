@@ -42,7 +42,7 @@ export interface KafkaMarketConfig {
   readonly timestampPolicy: KafkaBootstrapTimestampPolicy
 }
 export class KafkaMarketFailure extends Data.TaggedError('KafkaMarketFailure')<{
-  readonly operation: 'connect' | 'bootstrap' | 'consume' | 'commit' | 'close' | 'read'
+  readonly operation: 'connect' | 'bootstrap' | 'consume' | 'close' | 'read'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -64,7 +64,6 @@ export interface KafkaProjectionTransport {
     positions: readonly KafkaPartitionPosition[],
     invalidated: (cause: unknown) => void,
   ) => Promise<KafkaProjectionStream>
-  readonly commit: (records: readonly KafkaConsumedRecord[]) => Promise<void>
   readonly close: () => Promise<void>
 }
 export type KafkaProjectionTransportFactory = (config: KafkaMarketConfig, epoch: string) => KafkaProjectionTransport
@@ -198,15 +197,6 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
         },
       }
     },
-    commit: (records) =>
-      consumer.commit({
-        offsets: records.map((record) => ({
-          topic: record.topic,
-          partition: record.partition,
-          offset: BigInt(record.offset) + 1n,
-          leaderEpoch: record.leaderEpoch,
-        })),
-      }),
     close,
   }
 }
@@ -396,14 +386,6 @@ export const makeKafkaMarketProjection = (
                 elapsedMs: (yield* Clock.currentTimeMillis) - observedAtMs,
                 rejectedPartitions: projection.rejections.size,
               })
-            }
-            if (terminals.size > 0) {
-              const committed = [...terminals.values()]
-              yield* operation('commit', () => transport.commit(committed))
-              for (const record of committed) {
-                const key = topicPartitionKey(record.topic, record.partition)
-                if (terminals.get(key) === record) terminals.delete(key)
-              }
             }
           }
         })
