@@ -71,6 +71,10 @@ test('host storage collector reads host counters without a public listener or Ku
   expect(config).toMatch(/procfs_path\s*=\s*"\/host\/proc"/)
   expect(config).toMatch(/sysfs_path\s*=\s*"\/host\/sys"/)
   expect(config).toContain('sys.env("NODE_NAME")')
+  // Exporter-provided target labels override scrape job_name. The discovered
+  // integrations/unix label must be replaced before these targets are scraped.
+  const discovery = config.match(/discovery\.relabel "storage" \{([\s\S]*?)\n\}/)?.[1]
+  expect(discovery).toMatch(/replacement\s*=\s*"node-storage"\s+target_label\s*=\s*"job"/)
   expect(config).not.toContain('discovery.kubernetes')
   const allow = metricAllowlist(config, 'storage')
   for (const name of [
