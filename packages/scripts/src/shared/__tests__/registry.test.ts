@@ -23,7 +23,7 @@ const backendBlock = (name: string): string => {
 
 describe('private registry write-pressure boundary', () => {
   it('rate-limits every mutation while keeping tiny manifest commits out of the blob queue', () => {
-    expect(haproxyConfig).toContain('filter bwlim-in registry_upload default-limit 1m default-period 1s')
+    expect(haproxyConfig).toContain('filter bwlim-in registry_upload default-limit 5m default-period 1s')
     expect(haproxyConfig).toContain('acl write_request method POST PUT PATCH DELETE')
     expect(haproxyConfig).toContain('acl manifest_write method PUT')
     expect(haproxyConfig).toContain('acl manifest_path path_reg ^/v2/.+/manifests/[^/]+$')

@@ -296,7 +296,7 @@ export const makeKafkaMarketProjection = (
           partitions,
         }
         const evidence = bootstrap
-        let invalidation: unknown
+        let invalidation: KafkaMarketFailure | undefined
         positions = partitions.map((partition) => ({
           topic: partition.topic,
           partition: partition.partition,
@@ -310,9 +310,10 @@ export const makeKafkaMarketProjection = (
               offset: partition.startOffset,
             })),
             (cause) => {
-              invalidation = cause
+              if (projection.epoch !== epoch) return
+              invalidation = failure('consume', 'Kafka assignment invalidated', cause)
               ready = false
-              lastFailure = failure('consume', 'Kafka assignment invalidated', cause)
+              lastFailure = invalidation
             },
           ),
         )
@@ -365,8 +366,7 @@ export const makeKafkaMarketProjection = (
           let announced = false
           while (true) {
             yield* Effect.sleep(Duration.seconds(1))
-            if (invalidation !== undefined)
-              return yield* failure('consume', 'Kafka assignment invalidated', invalidation)
+            if (invalidation !== undefined) return yield* invalidation
             const drained = source.drainedPositions()
             const incorporated = new Map(
               positions.map((position) => [topicPartitionKey(position.topic, position.partition), position]),
@@ -423,6 +423,9 @@ export const makeKafkaMarketProjection = (
               epoch,
               sequence: projection.sequence,
               bootstrapComplete: ready,
+              available: ready && lastFailure === undefined,
+              failureOperation: lastFailure?.operation ?? null,
+              failureCodes: lastFailure === undefined ? null : safeKafkaFailureCodes(lastFailure.cause),
               queuedRecords: source.queuedRecords(),
               queueHighWaterMark: 256,
               endOffsetLookupStartedAtMs: lookupStartedAtMs,
@@ -477,7 +480,7 @@ export const makeKafkaMarketProjection = (
       readForLiquidation: readCut(false),
       status: Effect.sync(() => ({
         epoch: projection.epoch,
-        ready,
+        ready: ready && lastFailure === undefined,
         sequence: projection.sequence,
         ...(lastFailure === undefined ? {} : { failure: lastFailure.message }),
       })),

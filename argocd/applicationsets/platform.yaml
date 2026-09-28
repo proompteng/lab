@@ -181,13 +181,13 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
-              - name: codex-devbox
-                path: argocd/applications/codex-devbox
+              - name: devbox
+                path: argocd/applications/devbox
                 namespace: codex-devbox
-                targetRevision: kargo/codex-devbox
+                targetRevision: kargo/devbox
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                  kargo.akuity.io/authorized-stage: lab-delivery:codex-devbox
+                  kargo.akuity.io/authorized-stage: lab-delivery:devbox
                 automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:
@@ -596,6 +596,22 @@ spec:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
                 enabled: "false"
+              - name: rune
+                path: argocd/applications/rune
+                namespace: rune
+                targetRevision: kargo/rune
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                  kargo.akuity.io/authorized-stage: lab-delivery:rune
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: restate
                 path: argocd/applications/restate
                 namespace: restate
