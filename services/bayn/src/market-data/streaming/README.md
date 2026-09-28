@@ -16,7 +16,12 @@ Liquidation snapshots require the quote topic's complete partition cut and a fre
 symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
 through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
 quotes, and invalidated assignments do. This does not authorize entry pricing during bootstrap or change order risk.
-Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
+Transport positions advance only after incorporation or explicit rejection, including drained control offsets.
+Each consumer epoch uses a new group and explicit bootstrap offsets. It never resumes from Kafka-committed offsets,
+so it does not write OffsetCommit requests. An offset-coordinator write failure cannot discard a usable in-memory
+projection. Assignment, heartbeat and fetch failures still invalidate the epoch and require reconstruction.
+Durable decision snapshots retain their source cuts and PostgreSQL references independently of the ephemeral consumer.
+The projection retains 61 bar minutes, 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
 Windows that need the applicable discarded rejection history fail verification. Liquidation checks quote retention
@@ -65,7 +70,7 @@ node dist/streaming-diagnostics-command.js --since 2026-09-11T19:00:00Z
 ```
 
 This bounded probe uses the configured Bayn Kafka identity and the production consumer/reducer. It captures source
-bounds, consumes retained records, commits incorporated offsets in a unique group, verifies exact feature-to-bar
+bounds, consumes retained records at explicit offsets in a unique group without committing offsets, verifies exact feature-to-bar
 matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
 input joins observed now; it does not claim those features were available in a past trading session. The image
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
