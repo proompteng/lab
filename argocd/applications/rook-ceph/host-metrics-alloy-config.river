@@ -27,6 +27,13 @@ prometheus.exporter.unix "storage" {
 discovery.relabel "storage" {
 	targets = prometheus.exporter.unix.storage.targets
 
+	// Embedded Unix targets already carry job="integrations/unix". A scrape
+	// job_name is only a default; override the target label for our rule contract.
+	rule {
+		replacement  = "node-storage"
+		target_label = "job"
+	}
+
 	rule {
 		replacement  = sys.env("NODE_NAME")
 		target_label = "node"
