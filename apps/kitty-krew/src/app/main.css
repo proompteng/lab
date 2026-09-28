@@ -1,0 +1,7 @@
+@import 'tailwindcss';
+
+@layer base {
+  html {
+    @apply bg-zinc-900;
+  }
+}

@@ -1,0 +1,374 @@
+{{- if .Values.rbac.create -}}
+{{- $fullName := include "agents.fullname" . -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $rbacKind := ternary "ClusterRole" "Role" .Values.rbac.clusterScoped -}}
+{{- $bindingKind := ternary "ClusterRoleBinding" "RoleBinding" .Values.rbac.clusterScoped -}}
+{{- $bindingNamespace := ternary "" $namespace .Values.rbac.clusterScoped -}}
+{{- $apiGroup := "rbac.authorization.k8s.io" -}}
+apiVersion: {{ $apiGroup }}/v1
+kind: {{ $rbacKind }}
+metadata:
+  name: {{ $fullName }}
+  {{- if not .Values.rbac.clusterScoped }}
+  namespace: {{ $namespace }}
+  {{- end }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
+      - agents
+      - agentruns
+      - agentproviders
+      - implementationspecs
+      - implementationsources
+      {{- if .Values.controller.vcsProviders.enabled }}
+      - versioncontrolproviders
+      {{- end }}
+      - memories
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
+      - agentruns
+    verbs:
+      - delete
+  - apiGroups:
+      - agents.proompteng.ai
+    resources:
+      - agents/status
+      - agentruns/status
+      - agentproviders/status
+      - implementationspecs/status
+      - implementationsources/status
+      {{- if .Values.controller.vcsProviders.enabled }}
+      - versioncontrolproviders/status
+      {{- end }}
+      - memories/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - orchestration.proompteng.ai
+    resources:
+      - orchestrations
+      - orchestrationruns
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - orchestration.proompteng.ai
+    resources:
+      - orchestrations/status
+      - orchestrationruns/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - approvals.proompteng.ai
+    resources:
+      - approvalpolicies
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - approvals.proompteng.ai
+    resources:
+      - approvalpolicies/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - budgets.proompteng.ai
+    resources:
+      - budgets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - budgets.proompteng.ai
+    resources:
+      - budgets/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - security.proompteng.ai
+    resources:
+      - secretbindings
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - security.proompteng.ai
+    resources:
+      - secretbindings/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - signals.proompteng.ai
+    resources:
+      - signals
+      - signaldeliveries
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - signals.proompteng.ai
+    resources:
+      - signals/status
+      - signaldeliveries/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - tools.proompteng.ai
+    resources:
+      - tools
+      - toolruns
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - tools.proompteng.ai
+    resources:
+      - tools/status
+      - toolruns/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - schedules.proompteng.ai
+    resources:
+      - schedules
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - schedules.proompteng.ai
+    resources:
+      - schedules/status
+    verbs:
+      - get
+      - update
+      - patch
+  {{- if .Values.swarm.enabled }}
+  - apiGroups:
+      - swarm.proompteng.ai
+    resources:
+      - swarms
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - swarm.proompteng.ai
+    resources:
+      - swarms/status
+    verbs:
+      - get
+      - update
+      - patch
+  {{- end }}
+  - apiGroups:
+      - artifacts.proompteng.ai
+    resources:
+      - artifacts
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - artifacts.proompteng.ai
+    resources:
+      - artifacts/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - workspaces.proompteng.ai
+    resources:
+      - workspaces
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+  - apiGroups:
+      - workspaces.proompteng.ai
+    resources:
+      - workspaces/status
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - batch
+    resources:
+      - cronjobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups: [""]
+    resources:
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+      - delete
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
+      - secrets
+    verbs:
+      - get
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - events
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+{{- if .Values.rbac.clusterScoped }}
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
+{{- end }}
+{{- with .Values.rbac.extraRules }}
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+---
+apiVersion: {{ $apiGroup }}/v1
+kind: {{ $bindingKind }}
+metadata:
+  name: {{ $fullName }}
+  {{- if $bindingNamespace }}
+  namespace: {{ $bindingNamespace }}
+  {{- end }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: {{ $apiGroup }}
+  kind: {{ $rbacKind }}
+  name: {{ $fullName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents.serviceAccountName" . }}
+    namespace: {{ $namespace }}
+{{- end }}

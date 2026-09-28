@@ -1,0 +1,9 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: bilig-zero-strip-prefix
+  namespace: bilig
+spec:
+  stripPrefix:
+    prefixes:
+      - /zero

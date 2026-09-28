@@ -1,0 +1,46 @@
+installCRDs: true
+
+replicaCount: 2
+leaderElect: true
+
+crds:
+  createClusterExternalSecret: false
+  createClusterPushSecret: false
+  createPushSecret: false
+
+processClusterExternalSecret: false
+processClusterPushSecret: false
+processPushSecret: false
+
+webhook:
+  create: true
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+certController:
+  create: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

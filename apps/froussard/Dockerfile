@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1.7
+
+ARG NODE_VERSION=24.11.1
+ARG BUN_VERSION=1.4.0
+ARG NODE_BASE_IMAGE=mirror.gcr.io/node
+ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
+
+FROM ${NODE_BASE_IMAGE}:${NODE_VERSION}-bookworm AS base
+ARG BUN_VERSION
+ENV BUN_INSTALL="/root/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+ENV CI=true
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
+WORKDIR /workspace
+
+FROM base AS deps
+COPY package.json bun.lock tsconfig.base.json ./
+COPY .npmrc* ./
+COPY scripts ./scripts
+COPY apps ./apps
+COPY packages ./packages
+COPY services ./services
+RUN bun install --filter @proompteng/agent-contracts --filter @proompteng/discord --filter froussard --frozen-lockfile --ignore-scripts
+
+FROM deps AS build
+RUN bun run --filter @proompteng/agent-contracts build
+RUN bun run --filter @proompteng/otel build
+RUN bun run --filter @proompteng/discord build
+RUN bun run --filter froussard build
+
+FROM deps AS prod-deps
+RUN bun install --filter froussard --production --frozen-lockfile --ignore-scripts
+
+FROM ${BUN_BASE_IMAGE}:${BUN_VERSION}-slim AS runtime
+ENV NODE_ENV=production
+WORKDIR /workspace
+COPY --from=prod-deps /workspace /workspace
+COPY --from=build /workspace/packages/agent-contracts/dist /workspace/packages/agent-contracts/dist
+COPY --from=build /workspace/packages/otel/dist /workspace/packages/otel/dist
+COPY --from=build /workspace/apps/froussard/dist /workspace/apps/froussard/dist
+WORKDIR /workspace/apps/froussard
+EXPOSE 8080
+CMD ["bun", "dist/index.mjs"]

@@ -1,0 +1,33 @@
+name: argo-lint
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.yaml'
+      - 'scripts/argo-lint.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+
+      - name: Lint Argo workflow manifests
+        run: nix run .#lint-argo-workflows

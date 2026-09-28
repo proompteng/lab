@@ -1,0 +1,11 @@
+apiVersion: approvals.proompteng.ai/v1alpha1
+kind: ApprovalPolicy
+metadata:
+  name: agents-primitives-approval
+  namespace: agents
+spec:
+  mode: automatic
+  approvers:
+    - agents-admin
+  requiredApprovals: 1
+  timeoutSeconds: 86400

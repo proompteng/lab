@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: restate-example
+  labels:
+    app.kubernetes.io/name: restate-example
+    app.kubernetes.io/part-of: restate-example
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: restate-example
+  ports:
+    - name: restate
+      port: 9080
+      targetPort: restate

@@ -1,0 +1,539 @@
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from unittest import TestCase
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app import config
+from app.models import Base, Strategy, TradeDecision
+from app.trading.models import StrategyDecision
+from app.trading.risk import RiskEngine
+
+
+class TestRiskEngine(TestCase):
+    def setUp(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        self.session_local = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
+        self.risk_engine = RiskEngine()
+        self.strategy = Strategy(
+            name="test",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.5"),
+            max_notional_per_trade=Decimal("20000"),
+        )
+        self._original_allow_shorts = config.settings.trading_allow_shorts
+        self._original_trading_enabled = config.settings.trading_enabled
+        self._original_trading_mode = config.settings.trading_mode
+        self._original_cooldown = config.settings.trading_cooldown_seconds
+        self._original_fragility_mode = config.settings.trading_fragility_mode
+        self._original_trading_crypto_enabled = config.settings.trading_crypto_enabled
+        self._original_trading_crypto_live_enabled = (
+            config.settings.trading_crypto_live_enabled
+        )
+        config.settings.trading_enabled = True
+        config.settings.trading_mode = "paper"
+        config.settings.trading_crypto_enabled = True
+        config.settings.trading_crypto_live_enabled = False
+        config.settings.trading_fragility_mode = "enforce"
+
+    def tearDown(self) -> None:
+        config.settings.trading_allow_shorts = self._original_allow_shorts
+        config.settings.trading_enabled = self._original_trading_enabled
+        config.settings.trading_mode = self._original_trading_mode
+        config.settings.trading_cooldown_seconds = self._original_cooldown
+        config.settings.trading_fragility_mode = self._original_fragility_mode
+        config.settings.trading_crypto_enabled = self._original_trading_crypto_enabled
+        config.settings.trading_crypto_live_enabled = (
+            self._original_trading_crypto_live_enabled
+        )
+
+    def test_sell_reduces_position_bypasses_buying_power(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("5"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "100", "buying_power": "10"}
+        positions = [{"symbol": "AAPL", "qty": "10", "market_value": "1000"}]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("insufficient_buying_power", verdict.reasons)
+
+    def test_short_blocked_by_default(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("shorts_not_allowed", verdict.reasons)
+
+    def test_short_allowed_when_enabled(self) -> None:
+        config.settings.trading_allow_shorts = True
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertTrue(verdict.approved)
+
+    def test_max_position_pct_counts_short_exposure(self) -> None:
+        config.settings.trading_allow_shorts = True
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="sell",
+            qty=Decimal("50"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions = [{"symbol": "AAPL", "qty": "-40", "market_value": "-4000"}]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("max_position_pct_exceeded", verdict.reasons)
+
+    def test_portfolio_sizing_cap_prevents_false_position_pct_reject(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="GOOG",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("0.2766"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("303.2669439236761"),
+                "portfolio_sizing": {
+                    "output": {
+                        "status": "approved",
+                        "final_qty": "0.2766",
+                        "final_notional": "83.9119507357623000",
+                        "remaining_room_notional": "83.9119507357623000",
+                    }
+                },
+            },
+        )
+        strategy = Strategy(
+            name="test-cap",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("20000"),
+        )
+        account = {
+            "equity": "31211.38",
+            "cash": "10000",
+            "buying_power": "10000",
+        }
+        positions = [
+            {"symbol": "GOOG", "qty": "8", "market_value": "2412.9984492642377"}
+        ]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, strategy, account, positions, {"GOOG"}
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("max_position_pct_exceeded", verdict.reasons)
+
+    def test_stale_portfolio_sizing_audit_does_not_bypass_position_pct_reject(
+        self,
+    ) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="GOOG",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("400"),
+                "portfolio_sizing": {
+                    "output": {
+                        "status": "approved",
+                        "final_qty": "0.2",
+                        "final_notional": "80",
+                        "remaining_room_notional": "80",
+                    }
+                },
+            },
+        )
+        strategy = Strategy(
+            name="test-stale-cap",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.08"),
+            max_notional_per_trade=Decimal("20000"),
+        )
+        account = {
+            "equity": "1000",
+            "cash": "1000",
+            "buying_power": "1000",
+        }
+        positions = [{"symbol": "GOOG", "qty": "1", "market_value": "200"}]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, strategy, account, positions, {"GOOG"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("max_position_pct_exceeded", verdict.reasons)
+
+    def test_max_position_pct_uses_portfolio_sizing_final_notional(self) -> None:
+        strategy = Strategy(
+            name="sized",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=Decimal("0.5"),
+            max_notional_per_trade=Decimal("20000"),
+        )
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("3.3333"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("30"),
+                "portfolio_sizing": {
+                    "output": {
+                        "status": "approved",
+                        "final_qty": "3.3333",
+                        "final_notional": "100",
+                    }
+                },
+            },
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions = [{"symbol": "AAPL", "qty": "163.3333", "market_value": "4900"}]
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, strategy, account, positions, {"AAPL"}
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("max_position_pct_exceeded", verdict.reasons)
+
+    def test_cooldown_ignores_rejected_decisions(self) -> None:
+        config.settings.trading_cooldown_seconds = 60
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            strategy_id = uuid.uuid4()
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy_id,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json={},
+                    status="rejected",
+                    created_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+                )
+            )
+            session.commit()
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("cooldown_active", verdict.reasons)
+
+    def test_cooldown_blocks_non_rejected_decisions(self) -> None:
+        config.settings.trading_cooldown_seconds = 60
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            strategy_id = uuid.uuid4()
+            session.add(
+                TradeDecision(
+                    strategy_id=strategy_id,
+                    alpaca_account_label="paper",
+                    symbol="AAPL",
+                    timeframe="1Min",
+                    decision_json={},
+                    status="planned",
+                    created_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+                )
+            )
+            session.commit()
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("cooldown_active", verdict.reasons)
+
+    def test_hard_notional_limit_still_enforced_with_allocator_metadata(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("500"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "allocator": {
+                    "status": "approved",
+                    "reason_codes": [],
+                    "approved_qty": "500",
+                },
+            },
+        )
+        account = {"equity": "100000", "cash": "100000", "buying_power": "100000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"AAPL"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("max_notional_exceeded", verdict.reasons)
+
+    def test_rejects_high_adverse_selection_risk_from_advisor(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session,
+                decision,
+                self.strategy,
+                account,
+                positions,
+                {"AAPL"},
+                execution_advisor={"adverse_selection_risk": "0.95"},
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("adverse_selection_risk_exceeds_maximum", verdict.reasons)
+
+    def test_crumbling_quote_overlay_metadata_is_not_live_risk_reject(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session,
+                decision,
+                self.strategy,
+                account,
+                positions,
+                {"AAPL"},
+                execution_advisor={
+                    "crumbling_quote_probability": "0.99",
+                    "mechanical_liquidity_withdrawal_probability": "0.99",
+                },
+            )
+        self.assertTrue(verdict.approved)
+        self.assertNotIn("adverse_selection_risk_exceeds_maximum", verdict.reasons)
+
+    def test_crypto_trade_blocked_when_crypto_flags_disabled(self) -> None:
+        config.settings.trading_crypto_enabled = False
+        config.settings.trading_crypto_enabled = False
+        config.settings.trading_crypto_enabled = False
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="BTC/USD",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"BTC/USD"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("crypto_trading_disabled", verdict.reasons)
+
+    def test_crypto_live_trade_blocked_when_live_gate_disabled(self) -> None:
+        config.settings.trading_mode = "live"
+        config.settings.trading_mode = "live"
+        config.settings.trading_crypto_live_enabled = False
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="ETH/USD",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={"price": Decimal("100")},
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        positions: list[dict[str, str]] = []
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, positions, {"ETH/USD"}
+            )
+        self.assertFalse(verdict.approved)
+        self.assertIn("crypto_live_trading_disabled", verdict.reasons)
+
+    def test_target_sizing_blocks_non_positive_expectancy(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "target_sizing": {
+                    "observed_post_cost_expectancy_bps": "0",
+                    "capacity_daily_notional": "1000000",
+                    "drawdown_budget": "1000",
+                },
+            },
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, [], {"AAPL"}
+            )
+
+        self.assertFalse(verdict.approved)
+        self.assertIn("observed_post_cost_expectancy_bps_non_positive", verdict.reasons)
+
+    def test_target_sizing_blocks_capacity_and_drawdown_over_budget(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="s1",
+            symbol="AAPL",
+            event_ts=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+            order_type="market",
+            time_in_force="day",
+            params={
+                "price": Decimal("100"),
+                "target_sizing": {
+                    "observed_post_cost_expectancy_bps": "5",
+                    "capacity_daily_notional": "999999",
+                    "drawdown_budget": "3500",
+                    "allocated_sleeve_equity": "100000",
+                },
+            },
+        )
+        account = {"equity": "10000", "cash": "10000", "buying_power": "10000"}
+        with self.session_local() as session:
+            verdict = self.risk_engine.evaluate(
+                session, decision, self.strategy, account, [], {"AAPL"}
+            )
+
+        self.assertFalse(verdict.approved)
+        self.assertIn("target_notional_capacity_below_required", verdict.reasons)
+        self.assertIn("target_drawdown_budget_exceeds_cap", verdict.reasons)

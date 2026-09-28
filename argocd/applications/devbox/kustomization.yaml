@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: codex-devbox
+resources:
+- storage.yaml
+- initialize.yaml
+- access-sealed-secret.yaml
+- statefulset.yaml
+- service.yaml
+- network-policy.yaml
+- resource-quota.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/codex-devbox
+  digest: sha256:28633e71c34cb2f570efa59aa29fcbdfbee6b9c2c31b767e1ab5156ab9230108

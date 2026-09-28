@@ -1,0 +1,223 @@
+import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
+
+import { decideIntradayMomentumCore, type IntradayMomentumCoreInput } from './decision-core'
+import { decodeDefaultIntradayMomentumProtocol } from './protocol'
+
+const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
+
+const observedAt = '2026-08-18T16:00:02.000Z'
+const evidenceAt = '2026-08-18T16:00:01.000Z'
+const makeInput = (candidateMidpoint: number): IntradayMomentumCoreInput => {
+  const protocol = success(decodeDefaultIntradayMomentumProtocol())
+  const symbols = [...protocol.candidateSymbols, protocol.benchmarkSymbol]
+  const rollingPrices = Object.fromEntries(
+    symbols.map((symbol) => [
+      symbol,
+      { referencePriceMicros: '100000000', rangeHighPriceMicros: '100300000', rangeLowPriceMicros: '99800000' },
+    ]),
+  )
+  const latestQuotes = Object.fromEntries(
+    symbols.map((symbol) => {
+      const midpoint = symbol === protocol.benchmarkSymbol ? 100.1 : symbol === 'AAPL' ? candidateMidpoint : 100.01
+      return [
+        symbol,
+        {
+          symbol,
+          eventAt: evidenceAt,
+          bidPrice: midpoint - 0.005,
+          bidSize: 100,
+          askPrice: midpoint + 0.005,
+          askSize: 100,
+        },
+      ]
+    }),
+  )
+  const latestTrades = Object.fromEntries(
+    protocol.candidateSymbols.map((symbol) => [
+      symbol,
+      {
+        symbol,
+        eventAt: evidenceAt,
+        price: symbol === 'AAPL' ? candidateMidpoint : 100.01,
+      },
+    ]),
+  )
+  return { rollingPrices, latestQuotes, latestTrades, observedAt, protocol }
+}
+
+describe('intraday momentum decision core', () => {
+  test('keeps strategy selection stable when feature input order changes', () => {
+    const input = makeInput(101)
+    const result = success(decideIntradayMomentumCore(input))
+    const reordered = success(
+      decideIntradayMomentumCore({
+        ...input,
+        rollingPrices: Object.fromEntries(Object.entries(input.rollingPrices).reverse()),
+      }),
+    )
+
+    expect(reordered).toEqual(result)
+    expect(result.selectedSymbols).toEqual(['AAPL'])
+    expect(result.targetWeights).toEqual({
+      AAPL: 0.1,
+      AMZN: 0,
+      IWM: 0,
+      NVDA: 0,
+      QQQ: 0,
+      SMH: 0,
+    })
+    expect(Object.keys(result)).toEqual([
+      'benchmark',
+      'selectedSymbols',
+      'excludedCandidates',
+      'targetWeights',
+      'signals',
+    ])
+    expect(result.signals.find(({ symbol }) => symbol === 'AAPL')).toMatchObject({
+      eligible: true,
+      rank: 1,
+      rejectionReasons: [],
+    })
+  })
+
+  test('retains an explicit no-trade result when every candidate is below the thresholds', () => {
+    const input = makeInput(100.01)
+    const result = success(decideIntradayMomentumCore(input))
+
+    expect(result.selectedSymbols).toEqual([])
+    expect(result.targetWeights).toEqual({
+      AAPL: 0,
+      AMZN: 0,
+      IWM: 0,
+      NVDA: 0,
+      QQQ: 0,
+      SMH: 0,
+    })
+    expect(result.signals.every(({ eligible, rank }) => !eligible && rank === null)).toBe(true)
+    expect(result.signals.every(({ rejectionReasons }) => rejectionReasons.includes('breakout'))).toBe(true)
+    expect(result.excludedCandidates).toEqual([])
+  })
+
+  test.each([
+    [
+      'quote',
+      (input: IntradayMomentumCoreInput) => {
+        const { AMZN: _ignored, ...latestQuotes } = input.latestQuotes
+        return { ...input, latestQuotes }
+      },
+    ],
+    [
+      'trade',
+      (input: IntradayMomentumCoreInput) => {
+        const { AMZN: _ignored, ...latestTrades } = input.latestTrades
+        return { ...input, latestTrades }
+      },
+    ],
+    [
+      'rolling features',
+      (input: IntradayMomentumCoreInput) => {
+        const { AMZN: _ignored, ...rollingPrices } = input.rollingPrices
+        return { ...input, rollingPrices }
+      },
+    ],
+  ] as const)('excludes a candidate with missing %s evidence while retaining a valid peer', (_, change) => {
+    const input = makeInput(101)
+    const result = success(decideIntradayMomentumCore(change(input)))
+
+    expect(result.selectedSymbols).toEqual(['AAPL'])
+    expect(result.signals.map(({ symbol }) => symbol)).toEqual(['AAPL', 'IWM', 'NVDA', 'QQQ', 'SMH'])
+    expect(result.excludedCandidates).toEqual([
+      {
+        symbol: 'AMZN',
+        reason: 'not-ready',
+        message: expect.any(String),
+      },
+    ])
+    expect(result.targetWeights).toMatchObject({ AAPL: 0.1, AMZN: 0 })
+  })
+
+  test('distinguishes all candidates unavailable from a valid threshold no-trade', () => {
+    const input = makeInput(101)
+    const unavailable = success(
+      decideIntradayMomentumCore({
+        ...input,
+        latestQuotes: { [input.protocol.benchmarkSymbol]: input.latestQuotes[input.protocol.benchmarkSymbol]! },
+        latestTrades: {},
+      }),
+    )
+    const noTrade = success(decideIntradayMomentumCore(makeInput(100.01)))
+
+    expect(unavailable.signals).toEqual([])
+    expect(unavailable.selectedSymbols).toEqual([])
+    expect(unavailable.excludedCandidates.map(({ symbol }) => symbol)).toEqual([...input.protocol.candidateSymbols])
+    expect(noTrade.signals).toHaveLength(input.protocol.candidateSymbols.length)
+    expect(noTrade.excludedCandidates).toEqual([])
+  })
+
+  test('keeps the benchmark mandatory when candidate evidence is unavailable', () => {
+    const input = makeInput(101)
+    const { SPY: _ignored, ...latestQuotes } = input.latestQuotes
+    const result = decideIntradayMomentumCore({ ...input, latestQuotes })
+
+    expect(Result.isFailure(result) ? result.failure : undefined).toMatchObject({
+      reason: 'snapshot-coverage',
+      symbol: 'SPY',
+    })
+  })
+})
+
+describe('prepared rolling feature strategy inputs', () => {
+  test('missing features exclude candidates and never invoke another feature calculation', () => {
+    const input = makeInput(101)
+    const values = {
+      referencePriceMicros: '100000000',
+      rangeHighPriceMicros: '100300000',
+      rangeLowPriceMicros: '99800000',
+    }
+    const rollingPrices = Object.fromEntries(
+      [...input.protocol.candidateSymbols, input.protocol.benchmarkSymbol].map((symbol) => [symbol, values]),
+    )
+    expect(success(decideIntradayMomentumCore({ ...input, rollingPrices }))).toEqual(
+      success(decideIntradayMomentumCore(input)),
+    )
+    const { AAPL: _candidate, ...missingCandidate } = rollingPrices
+    const excluded = success(decideIntradayMomentumCore({ ...input, rollingPrices: missingCandidate }))
+    expect(excluded.excludedCandidates).toContainEqual({
+      symbol: 'AAPL',
+      reason: 'not-ready',
+      message: 'required candidate rolling feature is unavailable',
+    })
+    expect(excluded.targetWeights['AAPL']).toBe(0)
+    const { SPY: _benchmark, ...missingBenchmark } = rollingPrices
+    expect(Result.isFailure(decideIntradayMomentumCore({ ...input, rollingPrices: missingBenchmark }))).toBe(true)
+  })
+
+  test('uses supplied rolling values while executable prices continue to come from quotes', () => {
+    const input = makeInput(101)
+    const rollingPrices = Object.fromEntries(
+      [...input.protocol.candidateSymbols, input.protocol.benchmarkSymbol].map((symbol) => [
+        symbol,
+        { referencePriceMicros: '100000000', rangeHighPriceMicros: '100300000', rangeLowPriceMicros: '99800000' },
+      ]),
+    )
+    const output = success(
+      decideIntradayMomentumCore({
+        ...input,
+        rollingPrices: {
+          ...rollingPrices,
+          AAPL: {
+            referencePriceMicros: '99900000',
+            rangeHighPriceMicros: '100400000',
+            rangeLowPriceMicros: '99800000',
+          },
+        },
+      }),
+    )
+    expect(output.signals.find((signal) => signal.symbol === 'AAPL')).toMatchObject({
+      referencePriceMicros: '99900000',
+      rangeHighPriceMicros: '100400000',
+      bidPriceMicros: '100995000',
+    })
+  })
+})

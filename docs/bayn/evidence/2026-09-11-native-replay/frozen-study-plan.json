@@ -1,0 +1,1275 @@
+{
+  "recordedAt": "2026-09-12T20:42:20.859896+00:00",
+  "scenarios": [
+    {
+      "name": "baseline",
+      "input": {
+        "schemaVersion": "bayn.execution-replay-session.v1",
+        "replicate": "friday-regenerated-v3-baseline",
+        "sessionDate": "2026-09-11",
+        "source": {
+          "schemaVersion": "bayn.retained-replay-source.v1",
+          "dataSha256": "f631e62244b6fa46f908b08fc7898a3a04f1b816332d454acf323af6709503ba",
+          "recordCount": 8437431,
+          "coverageStartMs": 1789133390000,
+          "coverageEndMs": 1789156810000,
+          "firstAvailableAtMs": 1789133390025,
+          "lastAvailableAtMs": 1789156809983,
+          "positions": [
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 0,
+              "startOffset": "1146468",
+              "endOffsetExclusive": "1154691"
+            },
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 1,
+              "startOffset": "1708105",
+              "endOffsetExclusive": "1722521"
+            },
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 2,
+              "startOffset": "2125586",
+              "endOffsetExclusive": "2149395"
+            },
+            {
+              "topic": "torghut.market-features.v1",
+              "partition": 0,
+              "startOffset": "0",
+              "endOffsetExclusive": "3817"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 1,
+              "startOffset": "178228122",
+              "endOffsetExclusive": "179426303"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 3,
+              "startOffset": "4737975",
+              "endOffsetExclusive": "5347939"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 4,
+              "startOffset": "9927002",
+              "endOffsetExclusive": "11247702"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 6,
+              "startOffset": "3538818",
+              "endOffsetExclusive": "3948222"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 8,
+              "startOffset": "2319702",
+              "endOffsetExclusive": "2899956"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 9,
+              "startOffset": "9260322",
+              "endOffsetExclusive": "10926182"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 12,
+              "startOffset": "14565455",
+              "endOffsetExclusive": "16961205"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 0,
+              "startOffset": "6401850",
+              "endOffsetExclusive": "6431342"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 1,
+              "startOffset": "10214335",
+              "endOffsetExclusive": "10224451"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 2,
+              "startOffset": "12472894",
+              "endOffsetExclusive": "12640339"
+            }
+          ],
+          "universe": {
+            "universeId": "torghut-core-equity-v2",
+            "universeSymbolHash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+            "symbols": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "COHR",
+              "CRDO",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SPY",
+              "WDC"
+            ],
+            "topics": {
+              "bars": "torghut.bars.1m.v1",
+              "quotes": "torghut.quotes.v1",
+              "trades": "torghut.trades.v1",
+              "features": "torghut.market-features.v1"
+            }
+          },
+          "origin": "Original frozen Kafka raw arrivals a76170c2c38ed4d79f0ed7435797625cf929334276803432293ccd91b264e72c preserved byte-for-byte after removing later bootstrap feature records; Dorvud production transition replay receipt 1833b399065cfc78de1b601d17d657aadf349633a93e96d632468cae0cbf1606 / output 37e88d3560ff6faa6d1c8130ad61804a7d971fed44d169cba580cc75b77ec269. Feature coordinates are isolated simulation coordinates, not published Kafka positions.",
+          "deliveryModel": {
+            "schemaVersion": "bayn.supplied-arrival-times.v1",
+            "description": "Raw availability remains max(ceiling producer ingestion,Kafka timestamp), zero additional transport. Dorvud rolling features become available 100ms after the triggering raw arrival or completed window, whichever is later; original input revisions and actual computedAt remain unchanged. Simulated feature coordinates are contiguous partition zero. Current asset eligibility is counterfactual; fill calibration and profitability remain unproven.",
+            "tieBreak": "availability-topic-partition-offset"
+          },
+          "regeneratedFeaturesRecordedAtMs": 1789245391056
+        },
+        "openingCashMicros": "100000000000",
+        "fractionalTrading": false,
+        "calendar": [
+          {
+            "date": "2026-09-11",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-14",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-15",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-16",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-17",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-18",
+            "open": "09:30",
+            "close": "16:00"
+          }
+        ],
+        "assets": [
+          {
+            "id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AAPL",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "03fb07bb-5db1-4077-8dea-5d711b272625",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AMD",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "f801f835-bfe6-4a9d-a6b1-ccbb84bfd75f",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AMZN",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "7a8b4fcf-0622-47ef-8541-de7f70ffc0c4",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AVGO",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "e3e977e6-a55b-4b5f-bc0a-e2b02183d254",
+            "class": "us_equity",
+            "exchange": "NYSE",
+            "symbol": "COHR",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "73fa2018-e4b3-4956-a6d7-6c47ccdbcd83",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "CRDO",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "ef2b4bb6-00eb-494a-ba4d-aa40dd9a701c",
+            "class": "us_equity",
+            "exchange": "ARCA",
+            "symbol": "IWM",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "363b9094-c5ae-4899-bbc0-f94b27c87a6e",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "LITE",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "723c21be-11af-4450-9b64-20346a6905fc",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "MRVL",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "1ef18995-5094-4f62-a5c5-e00168611152",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "MU",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "4ce9353c-66d1-46c2-898f-fce867ab0247",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "NVDA",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "2d9e926c-e17c-47c3-ad8c-26c7a594e48f",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "QQQ",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "b92f74a0-d31f-4e3c-9162-6ff91cae4174",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "SMH",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "325cea3c-527c-4075-8130-e5bbbe58a8a3",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "SNDK",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "b28f4066-5c6d-479b-a2af-85dc1a8f16fb",
+            "class": "us_equity",
+            "exchange": "ARCA",
+            "symbol": "SPY",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "70cb03f3-2184-4a3a-b04c-ad5ff9524612",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "WDC",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          }
+        ],
+        "assetObservationAt": "2026-09-12T19:22:16.582Z",
+        "assetObservationPolicy": "counterfactual-current-asset-eligibility",
+        "build": {
+          "sourceRevision": "4b1a044d0fa903771969d469247021d859271a7e",
+          "imageRepository": "registry.ide-newton.ts.net/lab/bayn",
+          "imageDigest": "sha256:ebdd0c9740dd10b005032e59986a0b4e325ef0382f3883660bb9fccef4d35894",
+          "strategyBehaviorHash": "5981590560e7760e5525192f45be248b3b60b65b28e8c9c3b7b95d9f8e4d0e51",
+          "strategyParameterHash": "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f"
+        },
+        "assumptions": {
+          "latencyMs": 100,
+          "slippageBps": 1,
+          "availableLiquidityPpm": 1000000,
+          "feeMultiplierPpm": 1000000
+        },
+        "cadence": {
+          "pollIntervalMs": 30000,
+          "reconciliationIntervalMs": 30000,
+          "reconciliationPassTimeoutMs": 30000,
+          "reconciliationStaleThresholdMs": 120000
+        }
+      }
+    },
+    {
+      "name": "cost-stress",
+      "input": {
+        "schemaVersion": "bayn.execution-replay-session.v1",
+        "replicate": "friday-regenerated-v3-cost-stress",
+        "sessionDate": "2026-09-11",
+        "source": {
+          "schemaVersion": "bayn.retained-replay-source.v1",
+          "dataSha256": "f631e62244b6fa46f908b08fc7898a3a04f1b816332d454acf323af6709503ba",
+          "recordCount": 8437431,
+          "coverageStartMs": 1789133390000,
+          "coverageEndMs": 1789156810000,
+          "firstAvailableAtMs": 1789133390025,
+          "lastAvailableAtMs": 1789156809983,
+          "positions": [
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 0,
+              "startOffset": "1146468",
+              "endOffsetExclusive": "1154691"
+            },
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 1,
+              "startOffset": "1708105",
+              "endOffsetExclusive": "1722521"
+            },
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 2,
+              "startOffset": "2125586",
+              "endOffsetExclusive": "2149395"
+            },
+            {
+              "topic": "torghut.market-features.v1",
+              "partition": 0,
+              "startOffset": "0",
+              "endOffsetExclusive": "3817"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 1,
+              "startOffset": "178228122",
+              "endOffsetExclusive": "179426303"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 3,
+              "startOffset": "4737975",
+              "endOffsetExclusive": "5347939"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 4,
+              "startOffset": "9927002",
+              "endOffsetExclusive": "11247702"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 6,
+              "startOffset": "3538818",
+              "endOffsetExclusive": "3948222"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 8,
+              "startOffset": "2319702",
+              "endOffsetExclusive": "2899956"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 9,
+              "startOffset": "9260322",
+              "endOffsetExclusive": "10926182"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 12,
+              "startOffset": "14565455",
+              "endOffsetExclusive": "16961205"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 0,
+              "startOffset": "6401850",
+              "endOffsetExclusive": "6431342"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 1,
+              "startOffset": "10214335",
+              "endOffsetExclusive": "10224451"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 2,
+              "startOffset": "12472894",
+              "endOffsetExclusive": "12640339"
+            }
+          ],
+          "universe": {
+            "universeId": "torghut-core-equity-v2",
+            "universeSymbolHash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+            "symbols": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "COHR",
+              "CRDO",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SPY",
+              "WDC"
+            ],
+            "topics": {
+              "bars": "torghut.bars.1m.v1",
+              "quotes": "torghut.quotes.v1",
+              "trades": "torghut.trades.v1",
+              "features": "torghut.market-features.v1"
+            }
+          },
+          "origin": "Original frozen Kafka raw arrivals a76170c2c38ed4d79f0ed7435797625cf929334276803432293ccd91b264e72c preserved byte-for-byte after removing later bootstrap feature records; Dorvud production transition replay receipt 1833b399065cfc78de1b601d17d657aadf349633a93e96d632468cae0cbf1606 / output 37e88d3560ff6faa6d1c8130ad61804a7d971fed44d169cba580cc75b77ec269. Feature coordinates are isolated simulation coordinates, not published Kafka positions.",
+          "deliveryModel": {
+            "schemaVersion": "bayn.supplied-arrival-times.v1",
+            "description": "Raw availability remains max(ceiling producer ingestion,Kafka timestamp), zero additional transport. Dorvud rolling features become available 100ms after the triggering raw arrival or completed window, whichever is later; original input revisions and actual computedAt remain unchanged. Simulated feature coordinates are contiguous partition zero. Current asset eligibility is counterfactual; fill calibration and profitability remain unproven.",
+            "tieBreak": "availability-topic-partition-offset"
+          },
+          "regeneratedFeaturesRecordedAtMs": 1789245391056
+        },
+        "openingCashMicros": "100000000000",
+        "fractionalTrading": false,
+        "calendar": [
+          {
+            "date": "2026-09-11",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-14",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-15",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-16",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-17",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-18",
+            "open": "09:30",
+            "close": "16:00"
+          }
+        ],
+        "assets": [
+          {
+            "id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AAPL",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "03fb07bb-5db1-4077-8dea-5d711b272625",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AMD",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "f801f835-bfe6-4a9d-a6b1-ccbb84bfd75f",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AMZN",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "7a8b4fcf-0622-47ef-8541-de7f70ffc0c4",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AVGO",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "e3e977e6-a55b-4b5f-bc0a-e2b02183d254",
+            "class": "us_equity",
+            "exchange": "NYSE",
+            "symbol": "COHR",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "73fa2018-e4b3-4956-a6d7-6c47ccdbcd83",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "CRDO",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "ef2b4bb6-00eb-494a-ba4d-aa40dd9a701c",
+            "class": "us_equity",
+            "exchange": "ARCA",
+            "symbol": "IWM",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "363b9094-c5ae-4899-bbc0-f94b27c87a6e",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "LITE",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "723c21be-11af-4450-9b64-20346a6905fc",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "MRVL",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "1ef18995-5094-4f62-a5c5-e00168611152",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "MU",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "4ce9353c-66d1-46c2-898f-fce867ab0247",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "NVDA",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "2d9e926c-e17c-47c3-ad8c-26c7a594e48f",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "QQQ",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "b92f74a0-d31f-4e3c-9162-6ff91cae4174",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "SMH",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "325cea3c-527c-4075-8130-e5bbbe58a8a3",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "SNDK",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "b28f4066-5c6d-479b-a2af-85dc1a8f16fb",
+            "class": "us_equity",
+            "exchange": "ARCA",
+            "symbol": "SPY",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "70cb03f3-2184-4a3a-b04c-ad5ff9524612",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "WDC",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          }
+        ],
+        "assetObservationAt": "2026-09-12T19:22:16.582Z",
+        "assetObservationPolicy": "counterfactual-current-asset-eligibility",
+        "build": {
+          "sourceRevision": "4b1a044d0fa903771969d469247021d859271a7e",
+          "imageRepository": "registry.ide-newton.ts.net/lab/bayn",
+          "imageDigest": "sha256:ebdd0c9740dd10b005032e59986a0b4e325ef0382f3883660bb9fccef4d35894",
+          "strategyBehaviorHash": "5981590560e7760e5525192f45be248b3b60b65b28e8c9c3b7b95d9f8e4d0e51",
+          "strategyParameterHash": "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f"
+        },
+        "assumptions": {
+          "latencyMs": 500,
+          "slippageBps": 2,
+          "availableLiquidityPpm": 500000,
+          "feeMultiplierPpm": 2000000
+        },
+        "cadence": {
+          "pollIntervalMs": 30000,
+          "reconciliationIntervalMs": 30000,
+          "reconciliationPassTimeoutMs": 30000,
+          "reconciliationStaleThresholdMs": 120000
+        }
+      }
+    },
+    {
+      "name": "severe-cost-stress",
+      "input": {
+        "schemaVersion": "bayn.execution-replay-session.v1",
+        "replicate": "friday-regenerated-v3-severe-cost-stress",
+        "sessionDate": "2026-09-11",
+        "source": {
+          "schemaVersion": "bayn.retained-replay-source.v1",
+          "dataSha256": "f631e62244b6fa46f908b08fc7898a3a04f1b816332d454acf323af6709503ba",
+          "recordCount": 8437431,
+          "coverageStartMs": 1789133390000,
+          "coverageEndMs": 1789156810000,
+          "firstAvailableAtMs": 1789133390025,
+          "lastAvailableAtMs": 1789156809983,
+          "positions": [
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 0,
+              "startOffset": "1146468",
+              "endOffsetExclusive": "1154691"
+            },
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 1,
+              "startOffset": "1708105",
+              "endOffsetExclusive": "1722521"
+            },
+            {
+              "topic": "torghut.bars.1m.v1",
+              "partition": 2,
+              "startOffset": "2125586",
+              "endOffsetExclusive": "2149395"
+            },
+            {
+              "topic": "torghut.market-features.v1",
+              "partition": 0,
+              "startOffset": "0",
+              "endOffsetExclusive": "3817"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 1,
+              "startOffset": "178228122",
+              "endOffsetExclusive": "179426303"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 3,
+              "startOffset": "4737975",
+              "endOffsetExclusive": "5347939"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 4,
+              "startOffset": "9927002",
+              "endOffsetExclusive": "11247702"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 6,
+              "startOffset": "3538818",
+              "endOffsetExclusive": "3948222"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 8,
+              "startOffset": "2319702",
+              "endOffsetExclusive": "2899956"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 9,
+              "startOffset": "9260322",
+              "endOffsetExclusive": "10926182"
+            },
+            {
+              "topic": "torghut.quotes.v1",
+              "partition": 12,
+              "startOffset": "14565455",
+              "endOffsetExclusive": "16961205"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 0,
+              "startOffset": "6401850",
+              "endOffsetExclusive": "6431342"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 1,
+              "startOffset": "10214335",
+              "endOffsetExclusive": "10224451"
+            },
+            {
+              "topic": "torghut.trades.v1",
+              "partition": 2,
+              "startOffset": "12472894",
+              "endOffsetExclusive": "12640339"
+            }
+          ],
+          "universe": {
+            "universeId": "torghut-core-equity-v2",
+            "universeSymbolHash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+            "symbols": [
+              "AAPL",
+              "AMD",
+              "AMZN",
+              "AVGO",
+              "COHR",
+              "CRDO",
+              "IWM",
+              "LITE",
+              "MRVL",
+              "MU",
+              "NVDA",
+              "QQQ",
+              "SMH",
+              "SNDK",
+              "SPY",
+              "WDC"
+            ],
+            "topics": {
+              "bars": "torghut.bars.1m.v1",
+              "quotes": "torghut.quotes.v1",
+              "trades": "torghut.trades.v1",
+              "features": "torghut.market-features.v1"
+            }
+          },
+          "origin": "Original frozen Kafka raw arrivals a76170c2c38ed4d79f0ed7435797625cf929334276803432293ccd91b264e72c preserved byte-for-byte after removing later bootstrap feature records; Dorvud production transition replay receipt 1833b399065cfc78de1b601d17d657aadf349633a93e96d632468cae0cbf1606 / output 37e88d3560ff6faa6d1c8130ad61804a7d971fed44d169cba580cc75b77ec269. Feature coordinates are isolated simulation coordinates, not published Kafka positions.",
+          "deliveryModel": {
+            "schemaVersion": "bayn.supplied-arrival-times.v1",
+            "description": "Raw availability remains max(ceiling producer ingestion,Kafka timestamp), zero additional transport. Dorvud rolling features become available 100ms after the triggering raw arrival or completed window, whichever is later; original input revisions and actual computedAt remain unchanged. Simulated feature coordinates are contiguous partition zero. Current asset eligibility is counterfactual; fill calibration and profitability remain unproven.",
+            "tieBreak": "availability-topic-partition-offset"
+          },
+          "regeneratedFeaturesRecordedAtMs": 1789245391056
+        },
+        "openingCashMicros": "100000000000",
+        "fractionalTrading": false,
+        "calendar": [
+          {
+            "date": "2026-09-11",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-14",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-15",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-16",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-17",
+            "open": "09:30",
+            "close": "16:00"
+          },
+          {
+            "date": "2026-09-18",
+            "open": "09:30",
+            "close": "16:00"
+          }
+        ],
+        "assets": [
+          {
+            "id": "b0b6dd9d-8b9b-48a9-ba46-b9d54906e415",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AAPL",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "03fb07bb-5db1-4077-8dea-5d711b272625",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AMD",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "f801f835-bfe6-4a9d-a6b1-ccbb84bfd75f",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AMZN",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "7a8b4fcf-0622-47ef-8541-de7f70ffc0c4",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "AVGO",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "e3e977e6-a55b-4b5f-bc0a-e2b02183d254",
+            "class": "us_equity",
+            "exchange": "NYSE",
+            "symbol": "COHR",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "73fa2018-e4b3-4956-a6d7-6c47ccdbcd83",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "CRDO",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "ef2b4bb6-00eb-494a-ba4d-aa40dd9a701c",
+            "class": "us_equity",
+            "exchange": "ARCA",
+            "symbol": "IWM",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "363b9094-c5ae-4899-bbc0-f94b27c87a6e",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "LITE",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "723c21be-11af-4450-9b64-20346a6905fc",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "MRVL",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "1ef18995-5094-4f62-a5c5-e00168611152",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "MU",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "4ce9353c-66d1-46c2-898f-fce867ab0247",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "NVDA",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "2d9e926c-e17c-47c3-ad8c-26c7a594e48f",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "QQQ",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "b92f74a0-d31f-4e3c-9162-6ff91cae4174",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "SMH",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "325cea3c-527c-4075-8130-e5bbbe58a8a3",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "SNDK",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "b28f4066-5c6d-479b-a2af-85dc1a8f16fb",
+            "class": "us_equity",
+            "exchange": "ARCA",
+            "symbol": "SPY",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "options_late_close",
+              "overnight_tradable"
+            ]
+          },
+          {
+            "id": "70cb03f3-2184-4a3a-b04c-ad5ff9524612",
+            "class": "us_equity",
+            "exchange": "NASDAQ",
+            "symbol": "WDC",
+            "status": "active",
+            "tradable": true,
+            "fractionable": true,
+            "attributes": [
+              "fractional_eh_enabled",
+              "has_options",
+              "overnight_tradable"
+            ]
+          }
+        ],
+        "assetObservationAt": "2026-09-12T19:22:16.582Z",
+        "assetObservationPolicy": "counterfactual-current-asset-eligibility",
+        "build": {
+          "sourceRevision": "4b1a044d0fa903771969d469247021d859271a7e",
+          "imageRepository": "registry.ide-newton.ts.net/lab/bayn",
+          "imageDigest": "sha256:ebdd0c9740dd10b005032e59986a0b4e325ef0382f3883660bb9fccef4d35894",
+          "strategyBehaviorHash": "5981590560e7760e5525192f45be248b3b60b65b28e8c9c3b7b95d9f8e4d0e51",
+          "strategyParameterHash": "cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f"
+        },
+        "assumptions": {
+          "latencyMs": 1000,
+          "slippageBps": 5,
+          "availableLiquidityPpm": 250000,
+          "feeMultiplierPpm": 3000000
+        },
+        "cadence": {
+          "pollIntervalMs": 30000,
+          "reconciliationIntervalMs": 30000,
+          "reconciliationPassTimeoutMs": 30000,
+          "reconciliationStaleThresholdMs": 120000
+        }
+      }
+    }
+  ],
+  "note": "v2 rejected before execution because session preparation incorrectly normalized a multi-session calendar against a single-day range. v3 fixes that runner defect; source, strategy and cost assumptions remain unchanged."
+}

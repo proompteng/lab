@@ -1,0 +1,163 @@
+{
+  "name": "captured-timer-cancellation",
+  "info": {
+    "namespace": "default",
+    "taskQueue": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+    "workflowId": "replay-captured-timer-cancellation-2af2160c-0657-4816-9406-ac4a4b122fe8",
+    "runId": "019dfeaa-dc1f-7192-b7d7-268cb53e2b5b",
+    "workflowType": "integrationTimerCancellationWorkflow",
+    "temporalVersion": "temporal version 1.7.0 (Server 1.31.0, UI 2.49.1)"
+  },
+  "history": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-05-06T19:01:43.583103Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "48235477",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "integrationTimerCancellationWorkflow"
+        },
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJ0aW1lb3V0TXMiOjMwMDAwfQ=="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "019dfeaa-dc1f-7192-b7d7-268cb53e2b5b",
+        "identity": "temporal-cli:gregkonush@Mac.pihole.lan",
+        "firstExecutionRunId": "019dfeaa-dc1f-7192-b7d7-268cb53e2b5b",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "header": {},
+        "workflowId": "replay-captured-timer-cancellation-2af2160c-0657-4816-9406-ac4a4b122fe8"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-05-06T19:01:43.583140Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "48235478",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "temporal-bun-integration-226ef847-2529-4a57-a209-4803745252b3",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-05-06T19:01:43.585065Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "48235483",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624",
+        "requestId": "58c01c33-1532-48c1-979a-a1af43ed4fa6",
+        "historySizeBytes": "493"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-05-06T19:01:43.590281Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "48235487",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-05-06T19:01:43.590298Z",
+      "eventType": "EVENT_TYPE_TIMER_STARTED",
+      "taskId": "48235488",
+      "timerStartedEventAttributes": {
+        "timerId": "capture-cancel-timer",
+        "startToFireTimeout": "30s",
+        "workflowTaskCompletedEventId": "4"
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-05-06T19:01:43.590308Z",
+      "eventType": "EVENT_TYPE_TIMER_CANCELED",
+      "taskId": "48235489",
+      "timerCanceledEventAttributes": {
+        "timerId": "capture-cancel-timer",
+        "startedEventId": "5",
+        "workflowTaskCompletedEventId": "4",
+        "identity": "temporal-bun-worker-Mac.pihole.lan-95624"
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-05-06T19:01:43.590313Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "taskId": "48235490",
+      "workflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "InRpbWVyLWNhbmNlbC1yZXF1ZXN0ZWQi"
+            }
+          ]
+        },
+        "workflowTaskCompletedEventId": "4"
+      }
+    }
+  ],
+  "expectedDeterminismState": {
+    "commandHistory": [
+      {
+        "intent": {
+          "id": "start-timer-0",
+          "kind": "start-timer",
+          "sequence": 0,
+          "timerId": "capture-cancel-timer",
+          "timeoutMs": 30000
+        },
+        "metadata": {
+          "eventId": "5",
+          "eventType": 17,
+          "workflowTaskCompletedEventId": "4"
+        }
+      },
+      {
+        "intent": {
+          "id": "cancel-timer-1",
+          "kind": "cancel-timer",
+          "sequence": 1,
+          "timerId": "capture-cancel-timer",
+          "startedEventId": "5"
+        },
+        "metadata": {
+          "eventId": "6",
+          "eventType": 19,
+          "workflowTaskCompletedEventId": "4"
+        }
+      }
+    ],
+    "randomValues": [],
+    "timeValues": [],
+    "signals": [],
+    "queries": []
+  }
+}

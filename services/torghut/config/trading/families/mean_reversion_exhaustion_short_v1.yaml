@@ -1,0 +1,53 @@
+schema_version: torghut.family-template.v1
+family_id: mean_reversion_exhaustion_short_v1
+economic_mechanism: Controlled intraday short fade after upside exhaustion with offer-pressure and quote-quality confirmation.
+supported_markets:
+  - us_equities_intraday
+required_features:
+  - session_open_extension
+  - reversal_rank
+  - quote_quality
+  - offer_pressure
+  - session_range_position
+allowed_normalizations:
+  - price_scaled
+  - opening_window_scaled
+entry_motifs:
+  - mean_reversion_exhaustion_short
+  - upside_exhaustion
+  - overbought_fade
+exit_motifs:
+  - vwap_reversion
+  - fade_complete
+  - close_flatten
+risk_controls:
+  - quote_quality_veto
+  - max_hold_seconds
+  - max_session_negative_exit_bps
+activity_model:
+  min_active_day_ratio: '0.55'
+  min_daily_notional: '250000'
+liquidity_assumptions:
+  max_spread_bps: '12'
+  min_quote_valid_ratio: '0.88'
+regime_activation_rules:
+  - metric: market_breadth
+    comparator: gte
+    threshold: '0.35'
+day_veto_rules:
+  - rule: quote_quality
+    action: block_day
+default_hard_vetoes:
+  required_min_active_day_ratio: '0.55'
+  required_min_daily_notional: '250000'
+  required_max_best_day_share: '0.45'
+  required_max_worst_day_loss: '500'
+  required_max_drawdown: '1000'
+  required_min_regime_slice_pass_rate: '0.35'
+default_selection_objectives:
+  target_net_pnl_per_day: '250'
+  require_positive_day_ratio: '0.50'
+runtime_harness:
+  family: mean_reversion_exhaustion_short_consistent
+  strategy_name: mean-reversion-exhaustion-short-v1
+  disable_other_strategies: true

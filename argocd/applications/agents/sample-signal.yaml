@@ -1,0 +1,8 @@
+apiVersion: signals.proompteng.ai/v1alpha1
+kind: Signal
+metadata:
+  name: sample-signal
+  namespace: agents
+spec:
+  channel: slack
+  description: Sample signal for agentctl and control-plane UI

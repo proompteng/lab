@@ -1,0 +1,28 @@
+{
+  "type": "record",
+  "name": "TaStatus",
+  "namespace": "torghut.ta",
+  "fields": [
+    {"name": "ingest_ts", "type": "string"},
+    {"name": "event_ts", "type": "string"},
+    {"name": "symbol", "type": "string"},
+    {"name": "seq", "type": "long"},
+    {"name": "is_final", "type": ["null", "boolean"], "default": null},
+    {"name": "source", "type": ["null", "string"], "default": null},
+    {"name": "window", "type": ["null", {
+      "type": "record",
+      "name": "WindowStatus",
+      "fields": [
+        {"name": "size", "type": "string"},
+        {"name": "step", "type": ["null", "string"], "default": null},
+        {"name": "start", "type": ["null", "string"], "default": null},
+        {"name": "end", "type": ["null", "string"], "default": null}
+      ]
+    }], "default": null},
+    {"name": "watermark_lag_ms", "type": ["null", "long"], "default": null},
+    {"name": "last_event_ts", "type": ["null", "string"], "default": null},
+    {"name": "status", "type": "string"},
+    {"name": "heartbeat", "type": ["null", "boolean"], "default": null},
+    {"name": "version", "type": ["int", "null"], "default": 1}
+  ]
+}

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tengri-auth-nonces
+  labels:
+    app.kubernetes.io/name: tengri
+    app.kubernetes.io/component: control-plane
+    app.kubernetes.io/part-of: tengri
+# Tengri updates this field with bounded, hashed replay receipts. The ApplicationSet
+# ignores /data so self-healing cannot erase live receipts during their validity window.
+data: {}

@@ -1,0 +1,42 @@
+{
+  "name": "tanstack-router-react-example-with-trpc-react-query",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --port 3000",
+    "build": "vite build",
+    "start": "bun .output/server/index.mjs",
+    "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
+    "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json ."
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
+    "@tailwindcss/vite": "^4.2.4",
+    "@tanstack/react-query": "5.100.9",
+    "@tanstack/react-query-devtools": "5.100.9",
+    "@tanstack/react-router": "1.169.1",
+    "@tanstack/react-start": "1.167.63",
+    "@tanstack/router-devtools": "1.166.13",
+    "@tanstack/router-plugin": "1.167.33",
+    "@trpc/client": "^11.17.0",
+    "@trpc/server": "^11.17.0",
+    "@trpc/tanstack-react-query": "^11.17.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "superjson": "^2.2.6",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.4",
+    "winston": "^3.19.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.10",
+    "vite-tsconfig-paths": "^6.1.1"
+  }
+}

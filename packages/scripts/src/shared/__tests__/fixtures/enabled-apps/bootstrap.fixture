@@ -1,0 +1,237 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: bootstrap
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements: &bootstrap_clusters_default
+                - cluster: in-cluster
+                  suffix: ""
+                  destinationServer: https://kubernetes.default.svc
+          - list:
+              elements: &bootstrap_elements
+                - name: argocd
+                  path: argocd/applications/argocd
+                  namespace: argocd
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-2"
+                  automation: manual
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      external-secrets.proompteng.ai/enabled: "true"
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
+                - name: sealed-secrets
+                  path: argocd/applications/sealed-secrets
+                  namespace: sealed-secrets
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-2"
+                  automation: auto
+                  enabled: "true"
+                - name: external-secrets
+                  path: argocd/applications/external-secrets
+                  namespace: external-secrets
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  managedNamespaceMetadata:
+                    labels:
+                      external-secrets.proompteng.ai/enabled: "true"
+                  automation: auto
+                  enabled: "true"
+                - name: cert-manager
+                  path: argocd/applications/cert-manager
+                  namespace: cert-manager
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  automation: auto
+                  enabled: "true"
+                  ignoreDifferences:
+                    - group: admissionregistration.k8s.io
+                      kind: MutatingWebhookConfiguration
+                      name: cert-manager-webhook
+                      jqPathExpressions:
+                        - .webhooks[]?.clientConfig.caBundle
+                    - group: admissionregistration.k8s.io
+                      kind: ValidatingWebhookConfiguration
+                      name: cert-manager-webhook
+                      jqPathExpressions:
+                        - .webhooks[]?.clientConfig.caBundle
+                    - group: apiextensions.k8s.io
+                      kind: CustomResourceDefinition
+                      nameRegex: '.*cert-manager.io'
+                      jqPathExpressions:
+                        - .spec.conversion.webhook.clientConfig.caBundle
+                    - group: apiregistration.k8s.io
+                      kind: APIService
+                      nameRegex: '.*cert-manager.io'
+                      jqPathExpressions:
+                        - .spec.caBundle
+                - name: rook-ceph
+                  path: argocd/applications/rook-ceph
+                  namespace: rook-ceph
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  automation: auto
+                  enabled: "true"
+                  ignoreDifferences:
+                    - kind: Secret
+                      name: rook-ceph-object-user-objectstore-loki
+                      namespace: rook-ceph
+                      jsonPointers:
+                        - /data
+                        - /metadata/labels
+                        - /metadata/ownerReferences
+                        - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                - name: local-path
+                  path: argocd/applications/local-path
+                  namespace: local-path-storage
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "-1"
+                  automation: manual
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: privileged
+                      pod-security.kubernetes.io/audit: privileged
+                      pod-security.kubernetes.io/warn: privileged
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
+                - name: metallb-system
+                  path: argocd/applications/metallb-system
+                  namespace: metallb-system
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "0"
+                  automation: auto
+                  enabled: "true"
+                - name: traefik
+                  path: argocd/applications/traefik
+                  namespace: traefik
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "1"
+                  automation: auto
+                  enabled: "true"
+                  managedNamespaceMetadata:
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
+                - name: tailscale
+                  path: argocd/applications/tailscale
+                  namespace: tailscale
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "0"
+                  managedNamespaceMetadata:
+                    labels:
+                      pod-security.kubernetes.io/enforce: privileged
+                      pod-security.kubernetes.io/audit: privileged
+                      pod-security.kubernetes.io/warn: privileged
+                    annotations:
+                      # Prevent accidental namespace deletion when an app stops managing the Namespace object.
+                      argocd.argoproj.io/sync-options: Prune=false
+                  automation: auto
+                  enabled: "true"
+                - name: registry
+                  path: argocd/applications/registry
+                  namespace: registry
+                  annotations:
+                    argocd.argoproj.io/sync-wave: "1"
+                  automation: auto
+                  enabled: "true"
+            selector:
+              matchExpressions:
+                - key: enabled
+                  operator: NotIn
+                  values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: '{{ .name }}{{ .suffix }}'
+    spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: https://github.com/proompteng/lab.git
+        targetRevision: main
+        path: '{{ .path }}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+          - ApplyOutOfSyncOnly=true
+          - PruneLast=true
+          - ClientSideApplyMigration=false
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $hasDestServer := hasKey . "destinationServer" -}}
+    {{- $hasDestName := hasKey . "destinationName" -}}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- $auto := eq .automation "auto" -}}
+    {{- $hasManagedNS := hasKey . "managedNamespaceMetadata" -}}
+    {{- $needsSpec := or $hasDestServer $hasDestName $useLovely $auto $hasManagedNS (hasKey . "ignoreDifferences") -}}
+    {{- if $needsSpec }}
+    spec:
+    {{- if or $hasDestServer $hasDestName }}
+      destination:
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      {{- if $hasDestServer }}
+        server: '{{ .destinationServer }}'
+      {{- end }}
+      {{- if $hasDestName }}
+        name: '{{ .destinationName }}'
+      {{- end }}
+    {{- end }}
+    {{- if $useLovely }}
+      source:
+        plugin:
+          name: lovely
+    {{- end }}
+    {{- if or $auto $hasManagedNS }}
+      syncPolicy:
+      {{- if $auto }}
+        automated:
+          enabled: true
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
+      {{- end }}
+      {{- if $hasManagedNS }}
+        managedNamespaceMetadata:
+        {{- if hasKey .managedNamespaceMetadata "labels" }}
+          labels:
+          {{- range $key, $value := .managedNamespaceMetadata.labels }}
+            {{ $key }}: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
+        {{- if hasKey .managedNamespaceMetadata "annotations" }}
+          annotations:
+          {{- range $key, $value := .managedNamespaceMetadata.annotations }}
+            {{ $key }}: {{ $value | quote }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences: {{ toJson .ignoreDifferences }}
+    {{- end }}
+    {{- end }}

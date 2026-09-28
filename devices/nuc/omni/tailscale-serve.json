@@ -1,0 +1,30 @@
+{
+  "version": "0.0.1",
+  "TCP": {
+    "443": {
+      "HTTPS": true
+    },
+    "8090": {
+      "TCPForward": "127.0.0.1:8090"
+    },
+    "8100": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "nuc.ide-newton.ts.net:443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8180"
+        }
+      }
+    },
+    "nuc.ide-newton.ts.net:8100": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8100"
+        }
+      }
+    }
+  }
+}
