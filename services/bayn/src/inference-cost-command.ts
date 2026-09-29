@@ -45,15 +45,17 @@ const readJson = (path: string) =>
     Effect.mapError(() => new InferenceCostError({ message: 'Inference cost input file is unavailable or invalid' })),
   )
 
+export const inferenceCostConfig = Config.all({
+  accountId: Config.redacted('BAYN_ALPACA_ACCOUNT_ID'),
+  url: Config.redacted('BAYN_POSTGRES_URL'),
+  tls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
+  caPath: Config.string('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
+})
+
 const readSession = (sessionDate: string) =>
   Effect.gen(function* () {
     // Deliberately require no broker key or model key: this command has no broker or inference client.
-    const config = yield* Config.all({
-      accountId: Config.redacted('BAYN_ALPACA_ACCOUNT_ID'),
-      url: Config.redacted('BAYN_POSTGRES_URL'),
-      tls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
-      caPath: Config.string('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/etc/bayn/postgres/ca.crt')),
-    })
+    const config = yield* inferenceCostConfig
     const read = Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       return yield* readInferenceCostEvidence(sql, Redacted.value(config.accountId), sessionDate)

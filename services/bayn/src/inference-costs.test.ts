@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { ConfigProvider, Effect, Result } from 'effect'
 
 import { canonicalHashV1 } from './hash'
-import { parseInferenceCostArgs } from './inference-cost-command'
+import { inferenceCostConfig, parseInferenceCostArgs } from './inference-cost-command'
 import { InferenceCostCoverage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
 import { JevFailure } from './jev/contract'
 import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './jev/evidence'
@@ -205,6 +205,22 @@ describe('inference operating-cost evidence', () => {
 })
 
 describe('inference-cost operator command', () => {
+  test('uses the standard verified PostgreSQL CA without requiring broker or model credentials', () => {
+    const config = Effect.runSync(
+      inferenceCostConfig.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({
+            BAYN_ALPACA_ACCOUNT_ID: 'fixture-account',
+            BAYN_POSTGRES_URL: 'postgresql://fixture@localhost/fixture_test',
+          }),
+        ),
+      ),
+    )
+    expect(config.tls).toBe(true)
+    expect(config.caPath).toBe('/var/run/secrets/bayn/postgres/ca.crt')
+  })
+
   test('accepts an explicit session or offline evidence and requires a rate card', () => {
     expect(Result.getOrThrow(parseInferenceCostArgs(['--help']))._tag).toBe('Help')
     expect(
