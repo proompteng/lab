@@ -8,6 +8,7 @@ resources:
 - objectbucketclaim.yaml
 - postgres-objectstore.yaml
 - postgres-cluster.yaml
+- postgres-monitoring.yaml
 - postgres-scheduled-backup.yaml
 - tigerbeetle-cluster.yaml
 - tigerbeetle-networkpolicy.yaml
@@ -30,4 +31,4 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:f63cb47fa4f972ada3cdbffd4cc19008261c90901f8afd350a99cfcb3344aa19
+  digest: sha256:347f42265d5015c8b7f1a1ce0bf90b35799d6c848eb50c46b663c9b1a64790d0
