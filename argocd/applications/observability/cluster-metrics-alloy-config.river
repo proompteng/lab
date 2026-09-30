@@ -76,6 +76,70 @@ prometheus.relabel "ceph_storage_metrics" {
 	}
 }
 
+// Daemon counters come from every exporter pod, not the load-balanced Service.
+// Keep node identity for correlation with the host disk and NIC collectors.
+discovery.kubernetes "ceph_exporter_pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["rook-ceph"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app=rook-ceph-exporter"
+	}
+}
+
+discovery.relabel "ceph_exporters" {
+	targets = discovery.kubernetes.ceph_exporter_pods.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "ceph-exporter;http-metrics"
+	}
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_phase"]
+		regex         = "Running"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+}
+
+prometheus.relabel "ceph_daemon_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|ceph_osd_op(_(r|w|rw))?(_(in_bytes|out_bytes))?|ceph_osd_op(_(r|w|rw))?(_process)?_latency_(sum|count)|ceph_osd_op_before_queue_op_lat_(sum|count)|ceph_bluefs_(db_(total|used)_bytes|slow_used_bytes|bytes_written_slow|fsync_lat_(sum|count))|ceph_bluestore_((kv_sync|txc_commit|read_wait_aio|state_kv_queued|state_deferred_queued)_lat_(sum|count)|buffer_(hit|miss)_bytes|slow_(aio_wait|committed_kv|read_onode_meta|read_wait_aio)_count)|ceph_rocksdb_((get|submit_sync)_latency_(sum|count)|compact_queue_len)"
+	}
+}
+
+prometheus.scrape "ceph_exporters" {
+	job_name        = "ceph-exporter"
+	targets         = discovery.relabel.ceph_exporters.output
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.ceph_daemon_metrics.receiver]
+}
+
 prometheus.scrape "ceph_storage" {
 	job_name = "ceph-storage"
 	targets  = [

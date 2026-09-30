@@ -148,6 +148,38 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  devbox: {
+    creationCriteria: 'single',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('codex-devbox')],
+    apps: ['devbox'],
+    includePaths: [
+      'services/devbox',
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/src/shared/docker.ts',
+      'argocd/applications/devbox',
+      '.github/workflows/codex-devbox.yml',
+      'flake.nix',
+      'flake.lock',
+      'nix/packages.nix',
+      'nix/toolchain-doctor.sh',
+    ],
+  },
+  rune: {
+    creationCriteria: 'single',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('rune')],
+    apps: ['rune'],
+    includePaths: [
+      'services/rune',
+      '.github/workflows/rune-images.yml',
+      'argocd/applications/rune',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/platform.yaml',
+    ],
+  },
   restate: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -717,7 +749,9 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('points every enrolled Argo Application at its exact authorized Kargo branch', () => {
     const applications = new Map(applicationSetElements.map((element) => [element.name as string, element]))
-    const expectedApplications = Object.values(expected)
+    const expectedApplications = Object.entries(expected)
+      .filter(([stageName]) => stageName !== 'hermes-toolchain')
+      .map(([, contract]) => contract)
       .flatMap((contract) => contract.apps)
       .sort()
     const kargoApplications = applicationSetElements
@@ -726,7 +760,11 @@ describe('Kargo direct-push GitOps contract', () => {
       .sort()
     expect(kargoApplications).toEqual(expectedApplications)
 
+    expect(applications.get('hermes')?.targetRevision).toBe('main')
+    expect(applications.get('hermes')?.annotations?.['kargo.akuity.io/authorized-stage']).toBeUndefined()
+
     for (const [stageName, contract] of Object.entries(expected)) {
+      if (stageName === 'hermes-toolchain') continue
       for (const applicationName of contract.apps) {
         expect(applications.get(applicationName)?.targetRevision).toBe(`kargo/${stageName}`)
         expect(applications.get(applicationName)?.annotations?.['kargo.akuity.io/authorized-stage']).toBe(
@@ -831,6 +869,17 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
+  it('aligns Rune source discovery with both image build triggers', () => {
+    const warehouse = byName(warehouses).get('rune')
+    const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
+      .includePaths
+    const workflow = YAML.parse(readFileSync('.github/workflows/rune-images.yml', 'utf8'))
+    for (const event of ['pull_request', 'push']) {
+      const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
+      expect(sourcePaths).toEqual(buildPaths)
+    }
+  })
+
   it('aligns the Agents Warehouse source paths with its exact image build trigger', () => {
     const warehouse = byName(warehouses).get('agents')
     const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
@@ -869,7 +918,9 @@ describe('Kargo direct-push GitOps contract', () => {
 
     const projectPolicies = projectConfig.spec?.promotionPolicies as Array<Record<string, any>>
     expect(projectPolicies.map((policy) => policy.stageSelector?.name).sort()).toEqual(expectedStageNames)
-    expect(projectPolicies.every((policy) => policy.autoPromotionEnabled === true)).toBe(true)
+    for (const policy of projectPolicies) {
+      expect(policy.autoPromotionEnabled).toBe(policy.stageSelector?.name !== 'hermes-toolchain')
+    }
 
     for (const stageName of expectedStageNames) {
       const contract = expected[stageName as keyof typeof expected]
@@ -952,9 +1003,11 @@ describe('Kargo direct-push GitOps contract', () => {
             ? '1h45m0s'
             : stageName === 'bilig'
               ? '1h15m0s'
-              : stageName === 'forgejo'
+              : ['forgejo', 'devbox'].includes(stageName)
                 ? '45m0s'
-                : '20m0s',
+                : stageName === 'rune'
+                  ? '4h0m0s'
+                  : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>

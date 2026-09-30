@@ -16,7 +16,12 @@ Liquidation snapshots require the quote topic's complete partition cut and a fre
 symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
 through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
 quotes, and invalidated assignments do. This does not authorize entry pricing during bootstrap or change order risk.
-Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
+Transport positions advance only after incorporation or explicit rejection, including drained control offsets.
+Each consumer epoch uses a new group and explicit bootstrap offsets. It never resumes from Kafka-committed offsets,
+so it does not write OffsetCommit requests. An offset-coordinator write failure cannot discard a usable in-memory
+projection. Assignment, heartbeat and fetch failures still invalidate the epoch and require reconstruction.
+Durable decision snapshots retain their source cuts and PostgreSQL references independently of the ephemeral consumer.
+The projection retains 61 bar minutes, 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
 Windows that need the applicable discarded rejection history fail verification. Liquidation checks quote retention
@@ -25,6 +30,10 @@ required symbol's retained quote history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+Invalidation belongs to its consumer epoch. A delayed callback from a closed consumer cannot invalidate its replacement;
+an invalidation without a cause still revokes reads and triggers the same bounded rebuild. Readiness requires both
+completed bootstrap and no retained failure. Measurements report bootstrap completion and read availability separately,
+and failed worker checks retain the epoch and bounded failure reason without transport credentials or raw exception data.
 The transport owns each SDK stream in the consume callback, before Node can run stream construction. It installs an
 error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
 the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption
@@ -46,7 +55,10 @@ This check preserves reconciliation and close recovery. A blocked current sessio
 until its close instead of being classified as historical waiting.
 
 Snapshots bind the consumer epoch, local receipt sequence, transport positions, raw rows and selected feature
-payloads. Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
+payloads. Jev's `quote-window-trade.v1` candidate policy retains matched rolling and technical feature receipts even
+when raw evidence excludes their candidate. The exclusion still prevents a signal request. A missing receipt in an
+older cut may reflect that older filtering contract, so it cannot prove that the worker never received the feature.
+Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
 immutable references in the decision transaction. Restart verification requires the exact committed reference.
 Flink failure does not disable broker reconciliation or the existing close-window recovery path. Migration 0066
 adds intraday protocol v3 to the durable authority contracts while preserving v1/v2 history.
@@ -58,7 +70,7 @@ node dist/streaming-diagnostics-command.js --since 2026-09-11T19:00:00Z
 ```
 
 This bounded probe uses the configured Bayn Kafka identity and the production consumer/reducer. It captures source
-bounds, consumes retained records, commits incorporated offsets in a unique group, verifies exact feature-to-bar
+bounds, consumes retained records at explicit offsets in a unique group without committing offsets, verifies exact feature-to-bar
 matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
 input joins observed now; it does not claim those features were available in a past trading session. The image
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
