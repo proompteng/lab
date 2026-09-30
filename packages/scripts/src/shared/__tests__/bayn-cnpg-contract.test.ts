@@ -61,7 +61,20 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     log_min_duration_statement: '1000ms',
     log_parameter_max_length: '0',
     log_parameter_max_length_on_error: '0',
+    track_io_timing: 'on',
+    track_wal_io_timing: 'on',
   })
+  expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([
+    { name: 'cnpg-default-monitoring', key: 'queries' },
+    { name: 'bayn-postgres-monitoring', key: 'queries' },
+  ])
+  const monitor = readManifest('argocd/applications/bayn/postgres-monitoring.yaml')
+  expect(monitor.metadata.labels['cnpg.io/reload']).toBe('true')
+  expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain('postgres-monitoring.yaml')
+  const queries = YAML.parse(monitor.data.queries)
+  expect(Object.keys(queries).sort()).toEqual(['bayn_io', 'bayn_io_timing', 'bayn_replication', 'bayn_waits'])
+  expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
+  expect(queries.bayn_replication.primary).toBe(true)
 })
 
 test('Bayn compares CNPG resources after admission defaulting', () => {

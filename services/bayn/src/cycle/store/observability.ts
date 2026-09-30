@@ -11,6 +11,8 @@ import {
   type ReconciliationObservation,
 } from '../observability'
 import { CycleState, CycleTerminalReason } from '../model'
+import { describeEntryAllocation, EntryAllocationFactsSchema } from '../entry-allocation-observation'
+import { lastEntryAllocationQuery } from './entry-allocation-query'
 import { Authority, KillState, ReconciliationStatus } from '../../execution/contracts'
 import {
   IsoDateSchema,
@@ -145,6 +147,7 @@ const ProjectionRowSchema = Schema.Struct({
   last_created_at: NullableDate,
   last_updated_at: NullableDate,
   last_terminal_at: NullableInstant,
+  last_entry_allocation: Schema.optionalKey(Schema.NullOr(EntryAllocationFactsSchema)),
   selected_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   account_mismatch: Schema.Boolean,
   unfinished_cycle_count: NonNegativeIntegerSchema,
@@ -267,6 +270,9 @@ const snapshotFromRow = (
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     terminalAt: row[`${prefix}_terminal_at`]?.toISOString() ?? null,
+    ...(prefix === 'last' && row.last_entry_allocation !== undefined
+      ? { entryAllocationReason: describeEntryAllocation(row.last_entry_allocation) }
+      : {}),
   })
 }
 
@@ -482,6 +488,9 @@ const makeCycleObservability = Effect.gen(function* () {
             FROM autonomous_cycle_shadow_decisions AS decision
             JOIN observed_cycle AS cycle ON cycle.cycle_id = decision.cycle_id
             LIMIT 1
+          ),
+          last_entry_allocation AS (
+            ${lastEntryAllocationQuery(sql)}
           ),
           cycle_intents AS (
             SELECT intent.*
@@ -768,6 +777,7 @@ const makeCycleObservability = Effect.gen(function* () {
             last.created_at AS last_created_at,
             last.updated_at AS last_updated_at,
             last.terminal_at AS last_terminal_at,
+            (SELECT facts FROM last_entry_allocation) AS last_entry_allocation,
             (SELECT account_id FROM selected_account) AS selected_account_id,
             (
               (SELECT account_id FROM requested_account) IS NOT NULL

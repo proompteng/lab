@@ -79,7 +79,6 @@ const transport = {
       }),
     }
   },
-  commit: async () => {},
   close: async () => {
     closeCount++
     closed = true

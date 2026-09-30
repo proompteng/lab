@@ -3,6 +3,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
+import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
 
@@ -119,6 +120,39 @@ beforeAll(async () => {
         lastActivityAt: '2026-08-27T00:00:00Z',
         attached: false,
       })
+    },
+    listCodexModels(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      if (call.request.agentId === 'legacy-model-catalog') {
+        callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
+        return
+      }
+      callback(null, {
+        rawJson:
+          call.request.agentId === 'broken-catalog'
+            ? '{"data":[{}],"nextCursor":null}'
+            : JSON.stringify({ data: codexModelFixtures, nextCursor: null }),
+      })
+    },
+    createCodexThread(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, { id: 'thread-selected', rawJson: '{}', eventSequence: 0 })
+    },
+    sendCodexTurn(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, { id: 'turn-selected', threadId: call.request.threadId })
     },
     getCodexAccount(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -316,6 +350,43 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('reads a validated guest catalog through the owner-signed transport', async () => {
+    const { listCodexModels } = await import('./grpc')
+    expect(await listCodexModels('github:42', 'agent-test', 'models-2')).toEqual({
+      models: codexModelFixtures,
+      nextCursor: null,
+    })
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', cursor: 'models-2' })
+    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
+    expect(await rejection(listCodexModels('github:42', 'broken-catalog'))).toMatchObject({
+      message: 'The guest returned an invalid Codex model catalog',
+    })
+  })
+
+  test('carries model and reasoning choices over protobuf for new and subsequent turns', async () => {
+    const { createCodexThread, sendCodexTurn } = await import('./grpc')
+    const options = {
+      model: 'gpt-6.1-sol',
+      reasoningEffort: 'high',
+    } satisfies import('./codex-models').TengriCodexOptions
+    await createCodexThread('github:42', 'agent-test', options)
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', ...options })
+    await sendCodexTurn('github:42', 'agent-test', 'thread-selected', 'Read the workspace', options)
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
+  })
+
+  test('identifies unsupported model selection without disguising other catalog failures', async () => {
+    const { listCodexModels } = await import('./grpc')
+    expect(await rejection(listCodexModels('github:42', 'legacy-model-catalog'))).toMatchObject({
+      status: 412,
+      code: 'model_selection_unavailable',
+    })
+    expect(await rejection(listCodexModels('github:42', 'broken-catalog'))).toMatchObject({
+      status: 503,
+      code: undefined,
+    })
+  })
+
   test('revokes editor sessions for the authenticated subject without a caller-selected owner', async () => {
     const { revokeEditorSessions } = await import('./grpc')
     await revokeEditorSessions('github:42')
@@ -640,7 +711,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { resumeCodexThread } = await import('./grpc')
 
     const thread = await resumeCodexThread('github:42', 'agent-test', 'thread-test')
-    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test' })
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
     expect(thread).toEqual({
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test"}}',
