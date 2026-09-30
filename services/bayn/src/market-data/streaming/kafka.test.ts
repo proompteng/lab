@@ -98,6 +98,66 @@ const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
 describe('Kafka bootstrap and scoped consumption', () => {
+  test.each(['rejected', 'stalled'] as const)(
+    'ephemeral projection needs no offset commits even when commits would be %s',
+    async (commitFailure) => {
+      const transports: FakeTransport[] = []
+      let commitAttempts = 0
+      await program(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
+          const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+            const transport = new FakeTransport()
+            transport.commit = () => {
+              commitAttempts++
+              return commitFailure === 'stalled'
+                ? new Promise<void>(() => {})
+                : Promise.reject(new Error('OffsetCommit coordinator unavailable'))
+            }
+            transports.push(transport)
+            return transport
+          })
+          yield* TestClock.adjust('2 seconds')
+          const initial = yield* projection.read
+          const transport = transports[0]
+          if (transport === undefined) throw new Error('transport missing')
+          for (const offset of ['0', '1']) {
+            const at = yield* Clock.currentTimeMillis
+            transport.send({
+              topic: 'quotes',
+              partition: 0,
+              offset,
+              value: JSON.stringify({
+                provider: 'alpaca',
+                feed: 'iex',
+                delayClass: 'real_time_exchange_only',
+                marketSession: 'regular',
+                channel: 'quotes',
+                symbol: 'AAPL',
+                eventTs: new Date(at).toISOString(),
+                ingestTs: new Date(at).toISOString(),
+                version: 2,
+                payload: { t: new Date(at).toISOString(), bp: 100 + Number(offset), ap: 102, bs: 10, as: 10 },
+              }),
+              timestampMs: at,
+              leaderEpoch: 1,
+            })
+            yield* TestClock.adjust('4 seconds')
+          }
+          const cut = yield* projection.read
+          expect(cut.projection.epoch).toBe(initial.projection.epoch)
+          expect(cut.projection.quotes.get('AAPL')?.value.bidPrice).toBe(101)
+          expect(cut.positions.find((position) => position.topic === 'quotes')?.offset).toBe('2')
+          expect(cut.projection.rejections.size).toBe(0)
+          expect(transport.closeCount).toBe(0)
+          expect(transports).toHaveLength(1)
+          expect(commitAttempts).toBe(0)
+        }),
+      )
+      expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+    },
+  )
+
   test('exposes a liquidation cut during history rebuild and invalidates it immediately on reassignment', async () => {
     const transport = new FakeTransport()
     transport.offsets = async (_topics, timestamp) =>
@@ -288,7 +348,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transport.closeCount).toBe(1)
   })
 
-  test('commits follow rejection incorporation and reassignment revokes readiness immediately', async () => {
+  test('positions follow rejection incorporation and reassignment revokes readiness immediately', async () => {
     const transports: FakeTransport[] = []
     await program(
       Effect.gen(function* () {
@@ -313,7 +373,8 @@ describe('Kafka bootstrap and scoped consumption', () => {
         yield* TestClock.adjust('2 seconds')
         const cut = yield* projection.read
         expect(cut.projection.rejections.size).toBe(1)
-        expect(transport.commits.some((batch) => batch.some((record) => record.offset === '0'))).toBe(true)
+        expect(cut.positions.find((position) => position.topic === 'quotes')?.offset).toBe('1')
+        expect(transport.commits).toHaveLength(0)
         transport.invalidated?.(new Error('reassigned'))
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         yield* TestClock.adjust('3 seconds')
@@ -354,6 +415,43 @@ describe('Kafka bootstrap and scoped consumption', () => {
       }),
     )
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+  })
+
+  test('retains the first invalidation cause and reports recovery without private transport details', async () => {
+    const transports: FakeTransport[] = []
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    const firstCause = new AuthenticationError('private transport credential detail')
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('2 seconds')
+        const prior = yield* projection.read
+        const first = transports[0]
+        if (first === undefined) throw new Error('First transport missing')
+        first.invalidated?.(firstCause)
+        first.invalidated?.(new Error('secondary stream failure'))
+        const invalid = yield* Effect.result(projection.read)
+        if (Result.isSuccess(invalid)) throw new Error('Invalidated epoch remained readable')
+        expect(invalid.failure.cause).toBe(firstCause)
+        yield* TestClock.adjust('3 seconds')
+        expect((yield* projection.read).projection.epoch).not.toBe(prior.projection.epoch)
+        expect(logs).toContainEqual([
+          'Kafka market projection cycle failed',
+          expect.objectContaining({ failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
+        ])
+        expect(logs).toContainEqual([
+          'Kafka market projection recovered',
+          expect.objectContaining({ failedEpoch: prior.projection.epoch }),
+        ])
+        expect(JSON.stringify(logs)).not.toContain('private transport credential detail')
+        expect(first.closeCount).toBe(1)
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
   })
 
   test('invalidation without a cause still revokes the epoch and rebuilds', async () => {

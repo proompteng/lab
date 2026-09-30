@@ -1,4 +1,5 @@
 import { Effect } from 'effect'
+import { makeBrokerStateCache } from '../execution/broker-state-cache'
 
 import type { ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
 import { operationalError } from '../errors'
@@ -16,7 +17,7 @@ export interface TradingEngineInput {
     readonly executionCycleClosureStore: ExecutionCycleClosureStoreShape
     readonly blockedCycleIntentStore: BlockedCycleIntentStoreShape
   }
-  readonly execution: Omit<ExecutionProgramDependencies, 'riskPolicy' | 'isCloseOnlyIntent'>
+  readonly execution: Omit<ExecutionProgramDependencies, 'riskPolicy' | 'isCloseOnlyIntent' | 'brokerStateCache'>
   readonly executionMode: MutationCycleExecutionMode
 }
 
@@ -32,6 +33,7 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
     const executionProgram = yield* Effect.fromResult(
       makeExecutionProgram(input.authority, {
         ...input.execution,
+        brokerStateCache: makeBrokerStateCache(input.cycle.accountId, input.cycle.authorityGenerationHash),
         riskPolicy,
         isCloseOnlyIntent: (intentId) => input.cycle.executionCycleClosureStore.containsIntent(intentId),
       }),

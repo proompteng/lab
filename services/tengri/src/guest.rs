@@ -13,6 +13,9 @@ use thiserror::Error;
 use crate::crd::{MicroVM, MicroVMPhase};
 
 mod codex_history;
+mod codex_options;
+
+pub use codex_options::CodexOptions;
 
 const GUEST_API_PORT: u16 = 8080;
 pub const EDITOR_PORT: u16 = 13337;

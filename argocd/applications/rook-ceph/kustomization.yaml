@@ -2,7 +2,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: rook-ceph
 
+configMapGenerator:
+  - name: rook-ceph-host-metrics-alloy
+    files:
+      - config.river=host-metrics-alloy-config.river
+
 resources:
+  - host-metrics-alloy-daemonset.yaml
   - storageclasses.yaml
   - tailscale-service-dashboard.yaml
   - ingressroute-ceph-k8s-private.yaml

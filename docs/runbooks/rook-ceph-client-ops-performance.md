@@ -317,6 +317,9 @@ objectstore.rgw.buckets.data pg_num=128 pgp_num=128
 
 ## Normal Client-Ops State
 
+For per-OSD and host telemetry, effective-config verification, and removal of persistent live recovery overrides,
+follow [Ceph performance telemetry](ceph-performance-telemetry.md). Removing a key from Git alone is not live proof.
+
 Normal operation should prefer client IO after recovery/backfill is clean:
 
 ```yaml
@@ -342,6 +345,7 @@ The recovery override keys must be absent in normal operation:
 ```yaml
 osd_mclock_override_recovery_settings
 osd_max_backfills
+osd_recovery_max_active
 osd_recovery_max_active_hdd
 osd_recovery_sleep_hdd
 ```
