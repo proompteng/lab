@@ -150,6 +150,14 @@ const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
 
 const settle = Effect.repeat(Effect.yieldNow, { times: 10 })
 
+const clockAt = (clock: Clock.Clock, currentTimeMillis: number): Clock.Clock => ({
+  currentTimeMillisUnsafe: () => currentTimeMillis,
+  currentTimeMillis: Effect.succeed(currentTimeMillis),
+  currentTimeNanosUnsafe: () => BigInt(currentTimeMillis) * 1_000_000n,
+  currentTimeNanos: Effect.succeed(BigInt(currentTimeMillis) * 1_000_000n),
+  sleep: (duration) => clock.sleep(duration),
+})
+
 describe('broker snapshot cache', () => {
   test('retains filled orders, positions, fills, fees and their original broker evidence in the cached snapshot', async () => {
     const observedAt = '1970-01-01T00:00:00.000Z'
@@ -307,20 +315,42 @@ describe('broker snapshot cache', () => {
         source.blockAccount(Effect.never)
         yield* TestClock.adjust(30_000)
         const clock = yield* Clock.Clock
-        const at = (currentTimeMillis: number): Clock.Clock => ({
-          currentTimeMillisUnsafe: () => currentTimeMillis,
-          currentTimeMillis: Effect.succeed(currentTimeMillis),
-          currentTimeNanosUnsafe: () => BigInt(currentTimeMillis) * 1_000_000n,
-          currentTimeNanos: Effect.succeed(BigInt(currentTimeMillis) * 1_000_000n),
-          sleep: (duration) => clock.sleep(duration),
-        })
-        yield* read.account.pipe(Effect.provideService(Clock.Clock, at(59_999)))
+        yield* read.account.pipe(Effect.provideService(Clock.Clock, clockAt(clock, 59_999)))
         const error = yield* Effect.flip(readStableBrokerSnapshot(read, currentUtcInstant)).pipe(
-          Effect.provideService(Clock.Clock, at(60_000)),
+          Effect.provideService(Clock.Clock, clockAt(clock, 60_000)),
         )
         expect(error.message).toBe('Broker snapshot cache is stale')
         expect(error).toBeInstanceOf(BrokerReadError)
         if (error instanceof BrokerReadError) expect(error.retryable).toBe(true)
+      }),
+    )
+  })
+
+  test('bounds freshness by the full capture start when later observations finish after early history reads', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        source.blockAccount(Effect.sleep(20_000))
+        const fresh: BrokerReadShape = {
+          ...source.read,
+          positions: Effect.sleep(20_000).pipe(Effect.andThen(source.read.positions)),
+          accountConfiguration: Effect.sleep(20_000).pipe(Effect.andThen(source.read.accountConfiguration)),
+        }
+        const acquiring = yield* makeCachedBrokerRead(fresh, config).pipe(Effect.forkChild)
+        yield* TestClock.adjust(20_000)
+        const read = yield* Fiber.join(acquiring)
+        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
+        expect(snapshot.history.orders.observedAt).toBe('1970-01-01T00:00:20.000Z')
+        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:00:20.000Z')
+        source.blockAccount(Effect.never)
+        yield* TestClock.adjust(10_000)
+        const clock = yield* Clock.Clock
+        yield* read.account.pipe(Effect.provideService(Clock.Clock, clockAt(clock, 59_999)))
+        const expired = yield* Effect.result(read.account).pipe(
+          Effect.provideService(Clock.Clock, clockAt(clock, 60_000)),
+        )
+        expect(Result.isFailure(expired)).toBe(true)
+        if (Result.isFailure(expired)) expect(expired.failure.message).toBe('Broker snapshot cache is stale')
       }),
     )
   })

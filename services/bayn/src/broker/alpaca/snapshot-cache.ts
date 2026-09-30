@@ -193,6 +193,7 @@ export const makeCachedBrokerRead = (
         ),
       )
       const observedAtMs = Math.min(
+        startedAt,
         ...[
           value.snapshot.account.evidence.observedAt,
           value.snapshot.positions.evidence.observedAt,

@@ -16,8 +16,10 @@ account, position, and health reads reuse the original response evidence without
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 30,000 milliseconds. `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000
 milliseconds and must exceed the poll interval. Both values must be between 1,000 and 60,000 milliseconds. Freshness is
-measured from the oldest source observation, rather than the time a cached value is read. A failed poll or expired
-snapshot makes cached reads unavailable. Startup requires a successful initial poll, and shutdown interrupts the poller.
+measured from the earlier of the whole poll's start and the oldest source observation, rather than the time a cached
+value is read. The capture start bounds the age of every history page and its before/after stability evidence.
+A failed poll or expired snapshot makes cached reads unavailable. Startup requires a successful initial poll,
+and shutdown interrupts the poller.
 
 Polls run without overlap, with the interval measured from the previous poll's start. Each poll's deadline is the
 smaller of half the maximum age and the maximum age minus the poll interval. With the defaults, the deadline is
