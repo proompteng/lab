@@ -385,7 +385,36 @@ export interface FillActivitiesQuery {
   readonly pageToken?: string
 }
 
+export interface Observed<A> {
+  readonly value: A
+  readonly evidence: ReadEvidence
+}
+
+export interface OrderRead {
+  readonly rows: readonly Observed<Order>[]
+  readonly observedAt: string
+}
+
+export interface BrokerHistory {
+  readonly orders: OrderRead
+  readonly fills: readonly Observed<FillActivity>[]
+  readonly fees: readonly Observed<FeeActivity>[]
+}
+
+export interface StableBrokerSnapshot {
+  readonly account: ReadResult<Account>
+  readonly positions: ReadResult<readonly Position[]>
+  readonly history: BrokerHistory
+}
+
+export interface BrokerReadProjection {
+  readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
+  readonly fresh: BrokerReadShape
+  readonly invalidate: Effect.Effect<void>
+}
+
 export interface BrokerReadShape {
+  readonly projection?: BrokerReadProjection
   readonly account: Effect.Effect<ReadResult<Account>, BrokerReadError>
   readonly accountConfiguration: Effect.Effect<ReadResult<AccountConfigurationObservation>, BrokerReadError>
   readonly assetBySymbol: (symbol: string) => Effect.Effect<ReadResult<AssetObservation>, BrokerReadError>

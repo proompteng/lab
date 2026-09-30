@@ -7,6 +7,23 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
+## Broker snapshot cache
+
+Each verified Alpaca session owns a scoped background poller. It collects the complete, paginated order, fill, and fee
+history with the existing before/after stability check, account and position observations, and the account configuration
+and recent-order/fill observations used by health checks. Reconciliation reads one complete cached snapshot; routine
+account, position, and health reads reuse the original response evidence without another Alpaca request.
+
+`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 30,000 milliseconds. `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000
+milliseconds and must cover the poll interval. Both values must be between 1,000 and 60,000 milliseconds. Freshness is
+measured from the oldest source observation, rather than the time a cached value is read. A failed poll or expired
+snapshot makes cached reads unavailable. Startup requires a successful initial poll, and shutdown interrupts the poller.
+
+Submit and cancel attempts invalidate the cache before the broker request and after every outcome, including timeout
+and interruption. An earlier in-flight poll cannot republish a snapshot after invalidation. The final pre-submit capital
+and exposure check retains fresh broker reads. Individual order lookups, arbitrary filtered order queries, and metadata
+reads retain their direct broker semantics. The cache is local to the session; Kafka is not required for this read path.
+
 ## Active strategy
 
 Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified prices, volume, computed technical
@@ -235,9 +252,10 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
   visible in execution elapsed time. These measurements do not claim that an earlier uninstrumented stall had the same cause.
 - A generation authority read gets at most one-sixth of the pass budget, capped at five seconds. Authority reads
   separately trace pool acquisition and query execution, and reuse the current transaction when one exists.
-  Each reconciliation broker read gets at most one-third of the reconciliation budget, or ten seconds with the
-  current configuration. The aggregate pass budget still bounds the full operation. Startup preflight keeps its own
-  request and retry deadlines. Both broker-history captures remain mandatory.
+  Each uncached reconciliation broker read gets at most one-third of the reconciliation budget, or ten seconds with
+  the current configuration. The aggregate pass budget still bounds reconciliation. Background broker polls use the
+  adapter's request and retry deadlines, with the cache maximum age as their aggregate deadline. Startup preflight
+  keeps its own request and retry deadlines. Both broker-history captures remain mandatory for every snapshot poll.
 - The dedicated Bayn PostgreSQL cluster logs statements exceeding one second and lock waits exceeding one second.
   `log_parameter_max_length=0` and `log_parameter_max_length_on_error=0` suppress parameter values. SQL statement text is
   still present in database logs. For a lock wait, correlate the PostgreSQL process ID, blocker ID, application name,

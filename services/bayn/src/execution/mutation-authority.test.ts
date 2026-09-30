@@ -382,6 +382,46 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 describe('final broker mutation authority', () => {
+  test('uses fresh account and exposure reads when routine reads have a cache projection', async () => {
+    const trace: string[] = []
+    const unusedRead = Effect.die(new Error('unexpected cached read before submission'))
+    const fresh: BrokerReadShape = {
+      account: Effect.sync(() => {
+        trace.push('account')
+        return readResult(account())
+      }),
+      positions: Effect.sync(() => {
+        trace.push('positions')
+        return readResult([position()])
+      }),
+      orders: () =>
+        Effect.sync(() => {
+          trace.push('orders')
+          return readResult([])
+        }),
+      accountConfiguration: unusedRead,
+      assetBySymbol: () => unusedRead,
+      orderById: () => unusedRead,
+      orderByClientId: () => unusedRead,
+      fillActivities: () => unusedRead,
+      feeActivities: () => unusedRead,
+      marketCalendar: () => unusedRead,
+    }
+    const cached: BrokerReadShape = {
+      ...fresh,
+      account: unusedRead,
+      positions: unusedRead,
+      orders: () => unusedRead,
+      projection: { fresh, snapshot: unusedRead, invalidate: Effect.void },
+    }
+    const snapshot = await Effect.runPromise(
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), defaultLimits, cached),
+    )
+    expect(snapshot.positions).toEqual([position()])
+    expect(snapshot.account).toEqual(account())
+    expect(trace).toEqual(['positions', 'orders', 'account'])
+  })
+
   test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(
     'revalidates the same persisted grant contract for %s submission',
     async (environment) => {
