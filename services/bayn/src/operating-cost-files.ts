@@ -32,6 +32,6 @@ export const readOperatingCostPacket = (path: string) =>
     Effect.mapError((cause) =>
       cause instanceof OperatingCostError
         ? cause
-        : new OperatingCostError({ message: 'Operating-cost packet could not be read or decoded' }),
+        : new OperatingCostError({ message: 'Operating-cost packet could not be read or decoded', cause }),
     ),
   )

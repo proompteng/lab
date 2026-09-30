@@ -25,7 +25,10 @@ export enum OperatingCostCoverage {
   Unknown = 'UNKNOWN',
 }
 
-export class OperatingCostError extends Data.TaggedError('OperatingCostError')<{ readonly message: string }> {}
+export class OperatingCostError extends Data.TaggedError('OperatingCostError')<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
 const fail = (message: string) => new OperatingCostError({ message })
 const hash = (value: unknown) =>
   canonicalHashV1Result(value).pipe(Result.mapError(() => fail('Cost evidence is not canonical')))
@@ -164,14 +167,14 @@ export const makeOperatingCostReport = (
       )
         return yield* Result.fail(fail('Prepaid payment must match its invoice amount and temporal scope'))
       if (entry.payment !== null) {
-        const paymentKey = `${entry.provider}:${entry.payment.receiptSourceHash}`
+        const paymentKey = entry.payment.receiptSourceHash
         if (paymentArtifacts.has(paymentKey))
           return yield* Result.fail(fail('One payment receipt cannot fund multiple imported invoices'))
         paymentArtifacts.add(paymentKey)
       }
       funding.set(key, entry)
       fundingDocuments.add(key)
-      const sourceKey = `${entry.provider}:${entry.invoiceSourceHash}`
+      const sourceKey = entry.invoiceSourceHash
       if (documentSources.has(sourceKey) && documentSources.get(sourceKey) !== key)
         return yield* Result.fail(fail('One source invoice cannot acquire multiple funding identities'))
       documentSources.set(sourceKey, key)
@@ -184,7 +187,7 @@ export const makeOperatingCostReport = (
       const key = `${documentKey}:${entry.lineId}`
       if (fundingDocuments.has(documentKey) || creditIds.has(documentKey))
         return yield* Result.fail(fail('A prepaid purchase or credit note cannot also be a consumption expense'))
-      const sourceKey = `${entry.provider}:${entry.sourceHash}`
+      const sourceKey = entry.sourceHash
       if (documentSources.has(sourceKey) && documentSources.get(sourceKey) !== documentKey)
         return yield* Result.fail(fail('One source invoice cannot acquire multiple document identities'))
       documentSources.set(sourceKey, documentKey)
@@ -202,7 +205,7 @@ export const makeOperatingCostReport = (
       let credits = 0n
       for (const credit of entry.credits) {
         const creditKey = `${entry.provider}:${credit.documentId}`
-        const artifactKey = `${entry.provider}:${credit.sourceHash}`
+        const artifactKey = credit.sourceHash
         if (
           creditIds.has(creditKey) ||
           creditArtifacts.has(artifactKey) ||

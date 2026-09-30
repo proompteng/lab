@@ -123,6 +123,40 @@ const topup = (): OperatingCostEvidence['prepaidFunding'][number] => ({
 })
 
 describe('document-bound external operating costs', () => {
+  test('artifact ownership cannot be changed by relabeling the provider', () => {
+    const secondSource = '6'.repeat(64)
+    const sources = new Set([...verified, secondSource])
+    const first = charge()
+    const second = { ...first, provider: 'another-provider', documentId: '5'.repeat(64), sourceHash: secondSource }
+    expect(
+      Result.isFailure(makeOperatingCostReport(inference(), { ...evidence(), consumption: [first, second] }, sources)),
+    ).toBe(true)
+    const paid = topup()
+    const otherPaid = {
+      ...paid,
+      provider: 'another-provider',
+      documentId: '4'.repeat(64),
+      invoiceSourceHash: secondSource,
+    }
+    expect(
+      Result.isFailure(
+        makeOperatingCostReport(inference(), { ...evidence(), prepaidFunding: [paid, otherPaid] }, sources),
+      ),
+    ).toBe(true)
+    const duplicatedInvoice = {
+      ...first,
+      provider: 'another-provider',
+      documentId: '3'.repeat(64),
+      credits: [],
+      grossAmountMicros: '4000',
+    }
+    expect(
+      Result.isFailure(
+        makeOperatingCostReport(inference(), { ...evidence(), consumption: [first, duplicatedInvoice] }, sources),
+      ),
+    ).toBe(true)
+  })
+
   test('rejects invoice artifacts reused as credit evidence regardless of import order', () => {
     const line = charge()
     const reused = { ...line, credits: [{ documentId: 'b'.repeat(64), sourceHash: source, amountMicros: '1000' }] }
@@ -289,6 +323,24 @@ describe('document-bound external operating costs', () => {
         yield* fs.writeFileString(`${root}/source.txt`, 'changed')
         const changed = yield* Effect.result(readOperatingCostPacket(`${root}/packet.json`))
         expect(Result.isFailure(changed)).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  })
+
+  test('retains filesystem and schema causes behind the bounded packet error', async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-expense-cause-' })
+        const missing = yield* Effect.result(readOperatingCostPacket(`${root}/missing.json`))
+        if (Result.isSuccess(missing)) throw new Error('Missing packet unexpectedly loaded')
+        expect(missing.failure.message).toBe('Operating-cost packet could not be read or decoded')
+        expect(missing.failure).toHaveProperty('cause')
+        yield* fs.writeFileString(`${root}/malformed.json`, '{invalid')
+        const malformed = yield* Effect.result(readOperatingCostPacket(`${root}/malformed.json`))
+        if (Result.isSuccess(malformed)) throw new Error('Malformed packet unexpectedly loaded')
+        expect(malformed.failure.message).toBe(missing.failure.message)
+        expect(malformed.failure).toHaveProperty('cause')
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     )
   })
