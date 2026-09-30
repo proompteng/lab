@@ -941,12 +941,9 @@ export const confirmExecutionBrokerState = (
   brokerRead: BrokerReadShape,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
+    const fresh = brokerRead.projection?.fresh ?? brokerRead
     const [positions, orders, account] = yield* Effect.all(
-      [
-        brokerRead.positions,
-        brokerRead.orders({ status: OrderCollection.Open, limit: limits.maxOpenOrders }),
-        brokerRead.account,
-      ],
+      [fresh.positions, fresh.orders({ status: OrderCollection.Open, limit: limits.maxOpenOrders }), fresh.account],
       { concurrency: 3 },
     ).pipe(Effect.mapError((cause) => mutationAuthorizationError('broker state confirmation failed', cause)))
     const stablePositions = validateStablePositionSnapshot(cached.state.positions, positions.value)

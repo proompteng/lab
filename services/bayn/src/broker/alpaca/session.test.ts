@@ -6,6 +6,9 @@ import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
+import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
+import { currentUtcInstant } from '../../time'
+import { AlpacaBrokerResourcesLive } from './composition'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import { AccountStatus, BrokerRead } from './model'
 import {
@@ -93,6 +96,7 @@ const completePreflightResponse = (
     url.pathname === '/v2/positions' ||
     url.pathname === '/v2/orders' ||
     url.pathname === '/v2/account/activities/FILL' ||
+    url.pathname === '/v2/account/activities/FEE' ||
     url.pathname === '/v2/calendar'
   ) {
     return jsonResponse(request, [], requestId)
@@ -101,6 +105,35 @@ const completePreflightResponse = (
 }
 
 describe('Alpaca broker session acquisition retry', () => {
+  test('production resources share one verified polling cache across the session and read service', async () => {
+    let requests = 0
+    const client = HttpClient.make((request, url) => {
+      requests += 1
+      return Effect.succeed(completePreflightResponse(request, url, `req-${requests}`))
+    })
+    const resources = AlpacaBrokerResourcesLive(connection(0), Layer.succeed(HttpClient.HttpClient, client))
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const session = yield* BrokerSession
+        const read = yield* BrokerRead
+        expect(session.read).toBe(read)
+        expect(session.preflight.accountId).toBe(accountId)
+        expect(read.projection).toBeDefined()
+        const initialRequests = requests
+        for (let n = 0; n < 10; n++) {
+          const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
+          expect(snapshot.account.value.id).toBe(accountId)
+          yield* read.accountConfiguration
+        }
+        expect(requests).toBe(initialRequests)
+        yield* TestClock.adjust(30_000)
+        yield* Effect.repeat(Effect.yieldNow, { times: 10 })
+        expect(requests).toBe(initialRequests + 12)
+        expect((yield* read.account).evidence.observedAt).toBe('1970-01-01T00:00:30.000Z')
+      }).pipe(Effect.provide(resources), Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([]))),
+    )
+  })
+
   test('re-runs the complete preflight after request retry exhaustion and publishes one frozen verified session', async () => {
     const options = connection(1)
     let requests = 0

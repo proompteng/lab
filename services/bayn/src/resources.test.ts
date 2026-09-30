@@ -166,6 +166,7 @@ describe('Bayn resource lifecycle', () => {
             : url.pathname === '/v2/orders' ||
                 url.pathname === '/v2/positions' ||
                 url.pathname === '/v2/account/activities/FILL' ||
+                url.pathname === '/v2/account/activities/FEE' ||
                 url.pathname === '/v2/calendar'
               ? []
               : { code: 40410000, message: 'order not found' }
@@ -196,6 +197,7 @@ describe('Bayn resource lifecycle', () => {
 
     expect(services.httpClient).toBe(client)
     expect(services.session.read).toBeDefined()
+    expect(services.session.read.projection).toBeDefined()
     expect(acquisitions).toBe(1)
     expect(finalizations).toBe(1)
   })
