@@ -28,6 +28,8 @@ timeout and interruption. Starting a mutation cancels an earlier in-flight poll 
 active mutations settle. After the final outcome, the cache remains unavailable for the same one-second broker
 consistency window used by post-mutation reconciliation, then starts a fresh poll. Other invalidations wake the poller
 without releasing an active mutation's hold or shortening the consistency window.
+Lookup-only recovery that finds new durable order state also clears the snapshot and starts this consistency window;
+replaying unchanged recovery evidence keeps the current snapshot.
 Refresh signals coalesce in a one-slot queue, and polls remain serial. An earlier poll cannot republish a snapshot after
 invalidation. The final pre-submit capital and exposure check retains fresh broker reads. Individual order lookups,
 arbitrary filtered order queries, and metadata
