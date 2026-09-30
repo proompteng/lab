@@ -447,8 +447,19 @@ negative differences are excluded and counted in `bayn_cycle_latency_clock_regre
 
 Decision building and close preparation share the current pass's reconciliation. Additional uses check its age and
 current authority version; stale evidence or changed authority requires another reconciliation. The result does not
-survive the serialized pass or its broker mutation. Transmission retains its independent broker refresh, current
-grant and risk checks under the writer fence.
+survive the serialized pass or its broker mutation. Exact native reconciliation also fills the generation-owned
+submit cache. Its account identity, reconciliation ID and authority version are checked under the final writer fence;
+a newer reconciliation, later broker observation or another mutation invalidates that version. Cache misses,
+discrepancies, unknown mutations, pending orders, stale evidence and authority changes deny submission. Submit consumes
+the version before broker I/O; cancellation, recovery and failed reconciliation invalidate it. Replaying the consumed
+reconciliation cannot refill it. Only a new native exact reconciliation supplies another version.
+
+Transmission confirms positions, open orders and account once concurrently, replacing seven sequential broker GETs.
+Position, order or cash drift from the cached cut denies transmission. Current account blocks and buying power,
+persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. This is a bounded
+REST observation cache, not an order-update stream or an atomic broker snapshot; it does not remove the broker's
+external-writer race. The confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within
+`order_acknowledgement`, after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
