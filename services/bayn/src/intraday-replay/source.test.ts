@@ -14,6 +14,13 @@ import {
 } from './source'
 import { Result } from 'effect'
 
+const archiveTopology = (positions: ReturnType<typeof fixture>['manifest']['positions']) => ({
+  positions: positions.filter((position) => position.startOffset !== position.endOffsetExclusive),
+  archiveUnobservedPartitions: positions
+    .filter((position) => position.startOffset === position.endOffsetExclusive)
+    .map(({ topic, partition }) => ({ topic, partition })),
+})
+
 test('archive reconstruction cannot masquerade as a directly captured Kafka stream or prove live availability', () => {
   const data = fixture()
   const manifest = { ...data.manifest, transport: 'archive-reconstruction' as const }
@@ -45,6 +52,19 @@ test('archive reconstruction cannot masquerade as a directly captured Kafka stre
   expect(Result.isFailure(validateBacktestSourceReceipt(claimedLive, sha256(claimedLive)))).toBe(true)
 })
 
+test('archive reconstruction rejects invented empty cuts while captured empty cuts remain valid', () => {
+  const data = fixture()
+  const positions = data.manifest.positions.map((position, index) =>
+    index === 0 ? { ...position, endOffsetExclusive: position.startOffset } : position,
+  )
+  expect(Result.isSuccess(validateBacktestSourceManifest({ ...data.manifest, positions }))).toBe(true)
+  expect(
+    Result.isFailure(
+      validateBacktestSourceManifest({ ...data.manifest, positions, transport: 'archive-reconstruction' }),
+    ),
+  ).toBe(true)
+})
+
 test('archive reconstruction accounts for partitions without retained rows without inventing empty log offsets', () => {
   const data = fixture()
   const missing = data.manifest.positions[0]
@@ -53,8 +73,11 @@ test('archive reconstruction accounts for partitions without retained rows witho
   const manifest = {
     ...data.manifest,
     transport: 'archive-reconstruction' as const,
-    positions: data.manifest.positions.slice(1),
-    archiveUnobservedPartitions: [partition],
+    ...archiveTopology(data.manifest.positions.slice(1)),
+    archiveUnobservedPartitions: [
+      partition,
+      ...archiveTopology(data.manifest.positions.slice(1)).archiveUnobservedPartitions,
+    ],
   }
   expect(Result.isSuccess(validateBacktestSourceManifest(manifest))).toBe(true)
   expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, archiveUnobservedPartitions: [] }))).toBe(true)
@@ -219,6 +242,7 @@ test('archive reconstruction admits bound retained-coordinate gaps without weake
   const manifest = {
     ...data.manifest,
     transport: 'archive-reconstruction' as const,
+    ...archiveTopology(data.manifest.positions),
     recordCount: events.length,
     dataSha256: sha256(body),
   }
@@ -231,6 +255,8 @@ test('archive reconstruction admits bound retained-coordinate gaps without weake
     queryHashes: ['1'.repeat(64)],
     archiveResponseHashes: ['2'.repeat(64)],
     sourceDataSha256: manifest.dataSha256,
+    positions: manifest.positions,
+    archiveUnobservedPartitions: manifest.archiveUnobservedPartitions,
     normalization: 'bayn.archive-envelope-reconstruction.v1',
     originalStreamAvailability: 'NOT_OBSERVED',
     completeness: 'RETAINED_ROWS_ONLY',

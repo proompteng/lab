@@ -137,6 +137,11 @@ export const makeOperatingCostReport = (
     const consumption = new Map<string, OperatingCostEvidence['consumption'][number]>()
     const creditIds = new Set<string>()
     const creditArtifacts = new Set<string>()
+    // Inspect all invoice artifacts before credits so import order cannot authorize a reused source.
+    const invoiceArtifacts = new Set([
+      ...evidence.consumption.map((entry) => entry.sourceHash),
+      ...evidence.prepaidFunding.map((entry) => entry.invoiceSourceHash),
+    ])
     const paymentArtifacts = new Set<string>()
     const funding = new Map<string, OperatingCostEvidence['prepaidFunding'][number]>()
     const fundingDocuments = new Set<string>()
@@ -201,6 +206,7 @@ export const makeOperatingCostReport = (
         if (
           creditIds.has(creditKey) ||
           creditArtifacts.has(artifactKey) ||
+          invoiceArtifacts.has(credit.sourceHash) ||
           documentArtifacts.has(creditKey) ||
           credit.documentId === entry.documentId
         )

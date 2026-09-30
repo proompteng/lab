@@ -224,6 +224,13 @@ export const validateBacktestSourceManifest = (input: unknown) =>
       return yield* Result.fail(fail('Technical regeneration requires its bound source topic'))
     const expected = backtestSourcePartitions(manifest)
     const unobserved = manifest.archiveUnobservedPartitions ?? []
+    if (
+      manifest.transport === 'archive-reconstruction' &&
+      manifest.positions.some((position) => position.startOffset === position.endOffsetExclusive)
+    )
+      return yield* Result.fail(
+        fail('No-record archive partitions must be declared unobserved, not assigned empty log offsets'),
+      )
     if (manifest.transport !== 'archive-reconstruction' && manifest.archiveUnobservedPartitions !== undefined)
       return yield* Result.fail(fail('Only archive reconstruction can declare unobserved partitions'))
     const suppliedTopology = [...manifest.positions, ...unobserved].sort(

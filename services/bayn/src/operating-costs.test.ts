@@ -123,6 +123,28 @@ const topup = (): OperatingCostEvidence['prepaidFunding'][number] => ({
 })
 
 describe('document-bound external operating costs', () => {
+  test('rejects invoice artifacts reused as credit evidence regardless of import order', () => {
+    const line = charge()
+    const reused = { ...line, credits: [{ documentId: 'b'.repeat(64), sourceHash: source, amountMicros: '1000' }] }
+    expect(
+      Result.isFailure(makeOperatingCostReport(inference(), { ...evidence(), consumption: [reused] }, verified)),
+    ).toBe(true)
+    const futureInvoice = {
+      ...line,
+      documentId: '6'.repeat(64),
+      sourceHash: creditSource,
+      credits: [],
+      grossAmountMicros: '4000',
+    }
+    for (const consumption of [
+      [line, futureInvoice],
+      [futureInvoice, line],
+    ])
+      expect(Result.isFailure(makeOperatingCostReport(inference(), { ...evidence(), consumption }, verified))).toBe(
+        true,
+      )
+  })
+
   test('rejects reused payment or credit artifacts under different normalized document identities', () => {
     const additionalSource = '6'.repeat(64)
     const sources = new Set([...verified, additionalSource])
