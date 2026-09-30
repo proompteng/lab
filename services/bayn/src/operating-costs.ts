@@ -185,6 +185,8 @@ export const makeOperatingCostReport = (
     for (const entry of evidence.consumption) {
       const documentKey = `${entry.provider}:${entry.documentId}`
       const key = `${documentKey}:${entry.lineId}`
+      if (paymentArtifacts.has(entry.sourceHash))
+        return yield* Result.fail(fail('A funding payment receipt cannot also be a consumption invoice'))
       if (fundingDocuments.has(documentKey) || creditIds.has(documentKey))
         return yield* Result.fail(fail('A prepaid purchase or credit note cannot also be a consumption expense'))
       const sourceKey = entry.sourceHash
@@ -209,6 +211,7 @@ export const makeOperatingCostReport = (
         if (
           creditIds.has(creditKey) ||
           creditArtifacts.has(artifactKey) ||
+          paymentArtifacts.has(artifactKey) ||
           invoiceArtifacts.has(credit.sourceHash) ||
           documentArtifacts.has(creditKey) ||
           credit.documentId === entry.documentId

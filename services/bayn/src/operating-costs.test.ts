@@ -123,6 +123,32 @@ const topup = (): OperatingCostEvidence['prepaidFunding'][number] => ({
 })
 
 describe('document-bound external operating costs', () => {
+  test('payment evidence cannot also reduce costs as a credit or become a consumption invoice', () => {
+    const consumptionSource = '6'.repeat(64)
+    const sources = new Set([...verified, consumptionSource])
+    const paid = topup()
+    const line = { ...charge(), sourceHash: consumptionSource }
+    expect(
+      Result.isSuccess(
+        makeOperatingCostReport(inference(), { ...evidence(), prepaidFunding: [paid], consumption: [line] }, sources),
+      ),
+    ).toBe(true)
+    for (const provider of ['synthetic-provider', 'another-provider']) {
+      const creditReuse = {
+        ...line,
+        provider,
+        credits: [{ documentId: 'b'.repeat(64), sourceHash: paymentSource, amountMicros: '1000' }],
+      }
+      const invoiceReuse = { ...line, provider, sourceHash: paymentSource }
+      for (const consumption of [[creditReuse], [invoiceReuse]])
+        expect(
+          Result.isFailure(
+            makeOperatingCostReport(inference(), { ...evidence(), prepaidFunding: [paid], consumption }, sources),
+          ),
+        ).toBe(true)
+    }
+  })
+
   test('artifact ownership cannot be changed by relabeling the provider', () => {
     const secondSource = '6'.repeat(64)
     const sources = new Set([...verified, secondSource])
