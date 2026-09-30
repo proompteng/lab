@@ -48,6 +48,7 @@ const fixture = (
 ) => {
   const calls: string[] = []
   let equityMicros = '1000000000'
+  let pendingEquity: { readonly value: string; readonly visibleAtMs: number } | undefined
   let accountFailure: BrokerReadError | undefined
   let accountBarrier: Effect.Effect<void> = Effect.void
   const observe = <A>(operation: string, value: (at: string) => A): Effect.Effect<ReadResult<A>> =>
@@ -70,22 +71,25 @@ const fixture = (
       Effect.andThen(
         Effect.suspend(() =>
           accountFailure === undefined
-            ? observe(
-                'account',
-                (observedAt): Account => ({
+            ? observe('account', (observedAt): Account => {
+                const equity =
+                  pendingEquity !== undefined && Date.parse(observedAt) >= pendingEquity.visibleAtMs
+                    ? pendingEquity.value
+                    : equityMicros
+                return {
                   id: accountId,
                   status: AccountStatus.Active,
                   currency: 'USD',
-                  cashMicros: equityMicros,
-                  equityMicros,
-                  lastEquityMicros: equityMicros,
-                  buyingPowerMicros: equityMicros,
+                  cashMicros: equity,
+                  equityMicros: equity,
+                  lastEquityMicros: equity,
+                  buyingPowerMicros: equity,
                   accountBlocked: false,
                   tradingBlocked: false,
                   tradeSuspendedByUser: false,
                   observedAt,
-                }),
-              )
+                }
+              })
             : Effect.fail(accountFailure),
         ),
       ),
@@ -121,6 +125,10 @@ const fixture = (
     calls,
     setEquity: (value: string) => {
       equityMicros = value
+      pendingEquity = undefined
+    },
+    setDelayedEquity: (value: string, visibleAtMs: number) => {
+      pendingEquity = { value, visibleAtMs }
     },
     failAccount: (error: BrokerReadError | undefined) => {
       accountFailure = error
@@ -435,7 +443,30 @@ describe('broker snapshot cache', () => {
         yield* settle
         const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
         expect(snapshot.account.value.equityMicros).toBe('900000000')
-        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:01:30.000Z')
+        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:01:31.000Z')
+        expect(source.calls.length).toBe(24)
+      }),
+    )
+  })
+
+  test('waits for the broker consistency boundary before refreshing post-mutation state', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const read = yield* makeCachedBrokerRead(source.read, config)
+        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
+        source.setDelayedEquity('900000000', 1_000)
+        yield* read.projection.withMutation(Effect.void)
+        yield* TestClock.adjust(999)
+        yield* read.projection.invalidate
+        yield* settle
+        expect(Result.isFailure(yield* Effect.result(read.account))).toBe(true)
+        expect(source.calls.length).toBe(12)
+        yield* TestClock.adjust(1)
+        yield* settle
+        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
+        expect(snapshot.account.value.equityMicros).toBe('900000000')
+        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:00:01.000Z')
         expect(source.calls.length).toBe(24)
       }),
     )
@@ -469,6 +500,27 @@ describe('broker snapshot cache', () => {
         yield* Deferred.succeed(secondRelease, undefined)
         yield* Fiber.join(second)
         yield* TestClock.adjust(1_000)
+        yield* settle
+        expect((yield* read.account).value.equityMicros).toBe('800000000')
+        expect(source.calls.length).toBe(24)
+      }),
+    )
+  })
+
+  test('starts a new consistency window when another mutation settles before the previous refresh', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const read = yield* makeCachedBrokerRead(source.read, config)
+        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
+        source.setDelayedEquity('800000000', 1_500)
+        yield* read.projection.withMutation(Effect.void)
+        yield* TestClock.adjust(500)
+        yield* read.projection.withMutation(Effect.void)
+        yield* TestClock.adjust(500)
+        expect(Result.isFailure(yield* Effect.result(read.account))).toBe(true)
+        expect(source.calls.length).toBe(12)
+        yield* TestClock.adjust(500)
         yield* settle
         expect((yield* read.account).value.equityMicros).toBe('800000000')
         expect(source.calls.length).toBe(24)

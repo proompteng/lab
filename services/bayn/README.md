@@ -25,8 +25,9 @@ smaller of half the maximum age and the maximum age minus the poll interval. Wit
 
 Submit and cancel attempts keep the cache unavailable throughout the broker request and response processing, including
 timeout and interruption. Starting a mutation cancels an earlier in-flight poll and pauses broker polling until all
-active mutations settle. After the final outcome, the poller starts a new refresh. Other invalidations wake the poller
-without releasing an active mutation's hold.
+active mutations settle. After the final outcome, the cache remains unavailable for the same one-second broker
+consistency window used by post-mutation reconciliation, then starts a fresh poll. Other invalidations wake the poller
+without releasing an active mutation's hold or shortening the consistency window.
 Refresh signals coalesce in a one-slot queue, and polls remain serial. An earlier poll cannot republish a snapshot after
 invalidation. The final pre-submit capital and exposure check retains fresh broker reads. Individual order lookups,
 arbitrary filtered order queries, and metadata

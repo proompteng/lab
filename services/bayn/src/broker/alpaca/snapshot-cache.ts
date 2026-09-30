@@ -7,6 +7,7 @@ import { BrokerReadError, BrokerReadErrorKind, configurationError, safeCause } f
 import {
   OrderCollection,
   SortDirection,
+  mutationConsistencyDelayMs,
   type AccountConfigurationObservation,
   type BrokerReadProjection,
   type BrokerReadShape,
@@ -54,6 +55,7 @@ interface CachedSnapshot {
 type CacheState =
   | { readonly _tag: 'Invalidated'; readonly generation: number }
   | { readonly _tag: 'Mutating'; readonly generation: number; readonly pendingMutations: number }
+  | { readonly _tag: 'Settling'; readonly generation: number; readonly refreshAfterMs: number }
   | { readonly _tag: 'Ready'; readonly generation: number; readonly value: CachedSnapshot }
   | { readonly _tag: 'Failed'; readonly generation: number; readonly error: BrokerReadError }
 
@@ -92,7 +94,7 @@ export const makeCachedBrokerRead = (
     const invalidate = Ref.update(
       state,
       (current): CacheState =>
-        current._tag === 'Mutating'
+        current._tag === 'Mutating' || current._tag === 'Settling'
           ? { ...current, generation: current.generation + 1 }
           : { _tag: 'Invalidated', generation: current.generation + 1 },
     ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
@@ -104,13 +106,23 @@ export const makeCachedBrokerRead = (
         pendingMutations: current._tag === 'Mutating' ? current.pendingMutations + 1 : 1,
       }),
     ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
-    const endMutation = Ref.update(
-      state,
-      (current): CacheState =>
-        current._tag === 'Mutating' && current.pendingMutations > 1
-          ? { ...current, generation: current.generation + 1, pendingMutations: current.pendingMutations - 1 }
-          : { _tag: 'Invalidated', generation: current.generation + 1 },
-    ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
+    const endMutation = Clock.currentTimeMillis.pipe(
+      Effect.flatMap((now) =>
+        Ref.update(
+          state,
+          (current): CacheState =>
+            current._tag === 'Mutating' && current.pendingMutations > 1
+              ? { ...current, generation: current.generation + 1, pendingMutations: current.pendingMutations - 1 }
+              : {
+                  _tag: 'Settling',
+                  generation: current.generation + 1,
+                  refreshAfterMs: now + mutationConsistencyDelayMs,
+                },
+        ),
+      ),
+      Effect.andThen(Queue.offer(refresh, undefined)),
+      Effect.asVoid,
+    )
     const withMutation: BrokerReadProjection['withMutation'] = (effect) =>
       Effect.acquireUseRelease(
         beginMutation,
@@ -123,6 +135,10 @@ export const makeCachedBrokerRead = (
       yield* Ref.set(nextPollAt, startedAt + config.pollIntervalMs)
       const current = yield* Ref.get(state)
       if (current._tag === 'Mutating') return
+      if (current._tag === 'Settling' && startedAt < current.refreshAfterMs) {
+        yield* Ref.set(nextPollAt, current.refreshAfterMs)
+        return
+      }
       const generation = current.generation
       const value = yield* Effect.all(
         {
@@ -217,7 +233,9 @@ export const makeCachedBrokerRead = (
           Effect.flatMap((current) =>
             current._tag === 'Invalidated'
               ? Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Ref.set(nextPollAt, now)))
-              : Effect.void,
+              : current._tag === 'Settling'
+                ? Ref.set(nextPollAt, current.refreshAfterMs)
+                : Effect.void,
           ),
         ),
       ),
@@ -231,6 +249,8 @@ export const makeCachedBrokerRead = (
       if (current._tag === 'Failed') return yield* current.error
       if (current._tag === 'Mutating')
         return yield* unavailable('Broker snapshot cache is unavailable while broker mutations are in flight')
+      if (current._tag === 'Settling')
+        return yield* unavailable('Broker snapshot cache is waiting for the broker mutation consistency window')
       if (current._tag === 'Invalidated')
         return yield* unavailable('Broker snapshot cache is waiting for a poll after invalidation')
       if (now < current.value.observedAtMs || now - current.value.observedAtMs >= config.maxAgeMs)

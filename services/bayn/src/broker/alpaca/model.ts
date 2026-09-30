@@ -407,6 +407,8 @@ export interface StableBrokerSnapshot {
   readonly history: BrokerHistory
 }
 
+export const mutationConsistencyDelayMs = 1_000
+
 export interface BrokerReadProjection {
   readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
