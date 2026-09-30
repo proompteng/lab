@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: codex-turin
+  labels:
+    app.kubernetes.io/name: codex-devbox
+spec:
+  serviceName: codex-turin
+  replicas: 1
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codex-devbox
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codex-devbox
+      annotations:
+        io.katacontainers.volume.devbox-data.mount_path: /persist
+        io.katacontainers.volume.devbox-data.fs_type: ext4
+    spec:
+      runtimeClassName: kata-dragonball
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 90
+      nodeSelector:
+        kubernetes.io/hostname: turin
+        kubernetes.io/arch: amd64
+        runtime.proompteng.ai/kata-dragonball: ready
+        runtime.proompteng.ai/kata-dragonball-persistent-block: ready
+      containers:
+        - name: devbox
+          image: registry.ide-newton.ts.net/lab/codex-devbox:unpublished
+          ports:
+            - name: ssh
+              containerPort: 22
+            - name: health
+              containerPort: 8080
+          securityContext:
+            runAsUser: 0
+            privileged: true
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+            limits:
+              cpu: "8"
+              memory: 64Gi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            failureThreshold: 180
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeDevices:
+            - name: data
+              devicePath: /dev/devbox-data
+          volumeMounts:
+            - name: access
+              mountPath: /bootstrap
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: codex-turin
+        - name: access
+          secret:
+            secretName: codex-devbox-access
+            defaultMode: 0400

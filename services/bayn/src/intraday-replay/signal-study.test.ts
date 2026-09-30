@@ -127,6 +127,9 @@ test.each([
     ...base.query,
     symbols: [...fixture.protocol.candidateSymbols, fixture.protocol.benchmarkSymbol].sort(),
     candidateSymbols: fixture.protocol.candidateSymbols,
+    ...(fixture.protocol.candidateEvidencePolicy === undefined
+      ? {}
+      : { candidateEvidencePolicy: fixture.protocol.candidateEvidencePolicy }),
   }
   const { snapshot } = streamingFixtureFromRaw(
     makeIntradayMomentumTestSnapshot(

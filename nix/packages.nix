@@ -148,23 +148,23 @@ let
     };
   };
 
-  kubectlVersion = "1.29.4";
+  kubectlVersion = "1.37.0";
   kubectlSource = sourceFor "kubectl" {
     x86_64-linux.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/linux/amd64/kubectl";
-      hash = "sha256-EONDhhw8sAEBYecDMHupB63Sru6v/GREd5rZFfmInIg=";
+      hash = "sha256-YSk1n04fOEilVyzLCybPKLjKCM7zjJWnZbL2SiyWGi8=";
     };
     aarch64-linux.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/linux/arm64/kubectl";
-      hash = "sha256-YVN0CO7crQZNczQ4Su1Qioqh6nhjEbh7UFRWouBTXTY=";
+      hash = "sha256-ki3yjfJIzACp4CX5R3BPHRSC3mTs5Uz+V+YfGerx7vM=";
     };
     x86_64-darwin.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/darwin/amd64/kubectl";
-      hash = "sha256-evm4ojPEmtXuy1kARxngvAeXJJK2dOu84pGeUzJrVbI=";
+      hash = "sha256-1SdsD0/ed/xEYHApDzRZRKfx/aFT32uWDl/ek7epvM0=";
     };
     aarch64-darwin.src = fetchurl {
       url = "https://dl.k8s.io/release/v${kubectlVersion}/bin/darwin/arm64/kubectl";
-      hash = "sha256-s6iB5iCKpBJ1qXSBZ2qMijwWKC8817RBsX8ligVAEvE=";
+      hash = "sha256-WDvu2uvkIucdPxqWrO+LH++G6i8JpFrQGqbJzih8E4A=";
     };
   };
 
