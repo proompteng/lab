@@ -137,6 +137,7 @@ type MockOptions = {
   codexAuthenticated?: boolean
   codexModels?: typeof codexModelFixtures
   failCodexModels?: boolean
+  legacyCodexModels?: boolean
   paginateCodexModels?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
@@ -635,6 +636,16 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-models':
+        if (options.legacyCodexModels) {
+          await route.fulfill({
+            status: 412,
+            json: {
+              error: 'Model selection needs an updated guest. Chat continues with existing Codex settings.',
+              code: 'model_selection_unavailable',
+            },
+          })
+          return
+        }
         if (options.failCodexModels) {
           await route.fulfill({ status: 503, json: { error: 'Codex model catalog unavailable' } })
           return
@@ -1448,6 +1459,89 @@ test('reports a model catalog outage and retries without creating a conversation
   await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
   await expect(chrome.getByRole('button', { name: 'Send message' })).toBeEnabled()
 })
+
+for (const savedThread of [false, true]) {
+  test(`continues ${savedThread ? 'saved' : 'new'} conversations while model selection awaits a guest update`, async ({
+    page,
+  }) => {
+    const options = { legacyCodexModels: true }
+    const mock = await mockTengri(page, options)
+    if (savedThread) {
+      await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+    }
+    await page.goto('/')
+    const chrome = page.getByRole('region', { name: 'Chrome window' })
+    await expect(chrome.getByRole('alert')).toContainText('Chat continues with existing Codex settings')
+    await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
+    await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Continue in this workspace')
+    await chrome.getByRole('button', { name: 'Send message' }).click()
+    await expect.poll(() => mock.actions.some((action) => action.action === 'send-turn')).toBe(true)
+    for (const action of mock.actions.filter((action) =>
+      ['create-thread', 'resume-thread', 'send-turn'].includes(String(action.action)),
+    )) {
+      expect(action).not.toHaveProperty('model')
+      expect(action).not.toHaveProperty('reasoningEffort')
+    }
+    expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(!savedThread)
+    await emitCodexEvent(page, {
+      sequence: 1,
+      kind: 'thread-state',
+      method: 'turn/completed',
+      threadId: savedThread ? 'thread-existing' : 'thread-1',
+      turnId: 'turn-1',
+      itemId: '',
+      approvalId: '',
+      text: '',
+      rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+    })
+    options.legacyCodexModels = false
+    await chrome.getByRole('button', { name: 'Retry models' }).click()
+    await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+    await chrome.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('high')
+    await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected settings')
+    await chrome.getByRole('button', { name: 'Send message' }).click()
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
+      .toMatchObject({ model: 'gpt-6.1-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
+  })
+}
+
+for (const unavailable of ['model', 'effort']) {
+  test(`can replace a saved unavailable ${unavailable} after conversation recovery fails`, async ({ page }) => {
+    const mock = await mockTengri(page, {
+      resumeThreadErrors: [{ status: 400, error: 'Saved Codex settings are unavailable' }],
+    })
+    await page.addInitScript((unavailable) => {
+      localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing')
+      localStorage.setItem(
+        'tengri-codex-options:microvm-ada',
+        JSON.stringify({
+          model: unavailable === 'model' ? 'removed-model' : 'gpt-5.6-luna',
+          reasoningEffort: 'high',
+        }),
+      )
+    }, unavailable)
+    await page.goto('/')
+    const chrome = page.getByRole('region', { name: 'Chrome window' })
+    await expect(chrome.getByText('Saved Codex settings are unavailable', { exact: true })).toBeVisible()
+    const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
+    await expect(model).toBeEnabled()
+    if (unavailable === 'model') await model.selectOption('gpt-6.1-sol')
+    const reasoning = chrome.getByRole('combobox', { name: 'Reasoning effort' })
+    await expect(reasoning).toBeEnabled()
+    await reasoning.selectOption('low')
+    await chrome.getByRole('button', { name: 'Retry conversation recovery' }).click()
+    await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+    expect(mock.actions.filter((action) => action.action === 'resume-thread').at(-1)).toMatchObject({
+      model: unavailable === 'model' ? 'gpt-6.1-sol' : 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+    })
+    expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
+    await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Continue this conversation')
+    await chrome.getByRole('button', { name: 'Send message' }).click()
+    await expect.poll(() => mock.actions.some((action) => action.action === 'send-turn')).toBe(true)
+  })
+}
 
 test('keeps an unavailable default visible until the user selects an available model', async ({ page }) => {
   await mockTengri(page, { codexModels: codexModelFixtures.slice(1) })

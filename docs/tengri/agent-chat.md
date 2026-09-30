@@ -41,9 +41,15 @@ are saved per agent in the browser and sent explicitly on thread creation, threa
 Changing models resets an incompatible effort to the selected model's default. New conversations keep the settings.
 An active turn keeps its original settings; the selectors become available after it finishes.
 
-If the catalog is unavailable, the chat displays the error with **Retry models** and blocks starting a new turn.
+If the catalog fails to load, the chat displays the error with **Retry models** and blocks starting a new turn.
+During a rollout, an older controller or guest can explicitly report that model selection is unsupported. The chat
+then explains that it uses the existing Codex settings and continues sending without model or reasoning overrides.
+Updated guests default to `gpt-6.1-sol`; omitted options preserve the guest configuration and existing thread settings.
+Retrying the catalog restores the selectors when the compatible controller and guest are available.
 If the account does not offer the selected model or effort, the selection stays visible until the user chooses an
-available option. Tengri does not silently substitute a model. A running turn can still be steered or interrupted.
+available option. An unavailable saved selection is not applied during automatic recovery, and the selectors stay
+editable after recovery fails so the user can choose valid settings and retry the same conversation. Tengri does not
+silently substitute a model. A running turn can still be steered or interrupted.
 
 ## Guest administration
 
@@ -52,7 +58,7 @@ Terminal and Codex operate in a guest with a writable operating-system root and 
 filesystems, and configure guest networking. Codex uses `danger-full-access`; the `kata-fc` VM provides the isolation
 boundary around guest administration.
 
-The root filesystem has the image's 512 MiB capacity and lasts for the guest Pod's lifetime. Sleep/resume or Pod
+The root filesystem has the image's 512 MiB capacity and is ephemeral. Container recreation, sleep/resume, or guest
 replacement restores that root from the image. Home and `/workspace` use the retained 16 GiB PVC, including Codex
 credentials, threads, and tools installed there. Running guests adopt a new image and Pod template at the next safe
 sleep/resume boundary.

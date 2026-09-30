@@ -89,8 +89,11 @@ controller allows privilege escalation, grants the guest Linux capabilities, and
 inside the `kata-fc` VM. The Pod has no host namespace or host filesystem mounts, and no Kubernetes service-account
 token. Codex threads and turns use `danger-full-access` inside this same guest.
 
-The operating-system root remains the 512 MiB Firecracker image filesystem. Its changes last for the guest Pod's
-lifetime; sleep/resume or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
+Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
+omitted options preserve an existing thread's settings.
+
+The operating-system root remains the 512 MiB Firecracker image filesystem. Its changes are ephemeral;
+container recreation, sleep/resume, or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a

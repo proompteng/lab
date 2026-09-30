@@ -7,7 +7,8 @@ Kata RuntimeClasses, node scheduling, or cluster nodes.
 The owning ApplicationSet sets Tengri's namespace admission to `privileged` so the `kata-fc` guests can use
 passwordless `sudo`, full capabilities, and unconfined guest syscalls. Guest Pods keep `privileged: false`, no host
 namespaces or mounts, and no service-account token. The controller Deployment keeps its restricted security context.
-The guest root is writable for the Pod's lifetime; home and workspace contents survive sleep/resume.
+The guest root is writable and ephemeral; container recreation restores the image. Home and workspace contents
+survive sleep/resume.
 
 ## Source and release contract
 

@@ -127,6 +127,10 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
+      if (call.request.agentId === 'legacy-model-catalog') {
+        callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
+        return
+      }
       callback(null, {
         rawJson:
           call.request.agentId === 'broken-catalog'
@@ -369,6 +373,18 @@ describe('Tengri gRPC BFF transport', () => {
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', ...options })
     await sendCodexTurn('github:42', 'agent-test', 'thread-selected', 'Read the workspace', options)
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
+  })
+
+  test('identifies unsupported model selection without disguising other catalog failures', async () => {
+    const { listCodexModels } = await import('./grpc')
+    expect(await rejection(listCodexModels('github:42', 'legacy-model-catalog'))).toMatchObject({
+      status: 412,
+      code: 'model_selection_unavailable',
+    })
+    expect(await rejection(listCodexModels('github:42', 'broken-catalog'))).toMatchObject({
+      status: 503,
+      code: undefined,
+    })
   })
 
   test('revokes editor sessions for the authenticated subject without a caller-selected owner', async () => {

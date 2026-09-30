@@ -183,8 +183,10 @@ async fn legacy_threads_keep_the_atomic_full_snapshot_contract() {
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["params"]["excludeTurns"], true);
+    assert_eq!(requests[0]["params"]["model"], Value::Null);
     assert_eq!(requests[1]["method"], "thread/resume");
     assert_eq!(requests[1]["params"]["excludeTurns"], false);
+    assert_eq!(requests[1]["params"]["model"], Value::Null);
 }
 
 #[tokio::test]

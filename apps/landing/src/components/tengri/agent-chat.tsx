@@ -51,6 +51,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [models, setModels] = useState<TengriCodexModel[] | null>(null)
   const [modelError, setModelError] = useState('')
+  const [modelSelectionUnavailable, setModelSelectionUnavailable] = useState(false)
   const [modelReload, setModelReload] = useState(0)
   const [selection, setSelection] = useState<TengriCodexSelection>(defaultCodexSelection)
   const [selectionWarning, setSelectionWarning] = useState('')
@@ -86,11 +87,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
-  const optionsRef = useRef<TengriCodexOptions>({ model: selection.model })
-  optionsRef.current = selectedOptions ?? {
-    model: selection.model,
-    ...(selection.reasoningEffort === 'default' ? {} : { reasoningEffort: selection.reasoningEffort }),
-  }
+  const canStartTurn = Boolean(selectedOptions) || modelSelectionUnavailable
+  const optionsRef = useRef<TengriCodexOptions>({})
+  optionsRef.current = selectedOptions ?? {}
   const accountChecked = account !== null
   const showStopAction = Boolean(activeTurnId) && !prompt.trim()
   const canStartNewConversation = codexCanStartNewConversation({
@@ -207,6 +206,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setAccount(null)
     setModels(null)
     setModelError('')
+    setModelSelectionUnavailable(false)
     setSelection(readStoredSelection(agentId))
     setSelectionWarning('')
     loginIdRef.current = ''
@@ -245,12 +245,16 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const controller = new AbortController()
     setModels(null)
     setModelError('')
+    setModelSelectionUnavailable(false)
     void loadCodexModels(agentId, controller.signal)
       .then((models) => {
         if (!controller.signal.aborted) setModels(models)
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
+          setModelSelectionUnavailable(
+            cause instanceof TengriRequestError && cause.code === 'model_selection_unavailable',
+          )
           setModelError(cause instanceof Error ? cause.message : 'Codex models could not be loaded')
         }
       })
@@ -305,7 +309,15 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   )
 
   useEffect(() => {
-    if (!active || !account?.authenticated || !threadId || threadReady || replayRecoveryRef.current) return
+    if (
+      !active ||
+      !account?.authenticated ||
+      !threadId ||
+      threadReady ||
+      replayRecoveryRef.current ||
+      (!models && !modelError)
+    )
+      return
     const controller = new AbortController()
     const resumeSequence = lastEventSequence.current
     const generation = ++threadResumeGeneration.current
@@ -333,7 +345,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         }
       })
     return () => controller.abort()
-  }, [account?.authenticated, active, agentId, commitThreadState, threadId, threadReady])
+  }, [account?.authenticated, active, agentId, commitThreadState, modelError, models, threadId, threadReady])
 
   const recoverThreadState = useCallback(async () => {
     const currentThread = threadIdRef.current
@@ -486,7 +498,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       replayRecovering ||
       replayRecoveryRef.current ||
       (threadId && !threadReady) ||
-      (!activeTurnIdRef.current && !selectedOptions)
+      (!activeTurnIdRef.current && !canStartTurn)
     )
       return
     setSubmitting(true)
@@ -679,7 +691,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       </div>
       <div className="shrink-0 px-3 pb-3 sm:px-4">
         <CodexModelPicker
-          disabled={Boolean(activeTurnId) || submitting || replayRecovering || Boolean(threadId && !threadReady)}
+          disabled={Boolean(activeTurnId) || submitting || replayRecovering}
           error={modelError}
           models={models}
           onChange={selectOptions}
@@ -764,7 +776,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               submitting ||
               interrupting ||
               replayRecovering ||
-              (!activeTurnId && !selectedOptions) ||
+              (!activeTurnId && !canStartTurn) ||
               Boolean(threadId && !threadReady)
             }
             onClick={showStopAction ? () => void interruptTurn() : undefined}

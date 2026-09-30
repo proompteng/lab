@@ -2,7 +2,11 @@ import type { TengriCodexOptions } from './codex-models'
 
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
-export type TengriErrorCode = 'conversation_not_found' | 'file_conflict' | 'capacity_full'
+export type TengriErrorCode =
+  | 'conversation_not_found'
+  | 'file_conflict'
+  | 'capacity_full'
+  | 'model_selection_unavailable'
 
 export type TengriCondition = {
   type: string

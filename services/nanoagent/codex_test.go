@@ -415,14 +415,16 @@ func TestCodexSupervisorCompletesInitializationHandshake(t *testing.T) {
 	}
 	directory := t.TempDir()
 	marker := filepath.Join(directory, "initialized.json")
+	arguments := filepath.Join(directory, "arguments.txt")
 	binary := filepath.Join(directory, "fake-codex")
 	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
 IFS= read -r initialize
 printf '%%s\n' '{"id":1,"result":{}}'
 IFS= read -r initialized
 printf '%%s' "$initialized" > %q
 sleep 30
-`, marker)
+`, arguments, marker)
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake app-server: %v", err)
 	}
@@ -443,6 +445,10 @@ sleep 30
 			}
 			if !supervisor.isReady() {
 				t.Fatal("Codex supervisor was not ready after the initialization handshake")
+			}
+			args, err := os.ReadFile(arguments)
+			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
+				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
 			}
 			return
 		}

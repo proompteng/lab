@@ -10,7 +10,8 @@ the guest and does not use AgentRun, KubeVirt, host devices, privileged launcher
 The guest user retains UID/GID 1000 and can become root with passwordless `sudo`. The writable root filesystem,
 privilege escalation, full Linux capabilities, and unconfined guest syscalls allow administration inside the VM.
 `privileged: false`, the `kata-fc` runtime, absent host namespaces/mounts, and disabled service-account mounting retain
-the VM boundary. System-root changes last for the Pod's lifetime; the home and workspace survive sleep/resume.
+the VM boundary. System-root changes are ephemeral and reset when the guest container is recreated; the home and
+workspace survive sleep/resume.
 The ApplicationSet permits this guest profile through Tengri's namespace admission policy. The control-plane
 Deployment retains its non-root UID, dropped capabilities, read-only root, and disabled privilege escalation.
 

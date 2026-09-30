@@ -619,6 +619,15 @@ function callOptions(deadlineMs: number): grpc.CallOptions {
 
 function mapGrpcError(error: grpc.ServiceError, methodName: string) {
   switch (error.code) {
+    case grpc.status.UNIMPLEMENTED:
+      if (methodName === 'listCodexModels') {
+        return new TengriUnavailableError(
+          'Model selection is unavailable for this workspace. Chat continues with existing Codex settings.',
+          412,
+          'model_selection_unavailable',
+        )
+      }
+      return new TengriUnavailableError('Tengri control plane is unavailable', 503)
     case grpc.status.INVALID_ARGUMENT:
       return new TengriUnavailableError('Tengri request is invalid', 400)
     case grpc.status.UNAUTHENTICATED:

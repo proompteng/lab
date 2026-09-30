@@ -204,6 +204,7 @@ func (supervisor *codexSupervisor) run() {
 func (supervisor *codexSupervisor) runProcess() error {
 	command := exec.Command(
 		supervisor.binary,
+		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
 		"app-server",

@@ -1,29 +1,13 @@
 use serde_json::{Value, json};
 
-pub const DEFAULT_CODEX_MODEL: &str = "gpt-6.1-sol";
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CodexOptions {
-    pub model: String,
+    pub model: Option<String>,
     pub reasoning_effort: Option<String>,
-}
-
-impl Default for CodexOptions {
-    fn default() -> Self {
-        Self {
-            model: DEFAULT_CODEX_MODEL.to_owned(),
-            reasoning_effort: None,
-        }
-    }
 }
 
 impl CodexOptions {
     pub fn parse(model: String, reasoning_effort: String) -> Result<Self, &'static str> {
-        let model = if model.is_empty() {
-            DEFAULT_CODEX_MODEL.to_owned()
-        } else {
-            model
-        };
         if model.len() > 160
             || !model.bytes().all(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'/')
@@ -39,7 +23,7 @@ impl CodexOptions {
             _ => return Err("invalid Codex reasoning effort"),
         };
         Ok(Self {
-            model,
+            model: if model.is_empty() { None } else { Some(model) },
             reasoning_effort,
         })
     }
@@ -56,9 +40,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_to_sol_without_overriding_the_owners_reasoning() {
+    fn explicit_model_does_not_override_the_owners_reasoning() {
+        let options = CodexOptions::parse("gpt-6.1-sol".into(), String::new()).unwrap();
+        assert_eq!(options.model.as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(options.thread_config(), None);
+    }
+
+    #[test]
+    fn omitted_options_preserve_existing_guest_and_thread_settings() {
         let options = CodexOptions::parse(String::new(), String::new()).unwrap();
-        assert_eq!(options.model, "gpt-6.1-sol");
+        assert_eq!(json!(options.model), Value::Null);
         assert_eq!(options.thread_config(), None);
     }
 
