@@ -146,10 +146,22 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          load: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
           tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
+
+      - name: Verify guest administrator access
+        if: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
+        env:
+          GUEST_ADMIN_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          docker run --rm --interactive --user 1000:1000 \
+            --cap-add ALL --security-opt seccomp=unconfined \
+            --entrypoint /bin/bash "$GUEST_ADMIN_IMAGE" -s -- --runtime \
+            < services/nanoagent/test-guest-admin.sh
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

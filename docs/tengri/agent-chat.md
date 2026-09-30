@@ -33,6 +33,30 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
 
 The chat, Finder, Code, Terminal, and preview tabs all operate on the same guest home and `/workspace` filesystem.
 
+## Model and reasoning selection
+
+The chat defaults to `gpt-6.1-sol`. Its **Model** selector reads the signed-in guest's paginated `model/list` catalog;
+the **Reasoning effort** selector offers that model's supported efforts and displays its default effort. Both settings
+are saved per agent in the browser and sent explicitly on thread creation, thread resume, and every subsequent turn.
+Changing models resets an incompatible effort to the selected model's default. New conversations keep the settings.
+An active turn keeps its original settings; the selectors become available after it finishes.
+
+If the catalog is unavailable, the chat displays the error with **Retry models** and blocks starting a new turn.
+If the account does not offer the selected model or effort, the selection stays visible until the user chooses an
+available option. Tengri does not silently substitute a model. A running turn can still be steered or interrupted.
+
+## Guest administration
+
+Terminal and Codex operate in a guest with a writable operating-system root and passwordless `sudo` for the
+`nanoagent` user. The owner can install system packages, edit `/etc` and `/usr/local`, manage guest processes, mount
+filesystems, and configure guest networking. Codex uses `danger-full-access`; the `kata-fc` VM provides the isolation
+boundary around guest administration.
+
+The root filesystem has the image's 512 MiB capacity and lasts for the guest Pod's lifetime. Sleep/resume or Pod
+replacement restores that root from the image. Home and `/workspace` use the retained 16 GiB PVC, including Codex
+credentials, threads, and tools installed there. Running guests adopt a new image and Pod template at the next safe
+sleep/resume boundary.
+
 ## API path
 
 The public browser surface uses strict action schemas rather than exposing arbitrary app-server calls:
@@ -42,6 +66,7 @@ The public browser surface uses strict action schemas rather than exposing arbit
 | `codex-account`      | `GetCodexAccount`      | `account/read`                      |
 | `codex-login-status` | `GetCodexLogin`        | Nanoagent active-login snapshot     |
 | `codex-login`        | `StartCodexLogin`      | `account/login/start`               |
+| `codex-models`       | `ListCodexModels`      | `model/list`                        |
 | `create-thread`      | `CreateCodexThread`    | `thread/start`                      |
 | `resume-thread`      | `ResumeCodexThread`    | `thread/resume`                     |
 | `send-turn`          | `SendCodexTurn`        | `turn/start`                        |
@@ -92,6 +117,7 @@ bun test \
   apps/landing/src/components/tengri/codex-events.test.ts \
   apps/landing/src/components/tengri/codex-event-card.test.tsx \
   apps/landing/src/lib/tengri/grpc.test.ts \
+  apps/landing/src/lib/tengri/codex-models.test.ts \
   apps/landing/src/lib/tengri/schemas.test.ts \
   apps/landing/src/lib/tengri/sse.test.ts \
   apps/landing/src/lib/tengri/ready-desktop.test.tsx
@@ -107,9 +133,11 @@ The live acceptance path runs only after the GitOps rollout described in
 [`operations.md`](./operations.md). It must prove the complete owner-scoped path:
 
 1. Sign in with GitHub and create or resume one agent.
-2. Verify its Pod is unprivileged and uses `runtimeClassName: kata-fc` without changing node scheduling.
+2. Verify its Pod uses `runtimeClassName: kata-fc`, `privileged: false`, and no host namespaces or filesystem mounts.
+   In Terminal, verify `sudo -n id -u` returns `0` and an owner-requested system-file edit or package install succeeds.
 3. Open Chrome at `tengri://agent`, complete a per-user Codex device login, and create a thread.
-4. Send a real turn that reads or edits `/workspace`; confirm typed assistant, tool, and file-diff events render.
+4. Select a model and supported reasoning effort. Send a real turn that reads or edits `/workspace`; confirm the
+   app-server model/effort readback and typed assistant, tool, and file-diff events. Reload and verify the selection.
 5. Exercise one advertised approval decision, steer or interrupt a running turn, and reload Chrome during a turn to
    prove replay and thread recovery.
 6. Read the changed file in Finder, Code, and Terminal to prove all surfaces share the same guest filesystem.

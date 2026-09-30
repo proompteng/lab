@@ -110,7 +110,10 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
     .await;
     let snapshot = fixture
         .client
-        .resume_codex_thread("thread-one")
+        .resume_codex_thread(
+            "thread-one",
+            &CodexOptions::parse("gpt-6.1-sol".into(), "high".into()).unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(snapshot.event_sequence, 10);
@@ -138,7 +141,8 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
         requests[0],
         json!({"method":"thread/resume", "params": {
             "threadId":"thread-one", "cwd":"/workspace", "runtimeWorkspaceRoots":["/workspace"],
-            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true
+            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true,
+            "model":"gpt-6.1-sol", "config":{"model_reasoning_effort":"high"}
         }})
     );
     assert_eq!(
@@ -170,7 +174,7 @@ async fn legacy_threads_keep_the_atomic_full_snapshot_contract() {
     .await;
     let snapshot = fixture
         .client
-        .resume_codex_thread("thread-one")
+        .resume_codex_thread("thread-one", &CodexOptions::default())
         .await
         .unwrap();
     assert_eq!(snapshot.result, legacy);
@@ -231,7 +235,7 @@ async fn rejects_broken_page_contracts_without_returning_partial_history() {
         assert!(
             fixture
                 .client
-                .resume_codex_thread("thread-one")
+                .resume_codex_thread("thread-one", &CodexOptions::default())
                 .await
                 .is_err()
         );
@@ -249,7 +253,10 @@ async fn propagates_upstream_failure_and_does_not_fall_back_to_deprecated_hydrat
     ])
     .await;
     assert!(matches!(
-        fixture.client.resume_codex_thread("thread-one").await,
+        fixture
+            .client
+            .resume_codex_thread("thread-one", &CodexOptions::default())
+            .await,
         Err(GuestError::Api {
             status: StatusCode::SERVICE_UNAVAILABLE,
             ..
@@ -268,7 +275,10 @@ async fn bounds_total_history_even_when_individual_pages_are_within_limits() {
     ])
     .await;
     assert!(matches!(
-        fixture.client.resume_codex_thread("thread-one").await,
+        fixture
+            .client
+            .resume_codex_thread("thread-one", &CodexOptions::default())
+            .await,
         Err(GuestError::ResponseTooLarge(MAX_GUEST_JSON_BYTES))
     ));
 }
@@ -281,7 +291,10 @@ async fn rejects_mismatched_thread_identity_and_unknown_history_mode() {
         }
         let fixture = fixture(vec![reply(10, response)]).await;
         assert!(matches!(
-            fixture.client.resume_codex_thread("thread-one").await,
+            fixture
+                .client
+                .resume_codex_thread("thread-one", &CodexOptions::default())
+                .await,
             Err(GuestError::InvalidCodexHistory(_))
         ));
         assert_eq!(fixture.requests.lock().unwrap().len(), 1);

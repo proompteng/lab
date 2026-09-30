@@ -31,7 +31,7 @@ use crate::{
     },
     gateway::PreviewOrigin,
     guest::{
-        EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
+        CodexOptions, EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
         TerminalCreation as GuestTerminalCreation,
     },
     metrics,
@@ -45,19 +45,19 @@ pub mod proto {
 
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
-    CodexEvent, CodexEventKind, CodexLogin, CodexThread, CodexTurn, CreateAgentRequest,
-    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest,
-    DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest,
-    GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
+    CodexEvent, CodexEventKind, CodexLogin, CodexModels, CodexThread, CodexTurn,
+    CreateAgentRequest, CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest,
+    DeleteAgentRequest, DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind,
+    GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
     IssueEditorSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
-    ListAgentsRequest, ListAgentsResponse, ListFilesRequest, ListFilesResponse,
-    ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest,
-    ReadFileResponse, ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
-    RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexTurnRequest,
-    SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest, TerminalSession,
-    TerminalTicket, TerminateTerminalRequest, WatchAgentRequest, WatchCodexEventsRequest,
-    WatchFilesRequest, WriteFileRequest, WriteFileResponse,
-    micro_vm_control_plane_server::MicroVmControlPlane,
+    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListFilesRequest,
+    ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
+    PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
+    ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
+    SearchFilesResponse, SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest,
+    SteerCodexTurnRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
+    WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
+    WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -762,6 +762,33 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn list_codex_models(
+        &self,
+        request: Request<ListCodexModelsRequest>,
+    ) -> Result<Response<CodexModels>, Status> {
+        let principal = self.authorize(&request, "ListCodexModels").await?;
+        let request = request.into_inner();
+        if request.cursor.len() > 4096 || request.cursor.chars().any(char::is_control) {
+            return Err(Status::invalid_argument("invalid Codex model cursor"));
+        }
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "model/list",
+                json!({
+                    "cursor": if request.cursor.is_empty() { None } else { Some(request.cursor) },
+                    "limit": 100,
+                    "includeHidden": false,
+                }),
+            )
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexModels {
+            raw_json: value.to_string(),
+        }))
+    }
+
     async fn start_codex_login(
         &self,
         request: Request<StartCodexLoginRequest>,
@@ -807,12 +834,16 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<CodexThread>, Status> {
         let principal = self.authorize(&request, "CreateCodexThread").await?;
         let request = request.into_inner();
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
             .codex_call_with_sequence(
                 "thread/start",
                 json!({
+                    "model": options.model,
+                    "config": options.thread_config(),
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
                     "approvalPolicy": "on-request",
@@ -840,10 +871,12 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResumeCodexThread").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
-            .resume_codex_thread(&request.thread_id)
+            .resume_codex_thread(&request.thread_id, &options)
             .await
             .map_err(map_guest_error)?;
         let value = snapshot.result;
@@ -863,6 +896,8 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         let text = validate_prompt(&request.text)?;
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let value = self
             .guest(&principal, &request.agent_id)
             .await?
@@ -870,6 +905,8 @@ impl MicroVmControlPlane for ControlPlane {
                 "turn/start",
                 json!({
                     "threadId": request.thread_id,
+                    "model": options.model,
+                    "effort": options.reasoning_effort,
                     "input": [{"type": "text", "text": text, "text_elements": []}],
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],

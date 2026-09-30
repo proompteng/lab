@@ -1,8 +1,13 @@
 # Tengri operations
 
 Tengri is delivered through the main-branch image build, Kargo, and the `tengri` Argo CD application. It owns namespaced `MicroVM` resources,
-their bootstrap Secrets, 16 GiB `rook-ceph-block` PVCs, and unprivileged `kata-fc` Pods. It does not mutate Talos,
+their bootstrap Secrets, 16 GiB `rook-ceph-block` PVCs, and `kata-fc` Pods with guest administrator access. It does not mutate Talos,
 Kata RuntimeClasses, node scheduling, or cluster nodes.
+
+The owning ApplicationSet sets Tengri's namespace admission to `privileged` so the `kata-fc` guests can use
+passwordless `sudo`, full capabilities, and unconfined guest syscalls. Guest Pods keep `privileged: false`, no host
+namespaces or mounts, and no service-account token. The controller Deployment keeps its restricted security context.
+The guest root is writable for the Pod's lifetime; home and workspace contents survive sleep/resume.
 
 ## Source and release contract
 

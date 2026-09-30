@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
+import { codexModelFixtures } from './codex-models.fixture'
 
 const user = {
   id: '424242',
@@ -134,6 +135,9 @@ type MockOptions = {
   agent?: typeof readyAgent | null
   blockDraftStorage?: boolean
   codexAuthenticated?: boolean
+  codexModels?: typeof codexModelFixtures
+  failCodexModels?: boolean
+  paginateCodexModels?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
   failCodexAccountUntilReleased?: boolean
@@ -629,6 +633,18 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           email: options.codexAuthenticated === false ? '' : 'ada@example.test',
           plan: options.codexAuthenticated === false ? '' : 'pro',
         }
+        break
+      case 'codex-models':
+        if (options.failCodexModels) {
+          await route.fulfill({ status: 503, json: { error: 'Codex model catalog unavailable' } })
+          return
+        }
+        result = options.paginateCodexModels
+          ? {
+              models: codexModelFixtures.slice(action.cursor ? 1 : 0, action.cursor ? 2 : 1),
+              nextCursor: action.cursor ? null : 'models-2',
+            }
+          : { models: options.codexModels ?? codexModelFixtures, nextCursor: null }
         break
       case 'codex-login-status':
         result = options.activeCodexLogin
@@ -1358,6 +1374,93 @@ test('offers old-editor drafts for download without overwriting guest files or e
   expect(mock.actions.some((action) => action.action === 'write-file')).toBe(false)
   await code.getByRole('button', { name: 'Close Code', exact: true }).click()
   await expect(code).toHaveCount(0)
+})
+
+test('selects and persists Codex models and reasoning for subsequent turns', async ({ page }) => {
+  const mock = await mockTengri(page, { preserveDraftStorageOnReload: true, paginateCodexModels: true })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
+  const reasoning = chrome.getByRole('combobox', { name: 'Reasoning effort' })
+  await expect(model).toHaveValue('gpt-6.1-sol')
+  await expect(model).toBeEnabled()
+  await reasoning.selectOption('high')
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({
+      model: 'gpt-6.1-sol',
+      reasoningEffort: 'high',
+      text: 'Read the workspace',
+    })
+  expect(mock.actions.find((action) => action.action === 'create-thread')).toMatchObject({
+    model: 'gpt-6.1-sol',
+    reasoningEffort: 'high',
+  })
+  await expect(model).toBeDisabled()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+  })
+  await expect(model).toBeEnabled()
+  await page.reload()
+  await expect(reasoning).toHaveValue('high')
+  await expect(reasoning).toBeEnabled()
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'resume-thread').at(-1))
+    .toMatchObject({
+      model: 'gpt-6.1-sol',
+      reasoningEffort: 'high',
+    })
+  await model.selectOption('gpt-5.6-luna')
+  await expect(reasoning).toHaveValue('default')
+  await expect(reasoning.locator('option[value="high"]')).toHaveCount(0)
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected model')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
+    .toMatchObject({
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+      text: 'Use the selected model',
+    })
+})
+
+test('reports a model catalog outage and retries without creating a conversation', async ({ page }) => {
+  const options = { failCodexModels: true }
+  const mock = await mockTengri(page, options)
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('alert')).toContainText('Codex model catalog unavailable')
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
+  options.failCodexModels = false
+  await chrome.getByRole('button', { name: 'Retry models' }).click()
+  await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeEnabled()
+})
+
+test('keeps an unavailable default visible until the user selects an available model', async ({ page }) => {
+  await mockTengri(page, { codexModels: codexModelFixtures.slice(1) })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
+  await expect(chrome.getByRole('alert')).toContainText('This model is unavailable')
+  await expect(model).toHaveValue('gpt-6.1-sol')
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  await model.selectOption('gpt-5.6-luna')
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  await expect(chrome.getByRole('alert')).toHaveCount(0)
 })
 
 test('persists Finder changes and exposes a localhost preview from Chrome', async ({ page }) => {

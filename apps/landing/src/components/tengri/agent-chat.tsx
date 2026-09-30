@@ -2,6 +2,16 @@
 
 import { ArrowUp, Copy, ExternalLink, LoaderCircle, Plus, Square } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  codexOptionsForSelection,
+  codexReasoningLabels,
+  codexSelectionSchema,
+  defaultCodexSelection,
+  type TengriCodexModel,
+  type TengriCodexModelPage,
+  type TengriCodexOptions,
+  type TengriCodexSelection,
+} from '@/lib/tengri/codex-models'
 import type {
   TengriCodexAccount,
   TengriCodexEvent,
@@ -39,6 +49,11 @@ type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
+  const [models, setModels] = useState<TengriCodexModel[] | null>(null)
+  const [modelError, setModelError] = useState('')
+  const [modelReload, setModelReload] = useState(0)
+  const [selection, setSelection] = useState<TengriCodexSelection>(defaultCodexSelection)
+  const [selectionWarning, setSelectionWarning] = useState('')
   const [threadId, setThreadId] = useState('')
   const [threadReady, setThreadReady] = useState(false)
   const [activeTurnId, setActiveTurnId] = useState('')
@@ -70,6 +85,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const replayRecoveryRef = useRef(false)
   const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
+  const selectedOptions = codexOptionsForSelection(selection, models ?? [])
+  const optionsRef = useRef<TengriCodexOptions>({ model: selection.model })
+  optionsRef.current = selectedOptions ?? {
+    model: selection.model,
+    ...(selection.reasoningEffort === 'default' ? {} : { reasoningEffort: selection.reasoningEffort }),
+  }
   const accountChecked = account !== null
   const showStopAction = Boolean(activeTurnId) && !prompt.trim()
   const canStartNewConversation = codexCanStartNewConversation({
@@ -184,6 +205,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   useEffect(() => {
     setAccount(null)
+    setModels(null)
+    setModelError('')
+    setSelection(readStoredSelection(agentId))
+    setSelectionWarning('')
     loginIdRef.current = ''
     setLogin(null)
     setThreadReady(false)
@@ -214,6 +239,23 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     void refreshAccountAndRecoverLogin(controller.signal)
     return () => controller.abort()
   }, [active, refreshAccountAndRecoverLogin])
+
+  useEffect(() => {
+    if (!active || !account?.authenticated) return
+    const controller = new AbortController()
+    setModels(null)
+    setModelError('')
+    void loadCodexModels(agentId, controller.signal)
+      .then((models) => {
+        if (!controller.signal.aborted) setModels(models)
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) {
+          setModelError(cause instanceof Error ? cause.message : 'Codex models could not be loaded')
+        }
+      })
+    return () => controller.abort()
+  }, [account?.authenticated, active, agentId, modelReload])
 
   useEffect(() => {
     if (!active || !login || account?.authenticated) return
@@ -267,7 +309,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const controller = new AbortController()
     const resumeSequence = lastEventSequence.current
     const generation = ++threadResumeGeneration.current
-    void runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId }, controller.signal)
+    void runTengriAction<TengriCodexThread>(
+      { action: 'resume-thread', agentId, threadId, ...optionsRef.current },
+      controller.signal,
+    )
       .then((thread) => {
         if (
           controller.signal.aborted ||
@@ -303,6 +348,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         action: 'resume-thread',
         agentId,
         threadId: currentThread,
+        ...optionsRef.current,
       })
       if (
         !mountedRef.current ||
@@ -434,7 +480,15 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   async function send() {
     const text = prompt.trim()
-    if (!text || submitting || replayRecovering || replayRecoveryRef.current || (threadId && !threadReady)) return
+    if (
+      !text ||
+      submitting ||
+      replayRecovering ||
+      replayRecoveryRef.current ||
+      (threadId && !threadReady) ||
+      (!activeTurnIdRef.current && !selectedOptions)
+    )
+      return
     setSubmitting(true)
     setError('')
     setPrompt('')
@@ -454,6 +508,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           agentId,
           threadId: currentThread.id,
           text,
+          ...optionsRef.current,
         })
         if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
       }
@@ -469,8 +524,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     if (threadId && threadReady) return { id: threadId, activeTurnId: activeTurnIdRef.current }
     const resumeSequence = lastEventSequence.current
     const thread = threadId
-      ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId })
-      : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId })
+      ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
+      : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
     const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
     setThreadReady(true)
     return { id: thread.id, activeTurnId: state.activeTurnId }
@@ -550,6 +605,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     requestAnimationFrame(() => promptRef.current?.focus())
   }
 
+  function selectOptions(next: TengriCodexSelection) {
+    setSelection(next)
+    const persisted = writeStoredSelection(agentId, next)
+    setSelectionWarning(persisted ? '' : 'Browser storage is unavailable. This selection lasts until the tab closes.')
+  }
+
   if (!account) {
     return (
       <div className="grid h-full place-items-center p-8">
@@ -617,6 +678,19 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </div>
       </div>
       <div className="shrink-0 px-3 pb-3 sm:px-4">
+        <CodexModelPicker
+          disabled={Boolean(activeTurnId) || submitting || replayRecovering || Boolean(threadId && !threadReady)}
+          error={modelError}
+          models={models}
+          onChange={selectOptions}
+          onRetry={() => setModelReload((version) => version + 1)}
+          selection={selection}
+        />
+        {selectionWarning ? (
+          <p role="status" className="mb-2 text-xs text-amber-200/80">
+            {selectionWarning}
+          </p>
+        ) : null}
         <StreamStatus error={errorMessage} state={eventStreamState} />
         {replayRecovering ? (
           <p className="mx-auto mb-2 w-full text-xs text-white/45" role="status">
@@ -690,6 +764,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               submitting ||
               interrupting ||
               replayRecovering ||
+              (!activeTurnId && !selectedOptions) ||
               Boolean(threadId && !threadReady)
             }
             onClick={showStopAction ? () => void interruptTurn() : undefined}
@@ -803,6 +878,154 @@ function EmptyConversation() {
       </p>
     </div>
   )
+}
+
+function CodexModelPicker({
+  disabled,
+  error,
+  models,
+  onChange,
+  onRetry,
+  selection,
+}: {
+  disabled: boolean
+  error: string
+  models: TengriCodexModel[] | null
+  onChange: (selection: TengriCodexSelection) => void
+  onRetry: () => void
+  selection: TengriCodexSelection
+}) {
+  const model = models?.find((model) => model.model === selection.model)
+  const validSelection = models && codexOptionsForSelection(selection, models)
+  const selectClass =
+    'h-8 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-800 px-2 text-xs text-zinc-200 outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50'
+  return (
+    <div className="mb-2 space-y-1.5">
+      <div className="flex flex-wrap gap-2">
+        <label className="min-w-36 flex-1 space-y-1 text-[11px] text-zinc-400">
+          <span>Model</span>
+          <select
+            aria-label="Model"
+            className={selectClass}
+            disabled={disabled || !models?.length}
+            onChange={(event) => {
+              const next = models?.find((model) => model.model === event.target.value)
+              if (!next) return
+              const reasoningEffort =
+                selection.reasoningEffort === 'default' ||
+                next.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort)
+                  ? selection.reasoningEffort
+                  : 'default'
+              onChange({ model: next.model, reasoningEffort })
+            }}
+            value={selection.model}
+          >
+            {!model ? (
+              <option value={selection.model} disabled>
+                {models ? `${selection.model} (unavailable)` : error ? 'Models unavailable' : 'Loading models…'}
+              </option>
+            ) : null}
+            {models?.map((model) => (
+              <option key={model.model} value={model.model}>
+                {model.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="w-32 space-y-1 text-[11px] text-zinc-400">
+          <span>Reasoning</span>
+          <select
+            aria-label="Reasoning effort"
+            className={selectClass}
+            disabled={disabled || !model}
+            onChange={(event) =>
+              onChange(codexSelectionSchema.parse({ ...selection, reasoningEffort: event.target.value }))
+            }
+            value={selection.reasoningEffort}
+          >
+            <option value="default">
+              {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
+            </option>
+            {selection.reasoningEffort !== 'default' &&
+            !model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? (
+              <option value={selection.reasoningEffort} disabled>
+                {codexReasoningLabels[selection.reasoningEffort]} (unavailable)
+              </option>
+            ) : null}
+            {model?.supportedReasoningEfforts.map((effort) => (
+              <option key={effort.reasoningEffort} value={effort.reasoningEffort} title={effort.description}>
+                {codexReasoningLabels[effort.reasoningEffort]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {error ? (
+        <p className="text-xs text-amber-200/80" role="alert">
+          {error}{' '}
+          <button
+            type="button"
+            className="rounded underline outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+            onClick={onRetry}
+          >
+            Retry models
+          </button>
+        </p>
+      ) : models && !validSelection ? (
+        <p className="text-xs text-amber-200/80" role="alert">
+          {model
+            ? 'Choose a supported reasoning effort.'
+            : 'This model is unavailable for your Codex account. Choose another model or refresh.'}{' '}
+          <button
+            type="button"
+            className="rounded underline outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+            onClick={onRetry}
+          >
+            Refresh models
+          </button>
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+async function loadCodexModels(agentId: string, signal: AbortSignal): Promise<TengriCodexModel[]> {
+  const models: TengriCodexModel[] = []
+  const cursors = new Set<string>()
+  let cursor: string | undefined
+  for (let pageIndex = 0; pageIndex < 8; pageIndex += 1) {
+    const page = await runTengriAction<TengriCodexModelPage>({ action: 'codex-models', agentId, cursor }, signal)
+    models.push(...page.models)
+    if (!page.nextCursor) {
+      if (new Set(models.map((model) => model.model)).size !== models.length) {
+        throw new Error('The guest returned duplicate Codex models')
+      }
+      return models
+    }
+    if (cursors.has(page.nextCursor)) throw new Error('The guest repeated a Codex model page')
+    cursors.add(page.nextCursor)
+    cursor = page.nextCursor
+  }
+  throw new Error('The Codex model catalog exceeded its page limit')
+}
+
+function readStoredSelection(agentId: string): TengriCodexSelection {
+  try {
+    const value = localStorage.getItem(`tengri-codex-options:${agentId}`)
+    if (value) return codexSelectionSchema.parse(JSON.parse(value))
+  } catch {
+    return defaultCodexSelection()
+  }
+  return defaultCodexSelection()
+}
+
+function writeStoredSelection(agentId: string, selection: TengriCodexSelection): boolean {
+  try {
+    localStorage.setItem(`tengri-codex-options:${agentId}`, JSON.stringify(selection))
+    return true
+  } catch {
+    return false
+  }
 }
 
 function StreamStatus({ error, state }: { error: string; state: EventStreamState }) {

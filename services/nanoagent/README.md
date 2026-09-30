@@ -81,7 +81,20 @@ home-volume install. Nanoagent configures both npm and Bun to use `~/.local` as 
 globally installed package executables are immediately available from the existing `~/.local/bin` PATH. Rust
 compilation and doctests use the bundled architecture-specific `rust-lld` and minimal startup objects through
 atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
-C, and CGO projects therefore build without `apt`, `sudo`, or any mutation of the read-only guest rootfs.
+C, and CGO projects therefore build from the persistent home toolchain without installing system packages.
+
+The guest's operating-system root filesystem is writable. The `nanoagent` user has passwordless `sudo` for guest
+administration, including `sudo apt-get install`, system-file edits, mounts, and guest network configuration. The
+controller allows privilege escalation, grants the guest Linux capabilities, and leaves guest syscalls unconfined
+inside the `kata-fc` VM. The Pod has no host namespace or host filesystem mounts, and no Kubernetes service-account
+token. Codex threads and turns use `danger-full-access` inside this same guest.
+
+The operating-system root remains the 512 MiB Firecracker image filesystem. Its changes last for the guest Pod's
+lifetime; sleep/resume or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
+home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
+installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
+`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
+Linux container with the guest capability and seccomp settings to also exercise mounts and network administration.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.153.4 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
