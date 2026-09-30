@@ -3,6 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import { TestClock } from 'effect/testing'
+
+import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca'
+import { discoverAutonomousCyclePass } from '../runner/program'
 
 import {
   CycleState,
@@ -182,6 +186,81 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       cycleId: third.identity.cycleId,
       entryAttemptOrdinal: 3,
     })
+  })
+
+  test('discovery preserves the pre-open rollover block and converges on one new unbound attempt', async () => {
+    const candidate = draft()
+    const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+    if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('invalid policy')
+    const forbidden = () => Effect.die(new Error('unexpected recovery-side broker or decision operation'))
+    const broker: BrokerReadShape = {
+      account: forbidden(),
+      accountConfiguration: forbidden(),
+      positions: forbidden(),
+      assetBySymbol: forbidden,
+      orders: forbidden,
+      orderById: forbidden,
+      orderByClientId: forbidden,
+      fillActivities: forbidden,
+      feeActivities: forbidden,
+      marketCalendar: () =>
+        Effect.succeed({
+          value: {
+            schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+            source: 'alpaca-v2-calendar',
+            timeZone: 'UTC',
+            requestedRange: { start: sessionDate, end: sessionDate },
+            normalizedResponseHash: '8'.repeat(64),
+            sessions: [{ date: sessionDate, openAt: '2026-08-28T13:30:00.000Z', closeAt: '2026-08-28T20:00:00.000Z' }],
+          },
+          evidence: {
+            requestId: 'recovery-calendar',
+            status: 200,
+            contentHash: '9'.repeat(64),
+            observedAt: '2026-08-28T13:11:00.000Z',
+          },
+        }),
+    }
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(candidate, acquiredAt)
+        const blocked = yield* store.block(
+          candidate.identity.cycleId,
+          CycleTerminalReason.ProvenanceMismatch,
+          '2026-08-28T13:10:00.000Z',
+        )
+        yield* TestClock.setTime(Date.parse('2026-08-28T13:11:00.000Z'))
+        const discover = discoverAutonomousCyclePass({
+          cycleBindingId: qualificationRunId,
+          accountId,
+          strategyName: 'intraday-momentum',
+          strategyProtocolHash: candidate.identity.strategyProtocolHash,
+          authorityGenerationHash: '7'.repeat(64),
+          executionPolicy,
+          buildDecision: forbidden,
+        })
+        const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
+        const sql = yield* PgClient.PgClient
+        const [intents] = yield* sql<{ count: string }>`SELECT count(*)::text AS count FROM intents`
+        return {
+          blocked: blocked.cycle,
+          previous: yield* store.read(candidate.identity.cycleId),
+          current: yield* store.readAuthoritySlot({ qualificationRunId, accountId, executionSessionDate: sessionDate }),
+          attempts,
+          intentCount: intents?.count,
+        }
+      }).pipe(Effect.provideService(BrokerRead, broker), Effect.provide(TestClock.layer())),
+    )
+    expect(Option.getOrThrow(result.previous)).toEqual(result.blocked)
+    const current = Option.getOrThrow(result.current)
+    expect(current.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: sessionDate })
+    expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
+    expect(current.state).toBe(CycleState.Pending)
+    expect(current.bindings).toEqual({})
+    expect(current.window).toEqual(candidate.window)
+    expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
+    expect(result.intentCount).toBe('0')
   })
 
   test('persists and reloads an exact full-session cycle with zero boundary offsets', async () => {

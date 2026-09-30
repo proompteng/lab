@@ -11,12 +11,15 @@ import {
 } from '../construction'
 import {
   CycleState,
+  CycleTerminalReason,
   intradayCycleEntryAttemptOrdinal,
+  isIntradayAutonomousCycle,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
   type IntradayCycleEntryAttemptOrdinal,
 } from '../model'
+import { cycleDraftMatches, cycleDraftOf } from '../transitions'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
@@ -178,4 +181,35 @@ export const nextIntradayEntryAttemptOrdinal = (
     Date.parse(observedAt) >= rearmAt
     ? currentAttempt + 1
     : undefined
+}
+
+/**
+ * Authority rollover can terminalize an unused pre-submission cycle without a decision document. Reconstruct its
+ * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
+ * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
+ * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
+ */
+export const canRearmUnboundPreSubmissionCycle = (
+  cycle: AutonomousCycle,
+  candidate: IntradayCycleCandidate,
+  observation: MarketCalendarObservation,
+  executionSession: MarketCalendarSession,
+): boolean => {
+  if (
+    !isIntradayAutonomousCycle(cycle) ||
+    cycle.state !== CycleState.Blocked ||
+    cycle.terminalReason !== CycleTerminalReason.ProvenanceMismatch ||
+    cycle.bindings.snapshotId !== undefined ||
+    cycle.bindings.decisionHash !== undefined ||
+    cycle.terminalAt === undefined ||
+    cycle.terminalAt >= cycle.window.submissionOpenAt
+  )
+    return false
+  const originalDraft = makeIntradayCycleDraft(
+    candidate,
+    observation,
+    executionSession,
+    intradayCycleEntryAttemptOrdinal(cycle.identity),
+  )
+  return Result.isSuccess(originalDraft) && cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
 }
