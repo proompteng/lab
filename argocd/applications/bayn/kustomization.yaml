@@ -8,6 +8,7 @@ resources:
   - objectbucketclaim.yaml
   - postgres-objectstore.yaml
   - postgres-cluster.yaml
+  - postgres-monitoring.yaml
   - postgres-scheduled-backup.yaml
   - tigerbeetle-cluster.yaml
   - tigerbeetle-networkpolicy.yaml

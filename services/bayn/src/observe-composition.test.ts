@@ -937,6 +937,8 @@ const sandboxExecutionProgram = (
     _tag: 'ExecutionProgram',
     schemaVersion: 'bayn.execution-program.v1',
     authority,
+    recordReconciliation: () => Effect.void,
+    invalidateBrokerState: Effect.void,
     dryRunSubmit: () => unused,
     submit: () => unused,
     cancel: () => unused,
@@ -4253,6 +4255,7 @@ describe('OBSERVE runtime composition', () => {
                       ...cut,
                       projection: {
                         ...cut.projection,
+                        quoteHistory: new Map([...cut.projection.quoteHistory].filter(([symbol]) => symbol === 'SPY')),
                         tradeHistory: new Map([...cut.projection.tradeHistory].filter(([symbol]) => symbol === 'SPY')),
                       },
                     },

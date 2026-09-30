@@ -14,7 +14,8 @@ The Kargo API serves its UI at `https://kargo.ide-newton.ts.net` through a priva
 the existing Argo Dex SSO identity. Kargo's built-in admin account and API Secret management are disabled; credentials
 and delivery resources remain declarative GitOps inputs. The UI is an operator view of Warehouse, Freight, Stage,
 Promotion, and Argo state. Normal application upgrades remain automatic and must not be replaced with UI-driven image
-selection, manifest edits, or manual Argo synchronization.
+selection or manifest edits. Manual Argo synchronization within an authorized rollout follows the same committed
+desired state and promotion gates described below.
 
 Kargo completes the OIDC authorization-code exchange in the browser. The public Argo Dex route therefore attaches the
 `kargo-dex-cors` Traefik middleware, which permits only the Kargo Tailscale origin and handles token-endpoint preflight
@@ -73,9 +74,16 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-There is no Image Updater, SHA-manifest bump, release branch, deployment PR, release automerge, manual Argo sync, or
-direct `kubectl` deployment in this path. A failed build, Warehouse, Freight, Stage, Argo, or rollout gate blocks the
-transaction at that gate; it is not repaired by bypassing the gate.
+An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
+Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
+affected resources. For Kargo-managed applications, verify the eligible image, selected Freight, and the authorized
+Stage's generated `kargo/<stage>` commit. Sync only that commit and preserve Kargo metadata and existing automation
+and retention settings.
+Scope expansion, unrequested destructive pruning, and credential or permission changes still require approval.
+
+There is no Image Updater, SHA-manifest bump, release branch, deployment PR, release automerge, or direct `kubectl`
+deployment in this path. A failed build, Warehouse, Freight, Stage, Argo, or rollout gate blocks the transaction at
+that gate; an Argo sync must not bypass it.
 
 Kargo's `lab-delivery` Project, Warehouses, Freight records, Stages, promotion policies, and `kargo/<stage>` branches
 are the promotion record. The ApplicationSet points each Kargo-managed Application at its Kargo branch and must not

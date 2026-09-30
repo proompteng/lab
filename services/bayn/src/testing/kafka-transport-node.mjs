@@ -8,6 +8,9 @@ import { platformaticProjectionTransport } from '../market-data/streaming/kafka.
 
 let finishJoin
 const closeMock = mock.method(Consumer.prototype, 'close')
+const commitMock = mock.method(Consumer.prototype, 'commit', () => {
+  throw new Error('ephemeral market readers must not commit offsets')
+})
 mock.method(Consumer.prototype, 'joinGroup', function (_options, callback) {
   finishJoin = () => {
     this.memberId = 'test-member'
@@ -69,6 +72,7 @@ await nextTurn()
 assert.equal(closeMock.mock.callCount(), 1)
 assert.equal(closeMock.mock.calls[0].this.closed, true)
 assert.equal(closeMock.mock.calls[0].this.streamsCount, 0)
+assert.equal(commitMock.mock.callCount(), 0)
 if (mode !== 'construct') assert.deepEqual(failures, [])
 mock.restoreAll()
 console.log(`${mode}: Kafka stream owned and closed without an unhandled error`)

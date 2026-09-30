@@ -2,6 +2,7 @@ import { Data, Result } from 'effect'
 
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
+import { assessEntryTurnoverReserve, EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -9,7 +10,7 @@ import {
 import { MICROS, numberToMicros } from '../execution-model'
 import { jevProtectiveStopCrossed } from '../jev/exit'
 import type { JevProtocol } from '../jev/protocol'
-import type { IntradayQuote } from '../market-data/intraday/model'
+import { usesCandidateWindowTrade, type IntradayQuote } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { compareRecords } from '../market-data/intraday/verification'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
@@ -110,10 +111,15 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
         if (rolling === undefined || quote === undefined || trade === undefined)
           return yield* Result.fail(new ControlStudyFailure({ message: `Missing control signal for ${symbol}` }))
         const now = intradayInstantNanos(snapshot.manifest.observedAt)
-        const fresh = [quote.eventAt, trade.eventAt].every((at) => {
-          const age = now - intradayInstantNanos(at)
-          return age >= 0n && age <= BigInt(protocol.maximumQuoteAgeMs) * 1_000_000n
-        })
+        const pricingTimes = usesCandidateWindowTrade(snapshot.manifest, symbol)
+          ? [quote.eventAt]
+          : [quote.eventAt, trade.eventAt]
+        const fresh =
+          intradayInstantNanos(trade.eventAt) <= now &&
+          pricingTimes.every((at) => {
+            const age = now - intradayInstantNanos(at)
+            return age >= 0n && age <= BigInt(protocol.maximumQuoteAgeMs) * 1_000_000n
+          })
         return {
           reference: BigInt(rolling.value.material.values.referencePriceMicros),
           high: BigInt(rolling.value.material.values.rangeHighPriceMicros),
@@ -152,6 +158,7 @@ export const controlEntryQuantity = (input: {
   readonly referencePriceMicros: bigint
   readonly atMs: number
   readonly feeMultiplierPpm: number
+  readonly turnoverPolicy?: EntryTurnoverPolicy
 }) =>
   Result.gen(function* () {
     const { portfolio, policy, symbol, referencePriceMicros, protocol } = input
@@ -210,7 +217,17 @@ export const controlEntryQuantity = (input: {
       const allowed =
         Result.isSuccess(tentative) &&
         notional <= BigInt(policy.maxOrderNotionalMicros) &&
-        portfolio.tradedNotionalMicros + notional <= BigInt(policy.maxDailyTradedNotionalMicros)
+        portfolio.tradedNotionalMicros + notional <= BigInt(policy.maxDailyTradedNotionalMicros) &&
+        (input.turnoverPolicy !== EntryTurnoverPolicy.EntryAndExpectedExit ||
+          (yield* assessEntryTurnoverReserve({
+            filledTurnoverMicros: portfolio.tradedNotionalMicros,
+            maximumTurnoverMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+            otherReservedMicros: 0n,
+            quantityMicros: shares * MICROS,
+            entryLimitPriceMicros: pricing.expectedExecutionPriceMicros,
+            exitReferencePriceMicros: referencePriceMicros,
+            exitAllowanceBps: BigInt(policy.maxAdverseSlippageBps),
+          })).admitted)
       if (allowed) low = shares
       else high = shares - 1n
     }

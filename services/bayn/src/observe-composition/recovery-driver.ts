@@ -1,7 +1,7 @@
 import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
-import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
+import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
 import {
@@ -60,7 +60,7 @@ type RecoveryFirstDecisionBuilder = (
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
 
-/** Owned by one serialized pass, discarded before its post-mutation continuation. Transmission still refreshes at the writer fence. */
+/** Owned by one serialized pass, discarded before its post-mutation continuation. */
 export const reconciliationForPreparation = <R>(
   initial: ReconciliationPassResult | undefined,
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
@@ -324,7 +324,15 @@ const makeRecoveryFirstCycleDriverEffect = (
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
     const nextDelayMs = recoveryFirstCycleNextDelayMs(input)
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
+      Effect.tap((result) =>
+        capability._tag === 'RecoveryOnly' ? Effect.void : capability.executionProgram.recordReconciliation(result),
+      ),
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) && capability._tag !== 'RecoveryOnly'
+          ? capability.executionProgram.invalidateBrokerState
+          : Effect.void,
+      ),
     )
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)

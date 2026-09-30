@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
+import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { canonicalHashV1 } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
@@ -49,6 +50,34 @@ const order = (side: OrderSide, atMs = at, shares = 10n) => ({
   arrivalQuote: quote(atMs + 100),
 })
 const flat = () => Result.getOrThrow(createControlPortfolio('100000000000'))
+
+test('the explicit reserve experiment lowers late entry size while the legacy/default path is unchanged', async () => {
+  const policy = await Effect.runPromise(
+    loadQuoteBoundExecutionRiskPolicy('control-fixture', fixture.protocol.universe),
+  )
+  const portfolio = { ...flat(), tradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros) - 21_000_000_000n }
+  const input = {
+    portfolio,
+    policy,
+    protocol: fixture.protocol,
+    targetWeight: 0.2,
+    symbol: 'AAPL',
+    referencePriceMicros: 100_000_000n,
+    atMs: at,
+    feeMultiplierPpm: 1_000_000,
+  }
+  const legacy = Result.getOrThrow(controlEntryQuantity(input))
+  const explicit = Result.getOrThrow(
+    controlEntryQuantity({ ...input, turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment }),
+  )
+  const reserved = Result.getOrThrow(
+    controlEntryQuantity({ ...input, turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit }),
+  )
+  expect(legacy).toBe(explicit)
+  expect(reserved).toBeGreaterThan(0n)
+  expect(reserved).toBeLessThan(legacy)
+  expect(reserved * 100n * 2n).toBeLessThanOrEqual(21_000_000_000n)
+})
 const entry = () => Result.getOrThrow(applyControlOrder(flat(), order(OrderSide.Buy))).portfolio
 const exiting = () =>
   Result.getOrThrow(
@@ -248,6 +277,49 @@ test('control signal uses the full verified snapshot and rejects stale benchmark
     },
   }
   expect(Result.isFailure(selectControlSymbol(stale, ControlPolicy.RelativeMomentum, fixture.protocol))).toBeTrue()
+})
+
+test('relative momentum preserves candidate quote freshness while using a real older window trade', () => {
+  const snapshot = {
+    ...fixture.snapshot,
+    trades: fixture.snapshot.trades.map((trade) =>
+      trade.symbol === 'SPY' ? trade : { ...trade, eventAt: new Date(at - 60_000).toISOString() },
+    ),
+  }
+  expect(Result.getOrThrow(selectControlSymbol(snapshot, ControlPolicy.RelativeMomentum, fixture.protocol))).toBe(
+    'AAPL',
+  )
+  const { candidateEvidencePolicy: _policy, ...historicalManifest } = snapshot.manifest
+  expect(
+    Result.getOrThrow(
+      selectControlSymbol(
+        { ...snapshot, manifest: historicalManifest },
+        ControlPolicy.RelativeMomentum,
+        fixture.protocol,
+      ),
+    ),
+  ).toBeNull()
+  for (const quoteAgeMs of [10_000, 10_001]) {
+    const aged = {
+      ...snapshot,
+      latestQuotes: Object.fromEntries(
+        Object.entries(snapshot.latestQuotes).map(([symbol, quote]) => [
+          symbol,
+          symbol === 'SPY' ? quote : { ...quote, eventAt: new Date(at - quoteAgeMs).toISOString() },
+        ]),
+      ),
+    }
+    const selected = Result.getOrThrow(selectControlSymbol(aged, ControlPolicy.RelativeMomentum, fixture.protocol))
+    if (quoteAgeMs === 10_000) expect(selected).toBe('AAPL')
+    else expect(selected).toBeNull()
+  }
+  const future = {
+    ...snapshot,
+    trades: snapshot.trades.map((trade) =>
+      trade.symbol === 'SPY' ? trade : { ...trade, eventAt: new Date(at + 1).toISOString() },
+    ),
+  }
+  expect(Result.getOrThrow(selectControlSymbol(future, ControlPolicy.RelativeMomentum, fixture.protocol))).toBeNull()
 })
 
 test('retained breakout accepts a fresh benchmark quote when its trade is older than candidate freshness', () => {

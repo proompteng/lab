@@ -70,7 +70,7 @@ import {
 import { CycleStore } from '../cycle/store'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
-import { readFinalExecutionRiskContext } from '../db/reconciliation'
+import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
@@ -822,6 +822,8 @@ durableTest.each([
                   mutationStore: mutations,
                   writerFence: fence,
                   persistedCapitalGrants: grants,
+                  verifyBrokerStateVersion: (version, intentId) =>
+                    verifyBrokerStateVersion(sql, accountId, version, intentId),
                   readFinalExecutionRiskContext: (at) => readFinalExecutionRiskContext(sql, accountId, at),
                 },
               })
