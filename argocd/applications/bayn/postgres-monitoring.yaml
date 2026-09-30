@@ -1,0 +1,142 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-postgres-monitoring
+  labels:
+    app.kubernetes.io/name: bayn-db
+    app.kubernetes.io/part-of: bayn
+    cnpg.io/reload: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+data:
+  queries: |
+    bayn_io:
+      runonserver: ">=18.0.0 <19.0.0"
+      target_databases: [bayn]
+      query: |
+        SELECT backend_type, object, context,
+               COALESCE(reads, 0) AS reads_total,
+               COALESCE(writes, 0) AS writes_total,
+               COALESCE(fsyncs, 0) AS fsyncs_total,
+               COALESCE(read_bytes, 0) AS read_bytes_total,
+               COALESCE(write_bytes, 0) AS write_bytes_total,
+               COALESCE(read_time, 0) / 1000.0 AS read_seconds_total,
+               COALESCE(write_time, 0) / 1000.0 AS write_seconds_total,
+               COALESCE(fsync_time, 0) / 1000.0 AS fsync_seconds_total,
+               EXTRACT(EPOCH FROM stats_reset) AS stats_reset_seconds
+        FROM pg_catalog.pg_stat_io
+      metrics:
+        - backend_type:
+            usage: LABEL
+            description: PostgreSQL backend type, without process identifiers
+        - object:
+            usage: LABEL
+            description: I/O object class, including WAL on PostgreSQL 18
+        - context:
+            usage: LABEL
+            description: PostgreSQL I/O context
+        - reads_total:
+            usage: COUNTER
+            description: Read operations; unsupported operations are zero
+        - writes_total:
+            usage: COUNTER
+            description: Write operations; unsupported operations are zero
+        - fsyncs_total:
+            usage: COUNTER
+            description: File synchronization operations; unsupported operations are zero
+        - read_bytes_total:
+            usage: COUNTER
+            description: Bytes read
+        - write_bytes_total:
+            usage: COUNTER
+            description: Bytes written
+        - read_seconds_total:
+            usage: COUNTER
+            description: Read time collected while the applicable timing setting is enabled
+        - write_seconds_total:
+            usage: COUNTER
+            description: Write time collected while the applicable timing setting is enabled
+        - fsync_seconds_total:
+            usage: COUNTER
+            description: Synchronization time collected while the applicable timing setting is enabled
+        - stats_reset_seconds:
+            usage: GAUGE
+            description: Unix timestamp of the I/O statistics reset
+    bayn_waits:
+      target_databases: [bayn]
+      query: |
+        SELECT backend_type,
+               COALESCE(wait_event_type, 'none') AS wait_event_type,
+               COALESCE(wait_event, 'none') AS wait_event,
+               count(*) AS backends,
+               COALESCE(max(GREATEST(EXTRACT(EPOCH FROM
+                 (pg_catalog.clock_timestamp() - query_start)), 0))
+                 FILTER (WHERE state = 'active'), 0) AS active_query_age_seconds
+        FROM pg_catalog.pg_stat_activity
+        WHERE pid <> pg_catalog.pg_backend_pid()
+          AND (datname = pg_catalog.current_database()
+               OR backend_type IN ('checkpointer', 'walwriter', 'walsender', 'walreceiver', 'startup'))
+        GROUP BY backend_type, wait_event_type, wait_event
+      metrics:
+        - backend_type:
+            usage: LABEL
+            description: PostgreSQL backend type
+        - wait_event_type:
+            usage: LABEL
+            description: Wait class, including IPC for synchronous replication
+        - wait_event:
+            usage: LABEL
+            description: Current PostgreSQL wait event, not SQL text or an application identifier
+        - backends:
+            usage: GAUGE
+            description: Backends currently in this wait state
+        - active_query_age_seconds:
+            usage: GAUGE
+            description: Age of the oldest active query in this group, not duration spent in this wait
+    bayn_replication:
+      primary: true
+      target_databases: [bayn]
+      query: |
+        SELECT count(*) AS connected_standbys,
+               count(*) FILTER (WHERE state = 'streaming') AS streaming_standbys,
+               count(*) FILTER (WHERE state = 'streaming' AND sync_state IN ('sync', 'quorum')) AS synchronous_standbys,
+               count(flush_lag) AS measured_flush_lag_standbys,
+               max(EXTRACT(EPOCH FROM flush_lag)) AS max_flush_lag_seconds,
+               max(GREATEST(EXTRACT(EPOCH FROM
+                 (pg_catalog.clock_timestamp() - reply_time)), 0)) AS max_reply_age_seconds,
+               max(pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), flush_lsn)) AS max_unflushed_bytes
+        FROM pg_catalog.pg_stat_replication
+      metrics:
+        - connected_standbys:
+            usage: GAUGE
+            description: Connected standby senders
+        - streaming_standbys:
+            usage: GAUGE
+            description: Standbys in streaming state
+        - synchronous_standbys:
+            usage: GAUGE
+            description: Streaming standbys eligible for the configured synchronous quorum
+        - measured_flush_lag_standbys:
+            usage: GAUGE
+            description: Standbys with a reported recent flush lag; zero means lag is not measured
+        - max_flush_lag_seconds:
+            usage: GAUGE
+            description: Largest reported recent flush lag; interpret with measured_flush_lag_standbys
+        - max_reply_age_seconds:
+            usage: GAUGE
+            description: Age of the oldest latest standby reply; interpret with connected_standbys
+        - max_unflushed_bytes:
+            usage: GAUGE
+            description: Largest outstanding WAL byte distance to a standby flush position
+    bayn_io_timing:
+      target_databases: [bayn]
+      query: |
+        SELECT (pg_catalog.current_setting('track_io_timing') = 'on')::integer AS relation_enabled,
+               (pg_catalog.current_setting('track_wal_io_timing') = 'on')::integer AS wal_enabled
+      metrics:
+        - relation_enabled:
+            usage: GAUGE
+            description: Whether relation I/O timings are currently collected
+        - wal_enabled:
+            usage: GAUGE
+            description: Whether WAL I/O timings are currently collected

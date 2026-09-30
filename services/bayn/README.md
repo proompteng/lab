@@ -331,6 +331,29 @@ does not write to TigerBeetle or change the broker's cash balance. A strategy ec
 operating-cost estimate from trading P&L while retaining its incomplete-coverage status; provider invoice reconciliation,
 credits, taxes, shared subscriptions, data costs, and allocated infrastructure costs remain separate evidence requirements.
 
+### Operational diagnostics
+
+The last terminal cycle may include `entryAllocationReason`. `TURNOVER_BUDGET_EXHAUSTED` means a retained no-trade
+decision had a positive signal, a flat portfolio, zero allocated capital, and earlier recorded account/session turnover
+at least as large as its bound limit. `ZERO_ALLOCATION` makes no claim about which limit caused a zero allocation.
+Missing historical facts remain unclassified. This explanation stays on the last cycle after a following session is
+created; it does not rewrite the immutable target-plan reason or change any trading limit. Current turnover checks
+admit the immediate sell-plus-buy adjustment, while strictly exposure-reducing closes retain their separate exception.
+They do not promise a hard round-trip ceiling that reserves every future sale of newly acquired inventory.
+
+Kafka supervision retains the first invalidation cause in each epoch. Rejoin, rebalance, reassignment and stalled
+heartbeat signals have bounded reason codes; arbitrary transport error text is not included in failure telemetry.
+Recovery logs connect the failed and rebuilt epochs and record time from the observed failure to a completed bootstrap.
+Retries and the existing cooldown do not relax assignment revocation, source verification or required history barriers.
+Transport recovery establishes an available projection, not fresh session data or a tradable signal.
+
+The dedicated PostgreSQL cluster collects relation and WAL I/O timings using PostgreSQL 18's `pg_stat_io` and exports
+bounded backend-wait and aggregate synchronous-standby measurements. Timing settings, metric availability, statistics
+resets, and the distinction between active-query age and actual wait duration must be checked before attribution.
+See the [cycle operations runbook](../../docs/runbooks/bayn-cycle-operations.md#database-latency-investigation).
+
+### Delivery
+
 Normal delivery uses the shared Kargo path:
 
 1. merge reviewed source to `main`;
