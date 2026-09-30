@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, ConfigProvider, Deferred, Effect, Exit, Fiber, Logger, type Scope } from 'effect'
+import { Cause, Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, Logger, type Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1 } from '../../hash'
@@ -270,17 +270,47 @@ describe('broker snapshot cache', () => {
     )
   })
 
+  test('schedules slow successful polls from their start and replaces evidence before it expires', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        source.blockAccount(Effect.sleep(20_000))
+        const acquiring = yield* makeCachedBrokerRead(source.read, config).pipe(Effect.forkChild)
+        yield* TestClock.adjust(20_000)
+        const read = yield* Fiber.join(acquiring)
+        const initialCalls = source.calls.length
+        expect((yield* read.accountConfiguration).evidence.observedAt).toBe('1970-01-01T00:00:00.000Z')
+        yield* TestClock.adjust(30_000)
+        yield* settle
+        expect((yield* read.accountConfiguration).evidence.observedAt).toBe('1970-01-01T00:00:30.000Z')
+        expect((yield* read.account).evidence.observedAt).toBe('1970-01-01T00:00:50.000Z')
+        expect(source.calls.length).toBe(initialCalls * 2)
+        yield* TestClock.adjust(10_000)
+        yield* read.account
+      }),
+    )
+  })
+
   test('rejects expired evidence while a background poll is blocked', async () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
         const read = yield* makeCachedBrokerRead(source.read, config)
         source.blockAccount(Effect.never)
-        yield* TestClock.adjust(59_999)
-        yield* read.account
-        yield* TestClock.adjust(1)
-        expect((yield* Effect.flip(read.account)).message).toBe('Broker snapshot cache is stale')
-        const error = yield* Effect.flip(readStableBrokerSnapshot(read, currentUtcInstant))
+        yield* TestClock.adjust(30_000)
+        const clock = yield* Clock.Clock
+        const at = (currentTimeMillis: number): Clock.Clock => ({
+          currentTimeMillisUnsafe: () => currentTimeMillis,
+          currentTimeMillis: Effect.succeed(currentTimeMillis),
+          currentTimeNanosUnsafe: () => BigInt(currentTimeMillis) * 1_000_000n,
+          currentTimeNanos: Effect.succeed(BigInt(currentTimeMillis) * 1_000_000n),
+          sleep: (duration) => clock.sleep(duration),
+        })
+        yield* read.account.pipe(Effect.provideService(Clock.Clock, at(59_999)))
+        const error = yield* Effect.flip(readStableBrokerSnapshot(read, currentUtcInstant)).pipe(
+          Effect.provideService(Clock.Clock, at(60_000)),
+        )
+        expect(error.message).toBe('Broker snapshot cache is stale')
         expect(error).toBeInstanceOf(BrokerReadError)
         if (error instanceof BrokerReadError) expect(error.retryable).toBe(true)
       }),
@@ -368,31 +398,37 @@ describe('broker snapshot cache', () => {
     expect(source.calls.length).toBe(calls)
   })
 
-  test('bounds and cancels initial acquisition when the broker cannot produce a complete snapshot', async () => {
-    const source = fixture()
-    let finalizations = 0
-    const failure = await run(
-      Effect.gen(function* () {
-        const started = yield* Deferred.make<void>()
-        source.blockAccount(
-          Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.ensuring(
-              Effect.sync(() => {
-                finalizations += 1
-              }),
+  test.each([
+    [10_000, 30_000],
+    [45_000, 15_000],
+  ] as const)(
+    'bounds acquisition with a %i ms poll interval and cancels the request',
+    async (pollIntervalMs, deadlineMs) => {
+      const source = fixture()
+      let finalizations = 0
+      const failure = await run(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          source.blockAccount(
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  finalizations += 1
+                }),
+              ),
             ),
-          ),
-        )
-        const fiber = yield* makeCachedBrokerRead(source.read, config).pipe(Effect.forkChild)
-        yield* Deferred.await(started)
-        yield* TestClock.adjust(60_000)
-        return yield* Effect.flip(Fiber.join(fiber))
-      }),
-    )
-    expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
-    expect(finalizations).toBe(1)
-  })
+          )
+          const fiber = yield* makeCachedBrokerRead(source.read, { ...config, pollIntervalMs }).pipe(Effect.forkChild)
+          yield* Deferred.await(started)
+          yield* TestClock.adjust(deadlineMs)
+          return yield* Effect.flip(Fiber.join(fiber))
+        }),
+      )
+      expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
+      expect(finalizations).toBe(1)
+    },
+  )
 
   test('propagates defects during initial acquisition', async () => {
     const source = fixture()
@@ -403,17 +439,16 @@ describe('broker snapshot cache', () => {
   })
 
   test('validates polling configuration at startup', async () => {
-    const provider = ConfigProvider.fromEnv({
-      env: {
-        BAYN_BROKER_POLL_INTERVAL_MS: '30000',
-        BAYN_BROKER_CACHE_MAX_AGE_MS: '10000',
-      },
-    })
-    const error = await Effect.runPromise(
-      Effect.flip(brokerSnapshotCacheConfig).pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider)),
-    )
-    expect(error.kind).toBe(BrokerReadErrorKind.Configuration)
-    expect(error.message).toContain('cover its poll interval')
+    for (const maxAgeMs of ['10000', '30000']) {
+      const provider = ConfigProvider.fromEnv({
+        env: { BAYN_BROKER_POLL_INTERVAL_MS: '30000', BAYN_BROKER_CACHE_MAX_AGE_MS: maxAgeMs },
+      })
+      const error = await Effect.runPromise(
+        Effect.flip(brokerSnapshotCacheConfig).pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider)),
+      )
+      expect(error.kind).toBe(BrokerReadErrorKind.Configuration)
+      expect(error.message).toContain('exceed its poll interval')
+    }
     const defaults = await Effect.runPromise(
       brokerSnapshotCacheConfig.pipe(
         Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: {} })),

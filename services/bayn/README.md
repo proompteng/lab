@@ -15,9 +15,13 @@ and recent-order/fill observations used by health checks. Reconciliation reads o
 account, position, and health reads reuse the original response evidence without another Alpaca request.
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 30,000 milliseconds. `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000
-milliseconds and must cover the poll interval. Both values must be between 1,000 and 60,000 milliseconds. Freshness is
+milliseconds and must exceed the poll interval. Both values must be between 1,000 and 60,000 milliseconds. Freshness is
 measured from the oldest source observation, rather than the time a cached value is read. A failed poll or expired
 snapshot makes cached reads unavailable. Startup requires a successful initial poll, and shutdown interrupts the poller.
+
+Polls run without overlap, with the interval measured from the previous poll's start. Each poll's deadline is the
+smaller of half the maximum age and the maximum age minus the poll interval. With the defaults, the deadline is
+30 seconds. These bounds leave time to replace a successful snapshot before its oldest evidence expires.
 
 Submit and cancel attempts invalidate the cache before the broker request and after every outcome, including timeout
 and interruption. An earlier in-flight poll cannot republish a snapshot after invalidation. The final pre-submit capital
@@ -254,7 +258,7 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
   separately trace pool acquisition and query execution, and reuse the current transaction when one exists.
   Each uncached reconciliation broker read gets at most one-third of the reconciliation budget, or ten seconds with
   the current configuration. The aggregate pass budget still bounds reconciliation. Background broker polls use the
-  adapter's request and retry deadlines, with the cache maximum age as their aggregate deadline. Startup preflight
+  adapter's request and retry deadlines, with the cache's freshness budget as their aggregate deadline. Startup preflight
   keeps its own request and retry deadlines. Both broker-history captures remain mandatory for every snapshot poll.
 - The dedicated Bayn PostgreSQL cluster logs statements exceeding one second and lock waits exceeding one second.
   `log_parameter_max_length=0` and `log_parameter_max_length_on_error=0` suppress parameter values. SQL statement text is

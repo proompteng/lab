@@ -1,4 +1,4 @@
-import { Clock, Config, DateTime, Effect, Ref, Schedule, Schema, type Scope } from 'effect'
+import { Clock, Config, DateTime, Effect, Ref, Schema, type Scope } from 'effect'
 
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { ReconciliationError } from '../../simulation-reconciliation/broker-reconciler-model'
@@ -30,11 +30,11 @@ export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig,
     configurationError({ operation: 'configuration', message: 'Invalid broker cache configuration', cause }),
   ),
   Effect.flatMap((config) =>
-    config.maxAgeMs < config.pollIntervalMs
+    config.maxAgeMs <= config.pollIntervalMs
       ? Effect.fail(
           configurationError({
             operation: 'configuration',
-            message: 'Broker cache maximum age must cover its poll interval',
+            message: 'Broker cache maximum age must exceed its poll interval',
           }),
         )
       : Effect.succeed(config),
@@ -84,12 +84,16 @@ export const makeCachedBrokerRead = (
 ): Effect.Effect<BrokerReadShape, BrokerReadError, Scope.Scope> =>
   Effect.gen(function* () {
     const state = yield* Ref.make<CacheState>({ _tag: 'Invalidated', generation: 0 })
+    const nextPollAt = yield* Ref.make(0)
+    const pollTimeoutMs = Math.min(config.maxAgeMs - config.pollIntervalMs, config.maxAgeMs / 2)
     const invalidate = Ref.update(
       state,
       (current): CacheState => ({ _tag: 'Invalidated', generation: current.generation + 1 }),
     )
     yield* Effect.addFinalizer(() => invalidate)
     const poll = Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis
+      yield* Ref.set(nextPollAt, startedAt + config.pollIntervalMs)
       const generation = (yield* Ref.get(state)).generation
       const value = yield* Effect.all(
         {
@@ -103,8 +107,17 @@ export const makeCachedBrokerRead = (
         },
         { concurrency: 2 },
       ).pipe(
+        Effect.flatMap((value) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.flatMap((finishedAt) =>
+              finishedAt - startedAt >= pollTimeoutMs
+                ? Effect.fail(unavailable('Broker snapshot polling exceeded its deadline'))
+                : Effect.succeed(value),
+            ),
+          ),
+        ),
         Effect.timeoutOrElse({
-          duration: config.maxAgeMs,
+          duration: pollTimeoutMs,
           orElse: () => Effect.fail(unavailable('Broker snapshot polling exceeded its deadline')),
         }),
         Effect.onError((cause) =>
@@ -155,7 +168,12 @@ export const makeCachedBrokerRead = (
     }).pipe(Effect.withSpan('broker.snapshot.poll'))
 
     yield* poll
-    yield* poll.pipe(
+    yield* Effect.gen(function* () {
+      const next = yield* Ref.get(nextPollAt)
+      const now = yield* Clock.currentTimeMillis
+      yield* Effect.sleep(Math.max(0, next - now))
+      yield* poll
+    }).pipe(
       Effect.catch((error) =>
         Effect.logWarning('Broker snapshot polling failed').pipe(
           Effect.annotateLogs({
@@ -165,8 +183,7 @@ export const makeCachedBrokerRead = (
           }),
         ),
       ),
-      Effect.repeat(Schedule.spaced(config.pollIntervalMs)),
-      Effect.delay(config.pollIntervalMs),
+      Effect.forever,
       Effect.forkScoped,
     )
 
