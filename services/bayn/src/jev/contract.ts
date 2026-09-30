@@ -1,4 +1,5 @@
 import { Data, Result, Schema } from 'effect'
+import type { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import {
@@ -86,6 +87,8 @@ export class JevContractError extends Data.TaggedError('JevContractError')<{
   readonly message: string
   readonly question?: string
   readonly cause?: unknown
+  readonly observationCheck?: JevObservationCheck
+  readonly observationField?: JevObservationField
 }> {}
 
 export const prepareJevRequest = (input: unknown) =>

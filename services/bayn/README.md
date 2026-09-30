@@ -331,7 +331,40 @@ does not write to TigerBeetle or change the broker's cash balance. A strategy ec
 operating-cost estimate from trading P&L while retaining its incomplete-coverage status; provider invoice reconciliation,
 credits, taxes, shared subscriptions, data costs, and allocated infrastructure costs remain separate evidence requirements.
 
+Supply `--expenses /private/expenses.json` to produce `bayn.inference-economic-report.v1`, containing the unchanged
+metered `inference` report and a separate `economic` report. The packet has `evidence` conforming to
+`OperatingCostEvidenceSchema` in `src/operating-costs.ts` and `artifacts: [{ sha256, path }]`. Artifact paths resolve
+relative to the packet; each original file is rehashed before reporting. Keep invoices, receipts, account bindings,
+reviewed allocations, and results outside the repository and public endpoints.
+
+The normalized evidence binds the same account/session, its as-of cut, an optional reconciled trading P&L source,
+and explicit coverage for `INFERENCE`, `DATA`, `INFRASTRUCTURE`, and `RESEARCH`. Every complete category, including
+zero expenses, needs supporting source evidence. Consumption lines retain invoice/line identities, original file
+hashes, service dates, credits, all account/session allocations and the unallocated remainder. Allocations and
+credits must reconcile exactly. Identical imports are idempotent; conflicting identities, reused credit/payment
+artifacts, unsupported coverage, and over-allocation fail. A credit note is assigned to one original invoice line;
+split credit documents or partial invoice payments require an explicitly extended normalization contract.
+
+Prepaid credit purchases belong to `prepaidFunding`, not session consumption. Invoice and payment-receipt evidence
+describe one purchase, not two expenses. No remaining prepaid balance is inferred without an opening balance and
+complete usage history. A provider payment receipt is not a bank reconciliation. An inference invoice allocation
+replaces the tariff estimate for economic P&L; it is never added to the same estimated usage. The frozen qualification
+cost comparison separately uses the greater of the applicable tariff or actual inference expense. Missing model
+usage keeps that qualification amount unresolved even when a complete provider invoice is available.
+
+`netEconomicPnlMicros` and `totalOperatingCostMicros` remain null until all expense categories have complete evidence.
+Partial reports show invoice and tariff subtotals separately and expose unknown/unpriced inference usage. Source
+hashes prove file identity, not issuer authenticity, correct classification or coverage completeness: those remain
+reviewed input assertions. This read-only import never mutates broker cash, TigerBeetle, an invoice provider or a bank.
+
 ### Operational diagnostics
+
+Jev observation reconstruction failures retain a bounded `observationCheck` and, for broker snapshots, an
+`observationField`. The top-level error identifies schema, source reconstruction, observation time, universe/feed/topic,
+window, decision lag, session boundary, premature/stale portfolio evidence, feature definition or content identity.
+The underlying cause remains attached, but arbitrary provider payloads and account data are not copied into the
+top-level diagnostic message. Valid observation bytes, identity hashes, rejection predicates and freshness limits
+are unchanged. These are failure explanations, not permission to bypass a failed check.
 
 The last terminal cycle may include `entryAllocationReason`. `TURNOVER_BUDGET_EXHAUSTED` means a retained no-trade
 decision had a positive signal, a flat portfolio, zero allocated capital, and earlier recorded account/session turnover
@@ -461,6 +494,30 @@ submission window is still in the future and it has no durable decision or inten
 and any future cycle with durable execution work still prevent a sufficient receipt.
 
 ## Replay and backtesting
+
+### Bounded mechanical control and turnover comparison
+
+`bun tools/control-study.ts` supports the strictly offline `MECHANICAL` management mode, which creates no provider
+client, broker account, database or capital authority. Its three fixed control policies share the native control
+portfolio's point-in-time quotes, finite displayed-liquidity consumption, IOC partial fills, fee accounting, loss and
+drawdown limits, close deadlines and explicit missing-data outcomes. A mechanical control is not an exact replay of
+the production Jev decision/persistence pipeline and is not a matched live-performance claim.
+
+`bayn.control-study-input.v3` requires `turnoverPolicy`: `IMMEDIATE_ADJUSTMENT` preserves the existing entry-admission
+calculation; `ENTRY_AND_EXPECTED_EXIT` additionally reserves the proposed entry limit notional and a modeled future
+sale at reference price plus the risk policy's bounded allowance. The integer calculation rounds costs upward,
+respects existing reservations and whole-share sizing, and cannot authorize an order itself. Legacy v2 study inputs
+keep their previous immediate-adjustment behavior. The reservation applies only to control entry sizing; it cannot
+block risk-reducing exits, and a price move beyond the modeled allowance can exceed the reserved amount. It is not
+a hard bound on unknown future exit prices. Production entry sizing, turnover mandates and exit exceptions are
+unchanged by an offline experiment.
+
+Freeze the input, source receipt, exact source revision or file-hash snapshot, and comparison policy before results.
+Run each registered input with `--input-sha256` and `--source-receipt-sha256`, preserving failed runs and distinct
+output files. Current asset eligibility must be labeled counterfactual rather than historical. A zero allocated data
+charge is an explicit incremental-cost scenario, not proof of zero operating costs. Apply further cost/latency stress
+without selecting favorable dates or erasing missing observations. Development comparisons do not satisfy the frozen
+prospective qualification protocol and never activate a different model, prompt, threshold or trading policy.
 
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
