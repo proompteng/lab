@@ -4,7 +4,7 @@ import { Effect, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../../broker/alpaca'
-import { makeCycleExecutionPolicy } from '../construction'
+import { makeCycleDraft, makeCycleExecutionPolicy, makeCycleIdentity } from '../construction'
 import { CycleState, CycleTerminalReason, decodeAutonomousCycle, type AutonomousCycle } from '../model'
 import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store'
 import { makeInitialCycle } from '../store/decisions'
@@ -131,6 +131,34 @@ const fixture = (
 }
 
 describe('unbound pre-submission cycle recovery', () => {
+  test('retains a supported v3 record and acquires a v4 successor under the same immutable context', async () => {
+    const candidate = { ...context, strategyName: 'intraday-momentum' as const }
+    const current = Result.getOrThrow(makeIntradayCycleDraft(candidate, calendar, session))
+    if (current.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') throw new Error('expected v4 fixture')
+    const { cycleId: _id, schemaVersion: _schema, entryAttemptOrdinal: _ordinal, ...material } = current.identity
+    const original = Result.getOrThrow(
+      makeCycleDraft(
+        Result.getOrThrow(makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' })),
+        current.window,
+      ),
+    )
+    const prior = blockedCycle(1, original)
+    const f = fixture(prior)
+    const result = await f.run(candidate)
+    expect(result.outcome).toBe('ACQUIRED')
+    if (result.outcome !== 'ACQUIRED') throw new Error('legacy successor not acquired')
+    expect(result.receipt.cycle.identity).toMatchObject({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 2,
+    })
+    expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
+    const mismatched = fixture(prior)
+    expect((await mismatched.run({ ...candidate, strategyProtocolHash: 'a'.repeat(64) })).outcome).toBe(
+      'ALREADY_TERMINAL',
+    )
+    expect(mismatched.acquisitions()).toBe(0)
+  })
+
   test('acquires a distinct same-session successor without changing the blocked historical cycle', async () => {
     const prior = blockedCycle()
     const f = fixture(prior)

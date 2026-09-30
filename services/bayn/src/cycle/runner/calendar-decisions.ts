@@ -211,5 +211,17 @@ export const canRearmUnboundPreSubmissionCycle = (
     executionSession,
     intradayCycleEntryAttemptOrdinal(cycle.identity),
   )
-  return Result.isSuccess(originalDraft) && cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
+  if (Result.isFailure(originalDraft)) return false
+  if (cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4') {
+    return cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
+  }
+  const identity = originalDraft.success.identity
+  if (identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') return false
+  // V3 has an implicit first ordinal. Reconstruct that original version solely for comparison;
+  // acquisition still creates a new v4 attempt and never rewrites the retained v3 record.
+  const { cycleId: _cycleId, schemaVersion: _schemaVersion, entryAttemptOrdinal: _ordinal, ...material } = identity
+  const legacyDraft = makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' }).pipe(
+    Result.flatMap((legacyIdentity) => makeCycleDraft(legacyIdentity, originalDraft.success.window)),
+  )
+  return Result.isSuccess(legacyDraft) && cycleDraftMatches(cycleDraftOf(cycle), legacyDraft.success)
 }
