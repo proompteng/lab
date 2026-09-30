@@ -29,15 +29,14 @@ import {
   usableJevBatchInferences,
 } from '../jev/batch'
 import { evaluateJevBatch, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { JevResolutionStatus } from '../jev/resolution'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
-import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
+import { nativeJevFixture, nativeRuneInference } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevBatchStoreLive, makeJevBatchStore } from './jev-batch-postgres'
@@ -47,23 +46,21 @@ import { postgresMigrations } from './postgres-migrations'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const fixture = candidateObservationFixture()
-const observed = Date.parse(fixture.input.observedAt)
+const fixture = nativeJevFixture()
+const observed = Date.parse(fixture.observation.payload.observedAt)
 const plan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
-    expiresAt: utcInstantFromEpochMillis(observed + 5000),
+    expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
     planVersion: JevBatchPlanVersion.V1,
   }),
 )
 const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
 const first = requested[0]
 if (first === undefined) throw new Error('Jev batch fixture requires a candidate')
-const successful: typeof JevClient.Service = {
+const successful: typeof RuneClient.Service = {
   evaluate: (request) =>
-    Clock.currentTimeMillis.pipe(
-      Effect.map((now) => tradingSignalInferenceFixture(request, utcInstantFromEpochMillis(now))),
-    ),
+    Clock.currentTimeMillis.pipe(Effect.map((now) => nativeRuneInference(request, utcInstantFromEpochMillis(now)))),
 }
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   TestClock.setTime(observed).pipe(Effect.andThen(effect), Effect.provide(TestClock.layer()))
@@ -97,9 +94,15 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
         yield* (yield* CycleStore).acquire(fixture.draft, fixture.cycle.createdAt)
-        yield* (yield* CandidateObservationStore).record(fixture.observation)
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
         VALUES (${plan.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${plan.observedAt})`
+        const r = fixture.portfolio.brokerState.reconciliation
+        yield* sql`INSERT INTO reconciliations (
+          reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+          content_hash, status, discrepancies, reconciled_at
+        ) VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash},
+          ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+        yield* (yield* CandidateObservationStore).record(fixture.observation)
       }),
     )
   })
@@ -125,7 +128,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(calls).toBe(requested.length)
         expect(yield* (yield* JevBatchStore).read(plan.batchId)).toEqual(stored)
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Effect.sync(() => {
               calls += 1
@@ -205,7 +208,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                 completedAt: plan.observedAt,
                 outcome: {
                   status: JevOutcome.Received,
-                  inference: tradingSignalInferenceFixture(candidate.request.request, plan.observedAt),
+                  inference: nativeRuneInference(candidate.request.request, plan.observedAt),
                 },
               }),
             ),
@@ -251,14 +254,15 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         }
         const saved = yield* store.begin(plan)
         expect(yield* store.begin(plan)).toEqual(saved)
-        const second = Result.getOrThrow(
-          makeJevTradingSignalBatch({
-            observation: fixture.observation.payload,
-            expiresAt: utcInstantFromEpochMillis(observed + 6000),
-            planVersion: JevBatchPlanVersion.V1,
-          }),
-        )
-        expect(Result.isFailure(yield* store.begin(second).pipe(Effect.result))).toBe(true)
+        expect(
+          Result.isFailure(
+            makeJevTradingSignalBatch({
+              observation: fixture.observation.payload,
+              expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs + 1),
+              planVersion: JevBatchPlanVersion.V1,
+            }),
+          ),
+        ).toBe(true)
         expect(yield* (yield* PgClient.PgClient)`SELECT batch_id FROM jev_batch_plans`).toEqual([
           { batch_id: plan.batchId },
         ])
@@ -274,7 +278,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* store.begin(plan)
         yield* requests.begin(first.request)
         expect((yield* recoverJevBatch(plan.batchId)).result).toBeNull()
-        yield* TestClock.adjust('5 seconds')
+        yield* TestClock.setTime(Date.parse(plan.expiresAt))
         const sealed = yield* recoverJevBatch(plan.batchId)
         const result = sealed.result
         if (result === null) throw new Error('Expired batch did not finalize')
@@ -293,7 +297,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             completedAt: plan.expiresAt,
             outcome: {
               status: JevOutcome.Received,
-              inference: tradingSignalInferenceFixture(first.request.request, plan.observedAt),
+              inference: nativeRuneInference(first.request.request, plan.observedAt),
             },
           }),
         )
@@ -303,7 +307,9 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(yield* recoverJevBatch(plan.batchId)).toEqual(sealed)
         for (const candidate of requested.slice(1))
           expect(Result.isFailure(yield* requests.begin(candidate.request).pipe(Effect.result))).toBe(true)
-        expect(Result.isFailure(usableJevBatchInferences(plan, result, observed + 5000))).toBe(true)
+        expect(
+          Result.isFailure(usableJevBatchInferences(plan, result, observed + fixture.protocol.inferenceValidityMs)),
+        ).toBe(true)
       }).pipe(atObservation),
     )
   })
@@ -312,7 +318,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* JevBatchStore
-        for (const now of [observed - 1, observed + 5000]) {
+        for (const now of [observed - 1, observed + fixture.protocol.inferenceValidityMs]) {
           yield* TestClock.setTime(now)
           expect(Result.isFailure(yield* store.begin(plan).pipe(Effect.result))).toBe(true)
         }
@@ -352,7 +358,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(yield* evaluateJevBatch(plan)).toEqual(saved)
         expect(calls).toBe(requested.length)
       }).pipe(
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (request) =>
             Effect.sync(() => {
               calls += 1
@@ -373,7 +379,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           const wave = yield* Deferred.make<void>()
           const all = yield* Deferred.make<void>()
           const fiber = yield* evaluateJevBatch(plan).pipe(
-            Effect.provideService(JevClient, {
+            Effect.provideService(RuneClient, {
               evaluate: (request) =>
                 Effect.gen(function* () {
                   calls += 1
@@ -415,7 +421,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const requests = yield* JevEvaluationStore
         yield* store.begin(plan)
         yield* requests.begin(first.request)
-        yield* TestClock.adjust('5 seconds')
+        yield* TestClock.setTime(Date.parse(plan.expiresAt))
         const recovered = yield* Effect.all(
           Array.from({ length: 4 }, () => recoverJevBatch(plan.batchId)),
           { concurrency: 'unbounded' },
@@ -442,7 +448,8 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const store = yield* JevBatchStore
         const delayed = {
           ...store,
-          finish: (id: string) => store.finish(id).pipe(Effect.tap(() => TestClock.adjust('5 seconds'))),
+          finish: (id: string) =>
+            store.finish(id).pipe(Effect.tap(() => TestClock.setTime(Date.parse(plan.expiresAt)))),
         }
         const saved = yield* evaluateJevBatch(plan).pipe(Effect.provideService(JevBatchStore, delayed))
         if (saved.result === null) throw new Error('Delayed commit acknowledgement lost its result')
@@ -451,7 +458,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           true,
         )
         expect(yield* store.read(plan.batchId)).toEqual(saved)
-      }).pipe(Effect.provideService(JevClient, successful), atObservation),
+      }).pipe(Effect.provideService(RuneClient, successful), atObservation),
     )
   })
 
@@ -463,7 +470,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         Effect.gen(function* () {
           const started = yield* Deferred.make<void>()
           const fiber = yield* evaluateJevBatch(plan).pipe(
-            Effect.provideService(JevClient, {
+            Effect.provideService(RuneClient, {
               evaluate: () =>
                 Effect.sync(() => {
                   calls += 1
@@ -484,7 +491,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           expect(calls).toBeGreaterThan(0)
           expect(stopped).toBe(calls)
           expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
-          yield* TestClock.adjust('5 seconds')
+          yield* TestClock.setTime(Date.parse(plan.expiresAt))
           expect((yield* recoverJevBatch(plan.batchId)).result).not.toBeNull()
           expect(stopped).toBe(calls)
         }),
@@ -496,11 +503,11 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const exit = yield* evaluateJevBatch(plan).pipe(
-          Effect.provideService(JevClient, { evaluate: () => Effect.die('provider defect') }),
+          Effect.provideService(RuneClient, { evaluate: () => Effect.die('provider defect') }),
           Effect.exit,
         )
         expect(Exit.isFailure(exit)).toBe(true)
-        yield* TestClock.adjust('5 seconds')
+        yield* TestClock.setTime(Date.parse(plan.expiresAt))
         const saved = yield* recoverJevBatch(plan.batchId)
         expect(saved.result).not.toBeNull()
       }).pipe(atObservation),
@@ -515,7 +522,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         Effect.gen(function* () {
           const allStarted = yield* Deferred.make<void>()
           const fiber = yield* evaluateJevBatch(plan).pipe(
-            Effect.provideService(JevClient, {
+            Effect.provideService(RuneClient, {
               evaluate: (request) =>
                 Effect.gen(function* () {
                   calls += 1
@@ -534,7 +541,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(allStarted)
-          yield* TestClock.adjust('5 seconds')
+          yield* TestClock.setTime(Date.parse(plan.expiresAt))
           const saved = yield* Fiber.join(fiber)
           if (saved.result === null) throw new Error('Timed-out batch did not finalize')
           const outcomes = saved.result.candidates.flatMap((candidate) =>
@@ -546,7 +553,11 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           expect(outcomes.filter((status) => status === JevOutcome.Received)).toHaveLength(requested.length - 1)
           expect(stopped).toBe(1)
           expect(calls).toBe(requested.length)
-          expect(Result.isFailure(usableJevBatchInferences(plan, saved.result, observed + 5000))).toBe(true)
+          expect(
+            Result.isFailure(
+              usableJevBatchInferences(plan, saved.result, observed + fixture.protocol.inferenceValidityMs),
+            ),
+          ).toBe(true)
         }),
       ).pipe(atObservation),
     )
@@ -627,7 +638,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         ])
           expect(Result.isFailure(yield* operation.pipe(Effect.result))).toBe(true)
         expect(yield* store.read(plan.batchId)).toEqual(stored)
-      }).pipe(Effect.provideService(JevClient, successful), atObservation),
+      }).pipe(Effect.provideService(RuneClient, successful), atObservation),
     )
   })
 })

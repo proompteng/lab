@@ -4,9 +4,10 @@ import { Cause, Clock, Deferred, Effect, Exit, Fiber, FileSystem, Result } from 
 import { TestClock } from 'effect/testing'
 import { OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
-import { JevError, type JevClient } from '../jev/client'
-import { JevFailure, prepareJevRequest, type JevRequest } from '../jev/contract'
-import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
+import { RuneError, type RuneClient } from '../rune/client'
+import { JevFailure } from '../jev/contract'
+import { prepareRuneRequest, type RuneRequest } from '../rune/contract'
+import { nativeJevFixture, nativeRuneInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { makeControlJevJournal } from './control-jev-journal'
@@ -41,15 +42,15 @@ const simulate = (
       yield* marketClock.setTime(openMs)
       const runId = '3'.repeat(64)
       const journal = yield* makeControlJevJournal(directory, runId)
-      const requests: JevRequest[] = []
-      const provider: JevClient['Service'] = {
+      const requests: RuneRequest[] = []
+      const provider: RuneClient['Service'] = {
         evaluate: (input) =>
           Effect.gen(function* () {
-            requests.push(Result.getOrThrow(prepareJevRequest(input)).request)
+            requests.push(Result.getOrThrow(prepareRuneRequest(input)).request)
             yield* providerClock.adjust(options.latencyMs ?? 125)
             if (options.failed === true)
-              return yield* new JevError({ failure: JevFailure.Transport, message: 'Fixture connection failed' })
-            return nativeJevInference(
+              return yield* new RuneError({ failure: JevFailure.Transport, message: 'Fixture connection failed' })
+            return nativeRuneInference(
               input,
               new Date(yield* providerClock.currentTimeMillis).toISOString(),
               options.action ?? 'exit',
@@ -180,7 +181,7 @@ test('failed source catch-up rejects management while retaining its paid respons
           provider: {
             evaluate: (input) =>
               providerClock.currentTimeMillis.pipe(
-                Effect.map((atMs) => nativeJevInference(input, new Date(atMs).toISOString(), 'exit')),
+                Effect.map((atMs) => nativeRuneInference(input, new Date(atMs).toISOString(), 'exit')),
               ),
           },
         },

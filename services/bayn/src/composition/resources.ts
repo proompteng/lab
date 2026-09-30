@@ -2,9 +2,8 @@ import { CandidateObservationStoreLive } from '../db/candidate-observation-postg
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
 import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
-import { JevClient, JevClientLive, JevError } from '../jev/client'
-import { JevFailure } from '../jev/contract'
-import { JevHttpClientLive } from '../jev/http'
+import { RuneClient, RuneClientLive } from '../rune/client'
+import { RuneHttpClientLive } from '../rune/http'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { intradayFeatureTopic } from '../strategy/intraday-market'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
@@ -184,32 +183,22 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
-    plan.config.jevKey === undefined
-      ? Layer.succeed(JevClient, {
-          evaluate: () =>
-            Effect.fail(
-              new JevError({
-                failure: JevFailure.Request,
-                message: 'Jev entry requires the configured TypeSafe credential',
-              }),
-            ),
-        })
-      : JevClientLive(plan.config.jevKey, defaultJevProtocolDocument.inferenceValidityMs).pipe(
-          Layer.provide(JevHttpClientLive(plan.config.alpaca.proxyUrl)),
-          Layer.catch((cause) =>
-            Layer.effect(
-              JevClient,
-              Effect.fail(
-                operationalError({
-                  component: 'config',
-                  operation: 'jev-client',
-                  message: 'Jev inference configuration is invalid',
-                  cause,
-                }),
-              ),
-            ),
+    RuneClientLive(defaultJevProtocolDocument.inferenceValidityMs).pipe(
+      Layer.provide(RuneHttpClientLive()),
+      Layer.catch((cause) =>
+        Layer.effect(
+          RuneClient,
+          Effect.fail(
+            operationalError({
+              component: 'config',
+              operation: 'rune-client',
+              message: 'Rune inference configuration is invalid',
+              cause,
+            }),
           ),
         ),
+      ),
+    ),
     BrokerSessionResourceLive(plan.config),
     executionPersistence,
     WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),

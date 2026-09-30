@@ -18,11 +18,12 @@ import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/
 import { makeJevObservation } from './observation'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
 import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
+import { makeInitialCycle } from '../cycle/store/decisions'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { jevBehaviorHash } from './protocol'
-import { prepareJevRequest, decodeJevResponse, type JevResponse } from './contract'
+import { prepareRuneRequest, decodeRuneResponse, type RuneResponse } from '../rune/contract'
 import {
   JevBatchPlanVersion,
   JevCandidatePlanStatus,
@@ -200,12 +201,22 @@ export const nativeJevFixture = (
       snapshot,
     }),
   )
-  return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft }
+  return {
+    protocol,
+    portfolio,
+    observation,
+    snapshot,
+    cut,
+    query: snapshotQuery,
+    entryFills,
+    draft,
+    cycle: makeInitialCycle(draft, session.openAt),
+  }
 }
 
-export const nativeJevInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {
-  const { request, requestHash } = Result.getOrThrow(prepareJevRequest(input))
-  const answers: Record<string, JevResponse['answers'][string]> = {}
+export const nativeRuneInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {
+  const { request, requestHash } = Result.getOrThrow(prepareRuneRequest(input))
+  const answers: Record<string, RuneResponse['answers'][string]> = {}
   for (const [key, question] of Object.entries(request.questions)) {
     if (question.type === 'noul') answers[key] = { type: 'noul', noul: 0.8 }
     else if (question.type === 'choice') {
@@ -215,7 +226,7 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
       answers[key] = {
         type: 'choice',
         choice: selected,
-        confidence: probability,
+        confidence: (probability - 1 / choices.length) / (1 - 1 / choices.length),
         probabilities: Object.fromEntries(
           choices.map((choice) => [
             choice,
@@ -234,7 +245,13 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
     }
   }
   const response = Result.getOrThrow(
-    decodeJevResponse(request, { model: request.model, answers, usage: { input_tokens: 100, output_tokens: 25 } }),
+    decodeRuneResponse(request, {
+      id: 'dec-native-fixture',
+      model: request.model,
+      provider: 'surogate',
+      answers,
+      usage: { input_tokens: 100, output_tokens: Object.keys(answers).length, cost: 0 },
+    }),
   )
   return { requestHash, responseHash: canonicalHashV1(response), startedAt: at, completedAt: at, response }
 }
@@ -275,7 +292,7 @@ export const nativeJevBatchResult = (
             completedAt: at,
             outcome: {
               status: JevOutcome.Received,
-              inference: nativeJevInference(candidate.request.request, at, action(candidate.symbol), probability),
+              inference: nativeRuneInference(candidate.request.request, at, action(candidate.symbol), probability),
             },
           }),
         )

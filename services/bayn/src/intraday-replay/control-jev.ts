@@ -1,7 +1,7 @@
 import { Clock, Effect } from 'effect'
 import { TestClock } from 'effect/testing'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { decideJevManagement } from '../jev/decision'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { evaluateJevObservation } from '../jev/runtime'
@@ -13,7 +13,7 @@ import { type ControlPortfolio, ControlStudyFailure } from './control-portfolio'
 import { makeReplayJevTiming } from './jev-timing'
 
 export interface ControlJevBinding {
-  readonly provider: JevClient['Service']
+  readonly provider: RuneClient['Service']
   readonly providerClock: Clock.Clock
   readonly journal: ControlJevJournal
 }
@@ -73,7 +73,7 @@ export const makeControlJevManagement = (
             Effect.provideService(CandidateObservationStore, binding.journal.observations),
             Effect.provideService(JevBatchStore, binding.journal.batches),
             Effect.provideService(JevEvaluationStore, binding.journal.evaluations),
-            Effect.provideService(JevClient, timing.client),
+            Effect.provideService(RuneClient, timing.client),
             Effect.catchTags({
               JevAwaitingFreshWindow: (cause) => Effect.succeed({ status: 'ALREADY_OBSERVED' as const, cause }),
               JevAwaitingEvidence: (cause) => Effect.succeed({ status: 'UNAVAILABLE' as const, cause }),

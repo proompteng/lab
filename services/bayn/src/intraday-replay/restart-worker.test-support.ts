@@ -25,8 +25,8 @@ import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeSimulatedExecutionClock } from './clock'
 import { makeReplayExecutionRuntime } from './runtime'
 import { validateReplayDatabaseTargets } from '../backtest-command'
-import { JevClient } from '../jev/client'
-import { nativeJevInference } from '../jev/native.test-support'
+import { RuneClient } from '../rune/client'
+import { nativeRuneInference } from '../jev/native.test-support'
 
 const main = Effect.scoped(
   Effect.gen(function* () {
@@ -195,10 +195,10 @@ const main = Effect.scoped(
         { flag: 'wx' },
       )
     }).pipe(
-      Effect.provideService(JevClient, {
+      Effect.provideService(RuneClient, {
         evaluate: (request) =>
           Clock.currentTimeMillis.pipe(
-            Effect.map((now) => nativeJevInference(request, utcInstantFromEpochMillis(now))),
+            Effect.map((now) => nativeRuneInference(request, utcInstantFromEpochMillis(now))),
           ),
       }),
       Effect.provide(Layer.mergeAll(stores, TestClock.layer())),

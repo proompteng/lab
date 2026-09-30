@@ -6,9 +6,10 @@ Bayn is a single-writer intraday trading service. The execution path is account-
 the same strategy, intent, risk, mutation, recovery, accounting, and reconciliation code. Broker environment and a
 durable capital activation determine where an otherwise identical execution plan may run.
 
-The active runtime contains one strategy, `jev`, using
-`bayn.jev.protocol.v1`. Historical strategy and decision schemas remain readable only where persisted
-records require them; they are not runtime fallbacks and cannot start new cycles.
+The active runtime contains one strategy, `jev`, using `bayn.jev.protocol.v1` and the pinned native Rune model
+`rune-v3-c6b360d47895`. The strategy and protocol names are persisted identifiers. Historical strategy and decision
+schemas remain readable only where persisted records require them; they are not runtime fallbacks and cannot start
+new cycles.
 
 ## Ownership
 
@@ -35,7 +36,7 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 3. During an eligible regular-market window, Bayn cuts its raw-plus-feature projection at one local observation.
    It requires exact feature-to-bar revision matches, the broker calendar, and fresh raw quotes and trades. A
    replacement worker rebuilds state through captured Kafka partition barriers within the five-minute startup budget.
-4. Bayn constructs verified trading-signal state for the pinned Jev model, retains the complete inference batch, and
+4. Bayn constructs verified trading-signal state for the pinned Rune model, retains the complete inference batch, and
    derives a target portfolio or typed readiness from that evidence. Missing candidate features remain explicit
    exclusions; missing benchmark evidence blocks the observation. Unavailable inference stays distinct from a valid
    no-trade result. Existing positions retain deterministic protective-stop, holding-time and session-close exits.
@@ -63,7 +64,10 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 The submission window opens with the regular session. After its first complete 30-minute IEX window and two-second
 decision delay, Bayn evaluates rolling windows until five minutes before the close, without an extra clock warmup.
 It supplies verified prices, volume, computed technical indicators, quotes, benchmark relationships and position
-context to `jev-1.13.0`. Bayn owns arithmetic, timing, sizing, risk and accounting. The default development protocol
+context to `rune-v3-c6b360d47895` at the internal `/v1/decisions` service with `thinking: false`. Bayn validates the
+exact model, typed answers, normalized probabilities and usage within its existing request deadline. Unavailable or
+invalid Rune inference fails closed; there is no alternate provider or endpoint. Bayn owns arithmetic, timing,
+sizing, risk and accounting. The default development protocol
 requires a reported entry probability of at least 0.65 and a spread no wider than 5 basis points. Complete batch
 evidence must complete within its ten-second lifetime before authorization. Entry risk then binds a fresh execution
 quote for at most ten seconds from its event time. These parameters have not established a

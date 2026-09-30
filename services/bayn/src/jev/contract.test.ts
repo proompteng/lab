@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { decodeJevResponse, jevModel, prepareJevRequest } from './contract'
-import { requestFixture, responseFixture } from './test-support'
+import { requestFixture, responseFixture } from './retained.test-support'
 
 const scoreResponse = (score: number, probabilities: ReadonlyArray<number>) => {
   const criteria = probabilities.map((_, level) => `Level ${level}`)

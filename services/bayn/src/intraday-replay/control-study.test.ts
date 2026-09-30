@@ -10,7 +10,7 @@ import { nativeJevFixture } from '../jev/native.test-support'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { jevModel } from '../jev/contract'
+import { runeModel } from '../rune/contract'
 import { ControlPolicy } from './control-portfolio'
 import {
   ControlManagementMode,
@@ -356,7 +356,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       schemaVersion: 'bayn.backtest.v3',
       inference: {
         mode: 'measured-provider',
-        model: jevModel,
+        model: runeModel,
         inputDefinition: 'bayn.jev-trading-signal-state.v2',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },

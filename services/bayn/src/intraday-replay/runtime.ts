@@ -3,7 +3,7 @@ import { makeJevBatchStore } from '../db/jev-batch-postgres'
 import { makeJevEvaluationStore } from '../db/jev-evaluation-postgres'
 import { makeJevPositionStore } from '../db/jev-position-postgres'
 import { JevBatchStore } from '../jev/batch-evaluation'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
@@ -112,7 +112,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const cycleStore = withWriterFenceCycleStore(yield* makeCycleStore(input.clock), fence)
     const marketData = yield* makeSimulatedMarketData(input.source, input.cursor)
     const candidateObservationStore = yield* makeCandidateObservationStore
-    const jevClient = yield* JevClient
+    const jevClient = yield* RuneClient
     const jevEvaluations = yield* makeJevEvaluationStore
     const jevBatches = yield* makeJevBatchStore.pipe(Effect.provideService(JevEvaluationStore, jevEvaluations))
     const jevPositions = yield* makeJevPositionStore
@@ -182,7 +182,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const resources = Context.make(BrokerRead, input.broker.read).pipe(
       Context.add(ReconciliationClock, reconciliationTime),
       Context.add(CandidateObservationStore, candidateObservationStore),
-      Context.add(JevClient, jevClient),
+      Context.add(RuneClient, jevClient),
       Context.add(JevEvaluationStore, jevEvaluations),
       Context.add(JevBatchStore, jevBatches),
       Context.add(JevPositionStore, jevPositions),

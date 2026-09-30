@@ -27,6 +27,16 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: rune
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rune
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kafka
           podSelector:
             matchLabels:

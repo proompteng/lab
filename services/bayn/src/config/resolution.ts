@@ -217,7 +217,6 @@ const baseConfig = (
   cyclePollIntervalMs: parsed.cyclePollIntervalMs,
   alpaca,
   kafka: parsed.kafka,
-  jevKey: parsed.jevKey,
   clickhouse: parsed.clickhouse,
   postgres: parsed.postgres,
   tigerBeetle: parsed.tigerBeetle,

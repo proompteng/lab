@@ -34,9 +34,10 @@ import { canonicalHashV1 } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { makeActiveStrategyRuntime } from '../strategy'
-import { JevClient, JevError } from '../jev/client'
-import { nativeJevInference } from '../jev/native.test-support'
-import { JevFailure, prepareJevRequest } from '../jev/contract'
+import { RuneClient, RuneError } from '../rune/client'
+import { nativeRuneInference } from '../jev/native.test-support'
+import { JevFailure } from '../jev/contract'
+import { prepareRuneRequest } from '../rune/contract'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevPositionStore } from '../jev/portfolio'
@@ -337,7 +338,7 @@ durableTest.each([
             yield* clock.advanceTo(utcInstantFromEpochMillis(atMs))
             yield* TestClock.setTime(atMs)
           })
-        const provider = yield* JevClient
+        const provider = yield* RuneClient
         measuredProviderClock = providerClock
         yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
         const timing = measured
@@ -485,7 +486,7 @@ durableTest.each([
                 : config.operationTimeoutMs,
         }
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
-          Effect.provideService(JevClient, timing?.client ?? provider),
+          Effect.provideService(RuneClient, timing?.client ?? provider),
           (operation) => (timing === undefined ? operation : timing.run(operation)),
           Effect.map((engine) => ({
             ...engine,
@@ -610,7 +611,7 @@ durableTest.each([
           })
           expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
           expect((yield* runtime.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
-          const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.client ?? provider))
+          const restarted = yield* createRuntime.pipe(Effect.provideService(RuneClient, timing?.client ?? provider))
           expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
           if (timing === undefined) throw new Error('Missing measured timing')
           yield* advanceMarketTo(reentryAtMs)
@@ -747,7 +748,7 @@ durableTest.each([
             Context.add(WriterFence, fence),
             Context.add(IntentStore, intents),
             Context.add(MutationStore, mutations),
-            Context.add(JevClient, yield* JevClient),
+            Context.add(RuneClient, yield* RuneClient),
             Context.add(JevEvaluationStore, yield* JevEvaluationStore),
             Context.add(JevBatchStore, yield* JevBatchStore),
             Context.add(JevPositionStore, yield* JevPositionStore),
@@ -1268,11 +1269,11 @@ durableTest.each([
         return { _tag: 'Fill' as const, brokerState, reconciliation, rows, passes: yield* Ref.get(passes) }
       }).pipe(
         Effect.scoped,
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: (raw) =>
             Effect.gen(function* () {
               const started = yield* Clock.currentTimeMillis
-              const { request } = Result.getOrThrow(prepareJevRequest(raw))
+              const { request } = Result.getOrThrow(prepareRuneRequest(raw))
               const action = request.questions['action']
               const managing = action?.type === 'choice' && 'exit' in action.criteria
               if (managing) managementCalls += 1
@@ -1283,10 +1284,10 @@ durableTest.each([
               const now = yield* Clock.currentTimeMillis
               if (scenario === 'failed-model-response' || (scenario === 'failed-management-response' && managing)) {
                 const rejected = {
-                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), managing ? 'hold' : 'enter').response,
+                  ...nativeRuneInference(raw, utcInstantFromEpochMillis(now), managing ? 'hold' : 'enter').response,
                   answers: {},
                 }
-                return yield* new JevError({
+                return yield* new RuneError({
                   failure: JevFailure.Response,
                   message: 'Response has billed usage but no valid decision answers',
                   responseHash: canonicalHashV1(rejected),
@@ -1294,7 +1295,7 @@ durableTest.each([
                 })
               }
               return {
-                ...nativeJevInference(
+                ...nativeRuneInference(
                   raw,
                   utcInstantFromEpochMillis(now),
                   managing

@@ -28,8 +28,8 @@ import {
   loadActiveStrategyProtocol,
   makeActiveStrategyRuntime,
 } from '../strategy'
-import { JevClient } from '../jev/client'
-import { jevModel } from '../jev/contract'
+import { RuneClient } from '../rune/client'
+import { runeModel } from '../rune/contract'
 import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 import { calculateReplayJevCosts, ReplayJevCostModelSchema } from './jev-costs'
 import {
@@ -100,7 +100,7 @@ export const BacktestInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest.v3'),
   inference: Schema.Struct({
     mode: Schema.Literal('measured-provider'),
-    model: Schema.Literal(jevModel),
+    model: Schema.Literal(runeModel),
     inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v2'),
     costs: ReplayJevCostModelSchema,
   }),
@@ -361,7 +361,7 @@ export const runBacktest = (
     const inferenceCalls: ReplayJevCall[] = []
     const timing = yield* makeReplayJevTiming({
       measureDatabaseTime: clock.measure,
-      provider: yield* JevClient,
+      provider: yield* RuneClient,
       providerClock,
       advanceTo,
       advanceDeadlineTo,
@@ -408,7 +408,7 @@ export const runBacktest = (
       clock,
       recordPass: () => Effect.void,
       ...prepared.input.cadence,
-    }).pipe(Effect.provideService(JevClient, timing.client), timing.run)
+    }).pipe(Effect.provideService(RuneClient, timing.client), timing.run)
     const initializationCompletedAtMs = yield* Clock.currentTimeMillis
     if (initializationCompletedAtMs > prepared.openMs)
       return yield* new ReplayBrokerFailure({ message: 'Replay initialization missed the first session open' })

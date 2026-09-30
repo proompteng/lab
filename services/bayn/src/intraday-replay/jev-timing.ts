@@ -1,20 +1,21 @@
 import { Cause, Clock, Effect, Exit, Redacted, Ref, Result, Semaphore } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevClient, JevError, type JevInference } from '../jev/client'
-import { JevFailure, prepareJevRequest, type JevRequest } from '../jev/contract'
+import { RuneClient, RuneError, type RuneInference } from '../rune/client'
+import { JevFailure } from '../jev/contract'
+import { prepareRuneRequest, type RuneRequest } from '../rune/contract'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
 
 export type ReplayJevCall = {
   readonly schemaVersion: 'bayn.replay-jev-call.v1'
-  readonly request: JevRequest
+  readonly request: RuneRequest
   readonly requestHash: string
   readonly simulatedStartedAt: string
   readonly providerStartedAt: string
   readonly providerCompletedAt: string
   readonly outcome:
-    | { readonly status: 'RECEIVED'; readonly inference: JevInference }
+    | { readonly status: 'RECEIVED'; readonly inference: RuneInference }
     | {
         readonly status: 'FAILED'
         readonly failure: JevFailure
@@ -25,7 +26,7 @@ export type ReplayJevCall = {
     | { readonly status: 'INTERRUPTED' | 'DEFECT' }
 }
 
-const recordedOutcome = (exit: Exit.Exit<JevInference, JevError>): ReplayJevCall['outcome'] => {
+const recordedOutcome = (exit: Exit.Exit<RuneInference, RuneError>): ReplayJevCall['outcome'] => {
   if (Exit.isSuccess(exit)) return { status: 'RECEIVED', inference: exit.value }
   const error = Cause.findError(exit.cause)
   if (Result.isFailure(error)) return { status: Cause.hasInterruptsOnly(exit.cause) ? 'INTERRUPTED' : 'DEFECT' }
@@ -40,7 +41,7 @@ const recordedOutcome = (exit: Exit.Exit<JevInference, JevError>): ReplayJevCall
 }
 
 export const makeReplayJevTiming = (input: {
-  readonly provider: JevClient['Service']
+  readonly provider: RuneClient['Service']
   readonly providerClock: Clock.Clock
   readonly advanceTo: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
   readonly advanceDeadlineTo: (atMs: number) => Effect.Effect<void, ReplayBrokerFailure>
@@ -94,7 +95,7 @@ export const makeReplayJevTiming = (input: {
       })
     const synchronize = Effect.uninterruptible(permit.withPermit(synchronizeUnlocked(input.advanceDeadlineTo)))
 
-    const client: JevClient['Service'] = {
+    const client: RuneClient['Service'] = {
       evaluate: (raw) =>
         Effect.acquireUseRelease(
           Effect.sync(() => {
@@ -102,7 +103,7 @@ export const makeReplayJevTiming = (input: {
           }),
           () =>
             Effect.gen(function* () {
-              const prepared = yield* Effect.fromResult(prepareJevRequest(raw)).pipe(
+              const prepared = yield* Effect.fromResult(prepareRuneRequest(raw)).pipe(
                 Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Invalid replay Jev request', cause })),
               )
               const started = yield* synchronize
@@ -162,7 +163,7 @@ export const makeReplayJevTiming = (input: {
             Ref.set(failure, cause).pipe(
               Effect.andThen(
                 Effect.fail(
-                  new JevError({ failure: JevFailure.Request, message: cause.message, cause: Redacted.make(cause) }),
+                  new RuneError({ failure: JevFailure.Request, message: cause.message, cause: Redacted.make(cause) }),
                 ),
               ),
             ),

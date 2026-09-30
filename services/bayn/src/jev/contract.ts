@@ -17,7 +17,6 @@ export enum JevFailure {
 }
 
 export const jevModel = 'jev-1.13.0' as const
-export const jevEndpoint = 'https://api.typesafe.ai/v1/systemone' as const
 
 const QuestionName = StrictNonEmptyStringSchema.check(Schema.isMaxLength(64))
 const Instructions = Schema.Json.check(
@@ -57,7 +56,7 @@ export const JevRequestSchema = Schema.Struct({
 
 export type JevRequest = typeof JevRequestSchema.Type
 
-const Answer = Schema.Union([
+export const DecisionAnswerSchema = Schema.Union([
   Schema.Struct({ type: Schema.Literal('noul'), noul: UnitIntervalSchema }),
   Schema.Struct({
     type: Schema.Literal('choice'),
@@ -76,7 +75,7 @@ const Answer = Schema.Union([
 
 export const JevResponseSchema = Schema.Struct({
   model: Schema.Literal(jevModel),
-  answers: Schema.Record(QuestionName, Answer),
+  answers: Schema.Record(QuestionName, DecisionAnswerSchema),
   usage: Schema.Struct({ input_tokens: NonNegativeIntegerSchema, output_tokens: NonNegativeIntegerSchema }),
 })
 

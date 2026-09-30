@@ -9,7 +9,7 @@ import {
   BacktestIssue,
   qualifiesReplayValuation,
 } from './backtest'
-import { jevModel } from '../jev/contract'
+import { runeModel } from '../rune/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
 import { validateBacktestSourceReceipt } from './source'
 import { sha256 } from '../hash'
@@ -22,7 +22,7 @@ const fixture = () => {
     schemaVersion: 'bayn.backtest.v3',
     inference: {
       mode: 'measured-provider',
-      model: jevModel,
+      model: runeModel,
       inputDefinition: 'bayn.jev-trading-signal-state.v2',
       costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
     },
@@ -75,7 +75,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
   expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v1')
-  expect(prepared.protocol.model).toBe(jevModel)
+  expect(prepared.protocol.model).toBe(runeModel)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
   const strategy = prepared.strategy.provenance.strategy
   const proof = {

@@ -2,7 +2,7 @@ import type { ReconciliationRuntime } from './model'
 import { CandidateObservationStore } from './candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
-import { JevClient } from '../jev/client'
+import { RuneClient } from '../rune/client'
 import { decideJevEntry } from '../jev/decision'
 import type { JevExitTarget } from '../jev/exit'
 import { decodeJevProtocol } from '../jev/protocol'
@@ -769,7 +769,7 @@ const nativeJevProtocol = (strategy: StrategyRuntime) => {
   )
 }
 
-type JevDecisionServices = CandidateObservationStore | JevBatchStore | JevEvaluationStore | JevClient
+type JevDecisionServices = CandidateObservationStore | JevBatchStore | JevEvaluationStore | RuneClient
 
 const snapshotQueryReadiness = (query: IntradaySnapshotQuery) => ({
   rangeStartAt: query.rangeStartAt,

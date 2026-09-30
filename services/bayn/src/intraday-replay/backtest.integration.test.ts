@@ -13,8 +13,8 @@ import { IntentStoreLive, BlockedCycleIntentStoreLive } from '../execution/inten
 import { MutationStoreLive } from '../execution/mutations'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
-import { JevClient } from '../jev/client'
-import { jevModel } from '../jev/contract'
+import { RuneClient } from '../rune/client'
+import { runeModel } from '../rune/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
@@ -230,7 +230,7 @@ durableTest(
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
             mode: 'measured-provider',
-            model: jevModel,
+            model: runeModel,
             inputDefinition: 'bayn.jev-trading-signal-state.v2',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
@@ -312,7 +312,7 @@ durableTest(
               Effect.tap(() => Effect.sleep('25 millis').pipe(Effect.provideService(Clock.Clock, providerClock))),
             ),
           }),
-          Effect.provideService(JevClient, { evaluate: () => Effect.die('A quiet opening fixture must not infer') }),
+          Effect.provideService(RuneClient, { evaluate: () => Effect.die('A quiet opening fixture must not infer') }),
         )
         expect(Date.parse(passes[0]?.observedAt ?? '')).toBeGreaterThanOrEqual(openMs)
         expect(Date.parse(passes.at(-1)?.observedAt ?? '')).toBeGreaterThanOrEqual(closeMs)

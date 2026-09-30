@@ -4,7 +4,7 @@ import { TestClock } from 'effect/testing'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1 } from '../hash'
-import { JevClient, JevError } from './client'
+import { RuneClient, RuneError } from '../rune/client'
 import { JevFailure } from './contract'
 import {
   decodeJevEvaluationReceipt,
@@ -16,6 +16,7 @@ import {
 import { evaluateJevOnce, JevClaim, JevEvaluationStore, recoverExpiredJevEvaluation } from './evaluation'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution, type JevResolution } from './resolution'
 import { evaluationRequestFixture, inferenceFixture, responseFixture } from './test-support'
+import { evaluationRequestFixture as retainedJevRequestFixture } from './retained.test-support'
 
 const request = evaluationRequestFixture()
 const fixtureReceipt = () =>
@@ -82,6 +83,36 @@ const memoryStore = () => {
 }
 
 describe('durable Jev evaluation', () => {
+  test('retained hosted requests cannot acquire new evaluations or call Rune', async () => {
+    const memory = memoryStore()
+    let claims = 0
+    let calls = 0
+    const result = await Effect.runPromise(
+      evaluateJevOnce(retainedJevRequestFixture()).pipe(
+        Effect.result,
+        Effect.provideService(JevEvaluationStore, {
+          ...memory.store,
+          begin: (input) =>
+            Effect.sync(() => {
+              claims += 1
+            }).pipe(Effect.andThen(memory.store.begin(input))),
+        }),
+        Effect.provideService(RuneClient, {
+          evaluate: () =>
+            Effect.sync(() => {
+              calls += 1
+              return inferenceFixture()
+            }),
+        }),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(claims).toBe(0)
+    expect(calls).toBe(0)
+    expect(memory.recordings()).toBe(0)
+  })
+
   test('rejects changed request content, oversized validity and forged identity', () => {
     for (const invalid of [
       { ...request, requestId: 'd'.repeat(64) },
@@ -104,7 +135,7 @@ describe('durable Jev evaluation', () => {
         expect(memory.recordings()).toBe(1)
       }).pipe(
         Effect.provideService(JevEvaluationStore, memory.store),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: () =>
             Effect.sync(() => {
               calls += 1
@@ -135,7 +166,7 @@ describe('durable Jev evaluation', () => {
         }),
       ).pipe(
         Effect.provideService(JevEvaluationStore, memory.store),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: () =>
             Effect.sync(() => {
               calls += 1
@@ -172,14 +203,14 @@ describe('durable Jev evaluation', () => {
         expect(calls).toBe(1)
       }).pipe(
         Effect.provideService(JevEvaluationStore, memory.store),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: () =>
             Effect.sync(() => {
               calls += 1
             }).pipe(
               Effect.andThen(
                 Effect.fail(
-                  new JevError({
+                  new RuneError({
                     failure: JevFailure.Response,
                     message: 'invalid probability total',
                     responseHash: canonicalHashV1(rejected),
@@ -206,7 +237,7 @@ describe('durable Jev evaluation', () => {
         expect(calls).toBe(1)
       }).pipe(
         Effect.provideService(JevEvaluationStore, { ...memory.store, record: () => Effect.fail(failure) }),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: () =>
             Effect.sync(() => {
               calls += 1
@@ -228,7 +259,7 @@ describe('durable Jev evaluation', () => {
           ...memory.store,
           begin: (request) => memory.store.begin(request).pipe(Effect.tap(() => TestClock.adjust(5000))),
         }),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: () =>
             Effect.sync(() => {
               calls += 1
@@ -273,7 +304,7 @@ describe('durable Jev evaluation', () => {
         }),
       ).pipe(
         Effect.provideService(JevEvaluationStore, memory.store),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: () =>
             Effect.sync(() => {
               calls += 1
@@ -301,7 +332,7 @@ describe('durable Jev evaluation', () => {
           record: (request, receipt) =>
             memory.store.record(request, receipt).pipe(Effect.tap(() => TestClock.adjust(5000))),
         }),
-        Effect.provideService(JevClient, { evaluate: () => Effect.succeed(inferenceFixture()) }),
+        Effect.provideService(RuneClient, { evaluate: () => Effect.succeed(inferenceFixture()) }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -330,7 +361,7 @@ describe('durable Jev evaluation', () => {
     const exit = await Effect.runPromiseExit(
       evaluateJevOnce(request).pipe(
         Effect.provideService(JevEvaluationStore, memory.store),
-        Effect.provideService(JevClient, { evaluate: () => Effect.die(defect) }),
+        Effect.provideService(RuneClient, { evaluate: () => Effect.die(defect) }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -357,7 +388,7 @@ describe('durable Jev evaluation', () => {
         expect(Result.isFailure(yield* evaluateJevOnce(request).pipe(Effect.result))).toBe(true)
       }).pipe(
         Effect.provideService(JevEvaluationStore, memory.store),
-        Effect.provideService(JevClient, { evaluate: () => Effect.die('Abandoned requests must never reinvoke Jev') }),
+        Effect.provideService(RuneClient, { evaluate: () => Effect.die('Abandoned requests must never reinvoke Jev') }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -381,7 +412,9 @@ describe('durable Jev evaluation', () => {
           ...memory.store,
           begin: (request) => memory.store.begin(request).pipe(Effect.andThen(Effect.fail(failure))),
         }),
-        Effect.provideService(JevClient, { evaluate: () => Effect.die('An unacknowledged claim must not invoke Jev') }),
+        Effect.provideService(RuneClient, {
+          evaluate: () => Effect.die('An unacknowledged claim must not invoke Jev'),
+        }),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -412,7 +445,7 @@ describe('durable Jev evaluation', () => {
           record: (request, receipt) =>
             memory.store.record(request, receipt).pipe(Effect.andThen(Effect.fail(failure))),
         }),
-        Effect.provideService(JevClient, {
+        Effect.provideService(RuneClient, {
           evaluate: () =>
             Effect.sync(() => {
               calls += 1

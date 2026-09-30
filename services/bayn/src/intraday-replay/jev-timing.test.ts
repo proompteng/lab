@@ -3,24 +3,34 @@ import { Cause, Clock, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1OrThrow } from '../hash'
-import { JevError, type JevClient } from '../jev/client'
-import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
+import { RuneError, type RuneClient } from '../rune/client'
+import { JevFailure } from '../jev/contract'
+import { runeModel, prepareRuneRequest, type RuneResponse } from '../rune/contract'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
 import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 
 const request = (symbol: string) =>
   Result.getOrThrow(
-    prepareJevRequest({
-      model: jevModel,
+    prepareRuneRequest({
+      model: runeModel,
+      thinking: false,
       state: { symbol },
-      questions: { enter: { type: 'noul', instructions: 'Assess the supplied trading state.' } },
+      questions: {
+        enter: {
+          type: 'noul',
+          instructions: 'Assess the supplied trading state.',
+          criteria: { true: 'Yes.', false: 'No.' },
+        },
+      },
     }),
   )
-const response: JevResponse = {
-  model: jevModel,
+const response: RuneResponse = {
+  id: 'dec-timing-fixture',
+  provider: 'surogate',
+  model: runeModel,
   answers: { enter: { type: 'noul', noul: 0.7 } },
-  usage: { input_tokens: 100, output_tokens: 0 },
+  usage: { input_tokens: 100, output_tokens: 1, cost: 0 },
 }
 const providerAt = Date.parse('2026-09-21T12:00:00.000Z')
 const marketAt = Date.parse('2026-09-04T14:00:02.000Z')
@@ -65,7 +75,7 @@ test('provider receipts start after measured clock synchronization', async () =>
         provider: {
           evaluate: (raw) =>
             Effect.gen(function* () {
-              const prepared = Result.getOrThrow(prepareJevRequest(raw))
+              const prepared = Result.getOrThrow(prepareRuneRequest(raw))
               const startedAt = yield* Clock.currentTimeMillis
               yield* f.providerClock.adjust(50)
               return {
@@ -226,10 +236,10 @@ test('concurrent inference advances source time by elapsed batch time and preser
         let startedCount = 0
         let activeCalls = 0
         let sourceAdvancedDuringInference = false
-        const provider: JevClient['Service'] = {
+        const provider: RuneClient['Service'] = {
           evaluate: (raw) =>
             Effect.gen(function* () {
-              const prepared = yield* Effect.fromResult(prepareJevRequest(raw)).pipe(Effect.orDie)
+              const prepared = yield* Effect.fromResult(prepareRuneRequest(raw)).pipe(Effect.orDie)
               const startedAt = yield* Clock.currentTimeMillis
               activeCalls++
               if (++startedCount === 2) yield* Deferred.succeed(bothStarted, undefined)
@@ -312,13 +322,13 @@ test('provider failures consume elapsed time and remain retained', async () => {
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* fixture
-        const provider: JevClient['Service'] = {
+        const provider: RuneClient['Service'] = {
           evaluate: () =>
             f.providerClock
               .setTime(providerAt + 250)
               .pipe(
                 Effect.andThen(
-                  Effect.fail(new JevError({ failure: JevFailure.Status, message: 'Rejected', status: 429 })),
+                  Effect.fail(new RuneError({ failure: JevFailure.Status, message: 'Rejected', status: 429 })),
                 ),
               ),
         }
@@ -346,8 +356,8 @@ test('failure to retain inference fails the replay even when the evaluator handl
     Effect.scoped(
       Effect.gen(function* () {
         const f = yield* fixture
-        const provider: JevClient['Service'] = {
-          evaluate: () => Effect.fail(new JevError({ failure: JevFailure.Transport, message: 'Offline' })),
+        const provider: RuneClient['Service'] = {
+          evaluate: () => Effect.fail(new RuneError({ failure: JevFailure.Transport, message: 'Offline' })),
         }
         const timing = yield* makeReplayJevTiming({
           ...f,
@@ -373,7 +383,7 @@ test('cancellation stops the provider and preserves an unresolved paid-call rece
         const f = yield* fixture
         const entered = yield* Deferred.make<void>()
         let finalized = false
-        const provider: JevClient['Service'] = {
+        const provider: RuneClient['Service'] = {
           evaluate: () =>
             Deferred.succeed(entered, undefined).pipe(
               Effect.andThen(Effect.never),

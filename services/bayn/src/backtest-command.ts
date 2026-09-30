@@ -1,6 +1,7 @@
+import { RuneHttpClientLive } from './rune/http'
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 import { OperationDeadlineClock } from './operation-timeout'
-import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import {
   Cause,
   Clock,
@@ -28,7 +29,7 @@ import { PersistedCapitalGrantStoreLive } from './db/persisted-capital-grant'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
 import { operationalError } from './errors'
 import { prepareBacktest, runBacktest, type ReplayDatabaseConfig } from './intraday-replay/backtest'
-import { JevClientLive } from './jev/client'
+import { RuneClientLive } from './rune/client'
 import { ReplayBrokerFailure } from './intraday-replay/broker'
 
 const usage =
@@ -104,7 +105,6 @@ const main = Effect.scoped(
       validateBacktestSourceReceipt(sourceReceiptText, args.sourceReceiptHash),
     )
     const prepared = yield* Effect.fromResult(prepareBacktest(parsed, sourceReceipt))
-    const jevKey = yield* Config.redacted('BAYN_JEV_API_KEY')
     const databaseInput = yield* Config.all({
       postgresUrl: Config.redacted('BAYN_BACKTEST_POSTGRES_URL'),
       tigerBeetleAddress: Config.string('BAYN_BACKTEST_TIGERBEETLE_ADDRESS'),
@@ -172,9 +172,7 @@ const main = Effect.scoped(
         Layer.mergeAll(
           stores,
           TestClock.layer(),
-          JevClientLive(jevKey, prepared.protocol.inferenceValidityMs).pipe(
-            Layer.provide(NodeHttpClient.layerNodeHttp),
-          ),
+          RuneClientLive(prepared.protocol.inferenceValidityMs).pipe(Layer.provide(RuneHttpClientLive())),
         ),
       ),
       Effect.provideService(OperationDeadlineClock, deadlineClock),

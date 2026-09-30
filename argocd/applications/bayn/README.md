@@ -2,25 +2,18 @@
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v1` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol
-hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
-The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
-subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+The active implementation uses `bayn.jev.protocol.v1` with native Rune model `rune-v3-c6b360d47895`.
+Behavior v4 binds the Rune request/response contract and new parameter identity. Its matching sealed research
+mandate preserves the existing sandbox broker identity, Research grant type, risk policy, limits and authored build
+anchor. Kargo writes the newly published source and image into all three runtime lineages. Image promotion alone
+does not grant capital authority; the native activation hook still requires compatible durable state and exact
+reconciliation. Historical Jev evidence remains readable under its original identities.
 
-The candidate quote/window-trade policy is bound to Jev behavior v3 and its parameter identity. Its build hashes,
-sealed mandate, and all three runtime lineages change together. The mandate keeps the existing authored build anchor,
-sandbox account, Research authority type, risk policy, and limits; broker and model credentials are unchanged.
-
-The Jev mandate preserves the existing published build as its lineage anchor and binds the new strategy explicitly.
-Kargo writes the exact newly published source and image into the activation endpoint of every runtime lineage. The
-previous strategy cannot execute against the Jev mandate. The activation hook still requires compatible durable
-state and exact reconciliation before replacing the account-keyed controller.
-
-Only the execution worker receives `BAYN_JEV_API_KEY` from `bayn-jev-auth`, delivered by the SealedSecrets controller
-before worker rollout. Jev uses a scoped HTTP CONNECT client through the existing egress proxy. The allowlist contains
-the three exact Alpaca API hosts and `api.typesafe.ai`; direct external worker access remains unavailable. A missing
-credential or unavailable provider blocks new entries while deterministic position-reducing management remains active.
-The public status service and activation hook do not receive the model credential.
+Deploy and prove the pinned [Rune service](../../../services/rune/README.md) before promoting this Bayn migration. The execution
+worker connects directly to `rune.rune.svc.cluster.local:8080`, allowed by narrowly scoped policies at both ends.
+It receives no model API credential. The existing egress proxy admits only the three exact Alpaca API hosts.
+An unavailable or invalid Rune response blocks model-dependent entries; deterministic position-reducing management
+retains its existing deadline and reconciliation rules. There is no alternate model transport.
 
 The worker requires Kafka and consumes verified raw-feature joins through the common market-data adapter. Its versioned bootstrap budget is five minutes: the initial 905,542-record
 catch-up completed in 223 seconds on the slower worker. Freshness and entry checks apply after catch-up. Verify the sealed request's

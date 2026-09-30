@@ -1,8 +1,9 @@
+import { prepareRuneRequest } from '../rune/contract'
 import { Clock, Context, Effect, Redacted, Result } from 'effect'
 
 import type { OperationalError } from '../errors'
 import { utcInstantFromEpochMillis } from '../time'
-import { JevClient, JevError } from './client'
+import { RuneClient, RuneError } from '../rune/client'
 import { JevFailure } from './contract'
 import {
   decodeJevEvaluationReceipt,
@@ -48,6 +49,11 @@ export class JevEvaluationStore extends Context.Service<
 export const evaluateJevOnce = (input: unknown) =>
   Effect.gen(function* () {
     const request = yield* Effect.fromResult(decodeJevEvaluationRequest(input))
+    yield* Effect.fromResult(prepareRuneRequest(request.request)).pipe(
+      Effect.mapError(
+        () => new JevEvidenceError({ message: 'Only the pinned Rune model may acquire a new evaluation' }),
+      ),
+    )
     const started = yield* Clock.currentTimeMillis
     if (started < Date.parse(request.observedAt) || started >= Date.parse(request.expiresAt)) {
       return yield* new JevEvidenceError({ message: 'Jev evaluation request is outside its validity window' })
@@ -72,13 +78,13 @@ export const evaluateJevOnce = (input: unknown) =>
         if (now >= Date.parse(request.expiresAt)) yield* store.abandon(request, utcInstantFromEpochMillis(now))
         return yield* new JevEvidenceError({ message: 'Jev request expired or its clock regressed during persistence' })
       }
-      const client = yield* JevClient
+      const client = yield* RuneClient
       const result = yield* client.evaluate(request.request).pipe(
         Effect.timeoutOrElse({
           duration: Date.parse(request.expiresAt) - now,
           orElse: () =>
             Effect.fail(
-              new JevError({
+              new RuneError({
                 failure: JevFailure.Timeout,
                 message: 'Jev request validity expired during inference',
                 requestHash: request.requestHash,

@@ -2,13 +2,14 @@
 
 `services/bayn/tools/control-study.ts` evaluates deterministic controls over complete retained sessions. Each
 portfolio owns cash, inventory, execution fees, daily turnover, exit triggers, and completed position episodes.
-It evaluates opportunities from its own position state, including periods when the original Jev replay held a
-position. It never synthesizes Jev responses or supplies production trading authority.
+It evaluates opportunities from its own position state, including periods when the original candidate replay held a
+position. It never synthesizes model responses or supplies production trading authority.
 
 This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). Management must be selected explicitly: `MECHANICAL`
-removes model decisions, while `JEV` gives each repeated control its own native Jev management. The retained close
-control always uses its original close lifecycle. The full acceptance experiment still needs frozen control
+removes model decisions, while the retained `JEV` mode identifier gives each repeated control its own native Rune
+management. This identifier belongs to the persisted study schema; the active provider is Rune and has no hosted
+Jev fallback. The retained close control always uses its original close lifecycle. The full acceptance experiment still needs frozen control
 definitions, calibrated timing and execution assumptions, and untouched prospective sessions.
 
 ## Fixed policies
@@ -60,7 +61,7 @@ budget. Native replay applies the same per-quote consumption rule. Counterfactua
 
 The declared `decisionLatencyMs` covers the research scenario's full construction, evaluation, and persistence
 delay. Routing delay comes from the native replay assumptions and is added separately. The command does not
-measure full runtime latency. A scenario value cannot be presented as observed p95 latency. Jev management measures
+measure full runtime latency. A scenario value cannot be presented as observed p95 latency. Model management measures
 provider and simulation-journal work against an independent clock. Its elapsed time advances the market source,
 and expired responses cannot authorize model exits. This measures the offline persistence implementation, not the
 production PostgreSQL/controller path; the frozen comparison still requires common calibrated timing assumptions.
@@ -77,7 +78,9 @@ A zero-size bid produces a missing mark even if liquidity returns and the positi
 size does not prove that the full position could be liquidated at that price. Missing observations,
 execution quotes, or marks make the session `INCOMPLETE`. Canceled IOC orders remain recorded. Unclosed positions
 retain a null realized result. Mechanical controls have zero model calls and charges. In `JEV` mode, known usage
-is priced with the frozen native replay tariff, including usable billing evidence from failed or late responses.
+is allocated at the frozen native replay token rates, including usable usage evidence from failed or late responses.
+This declared allocation is pending GPU-cost calibration. Rune reports zero API billing; that does not establish
+zero compute cost or an all-cost net return.
 Unresolved usage makes the session incomplete and leaves `modelCostMicros` null; `knownModelCostMicros` and
 `netPnlAfterKnownCostsMicros` retain only the known charges. Allocated data costs
 are charged once per policy per session, including zero-trade sessions. As in native replay, these external expenses
@@ -91,8 +94,8 @@ The report uses `bayn.control-study-report.v3` and definition `bayn.control-stud
 reports charged external expenses to broker cash and are not comparable at nonzero allocated data cost. Retain
 their original evidence and generate a new report with the corrected executable when comparing net performance.
 
-Jev mode requires a new evidence directory. Its registration binds the input, source receipt, policy definitions
-and risk policy before inference. Each policy has separate source observations, native batches, request claims,
+The `JEV` management mode requires a new evidence directory. Its registration binds the input, source receipt,
+policy definitions and risk policy before inference. Each policy has separate source observations, native batches, request claims,
 terminal receipts and resolutions, and provider call records. Files are flushed before a request can proceed or a
 response can be used. A pending request cannot trigger another provider call; a late receipt cannot reverse an
 abandoned request. Reusing an existing directory is rejected, including after interruption. Preserve an interrupted
@@ -106,7 +109,7 @@ A completed development replay does not prove executable capacity or live profit
 
 Create an input with the following shape. `backtest` is the complete existing `bayn.backtest.v3` document, including
 its source receipt bindings and native build/strategy identity. It identifies the source experiment; it does not
-claim that controls made Jev calls or executed the production interpreter.
+claim that controls made model calls or executed the production interpreter.
 
 ```json
 {
@@ -135,6 +138,15 @@ The command refuses duplicate or incomplete flags, hash mismatches, and an exist
 executable Git commit, input hashes, command, exit status, and report hash in the experiment receipt. A report
 records the source and policy definitions but does not independently prove which Git commit executed the command.
 
-For a separately registered managed study, set `management` to `JEV`, bind `BAYN_JEV_API_KEY` through the existing
-secret path, and add `--evidence-directory /absolute/path/new-evidence-directory`. That mode makes paid provider
-calls. It fails when the key or evidence directory is missing; it never silently switches to mechanical management.
+For a separately registered managed study, set `management` to `JEV` and add
+`--evidence-directory /absolute/path/new-evidence-directory`. Run it from an already authorized Bayn or Rune
+workload with the input files available and access to
+`http://rune.rune.svc.cluster.local:8080/v1/decisions`. A workstation outside that cluster DNS and NetworkPolicy
+route cannot run managed inference. This command does not create a workload, open a public endpoint, or change
+network permissions.
+
+Managed studies call the pinned `rune-v3-c6b360d47895` model with `thinking: false`, using the same native typed
+request and response contract as Bayn. No provider API key is read or required. Missing evidence storage aborts the
+command. An unreachable service, an expired response, or a contract mismatch records unavailable management and
+leaves the affected session incomplete; none switches it to mechanical management or another model. Freeze the executable, source, questions, timing and GPU-cost allocation before
+using results for comparisons. See [Rune serving](../../services/rune/README.md) for the deployment and latency gates.

@@ -3,9 +3,10 @@ import { Headers, HttpClient, HttpClientRequest } from 'effect/unstable/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
-import { decodeJevResponse, jevEndpoint, prepareJevRequest, JevFailure, type JevResponse } from './contract'
+import { JevFailure } from '../jev/contract'
+import { decodeRuneResponse, runeEndpoint, prepareRuneRequest, type RuneResponse } from './contract'
 
-export class JevError extends Data.TaggedError('JevError')<{
+export class RuneError extends Data.TaggedError('RuneError')<{
   readonly failure: JevFailure
   readonly message: string
   readonly requestHash?: string
@@ -15,56 +16,50 @@ export class JevError extends Data.TaggedError('JevError')<{
   readonly cause?: Redacted.Redacted<unknown>
 }> {}
 
-export interface JevInference {
+export interface RuneInference {
   readonly requestHash: string
   readonly responseHash: string
   readonly startedAt: string
   readonly completedAt: string
-  readonly response: JevResponse
+  readonly response: RuneResponse
 }
 
-export class JevClient extends Context.Service<
-  JevClient,
-  { readonly evaluate: (request: unknown) => Effect.Effect<JevInference, JevError> }
->()('@proompteng/bayn/JevClient') {}
+export class RuneClient extends Context.Service<
+  RuneClient,
+  { readonly evaluate: (request: unknown) => Effect.Effect<RuneInference, RuneError> }
+>()('@proompteng/bayn/RuneClient') {}
 
-export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number) =>
+export const RuneClientLive = (timeoutMs: number) =>
   Layer.effect(
-    JevClient,
+    RuneClient,
     Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
-      if (
-        !Number.isSafeInteger(timeoutMs) ||
-        timeoutMs <= 0 ||
-        timeoutMs > 10_000 ||
-        Redacted.value(key).length === 0
-      ) {
-        return yield* new JevError({
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000) {
+        return yield* new RuneError({
           failure: JevFailure.Request,
-          message: 'Jev requires a key and a 1-10000ms timeout',
+          message: 'Rune requires a 1-10000ms timeout',
         })
       }
-      const evaluate = (input: unknown): Effect.Effect<JevInference, JevError> =>
+      const evaluate = (input: unknown): Effect.Effect<RuneInference, RuneError> =>
         Effect.gen(function* () {
-          const prepared = yield* Effect.fromResult(prepareJevRequest(input)).pipe(
+          const prepared = yield* Effect.fromResult(prepareRuneRequest(input)).pipe(
             Effect.mapError(
               (cause) =>
-                new JevError({ failure: JevFailure.Request, message: cause.message, cause: Redacted.make(cause) }),
+                new RuneError({ failure: JevFailure.Request, message: cause.message, cause: Redacted.make(cause) }),
             ),
           )
           const { requestHash } = prepared
           const started = yield* Clock.currentTimeMillis
           return yield* Effect.gen(function* () {
-            const request = HttpClientRequest.post(jevEndpoint).pipe(
-              HttpClientRequest.bearerToken(key),
+            const request = HttpClientRequest.post(runeEndpoint).pipe(
               HttpClientRequest.bodyText(prepared.body, 'application/json'),
               HttpClientRequest.acceptJson,
             )
             const response = yield* http.execute(request)
             if (response.status !== 200) {
-              return yield* new JevError({
+              return yield* new RuneError({
                 failure: JevFailure.Status,
-                message: 'Jev evaluation returned an unsuccessful status',
+                message: 'Rune evaluation returned an unsuccessful status',
                 requestHash,
                 status: response.status,
               })
@@ -72,10 +67,10 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             const raw = yield* response.json
             const responseHashResult = canonicalHashV1Result(raw)
             const responseHash = Result.isSuccess(responseHashResult) ? responseHashResult.success : undefined
-            const decoded = yield* Effect.fromResult(decodeJevResponse(prepared.request, raw)).pipe(
+            const decoded = yield* Effect.fromResult(decodeRuneResponse(prepared.request, raw)).pipe(
               Effect.mapError(
                 (cause) =>
-                  new JevError({
+                  new RuneError({
                     failure: JevFailure.Response,
                     message: cause.message,
                     requestHash,
@@ -86,9 +81,9 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
               ),
             )
             if (responseHash === undefined) {
-              return yield* new JevError({
+              return yield* new RuneError({
                 failure: JevFailure.Response,
-                message: 'Jev response cannot be canonically hashed',
+                message: 'Rune response cannot be canonically hashed',
                 requestHash,
                 rejectedResponse: Redacted.make(raw),
                 cause: Redacted.make(responseHashResult),
@@ -96,9 +91,9 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             }
             const completed = yield* Clock.currentTimeMillis
             if (completed < started || completed - started >= timeoutMs) {
-              return yield* new JevError({
+              return yield* new RuneError({
                 failure: JevFailure.Timeout,
-                message: 'Jev response arrived outside its inference deadline',
+                message: 'Rune response arrived outside its inference deadline',
                 requestHash,
                 responseHash,
                 rejectedResponse: Redacted.make(raw),
@@ -114,11 +109,11 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
           }).pipe(
             Effect.timeout(`${timeoutMs} millis`),
             Effect.mapError((cause) =>
-              cause instanceof JevError
+              cause instanceof RuneError
                 ? cause
-                : new JevError({
+                : new RuneError({
                     failure: Cause.isTimeoutError(cause) ? JevFailure.Timeout : JevFailure.Transport,
-                    message: Cause.isTimeoutError(cause) ? 'Jev inference deadline elapsed' : 'Jev transport failed',
+                    message: Cause.isTimeoutError(cause) ? 'Rune inference deadline elapsed' : 'Rune transport failed',
                     requestHash,
                     cause: Redacted.make(cause),
                   }),

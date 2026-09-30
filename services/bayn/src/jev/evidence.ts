@@ -2,7 +2,13 @@ import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { decodeJevResponse, JevFailure, JevRequestSchema, JevResponseSchema, prepareJevRequest } from './contract'
+import { JevFailure } from './contract'
+import {
+  decodeRetainedDecisionResponse,
+  prepareRetainedDecisionRequest,
+  RetainedDecisionRequestSchema,
+  RetainedDecisionResponseSchema,
+} from './model-evidence'
 
 const RequestMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-evaluation-request.v1'),
@@ -13,7 +19,7 @@ const RequestMaterialSchema = Schema.Struct({
   observedAt: UtcInstantSchema,
   expiresAt: UtcInstantSchema,
   requestHash: Sha256Schema,
-  request: JevRequestSchema,
+  request: RetainedDecisionRequestSchema,
 })
 
 export const JevEvaluationRequestSchema = Schema.Struct({
@@ -32,7 +38,7 @@ const InferenceSchema = Schema.Struct({
   responseHash: Sha256Schema,
   startedAt: UtcInstantSchema,
   completedAt: UtcInstantSchema,
-  response: JevResponseSchema,
+  response: RetainedDecisionResponseSchema,
 })
 
 const OutcomeSchema = Schema.Union([
@@ -73,7 +79,7 @@ export const makeJevEvaluationRequest = (input: unknown) =>
   )(input).pipe(
     Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation request is malformed' })),
     Result.flatMap((material) =>
-      prepareJevRequest(material.request).pipe(
+      prepareRetainedDecisionRequest(material.request).pipe(
         Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation request violates the model contract' })),
         Result.flatMap((prepared) => {
           const lifetime = Date.parse(material.expiresAt) - Date.parse(material.observedAt)
@@ -129,7 +135,7 @@ export const makeJevEvaluationReceipt = (request: JevEvaluationRequest, input: u
           inference.completedAt > material.completedAt ||
           Result.isFailure(responseHash) ||
           responseHash.success !== inference.responseHash ||
-          Result.isFailure(decodeJevResponse(request.request, inference.response))
+          Result.isFailure(decodeRetainedDecisionResponse(request.request, inference.response))
         ) {
           return invalid('Jev inference does not match its recorded request, response or clocks')
         }
