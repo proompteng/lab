@@ -123,6 +123,38 @@ const topup = (): OperatingCostEvidence['prepaidFunding'][number] => ({
 })
 
 describe('document-bound external operating costs', () => {
+  test('payment receipts are distinct from all prepaid invoices regardless of import order or provider', () => {
+    const additionalSource = '6'.repeat(64)
+    const sources = new Set([...verified, additionalSource])
+    const paid = topup()
+    if (paid.payment === null) throw new Error('Expected a synthetic payment')
+    const selfReceipt = { ...paid, payment: { ...paid.payment, receiptSourceHash: source } }
+    expect(
+      Result.isFailure(makeOperatingCostReport(inference(), { ...evidence(), prepaidFunding: [selfReceipt] }, sources)),
+    ).toBe(true)
+    for (const provider of ['synthetic-provider', 'another-provider']) {
+      const other = {
+        ...paid,
+        provider,
+        documentId: '5'.repeat(64),
+        invoiceSourceHash: additionalSource,
+        payment: null,
+      }
+      const reused = { ...paid, payment: { ...paid.payment, receiptSourceHash: additionalSource } }
+      for (const prepaidFunding of [
+        [reused, other],
+        [other, reused],
+      ])
+        expect(Result.isFailure(makeOperatingCostReport(inference(), { ...evidence(), prepaidFunding }, sources))).toBe(
+          true,
+        )
+      const distinct = Result.getOrThrow(
+        makeOperatingCostReport(inference(), { ...evidence(), prepaidFunding: [paid, other] }, sources),
+      )
+      expect(distinct.prepaidFunding.providerReceiptedPaymentsMicros).toBe('5000000')
+    }
+  })
+
   test('payment evidence cannot also reduce costs as a credit or become a consumption invoice', () => {
     const consumptionSource = '6'.repeat(64)
     const sources = new Set([...verified, consumptionSource])

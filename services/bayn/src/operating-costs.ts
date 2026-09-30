@@ -168,6 +168,8 @@ export const makeOperatingCostReport = (
         return yield* Result.fail(fail('Prepaid payment must match its invoice amount and temporal scope'))
       if (entry.payment !== null) {
         const paymentKey = entry.payment.receiptSourceHash
+        if (invoiceArtifacts.has(paymentKey))
+          return yield* Result.fail(fail('A payment receipt must be distinct from every imported invoice artifact'))
         if (paymentArtifacts.has(paymentKey))
           return yield* Result.fail(fail('One payment receipt cannot fund multiple imported invoices'))
         paymentArtifacts.add(paymentKey)
