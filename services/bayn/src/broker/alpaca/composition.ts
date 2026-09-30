@@ -8,7 +8,7 @@ import {
   BrokerSession,
   BrokerSessionAcquisitionError,
   BrokerSessionAcquisitionStage,
-  layer as brokerSessionLayer,
+  cachedLayer as brokerSessionLayer,
 } from './session'
 import { BrokerRead } from './model'
 import { Pipeable } from '../../pipeable'

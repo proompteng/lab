@@ -138,6 +138,30 @@ interface MutationHarnessOptions {
   readonly session?: BrokerSessionShape
 }
 
+const projectedSession = (
+  lifecycle: (phase: 'begin' | 'end') => Effect.Effect<void>,
+  operationTimeoutMs?: number,
+): BrokerSessionShape => {
+  const session = verifiedSession(operationTimeoutMs === undefined ? {} : { operationTimeoutMs })
+  return {
+    ...session,
+    read: {
+      ...session.read,
+      projection: {
+        fresh: session.read,
+        snapshot: unexpectedRead('cached snapshot'),
+        invalidate: unexpectedRead('unguarded cache invalidation'),
+        withMutation: (effect) =>
+          Effect.acquireUseRelease(
+            lifecycle('begin'),
+            () => effect,
+            () => lifecycle('end'),
+          ),
+      },
+    },
+  }
+}
+
 const intent: Intent = {
   schemaVersion: 'bayn.paper-intent.v3',
   intentId: 'a'.repeat(64),
@@ -235,6 +259,36 @@ const assertFailure = <A, E>(result: Result.Result<A, E>): E => {
 }
 
 describe('Alpaca broker mutations', () => {
+  test.each([
+    ['submit', 200],
+    ['submit', 500],
+    ['cancel', 204],
+    ['cancel', 500],
+  ] as const)('holds the cache until %s returns HTTP %i', async (operation, status) => {
+    const trace: string[] = []
+    const session = projectedSession((phase) =>
+      Effect.sync(() => {
+        trace.push(phase)
+      }),
+    )
+    const client = HttpClient.make((request) => {
+      trace.push('request')
+      return Effect.succeed(response(request, operation === 'submit' ? orderResponse : {}, status))
+    })
+    const exit = await Effect.runPromiseExit(
+      withMutation(
+        client,
+        (mutation) =>
+          operation === 'submit'
+            ? mutation.submit(intent).pipe(Effect.asVoid)
+            : mutation.cancel(orderId).pipe(Effect.asVoid),
+        { session },
+      ),
+    )
+    expect(exit._tag).toBe(status < 400 ? 'Success' : 'Failure')
+    expect(trace).toEqual(['begin', 'request', 'end'])
+  })
+
   test('returns closed request encoding failures without throwing', () => {
     expect(assertFailure(submitBody({ ...intent, state: IntentState.Approved }))).toMatchObject({
       _tag: 'OrderRequestError',
@@ -935,6 +989,14 @@ describe('Alpaca broker mutations', () => {
   test('interrupts a timed-out submit and reports UNKNOWN without retry', async () => {
     let calls = 0
     let interrupted = false
+    let invalidations = 0
+    const session = projectedSession(
+      () =>
+        Effect.sync(() => {
+          invalidations += 1
+        }),
+      10,
+    )
     const client = HttpClient.make(() => {
       calls += 1
       return Effect.never.pipe(
@@ -946,7 +1008,7 @@ describe('Alpaca broker mutations', () => {
       )
     })
 
-    const program = makeMutation(verifiedSession({ operationTimeoutMs: 10 }), submitAuthority, client).pipe(
+    const program = makeMutation(session, submitAuthority, client).pipe(
       Effect.flatMap((mutation) =>
         Effect.gen(function* () {
           const fiber = yield* Effect.flip(mutation.submit(intent)).pipe(Effect.forkChild)
@@ -966,6 +1028,7 @@ describe('Alpaca broker mutations', () => {
     })
     expect(calls).toBe(1)
     expect(interrupted).toBe(true)
+    expect(invalidations).toBe(2)
   })
 
   test('redacts credentials from an ambiguous submit transport failure', async () => {
@@ -1028,6 +1091,7 @@ describe('Alpaca broker mutations', () => {
 
   test('propagates external interruption and finalizes an in-flight submit exactly once', async () => {
     let calls = 0
+    let invalidations = 0
     const finalizations = await Effect.runPromise(
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>()
@@ -1039,7 +1103,12 @@ describe('Alpaca broker mutations', () => {
             Effect.ensuring(Ref.update(finalized, (count) => count + 1)),
           )
         })
-        const mutation = yield* makeMutation(verifiedSession(), submitAuthority, client)
+        const session = projectedSession(() =>
+          Effect.sync(() => {
+            invalidations += 1
+          }),
+        )
+        const mutation = yield* makeMutation(session, submitAuthority, client)
         const fiber = yield* mutation.submit(intent).pipe(Effect.forkChild({ startImmediately: true }))
         yield* Deferred.await(started)
         yield* Fiber.interrupt(fiber)
@@ -1049,6 +1118,7 @@ describe('Alpaca broker mutations', () => {
 
     expect(calls).toBe(1)
     expect(finalizations).toBe(1)
+    expect(invalidations).toBe(2)
   })
 
   test('cancels a positively identified order once; every non-204 result requires lookup', async () => {
