@@ -35,9 +35,9 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -73,8 +73,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.CRC32
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
@@ -1293,38 +1291,41 @@ class ForwarderApp(
     val barsTopic = config.topics.bars1m ?: return
     if (symbols.isEmpty()) return
     val result =
-      barRecovery.reconcile(
-        now = Instant.ofEpochMilli(nowMs()),
-        symbols = symbols.toSet(),
-        fetch = { window -> fetchBackfillBars(symbols, window) },
-        publish = { bar ->
-          val eventTime = Instant.parse(bar.timestamp)
-          val env =
-            Envelope(
-              ingestTs = Instant.ofEpochMilli(nowMs()),
-              eventTs = eventTime,
-              feed = config.alpacaFeed,
-              channel = "bars",
-              symbol = bar.symbol,
-              seq = seq.next("bars:${bar.symbol}"),
-              payload = json.encodeToJsonElement(AlpacaBar.serializer(), bar),
-              provider = "alpaca",
-              marketSession = classifyMarketSession(eventTime).id,
-              delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "bars").id },
-              isFinal = true,
-              source = "rest",
-              version = 2,
-            )
-          recordLag(env, coreMarketDataFeed)
-          suspendCancellableCoroutine<Unit> { continuation ->
-            sendKafka(producer, barsTopic, env, "bars", coreMarketDataFeed, onCompletion = { error ->
-              if (continuation.isActive) {
-                if (error == null) continuation.resume(Unit) else continuation.resumeWithException(error)
-              }
-            })
-          }
-        },
-      )
+      withContext(Dispatchers.IO) {
+        barRecovery.reconcile(
+          now = Instant.ofEpochMilli(nowMs()),
+          symbols = symbols.toSet(),
+          fetch = { window -> fetchBackfillBars(symbols, window) },
+          publish = { bar ->
+            val eventTime = Instant.parse(bar.timestamp)
+            val env =
+              Envelope(
+                ingestTs = Instant.ofEpochMilli(nowMs()),
+                eventTs = eventTime,
+                feed = config.alpacaFeed,
+                channel = "bars",
+                symbol = bar.symbol,
+                seq = seq.next("bars:${bar.symbol}"),
+                payload = json.encodeToJsonElement(AlpacaBar.serializer(), bar),
+                provider = "alpaca",
+                marketSession = classifyMarketSession(eventTime).id,
+                delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "bars").id },
+                isFinal = true,
+                source = "rest",
+                version = 2,
+              )
+            recordLag(env, coreMarketDataFeed)
+            val delivered = CompletableDeferred<Unit>()
+            // Stay on the recovery dispatcher so undispatched batches preserve send order.
+            runInterruptible {
+              sendKafka(producer, barsTopic, env, "bars", coreMarketDataFeed, onCompletion = { error ->
+                if (error == null) delivered.complete(Unit) else delivered.completeExceptionally(error)
+              })
+            }
+            delivered.await()
+          },
+        )
+      }
     logger.info {
       "bar recovery checked=${result.observed} published=${result.published} feed=${config.alpacaFeed} " +
         "start=${result.window.start} end=${result.window.end}"

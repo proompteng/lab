@@ -67,6 +67,19 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
     return {
       check: kafka.read.pipe(
         Effect.asVoid,
+        Effect.tapError((cause) =>
+          kafka.status.pipe(
+            Effect.flatMap((status) =>
+              Effect.logWarning('Execution market projection check failed', {
+                epoch: status.epoch,
+                ready: status.ready,
+                sequence: status.sequence,
+                operation: cause.operation,
+                reason: cause.message,
+              }),
+            ),
+          ),
+        ),
         Effect.mapError((cause) => marketDataOperationError('check', 'Kafka projection is rebuilding', cause)),
       ),
       loadSnapshot,

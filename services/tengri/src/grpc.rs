@@ -31,7 +31,7 @@ use crate::{
     },
     gateway::PreviewOrigin,
     guest::{
-        EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
+        CodexOptions, EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
         TerminalCreation as GuestTerminalCreation,
     },
     metrics,
@@ -45,19 +45,19 @@ pub mod proto {
 
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
-    CodexEvent, CodexEventKind, CodexLogin, CodexThread, CodexTurn, CreateAgentRequest,
-    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest,
-    DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest,
-    GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
+    CodexEvent, CodexEventKind, CodexLogin, CodexModels, CodexThread, CodexTurn,
+    CreateAgentRequest, CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest,
+    DeleteAgentRequest, DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind,
+    GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
     IssueEditorSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
-    ListAgentsRequest, ListAgentsResponse, ListFilesRequest, ListFilesResponse,
-    ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest,
-    ReadFileResponse, ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
-    RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexTurnRequest,
-    SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest, TerminalSession,
-    TerminalTicket, TerminateTerminalRequest, WatchAgentRequest, WatchCodexEventsRequest,
-    WatchFilesRequest, WriteFileRequest, WriteFileResponse,
-    micro_vm_control_plane_server::MicroVmControlPlane,
+    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListFilesRequest,
+    ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
+    PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
+    ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
+    SearchFilesResponse, SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest,
+    SteerCodexTurnRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
+    WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
+    WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -762,6 +762,33 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn list_codex_models(
+        &self,
+        request: Request<ListCodexModelsRequest>,
+    ) -> Result<Response<CodexModels>, Status> {
+        let principal = self.authorize(&request, "ListCodexModels").await?;
+        let request = request.into_inner();
+        if request.cursor.len() > 4096 || request.cursor.chars().any(char::is_control) {
+            return Err(Status::invalid_argument("invalid Codex model cursor"));
+        }
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "model/list",
+                json!({
+                    "cursor": if request.cursor.is_empty() { None } else { Some(request.cursor) },
+                    "limit": 100,
+                    "includeHidden": false,
+                }),
+            )
+            .await
+            .map_err(map_codex_models_error)?;
+        Ok(Response::new(CodexModels {
+            raw_json: value.to_string(),
+        }))
+    }
+
     async fn start_codex_login(
         &self,
         request: Request<StartCodexLoginRequest>,
@@ -807,12 +834,16 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<CodexThread>, Status> {
         let principal = self.authorize(&request, "CreateCodexThread").await?;
         let request = request.into_inner();
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
             .codex_call_with_sequence(
                 "thread/start",
                 json!({
+                    "model": options.model,
+                    "config": options.thread_config(),
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
                     "approvalPolicy": "on-request",
@@ -840,10 +871,12 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResumeCodexThread").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
-            .resume_codex_thread(&request.thread_id)
+            .resume_codex_thread(&request.thread_id, &options)
             .await
             .map_err(map_guest_error)?;
         let value = snapshot.result;
@@ -863,6 +896,8 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         let text = validate_prompt(&request.text)?;
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let value = self
             .guest(&principal, &request.agent_id)
             .await?
@@ -870,6 +905,8 @@ impl MicroVmControlPlane for ControlPlane {
                 "turn/start",
                 json!({
                     "threadId": request.thread_id,
+                    "model": options.model,
+                    "effort": options.reasoning_effort,
                     "input": [{"type": "text", "text": text, "text_elements": []}],
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
@@ -2242,6 +2279,25 @@ fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
     }
 }
 
+fn map_codex_models_error(error: GuestError) -> Status {
+    if let GuestError::Api { status, message } = &error
+        && *status == reqwest::StatusCode::BAD_GATEWAY
+        && serde_json::from_str::<Value>(message)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .as_deref()
+            == Some("Codex method is not exposed by Nanoagent")
+    {
+        return Status::unimplemented("This guest does not support Codex model selection");
+    }
+    map_guest_error(error)
+}
+
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
@@ -2292,6 +2348,32 @@ mod tests {
     use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
+
+    #[test]
+    fn recognizes_only_the_legacy_guest_model_allowlist_failure() {
+        let message = json!({"error": "Codex method is not exposed by Nanoagent"}).to_string();
+        assert_eq!(
+            map_codex_models_error(GuestError::Api {
+                status: reqwest::StatusCode::BAD_GATEWAY,
+                message: message.clone(),
+            })
+            .code(),
+            tonic::Code::Unimplemented
+        );
+        for (status, message) in [
+            (reqwest::StatusCode::FORBIDDEN, message),
+            (
+                reqwest::StatusCode::BAD_GATEWAY,
+                json!({"error": "Codex app-server is unavailable"}).to_string(),
+            ),
+            (reqwest::StatusCode::BAD_GATEWAY, "invalid response".into()),
+        ] {
+            assert_ne!(
+                map_codex_models_error(GuestError::Api { status, message }).code(),
+                tonic::Code::Unimplemented
+            );
+        }
+    }
 
     #[test]
     fn missing_codex_snapshot_cursor_reports_the_destructive_recovery() {

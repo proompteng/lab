@@ -295,6 +295,98 @@ recovery behavior, and evidence boundaries.
 
 ## Operations
 
+### Private inference operating-cost report
+
+Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
+Jev requests across all cycles for one account and exchange-session date, including blocked and no-trade cycles:
+
+```sh
+bayn-inference-cost --session 2026-01-02 --rate-card /private/inference-rates.json
+# An already exported, private evidence cut can be evaluated without network or credential access:
+bayn-inference-cost --evidence /private/inference-evidence.json --rate-card /private/inference-rates.json
+```
+
+The database mode requires `BAYN_POSTGRES_URL`, `BAYN_ALPACA_ACCOUNT_ID`, and the normal PostgreSQL TLS settings.
+It does not acquire a broker client, inference client, writer fence, or execution authority. The account and session
+filter execute in a repeatable-read, read-only transaction. More than 10,000 claimed requests fails explicitly rather
+than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
+endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
+
+Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has `provider: "typesafe"`, an exact `model`,
+`currency: "USD"`, a `source` description, canonical UTC `effectiveFrom` / exclusive `effectiveUntil` instants, and
+`inputMicrosPerMillionTokens` / `outputMicrosPerMillionTokens` as unsigned decimal integer strings. Supply the tariff
+applicable to the requested period; a list price is an estimate, not proof of a negotiated rate or an invoice. Model
+intervals may not overlap. Missing model/date coverage is unpriced, not free. An explicit zero output rate is valid.
+
+The report verifies immutable request, receipt, rejected-response, and resolution hashes. A rejected or abandoned
+decision can still carry billable usage. A claim without retained usage stays unknown: it does not prove either that
+the provider received a request or that no charge occurred. Identical repeated evidence is deduplicated by request
+identity; conflicting duplicates fail. Token counts are safe integers. Cost arithmetic retains pico-USD precision
+and rounds the aggregate upward to micro-USD only once. These are metered estimates, not invoice-reconciled costs.
+
+`knownEstimatedCostMicros` is the priced, recorded subtotal. `estimatedTotalCostMicros` is null whenever any claimed
+request has unknown usage or any metered request is unpriced. `invoiceReconciled` remains false. The account binding,
+session, as-of cut, evidence hashes, tariff hashes, and report hash make an exported report reproducible. This command
+does not write to TigerBeetle or change the broker's cash balance. A strategy economic report may subtract the supported
+operating-cost estimate from trading P&L while retaining its incomplete-coverage status; provider invoice reconciliation,
+credits, taxes, shared subscriptions, data costs, and allocated infrastructure costs remain separate evidence requirements.
+
+Supply `--expenses /private/expenses.json` to produce `bayn.inference-economic-report.v1`, containing the unchanged
+metered `inference` report and a separate `economic` report. The packet has `evidence` conforming to
+`OperatingCostEvidenceSchema` in `src/operating-costs.ts` and `artifacts: [{ sha256, path }]`. Artifact paths resolve
+relative to the packet; each original file is rehashed before reporting. Keep invoices, receipts, account bindings,
+reviewed allocations, and results outside the repository and public endpoints.
+
+The normalized evidence binds the same account/session, its as-of cut, an optional reconciled trading P&L source,
+and explicit coverage for `INFERENCE`, `DATA`, `INFRASTRUCTURE`, and `RESEARCH`. Every complete category, including
+zero expenses, needs supporting source evidence. Consumption lines retain invoice/line identities, original file
+hashes, service dates, credits, all account/session allocations and the unallocated remainder. Allocations and
+credits must reconcile exactly. Identical imports are idempotent; conflicting identities, reused credit/payment
+artifacts, unsupported coverage, and over-allocation fail. A credit note is assigned to one original invoice line;
+split credit documents or partial invoice payments require an explicitly extended normalization contract.
+
+Prepaid credit purchases belong to `prepaidFunding`, not session consumption. Invoice and payment-receipt evidence
+describe one purchase, not two expenses. No remaining prepaid balance is inferred without an opening balance and
+complete usage history. A provider payment receipt is not a bank reconciliation. An inference invoice allocation
+replaces the tariff estimate for economic P&L; it is never added to the same estimated usage. The frozen qualification
+cost comparison separately uses the greater of the applicable tariff or actual inference expense. Missing model
+usage keeps that qualification amount unresolved even when a complete provider invoice is available.
+
+`netEconomicPnlMicros` and `totalOperatingCostMicros` remain null until all expense categories have complete evidence.
+Partial reports show invoice and tariff subtotals separately and expose unknown/unpriced inference usage. Source
+hashes prove file identity, not issuer authenticity, correct classification or coverage completeness: those remain
+reviewed input assertions. This read-only import never mutates broker cash, TigerBeetle, an invoice provider or a bank.
+
+### Operational diagnostics
+
+Jev observation reconstruction failures retain a bounded `observationCheck` and, for broker snapshots, an
+`observationField`. The top-level error identifies schema, source reconstruction, observation time, universe/feed/topic,
+window, decision lag, session boundary, premature/stale portfolio evidence, feature definition or content identity.
+The underlying cause remains attached, but arbitrary provider payloads and account data are not copied into the
+top-level diagnostic message. Valid observation bytes, identity hashes, rejection predicates and freshness limits
+are unchanged. These are failure explanations, not permission to bypass a failed check.
+
+The last terminal cycle may include `entryAllocationReason`. `TURNOVER_BUDGET_EXHAUSTED` means a retained no-trade
+decision had a positive signal, a flat portfolio, zero allocated capital, and earlier recorded account/session turnover
+at least as large as its bound limit. `ZERO_ALLOCATION` makes no claim about which limit caused a zero allocation.
+Missing historical facts remain unclassified. This explanation stays on the last cycle after a following session is
+created; it does not rewrite the immutable target-plan reason or change any trading limit. Current turnover checks
+admit the immediate sell-plus-buy adjustment, while strictly exposure-reducing closes retain their separate exception.
+They do not promise a hard round-trip ceiling that reserves every future sale of newly acquired inventory.
+
+Kafka supervision retains the first invalidation cause in each epoch. Rejoin, rebalance, reassignment and stalled
+heartbeat signals have bounded reason codes; arbitrary transport error text is not included in failure telemetry.
+Recovery logs connect the failed and rebuilt epochs and record time from the observed failure to a completed bootstrap.
+Retries and the existing cooldown do not relax assignment revocation, source verification or required history barriers.
+Transport recovery establishes an available projection, not fresh session data or a tradable signal.
+
+The dedicated PostgreSQL cluster collects relation and WAL I/O timings using PostgreSQL 18's `pg_stat_io` and exports
+bounded backend-wait and aggregate synchronous-standby measurements. Timing settings, metric availability, statistics
+resets, and the distinction between active-query age and actual wait duration must be checked before attribution.
+See the [cycle operations runbook](../../docs/runbooks/bayn-cycle-operations.md#database-latency-investigation).
+
+### Delivery
+
 Normal delivery uses the shared Kargo path:
 
 1. merge reviewed source to `main`;
@@ -355,8 +447,19 @@ negative differences are excluded and counted in `bayn_cycle_latency_clock_regre
 
 Decision building and close preparation share the current pass's reconciliation. Additional uses check its age and
 current authority version; stale evidence or changed authority requires another reconciliation. The result does not
-survive the serialized pass or its broker mutation. Transmission retains its independent broker refresh, current
-grant and risk checks under the writer fence.
+survive the serialized pass or its broker mutation. Exact native reconciliation also fills the generation-owned
+submit cache. Its account identity, reconciliation ID and authority version are checked under the final writer fence;
+a newer reconciliation, later broker observation or another mutation invalidates that version. Cache misses,
+discrepancies, unknown mutations, pending orders, stale evidence and authority changes deny submission. Submit consumes
+the version before broker I/O; cancellation, recovery and failed reconciliation invalidate it. Replaying the consumed
+reconciliation cannot refill it. Only a new native exact reconciliation supplies another version.
+
+Transmission confirms positions, open orders and account once concurrently, replacing seven sequential broker GETs.
+Position, order or cash drift from the cached cut denies transmission. Current account blocks and buying power,
+persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. This is a bounded
+REST observation cache, not an order-update stream or an atomic broker snapshot; it does not remove the broker's
+external-writer race. The confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within
+`order_acknowledgement`, after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the
@@ -402,6 +505,30 @@ submission window is still in the future and it has no durable decision or inten
 and any future cycle with durable execution work still prevent a sufficient receipt.
 
 ## Replay and backtesting
+
+### Bounded mechanical control and turnover comparison
+
+`bun tools/control-study.ts` supports the strictly offline `MECHANICAL` management mode, which creates no provider
+client, broker account, database or capital authority. Its three fixed control policies share the native control
+portfolio's point-in-time quotes, finite displayed-liquidity consumption, IOC partial fills, fee accounting, loss and
+drawdown limits, close deadlines and explicit missing-data outcomes. A mechanical control is not an exact replay of
+the production Jev decision/persistence pipeline and is not a matched live-performance claim.
+
+`bayn.control-study-input.v3` requires `turnoverPolicy`: `IMMEDIATE_ADJUSTMENT` preserves the existing entry-admission
+calculation; `ENTRY_AND_EXPECTED_EXIT` additionally reserves the proposed entry limit notional and a modeled future
+sale at reference price plus the risk policy's bounded allowance. The integer calculation rounds costs upward,
+respects existing reservations and whole-share sizing, and cannot authorize an order itself. Legacy v2 study inputs
+keep their previous immediate-adjustment behavior. The reservation applies only to control entry sizing; it cannot
+block risk-reducing exits, and a price move beyond the modeled allowance can exceed the reserved amount. It is not
+a hard bound on unknown future exit prices. Production entry sizing, turnover mandates and exit exceptions are
+unchanged by an offline experiment.
+
+Freeze the input, source receipt, exact source revision or file-hash snapshot, and comparison policy before results.
+Run each registered input with `--input-sha256` and `--source-receipt-sha256`, preserving failed runs and distinct
+output files. Current asset eligibility must be labeled counterfactual rather than historical. A zero allocated data
+charge is an explicit incremental-cost scenario, not proof of zero operating costs. Apply further cost/latency stress
+without selecting favorable dates or erasing missing observations. Development comparisons do not satisfy the frozen
+prospective qualification protocol and never activate a different model, prompt, threshold or trading policy.
 
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common

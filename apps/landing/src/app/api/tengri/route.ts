@@ -14,6 +14,7 @@ import {
   issueEditorSession,
   issueTerminalTicket,
   listAgents,
+  listCodexModels,
   listFiles,
   listTerminals,
   moveFile,
@@ -161,14 +162,26 @@ export async function POST(request: Request) {
       case 'codex-login':
         result = await startCodexLogin(identity.subject, action.agentId)
         break
+      case 'codex-models':
+        result = await listCodexModels(identity.subject, action.agentId, action.cursor)
+        break
       case 'create-thread':
-        result = await createCodexThread(identity.subject, action.agentId)
+        result = await createCodexThread(identity.subject, action.agentId, {
+          model: action.model,
+          reasoningEffort: action.reasoningEffort,
+        })
         break
       case 'resume-thread':
-        result = await resumeCodexThread(identity.subject, action.agentId, action.threadId)
+        result = await resumeCodexThread(identity.subject, action.agentId, action.threadId, {
+          model: action.model,
+          reasoningEffort: action.reasoningEffort,
+        })
         break
       case 'send-turn':
-        result = await sendCodexTurn(identity.subject, action.agentId, action.threadId, action.text)
+        result = await sendCodexTurn(identity.subject, action.agentId, action.threadId, action.text, {
+          model: action.model,
+          reasoningEffort: action.reasoningEffort,
+        })
         break
       case 'steer-turn':
         result = await steerCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId, action.text)
