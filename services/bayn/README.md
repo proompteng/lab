@@ -24,7 +24,9 @@ smaller of half the maximum age and the maximum age minus the poll interval. Wit
 30 seconds. These bounds leave time to replace a successful snapshot before its oldest evidence expires.
 
 Submit and cancel attempts invalidate the cache before the broker request and after every outcome, including timeout
-and interruption. An earlier in-flight poll cannot republish a snapshot after invalidation. The final pre-submit capital
+and interruption. Invalidation wakes the poller, cancels an earlier in-flight poll, and starts a new refresh.
+Refresh signals coalesce in a one-slot queue, and polls remain serial. An earlier poll cannot republish a snapshot after
+invalidation. The final pre-submit capital
 and exposure check retains fresh broker reads. Individual order lookups, arbitrary filtered order queries, and metadata
 reads retain their direct broker semantics. The cache is local to the session; Kafka is not required for this read path.
 

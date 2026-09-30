@@ -1,4 +1,4 @@
-import { Clock, Config, DateTime, Effect, Ref, Schema, type Scope } from 'effect'
+import { Clock, Config, DateTime, Effect, Queue, Ref, Schema, type Scope } from 'effect'
 
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { ReconciliationError } from '../../simulation-reconciliation/broker-reconciler-model'
@@ -85,11 +85,12 @@ export const makeCachedBrokerRead = (
   Effect.gen(function* () {
     const state = yield* Ref.make<CacheState>({ _tag: 'Invalidated', generation: 0 })
     const nextPollAt = yield* Ref.make(0)
+    const refresh = yield* Queue.dropping<void>(1)
     const pollTimeoutMs = Math.min(config.maxAgeMs - config.pollIntervalMs, config.maxAgeMs / 2)
     const invalidate = Ref.update(
       state,
       (current): CacheState => ({ _tag: 'Invalidated', generation: current.generation + 1 }),
-    )
+    ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
     yield* Effect.addFinalizer(() => invalidate)
     const poll = Effect.gen(function* () {
       const startedAt = yield* Clock.currentTimeMillis
@@ -171,8 +172,8 @@ export const makeCachedBrokerRead = (
     yield* Effect.gen(function* () {
       const next = yield* Ref.get(nextPollAt)
       const now = yield* Clock.currentTimeMillis
-      yield* Effect.sleep(Math.max(0, next - now))
-      yield* poll
+      yield* Effect.sleep(Math.max(0, next - now)).pipe(Effect.raceFirst(Queue.take(refresh)))
+      yield* poll.pipe(Effect.raceFirst(Queue.take(refresh)))
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning('Broker snapshot polling failed').pipe(
@@ -181,6 +182,15 @@ export const makeCachedBrokerRead = (
             'broker.failure_kind': error.kind,
             'broker.retryable': error.retryable,
           }),
+        ),
+      ),
+      Effect.tap(() =>
+        Ref.get(state).pipe(
+          Effect.flatMap((current) =>
+            current._tag === 'Invalidated'
+              ? Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Ref.set(nextPollAt, now)))
+              : Effect.void,
+          ),
         ),
       ),
       Effect.forever,

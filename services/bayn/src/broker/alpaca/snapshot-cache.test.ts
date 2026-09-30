@@ -345,24 +345,57 @@ describe('broker snapshot cache', () => {
 
   test('prevents an in-flight poll from republishing a snapshot after mutation invalidation', async () => {
     const source = fixture()
+    let cancellations = 0
     await run(
       Effect.gen(function* () {
         const read = yield* makeCachedBrokerRead(source.read, config)
         const started = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
-        source.blockAccount(Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))))
+        source.blockAccount(
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                cancellations += 1
+              }),
+            ),
+          ),
+        )
         yield* TestClock.adjust(30_000)
         yield* Deferred.await(started)
         if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
+        const refreshStarted = yield* Deferred.make<void>()
+        const finishRefresh = yield* Deferred.make<void>()
+        source.blockAccount(
+          Deferred.succeed(refreshStarted, undefined).pipe(Effect.andThen(Deferred.await(finishRefresh))),
+        )
         yield* read.projection.invalidate
-        expect((yield* Effect.flip(read.account)).retryable).toBe(true)
-        source.blockAccount(Effect.void)
+        yield* Deferred.await(refreshStarted)
+        expect(cancellations).toBe(1)
         yield* Deferred.succeed(release, undefined)
-        yield* settle
         expect((yield* Effect.flip(read.account)).message).toContain('invalidation')
-        yield* TestClock.adjust(30_000)
+        yield* Deferred.succeed(finishRefresh, undefined)
         yield* settle
         yield* read.account
+      }),
+    )
+  })
+
+  test('refreshes immediately after a mutation so the one-second reconciliation can observe updated state', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const read = yield* makeCachedBrokerRead(source.read, config)
+        yield* TestClock.adjust(1_000)
+        source.setEquity('900000000')
+        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
+        yield* read.projection.invalidate
+        yield* TestClock.adjust(1_000)
+        yield* settle
+        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
+        expect(snapshot.account.value.equityMicros).toBe('900000000')
+        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:00:01.000Z')
+        expect(source.calls.length).toBe(24)
       }),
     )
   })
