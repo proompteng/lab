@@ -23,11 +23,13 @@ Polls run without overlap, with the interval measured from the previous poll's s
 smaller of half the maximum age and the maximum age minus the poll interval. With the defaults, the deadline is
 30 seconds. These bounds leave time to replace a successful snapshot before its oldest evidence expires.
 
-Submit and cancel attempts invalidate the cache before the broker request and after every outcome, including timeout
-and interruption. Invalidation wakes the poller, cancels an earlier in-flight poll, and starts a new refresh.
+Submit and cancel attempts keep the cache unavailable throughout the broker request and response processing, including
+timeout and interruption. Starting a mutation cancels an earlier in-flight poll and pauses broker polling until all
+active mutations settle. After the final outcome, the poller starts a new refresh. Other invalidations wake the poller
+without releasing an active mutation's hold.
 Refresh signals coalesce in a one-slot queue, and polls remain serial. An earlier poll cannot republish a snapshot after
-invalidation. The final pre-submit capital
-and exposure check retains fresh broker reads. Individual order lookups, arbitrary filtered order queries, and metadata
+invalidation. The final pre-submit capital and exposure check retains fresh broker reads. Individual order lookups,
+arbitrary filtered order queries, and metadata
 reads retain their direct broker semantics. The cache is local to the session; Kafka is not required for this read path.
 
 ## Active strategy

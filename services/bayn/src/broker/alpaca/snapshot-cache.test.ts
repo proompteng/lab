@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, Logger, type Scope } from 'effect'
+import { Cause, Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, Logger, Result, type Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1 } from '../../hash'
@@ -399,6 +399,117 @@ describe('broker snapshot cache', () => {
       }),
     )
   })
+
+  test('keeps cached reads unavailable throughout a slow mutation and refreshes after it settles', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const read = yield* makeCachedBrokerRead(source.read, config)
+        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const mutation = yield* read.projection
+          .withMutation(Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))))
+          .pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* read.projection.invalidate
+        yield* TestClock.adjust(90_000)
+        yield* settle
+        for (const observation of [
+          read.account.pipe(Effect.asVoid),
+          read.positions.pipe(Effect.asVoid),
+          read.projection.snapshot.pipe(Effect.asVoid),
+        ]) {
+          const result = yield* Effect.result(observation)
+          expect(Result.isFailure(result)).toBe(true)
+          if (Result.isFailure(result)) {
+            expect(result.failure.retryable).toBe(true)
+            expect(result.failure.message).toContain('mutations are in flight')
+          }
+        }
+        expect(source.calls.length).toBe(12)
+        source.setEquity('900000000')
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(mutation)
+        yield* TestClock.adjust(1_000)
+        yield* settle
+        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
+        expect(snapshot.account.value.equityMicros).toBe('900000000')
+        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:01:30.000Z')
+        expect(source.calls.length).toBe(24)
+      }),
+    )
+  })
+
+  test('waits for every overlapping mutation before publishing a refreshed snapshot', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const read = yield* makeCachedBrokerRead(source.read, config)
+        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
+        const firstStarted = yield* Deferred.make<void>()
+        const firstRelease = yield* Deferred.make<void>()
+        const secondStarted = yield* Deferred.make<void>()
+        const secondRelease = yield* Deferred.make<void>()
+        const first = yield* read.projection
+          .withMutation(Deferred.succeed(firstStarted, undefined).pipe(Effect.andThen(Deferred.await(firstRelease))))
+          .pipe(Effect.forkChild)
+        yield* Deferred.await(firstStarted)
+        const second = yield* read.projection
+          .withMutation(Deferred.succeed(secondStarted, undefined).pipe(Effect.andThen(Deferred.await(secondRelease))))
+          .pipe(Effect.forkChild)
+        yield* Deferred.await(secondStarted)
+        yield* Deferred.succeed(firstRelease, undefined)
+        yield* Fiber.join(first)
+        yield* TestClock.adjust(30_000)
+        yield* settle
+        expect((yield* Effect.flip(read.account)).message).toContain('mutations are in flight')
+        expect(source.calls.length).toBe(12)
+        source.setEquity('800000000')
+        yield* Deferred.succeed(secondRelease, undefined)
+        yield* Fiber.join(second)
+        yield* TestClock.adjust(1_000)
+        yield* settle
+        expect((yield* read.account).value.equityMicros).toBe('800000000')
+        expect(source.calls.length).toBe(24)
+      }),
+    )
+  })
+
+  test.each(['failure', 'defect', 'interruption'] as const)(
+    'releases the mutation hold and refreshes after %s',
+    async (outcome) => {
+      const source = fixture()
+      await run(
+        Effect.gen(function* () {
+          const read = yield* makeCachedBrokerRead(source.read, config)
+          if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
+          const started = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const operation = Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(outcome === 'failure' ? Effect.fail('fixture failure') : Effect.die('fixture defect')),
+          )
+          const mutation = yield* read.projection.withMutation(operation).pipe(Effect.forkChild)
+          yield* Deferred.await(started)
+          expect((yield* Effect.flip(read.account)).message).toContain('mutations are in flight')
+          source.setEquity('700000000')
+          if (outcome === 'interruption') {
+            yield* Fiber.interrupt(mutation)
+          } else {
+            yield* Deferred.succeed(release, undefined)
+            const exit = yield* Fiber.await(mutation)
+            expect(Exit.isFailure(exit)).toBe(true)
+            if (Exit.isFailure(exit)) expect(Cause.hasDies(exit.cause)).toBe(outcome === 'defect')
+          }
+          yield* TestClock.adjust(1_000)
+          yield* settle
+          expect((yield* read.account).value.equityMicros).toBe('700000000')
+          expect(source.calls.length).toBe(24)
+        }),
+      )
+    },
+  )
 
   test('interrupts the polling request exactly once and expires escaped reads on scope closure', async () => {
     const source = fixture()

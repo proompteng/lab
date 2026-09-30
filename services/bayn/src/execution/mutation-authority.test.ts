@@ -412,7 +412,7 @@ describe('final broker mutation authority', () => {
       account: unusedRead,
       positions: unusedRead,
       orders: () => unusedRead,
-      projection: { fresh, snapshot: unusedRead, invalidate: Effect.void },
+      projection: { fresh, snapshot: unusedRead, invalidate: Effect.void, withMutation: (effect) => effect },
     }
     const snapshot = await Effect.runPromise(
       confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), defaultLimits, cached),

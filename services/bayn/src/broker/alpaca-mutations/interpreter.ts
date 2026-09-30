@@ -1,4 +1,4 @@
-import { Cause, Effect } from 'effect'
+import { Cause, Effect, identity } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import type { ExecutionAuthority } from '../../execution/authority'
@@ -113,7 +113,7 @@ const makeMutationDataFirst = (
 ): Effect.Effect<BrokerMutationShape, BrokerMutationError> =>
   Effect.gen(function* () {
     const runtime = yield* Effect.fromResult(resolveMutationCapability(session, authority))
-    const invalidate = session.read.projection?.invalidate ?? Effect.void
+    const withMutation = session.read.projection?.withMutation ?? identity
 
     const submit = Effect.fn('BrokerMutation.submit', {
       attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
@@ -142,7 +142,6 @@ const makeMutationDataFirst = (
           prepared.requestHash,
           runtime.operationTimeoutMs,
           Effect.gen(function* () {
-            yield* invalidate
             const response = yield* client.execute(request)
             const headers = yield* responseHeaders(MutationOperation.Submit, prepared.requestHash, response)
             const body = yield* readSubmitBody(prepared.requestHash, response, headers)
@@ -156,7 +155,7 @@ const makeMutationDataFirst = (
                 observedAt,
               }),
             )
-          }).pipe(Effect.ensuring(invalidate)),
+          }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
@@ -175,7 +174,6 @@ const makeMutationDataFirst = (
           prepared.requestHash,
           runtime.operationTimeoutMs,
           Effect.gen(function* () {
-            yield* invalidate
             const response = yield* client.execute(request)
             const headers = yield* responseHeaders(MutationOperation.Cancel, prepared.requestHash, response)
             const body = yield* readCancelBody(prepared.requestHash, response, headers)
@@ -189,7 +187,7 @@ const makeMutationDataFirst = (
                 observedAt,
               }),
             )
-          }).pipe(Effect.ensuring(invalidate)),
+          }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),

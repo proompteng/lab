@@ -138,13 +138,26 @@ interface MutationHarnessOptions {
   readonly session?: BrokerSessionShape
 }
 
-const projectedSession = (invalidate: Effect.Effect<void>, operationTimeoutMs?: number): BrokerSessionShape => {
+const projectedSession = (
+  lifecycle: (phase: 'begin' | 'end') => Effect.Effect<void>,
+  operationTimeoutMs?: number,
+): BrokerSessionShape => {
   const session = verifiedSession(operationTimeoutMs === undefined ? {} : { operationTimeoutMs })
   return {
     ...session,
     read: {
       ...session.read,
-      projection: { fresh: session.read, snapshot: unexpectedRead('cached snapshot'), invalidate },
+      projection: {
+        fresh: session.read,
+        snapshot: unexpectedRead('cached snapshot'),
+        invalidate: unexpectedRead('unguarded cache invalidation'),
+        withMutation: (effect) =>
+          Effect.acquireUseRelease(
+            lifecycle('begin'),
+            () => effect,
+            () => lifecycle('end'),
+          ),
+      },
     },
   }
 }
@@ -251,11 +264,11 @@ describe('Alpaca broker mutations', () => {
     ['submit', 500],
     ['cancel', 204],
     ['cancel', 500],
-  ] as const)('invalidates the cache before and after %s returns HTTP %i', async (operation, status) => {
+  ] as const)('holds the cache until %s returns HTTP %i', async (operation, status) => {
     const trace: string[] = []
-    const session = projectedSession(
+    const session = projectedSession((phase) =>
       Effect.sync(() => {
-        trace.push('invalidate')
+        trace.push(phase)
       }),
     )
     const client = HttpClient.make((request) => {
@@ -273,7 +286,7 @@ describe('Alpaca broker mutations', () => {
       ),
     )
     expect(exit._tag).toBe(status < 400 ? 'Success' : 'Failure')
-    expect(trace).toEqual(['invalidate', 'request', 'invalidate'])
+    expect(trace).toEqual(['begin', 'request', 'end'])
   })
 
   test('returns closed request encoding failures without throwing', () => {
@@ -978,9 +991,10 @@ describe('Alpaca broker mutations', () => {
     let interrupted = false
     let invalidations = 0
     const session = projectedSession(
-      Effect.sync(() => {
-        invalidations += 1
-      }),
+      () =>
+        Effect.sync(() => {
+          invalidations += 1
+        }),
       10,
     )
     const client = HttpClient.make(() => {
@@ -1089,7 +1103,7 @@ describe('Alpaca broker mutations', () => {
             Effect.ensuring(Ref.update(finalized, (count) => count + 1)),
           )
         })
-        const session = projectedSession(
+        const session = projectedSession(() =>
           Effect.sync(() => {
             invalidations += 1
           }),

@@ -8,6 +8,7 @@ import {
   OrderCollection,
   SortDirection,
   type AccountConfigurationObservation,
+  type BrokerReadProjection,
   type BrokerReadShape,
   type FillActivityPage,
   type Order,
@@ -52,6 +53,7 @@ interface CachedSnapshot {
 
 type CacheState =
   | { readonly _tag: 'Invalidated'; readonly generation: number }
+  | { readonly _tag: 'Mutating'; readonly generation: number; readonly pendingMutations: number }
   | { readonly _tag: 'Ready'; readonly generation: number; readonly value: CachedSnapshot }
   | { readonly _tag: 'Failed'; readonly generation: number; readonly error: BrokerReadError }
 
@@ -89,13 +91,39 @@ export const makeCachedBrokerRead = (
     const pollTimeoutMs = Math.min(config.maxAgeMs - config.pollIntervalMs, config.maxAgeMs / 2)
     const invalidate = Ref.update(
       state,
-      (current): CacheState => ({ _tag: 'Invalidated', generation: current.generation + 1 }),
+      (current): CacheState =>
+        current._tag === 'Mutating'
+          ? { ...current, generation: current.generation + 1 }
+          : { _tag: 'Invalidated', generation: current.generation + 1 },
     ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
+    const beginMutation = Ref.update(
+      state,
+      (current): CacheState => ({
+        _tag: 'Mutating',
+        generation: current.generation + 1,
+        pendingMutations: current._tag === 'Mutating' ? current.pendingMutations + 1 : 1,
+      }),
+    ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
+    const endMutation = Ref.update(
+      state,
+      (current): CacheState =>
+        current._tag === 'Mutating' && current.pendingMutations > 1
+          ? { ...current, generation: current.generation + 1, pendingMutations: current.pendingMutations - 1 }
+          : { _tag: 'Invalidated', generation: current.generation + 1 },
+    ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
+    const withMutation: BrokerReadProjection['withMutation'] = (effect) =>
+      Effect.acquireUseRelease(
+        beginMutation,
+        () => effect,
+        () => endMutation,
+      )
     yield* Effect.addFinalizer(() => invalidate)
     const poll = Effect.gen(function* () {
       const startedAt = yield* Clock.currentTimeMillis
       yield* Ref.set(nextPollAt, startedAt + config.pollIntervalMs)
-      const generation = (yield* Ref.get(state)).generation
+      const current = yield* Ref.get(state)
+      if (current._tag === 'Mutating') return
+      const generation = current.generation
       const value = yield* Effect.all(
         {
           snapshot: readStableBrokerSnapshot(fresh, currentUtcInstant).pipe(
@@ -201,6 +229,8 @@ export const makeCachedBrokerRead = (
       const now = yield* Clock.currentTimeMillis
       const current = yield* Ref.get(state)
       if (current._tag === 'Failed') return yield* current.error
+      if (current._tag === 'Mutating')
+        return yield* unavailable('Broker snapshot cache is unavailable while broker mutations are in flight')
       if (current._tag === 'Invalidated')
         return yield* unavailable('Broker snapshot cache is waiting for a poll after invalidation')
       if (now < current.value.observedAtMs || now - current.value.observedAtMs >= config.maxAgeMs)
@@ -210,7 +240,7 @@ export const makeCachedBrokerRead = (
 
     return {
       ...fresh,
-      projection: { fresh, invalidate, snapshot: cached.pipe(Effect.map((value) => value.snapshot)) },
+      projection: { fresh, invalidate, withMutation, snapshot: cached.pipe(Effect.map((value) => value.snapshot)) },
       account: cached.pipe(Effect.map((value) => value.snapshot.account)),
       positions: cached.pipe(Effect.map((value) => value.snapshot.positions)),
       accountConfiguration: cached.pipe(Effect.map((value) => value.configuration)),

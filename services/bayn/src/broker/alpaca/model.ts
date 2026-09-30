@@ -411,6 +411,7 @@ export interface BrokerReadProjection {
   readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
   readonly invalidate: Effect.Effect<void>
+  readonly withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
 }
 
 export interface BrokerReadShape {
