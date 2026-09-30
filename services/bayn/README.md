@@ -66,11 +66,21 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
-Entry observations evaluate candidate availability independently. Missing or late candidate bars, and missing, late,
-or decision-time-stale candidate quotes or trades exclude that candidate with an explicit reason while other candidates
-remain eligible for evaluation. SPY is the mandatory benchmark. Source identity, canonical ordering, watermarks,
-finality, and premature data still fail the whole observation. Raw candidate rows and their exclusions remain in the
-hashed snapshot for revalidation.
+Entry observations evaluate candidate availability independently. The active Jev protocol binds
+`bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
+at or after the lookback start and available by observation, and 30 consecutive minute bars with their matching rolling feature.
+The quote may precede the completed bar boundary. Neither a post-range trade nor a trade within the quote-age limit
+is required. Jev receives the trade's actual age as context, not as an executable price. Quote and trade ingestion
+delays still obey the feed bound. Missing input, a stale quote, or late input excludes that candidate.
+SPY retains the mandatory benchmark evidence contract. Source identity, canonical ordering, watermarks, finality,
+and premature data still fail the whole observation. Raw candidate rows, exclusions, and all observed matching
+feature receipts remain in the hashed snapshot, including features for rejected candidates.
+
+Missing minute bars are reported with their timestamps. A complete raw window without a matching observed feature
+has a separate reason. The IEX feed can omit a minute when its trades do not qualify for a bar; see Alpaca's
+[minute-bar rules](https://alpaca.markets/learn/stock-minute-bars). Bayn neither creates substitute bars nor combines
+30 nonconsecutive bars into a 30-minute feature. Stored observations without the new evidence policy reproduce
+their original contract. The active runtime selects the new policy explicitly.
 
 Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
 alone cannot authorize a no-entry decision. A version-two or version-three entry batch with every candidate excluded by
@@ -272,7 +282,8 @@ The projection yields to the Node event loop every 256 consumed records, includi
 assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
 cancellation wait. Incorporation order and committed offsets retain the same rules.
 
-The worker joins a completed feature window to its exact raw bar revisions and independently fresh quotes/trades.
+The worker joins a completed feature window to its exact raw bar revisions, a fresh executable quote, and the
+trade evidence required by the bound candidate policy.
 Corrections invalidate an old feature until its replacement matches. Missing candidates produce exclusions;
 missing benchmark data or absence of every candidate makes the observation unavailable. Streaming failures never
 silently switch to the archive path. Reconciliation and the existing close-window recovery remain available.
@@ -283,6 +294,42 @@ backfill path. See [streaming operations and replay](src/market-data/streaming/R
 recovery behavior, and evidence boundaries.
 
 ## Operations
+
+### Private inference operating-cost report
+
+Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
+Jev requests across all cycles for one account and exchange-session date, including blocked and no-trade cycles:
+
+```sh
+bayn-inference-cost --session 2026-01-02 --rate-card /private/inference-rates.json
+# An already exported, private evidence cut can be evaluated without network or credential access:
+bayn-inference-cost --evidence /private/inference-evidence.json --rate-card /private/inference-rates.json
+```
+
+The database mode requires `BAYN_POSTGRES_URL`, `BAYN_ALPACA_ACCOUNT_ID`, and the normal PostgreSQL TLS settings.
+It does not acquire a broker client, inference client, writer fence, or execution authority. The account and session
+filter execute in a repeatable-read, read-only transaction. More than 10,000 claimed requests fails explicitly rather
+than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
+endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
+
+Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has `provider: "typesafe"`, an exact `model`,
+`currency: "USD"`, a `source` description, canonical UTC `effectiveFrom` / exclusive `effectiveUntil` instants, and
+`inputMicrosPerMillionTokens` / `outputMicrosPerMillionTokens` as unsigned decimal integer strings. Supply the tariff
+applicable to the requested period; a list price is an estimate, not proof of a negotiated rate or an invoice. Model
+intervals may not overlap. Missing model/date coverage is unpriced, not free. An explicit zero output rate is valid.
+
+The report verifies immutable request, receipt, rejected-response, and resolution hashes. A rejected or abandoned
+decision can still carry billable usage. A claim without retained usage stays unknown: it does not prove either that
+the provider received a request or that no charge occurred. Identical repeated evidence is deduplicated by request
+identity; conflicting duplicates fail. Token counts are safe integers. Cost arithmetic retains pico-USD precision
+and rounds the aggregate upward to micro-USD only once. These are metered estimates, not invoice-reconciled costs.
+
+`knownEstimatedCostMicros` is the priced, recorded subtotal. `estimatedTotalCostMicros` is null whenever any claimed
+request has unknown usage or any metered request is unpriced. `invoiceReconciled` remains false. The account binding,
+session, as-of cut, evidence hashes, tariff hashes, and report hash make an exported report reproducible. This command
+does not write to TigerBeetle or change the broker's cash balance. A strategy economic report may subtract the supported
+operating-cost estimate from trading P&L while retaining its incomplete-coverage status; provider invoice reconciliation,
+credits, taxes, shared subscriptions, data costs, and allocated infrastructure costs remain separate evidence requirements.
 
 Normal delivery uses the shared Kargo path:
 

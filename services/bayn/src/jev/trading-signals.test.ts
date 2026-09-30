@@ -4,6 +4,7 @@ import { Result } from 'effect'
 import technicalFixture from '../market-data/features/fixtures/technical-indicators-v1.json'
 import { decodeTechnicalMarketFeature, TechnicalReadiness } from '../market-data/features/technical-contract'
 import { featureBarContentHash } from '../market-data/features/contract'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { canonicalHashV1 } from '../hash'
 import { incorporateMarketRecord } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from '../market-data/streaming/snapshot'
@@ -12,7 +13,7 @@ import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import { decodeJevResponse, jevModel, prepareJevRequest } from './contract'
 
-const snapshotWithTechnical = () => {
+const snapshotWithTechnical = (candidateTradeMissing = false) => {
   const { snapshot, cut, query, protocol } = streamingFixture()
   const rolling = snapshot.manifest.streaming.features.find((entry) => entry.value.material.symbol === 'AAPL')
   const first = snapshot.bars.find((bar) => bar.symbol === 'AAPL')
@@ -63,8 +64,10 @@ const snapshotWithTechnical = () => {
     }),
   )
   const topic = 'torghut.technical-features.v1'
+  const tradeHistory = new Map(cut.projection.tradeHistory)
+  if (candidateTradeMissing) tradeHistory.delete('AAPL')
   const projection = incorporateMarketRecord(
-    { ...cut.projection, technicalTopic: topic },
+    { ...cut.projection, tradeHistory, technicalTopic: topic },
     {
       topic,
       partition: 0,
@@ -94,12 +97,24 @@ const snapshotWithTechnical = () => {
           ].sort((a, b) => a.topic.localeCompare(b.topic)),
         },
       },
-      query,
+      candidateTradeMissing
+        ? { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade }
+        : query,
     ),
   )
 }
 
 describe('Jev trading signal input', () => {
+  test('retains matched technical evidence for an excluded candidate without requesting a signal', () => {
+    const snapshot = snapshotWithTechnical(true)
+    expect(snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === 'AAPL')).toBe(true)
+    expect(snapshot.manifest.streaming.features.some((entry) => entry.value.material.symbol === 'AAPL')).toBe(true)
+    expect(
+      snapshot.manifest.streaming.technical?.features.some((entry) => entry.value.material.symbol === 'AAPL'),
+    ).toBe(true)
+    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isSuccess(makeJevTradingSignalRequest(snapshot, 'AMZN', 'SPY'))).toBe(true)
+  })
   test('reproduces the recorded simulated source before constructing the same signal input', () => {
     const fixture = simulationFixture()
     const snapshot = Result.getOrThrow(constructSimulatedSnapshot(fixture.cursor, fixture.source, fixture.query))

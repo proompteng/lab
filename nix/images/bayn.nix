@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.behavior.v2, verified by the production executable.
-  strategyBehaviorHash = "33495c0041be883e5dd26f5c3db78861dab2965fc4e84e0c72242eec485d93c1";
+  # SHA-256 identity for bayn.jev.behavior.v3, verified by the production executable.
+  strategyBehaviorHash = "a63b43489d8d386319e0816157766da9225ced9482cef51f547beb6cee3254c0";
   # Canonical hash of the compiled bayn.jev.protocol.v1 document.
-  strategyParameterHash = "ec39d233bfbaed8f88ab130b5b4cfda316c3f5bab7f48e17ee377db69eb1a444";
+  strategyParameterHash = "86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "f52bbd44648727b798a0b1ee312722c119279770aeceb6a25f5d8ad52f79d94d";
+  strategyProtocolHash = "131371357a091ac5d09f5a3dd1585b84cb5509e334beef99ee9d5f14600cf908";
   # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
   # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
   executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
@@ -29,6 +29,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
   '';
+  inferenceCostCommand = pkgs.writeShellScriptBin "bayn-inference-cost" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/inference-cost-command.js" "$@"
+  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
@@ -38,7 +43,7 @@ let
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/backtest-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/backtest-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -70,6 +75,7 @@ let
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/inference-cost-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/backtest-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/streaming-diagnostics-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
@@ -121,6 +127,7 @@ import ./bun-workspace-service.nix {
     nodejs
     pkgs.cacert
     forwardPerformanceCommand
+    inferenceCostCommand
     backtestCommand
   ];
   exposedPorts = {

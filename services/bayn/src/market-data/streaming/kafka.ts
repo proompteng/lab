@@ -42,7 +42,7 @@ export interface KafkaMarketConfig {
   readonly timestampPolicy: KafkaBootstrapTimestampPolicy
 }
 export class KafkaMarketFailure extends Data.TaggedError('KafkaMarketFailure')<{
-  readonly operation: 'connect' | 'bootstrap' | 'consume' | 'commit' | 'close' | 'read'
+  readonly operation: 'connect' | 'bootstrap' | 'consume' | 'close' | 'read'
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -64,7 +64,6 @@ export interface KafkaProjectionTransport {
     positions: readonly KafkaPartitionPosition[],
     invalidated: (cause: unknown) => void,
   ) => Promise<KafkaProjectionStream>
-  readonly commit: (records: readonly KafkaConsumedRecord[]) => Promise<void>
   readonly close: () => Promise<void>
 }
 export type KafkaProjectionTransportFactory = (config: KafkaMarketConfig, epoch: string) => KafkaProjectionTransport
@@ -198,15 +197,6 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
         },
       }
     },
-    commit: (records) =>
-      consumer.commit({
-        offsets: records.map((record) => ({
-          topic: record.topic,
-          partition: record.partition,
-          offset: BigInt(record.offset) + 1n,
-          leaderEpoch: record.leaderEpoch,
-        })),
-      }),
     close,
   }
 }
@@ -296,7 +286,7 @@ export const makeKafkaMarketProjection = (
           partitions,
         }
         const evidence = bootstrap
-        let invalidation: unknown
+        let invalidation: KafkaMarketFailure | undefined
         positions = partitions.map((partition) => ({
           topic: partition.topic,
           partition: partition.partition,
@@ -310,9 +300,10 @@ export const makeKafkaMarketProjection = (
               offset: partition.startOffset,
             })),
             (cause) => {
-              invalidation = cause
+              if (projection.epoch !== epoch) return
+              invalidation = failure('consume', 'Kafka assignment invalidated', cause)
               ready = false
-              lastFailure = failure('consume', 'Kafka assignment invalidated', cause)
+              lastFailure = invalidation
             },
           ),
         )
@@ -365,8 +356,7 @@ export const makeKafkaMarketProjection = (
           let announced = false
           while (true) {
             yield* Effect.sleep(Duration.seconds(1))
-            if (invalidation !== undefined)
-              return yield* failure('consume', 'Kafka assignment invalidated', invalidation)
+            if (invalidation !== undefined) return yield* invalidation
             const drained = source.drainedPositions()
             const incorporated = new Map(
               positions.map((position) => [topicPartitionKey(position.topic, position.partition), position]),
@@ -397,14 +387,6 @@ export const makeKafkaMarketProjection = (
                 rejectedPartitions: projection.rejections.size,
               })
             }
-            if (terminals.size > 0) {
-              const committed = [...terminals.values()]
-              yield* operation('commit', () => transport.commit(committed))
-              for (const record of committed) {
-                const key = topicPartitionKey(record.topic, record.partition)
-                if (terminals.get(key) === record) terminals.delete(key)
-              }
-            }
           }
         })
         const report = Effect.gen(function* () {
@@ -423,6 +405,9 @@ export const makeKafkaMarketProjection = (
               epoch,
               sequence: projection.sequence,
               bootstrapComplete: ready,
+              available: ready && lastFailure === undefined,
+              failureOperation: lastFailure?.operation ?? null,
+              failureCodes: lastFailure === undefined ? null : safeKafkaFailureCodes(lastFailure.cause),
               queuedRecords: source.queuedRecords(),
               queueHighWaterMark: 256,
               endOffsetLookupStartedAtMs: lookupStartedAtMs,
@@ -477,7 +462,7 @@ export const makeKafkaMarketProjection = (
       readForLiquidation: readCut(false),
       status: Effect.sync(() => ({
         epoch: projection.epoch,
-        ready,
+        ready: ready && lastFailure === undefined,
         sequence: projection.sequence,
         ...(lastFailure === undefined ? {} : { failure: lastFailure.message }),
       })),
