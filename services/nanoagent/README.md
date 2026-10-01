@@ -11,6 +11,24 @@ unauthenticated.
 
 ## Current API
 
+Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves authenticated gRPC
+over HTTP/2 without TLS on its existing port 8080. Each unary and streaming RPC checks the same per-MicroVM bootstrap
+credential in `authorization` metadata. This migration retains the existing transport trust and requires no SPIRE,
+service mesh, additional listener, or Talos configuration.
+
+The service covers editor startup, bounded file discovery and atomic mutations, PTY lifecycle, Codex calls and
+approvals, file/Codex server streams, and a bidirectional terminal stream. File content travels as protobuf bytes.
+Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
+this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
+
+Authenticated `/v1/evidence` advertises `guestProtocolVersion: 1`. Tengri selects gRPC for version 1 and retains the
+legacy HTTP API for running guests that omit the field. An unsupported version, identity mismatch, or RPC failure
+fails visibly. RPC failures never retry through HTTP. Existing guests retain their image until sleep/resume; the
+current guest keeps the HTTP routes below so an older controller can still operate it during rollback.
+
+Probes, evidence, editor traffic, and arbitrary application previews continue to use HTTP/WebSocket.
+
 - `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes;
 - `GET /v1/evidence`: guest boot ID, kernel release, architecture, and microVM identity;
 - `GET /v1/files`, `GET /v1/files/content`, and `GET /v1/files/search`: bounded file discovery and reads;
@@ -32,6 +50,8 @@ stops searches and event streams.
 File-content reads return a strong SHA-256 ETag. Writes require `expectedRevision`, either the exact lowercase
 64-hex revision from the read or `missing` for create-only writes. Successful writes return the new revision; stale
 writes return HTTP 409. A workspace lock serializes revision comparison and mutation for Nanoagent API writers.
+gRPC carries the revision in the response and reports stale writes as `ABORTED` with `OperationFailure` details;
+Tengri preserves the existing public conflict response and current revision.
 Direct filesystem writers, including shell commands and Codex, do not participate in that lock; their changes are
 reported through file events and require editor reconciliation. The API does not claim atomic conditional writes
 against arbitrary external processes.
@@ -118,6 +138,8 @@ The owner-scoped browser-to-guest flow, replay behavior, and live acceptance pro
 
 ```bash
 cd services/nanoagent
+# Requires Buf and the module's Go toolchain; generator versions are pinned in the script.
+bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
 bash -n validate-rootfs.sh validate-rootfs.test.sh

@@ -70,15 +70,21 @@ type terminalDelivery struct {
 	reason     string
 }
 
+type terminalWriter interface {
+	Write(context.Context, websocket.MessageType, []byte) error
+	Close(websocket.StatusCode, string) error
+	CloseNow() error
+}
+
 type terminalConnection struct {
-	connection *websocket.Conn
+	connection terminalWriter
 	closed     atomic.Bool
 	done       chan struct{}
 	outbound   chan terminalDelivery
 	token      string
 }
 
-func newTerminalConnection(connection *websocket.Conn, token string) *terminalConnection {
+func newTerminalConnection(connection terminalWriter, token string) *terminalConnection {
 	result := &terminalConnection{
 		connection: connection,
 		done:       make(chan struct{}),
@@ -172,6 +178,7 @@ type terminalSession struct {
 	processCleanupOnce     sync.Once
 	processCleanupDone     chan struct{}
 	terminal               *os.File
+	inputPermit            chan struct{}
 	mu                     sync.Mutex
 	ioMu                   sync.Mutex
 	sequence               uint32
@@ -693,7 +700,7 @@ func (session *terminalSession) append(payload []byte) {
 	}
 }
 
-func (session *terminalSession) attach(connection *websocket.Conn, token string, since uint32) (*terminalConnection, error) {
+func (session *terminalSession) attach(connection terminalWriter, token string, since uint32) (*terminalConnection, error) {
 	if err := validateReconnectToken(token); err != nil {
 		return nil, err
 	}
@@ -783,22 +790,53 @@ func (session *terminalSession) bufferStart() uint32 {
 }
 
 func (session *terminalSession) input(payload []byte) {
+	_ = session.inputContext(context.Background(), payload)
+}
+
+func (session *terminalSession) inputContext(ctx context.Context, payload []byte) error {
 	if len(payload) == 0 {
-		return
+		return nil
 	}
 	session.mu.Lock()
 	if session.closed || session.closing {
 		session.mu.Unlock()
-		return
+		return nil
 	}
 	session.lastActivityAt = time.Now().UTC()
 	terminal := session.terminal
+	if session.inputPermit == nil {
+		session.inputPermit = make(chan struct{}, 1)
+		session.inputPermit <- struct{}{}
+	}
+	permit := session.inputPermit
 	session.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-permit:
+	}
+	defer func() { permit <- struct{}{} }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Keep terminal writes outside ioMu so closeTerminal can interrupt a
 	// blocked PTY write during session shutdown. os.File permits concurrent
 	// use of Write and Close; the control operations below still serialize
 	// their descriptor access with Close.
-	_, _ = terminal.Write(payload)
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = terminal.SetWriteDeadline(time.Now())
+		close(interrupted)
+	})
+	_, err := terminal.Write(payload)
+	if !stop() {
+		<-interrupted
+	}
+	_ = terminal.SetWriteDeadline(time.Time{})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 func (session *terminalSession) resize(columns, rows uint16) {
