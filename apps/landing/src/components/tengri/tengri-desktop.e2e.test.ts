@@ -3845,6 +3845,7 @@ test('keeps streamed output expanded when replay recovery moves it into restored
   const chrome = page.getByRole('region', { name: 'Chrome window' })
   await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Run the project checks.')
   await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect(chrome.getByRole('button', { name: 'Stop response' })).toBeEnabled()
   await emitCodexEvent(page, {
     sequence: 1,
     threadId: 'thread-1',
