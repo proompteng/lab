@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -728,71 +726,6 @@ func (files *fileWatcher) invalidateDirectoryLocked(directory string) {
 		}
 	}
 	delete(files.watched, directory)
-}
-
-func (server *apiServer) handleWatchFiles(writer http.ResponseWriter, request *http.Request) {
-	target, err := server.workspace.resolveExisting(request.URL.Query().Get("path"))
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	info, err := os.Stat(target)
-	if err != nil || !info.IsDir() {
-		writeAPIError(writer, http.StatusBadRequest, "watch path must be a directory")
-		return
-	}
-	flusher, ok := writer.(http.Flusher)
-	if !ok {
-		writeAPIError(writer, http.StatusInternalServerError, "streaming is unavailable")
-		return
-	}
-	// An initial Tengri subscription omits the cursor and tails from the current
-	// sequence. Explicit cursors, including zero, retain replay semantics for
-	// reconnects and direct Nanoagent clients.
-	var id uint64
-	var events <-chan fileEvent
-	if request.URL.Query().Has("after") {
-		after, parseErr := strconv.ParseUint(request.URL.Query().Get("after"), 10, 64)
-		if parseErr != nil {
-			writeAPIError(writer, http.StatusBadRequest, "after must be an unsigned sequence")
-			return
-		}
-		id, events, err = server.fileWatcher.subscribe(after, server.workspace.displayPath(target), target)
-	} else {
-		id, events, err = server.fileWatcher.subscribeCurrent(server.workspace.displayPath(target), target)
-	}
-	if err != nil {
-		writeAPIError(writer, http.StatusTooManyRequests, err.Error())
-		return
-	}
-	defer server.fileWatcher.unsubscribe(id)
-	writer.Header().Set("Content-Type", "application/x-ndjson")
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.Header().Set("X-Content-Type-Options", "nosniff")
-	writer.WriteHeader(http.StatusOK)
-	flusher.Flush()
-	heartbeat := time.NewTicker(15 * time.Second)
-	defer heartbeat.Stop()
-	encoder := json.NewEncoder(writer)
-	for {
-		select {
-		case <-request.Context().Done():
-			return
-		case event, open := <-events:
-			if !open {
-				return
-			}
-			if err := encoder.Encode(event); err != nil {
-				return
-			}
-			flusher.Flush()
-		case <-heartbeat.C:
-			if _, err := writer.Write([]byte("\n")); err != nil {
-				return
-			}
-			flusher.Flush()
-		}
-	}
 }
 
 func fileEventMatchesPrefix(event fileEvent, prefix string) bool {

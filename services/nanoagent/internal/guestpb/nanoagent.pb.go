@@ -2074,14 +2074,14 @@ func (x *CodexEvent) GetRawJson() []byte {
 	return nil
 }
 
-// Preserves legacy operation semantics during mixed-version rollout without
-// leaking filesystem or credential details through transport errors.
+// Operation details preserve revision conflicts and bounded-resource failures
+// without leaking filesystem or credential details.
 type OperationFailure struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	HttpStatus      uint32                 `protobuf:"varint,1,opt,name=http_status,json=httpStatus,proto3" json:"http_status,omitempty"`
-	CurrentRevision string                 `protobuf:"bytes,2,opt,name=current_revision,json=currentRevision,proto3" json:"current_revision,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	CurrentRevision  string                 `protobuf:"bytes,2,opt,name=current_revision,json=currentRevision,proto3" json:"current_revision,omitempty"`
+	ResourceTooLarge bool                   `protobuf:"varint,3,opt,name=resource_too_large,json=resourceTooLarge,proto3" json:"resource_too_large,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *OperationFailure) Reset() {
@@ -2114,18 +2114,18 @@ func (*OperationFailure) Descriptor() ([]byte, []int) {
 	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{33}
 }
 
-func (x *OperationFailure) GetHttpStatus() uint32 {
-	if x != nil {
-		return x.HttpStatus
-	}
-	return 0
-}
-
 func (x *OperationFailure) GetCurrentRevision() string {
 	if x != nil {
 		return x.CurrentRevision
 	}
 	return ""
+}
+
+func (x *OperationFailure) GetResourceTooLarge() bool {
+	if x != nil {
+		return x.ResourceTooLarge
+	}
+	return false
 }
 
 var File_proompteng_runtime_guest_v1_nanoagent_proto protoreflect.FileDescriptor
@@ -2280,11 +2280,10 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
 	"\vapproval_id\x18\x03 \x01(\tR\n" +
 	"approvalId\x12\x19\n" +
-	"\braw_json\x18\x04 \x01(\fR\arawJson\"^\n" +
-	"\x10OperationFailure\x12\x1f\n" +
-	"\vhttp_status\x18\x01 \x01(\rR\n" +
-	"httpStatus\x12)\n" +
-	"\x10current_revision\x18\x02 \x01(\tR\x0fcurrentRevision2\xde\r\n" +
+	"\braw_json\x18\x04 \x01(\fR\arawJson\"~\n" +
+	"\x10OperationFailure\x12)\n" +
+	"\x10current_revision\x18\x02 \x01(\tR\x0fcurrentRevision\x12,\n" +
+	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLargeJ\x04\b\x01\x10\x02R\vhttp_status2\xde\r\n" +
 	"\x10NanoagentService\x12U\n" +
 	"\aGetInfo\x12\".proompteng.runtime.guest.v1.Empty\x1a&.proompteng.runtime.guest.v1.GuestInfo\x12U\n" +
 	"\n" +

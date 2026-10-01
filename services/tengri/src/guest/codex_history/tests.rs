@@ -3,52 +3,39 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use axum::{Json, Router, http::StatusCode, routing::post};
+use crate::guest::rpc::{
+    proto,
+    test_server::{TestServer, TestService},
+};
+use reqwest::StatusCode;
 
 use super::*;
 
 struct Fixture {
     client: GuestClient,
     requests: Arc<Mutex<Vec<Value>>>,
-    server: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.server.abort();
-    }
+    _server: TestServer,
 }
 
 async fn fixture(replies: Vec<(StatusCode, Value)>) -> Fixture {
     let replies = Arc::new(Mutex::new(VecDeque::from(replies)));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let recorded = requests.clone();
-    let router = Router::new().route(
-        "/v1/codex/call",
-        post(move |Json(request): Json<Value>| {
-            recorded.lock().unwrap().push(request);
-            let reply = replies
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("unexpected Codex call");
-            async move { (reply.0, Json(reply.1)) }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    let server = TestServer::start(TestService {
+        codex_call: Some(Arc::new(move |request| {
+            let request = request.into_inner();
+            recorded.lock().unwrap().push(json!({"method": request.method, "params": serde_json::from_slice::<Value>(&request.params_json).unwrap()}));
+            let (status, reply) = replies.lock().unwrap().pop_front().expect("unexpected Codex call");
+            if status != StatusCode::OK {
+                return Err(if status == StatusCode::NOT_FOUND { tonic::Status::not_found(reply.to_string()) } else { tonic::Status::unavailable(reply.to_string()) });
+            }
+            Ok(proto::CodexResult { result_json: serde_json::to_vec(&reply["result"]).unwrap(), event_sequence: reply["eventSequence"].as_u64().unwrap() })
+        })), ..Default::default()
+    }).await;
     Fixture {
-        client: GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            rpc: None,
-            token: "fixture-token".into(),
-        },
+        client: server.guest.clone(),
         requests,
-        server,
+        _server: server,
     }
 }
 

@@ -4,6 +4,8 @@ use tonic::{Request, Status, metadata::MetadataValue, transport::Channel};
 use super::*;
 
 #[cfg(test)]
+pub(super) mod test_server;
+#[cfg(test)]
 mod tests;
 
 pub(crate) mod proto {
@@ -48,6 +50,31 @@ impl RpcClient {
             request.set_timeout(timeout);
         }
         request
+    }
+
+    pub async fn verify_identity(&self, agent_id: &str) -> Result<(), GuestError> {
+        let info = self
+            .client
+            .clone()
+            .get_info(self.request(proto::Empty {}, Some(GUEST_UNARY_TIMEOUT)))
+            .await
+            .map_err(|error| {
+                if error.code() == tonic::Code::Unimplemented {
+                    GuestError::Api { status: StatusCode::SERVICE_UNAVAILABLE, message: "Nanoagent requires gRPC. Sleep and resume the agent to use the current guest image.".into() }
+                } else { rpc_error(error) }
+            })?
+            .into_inner();
+        if info.microvm_id != agent_id {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message: "Nanoagent identity does not match the requested MicroVM".into(),
+            });
+        }
+        if info.protocol_version != 1 {
+            return Err(GuestError::Api { status: StatusCode::BAD_GATEWAY,
+                message: "Nanoagent uses an unsupported guest protocol version. Sleep and resume the agent to use the current guest image.".into() });
+        }
+        Ok(())
     }
 
     pub async fn open_editor(&self) -> Result<(), GuestError> {
@@ -315,7 +342,7 @@ impl RpcClient {
             .into_inner();
         Ok(CodexCallResponse {
             result: serde_json::from_slice(&result.result_json)?,
-            event_sequence: Some(result.event_sequence),
+            event_sequence: result.event_sequence,
         })
     }
     pub async fn codex_login(&self) -> Result<CodexLoginSnapshot, GuestError> {
@@ -465,9 +492,8 @@ pub(crate) fn rpc_error(error: Status) -> GuestError {
             if detail.type_url == "type.googleapis.com/proompteng.runtime.guest.v1.OperationFailure"
                 && let Ok(failure) = proto::OperationFailure::decode(detail.value.as_slice())
             {
-                if (400..600).contains(&failure.http_status) {
-                    status = StatusCode::from_u16(failure.http_status as u16)
-                        .unwrap_or(StatusCode::BAD_GATEWAY);
+                if failure.resource_too_large {
+                    status = StatusCode::PAYLOAD_TOO_LARGE;
                 }
                 if !failure.current_revision.is_empty() {
                     message = serde_json::json!({"error": message, "currentRevision": failure.current_revision}).to_string();
