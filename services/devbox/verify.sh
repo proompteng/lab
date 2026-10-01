@@ -15,6 +15,7 @@ cargo --version
 docker version
 docker run --rm hello-world
 bun run --filter @proompteng/codex build
+(cd services/bumba && node -e 'require("tree-sitter-json")')
 bun -e 'const { chromium } = require("@playwright/test"); const browser = await chromium.launch(); const page = await browser.newPage(); await page.setContent("<title>devbox-ready</title>"); if (await page.title() !== "devbox-ready") throw new Error("browser check failed"); await browser.close();'
 (cd services/nanoagent && GOWORK=off go test ./...)
 kubectl --context galactic-lan -n default auth whoami

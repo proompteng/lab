@@ -2,10 +2,18 @@
 
 Tengri is the standalone Rust owner of `runtime.proompteng.ai/v1alpha1 MicroVM` resources. It accepts only signed,
 authenticated internal gRPC calls, derives one deterministic MicroVM name per GitHub subject, and projects each CR into
-an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
+a `kata-fc` Pod with guest administrator access and a 16 GiB persistent home PVC.
 
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
+
+The guest user retains UID/GID 1000 and can become root with passwordless `sudo`. The writable root filesystem,
+privilege escalation, full Linux capabilities, and unconfined guest syscalls allow administration inside the VM.
+`privileged: false`, the `kata-fc` runtime, absent host namespaces/mounts, and disabled service-account mounting retain
+the VM boundary. System-root changes are ephemeral and reset when the guest container is recreated; the home and
+workspace survive sleep/resume.
+The ApplicationSet permits this guest profile through Tengri's namespace admission policy. The control-plane
+Deployment retains its non-root UID, dropped capabilities, read-only root, and disabled privilege escalation.
 
 Terminal creation has one protocol: every client supplies a stable 16-to-128-character `creation_id`, and Nanoagent
 returns that exact identity with the session. Retries reuse the same identity and are idempotent. Tengri rejects
@@ -28,9 +36,8 @@ cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 2
 page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
-The guest pins Codex 0.153.4 in `services/nanoagent/bootstrap-codex.sh`. Its
-[item-page contract](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1743-L1760)
-returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
+The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+`gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
 

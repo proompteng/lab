@@ -72,3 +72,45 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 
 An alert clears only when its source-of-truth state changes and the next bounded projection or health probe confirms
 recovery.
+
+## Database latency investigation
+
+The `bayn-postgres-monitoring` ConfigMap adds PostgreSQL 18 catalog queries to the existing CNPG scrape; it does not
+replace the platform's default metrics. Queries run read-only under the existing metrics role, without grants to
+application tables. Neither credentials, SQL text, process identifiers nor account data are exported as labels.
+
+1. Confirm both `cnpg_bayn_io_timing_relation_enabled` and `cnpg_bayn_io_timing_wal_enabled` are one on the relevant
+   primary/standby and that the scrape is healthy. A zero timing counter while collection is disabled is not proof of
+   fast I/O. Inspect `cnpg_bayn_io_stats_reset_seconds` and start with rates over a bounded interval after collection
+   was enabled. PostgreSQL 18 moved WAL write/sync statistics to `pg_stat_io`; do not query the removed `pg_stat_wal`
+   timing columns.
+2. Correlate `bayn.postgres.commit`, execution deadline/cancellation spans and database log timestamps with
+   `cnpg_bayn_waits_backends`. `IPC/SyncRep` identifies synchronous acknowledgement waiting; `IO/WALSync` identifies
+   WAL synchronization. A scrape samples current wait states and may miss short waits.
+   `cnpg_bayn_waits_active_query_age_seconds` is query age, not time spent in its current wait state.
+3. Compare primary and standby rates of `cnpg_bayn_io_write_seconds_total` and
+   `cnpg_bayn_io_fsync_seconds_total` by `object` and `backend_type`, alongside the default checkpointer counters.
+   Differentiate WAL flush, checkpoint file sync and relation I/O before attributing every slow commit to one cause.
+4. Check connected, streaming and synchronous standby counts in `cnpg_bayn_replication_*`, recent flush-lag coverage,
+   reply ages and outstanding WAL bytes. No connected standby is not zero replication latency. Flush lag can become
+   null during idle periods; pair it with `measured_flush_lag_standbys` and the sender counts.
+5. Correlate the same interval with the verified PVC/RBD/OSD/device mapping, Ceph commit/apply latency, recovery,
+   scrubbing, device errors and competing writers. A different PVC on the same bottleneck is not storage isolation.
+   Changes to another application's workload require that application's explicit authorization.
+
+Preserve synchronous replication, `fsync`, checksums, statement cancellation and freshness bounds. Do not diagnose a
+storage repair from an idle-only sample. Any changed timing overhead or database load must be measured, and the
+existing durability requirements must remain true through rollout and naturally observed session traffic.
+
+## Allocation and recovery explanations
+
+Inspect `cycle.last.entryAllocationReason` independently of the current cycle: the next session may already exist.
+`TURNOVER_BUDGET_EXHAUSTED` is a read-only explanation of the last retained zero-allocation decision, not permission
+to increase the mandate. `ZERO_ALLOCATION` or absent evidence must not be upgraded to a proven turnover cause.
+Immutable `TARGETS_SATISFIED` records remain unchanged. Closing existing risk may exceed the entry-admission turnover
+ceiling by design; a future hard round-trip budget would require a separately reviewed policy change.
+
+Kafka cycle-failure telemetry records only a bounded invalidation reason and recognized SDK failure codes. The first
+invalidation wins even when a later SDK/cleanup event follows. A recovery event links the prior and replacement
+epochs after required bootstrap barriers complete. Match these events to source freshness and controller progress;
+ready pods or a recovered transport alone do not prove a valid decision window.

@@ -7,6 +7,20 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('accepts model options on conversation operations and rejects invalid choices', () => {
+    for (const action of [
+      { action: 'create-thread', agentId: 'agent-test' },
+      { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' },
+      { action: 'send-turn', agentId: 'agent-test', threadId: 'thread-test', text: 'Read the workspace' },
+    ]) {
+      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol', reasoningEffort: 'high' }).success).toBe(
+        true,
+      )
+      expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol\n' }).success).toBe(false)
+      expect(tengriActionSchema.safeParse({ ...action, reasoningEffort: 'unbounded' }).success).toBe(false)
+    }
+  })
+
   test('editor logout revocation cannot select another owner', () => {
     expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions' }).success).toBe(true)
     expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions', ownerId: 'someone-else' }).success).toBe(
