@@ -52,8 +52,9 @@ existing concurrency; individual captures can burst. Response headers showing on
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
 or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
 journals the next permissible poll time for successful, invalidated and failed captures. Larger captures extend the
-poll cadence rather than adding artificial delays inside a full history scan. Every capture, including repeated
-activation, waits for that deadline before starting its durable ticket and bounded acquisition. Interruption during
+poll cadence rather than adding artificial delays inside a full history scan. Before each capture, including repeated
+activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
+and its database ticket. Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
 the background budget does not impose a global limit on other account callers.

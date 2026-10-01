@@ -50,6 +50,7 @@ describeRestate('Real Restate broker observation journal', () => {
     let fail = false
     const makeObserved = () =>
       makeBaynBrokerObservations(config, {
+        nextPollNotBeforeMs: async () => 0,
         activate: async () => {
           activations += 1
         },

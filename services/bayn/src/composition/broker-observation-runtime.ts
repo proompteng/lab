@@ -57,6 +57,7 @@ export const acquireBrokerObservationRuntime = (
             Effect.flatMap(store, (value) => value.activate),
             { signal },
           ),
+        nextPollNotBeforeMs: (signal) => managed.runPromise(budget.nextPollNotBeforeMs, { signal }),
         poll: (signal) =>
           managed.runPromise(
             Effect.gen(function* () {

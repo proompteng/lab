@@ -18,18 +18,21 @@ const harness = (
     key?: string
     elapsedMs?: number
     now?: () => Promise<number>
+    sleep?: (milliseconds: number) => Promise<void>
   } = {},
 ) => {
   let state: State | null = input.state ?? null
   let activations = 0
   let polls = 0
   let clockReads = 0
+  const sleeps: number[] = []
   const deliveries: Array<{
     parameter: { sourceRevision: string; epoch: number; sequence: number }
     idempotencyKey: string
     delay: { milliseconds: number }
   }> = []
   const object = makeBaynBrokerObservations(config, {
+    nextPollNotBeforeMs: input.runtime?.nextPollNotBeforeMs ?? (async () => 0),
     activate:
       input.runtime?.activate ??
       (async () => {
@@ -52,6 +55,10 @@ const harness = (
       state = value
     },
     run: async (_name: string, action: () => Promise<unknown>) => action(),
+    sleep: async (duration: { milliseconds: number }) => {
+      sleeps.push(duration.milliseconds)
+      await input.sleep?.(duration.milliseconds)
+    },
     genericSend: (delivery: (typeof deliveries)[number]) => {
       deliveries.push(delivery)
     },
@@ -64,7 +71,7 @@ const harness = (
       }
     }
   ).object
-  return { handlers, context, deliveries, calls: () => ({ activations, polls }), state: () => state }
+  return { handlers, context, deliveries, sleeps, calls: () => ({ activations, polls }), state: () => state }
 }
 
 describe('Restate broker observation owner', () => {
@@ -108,7 +115,9 @@ describe('Restate broker observation owner', () => {
         )
         const h = harness({
           now: () => execute(Clock.currentTimeMillis),
+          sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
           runtime: {
+            nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
             poll: (signal) =>
               execute(
                 Effect.gen(function* () {
@@ -142,6 +151,65 @@ describe('Restate broker observation owner', () => {
         expect(h.state()?.epoch).toBe(1)
         expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([20_400, 20_400, 20_400])
         expect(new Set(h.deliveries.map((delivery) => delivery.idempotencyKey)).size).toBe(1)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+  })
+  test('waits durably beyond the inactivity bound before starting an activation capture', async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const execute = Effect.runPromiseWith(yield* Effect.context<never>())
+        const budget = yield* makeBrokerObservationBudget
+        const polls: number[] = []
+        const requests: number[] = []
+        const client = budget.decorate(
+          HttpClient.make((request) =>
+            Effect.gen(function* () {
+              requests.push(yield* Clock.currentTimeMillis)
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response('{}', { headers: { 'x-ratelimit-limit': '100' } }),
+              )
+            }),
+          ),
+        )
+        const h = harness({
+          now: () => execute(Clock.currentTimeMillis),
+          sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
+          runtime: {
+            nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
+            poll: (signal) =>
+              execute(
+                Effect.gen(function* () {
+                  polls.push(yield* Clock.currentTimeMillis)
+                  yield* budget.beginCapture
+                  yield* Effect.all(
+                    Array.from({ length: 52 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
+                    { concurrency: 2 },
+                  )
+                  return {
+                    _tag: 'Published',
+                    snapshotHash: 'c'.repeat(64),
+                    nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
+                  } as const
+                }),
+                { signal },
+              ),
+          },
+        })
+        yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision }))
+        const pending = yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision })).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(config.operationTimeoutMs * 2)
+        expect(h.sleeps).toEqual([62_400])
+        expect(polls).toEqual([0])
+        expect(requests).toHaveLength(52)
+        yield* TestClock.adjust(2_400)
+        expect((yield* Fiber.join(pending)).lastSnapshotHash).toBe('c'.repeat(64))
+        expect(polls).toEqual([0, 62_400])
+        expect(requests.slice(52)).toEqual(Array.from({ length: 52 }, () => 62_400))
+        expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([62_400, 62_400])
+        expect(h.state()?.epoch).toBe(1)
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })

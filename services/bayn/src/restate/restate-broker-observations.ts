@@ -26,6 +26,7 @@ export type BrokerObservationPoll = (
 
 export interface BrokerObservationRuntime {
   readonly activate: (signal: AbortSignal) => Promise<void>
+  readonly nextPollNotBeforeMs: (signal: AbortSignal) => Promise<number>
   readonly poll: (signal: AbortSignal) => Promise<BrokerObservationPoll>
 }
 export interface BrokerObservationOwnerConfig {
@@ -58,16 +59,30 @@ export const makeBaynBrokerObservations = (
       delay: { milliseconds: delayMs },
       idempotencyKey: `broker-observations:${state.sourceRevision}:${state.epoch}:${state.sequence}`,
     })
-  const sample = async (ctx: restate.ObjectContext): Promise<BrokerObservationPoll> => {
+  const sample = async (
+    ctx: restate.ObjectContext,
+    startedAt: number,
+  ): Promise<{ readonly poll: BrokerObservationPoll; readonly startedAt: number }> => {
+    let captureStartedAt = startedAt
     try {
-      return await ctx.run(
+      const notBefore = await ctx.run(
+        'read broker observation budget',
+        () => runtime.nextPollNotBeforeMs(ctx.request().attemptCompletedSignal),
+        { maxRetryAttempts: 0 },
+      )
+      if (notBefore > startedAt) {
+        await ctx.sleep({ milliseconds: notBefore - startedAt })
+        captureStartedAt = await ctx.date.now()
+      }
+      const poll = await ctx.run(
         'poll and publish broker observation',
         () => runtime.poll(ctx.request().attemptCompletedSignal),
         { maxRetryAttempts: 0 },
       )
+      return { poll, startedAt: captureStartedAt }
     } catch {
       ctx.console.warn('Broker observation poll failed before publication')
-      return { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
+      return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }, startedAt: captureStartedAt }
     }
   }
   const nextDelay = (poll: BrokerObservationPoll, startedAt: number, completedAt: number) =>
@@ -93,8 +108,7 @@ export const makeBaynBrokerObservations = (
             () => runtime.activate(ctx.request().attemptCompletedSignal),
             { maxRetryAttempts: 0 },
           )
-        const startedAt = await ctx.date.now()
-        const poll = await sample(ctx)
+        const { poll, startedAt } = await sample(ctx, await ctx.date.now())
         const sameRevision = current?.sourceRevision === config.sourceRevision
         const state: State = {
           sourceRevision: config.sourceRevision,
@@ -119,8 +133,7 @@ export const makeBaynBrokerObservations = (
           tick.sequence !== current.sequence
         )
           return
-        const startedAt = await ctx.date.now()
-        const poll = await sample(ctx)
+        const { poll, startedAt } = await sample(ctx, await ctx.date.now())
         const next: State = {
           sourceRevision: current.sourceRevision,
           epoch: current.epoch,
