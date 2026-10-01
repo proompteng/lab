@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronRight, FileDiff, ListChecks, LoaderCircle, ShieldCheck, TerminalSquare } from 'lucide-react'
+import { ChevronRight, FileDiff, ListChecks, LoaderCircle, ShieldCheck, TerminalSquare, Wrench } from 'lucide-react'
 import { useRef, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -125,7 +125,7 @@ export function CodexEventCard({
   if (kind === 'tool-call' || kind === 'tool-output' || kind === 'file-diff') {
     const presentation = {
       'file-diff': { label: 'Changes', icon: FileDiff },
-      'tool-call': { label: 'Command', icon: TerminalSquare },
+      'tool-call': { label: 'Activity', icon: Wrench },
       'tool-output': { label: 'Output', icon: TerminalSquare },
     }[kind]
     const Icon = presentation.icon

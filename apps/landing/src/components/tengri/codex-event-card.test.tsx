@@ -6,6 +6,14 @@ import { CodexLogin } from './agent-chat'
 import { CodexEventCard } from './codex-event-card'
 
 describe('Codex event rows', () => {
+  test('describes searches and other tool calls as activity', () => {
+    for (const text of ['Web search: Codex app screenshots', 'MCP tool: list_resources', 'View image: preview.png']) {
+      const html = renderToString(createElement(CodexEventCard, { kind: 'tool-call', text }))
+      expect(html).toContain('aria-label="Codex activity"')
+      expect(html).not.toContain('>Command<')
+    }
+  })
+
   test('keeps user and assistant message roles accessible', () => {
     const userHtml = renderToString(createElement(CodexEventCard, { kind: 'user-message', text: 'Build the page' }))
     const assistantHtml = renderToString(
