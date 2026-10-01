@@ -47,6 +47,7 @@ replacement attempt or invalidate the code already shown to the user.
 The Codex view aligns user messages on the right and agent responses on the left, without visible speaker headings.
 The rounded composer keeps model and reasoning choices beside the send/stop control. Prompt suggestions prepare a
 draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
+Active turns show a Thinking label with a highlight moving left to right; reduced motion keeps the label still.
 Responses support Markdown tables, task lists, and code blocks with copy feedback. The conversation follows new events
 while the reader is at the bottom. Reading earlier messages preserves the scroll position until the reader chooses
 **Jump to latest**.

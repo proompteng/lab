@@ -783,9 +783,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 .map(renderEvent),
             ]}
             {activeTurnId && !renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId) ? (
-              <div className="flex items-center gap-2 text-xs text-zinc-400" role="status">
-                <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                Codex is working…
+              <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
+                <span className="tengri-thinking-shimmer inline-block">Thinking</span>
               </div>
             ) : null}
           </div>
