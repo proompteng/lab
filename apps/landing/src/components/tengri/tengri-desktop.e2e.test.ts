@@ -2516,15 +2516,25 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   expect(outputCharacterWidths.symbols).toBeCloseTo(outputCharacterWidths.wide, 1)
   const user = chrome.getByRole('article', { name: 'Your message' })
   const response = chrome.getByRole('article', { name: 'Codex response' }).first()
-  for (const row of [user, response]) {
-    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(row).toHaveCSS('border-radius', '0px')
-    await expect(row).toHaveCSS('padding-top', '0px')
-    await expect(row).toHaveCSS('padding-bottom', '0px')
-  }
-  const [userBounds, responseBounds] = await Promise.all([user.boundingBox(), response.boundingBox()])
-  if (!userBounds || !responseBounds) throw new Error('Transcript rows are missing')
-  expect(userBounds.x).toBe(responseBounds.x)
+  const conversation = chrome.getByRole('log', { name: 'Conversation' })
+  await expect(conversation.getByText('You', { exact: true })).toHaveCount(0)
+  await expect(conversation.getByText('Codex', { exact: true })).toHaveCount(0)
+  await expect(user).toHaveCSS('text-align', 'right')
+  await expect(response).toHaveCSS('text-align', 'left')
+  await expect(user).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('border-radius', '0px')
+  await expect(response).toHaveCSS('padding-top', '0px')
+  await expect(response).toHaveCSS('padding-bottom', '0px')
+  const [userBounds, responseBounds, conversationBounds] = await Promise.all([
+    user.boundingBox(),
+    response.boundingBox(),
+    conversation.boundingBox(),
+  ])
+  if (!userBounds || !responseBounds || !conversationBounds) throw new Error('Transcript rows are missing')
+  expect(userBounds.x).toBeGreaterThan(responseBounds.x)
+  expect(userBounds.x + userBounds.width).toBeCloseTo(conversationBounds.x + conversationBounds.width, 0)
+  expect(responseBounds.x).toBeCloseTo(conversationBounds.x, 0)
   await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
   await expect(chrome).toHaveScreenshot('tengri-compact-chat.png')
   await chrome.getByRole('button', { name: 'Approve once', exact: true }).click()
@@ -2541,6 +2551,20 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   await expect(chrome.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(response).toBeVisible()
+  const [narrowUserBounds, narrowResponseBounds, narrowConversationBounds] = await Promise.all([
+    user.boundingBox(),
+    response.boundingBox(),
+    conversation.boundingBox(),
+  ])
+  if (!narrowUserBounds || !narrowResponseBounds || !narrowConversationBounds) {
+    throw new Error('Narrow transcript rows are missing')
+  }
+  expect(narrowUserBounds.x).toBeGreaterThan(narrowResponseBounds.x)
+  expect(narrowUserBounds.x + narrowUserBounds.width).toBeCloseTo(
+    narrowConversationBounds.x + narrowConversationBounds.width,
+    0,
+  )
+  expect(narrowResponseBounds.x).toBeCloseTo(narrowConversationBounds.x, 0)
   await page.mouse.move(0, 0)
   await expect(chrome).toHaveScreenshot('tengri-compact-chat-narrow.png')
 })
@@ -3714,7 +3738,7 @@ test('prepares suggested prompts and grows multiline drafts without sending them
       reasoningEffort: 'medium',
       text: Array.from({ length: 12 }, (_, index) => `Draft line ${index + 1}`).join('\n'),
     })
-  await expect(chrome.getByRole('heading', { name: 'Start a conversation' })).toHaveCount(0)
+  await expect(chrome.getByRole('heading', { name: 'Let’s build' })).toHaveCount(0)
   await expect(chrome.getByRole('button', { name: 'Stop response' })).toBeEnabled()
 })
 
