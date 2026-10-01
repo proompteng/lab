@@ -44,6 +44,7 @@ async fn fixture(replies: Vec<(StatusCode, Value)>) -> Fixture {
         client: GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "fixture-token".into(),
         },
         requests,
