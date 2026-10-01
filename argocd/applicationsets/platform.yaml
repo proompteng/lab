@@ -23,7 +23,7 @@ spec:
               - name: spire-server
                 path: argocd/applications/spire-server
                 namespace: spire-server
-                renderWithLovely: false
+                renderWithLovely: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
@@ -44,7 +44,7 @@ spec:
               - name: spire-system
                 path: argocd/applications/spire-system
                 namespace: spire-system
-                renderWithLovely: false
+                renderWithLovely: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto

@@ -2,6 +2,7 @@
 
 The `spire-server`, `spire-system`, and `spire-test` Applications install SPIRE through the platform ApplicationSet.
 The upstream SPIRE chart is pinned to `0.30.2`, SPIRE to `1.15.3`, and the CRD chart to `0.6.1`.
+The two Helm applications use the existing Lovely renderer and its Helm 3 toolchain. The canary uses native Kustomize.
 
 ## Ownership and identity
 
