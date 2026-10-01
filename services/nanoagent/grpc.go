@@ -78,24 +78,7 @@ func rpcOperationError(err error) error {
 		return status.FromContextError(err).Err()
 	}
 	failure := workspaceFailure(err)
-	code := codes.Internal
-	switch failure.status {
-	case http.StatusBadRequest:
-		code = codes.InvalidArgument
-	case http.StatusUnauthorized:
-		code = codes.Unauthenticated
-	case http.StatusForbidden:
-		code = codes.PermissionDenied
-	case http.StatusNotFound:
-		code = codes.NotFound
-	case http.StatusConflict:
-		code = codes.Aborted
-	case http.StatusRequestEntityTooLarge, http.StatusTooManyRequests:
-		code = codes.ResourceExhausted
-	case http.StatusBadGateway, http.StatusServiceUnavailable:
-		code = codes.Unavailable
-	}
-	result, detailErr := status.New(code, failure.message).WithDetails(&pb.OperationFailure{HttpStatus: uint32(failure.status), CurrentRevision: failure.currentRevision})
+	result, detailErr := status.New(failure.code, failure.message).WithDetails(&pb.OperationFailure{CurrentRevision: failure.currentRevision, ResourceTooLarge: failure.resourceTooLarge})
 	if detailErr != nil {
 		return status.Error(codes.Internal, "encode operation failure")
 	}
