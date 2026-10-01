@@ -191,6 +191,64 @@ describe('broker observation HTTP budget', () => {
       }),
     )
   })
+  test('charges every resumed history page after a quota reset to the next capture', async () => {
+    await run(
+      Effect.gen(function* () {
+        const budget = yield* makeBrokerObservationBudget
+        const source = transport((attempt) =>
+          attempt === 1
+            ? { headers: { 'x-ratelimit-limit': '100', 'x-ratelimit-remaining': '25', 'x-ratelimit-reset': '60' } }
+            : {},
+        )
+        const client = budget.decorate(source.client)
+        yield* budget.beginCapture
+        yield* client.get(url)
+        const remainingPages = yield* Effect.all(
+          Array.from({ length: 51 }, () => client.get(url)),
+          { concurrency: 2 },
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(59_999)
+        expect(source.starts).toEqual([0])
+        yield* TestClock.adjust(1)
+        yield* Fiber.join(remainingPages)
+        expect(source.starts.slice(1)).toEqual(Array.from({ length: 51 }, () => 60_000))
+        expect(yield* budget.nextPollNotBeforeMs).toBe(121_200)
+        const next = yield* budget.beginCapture.pipe(
+          Effect.andThen(client.get(url)),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(61_199)
+        expect(source.starts).toHaveLength(52)
+        yield* TestClock.adjust(1)
+        yield* Fiber.join(next)
+        expect(source.starts[52]).toBe(121_200)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(122_400)
+      }),
+    )
+  })
+  test('a short quota wait preserves request cost that has not elapsed', async () => {
+    await run(
+      Effect.gen(function* () {
+        const budget = yield* makeBrokerObservationBudget
+        const source = transport((attempt) =>
+          attempt === 34 ? { headers: { 'x-ratelimit-remaining': '50', 'x-ratelimit-reset': '1' } } : {},
+        )
+        const client = budget.decorate(source.client)
+        yield* budget.beginCapture
+        yield* Effect.all(
+          Array.from({ length: 34 }, () => client.get(url)),
+          { concurrency: 2 },
+        )
+        const resumed = yield* client.get(url).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(999)
+        expect(source.starts).toHaveLength(34)
+        yield* TestClock.adjust(1)
+        yield* Fiber.join(resumed)
+        expect(source.starts[34]).toBe(1_000)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(21_000)
+      }),
+    )
+  })
   test('capture cancellation and client replacement preserve the quota reset', async () => {
     await run(
       Effect.gen(function* () {

@@ -40,11 +40,20 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
   const reserve = Effect.gen(function* () {
     while (true) {
       const now = yield* Clock.currentTimeMillis
-      const delayMs = yield* Ref.modify(state, (current) =>
-        current.quotaResetAtMs > now
-          ? [current.quotaResetAtMs - now, current]
-          : [0, { ...current, requests: current.requests + 1 }],
-      )
+      const delayMs = yield* Ref.modify(state, (current) => {
+        if (current.quotaResetAtMs > now) return [current.quotaResetAtMs - now, current]
+        return current.quotaResetAtMs > 0
+          ? [
+              0,
+              {
+                ...current,
+                scheduledStartAtMs: Math.max(now, nextPollAt(current)),
+                requests: 1,
+                quotaResetAtMs: 0,
+              },
+            ]
+          : [0, { ...current, requests: current.requests + 1 }]
+      })
       if (delayMs === 0) return
       yield* Effect.sleep(delayMs)
     }
@@ -82,7 +91,7 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
         const delayMs = yield* Ref.modify(state, (current) =>
           nextPollAt(current) > now
             ? [nextPollAt(current) - now, current]
-            : [0, { ...current, scheduledStartAtMs: now, requests: 0 }],
+            : [0, { ...current, scheduledStartAtMs: now, requests: 0, quotaResetAtMs: 0 }],
         )
         if (delayMs === 0) return
         yield* Effect.sleep(delayMs)
