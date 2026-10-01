@@ -41,7 +41,6 @@ import {
   executionControllerPlanHash,
   failRecoveryFirstCycleDriverSlot,
   initializeNativeExecutionRuntime,
-  initializeNativeExecutionRuntimeForBinding,
   initializeNativeExecutionProjectionRuntime,
   makeManagedNativeExecutionRuntimeAdapter,
   makeNativeExecutionRuntimeAdapter,
@@ -331,7 +330,7 @@ describe('native execution runtime', () => {
     })
   })
 
-  test('defers execution driver acquisition until the first advance during an exact controller rotation', async () => {
+  test('keeps the owned execution runtime lazy until its first driver acquisition', async () => {
     let acquired = 0
     let released = 0
     const readySlot = Effect.runSync(
@@ -366,12 +365,6 @@ describe('native execution runtime', () => {
       ),
     )
 
-    await Effect.runPromise(
-      initializeNativeExecutionRuntimeForBinding(execution, {
-        planHash: hash('8'),
-        sourceRevision: '8'.repeat(40),
-      }),
-    )
     expect(acquired).toBe(0)
 
     await execution.runPromise(PublishedExecutionCycleDriver.pipe(Effect.asVoid))

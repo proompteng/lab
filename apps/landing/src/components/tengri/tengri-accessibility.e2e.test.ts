@@ -85,7 +85,7 @@ test('exposes usable browser tabs, connection state, and contrast', async ({ pag
 
   await expect(page.getByRole('region', { name: 'Chrome window' })).toBeVisible()
   await expect(page.getByText('Connected', { exact: true })).toBeAttached()
-  await expect(page.getByText('pro', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Agent status')).toHaveText('Ready')
 
   const tablist = page.getByRole('tablist', { name: 'Browser tabs' })
   const firstTab = tablist.getByRole('tab', { name: /Tengri Agent/ })

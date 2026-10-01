@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { cachedBrokerStateFixture } from './broker-state-cache.fixture'
+import { cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
 
 import { Cause, Clock, Effect, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -339,8 +339,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
               ordersObservedAt: input.ordersObservedAt ?? cached.state.ordersObservedAt,
             },
           },
-          grant.limits,
-          brokerRead,
+          proposedIntent.intentId,
+          submissionProjectionFixture(brokerRead),
         )
         const persisted = yield* persistedCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
@@ -382,6 +382,55 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 describe('final broker mutation authority', () => {
+  test('uses one coherent submission projection and never its direct reader', async () => {
+    const unusedRead = Effect.die('Unexpected broker GET during submission')
+    const fresh: BrokerReadShape = {
+      account: unusedRead,
+      positions: unusedRead,
+      orders: () => unusedRead,
+      accountConfiguration: unusedRead,
+      assetBySymbol: () => unusedRead,
+      orderById: () => unusedRead,
+      orderByClientId: () => unusedRead,
+      fillActivities: () => unusedRead,
+      feeActivities: () => unusedRead,
+      marketCalendar: () => unusedRead,
+    }
+    let reads = 0
+    const cached: BrokerReadShape = {
+      ...fresh,
+      projection: {
+        fresh,
+        snapshot: unusedRead,
+        invalidate: Effect.void,
+        withMutation: (effect) => effect,
+        submissionSnapshot: (id) =>
+          Effect.sync(() => {
+            expect(id).toBe(intent().intentId)
+            reads += 1
+            return { account: readResult(account()), positions: readResult([position()]), openOrders: readResult([]) }
+          }),
+      },
+    }
+    const snapshot = await Effect.runPromise(
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), intent().intentId, cached),
+    )
+    expect(snapshot.positions).toEqual([position()])
+    expect(snapshot.account).toEqual(account())
+    expect(reads).toBe(1)
+  })
+
+  test('denies submission when its observation projection is absent', async () => {
+    const raw = submissionProjectionFixture({} as BrokerReadShape).projection!.fresh
+    expect(
+      (
+        await Effect.runPromiseExit(
+          confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent().intentId, raw),
+        )
+      )._tag,
+    ).toBe('Failure')
+  })
+
   test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(
     'revalidates the same persisted grant contract for %s submission',
     async (environment) => {
@@ -419,8 +468,8 @@ describe('final broker mutation authority', () => {
         yield* TestClock.setTime(Date.parse(activeAt))
         const operation = yield* confirmExecutionBrokerState(
           cachedBrokerStateFixture(account()),
-          defaultLimits,
-          read,
+          intent().intentId,
+          submissionProjectionFixture(read),
         ).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust('100 millis')
         return (yield* Fiber.join(operation)) - Date.parse(activeAt)
@@ -438,7 +487,7 @@ describe('final broker mutation authority', () => {
     expect(observed.grantReads).toBe(1)
     expect(observed.positionReads).toBe(1)
     expect(observed.orderReads).toBe(1)
-    expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
+    expect(observed.orderLimit).toBe(1)
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
     expect(observed.trace.indexOf('authorize')).toBeGreaterThan(observed.trace.indexOf('clock'))
