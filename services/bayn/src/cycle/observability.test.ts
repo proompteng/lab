@@ -21,6 +21,7 @@ const projection: CycleOperationsProjection = {
     snapshotId: null,
     decisionHash: null,
     terminalReason: CycleTerminalReason.Authority,
+    publicationDeadlineAt: null,
     submissionOpenAt: '2026-08-31T14:30:00.000Z',
     submissionCutoffAt: '2026-08-31T19:00:00.000Z',
     executionOpenAt: '2026-08-31T13:30:00.000Z',

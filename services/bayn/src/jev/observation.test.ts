@@ -11,13 +11,13 @@ const withBrokerTime = (field: JevObservationField, ageMs: number) => {
   const payload = observation.payload
   const at = new Date(Date.parse(payload.observedAt) - ageMs).toISOString()
   const original = payload.portfolio.brokerState
+  const wholeCut = field === JevObservationField.Reconciliation && ageMs >= 0
   const state = {
     ...original,
-    account: { ...original.account, ...(field === JevObservationField.Account ? { observedAt: at } : {}) },
-    ...(field === JevObservationField.Positions ? { positionsObservedAt: at } : {}),
-    ...(field === JevObservationField.Orders ? { ordersObservedAt: at } : {}),
+    account: { ...original.account, ...(wholeCut || field === JevObservationField.Account ? { observedAt: at } : {}) },
+    ...(wholeCut || field === JevObservationField.Positions ? { positionsObservedAt: at } : {}),
+    ...(wholeCut || field === JevObservationField.Orders ? { ordersObservedAt: at } : {}),
   }
-  // Preserve a genuine reconciliation of the altered fixture so the temporal predicate is actually reached.
   const hash = Result.getOrThrow(reconciledStateHash(state))
   return {
     ...payload,
