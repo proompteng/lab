@@ -59,7 +59,7 @@ const main = Effect.gen(function* () {
     const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
     const providerClock = yield* Clock.clockWith(Effect.succeed)
     const providerContext = yield* Layer.build(
-      JevClientLive(yield* Config.redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs).pipe(
+      JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs).pipe(
         Layer.provide(NodeHttpClient.layerNodeHttp),
       ),
     )

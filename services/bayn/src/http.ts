@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
 import { Clock, Effect, Ref, Scope } from 'effect'
-import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'

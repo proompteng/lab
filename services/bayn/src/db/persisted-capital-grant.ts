@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, DateTime, Effect, Layer, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { BrokerEnvironmentSchema, BrokerProviderSchema, makeBrokerIdentity } from '../broker/identity'
 import {

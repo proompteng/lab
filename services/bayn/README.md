@@ -271,9 +271,13 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
   or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
   and writer permit. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
   cancellation invalidates the transport and the next request creates its replacement without replaying a mutation.
-- The pinned Effect PostgreSQL adapter has a package patch for interrupted reservations. It registers release ownership
-  before requesting a pool slot and returns connections delivered after cancellation. The integration regression cancels
-  two queued writers and verifies that both pool slots remain usable; proving only one subsequent query misses a one-slot leak.
+- The pinned Effect 4 PostgreSQL adapter owns connections through its native protocol pool. Interrupted reservations
+  return their pool slots. The integration regression cancels two queued writers and verifies that every pool slot
+  remains usable; proving only one subsequent query misses a one-slot leak.
+  Pool maintenance and connection deadlines use the live clock, so replay time jumps do not drive transport timers.
+- The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
+  with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
+  transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.

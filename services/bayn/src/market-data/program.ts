@@ -1,6 +1,6 @@
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Layer, Option, Result, pipe } from 'effect'
-import type { SqlError } from 'effect/unstable/sql/SqlError'
+import type { SqlError } from 'effect/sql/SqlError'
 
 import type { RuntimeConfig } from '../config'
 import {

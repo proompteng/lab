@@ -1,4 +1,4 @@
-import type { Undici } from '@effect/platform-node'
+import type * as Undici from '@effect/platform-node/Undici'
 import { Context, DateTime, Effect, Option, Schema, type Result } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
