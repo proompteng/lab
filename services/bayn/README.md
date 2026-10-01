@@ -7,6 +7,46 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
+## Broker observation owner
+
+`BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
+handlers poll without overlap and publish a complete snapshot in PostgreSQL `broker_observations`. Execution and
+status processes read that shared projection; they do not start local pollers. Endpoint registration remains separate
+from capital authority. Authorized bootstrap drains a predecessor controller, publishes a fresh observation for the
+exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
+inactive while the observation object's delayed loop continues to retry.
+
+Each poll retains the complete paginated order, fill and fee history with the existing before/after stability check,
+account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
+hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
+projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
+Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
+There is no refresh-on-miss path for normal submission.
+
+`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 30,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
+Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
+for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
+and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
+observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
+poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
+If a successful capture races a mutation or newer broker evidence and cannot publish, its successor retries after
+one second. A failed capture keeps the regular polling cadence. Both paths remain unavailable until a cut passes all
+publication and freshness checks.
+
+The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
+version and persisted grant checks remain submission authority. The final projection permits only that reserved
+intent's own start event; other mutations or newer durable broker evidence invalidate it. Submit/cancel invalidate
+before transmission and after completion, failure or interruption. Unknown or unresolved requests block submission;
+settled observations remain available to native reconciliation and lookup-only recovery so an unknown outcome cannot
+deadlock its own recovery. Observing an account never grants trading authority.
+A later poll must start after the existing one-second broker consistency window. Lookup-only recovery invalidates a
+cut when it finds new durable order state. Restarting a worker does not create a second cache or bypass reservations.
+
+This is bounded observation of the broker, not an atomic lock at Alpaca. An external change can become visible on
+the next complete poll. The existing risk freshness limit still applies at final authorization. Polling owns no
+accounting writes, order submissions, capital grants or strategy decisions; native reconciliation remains responsible
+for interpreting and persisting broker history.
+
 ## Active strategy
 
 Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified prices, volume, computed technical
@@ -235,9 +275,10 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
   visible in execution elapsed time. These measurements do not claim that an earlier uninstrumented stall had the same cause.
 - A generation authority read gets at most one-sixth of the pass budget, capped at five seconds. Authority reads
   separately trace pool acquisition and query execution, and reuse the current transaction when one exists.
-  Each reconciliation broker read gets at most one-third of the reconciliation budget, or ten seconds with the
-  current configuration. The aggregate pass budget still bounds the full operation. Startup preflight keeps its own
-  request and retry deadlines. Both broker-history captures remain mandatory.
+  Each uncached reconciliation broker read gets at most one-third of the reconciliation budget, or ten seconds with
+  the current configuration. The aggregate pass budget still bounds reconciliation. Background broker polls use the
+  adapter's request and retry deadlines, with the cache's freshness budget as their aggregate deadline. Startup preflight
+  keeps its own request and retry deadlines. Both broker-history captures remain mandatory for every snapshot poll.
 - The dedicated Bayn PostgreSQL cluster logs statements exceeding one second and lock waits exceeding one second.
   `log_parameter_max_length=0` and `log_parameter_max_length_on_error=0` suppress parameter values. SQL statement text is
   still present in database logs. For a lock wait, correlate the PostgreSQL process ID, blocker ID, application name,
@@ -454,12 +495,12 @@ discrepancies, unknown mutations, pending orders, stale evidence and authority c
 the version before broker I/O; cancellation, recovery and failed reconciliation invalidate it. Replaying the consumed
 reconciliation cannot refill it. Only a new native exact reconciliation supplies another version.
 
-Transmission confirms positions, open orders and account once concurrently, replacing seven sequential broker GETs.
-Position, order or cash drift from the cached cut denies transmission. Current account blocks and buying power,
-persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. This is a bounded
-REST observation cache, not an order-update stream or an atomic broker snapshot; it does not remove the broker's
-external-writer race. The confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within
-`order_acknowledgement`, after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
+Transmission reads positions, open orders and account from the shared observation in one payload without broker GETs.
+Position, order or cash drift from the reconciled cut denies transmission. Observed account blocks and buying power,
+persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. An external broker
+change becomes visible on the next complete background poll; the observation is not an atomic broker lock. The
+confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within `order_acknowledgement`,
+after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the

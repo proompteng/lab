@@ -650,9 +650,15 @@ describe('native Restate execution controller', () => {
         },
       }),
       sleep: () => Promise.reject(new Error('completed activation must not poll')),
-      genericCall: () => {
+      genericCall: (command: { service: string; method: string; key: string; parameter: unknown }) => {
         genericCalls += 1
-        return Promise.reject(new Error('bootstrap must not call a legacy service'))
+        expect(command).toMatchObject({
+          service: 'BaynBrokerObservations',
+          method: 'activate',
+          key: controllerKey,
+          parameter: { sourceRevision },
+        })
+        return Promise.resolve({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) })
       },
     } as unknown as Context
 
@@ -671,7 +677,42 @@ describe('native Restate execution controller', () => {
       planHash,
       sourceRevision,
     })
-    expect(genericCalls).toBe(0)
+    expect(genericCalls).toBe(1)
+  })
+
+  test('does not activate execution when the initial broker poll has no published cut', async () => {
+    const token = Buffer.alloc(32, 7).toString('base64url')
+    const authorizationHash = Result.getOrThrow(executionBootstrapAuthorizationHash(token))
+    const controller = makeBaynExecutionController(config, {
+      advance: () => Promise.reject(new Error('must not advance')),
+      log: () => Promise.resolve(),
+      projectState: () => Promise.resolve(),
+    })
+    let activations = 0
+    const context = {
+      request: () => ({
+        id: 'bootstrap-missing-observation',
+        headers: new Map([['authorization', `Bearer ${token}`]]),
+        attemptCompletedSignal: new AbortController().signal,
+      }),
+      objectClient: () => ({
+        status: async () => null,
+        activate: async () => {
+          activations += 1
+        },
+      }),
+      genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1 }),
+    } as unknown as Context
+    const failure = await bootstrapHandlers(makeBaynExecutionBootstrap(config, controller, authorizationHash))
+      .start(context, {
+        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+        controllerKey,
+        planHash,
+        sourceRevision,
+      })
+      .catch((cause: unknown) => cause)
+    expect(String(failure)).toContain('requires a fresh published broker observation')
+    expect(activations).toBe(0)
   })
 
   test('rotates the exact previous binding into one immediate pass and ignores its stale tick', async () => {
@@ -749,9 +790,15 @@ describe('native Restate execution controller', () => {
         if (firstTick === undefined) throw new Error('rotation did not schedule the new binding first pass')
         await object.tick(controllerContext, firstTick.parameter)
       },
-      genericCall: () => {
+      genericCall: (command: { service: string; method: string; key: string; parameter: unknown }) => {
         genericCalls += 1
-        return Promise.reject(new Error('bootstrap must not call a legacy service'))
+        expect(command).toMatchObject({
+          service: 'BaynBrokerObservations',
+          method: 'activate',
+          key: controllerKey,
+          parameter: { sourceRevision },
+        })
+        return Promise.resolve({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) })
       },
     } as unknown as Context
     const request = {
@@ -793,13 +840,13 @@ describe('native Restate execution controller', () => {
       parameter: { epoch: 5, sequence: 14, attempt: 0 },
     })
     expect(sleeps).toBe(2)
-    expect(genericCalls).toBe(0)
+    expect(genericCalls).toBe(1)
 
     await start(context, request)
     expect(projectedStates).toHaveLength(3)
     expect(projectedStates[2]).toEqual(state)
     expect(deliveries).toHaveLength(1)
-    expect(genericCalls).toBe(0)
+    expect(genericCalls).toBe(2)
 
     await object.tick(controllerContext, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -915,9 +962,15 @@ describe('native Restate execution controller', () => {
         headers: new Map([['authorization', `Bearer ${token}`]]),
         attemptCompletedSignal: new AbortController().signal,
       }),
-      genericCall: () => {
+      genericCall: (command: { service: string; method: string; key: string; parameter: unknown }) => {
         genericCalls += 1
-        return Promise.reject(new Error('bootstrap must not call a legacy service'))
+        expect(command).toMatchObject({
+          service: 'BaynBrokerObservations',
+          method: 'activate',
+          key: controllerKey,
+          parameter: { sourceRevision },
+        })
+        return Promise.resolve({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) })
       },
       objectClient: () => ({
         status: async () => {
@@ -960,7 +1013,7 @@ describe('native Restate execution controller', () => {
 
     expect(events).toEqual(['native-status', 'native-activate', 'native-sleep', 'native-status'])
     expect(forwarded).toMatchObject({ epoch: 1, firstSequence: 0, planHash, sourceRevision })
-    expect(genericCalls).toBe(0)
+    expect(genericCalls).toBe(1)
   })
 
   test('waits for durable successor evidence and fails bootstrap when it never arrives', async () => {
@@ -989,6 +1042,7 @@ describe('native Restate execution controller', () => {
         headers: new Map([['authorization', `Bearer ${token}`]]),
         attemptCompletedSignal: new AbortController().signal,
       }),
+      genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) }),
       objectClient: () => ({
         status: async () => {
           statusReads += 1

@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 
 import { MutationOperation } from '../broker/alpaca-mutations'
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { CycleRunnerError } from '../cycle/runner'
 import { CycleStoreError } from '../cycle/store'
 import { AuthorityRestrictionStore } from '../db/execution-store'
@@ -23,7 +24,7 @@ export type ExecutionMutationExecutor<E, R> = {
   readonly recover: (intentId: string, operation: MutationOperation) => Effect.Effect<MutationEvent, E, R>
 }
 
-export const mutationConsistencyDelayMs = 1_000
+export { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 
 export interface MutationRunnerErrorInput {
   readonly operation?: CycleRunnerError['operation']
