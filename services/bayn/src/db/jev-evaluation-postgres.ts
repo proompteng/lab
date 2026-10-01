@@ -153,12 +153,14 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
           INSERT INTO jev_evaluation_requests (request_id, cycle_id, authority_generation_hash, payload)
           SELECT ${request.requestId}, ${request.cycleId}, ${request.authorityGenerationHash}, ${sql.json(request)}
           WHERE NOT EXISTS (SELECT 1 FROM jev_batch_results WHERE batch_id = ${batchId})
-          ON CONFLICT (request_id) DO NOTHING RETURNING request_id
+          ON CONFLICT DO NOTHING RETURNING request_id
         `,
             )
             if (inserted.length === 1 && inserted[0]?.request_id === request.requestId) {
               return { status: JevClaim.Acquired } satisfies JevEvaluationClaim
             }
+            // Both the request ID and immutable candidate slot are unique. Concurrent identical
+            // claims may race on either index; only a readable exact request can be recovered.
             const evidence = yield* read(request.requestId)
             if (evidence === null) return yield* persistError('A finalized Jev batch cannot acquire another request')
             if (evidence.resolution?.status === JevResolutionStatus.Abandoned)

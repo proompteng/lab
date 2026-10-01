@@ -229,13 +229,29 @@ use `counterfactual-current-asset-eligibility`; it cannot be described as histor
 must match the input build; source invocations identify their build verification as `development-configured`.
 
 The `bayn.backtest-source.v1` manifest requires `encoding: "ndjson-gzip"` and binds the SHA-256 of the complete compressed NDJSON file, record count, export
-coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka` or `alpaca-rest` transport. Each line uses
+coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka`, `alpaca-rest`, or `archive-reconstruction` transport. Each line uses
 `HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
 while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
 records outside the frozen cuts, and changed bytes/counts. The current Torghut capture profile independently requires
 three bar partitions, thirteen quote partitions, three trade partitions, and three retained feature partitions.
-The offline regenerated feature stream has its own single partition. Every partition needs a cut, including empty
-cuts with equal start/end offsets. Record-derived partition inventories cannot establish source completeness.
+The offline regenerated feature stream has its own single partition. Captured streams require every partition cut,
+including empty cuts with equal start/end offsets. Record-derived partition inventories cannot establish captured
+source completeness.
+
+Archive reconstruction uses a separately hashed `bayn.archive-reconstruction-receipt.v1`: it binds the original query
+hashes, archived response hashes, normalized source hash, retained-coordinate cuts and explicit original-delivery
+limitations. It declares `originalStreamAvailability: NOT_OBSERVED` and `completeness: RETAINED_ROWS_ONLY`; it cannot
+masquerade as a Kafka capture. Original offsets can have gaps where other records were not retained in the archive
+export. Unknown partition offsets are not invented: `archiveUnobservedPartitions` declares each topology partition
+without retained rows, in both manifest and receipt. Declared cuts and unobserved partitions together must match the
+complete known topology exactly, without duplicates or overlaps. Such a declaration is not proof that a Kafka log
+was empty. Records from an unobserved partition, reversed/duplicate coordinates, endpoint substitutions and changed
+receipt bytes still fail. Captured Kafka and REST consecutive-offset checks remain unchanged.
+
+Archive ingestion timestamps and conservatively delayed per-partition ordering are a development delivery model,
+not the original consumer receipt sequence. Missing bars, feature joins, pricing, and close liquidity remain missing
+and can make a session inconclusive. Neither a complete file hash nor a successful mechanical simulation promotes an
+archive reconstruction into prospective qualification evidence.
 The independently pinned receipt must cover the full exchange session. The file must match its exact first/last arrivals; a quiet opening or closing interval does not fabricate missing events.
 Every partition cut must also equal the independently captured offset receipt. Its separately supplied SHA-256 is
 trusted configuration, outside the editable session input; replacing the receipt without that authority is rejected.

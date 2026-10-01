@@ -567,18 +567,18 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             ..ResourceRequirements::default()
         }),
         security_context: Some(SecurityContext {
-            allow_privilege_escalation: Some(false),
+            allow_privilege_escalation: Some(true),
             capabilities: Some(Capabilities {
-                drop: Some(vec!["ALL".to_owned()]),
+                add: Some(vec!["ALL".to_owned()]),
                 ..Capabilities::default()
             }),
             privileged: Some(false),
-            read_only_root_filesystem: Some(true),
+            read_only_root_filesystem: Some(false),
             run_as_non_root: Some(true),
             run_as_group: Some(GUEST_UID),
             run_as_user: Some(GUEST_UID),
             seccomp_profile: Some(SeccompProfile {
-                type_: "RuntimeDefault".to_owned(),
+                type_: "Unconfined".to_owned(),
                 ..SeccompProfile::default()
             }),
             ..SecurityContext::default()
@@ -904,7 +904,7 @@ mod tests {
     }
 
     #[test]
-    fn pod_is_guaranteed_unprivileged_and_firecracker_backed() {
+    fn pod_grants_guest_administration_inside_firecracker() {
         let microvm = test_microvm();
         let pod = build_pod(
             &microvm,
@@ -998,9 +998,31 @@ mod tests {
         let resources = container.resources.as_ref().expect("resources");
         assert_eq!(resources.requests, resources.limits);
         let security = container.security_context.as_ref().expect("security");
-        assert_eq!(security.allow_privilege_escalation, Some(false));
+        assert_eq!(security.allow_privilege_escalation, Some(true));
         assert_eq!(security.privileged, Some(false));
-        assert_eq!(security.read_only_root_filesystem, Some(true));
+        assert_eq!(security.read_only_root_filesystem, Some(false));
+        assert_eq!(security.run_as_user, Some(GUEST_UID));
+        assert_eq!(security.run_as_non_root, Some(true));
+        let capabilities = security.capabilities.as_ref().expect("guest capabilities");
+        assert_eq!(capabilities.add, Some(vec!["ALL".to_owned()]));
+        assert_eq!(capabilities.drop, None);
+        assert_eq!(
+            security
+                .seccomp_profile
+                .as_ref()
+                .map(|profile| profile.type_.as_str()),
+            Some("Unconfined")
+        );
+        assert_ne!(spec.host_network, Some(true));
+        assert_ne!(spec.host_pid, Some(true));
+        assert_ne!(spec.host_ipc, Some(true));
+        assert!(
+            spec.volumes
+                .as_ref()
+                .expect("guest volumes")
+                .iter()
+                .all(|volume| { volume.host_path.is_none() && volume.secret.is_none() })
+        );
         assert!(
             container
                 .env

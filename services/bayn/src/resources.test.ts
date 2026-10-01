@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
+import { BrokerObservations } from './broker/alpaca/observed-snapshot'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
 import { BrokerProvider, BrokerSession, decodeBrokerConnection, type BrokerConnection } from './broker/alpaca'
 import { AlpacaHttpClient } from './broker/alpaca/http'
@@ -166,6 +167,7 @@ describe('Bayn resource lifecycle', () => {
             : url.pathname === '/v2/orders' ||
                 url.pathname === '/v2/positions' ||
                 url.pathname === '/v2/account/activities/FILL' ||
+                url.pathname === '/v2/account/activities/FEE' ||
                 url.pathname === '/v2/calendar'
               ? []
               : { code: 40410000, message: 'order not found' }
@@ -190,12 +192,18 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         Effect.all({ session: BrokerSession, httpClient: AlpacaHttpClient }).pipe(
           Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
+          Effect.provideService(BrokerObservations, {
+            read: Effect.die('not read by acquisition'),
+            readForSubmit: () => Effect.die('not submitted by acquisition'),
+            invalidate: Effect.void,
+          }),
         ),
       ),
     )
 
     expect(services.httpClient).toBe(client)
     expect(services.session.read).toBeDefined()
+    expect(services.session.read.projection).toBeDefined()
     expect(acquisitions).toBe(1)
     expect(finalizations).toBe(1)
   })
@@ -244,6 +252,11 @@ describe('Bayn resource lifecycle', () => {
         Effect.gen(function* () {
           const fiber = yield* BrokerSession.pipe(
             Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
+            Effect.provideService(BrokerObservations, {
+              read: Effect.die('not read by acquisition'),
+              readForSubmit: () => Effect.die('not submitted by acquisition'),
+              invalidate: Effect.void,
+            }),
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(started)

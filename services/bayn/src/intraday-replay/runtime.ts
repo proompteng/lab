@@ -27,7 +27,7 @@ import {
 } from '../db/execution-store'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
-import { readFinalExecutionRiskContext } from '../db/reconciliation'
+import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { CycleStore } from '../cycle/store'
 import { makeCycleStore, withWriterFenceCycleStore } from '../cycle/store/postgres'
 import { BrokerAccess, grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
@@ -257,6 +257,8 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           executionMode: mode,
           execution: {
             currentUtcInstant: input.currentUtcInstant,
+            verifyBrokerStateVersion: (version, intentId) =>
+              verifyBrokerStateVersion(sql, identity.accountId, version, intentId),
             brokerRead: input.broker.read,
             brokerMutation: input.broker.mutation,
             intentStore,

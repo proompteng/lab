@@ -145,6 +145,7 @@ async function decodeResponse<Result>(response: Response): Promise<Result> {
       'code' in record &&
       ((response.status === 404 && record.code === 'conversation_not_found') ||
         (response.status === 409 && record.code === 'file_conflict') ||
+        (response.status === 412 && record.code === 'model_selection_unavailable') ||
         (response.status === 429 && record.code === 'capacity_full'))
         ? record.code
         : undefined
