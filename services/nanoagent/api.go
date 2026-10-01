@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"google.golang.org/grpc"
 )
 
 const (
@@ -44,6 +46,7 @@ type apiServer struct {
 	syncDirectories  func(workspace, ...string) error
 	terminals        *terminalManager
 	workspace        workspace
+	rpc              *grpc.Server
 }
 
 type apiError struct {
@@ -86,6 +89,8 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	if config.codeServerBinary != "" {
 		server.editor = newEditorSupervisor(config.codeServerBinary, config.codeServerBootstrap, config.homeRoot, workspace)
 	}
+	server.evidence.GuestProtocolVersion = guestProtocolVersion
+	server.rpc = server.newRPCServer()
 	return server, nil
 }
 
@@ -95,6 +100,9 @@ func (server *apiServer) close() {
 }
 
 func (server *apiServer) beginShutdown() {
+	if server.rpc != nil {
+		server.rpc.Stop()
+	}
 	if server.previewRequests != nil {
 		server.previewRequests.close()
 	}

@@ -779,6 +779,54 @@ func TestTerminalCloseInterruptsBlockedInput(t *testing.T) {
 	}
 }
 
+func TestTerminalCanceledInputRetainsUsablePTY(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("stty", "raw", "-echo")
+	command.Stdin = slave
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("configure raw PTY: %v: %s", err, output)
+	}
+	terminal, err := prepareTerminal(master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := prepareTerminal(slave)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	session := &terminalSession{terminal: terminal}
+	t.Cleanup(session.closeTerminal)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- session.inputContext(ctx, bytes.Repeat([]byte{'x'}, 1<<20)) }()
+	select {
+	case err := <-done:
+		t.Fatalf("input did not block: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("canceled input: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt PTY input")
+	}
+	_ = reader.SetReadDeadline(time.Now().Add(time.Second))
+	go func() { _, _ = io.Copy(io.Discard, reader) }()
+	next, cancelNext := context.WithTimeout(context.Background(), time.Second)
+	defer cancelNext()
+	if err := session.inputContext(next, []byte("still usable")); err != nil {
+		t.Fatalf("cancellation poisoned the retained PTY: %v", err)
+	}
+}
+
 func TestTerminalSignalTargetsForegroundProcessGroup(t *testing.T) {
 	var signaled []int
 	err := signalTerminalForeground(

@@ -14,6 +14,7 @@ use crate::crd::{MicroVM, MicroVMPhase};
 
 mod codex_history;
 mod codex_options;
+pub(crate) mod rpc;
 
 pub use codex_options::CodexOptions;
 
@@ -73,6 +74,7 @@ pub struct GuestClient {
     http: reqwest::Client,
     base_url: String,
     token: String,
+    pub(crate) rpc: Option<rpc::RpcClient>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -233,13 +235,44 @@ impl GuestClient {
         let token = String::from_utf8(token_bytes.0.clone())
             .map_err(|_| GuestError::MissingToken(secret_name))?;
 
-        Ok(Self {
+        let mut guest = Self {
             http: reqwest::Client::builder()
                 .connect_timeout(GUEST_CONNECT_TIMEOUT)
                 .build()?,
             base_url: format!("http://{guest_ip}:{GUEST_API_PORT}"),
             token,
-        })
+            rpc: None,
+        };
+        guest.select_protocol(agent_id).await?;
+        Ok(guest)
+    }
+
+    async fn select_protocol(&mut self, agent_id: &str) -> Result<(), GuestError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Evidence {
+            microvm_id: String,
+            #[serde(default)]
+            guest_protocol_version: u32,
+        }
+        let evidence: Evidence = self.json(self.request(Method::GET, "/v1/evidence")).await?;
+        if evidence.microvm_id != agent_id {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message: "Nanoagent identity does not match the requested MicroVM".into(),
+            });
+        }
+        self.rpc = match evidence.guest_protocol_version {
+            0 => None,
+            1 => Some(rpc::RpcClient::new(&self.base_url, &self.token)?),
+            _ => {
+                return Err(GuestError::Api {
+                    status: StatusCode::BAD_GATEWAY,
+                    message: "Nanoagent advertises an unsupported guest protocol version".into(),
+                });
+            }
+        };
+        Ok(())
     }
 
     pub fn base_url(&self) -> &str {
@@ -251,6 +284,9 @@ impl GuestClient {
     }
 
     pub async fn open_editor(&self) -> Result<(), GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.open_editor().await;
+        }
         let response = self
             .request(Method::POST, "/v1/editor")
             .timeout(Duration::from_secs(300))
@@ -272,6 +308,9 @@ impl GuestClient {
     }
 
     pub async fn list_files(&self, path: &str) -> Result<FileList, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.list_files(path).await;
+        }
         self.json(
             self.request(Method::GET, "/v1/files")
                 .query(&[("path", path)]),
@@ -280,6 +319,9 @@ impl GuestClient {
     }
 
     pub async fn read_file(&self, path: &str) -> Result<FileContent, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.read_file(path).await;
+        }
         let response = checked_response(
             self.send_unary(
                 self.request(Method::GET, "/v1/files/content")
@@ -315,6 +357,9 @@ impl GuestClient {
         content: &[u8],
         expected_revision: &str,
     ) -> Result<WriteResult, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.write_file(path, content, expected_revision).await;
+        }
         validate_expected_revision(expected_revision)?;
         let result: WriteResult = self
             .json(
@@ -339,6 +384,9 @@ impl GuestClient {
     }
 
     pub async fn create_directory(&self, path: &str) -> Result<FileEntry, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.create_directory(path).await;
+        }
         self.json(
             self.request(Method::POST, "/v1/files/directory")
                 .json(&serde_json::json!({"path": path})),
@@ -351,6 +399,9 @@ impl GuestClient {
         source_path: &str,
         destination_path: &str,
     ) -> Result<FileEntry, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.move_file(source_path, destination_path).await;
+        }
         self.json(
             self.request(Method::POST, "/v1/files/move")
                 .json(&serde_json::json!({
@@ -362,6 +413,9 @@ impl GuestClient {
     }
 
     pub async fn delete_file(&self, path: &str, recursive: bool) -> Result<(), GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.delete_file(path, recursive).await;
+        }
         checked_response(
             self.send_unary(
                 self.request(Method::DELETE, "/v1/files")
@@ -379,6 +433,9 @@ impl GuestClient {
         path: &str,
         limit: u32,
     ) -> Result<FileSearchResult, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.search_files(query, path, limit).await;
+        }
         self.json(self.request(Method::GET, "/v1/files/search").query(&[
             ("query", query.to_owned()),
             ("path", path.to_owned()),
@@ -392,6 +449,9 @@ impl GuestClient {
         path: &str,
         after: Option<u64>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<FileEvent, GuestError>> + Send>>, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.watch_files(path, after).await;
+        }
         self.ndjson(self.file_watch_request(path, after)).await
     }
 
@@ -412,6 +472,17 @@ impl GuestClient {
         columns: u32,
         rows: u32,
     ) -> Result<TerminalCreation, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return match rpc.create_terminal(creation_id, cwd, columns, rows).await {
+                Ok(result) => Ok(result),
+                Err(error @ GuestError::TerminalCreationIdentityMismatch { .. }) => Err(error),
+                Err(error) => {
+                    self.reconcile_terminal_creation_error(creation_id, error, false)
+                        .await
+                }
+            };
+        }
+
         let response = match self
             .send_unary(
                 self.request(Method::POST, "/v1/terminals")
@@ -459,6 +530,9 @@ impl GuestClient {
     }
 
     pub async fn list_terminals(&self) -> Result<Vec<TerminalSession>, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.list_terminals().await;
+        }
         let response: TerminalList = self
             .json(self.request(Method::GET, "/v1/terminals"))
             .await?;
@@ -466,6 +540,9 @@ impl GuestClient {
     }
 
     pub async fn terminate_terminal(&self, id: &str) -> Result<(), GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.terminate_terminal(id).await;
+        }
         checked_response(
             self.send_unary(self.request(Method::DELETE, &format!("/v1/terminals/{id}")))
                 .await?,
@@ -479,6 +556,9 @@ impl GuestClient {
     }
 
     pub async fn codex_login(&self) -> Result<CodexLoginSnapshot, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.codex_login().await;
+        }
         self.json(self.request(Method::GET, "/v1/codex/login"))
             .await
     }
@@ -502,6 +582,9 @@ impl GuestClient {
         method: &str,
         params: Value,
     ) -> Result<CodexCallResponse, GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.codex_call(method, params).await;
+        }
         self.json(
             self.request(Method::POST, "/v1/codex/call")
                 .json(&serde_json::json!({"method": method, "params": params})),
@@ -514,6 +597,9 @@ impl GuestClient {
         approval_id: &str,
         decision: &str,
     ) -> Result<(), GuestError> {
+        if let Some(rpc) = &self.rpc {
+            return rpc.resolve_codex_approval(approval_id, decision).await;
+        }
         checked_response(
             self.send_unary(
                 self.request(Method::POST, &format!("/v1/codex/approvals/{approval_id}"))
@@ -530,6 +616,9 @@ impl GuestClient {
         after: u64,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<CodexEvent, GuestError>> + Send>>, GuestError>
     {
+        if let Some(rpc) = &self.rpc {
+            return rpc.watch_codex_events(after).await;
+        }
         self.ndjson(
             self.request(Method::GET, "/v1/codex/events")
                 .query(&[("after", after.to_string())]),
@@ -764,6 +853,7 @@ mod tests {
             let guest = GuestClient {
                 http: reqwest::Client::new(),
                 base_url: format!("http://{address}"),
+                rpc: None,
                 token: "editor-test-token".to_owned(),
             };
             let result = guest.open_editor().await;
@@ -858,6 +948,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -890,6 +981,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -930,6 +1022,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -984,6 +1077,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -1058,6 +1152,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -1091,6 +1186,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -1139,6 +1235,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -1260,6 +1357,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -1298,6 +1396,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: format!("http://{address}"),
+            rpc: None,
             token: "test-bootstrap-token".to_owned(),
         };
 
@@ -1325,6 +1424,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: "http://127.0.0.1:8080".to_owned(),
+            rpc: None,
             token: "token".to_owned(),
         };
         let unary = client
@@ -1345,6 +1445,7 @@ mod tests {
         let client = GuestClient {
             http: reqwest::Client::new(),
             base_url: "http://127.0.0.1:8080".to_owned(),
+            rpc: None,
             token: "token".to_owned(),
         };
         let initial = client
