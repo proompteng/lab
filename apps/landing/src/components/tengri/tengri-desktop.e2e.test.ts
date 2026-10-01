@@ -3825,6 +3825,57 @@ test('keeps opened tool output stable during streaming and renders copyable stru
   ).toEqual([])
 })
 
+test('keeps streamed output expanded when replay recovery moves it into restored history', async ({ page }) => {
+  const text = 'Output before reconnect.\n'
+  const mock = await mockTengri(page, {
+    resumeThreadEventSequence: 2,
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: [{ id: 'output-1', type: 'commandExecution', aggregatedOutput: text }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Run the project checks.')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'output-1',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'tool-output',
+    method: 'item/commandExecution/outputDelta',
+    text,
+  })
+  const output = chrome.getByRole('article', { name: 'Codex output' })
+  await output.locator('summary').click()
+  await expect(output.locator('pre')).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 2,
+    threadId: 'thread-1',
+    turnId: '',
+    itemId: '',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'warning',
+    method: 'tengri/replayWarning',
+    text: 'Replay window exceeded',
+  })
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(1)
+  await expect(chrome.getByRole('textbox', { name: 'Steer the current turn' })).toBeEnabled()
+  await expect(output.locator('pre')).toBeVisible()
+  await expect(output.locator('pre')).toHaveText(text)
+})
+
 test('preserves the reading position while new events arrive and returns to the latest message on request', async ({
   page,
 }) => {

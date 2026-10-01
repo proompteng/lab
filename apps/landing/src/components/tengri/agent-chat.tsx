@@ -770,17 +770,19 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             aria-live="polite"
             aria-relevant="additions text"
           >
-            {historyItems.map((item) => {
-              const update = restoredItemUpdates.get(item.id)
-              return update ? (
-                renderEvent(update)
-              ) : (
-                <CodexEventCard key={`${threadId}-${item.id}-${item.kind}`} kind={item.kind} text={item.text} />
-              )
-            })}
-            {renderedEvents
-              .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
-              .map(renderEvent)}
+            {[
+              ...historyItems.map((item) => {
+                const update = restoredItemUpdates.get(item.id)
+                return update ? (
+                  renderEvent(update)
+                ) : (
+                  <CodexEventCard key={`${threadId}-${item.id}-${item.kind}`} kind={item.kind} text={item.text} />
+                )
+              }),
+              ...renderedEvents
+                .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
+                .map(renderEvent),
+            ]}
             {activeTurnId && !renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId) ? (
               <div className="flex items-center gap-2 text-xs text-zinc-400" role="status">
                 <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
