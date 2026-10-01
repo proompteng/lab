@@ -18,10 +18,11 @@ export const BrokerObservationOwnerStateSchema = Schema.Struct({
 })
 type State = typeof BrokerObservationOwnerStateSchema.Type
 
-export type BrokerObservationPoll =
+export type BrokerObservationPoll = (
   | { readonly _tag: 'Published'; readonly snapshotHash: string }
   | { readonly _tag: 'Invalidated' }
   | { readonly _tag: 'Unavailable' }
+) & { readonly nextPollNotBeforeMs: number }
 
 export interface BrokerObservationRuntime {
   readonly activate: (signal: AbortSignal) => Promise<void>
@@ -66,11 +67,16 @@ export const makeBaynBrokerObservations = (
       )
     } catch {
       ctx.console.warn('Broker observation poll failed before publication')
-      return { _tag: 'Unavailable' }
+      return { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
     }
   }
-  const nextDelay = (poll: BrokerObservationPoll, elapsedMs: number) =>
-    poll._tag === 'Invalidated' ? mutationConsistencyDelayMs : Math.max(1_000, config.pollIntervalMs - elapsedMs)
+  const nextDelay = (poll: BrokerObservationPoll, startedAt: number, completedAt: number) =>
+    Math.max(
+      poll._tag === 'Invalidated'
+        ? mutationConsistencyDelayMs
+        : Math.max(1_000, config.pollIntervalMs - (completedAt - startedAt)),
+      poll.nextPollNotBeforeMs - completedAt,
+    )
   return restate.object({
     name: 'BaynBrokerObservations',
     handlers: {
@@ -97,7 +103,7 @@ export const makeBaynBrokerObservations = (
           ...(poll._tag === 'Published' ? { lastSnapshotHash: poll.snapshotHash } : {}),
         }
         ctx.set(key, state)
-        schedule(ctx, state, nextDelay(poll, (await ctx.date.now()) - startedAt))
+        schedule(ctx, state, nextDelay(poll, startedAt, await ctx.date.now()))
         return state
       }),
       poll: restate.handlers.object.exclusive(async (ctx: restate.ObjectContext, candidate: unknown) => {
@@ -122,7 +128,7 @@ export const makeBaynBrokerObservations = (
           ...(poll._tag === 'Published' ? { lastSnapshotHash: poll.snapshotHash } : {}),
         }
         ctx.set(key, next)
-        schedule(ctx, next, nextDelay(poll, (await ctx.date.now()) - startedAt))
+        schedule(ctx, next, nextDelay(poll, startedAt, await ctx.date.now()))
       }),
       status: restate.handlers.object.shared(async (ctx: restate.ObjectSharedContext, _candidate: unknown) => {
         if (ctx.key !== config.controllerKey)

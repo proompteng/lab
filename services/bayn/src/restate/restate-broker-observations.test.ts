@@ -28,7 +28,7 @@ const harness = (
       input.runtime?.poll ??
       (async () => {
         polls += 1
-        return { _tag: 'Published', snapshotHash: 'c'.repeat(64) }
+        return { _tag: 'Published', snapshotHash: 'c'.repeat(64), nextPollNotBeforeMs: 0 }
       }),
   })
   const context = {
@@ -98,7 +98,10 @@ describe('Restate broker observation owner', () => {
     let failures = true
     const h = harness({
       runtime: {
-        poll: async () => (failures ? { _tag: 'Unavailable' } : { _tag: 'Published', snapshotHash: 'e'.repeat(64) }),
+        poll: async () =>
+          failures
+            ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
+            : { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 },
       },
     })
     expect((await h.handlers.activate(h.context, { sourceRevision })).lastSnapshotHash).toBeUndefined()
@@ -122,7 +125,10 @@ describe('Restate broker observation owner', () => {
     ])
   })
   test('retries an invalidated publication after the consistency window instead of the regular poll interval', async () => {
-    const h = harness({ runtime: { poll: async () => ({ _tag: 'Invalidated' }) }, elapsedMs: 250 })
+    const h = harness({
+      runtime: { poll: async () => ({ _tag: 'Invalidated', nextPollNotBeforeMs: 0 }) },
+      elapsedMs: 250,
+    })
     await h.handlers.activate(h.context, { sourceRevision })
     expect(h.deliveries[0]?.delay.milliseconds).toBe(1_000)
     expect(h.state()?.lastSnapshotHash).toBeUndefined()
@@ -134,7 +140,10 @@ describe('Restate broker observation owner', () => {
     let invalidated = true
     const h = harness({
       runtime: {
-        poll: async () => (invalidated ? { _tag: 'Invalidated' } : { _tag: 'Published', snapshotHash: 'f'.repeat(64) }),
+        poll: async () =>
+          invalidated
+            ? { _tag: 'Invalidated', nextPollNotBeforeMs: 0 }
+            : { _tag: 'Published', snapshotHash: 'f'.repeat(64), nextPollNotBeforeMs: 0 },
       },
       elapsedMs: 250,
     })
@@ -146,6 +155,23 @@ describe('Restate broker observation owner', () => {
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
     expect(h.deliveries).toHaveLength(2)
   })
+  test.each(['Published', 'Invalidated', 'Unavailable'] as const)(
+    'preserves the HTTP budget deadline for a %s capture',
+    async (tag) => {
+      const h = harness({
+        runtime: {
+          poll: async () =>
+            tag === 'Published'
+              ? { _tag: tag, snapshotHash: 'f'.repeat(64), nextPollNotBeforeMs: 20_400 }
+              : { _tag: tag, nextPollNotBeforeMs: 20_400 },
+        },
+        elapsedMs: 1_000,
+      })
+      await h.handlers.activate(h.context, { sourceRevision })
+      await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
+      expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([19_400, 19_400])
+    },
+  )
   test.each([{ sourceRevision: 'd'.repeat(40) }, { sourceRevision, interval: 1 }])(
     'rejects foreign revision or extra activation fields',
     async (input) => {

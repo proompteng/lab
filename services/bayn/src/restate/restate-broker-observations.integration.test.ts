@@ -55,7 +55,9 @@ describeRestate('Real Restate broker observation journal', () => {
         },
         poll: async () => {
           polls += 1
-          return fail ? { _tag: 'Unavailable' } : { _tag: 'Published', snapshotHash: '3'.repeat(64) }
+          return fail
+            ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
+            : { _tag: 'Published', snapshotHash: '3'.repeat(64), nextPollNotBeforeMs: 0 }
         },
       })
     const bridge = restate.service({

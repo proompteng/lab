@@ -61,7 +61,7 @@ describeRestate('Real Restate execution deployment activation', () => {
         poll: async () => {
           brokerPolls += 1
           if (!brokerReady) throw new Error('Broker observation dependency is temporarily unavailable')
-          return { _tag: 'Published', snapshotHash: 'e'.repeat(64) }
+          return { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 }
         },
       },
     )
