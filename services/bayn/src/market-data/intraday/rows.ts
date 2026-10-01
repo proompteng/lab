@@ -8,6 +8,7 @@ import {
   strictParseOptions,
 } from '../../schemas'
 import { IntradaySnapshotFailure } from './model'
+import { AlpacaQuoteMetadataSchema, AlpacaTradeMetadataSchema } from './alpaca-metadata'
 
 const FiniteNumericStringSchema = Schema.String.check(
   Schema.makeFilter((value: string) => value.length > 0 && value.trim() === value && Number.isFinite(Number(value)), {
@@ -89,6 +90,7 @@ const IntradayQuoteRowSchema = Schema.Struct({
   bid_size: NumericSchema,
   ask_price: NumericSchema,
   ask_size: NumericSchema,
+  provider_metadata: Schema.optional(AlpacaQuoteMetadataSchema),
 }).check(
   Schema.makeFilter(
     (row) =>
@@ -107,6 +109,7 @@ const IntradayTradeRowSchema = Schema.Struct({
   latest_payload_variants: Schema.optional(DigitsSchema),
   price: NumericSchema,
   size: NumericSchema,
+  provider_metadata: Schema.optional(AlpacaTradeMetadataSchema),
 }).check(
   Schema.makeFilter((row) => hasExpectedDelayClass(row) && numericValue(row.price) > 0 && numericValue(row.size) > 0, {
     expected: 'positive trade price and size',
