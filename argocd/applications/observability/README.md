@@ -116,6 +116,19 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
+The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic
+series declared by Bayn's catalog-only monitoring queries, including timing-enabled flags and statistics-reset times.
+It also retains bounded exporter collection errors and durations so a failed built-in collector cannot be mistaken
+for zero I/O. Unknown future metric families and unrelated PostgreSQL settings remain excluded. A new exporter
+metric requires both its query definition and this ingestion policy; direct endpoint availability is not Mimir proof.
+The storage-observability contract test exercises the configured allow-list against every declared metric name and
+negative examples. Verify both database pods in Mimir after the collector's configuration-digest rollout.
+The Rook application owns a read-only host Alloy DaemonSet (`node-storage` job) for disk latency/queue depth,
+NIC throughput/link speed/drops, CPU, memory, and pressure. It pushes to the same Mimir gateway without exposing
+a listener on the provider LAN. See the [Ceph telemetry runbook](../../../docs/runbooks/ceph-performance-telemetry.md)
+for ingestion acceptance, recording-rule units, missing-data alerts, and the bounded recovery-override cleanup.
+
 Validate the Mimir tenant after sync:
 
 ```bash

@@ -96,7 +96,7 @@ cephClusterSpec:
       # accumulate silently outside the window.
       osd_scrub_begin_hour: "8"
       osd_scrub_end_hour: "12"
-      osd_scrub_sleep: "0.1"
+      # mClock forces osd_scrub_sleep to zero. Keep no ineffective sleep override.
     # Per-OSD mClock HDD IOPS capacity, measured with Ceph's documented 4 KiB OSD bench path on 2026-07-07.
     osd.0:
       osd_mclock_max_capacity_iops_hdd: "210"

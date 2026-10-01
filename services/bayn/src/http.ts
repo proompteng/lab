@@ -294,6 +294,9 @@ const publicCycleSnapshot = (snapshot: RuntimeState['cycle']['current']) =>
         createdAt: snapshot.createdAt,
         updatedAt: snapshot.updatedAt,
         terminalAt: snapshot.terminalAt,
+        ...(snapshot.entryAllocationReason === undefined
+          ? {}
+          : { entryAllocationReason: snapshot.entryAllocationReason }),
       }
 
 const publicCycleReconciliation = (reconciliation: RuntimeState['cycle']['reconciliation']) =>

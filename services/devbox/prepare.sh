@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export HOME=/root
 # shellcheck source=services/devbox/profile.sh
 source /etc/profile.d/devbox.sh
 revision="$(cat /opt/devbox/source-revision)"
@@ -32,8 +33,6 @@ if [[ ! -f /home/codex/.devbox-initialized ]]; then
   chown codex:codex /home/codex/.devbox-initialized
 fi
 runuser -l codex -c 'export XDG_RUNTIME_DIR=/run/user/1000; codex app-server daemon bootstrap && codex app-server daemon start'
-digest="$(cat /etc/devbox-generation)"
-[[ "$digest" =~ ^[a-f0-9]{64}$ ]]
-printf '%s\n' "$digest" > /var/lib/devbox/last-ready.tmp
+printf '%s\n' "$revision" > /var/lib/devbox/last-ready.tmp
 mv /var/lib/devbox/last-ready.tmp /var/lib/devbox/last-ready
 touch /run/devbox-ready

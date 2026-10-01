@@ -16,7 +16,12 @@ Liquidation snapshots require the quote topic's complete partition cut and a fre
 symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
 through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
 quotes, and invalidated assignments do. This does not authorize entry pricing during bootstrap or change order risk.
-Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
+Transport positions advance only after incorporation or explicit rejection, including drained control offsets.
+Each consumer epoch uses a new group and explicit bootstrap offsets. It never resumes from Kafka-committed offsets,
+so it does not write OffsetCommit requests. An offset-coordinator write failure cannot discard a usable in-memory
+projection. Assignment, heartbeat and fetch failures still invalidate the epoch and require reconstruction.
+Durable decision snapshots retain their source cuts and PostgreSQL references independently of the ephemeral consumer.
+The projection retains 61 bar minutes, 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
 Windows that need the applicable discarded rejection history fail verification. Liquidation checks quote retention
@@ -25,6 +30,10 @@ required symbol's retained quote history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+Invalidation belongs to its consumer epoch. A delayed callback from a closed consumer cannot invalidate its replacement;
+an invalidation without a cause still revokes reads and triggers the same bounded rebuild. Readiness requires both
+completed bootstrap and no retained failure. Measurements report bootstrap completion and read availability separately,
+and failed worker checks retain the epoch and bounded failure reason without transport credentials or raw exception data.
 The transport owns each SDK stream in the consume callback, before Node can run stream construction. It installs an
 error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
 the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption
@@ -61,7 +70,7 @@ node dist/streaming-diagnostics-command.js --since 2026-09-11T19:00:00Z
 ```
 
 This bounded probe uses the configured Bayn Kafka identity and the production consumer/reducer. It captures source
-bounds, consumes retained records, commits incorporated offsets in a unique group, verifies exact feature-to-bar
+bounds, consumes retained records at explicit offsets in a unique group without committing offsets, verifies exact feature-to-bar
 matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
 input joins observed now; it does not claim those features were available in a past trading session. The image
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
@@ -220,13 +229,29 @@ use `counterfactual-current-asset-eligibility`; it cannot be described as histor
 must match the input build; source invocations identify their build verification as `development-configured`.
 
 The `bayn.backtest-source.v1` manifest requires `encoding: "ndjson-gzip"` and binds the SHA-256 of the complete compressed NDJSON file, record count, export
-coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka` or `alpaca-rest` transport. Each line uses
+coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka`, `alpaca-rest`, or `archive-reconstruction` transport. Each line uses
 `HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
 while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
 records outside the frozen cuts, and changed bytes/counts. The current Torghut capture profile independently requires
 three bar partitions, thirteen quote partitions, three trade partitions, and three retained feature partitions.
-The offline regenerated feature stream has its own single partition. Every partition needs a cut, including empty
-cuts with equal start/end offsets. Record-derived partition inventories cannot establish source completeness.
+The offline regenerated feature stream has its own single partition. Captured streams require every partition cut,
+including empty cuts with equal start/end offsets. Record-derived partition inventories cannot establish captured
+source completeness.
+
+Archive reconstruction uses a separately hashed `bayn.archive-reconstruction-receipt.v1`: it binds the original query
+hashes, archived response hashes, normalized source hash, retained-coordinate cuts and explicit original-delivery
+limitations. It declares `originalStreamAvailability: NOT_OBSERVED` and `completeness: RETAINED_ROWS_ONLY`; it cannot
+masquerade as a Kafka capture. Original offsets can have gaps where other records were not retained in the archive
+export. Unknown partition offsets are not invented: `archiveUnobservedPartitions` declares each topology partition
+without retained rows, in both manifest and receipt. Declared cuts and unobserved partitions together must match the
+complete known topology exactly, without duplicates or overlaps. Such a declaration is not proof that a Kafka log
+was empty. Records from an unobserved partition, reversed/duplicate coordinates, endpoint substitutions and changed
+receipt bytes still fail. Captured Kafka and REST consecutive-offset checks remain unchanged.
+
+Archive ingestion timestamps and conservatively delayed per-partition ordering are a development delivery model,
+not the original consumer receipt sequence. Missing bars, feature joins, pricing, and close liquidity remain missing
+and can make a session inconclusive. Neither a complete file hash nor a successful mechanical simulation promotes an
+archive reconstruction into prospective qualification evidence.
 The independently pinned receipt must cover the full exchange session. The file must match its exact first/last arrivals; a quiet opening or closing interval does not fabricate missing events.
 Every partition cut must also equal the independently captured offset receipt. Its separately supplied SHA-256 is
 trusted configuration, outside the editable session input; replacing the receipt without that authority is rejected.
