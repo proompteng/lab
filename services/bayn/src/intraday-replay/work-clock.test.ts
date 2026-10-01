@@ -24,6 +24,7 @@ test('an operation timeout excludes source work and retains subsequent provider 
       yield* provider.adjust(5000)
       expect(yield* work.clock.currentTimeMillis).toBe(0)
       expect(yield* work.clock.currentTimeNanos).toBe(0n)
+      expect(yield* work.clock.monotonicTimeNanos).toBe(0n)
       expect(worker.pollUnsafe()).toBeUndefined()
       yield* Deferred.succeed(released, undefined)
       yield* Effect.yieldNow
@@ -60,6 +61,7 @@ test('a running deadline cancels its old timer when parsing begins and resumes t
       yield* provider.adjust(1)
       yield* Fiber.join(sleeper)
       expect(yield* work.clock.currentTimeMillis).toBe(100)
+      expect(yield* work.clock.monotonicTimeNanos).toBe(100_000_000n)
     }).pipe(Effect.scoped),
   )
 })
@@ -94,6 +96,7 @@ test.each(['failure', 'defect', 'interruption'] as const)(
         yield* provider.adjust(50)
         expect(yield* work.clock.currentTimeMillis).toBe(50)
         expect(yield* work.clock.currentTimeNanos).toBe(50_000_000n)
+        expect(yield* work.clock.monotonicTimeNanos).toBe(50_000_000n)
         expect(yield* work.excludedSourceMillis).toBe(5000)
         yield* work.excludeSourceTime(Effect.void)
         expect(yield* work.excludedSourceMillis).toBe(5000)

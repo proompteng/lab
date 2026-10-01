@@ -1,5 +1,5 @@
 import { Effect, Result } from 'effect'
-import { SqlClient } from 'effect/unstable/sql'
+import { SqlClient } from 'effect/sql'
 
 import { makeStrategyProtocolHashResult } from '../src/contracts'
 import { canonicalHashV1OrThrow } from '../src/hash'

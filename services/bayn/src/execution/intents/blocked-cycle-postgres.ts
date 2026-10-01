@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 import { reconciliationIncompleteRestrictionReason } from '../authority'

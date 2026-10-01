@@ -34,7 +34,6 @@ import { makeCycleQueries } from './queries'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const accountId = 'paper-account-intraday-store'
 const qualificationRunId = '1'.repeat(64)
 const sessionDate = '2026-08-28' as const
@@ -423,7 +422,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             content_hash, status, discrepancies, reconciled_at
           ) VALUES (
             ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
-            ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+            ${reconciliationHash}, 'EXACT', ${sql.json([])}, ${reconciledAt}
           )
         `
         yield* sql`

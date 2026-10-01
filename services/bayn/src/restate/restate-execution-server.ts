@@ -27,13 +27,13 @@ export class RestateExecutionServerError extends Data.TaggedError('RestateExecut
 }> {}
 
 export const restateExecutionServerConfig = Config.all({
-  bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
+  bootstrapToken: Config.Redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
   previousPlanHash: Config.option(Config.schema(Sha256Schema, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH')),
   previousSourceRevision: Config.option(
     Config.schema(GitSourceRevisionSchema, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
   ),
-  port: Config.port('PORT').pipe(Config.withDefault(9080)),
-  requestIdentityKeys: Config.nonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
+  port: Config.Port('PORT').pipe(Config.withDefault(9080)),
+  requestIdentityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
 })
 
 const RestateRequestIdentityKeySchema = Schema.Trim.check(Schema.isPattern(/^publickeyv1_[1-9A-HJ-NP-Za-km-z]{43,44}$/))

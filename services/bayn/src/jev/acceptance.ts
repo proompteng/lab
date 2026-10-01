@@ -53,15 +53,15 @@ export const JevAcceptanceInputSchema = Schema.Struct({
     attemptIndex: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000_000 })),
     sessions: Schema.Array(
       Schema.Struct({ sessionDate: IsoDateSchema, openAt: UtcInstantSchema, closeAt: UtcInstantSchema }),
-    ).check(Schema.isLengthBetween(20, 20)),
+    ).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
   }),
   policies: Schema.Array(
     Schema.Struct({
       policy: Schema.Enum(JevResearchPolicy),
       definitionHash: Sha256Schema,
-      sessions: Schema.Array(Session).check(Schema.isLengthBetween(20, 20)),
+      sessions: Schema.Array(Session).check(Schema.isMinLength(20), Schema.isMaxLength(20)),
     }),
-  ).check(Schema.isLengthBetween(4, 4)),
+  ).check(Schema.isMinLength(4), Schema.isMaxLength(4)),
 })
 
 export type JevAcceptanceInput = typeof JevAcceptanceInputSchema.Type
