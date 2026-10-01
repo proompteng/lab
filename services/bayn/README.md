@@ -499,6 +499,9 @@ Transmission reads positions, open orders and account from the shared observatio
 Position, order or cash drift from the reconciled cut denies transmission. Observed account blocks and buying power,
 persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. An external broker
 change becomes visible on the next complete background poll; the observation is not an atomic broker lock. The
+projection preserves broker order and fill source timestamps at their original precision (up to nine fractional
+digits) and validates the complete payload before publishing availability. Poll and observation clocks remain
+canonical millisecond UTC instants; source event precision does not change freshness or mutation fences. The
 confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within `order_acknowledgement`,
 after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 
