@@ -40,7 +40,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              # Kargo binds bootstrap idempotency to the promoted immutable image.
+              # Kargo binds activation idempotency to the promoted immutable image.
               value: "44a58a1d26ec2cad62fae863739d8101a919ef74272770ae93fb2d8fb5e89bf5"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
@@ -141,7 +141,7 @@ spec:
               value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
-            - name: BAYN_EXECUTION_BOOTSTRAP_TOKEN
+            - name: BAYN_EXECUTION_ACTIVATION_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: bayn-execution-bootstrap

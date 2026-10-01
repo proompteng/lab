@@ -103,9 +103,9 @@ describe('native Restate execution activation', () => {
       ],
     ).not.toBe(idempotencyKey)
     expect(restateExecutionActivationRequest(config, token)).toEqual({
-      path: '/restate/send/BaynExecutionBootstrap/start',
+      path: `/restate/send/BaynExecutionController/${config.controllerKey}/activateDeployment`,
       body: {
-        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+        schemaVersion: 'bayn.execution-deployment-activation.v1',
         controllerKey: config.controllerKey,
         planHash: config.planHash,
         sourceRevision: config.sourceRevision,
@@ -125,7 +125,7 @@ describe('native Restate execution activation', () => {
     const request = restateExecutionActivationRequest(rotating, token)
 
     expect(request.body).toEqual({
-      schemaVersion: 'bayn.execution-controller-bootstrap.v3',
+      schemaVersion: 'bayn.execution-deployment-activation.v1',
       controllerKey: config.controllerKey,
       planHash: config.planHash,
       sourceRevision: config.sourceRevision,
@@ -205,14 +205,14 @@ describe('native Restate execution activation', () => {
 
     expect(state).toEqual(activeState)
     expect(requests.map(({ url }) => url)).toEqual([
-      `${config.ingressOrigin}/restate/send/BaynExecutionBootstrap/start`,
+      `${config.ingressOrigin}/restate/send/BaynExecutionController/${config.controllerKey}/activateDeployment`,
       `${config.ingressOrigin}/restate/invocation/${invocationId}/output`,
     ])
     expect(new Headers(requests[0]?.init?.headers).get('authorization')).toBe(`Bearer ${token}`)
     expect(JSON.stringify(state)).not.toContain(token)
   })
 
-  test('fails before invocation when the bootstrap token is malformed', async () => {
+  test('fails before invocation when the activation token is malformed', async () => {
     let requests = 0
     const failure = await Effect.runPromise(
       Effect.flip(

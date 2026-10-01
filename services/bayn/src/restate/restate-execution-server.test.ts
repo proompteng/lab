@@ -78,7 +78,7 @@ const readUnsignedDiscoveryStatus = (session: ClientHttp2Session): Promise<numbe
   })
 
 describe('native Restate execution server', () => {
-  test('discovers the account-keyed controller, observation owner and narrow bootstrap', async () => {
+  test('discovers two owners and a shared authenticated deployment activation with seven-day receipts', async () => {
     const handler = makeRestateExecutionEndpointHandler(
       { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
       {
@@ -112,7 +112,13 @@ describe('native Restate execution server', () => {
         discovery as {
           readonly services?: readonly {
             readonly name?: string
-            readonly handlers?: readonly { readonly name?: string }[]
+            readonly handlers?: readonly {
+              readonly name?: string
+              readonly ty?: string
+              readonly ingressPrivate?: boolean
+              readonly idempotencyRetention?: number
+              readonly journalRetention?: number
+            }[]
           }[]
         }
       ).services ?? []
@@ -121,13 +127,28 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'tick', 'deactivate', 'status'],
-      },
-      {
-        name: 'BaynExecutionBootstrap',
-        handlers: ['start'],
+        handlers: ['activate', 'tick', 'deactivate', 'status', 'activateDeployment'],
       },
       { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
+    ])
+    expect(services[0]?.handlers?.find(({ name }) => name === 'activateDeployment')).toMatchObject({
+      ty: 'SHARED',
+      ingressPrivate: false,
+      idempotencyRetention: 7 * 24 * 60 * 60_000,
+      journalRetention: 7 * 24 * 60 * 60_000,
+    })
+    expect(
+      services[0]?.handlers
+        ?.filter(({ name }) => name !== 'activateDeployment')
+        .map(({ name, ingressPrivate }) => ({
+          name,
+          ingressPrivate,
+        })),
+    ).toEqual([
+      { name: 'activate', ingressPrivate: true },
+      { name: 'tick', ingressPrivate: true },
+      { name: 'deactivate', ingressPrivate: true },
+      { name: 'status', ingressPrivate: true },
     ])
   })
 
@@ -145,7 +166,7 @@ describe('native Restate execution server', () => {
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromUnknown({
-            BAYN_EXECUTION_BOOTSTRAP_TOKEN: Buffer.alloc(32, 7).toString('base64url'),
+            BAYN_EXECUTION_ACTIVATION_TOKEN: Buffer.alloc(32, 7).toString('base64url'),
             RESTATE_REQUEST_IDENTITY_KEYS: requestIdentityKey,
             BAYN_LIFECYCLE_OWNER: 'RESTATE',
             BAYN_LIFECYCLE_COMMAND_PORT: '8081',
@@ -161,7 +182,7 @@ describe('native Restate execution server', () => {
       requestIdentityKeys: requestIdentityKey,
     })
     expect(Object.keys(configured).sort()).toEqual([
-      'bootstrapToken',
+      'activationToken',
       'port',
       'previousPlanHash',
       'previousSourceRevision',
