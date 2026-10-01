@@ -435,16 +435,11 @@ durableTest.each([
             ...broker,
             read: {
               ...broker.read,
-              projection: {
-                ...broker.read.projection,
-                snapshot: Ref.get(stallReconciliation).pipe(
-                  Effect.flatMap((stall) =>
-                    stall
-                      ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))
-                      : broker.read.projection.snapshot,
-                  ),
+              account: Ref.get(stallReconciliation).pipe(
+                Effect.flatMap((stall) =>
+                  stall ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true))) : broker.read.account,
                 ),
-              },
+              ),
             },
           },
           source,

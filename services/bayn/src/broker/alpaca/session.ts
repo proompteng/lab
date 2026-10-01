@@ -8,8 +8,7 @@ import { BrokerRead, type BrokerReadShape, type ReadPreflight } from './model'
 import { BrokerAccountPreflightError, verifyReadAccess } from './preflight'
 import { mapLayerAcquisitionError } from '../../resource-boundary'
 import { Pipeable } from '../../pipeable'
-import { makeProjectedBrokerRead } from './snapshot-cache'
-import { BrokerObservations } from './observed-snapshot'
+import { brokerSnapshotCacheConfig, makeCachedBrokerRead } from './snapshot-cache'
 
 export enum BrokerSessionAcquisitionStage {
   Connection = 'CONNECTION',
@@ -146,16 +145,15 @@ export const layer = (
 
 export const cachedLayer = (
   connection: BrokerConnection,
-): Layer.Layer<
-  BrokerSession | BrokerRead,
-  BrokerSessionAcquisitionError,
-  HttpClient.HttpClient | BrokerObservations
-> => {
+): Layer.Layer<BrokerSession | BrokerRead, BrokerSessionAcquisitionError, HttpClient.HttpClient> => {
   const session = Layer.effect(
     BrokerSession,
     Effect.gen(function* () {
       const verified = yield* acquireBrokerSession(connection)
-      const read = yield* makeProjectedBrokerRead(verified.read)
+      const read = yield* brokerSnapshotCacheConfig.pipe(
+        Effect.flatMap((config) => makeCachedBrokerRead(verified.read, config)),
+        Effect.mapError((cause) => acquisitionError(connection, cause)),
+      )
       return Object.freeze({ ...verified, read })
     }),
   )
@@ -175,5 +173,5 @@ export const mapHttpAcquisitionError = Pipeable.dual(2, mapHttpAcquisitionErrorD
 
 export const live = (
   connection: BrokerConnection,
-): Layer.Layer<BrokerSession | BrokerRead, BrokerSessionAcquisitionError, BrokerObservations> =>
+): Layer.Layer<BrokerSession | BrokerRead, BrokerSessionAcquisitionError> =>
   cachedLayer(connection).pipe(Layer.provide(mapHttpAcquisitionError(connection, alpacaHttpLayer(connection))))

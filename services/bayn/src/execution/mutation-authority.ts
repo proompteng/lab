@@ -2,6 +2,7 @@ import { Effect, Result } from 'effect'
 
 import {
   AccountStatus,
+  OrderCollection,
   OrderSide as BrokerOrderSide,
   OrderType as BrokerOrderType,
   type Account,
@@ -936,19 +937,15 @@ const mutationAuthorizationError = (message: string, cause: unknown) =>
 
 export const confirmExecutionBrokerState = (
   cached: CachedBrokerState,
-  intentId: string,
+  limits: ExecutionCapitalLimits,
   brokerRead: BrokerReadShape,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
-    if (brokerRead.projection === undefined)
-      return yield* mutationAuthorizationError('broker observation projection is required for submit', undefined)
-    const {
-      positions,
-      openOrders: orders,
-      account,
-    } = yield* brokerRead.projection
-      .submissionSnapshot(intentId)
-      .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker state confirmation failed', cause)))
+    const fresh = brokerRead.projection?.fresh ?? brokerRead
+    const [positions, orders, account] = yield* Effect.all(
+      [fresh.positions, fresh.orders({ status: OrderCollection.Open, limit: limits.maxOpenOrders }), fresh.account],
+      { concurrency: 3 },
+    ).pipe(Effect.mapError((cause) => mutationAuthorizationError('broker state confirmation failed', cause)))
     const stablePositions = validateStablePositionSnapshot(cached.state.positions, positions.value)
     if (Result.isFailure(stablePositions))
       return yield* mutationAuthorizationError('broker positions changed since reconciliation', stablePositions.failure)

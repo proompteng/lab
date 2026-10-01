@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
+import { cachedBrokerStateFixture } from './broker-state-cache.fixture'
 
 import { Cause, Clock, Effect, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -339,8 +339,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
               ordersObservedAt: input.ordersObservedAt ?? cached.state.ordersObservedAt,
             },
           },
-          proposedIntent.intentId,
-          submissionProjectionFixture(brokerRead),
+          grant.limits,
+          brokerRead,
         )
         const persisted = yield* persistedCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
@@ -382,12 +382,23 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 describe('final broker mutation authority', () => {
-  test('uses one coherent submission projection and never its direct reader', async () => {
-    const unusedRead = Effect.die('Unexpected broker GET during submission')
+  test('uses fresh account and exposure reads when routine reads have a cache projection', async () => {
+    const trace: string[] = []
+    const unusedRead = Effect.die(new Error('unexpected cached read before submission'))
     const fresh: BrokerReadShape = {
-      account: unusedRead,
-      positions: unusedRead,
-      orders: () => unusedRead,
+      account: Effect.sync(() => {
+        trace.push('account')
+        return readResult(account())
+      }),
+      positions: Effect.sync(() => {
+        trace.push('positions')
+        return readResult([position()])
+      }),
+      orders: () =>
+        Effect.sync(() => {
+          trace.push('orders')
+          return readResult([])
+        }),
       accountConfiguration: unusedRead,
       assetBySymbol: () => unusedRead,
       orderById: () => unusedRead,
@@ -396,39 +407,19 @@ describe('final broker mutation authority', () => {
       feeActivities: () => unusedRead,
       marketCalendar: () => unusedRead,
     }
-    let reads = 0
     const cached: BrokerReadShape = {
       ...fresh,
-      projection: {
-        fresh,
-        snapshot: unusedRead,
-        invalidate: Effect.void,
-        withMutation: (effect) => effect,
-        submissionSnapshot: (id) =>
-          Effect.sync(() => {
-            expect(id).toBe(intent().intentId)
-            reads += 1
-            return { account: readResult(account()), positions: readResult([position()]), openOrders: readResult([]) }
-          }),
-      },
+      account: unusedRead,
+      positions: unusedRead,
+      orders: () => unusedRead,
+      projection: { fresh, snapshot: unusedRead, invalidate: Effect.void, withMutation: (effect) => effect },
     }
     const snapshot = await Effect.runPromise(
-      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), intent().intentId, cached),
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), defaultLimits, cached),
     )
     expect(snapshot.positions).toEqual([position()])
     expect(snapshot.account).toEqual(account())
-    expect(reads).toBe(1)
-  })
-
-  test('denies submission when its observation projection is absent', async () => {
-    const raw = submissionProjectionFixture({} as BrokerReadShape).projection!.fresh
-    expect(
-      (
-        await Effect.runPromiseExit(
-          confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent().intentId, raw),
-        )
-      )._tag,
-    ).toBe('Failure')
+    expect(trace).toEqual(['positions', 'orders', 'account'])
   })
 
   test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(
@@ -468,8 +459,8 @@ describe('final broker mutation authority', () => {
         yield* TestClock.setTime(Date.parse(activeAt))
         const operation = yield* confirmExecutionBrokerState(
           cachedBrokerStateFixture(account()),
-          intent().intentId,
-          submissionProjectionFixture(read),
+          defaultLimits,
+          read,
         ).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust('100 millis')
         return (yield* Fiber.join(operation)) - Date.parse(activeAt)
@@ -487,7 +478,7 @@ describe('final broker mutation authority', () => {
     expect(observed.grantReads).toBe(1)
     expect(observed.positionReads).toBe(1)
     expect(observed.orderReads).toBe(1)
-    expect(observed.orderLimit).toBe(1)
+    expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
     expect(observed.trace.indexOf('authorize')).toBeGreaterThan(observed.trace.indexOf('clock'))

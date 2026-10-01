@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
+import { utcInstantFromEpochMillis } from '../time'
 
 import { provideTestLayer } from '../effect-test-support'
 import {
@@ -35,8 +35,7 @@ import {
   accountConfigurationObservationSchemaVersion,
   accountConfigurationObservationSource,
 } from '../broker/alpaca/model'
-import { BrokerObservations, observationUnavailable } from '../broker/alpaca/observed-snapshot'
-import { captureBrokerObservation, makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
+import { makeCachedBrokerRead } from '../broker/alpaca/snapshot-cache'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 import { canonicalHashV1 } from '../hash'
 import {
@@ -2117,7 +2116,7 @@ describe('execution coordinator', () => {
   })
 
   test.each([MutationOperation.Submit, MutationOperation.Cancel])(
-    'invalidates cached history when lookup-only %s recovery advances and retains the new poll on replay',
+    'refreshes cached history when lookup-only %s recovery advances and retains it on replay',
     async (operation) => {
       const harness = makeHarness()
       const orders: Order[] = []
@@ -2168,20 +2167,7 @@ describe('execution coordinator', () => {
       await Effect.runPromise(
         harness.provideRecovery(
           Effect.gen(function* () {
-            let available = true
-            let snapshot = yield* captureBrokerObservation(fresh, yield* currentUtcInstant, 30_000)
-            const observed = Effect.suspend(() =>
-              available ? Effect.succeed(snapshot) : Effect.fail(observationUnavailable('invalidated')),
-            )
-            const cached = yield* makeProjectedBrokerRead(fresh).pipe(
-              Effect.provideService(BrokerObservations, {
-                read: observed,
-                readForSubmit: () => observed,
-                invalidate: Effect.sync(() => {
-                  available = false
-                }),
-              }),
-            )
+            const cached = yield* makeCachedBrokerRead(fresh, { pollIntervalMs: 30_000, maxAgeMs: 60_000 })
             const requestHash = canonicalHashV1(encodedRequest(intent))
             yield* harness.mutations.beginSubmit(intentId, requestHash, 1_000, initialTime)
             if (operation === MutationOperation.Submit) {
@@ -2204,15 +2190,14 @@ describe('execution coordinator', () => {
             yield* TestClock.adjust(999)
             expect(Result.isFailure(yield* Effect.result(cached.account))).toBe(true)
             yield* TestClock.adjust(1)
-            snapshot = yield* captureBrokerObservation(fresh, yield* currentUtcInstant, 30_000)
-            available = true
-            const published = yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))
-            expect(published.history.orders.rows[0]?.value.brokerOrderId).toBe(orderId)
-            expect(published.history.orders.rows[0]?.value.status).toBe(orders[0]?.status)
-            expect(published.history.orders.observedAt).toBe('1970-01-01T00:00:03.000Z')
+            yield* Effect.repeat(Effect.yieldNow, { times: 10 })
+            const snapshot = yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))
+            expect(snapshot.history.orders.rows[0]?.value.brokerOrderId).toBe(orderId)
+            expect(snapshot.history.orders.rows[0]?.value.status).toBe(orders[0]?.status)
+            expect(snapshot.history.orders.observedAt).toBe('1970-01-01T00:00:03.000Z')
             const replay = yield* recover(intentId, operation).pipe(Effect.provideService(BrokerRead, cached))
             expect(replay.eventId).toBe(found.eventId)
-            expect(yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))).toBe(published)
+            expect(yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))).toBe(snapshot)
           }).pipe(Effect.scoped),
         ),
       )

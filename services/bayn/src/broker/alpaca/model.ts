@@ -409,15 +409,8 @@ export interface StableBrokerSnapshot {
 
 export const mutationConsistencyDelayMs = 1_000
 
-export interface BrokerSubmissionSnapshot {
-  readonly account: ReadResult<Account>
-  readonly positions: ReadResult<readonly Position[]>
-  readonly openOrders: ReadResult<readonly Order[]>
-}
-
 export interface BrokerReadProjection {
   readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
-  readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
   readonly invalidate: Effect.Effect<void>
   readonly withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>

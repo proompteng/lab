@@ -1,5 +1,3 @@
-import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
-import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 import { createServer } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
@@ -51,20 +49,11 @@ export const makeRestateExecutionEndpointHandler = (
   runtime: NativeExecutionRuntime,
   bootstrapAuthorizationHash: string,
   identityKeys: readonly string[],
-  brokerObservations: { readonly runtime: BrokerObservationRuntime; readonly pollIntervalMs: number },
   hooks: readonly restate.HooksProvider[] = [],
 ) => {
-  const observations = makeBaynBrokerObservations(
-    { ...config, pollIntervalMs: brokerObservations.pollIntervalMs },
-    brokerObservations.runtime,
-    hooks,
-  )
   const controller = makeBaynExecutionController(config, runtime, hooks)
   const bootstrap = makeBaynExecutionBootstrap(config, controller, bootstrapAuthorizationHash, hooks)
-  return restate.createEndpointHandler({
-    services: [controller, bootstrap, observations],
-    identityKeys: [...identityKeys],
-  })
+  return restate.createEndpointHandler({ services: [controller, bootstrap], identityKeys: [...identityKeys] })
 }
 
 export const restateExecutionServerProgram = Effect.gen(function* () {
@@ -104,20 +93,12 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     ),
   )
   const { config, runtime } = yield* acquireNativeExecutionRuntime(plan, previousBinding)
-  const brokerObservations = yield* acquireBrokerObservationRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),
     serviceVersion: config.sourceRevision,
   })
   const server = createServer(
-    makeRestateExecutionEndpointHandler(
-      config,
-      runtime,
-      bootstrapAuthorizationHash,
-      identityKeys,
-      brokerObservations,
-      telemetry.hooks,
-    ),
+    makeRestateExecutionEndpointHandler(config, runtime, bootstrapAuthorizationHash, identityKeys, telemetry.hooks),
   )
   yield* acquireRestateHttp2Server(server, port)
   yield* Effect.logInfo('Bayn native Restate execution endpoint is listening').pipe(

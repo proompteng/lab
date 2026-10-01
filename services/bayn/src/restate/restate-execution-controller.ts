@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 
 import * as restate from '@restatedev/restate-sdk'
-import { Result, Schema } from 'effect'
+import { Result } from 'effect'
 
 import { maximumConsistencyDelayMs } from '../execution/mutations'
 import {
@@ -27,8 +27,6 @@ import {
   type ExecutionControllerTick,
 } from '../execution/controller'
 import { sha256 } from '../hash'
-import { strictParseOptions } from '../schemas'
-import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
 
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
@@ -709,25 +707,6 @@ export const makeBaynExecutionBootstrap = (
             }
             activationState = deactivated
           }
-          const observation = Schema.decodeUnknownResult(
-            BrokerObservationOwnerStateSchema,
-            strictParseOptions,
-          )(
-            await ctx.genericCall({
-              service: 'BaynBrokerObservations',
-              method: 'activate',
-              key: config.controllerKey,
-              parameter: { sourceRevision: config.sourceRevision },
-              inputSerde: brokerObservationJsonSerde,
-              outputSerde: brokerObservationJsonSerde,
-            }),
-          )
-          if (
-            Result.isFailure(observation) ||
-            observation.success.sourceRevision !== config.sourceRevision ||
-            observation.success.lastSnapshotHash === undefined
-          )
-            throw terminal('execution controller bootstrap requires a fresh published broker observation')
           const activation = bindBootstrapActivation(activationState ?? null, request, config)
           let activated: ExecutionControllerState | null = await client.activate(activation)
           const maximumAttempts = executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs)

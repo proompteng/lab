@@ -1,4 +1,3 @@
-import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 import { Cause, Clock, Data, Effect, Exit, Fiber, Ref, Result, Schema, SynchronizedRef } from 'effect'
 
 import {
@@ -6,7 +5,6 @@ import {
   AssetClass,
   OrderClass,
   OrderSide,
-  OrderCollection,
   OrderStatus,
   OrderType,
   PositionSide,
@@ -1014,23 +1012,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     return {
       accountId,
       sourceManifestHash: config.sourceManifestHash,
-      read: {
-        ...read,
-        projection: {
-          fresh: read,
-          invalidate: Effect.void,
-          withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
-          snapshot: readStableBrokerSnapshot(read, now).pipe(
-            Effect.mapError((cause) => readFailure('preflight', 'Replay broker snapshot failed', cause)),
-          ),
-          submissionSnapshot: () =>
-            Effect.all({
-              account: read.account,
-              positions: read.positions,
-              openOrders: read.orders({ status: OrderCollection.Open, limit: 500 }),
-            }),
-        },
-      },
+      read,
       mutation,
       completeSession,
       valuation: markedPositions.pipe(Effect.map(({ valuation }) => valuation)),

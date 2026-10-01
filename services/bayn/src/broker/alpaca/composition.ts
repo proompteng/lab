@@ -11,7 +11,6 @@ import {
   cachedLayer as brokerSessionLayer,
 } from './session'
 import { BrokerRead } from './model'
-import { BrokerObservations } from './observed-snapshot'
 import { Pipeable } from '../../pipeable'
 
 const brokerSessionAcquisitionError = (
@@ -40,7 +39,7 @@ const mapHttpAcquisitionError = (
 const AlpacaBrokerResourcesLiveDataFirst = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError> = alpacaHttpLayer(connection),
-): Layer.Layer<BrokerSession | BrokerRead | AlpacaHttpClient, BrokerSessionAcquisitionError, BrokerObservations> => {
+): Layer.Layer<BrokerSession | BrokerRead | AlpacaHttpClient, BrokerSessionAcquisitionError> => {
   const sharedHttp = mapHttpAcquisitionError(connection, http)
   const session = brokerSessionLayer(connection).pipe(Layer.provide(sharedHttp))
   const client = Layer.effect(AlpacaHttpClient, HttpClient.HttpClient).pipe(Layer.provide(sharedHttp))

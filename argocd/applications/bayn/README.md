@@ -114,12 +114,7 @@ Expected:
 - the operator reports two ready worker replicas at the committed image digest, spread across eligible hostnames, and
   drains the previous revision;
 - the activation hook completes once for the exact committed plan and source;
-- zero legacy lifecycle registrations exist and Restate exposes the account-keyed native controller and private
-  `BaynBrokerObservations` object through the existing worker endpoint;
-- migration 87 is applied before endpoint registration; bootstrap drains the predecessor, publishes a fresh
-  source-bound `broker_observations` projection, then activates the native controller. PostgreSQL reads prove its
-  timestamp advances across background polls and its source revision matches the promoted image. Unavailable,
-  expired or invalidated observations block execution instead of issuing broker GETs from normal submission;
+- zero legacy lifecycle registrations exist and Restate exposes only the account-keyed native controller service;
 - delayed native ticks project fresh controller status while the worker's static broker/capital configuration remains
   read-only/none; any effective execution authority must still come only from the separately sealed and validated
   durable capital generation;

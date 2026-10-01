@@ -3,7 +3,6 @@ import { describe, expect, test } from 'bun:test'
 import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 
-import { BrokerObservations } from './broker/alpaca/observed-snapshot'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
 import { BrokerProvider, BrokerSession, decodeBrokerConnection, type BrokerConnection } from './broker/alpaca'
 import { AlpacaHttpClient } from './broker/alpaca/http'
@@ -192,11 +191,6 @@ describe('Bayn resource lifecycle', () => {
       Effect.scoped(
         Effect.all({ session: BrokerSession, httpClient: AlpacaHttpClient }).pipe(
           Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
-          Effect.provideService(BrokerObservations, {
-            read: Effect.die('not read by acquisition'),
-            readForSubmit: () => Effect.die('not submitted by acquisition'),
-            invalidate: Effect.void,
-          }),
         ),
       ),
     )
@@ -252,11 +246,6 @@ describe('Bayn resource lifecycle', () => {
         Effect.gen(function* () {
           const fiber = yield* BrokerSession.pipe(
             Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
-            Effect.provideService(BrokerObservations, {
-              read: Effect.die('not read by acquisition'),
-              readForSubmit: () => Effect.die('not submitted by acquisition'),
-              invalidate: Effect.void,
-            }),
             Effect.forkScoped({ startImmediately: true }),
           )
           yield* Deferred.await(started)
