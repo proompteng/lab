@@ -88,49 +88,12 @@ var workspaceSearchExcludedRootNames = map[string]struct{}{
 }
 
 func (server *apiServer) handleListFiles(writer http.ResponseWriter, request *http.Request) {
-	requested := request.URL.Query().Get("path")
-	if _, err := server.workspace.resolveExisting(requested); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	relative, err := server.workspace.relative(requested)
+	result, err := server.listFiles(request.URL.Query().Get("path"))
 	if err != nil {
 		writeWorkspaceError(writer, err)
 		return
 	}
-	directory, err := server.workspace.safeRoot.Open(relative)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	defer directory.Close()
-	info, err := directory.Stat()
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if !info.IsDir() {
-		writeAPIError(writer, http.StatusBadRequest, "path is not a directory")
-		return
-	}
-	entries, err := readDirectoryEntries(directory, maxDirectoryEntries)
-	if err != nil {
-		if errors.Is(err, errTooManyDirectoryEntries) {
-			writeAPIError(writer, http.StatusRequestEntityTooLarge, err.Error())
-			return
-		}
-		writeWorkspaceError(writer, err)
-		return
-	}
-	result := make([]fileEntry, 0, len(entries))
-	for _, entry := range entries {
-		item, itemErr := server.fileEntryRelative(filepath.Join(relative, entry.Name()))
-		if itemErr == nil {
-			result = append(result, item)
-		}
-	}
-	sortFileEntries(result)
-	writeJSON(writer, http.StatusOK, fileList{Path: server.workspace.displayRelative(relative), Entries: result})
+	writeJSON(writer, http.StatusOK, result)
 }
 
 func readDirectoryEntries(directory *os.File, limit int) ([]os.DirEntry, error) {
@@ -211,89 +174,12 @@ func (server *apiServer) handleWriteFile(writer http.ResponseWriter, request *ht
 		writeAPIError(writer, http.StatusBadRequest, "content must be base64 encoded")
 		return
 	}
-	if len(content) > maxFileBytes {
-		writeAPIError(writer, http.StatusRequestEntityTooLarge, errFileTooLarge.Error())
-		return
-	}
-
-	server.fileMutationMu.Lock()
-	defer server.fileMutationMu.Unlock()
-	// This lock serializes Nanoagent API writers. Direct filesystem writers
-	// outside this process are not participants in the check-and-rename
-	// protocol, so expectedRevision remains a content snapshot for them.
-
-	target, err := server.workspace.resolveForWrite(input.Path)
+	result, err := server.writeFile(fileWriteInput{Path: input.Path, Content: content, ExpectedRevision: input.ExpectedRevision})
 	if err != nil {
 		writeWorkspaceError(writer, err)
 		return
 	}
-	if target == server.workspace.root {
-		writeAPIError(writer, http.StatusBadRequest, "cannot overwrite the home root")
-		return
-	}
-	relative, err := server.workspace.relative(input.Path)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	state, err := server.fileRevisionState(relative)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if state.revision != input.ExpectedRevision {
-		writeRevisionConflict(writer, state.revision)
-		return
-	}
-	parent := filepath.Dir(relative)
-	if err := server.workspace.safeRoot.MkdirAll(parent, 0o750); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	mode := os.FileMode(0o640)
-	if state.exists {
-		mode = state.mode.Perm()
-	}
-	temporaryName, temporary, err := createWorkspaceTemporaryFile(server.workspace, parent, mode)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	defer server.workspace.safeRoot.Remove(temporaryName)
-	if err := temporary.Chmod(mode); err != nil {
-		_ = temporary.Close()
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if _, err := temporary.Write(content); err != nil {
-		_ = temporary.Close()
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := temporary.Close(); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := server.workspace.safeRoot.Rename(temporaryName, relative); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := server.syncMutationDirectories(parent); err != nil {
-		// Rename has already made the new content visible. A failed parent sync
-		// makes durability unknown; do not remove or otherwise roll back it.
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusOK, writeFileResponse{
-		Path:     server.workspace.displayRelative(relative),
-		Size:     int64(len(content)),
-		Revision: revisionForContent(content),
-	})
+	writeJSON(writer, http.StatusOK, result)
 }
 
 func (server *apiServer) handleCreateDirectory(writer http.ResponseWriter, request *http.Request) {
@@ -301,46 +187,12 @@ func (server *apiServer) handleCreateDirectory(writer http.ResponseWriter, reque
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
-	server.fileMutationMu.Lock()
-	defer server.fileMutationMu.Unlock()
-
-	target, err := server.workspace.resolveForWrite(input.Path)
+	result, err := server.createDirectory(input)
 	if err != nil {
 		writeWorkspaceError(writer, err)
 		return
 	}
-	if target == server.workspace.root {
-		writeAPIError(writer, http.StatusConflict, "home root already exists")
-		return
-	}
-	relative, err := server.workspace.relative(input.Path)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if _, err := server.workspace.safeRoot.Lstat(relative); err == nil {
-		writeAPIError(writer, http.StatusConflict, "path already exists")
-		return
-	} else if !errors.Is(err, os.ErrNotExist) {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := server.workspace.safeRoot.MkdirAll(relative, 0o750); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := server.syncMutationDirectories(relative); err != nil {
-		// The directory is already visible. A failed sync leaves its durable
-		// acknowledgement unknown, so leave the mutation in place.
-		writeWorkspaceError(writer, err)
-		return
-	}
-	entry, err := server.fileEntryRelative(relative)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusCreated, entry)
+	writeJSON(writer, http.StatusCreated, result)
 }
 
 func (server *apiServer) handleMoveFile(writer http.ResponseWriter, request *http.Request) {
@@ -348,115 +200,12 @@ func (server *apiServer) handleMoveFile(writer http.ResponseWriter, request *htt
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
-	server.fileMutationMu.Lock()
-	defer server.fileMutationMu.Unlock()
-
-	source, err := server.workspace.resolveExisting(input.SourcePath)
+	result, err := server.moveFile(input)
 	if err != nil {
 		writeWorkspaceError(writer, err)
 		return
 	}
-	if source == server.workspace.realRoot {
-		writeAPIError(writer, http.StatusBadRequest, "cannot move the home root")
-		return
-	}
-	sourceRelative, err := server.workspace.relative(input.SourcePath)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	logicalSource := filepath.Join(server.workspace.realRoot, sourceRelative)
-	sourceInfo, err := server.workspace.safeRoot.Lstat(sourceRelative)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	rawSource := source
-	if sourceInfo.Mode()&os.ModeSymlink != 0 {
-		// Rename moves a leaf symlink entry rather than its target, but fsnotify
-		// still reports that entry beneath the canonical parent directory.
-		rawSourceParent, err := filepath.EvalSymlinks(filepath.Dir(logicalSource))
-		if err != nil {
-			writeWorkspaceError(writer, err)
-			return
-		}
-		rawSource = filepath.Join(rawSourceParent, filepath.Base(logicalSource))
-	}
-	destination, err := server.workspace.resolveForWrite(input.DestinationPath)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if destination == server.workspace.root {
-		writeAPIError(writer, http.StatusBadRequest, "cannot replace the home root")
-		return
-	}
-	destinationRelative, err := server.workspace.relative(input.DestinationPath)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if _, err := server.workspace.safeRoot.Lstat(destinationRelative); err == nil {
-		writeAPIError(writer, http.StatusConflict, "destination already exists")
-		return
-	} else if !errors.Is(err, os.ErrNotExist) {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := server.workspace.safeRoot.MkdirAll(filepath.Dir(destinationRelative), 0o750); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	logicalDestination := filepath.Join(server.workspace.realRoot, destinationRelative)
-	rawDestinationParent, err := filepath.EvalSymlinks(filepath.Dir(destination))
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	rawDestination := filepath.Join(rawDestinationParent, filepath.Base(destination))
-	renameGeneration, err := server.fileWatcher.beginPairedRenamePaths(
-		logicalSource,
-		rawSource,
-		logicalDestination,
-		rawDestination,
-	)
-	if err != nil {
-		writeAPIError(writer, http.StatusConflict, err.Error())
-		return
-	}
-	renamePublished := false
-	defer func() {
-		if !renamePublished {
-			server.fileWatcher.cancelPairedRename(logicalSource, renameGeneration)
-		}
-	}()
-	if err := server.workspace.safeRoot.Rename(sourceRelative, destinationRelative); err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	destinationPath := server.workspace.displayRelative(destinationRelative)
-	entry, err := server.fileEntryRelative(destinationRelative)
-	if err != nil {
-		server.fileWatcher.publishPairedRename(logicalSource, renameGeneration, fileEvent{Path: destinationPath})
-		renamePublished = true
-	} else {
-		server.fileWatcher.publishPairedRename(logicalSource, renameGeneration, fileEvent{Path: entry.Path, Entry: &entry})
-		renamePublished = true
-	}
-	if syncErr := server.syncMutationDirectories(
-		filepath.Dir(sourceRelative),
-		filepath.Dir(destinationRelative),
-	); syncErr != nil {
-		// Rename and the watcher event have already completed. A failed parent
-		// sync makes durability unknown; never attempt a compensating rename.
-		writeWorkspaceError(writer, syncErr)
-		return
-	}
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusOK, entry)
+	writeJSON(writer, http.StatusOK, result)
 }
 
 func (server *apiServer) handleDeleteFile(writer http.ResponseWriter, request *http.Request) {
@@ -464,44 +213,8 @@ func (server *apiServer) handleDeleteFile(writer http.ResponseWriter, request *h
 	if !decodeJSON(writer, request, &input) {
 		return
 	}
-	server.fileMutationMu.Lock()
-	defer server.fileMutationMu.Unlock()
-
-	target, err := server.workspace.resolveExisting(input.Path)
+	_, err := server.deleteFile(input)
 	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if target == server.workspace.realRoot {
-		writeAPIError(writer, http.StatusBadRequest, "cannot delete the home root")
-		return
-	}
-	relative, err := server.workspace.relative(input.Path)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	info, err := server.workspace.safeRoot.Lstat(relative)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if info.IsDir() && input.Recursive {
-		err = server.workspace.safeRoot.RemoveAll(relative)
-	} else {
-		err = server.workspace.safeRoot.Remove(relative)
-	}
-	if err != nil {
-		if info.IsDir() && !input.Recursive {
-			writeAPIError(writer, http.StatusConflict, "directory is not empty; recursive deletion was not authorized")
-			return
-		}
-		writeWorkspaceError(writer, err)
-		return
-	}
-	if err := server.syncMutationDirectories(filepath.Dir(relative)); err != nil {
-		// Removal is already visible. A failed parent sync makes durability
-		// unknown; do not recreate the removed entry.
 		writeWorkspaceError(writer, err)
 		return
 	}
@@ -792,23 +505,36 @@ func sortFileEntries(entries []fileEntry) {
 }
 
 func writeWorkspaceError(writer http.ResponseWriter, err error) {
+	failure := workspaceFailure(err)
+	if failure.currentRevision != "" {
+		writeRevisionConflict(writer, failure.currentRevision)
+		return
+	}
+	writeAPIError(writer, failure.status, failure.message)
+}
+
+func workspaceFailure(err error) *operationError {
+	var operation *operationError
+	if errors.As(err, &operation) {
+		return operation
+	}
 	switch {
 	case errors.Is(err, errInternalPath):
-		writeAPIError(writer, http.StatusNotFound, "path is not visible")
+		return &operationError{status: http.StatusNotFound, message: "path is not visible"}
 	case errors.Is(err, errPathOutsideWorkspace):
-		writeAPIError(writer, http.StatusForbidden, "path must remain inside the user home")
+		return &operationError{status: http.StatusForbidden, message: "path must remain inside the user home"}
 	case errors.Is(err, os.ErrNotExist):
-		writeAPIError(writer, http.StatusNotFound, "path does not exist")
+		return &operationError{status: http.StatusNotFound, message: "path does not exist"}
 	case errors.Is(err, os.ErrPermission):
-		writeAPIError(writer, http.StatusForbidden, "path is not accessible")
+		return &operationError{status: http.StatusForbidden, message: "path is not accessible"}
 	case errors.Is(err, errFileTooLarge):
-		writeAPIError(writer, http.StatusRequestEntityTooLarge, errFileTooLarge.Error())
+		return &operationError{status: http.StatusRequestEntityTooLarge, message: errFileTooLarge.Error()}
 	case errors.Is(err, errNotRegularFile):
-		writeAPIError(writer, http.StatusBadRequest, errNotRegularFile.Error())
+		return &operationError{status: http.StatusBadRequest, message: errNotRegularFile.Error()}
 	case errors.Is(err, errNotDirectory):
-		writeAPIError(writer, http.StatusInternalServerError, errNotDirectory.Error())
+		return &operationError{status: http.StatusInternalServerError, message: errNotDirectory.Error()}
 	default:
-		writeAPIError(writer, http.StatusInternalServerError, "filesystem operation failed")
+		return &operationError{status: http.StatusInternalServerError, message: "filesystem operation failed"}
 	}
 }
 

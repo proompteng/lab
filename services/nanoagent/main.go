@@ -26,13 +26,14 @@ const (
 )
 
 type evidence struct {
-	Architecture  string    `json:"architecture"`
-	BootID        string    `json:"bootId"`
-	Hostname      string    `json:"hostname"`
-	KernelRelease string    `json:"kernelRelease"`
-	MicroVMID     string    `json:"microvmId"`
-	StartedAt     time.Time `json:"startedAt"`
-	State         string    `json:"state"`
+	Architecture         string    `json:"architecture"`
+	BootID               string    `json:"bootId"`
+	Hostname             string    `json:"hostname"`
+	KernelRelease        string    `json:"kernelRelease"`
+	MicroVMID            string    `json:"microvmId"`
+	GuestProtocolVersion uint32    `json:"guestProtocolVersion"`
+	StartedAt            time.Time `json:"startedAt"`
+	State                string    `json:"state"`
 }
 
 type fileReader func(string) ([]byte, error)
@@ -79,6 +80,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	current.GuestProtocolVersion = guestProtocolVersion
 
 	encoded, err := json.Marshal(current)
 	if err != nil {
@@ -114,6 +116,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr:              listenAddress,
 		Handler:           newHandler(api),
+		Protocols:         guestHTTPProtocols(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -354,5 +357,5 @@ func newHandler(api *apiServer) http.Handler {
 	mux.HandleFunc("GET /readyz", ready)
 	mux.HandleFunc("GET /healthz", live)
 	mux.Handle("/v1/", api.authenticatedRoutes())
-	return mux
+	return api.rpcHandler(mux)
 }
