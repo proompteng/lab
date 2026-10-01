@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Layer, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { AuthorizationError, ConnectionError, SqlError } from 'effect/unstable/sql/SqlError'
+import { AuthorizationError, ConnectionError, SqlError } from 'effect/sql/SqlError'
 
 import type { OperationalError } from './errors'
 import { canonicalHashV1 } from './hash'

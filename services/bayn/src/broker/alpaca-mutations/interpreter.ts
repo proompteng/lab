@@ -1,5 +1,5 @@
 import { Cause, Effect, identity } from 'effect'
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import type { ExecutionAuthority } from '../../execution/authority'
 import type { Intent } from '../../execution/contracts'

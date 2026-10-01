@@ -72,6 +72,12 @@ export const makeBrokerObservationStore = (
   const publish = (ticket: BrokerObservationTicket, value: ObservedBrokerSnapshot) =>
     run(
       Effect.gen(function* () {
+        const decoded = decodeObservedBrokerSnapshot(value)
+        if (Result.isFailure(decoded))
+          return yield* observationUnavailable(
+            'Broker observation cannot be published because decoding failed',
+            decoded.failure,
+          )
         yield* validateObservedBrokerSnapshot(value, accountId, yield* currentUtcInstant, maximumAgeMs)
         if (value.startedAt !== ticket.startedAt)
           return yield* observationUnavailable('Broker poll start does not match its durable ticket')
