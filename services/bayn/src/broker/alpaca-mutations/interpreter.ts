@@ -1,4 +1,4 @@
-import { Cause, Effect } from 'effect'
+import { Cause, Effect, identity } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
 
 import type { ExecutionAuthority } from '../../execution/authority'
@@ -113,6 +113,7 @@ const makeMutationDataFirst = (
 ): Effect.Effect<BrokerMutationShape, BrokerMutationError> =>
   Effect.gen(function* () {
     const runtime = yield* Effect.fromResult(resolveMutationCapability(session, authority))
+    const withMutation = session.read.projection?.withMutation ?? identity
 
     const submit = Effect.fn('BrokerMutation.submit', {
       attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
@@ -154,7 +155,7 @@ const makeMutationDataFirst = (
                 observedAt,
               }),
             )
-          }),
+          }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),
@@ -186,7 +187,7 @@ const makeMutationDataFirst = (
                 observedAt,
               }),
             )
-          }),
+          }).pipe(withMutation),
         )
       },
       (effect) => effect.pipe(Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders)),

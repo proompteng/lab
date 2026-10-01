@@ -253,6 +253,8 @@ func bootstrapUserHome(home string) error {
 	}{
 		{path: "workspace", mode: 0o750},
 		{path: ".cache", mode: 0o750},
+		{path: ".cache/apt/lists", mode: 0o750},
+		{path: ".cache/apt/archives", mode: 0o750},
 		{path: ".local/bin", mode: 0o750},
 		{path: ".bun", mode: 0o750},
 		{path: ".cargo", mode: 0o750},

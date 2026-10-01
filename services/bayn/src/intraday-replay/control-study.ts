@@ -4,6 +4,7 @@ import { TestClock } from 'effect/testing'
 import { AssetStatus, type MarketCalendarObservation, type MarketCalendarSession } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { OrderSide } from '../execution/contracts'
+import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { numberToMicros } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import type { JevProtocol } from '../jev/protocol'
@@ -51,7 +52,7 @@ export type ControlStudyManagement =
       readonly providerClock: Clock.Clock
     }
 
-export const ControlStudyInputSchema = Schema.Struct({
+const ControlStudyInputV2Schema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.control-study-input.v2'),
   management: Schema.Enum(ControlManagementMode),
   backtest: BacktestInputSchema,
@@ -59,8 +60,17 @@ export const ControlStudyInputSchema = Schema.Struct({
   repeatedTargetWeightPpm: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(200_000)),
 })
 
+export const ControlStudyInputSchema = Schema.Union([
+  ControlStudyInputV2Schema,
+  Schema.Struct({
+    ...ControlStudyInputV2Schema.fields,
+    schemaVersion: Schema.Literal('bayn.control-study-input.v3'),
+    turnoverPolicy: Schema.Enum(EntryTurnoverPolicy),
+  }),
+])
+
 export const controlStudyDefinition = {
-  schemaVersion: 'bayn.control-study-definition.v4',
+  schemaVersion: 'bayn.control-study-definition.v5',
   policies: {
     RETAINED_BREAKOUT_CLOSE:
       'Six retained candidates, retained breakout thresholds, 10 percent allocation, hold until the close window.',
@@ -75,6 +85,8 @@ export const controlStudyDefinition = {
     'Entry and management snapshots use the bound Jev candidate evidence policy. Relative momentum applies its quote/window-trade freshness contract. Breakout controls retain their independent native trade-confirmation freshness and breakout thresholds.',
   sizing:
     'Bayn target allocation and order/symbol/turnover bounds, whole shares, cash reserved for cumulative fees at the adverse buy limit.',
+  turnover:
+    'Version 2 retains immediate-adjustment admission. Version 3 explicitly selects immediate adjustment or entry plus expected exit at the reference price and adverse allowance. The reserve is not a hard bound on future prices; mandatory reducing exits are unchanged.',
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   management:
@@ -131,6 +143,7 @@ export const runControlSession = (input: {
   readonly openingCapital: ControlCapital
   readonly dataCostMicros: string
   readonly targetWeight: number
+  readonly turnoverPolicy?: EntryTurnoverPolicy
   readonly decisionLatencyMs: number
   readonly pollIntervalMs: number
   readonly assumptions: typeof BacktestInputSchema.Type.assumptions
@@ -462,6 +475,7 @@ export const runControlSession = (input: {
                     referencePriceMicros: yield* Effect.fromResult(numberToMicros(decisionQuote.value.askPrice)),
                     atMs,
                     feeMultiplierPpm: assumptions.feeMultiplierPpm,
+                    ...(input.turnoverPolicy === undefined ? {} : { turnoverPolicy: input.turnoverPolicy }),
                   }),
                 )
           if (quantity > 0n) {
@@ -654,6 +668,10 @@ export const runControlStudy = (
             dataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
             targetWeight: policy === ControlPolicy.RetainedBreakout ? 0.1 : input.repeatedTargetWeightPpm / 1_000_000,
             decisionLatencyMs: input.decisionLatencyMs,
+            turnoverPolicy:
+              input.schemaVersion === 'bayn.control-study-input.v3'
+                ? input.turnoverPolicy
+                : EntryTurnoverPolicy.ImmediateAdjustment,
             pollIntervalMs: prepared.input.cadence.pollIntervalMs,
             assumptions: prepared.input.assumptions,
             eligibleSymbols: new Set(

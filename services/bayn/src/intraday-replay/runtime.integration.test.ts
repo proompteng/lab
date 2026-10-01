@@ -70,7 +70,7 @@ import {
 import { CycleStore } from '../cycle/store'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
-import { readFinalExecutionRiskContext } from '../db/reconciliation'
+import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
@@ -435,11 +435,16 @@ durableTest.each([
             ...broker,
             read: {
               ...broker.read,
-              account: Ref.get(stallReconciliation).pipe(
-                Effect.flatMap((stall) =>
-                  stall ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true))) : broker.read.account,
+              projection: {
+                ...broker.read.projection,
+                snapshot: Ref.get(stallReconciliation).pipe(
+                  Effect.flatMap((stall) =>
+                    stall
+                      ? Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))
+                      : broker.read.projection.snapshot,
+                  ),
                 ),
-              ),
+              },
             },
           },
           source,
@@ -822,6 +827,8 @@ durableTest.each([
                   mutationStore: mutations,
                   writerFence: fence,
                   persistedCapitalGrants: grants,
+                  verifyBrokerStateVersion: (version, intentId) =>
+                    verifyBrokerStateVersion(sql, accountId, version, intentId),
                   readFinalExecutionRiskContext: (at) => readFinalExecutionRiskContext(sql, accountId, at),
                 },
               })

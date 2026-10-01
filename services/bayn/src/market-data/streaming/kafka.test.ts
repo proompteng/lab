@@ -417,6 +417,43 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
+  test('retains the first invalidation cause and reports recovery without private transport details', async () => {
+    const transports: FakeTransport[] = []
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    const firstCause = new AuthenticationError('private transport credential detail')
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('2 seconds')
+        const prior = yield* projection.read
+        const first = transports[0]
+        if (first === undefined) throw new Error('First transport missing')
+        first.invalidated?.(firstCause)
+        first.invalidated?.(new Error('secondary stream failure'))
+        const invalid = yield* Effect.result(projection.read)
+        if (Result.isSuccess(invalid)) throw new Error('Invalidated epoch remained readable')
+        expect(invalid.failure.cause).toBe(firstCause)
+        yield* TestClock.adjust('3 seconds')
+        expect((yield* projection.read).projection.epoch).not.toBe(prior.projection.epoch)
+        expect(logs).toContainEqual([
+          'Kafka market projection cycle failed',
+          expect.objectContaining({ failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
+        ])
+        expect(logs).toContainEqual([
+          'Kafka market projection recovered',
+          expect.objectContaining({ failedEpoch: prior.projection.epoch }),
+        ])
+        expect(JSON.stringify(logs)).not.toContain('private transport credential detail')
+        expect(first.closeCount).toBe(1)
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+  })
+
   test('invalidation without a cause still revokes the epoch and rebuilds', async () => {
     const transports: FakeTransport[] = []
     await program(

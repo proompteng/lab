@@ -12,7 +12,7 @@ import {
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { makeMutation } from '../broker/alpaca-mutations'
 import type { LoadedRuntimeConfig } from '../config'
-import { readFinalExecutionRiskContext } from '../db/reconciliation'
+import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { Authority, type ResearchCapitalGrantGeneration } from '../execution/contracts'
 import { resolvePreparedExecutionAuthority, resolvePreparedExecutionPolicy } from '../execution/runtime-authority'
 import { OperationalError } from '../errors'
@@ -283,6 +283,13 @@ export const makeAutonomousServiceRuntime = (
                                     executionMode: restricted ? 'CloseOnly' : 'Mutation',
                                     execution: {
                                       currentUtcInstant,
+                                      verifyBrokerStateVersion: (version, intentId) =>
+                                        verifyBrokerStateVersion(
+                                          runtimeServices.pgClient,
+                                          realizedPlan.config.alpaca.expectedAccountId,
+                                          version,
+                                          intentId,
+                                        ),
                                       brokerRead: runtimeServices.session.read,
                                       brokerMutation,
                                       persistedCapitalGrants: runtimeServices.persistedCapitalGrants,

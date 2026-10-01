@@ -4,6 +4,7 @@ import { Authority, KillState, ReconciliationStatus } from '../execution/contrac
 import { Pipeable } from '../pipeable'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from '../time'
 import { CycleState, CycleTerminalReason } from './model'
+import { EntryAllocationReason } from './entry-allocation-observation'
 
 export interface CycleOperationsThresholds {
   readonly cycleStallThresholdMs: number
@@ -27,6 +28,8 @@ export interface CycleOperationsSnapshot {
   readonly createdAt: string
   readonly updatedAt: string
   readonly terminalAt: string | null
+  /** A read-only explanation; the immutable target-plan reason and trading policy are unchanged. */
+  readonly entryAllocationReason?: EntryAllocationReason | null
 }
 
 export interface DurableAuthorityObservation {
@@ -184,6 +187,7 @@ export enum CycleOperationsReason {
   Active = 'ACTIVE',
   LastCycleCompleted = 'LAST_CYCLE_COMPLETED',
   LastCycleNoTrade = 'LAST_CYCLE_NO_TRADE',
+  TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   LastCycleBlocked = 'LAST_CYCLE_BLOCKED',
   MissedPublicationDeadline = 'MISSED_PUBLICATION_DEADLINE',
   MissedSubmissionCutoff = 'MISSED_SUBMISSION_CUTOFF',
@@ -303,7 +307,12 @@ const lifecycleCondition = (
       return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleCompleted]
     }
     if (projection.last?.phase === CycleState.NoTrade) {
-      return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleNoTrade]
+      return [
+        CycleOperationsCondition.Waiting,
+        projection.last.entryAllocationReason === EntryAllocationReason.TurnoverBudgetExhausted
+          ? CycleOperationsReason.TurnoverBudgetExhausted
+          : CycleOperationsReason.LastCycleNoTrade,
+      ]
     }
     return [CycleOperationsCondition.Waiting, CycleOperationsReason.NoCycleRecorded]
   }

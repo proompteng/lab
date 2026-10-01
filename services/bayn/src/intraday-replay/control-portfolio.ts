@@ -2,6 +2,7 @@ import { Data, Result } from 'effect'
 
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
+import { assessEntryTurnoverReserve, EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -157,6 +158,7 @@ export const controlEntryQuantity = (input: {
   readonly referencePriceMicros: bigint
   readonly atMs: number
   readonly feeMultiplierPpm: number
+  readonly turnoverPolicy?: EntryTurnoverPolicy
 }) =>
   Result.gen(function* () {
     const { portfolio, policy, symbol, referencePriceMicros, protocol } = input
@@ -215,7 +217,17 @@ export const controlEntryQuantity = (input: {
       const allowed =
         Result.isSuccess(tentative) &&
         notional <= BigInt(policy.maxOrderNotionalMicros) &&
-        portfolio.tradedNotionalMicros + notional <= BigInt(policy.maxDailyTradedNotionalMicros)
+        portfolio.tradedNotionalMicros + notional <= BigInt(policy.maxDailyTradedNotionalMicros) &&
+        (input.turnoverPolicy !== EntryTurnoverPolicy.EntryAndExpectedExit ||
+          (yield* assessEntryTurnoverReserve({
+            filledTurnoverMicros: portfolio.tradedNotionalMicros,
+            maximumTurnoverMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+            otherReservedMicros: 0n,
+            quantityMicros: shares * MICROS,
+            entryLimitPriceMicros: pricing.expectedExecutionPriceMicros,
+            exitReferencePriceMicros: referencePriceMicros,
+            exitAllowanceBps: BigInt(policy.maxAdverseSlippageBps),
+          })).admitted)
       if (allowed) low = shares
       else high = shares - 1n
     }

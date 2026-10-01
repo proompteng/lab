@@ -46,6 +46,22 @@ export class KafkaMarketFailure extends Data.TaggedError('KafkaMarketFailure')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
+
+export enum KafkaInvalidationReason {
+  Reassigned = 'PARTITIONS_REASSIGNED',
+  Rejoined = 'GROUP_REJOINED',
+  Rebalanced = 'GROUP_REBALANCED',
+  HeartbeatStalled = 'HEARTBEAT_STALLED',
+  TransportFailure = 'TRANSPORT_FAILURE',
+}
+
+class KafkaAssignmentInvalidation extends Data.TaggedError('KafkaAssignmentInvalidation')<{
+  readonly reason: KafkaInvalidationReason
+}> {}
+
+const invalidationReason = (cause: unknown): KafkaInvalidationReason =>
+  cause instanceof KafkaAssignmentInvalidation ? cause.reason : KafkaInvalidationReason.TransportFailure
+
 const failure = (operation: KafkaMarketFailure['operation'], message: string, cause?: unknown) =>
   new KafkaMarketFailure({ operation, message, ...(cause === undefined ? {} : { cause }) })
 
@@ -104,16 +120,18 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
     consume: async (positions, invalidated) => {
       let joined = false
       consumer.on('consumer:group:join', () => {
-        if (joined) invalidated(new Error('Kafka partitions reassigned'))
+        if (joined) invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.Reassigned }))
         joined = true
       })
       consumer.on('consumer:group:rejoin', () => {
-        if (joined) invalidated(new Error('Kafka group rejoined'))
+        if (joined) invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.Rejoined }))
       })
       consumer.on('consumer:group:rebalance', () => {
-        if (joined) invalidated(new Error('Kafka partitions reassigned'))
+        if (joined) invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.Rebalanced }))
       })
-      consumer.on('consumer:heartbeat:stalled', () => invalidated(new Error('Kafka heartbeat stalled')))
+      consumer.on('consumer:heartbeat:stalled', () =>
+        invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.HeartbeatStalled })),
+      )
       const source = await new Promise<MessagesStream<string, string, string, string>>((resolve, reject) => {
         if (closePromise !== undefined) {
           reject(new Error('Kafka consumer is closed'))
@@ -234,6 +252,9 @@ export const makeKafkaMarketProjection = (
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
     let lastFailure: KafkaMarketFailure | undefined
+    let recovery:
+      | { readonly failedEpoch: string; readonly startedAtMs: number; readonly reason: KafkaInvalidationReason }
+      | undefined
     const cycle = Effect.scoped(
       Effect.gen(function* () {
         const epoch = yield* Effect.sync(randomUUID)
@@ -300,10 +321,16 @@ export const makeKafkaMarketProjection = (
               offset: partition.startOffset,
             })),
             (cause) => {
-              if (projection.epoch !== epoch) return
+              // Cleanup and SDK rejoin events must not overwrite the first causal failure of this epoch.
+              if (projection.epoch !== epoch || invalidation !== undefined) return
               invalidation = failure('consume', 'Kafka assignment invalidated', cause)
               ready = false
               lastFailure = invalidation
+              recovery ??= {
+                failedEpoch: epoch,
+                startedAtMs: clock.currentTimeMillisUnsafe(),
+                reason: invalidationReason(cause),
+              }
             },
           ),
         )
@@ -386,6 +413,18 @@ export const makeKafkaMarketProjection = (
                 elapsedMs: (yield* Clock.currentTimeMillis) - observedAtMs,
                 rejectedPartitions: projection.rejections.size,
               })
+              if (recovery !== undefined) {
+                const completed = recovery
+                recovery = undefined
+                yield* Effect.logInfo('Kafka market projection recovered', {
+                  failedEpoch: completed.failedEpoch,
+                  recoveredEpoch: epoch,
+                  reason: completed.reason,
+                  elapsedMs: (yield* Clock.currentTimeMillis) - completed.startedAtMs,
+                  incorporatedRecords: projection.sequence,
+                  partitions: positions.length,
+                })
+              }
             }
           }
         })
@@ -423,9 +462,21 @@ export const makeKafkaMarketProjection = (
       }),
     ).pipe(
       Effect.tapError((cause) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           ready = false
-          lastFailure = cause
+          lastFailure ??= cause
+          recovery ??= {
+            failedEpoch: projection.epoch,
+            startedAtMs: yield* Clock.currentTimeMillis,
+            reason: invalidationReason(lastFailure.cause),
+          }
+          yield* Effect.logWarning('Kafka market projection cycle failed', {
+            epoch: projection.epoch,
+            operation: lastFailure.operation,
+            reason: invalidationReason(lastFailure.cause),
+            failureCodes: safeKafkaFailureCodes(lastFailure.cause),
+            retryableBySupervisor: true,
+          })
         }),
       ),
     )
@@ -436,7 +487,13 @@ export const makeKafkaMarketProjection = (
           if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)
           ready = false
           lastFailure ??= failure('consume', 'Kafka market projection stopped', cause)
-          yield* Effect.logError('Kafka market projection stopped', cause)
+          yield* Effect.logError('Kafka market projection stopped', {
+            epoch: projection.epoch,
+            operation: lastFailure.operation,
+            reason: invalidationReason(lastFailure.cause),
+            failureCodes: safeKafkaFailureCodes(lastFailure.cause),
+            cooldownMs: 30_000,
+          })
           yield* Effect.sleep('30 seconds')
         }),
       ),
