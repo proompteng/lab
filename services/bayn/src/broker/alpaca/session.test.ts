@@ -7,6 +7,9 @@ import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
+import { BrokerObservations } from './observed-snapshot'
+import { captureBrokerObservation } from './snapshot-cache'
+import { layer as rawBrokerSessionLayer } from './session'
 import { currentUtcInstant } from '../../time'
 import { AlpacaBrokerResourcesLive } from './composition'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
@@ -105,13 +108,32 @@ const completePreflightResponse = (
 }
 
 describe('Alpaca broker session acquisition retry', () => {
-  test('production resources share one verified polling cache across the session and read service', async () => {
+  test('production resources share one durable observation projection without starting local pollers', async () => {
     let requests = 0
     const client = HttpClient.make((request, url) => {
       requests += 1
       return Effect.succeed(completePreflightResponse(request, url, `req-${requests}`))
     })
-    const resources = AlpacaBrokerResourcesLive(connection(0), Layer.succeed(HttpClient.HttpClient, client))
+    const http = Layer.succeed(HttpClient.HttpClient, client)
+    const observation = await Effect.runPromise(
+      Effect.gen(function* () {
+        const session = yield* BrokerSession
+        return yield* captureBrokerObservation(session.read, yield* currentUtcInstant, 30_000)
+      }).pipe(
+        Effect.provide(rawBrokerSessionLayer(connection(0))),
+        Effect.provide(http),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    const resources = AlpacaBrokerResourcesLive(connection(0), http).pipe(
+      Layer.provide(
+        Layer.succeed(BrokerObservations, {
+          read: Effect.succeed(observation),
+          readForSubmit: () => Effect.succeed(observation),
+          invalidate: Effect.void,
+        }),
+      ),
+    )
     await Effect.runPromise(
       Effect.gen(function* () {
         const session = yield* BrokerSession
@@ -128,8 +150,8 @@ describe('Alpaca broker session acquisition retry', () => {
         expect(requests).toBe(initialRequests)
         yield* TestClock.adjust(30_000)
         yield* Effect.repeat(Effect.yieldNow, { times: 10 })
-        expect(requests).toBe(initialRequests + 12)
-        expect((yield* read.account).evidence.observedAt).toBe('1970-01-01T00:00:30.000Z')
+        expect(requests).toBe(initialRequests)
+        expect((yield* read.account).evidence.observedAt).toBe(observation.snapshot.account.evidence.observedAt)
       }).pipe(Effect.provide(resources), Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([]))),
     )
   })

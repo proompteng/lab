@@ -1,25 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, Logger, Result, type Scope } from 'effect'
+import { ConfigProvider, Deferred, Effect, Fiber, Logger, Result } from 'effect'
+import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1 } from '../../hash'
-import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import {
   AccountStatus,
-  AssetClass,
-  AssetExchange,
-  OrderClass,
   OrderCollection,
-  OrderSide,
   OrderStatus,
-  OrderType,
-  PositionSide,
-  SortDirection,
-  TimeInForce,
-  TradeActivityType,
   accountConfigurationObservationSchemaVersion,
   accountConfigurationObservationSource,
   type Account,
@@ -30,13 +21,10 @@ import {
   type Position,
   type ReadResult,
 } from './model'
-import { brokerSnapshotCacheConfig, makeCachedBrokerRead } from './snapshot-cache'
+import { brokerSnapshotCacheConfig, captureBrokerObservation, makeProjectedBrokerRead } from './snapshot-cache'
 
 const config = { pollIntervalMs: 30_000, maxAgeMs: 60_000 }
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
-const openQuery = { status: OrderCollection.Open, limit: 1 } as const
-const recentQuery = { status: OrderCollection.All, limit: 1, direction: SortDirection.Descending } as const
-const fillsQuery = { pageSize: 1, direction: SortDirection.Descending } as const
 
 const fixture = (
   history: {
@@ -139,547 +127,158 @@ const fixture = (
   }
 }
 
-const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
+const run = <A, E>(effect: Effect.Effect<A, E>) =>
   Effect.runPromise(
-    effect.pipe(
-      Effect.scoped,
-      Effect.provide(TestClock.layer()),
-      Effect.provideService(Logger.CurrentLoggers, new Set()),
-    ),
+    effect.pipe(Effect.provide(TestClock.layer()), Effect.provideService(Logger.CurrentLoggers, new Set())),
   )
 
-const settle = Effect.repeat(Effect.yieldNow, { times: 10 })
-
-const clockAt = (clock: Clock.Clock, currentTimeMillis: number): Clock.Clock => ({
-  currentTimeMillisUnsafe: () => currentTimeMillis,
-  currentTimeMillis: Effect.succeed(currentTimeMillis),
-  currentTimeNanosUnsafe: () => BigInt(currentTimeMillis) * 1_000_000n,
-  currentTimeNanos: Effect.succeed(BigInt(currentTimeMillis) * 1_000_000n),
-  sleep: (duration) => clock.sleep(duration),
-})
-
-describe('broker snapshot cache', () => {
-  test('retains filled orders, positions, fills, fees and their original broker evidence in the cached snapshot', async () => {
-    const observedAt = '1970-01-01T00:00:00.000Z'
-    const order: Order = {
-      accountId,
-      brokerOrderId: 'filled-order',
-      clientOrderId: 'client-filled-order',
-      createdAt: observedAt,
-      submittedAt: observedAt,
-      assetId: 'spy-asset',
-      symbol: 'SPY',
-      assetClass: AssetClass.UsEquity,
-      quantityMicros: '1000000',
-      filledQuantityMicros: '1000000',
-      filledAveragePriceMicros: '100000000',
-      orderClass: OrderClass.Simple,
-      orderType: OrderType.Market,
-      side: OrderSide.Buy,
-      timeInForce: TimeInForce.Day,
-      status: OrderStatus.Filled,
-      extendedHours: false,
-      observedAt,
-    }
-    const fill: FillActivity = {
-      accountId,
-      activityId: 'fill-activity',
-      brokerOrderId: order.brokerOrderId,
-      cumulativeQuantityMicros: '1000000',
-      leavesQuantityMicros: '0',
-      priceMicros: '100000000',
-      quantityMicros: '1000000',
-      side: OrderSide.Buy,
-      symbol: order.symbol,
-      transactionTime: observedAt,
-      type: TradeActivityType.Fill,
-    }
-    const position: Position = {
-      accountId,
-      assetId: order.assetId,
-      symbol: order.symbol,
-      exchange: AssetExchange.Arca,
-      assetClass: AssetClass.UsEquity,
-      side: PositionSide.Long,
-      quantityMicros: '1000000',
-      averageEntryPriceMicros: '100000000',
-      marketPriceMicros: '100000000',
-      marketValueMicros: '100000000',
-      unrealizedPnlMicros: '0',
-      observedAt,
-    }
-    const fee: FeeActivity = { accountId, activityId: 'fee-activity', date: '1970-01-01', netAmountMicros: '-1000' }
-    const source = fixture({ orders: [order], fills: [fill], positions: [position], fees: [fee] })
-    await run(
-      Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
-        const calls = source.calls.length
-        expect(snapshot.positions.value).toEqual([position])
-        expect(snapshot.history.orders.rows.map((row) => row.value)).toEqual([order])
-        expect(snapshot.history.fills.map((row) => row.value)).toEqual([fill])
-        expect(snapshot.history.fees.map((row) => row.value)).toEqual([fee])
-        expect(snapshot.history.fills[0]?.evidence.requestId).toContain('fills:')
-        expect((yield* read.orders(openQuery)).value).toEqual([])
-        expect((yield* read.orders(recentQuery)).value).toEqual([order])
-        expect((yield* read.fillActivities(fillsQuery)).value.items).toEqual([fill])
-        expect(source.calls.length).toBe(calls)
-      }),
-    )
-  })
-
-  test('serves reconciliation and routine reads without another broker request or new observation timestamps', async () => {
+describe('durable broker observations', () => {
+  test('cancels broker acquisition at the polling deadline without producing a partial cut', async () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        const initialCalls = source.calls.length
-        const initial = yield* readStableBrokerSnapshot(read, currentUtcInstant)
-        expect(initialCalls).toBe(12)
-        source.setEquity('900000000')
-        yield* TestClock.adjust(1_000)
-        for (let n = 0; n < 20; n++) {
-          const [account, positions, open, recent, fills, configuration, snapshot] = yield* Effect.all(
-            [
-              read.account,
-              read.positions,
-              read.orders(openQuery),
-              read.orders(recentQuery),
-              read.fillActivities(fillsQuery),
-              read.accountConfiguration,
-              readStableBrokerSnapshot(read, currentUtcInstant),
-            ],
-            { concurrency: 7 },
-          )
-          expect(account).toBe(initial.account)
-          expect(positions).toBe(initial.positions)
-          expect(account.value.equityMicros).toBe('1000000000')
-          expect(account.evidence.observedAt).toBe('1970-01-01T00:00:00.000Z')
-          expect(
-            [open, recent, fills, configuration].every(
-              (item) => item.evidence.observedAt === account.evidence.observedAt,
-            ),
-          ).toBe(true)
-          expect(snapshot).toBe(initial)
-        }
-        expect(source.calls.length).toBe(initialCalls)
-        yield* TestClock.adjust(29_000)
-        yield* settle
-        expect((yield* read.account).value.equityMicros).toBe('900000000')
-        expect(source.calls.length).toBe(initialCalls * 2)
-      }),
-    )
-  })
-
-  test('retains direct semantics for filtered orders and individual order lookups', async () => {
-    const source = fixture()
-    await run(
-      Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        const before = source.calls.length
-        yield* read.orders({ ...openQuery, symbols: ['SPY'] })
-        expect(source.calls.length).toBe(before + 1)
-        expect(read.orderById).toBe(source.read.orderById)
-        expect(read.orderByClientId).toBe(source.read.orderByClientId)
-        expect(read.projection?.fresh).toBe(source.read)
-      }),
-    )
-  })
-
-  test('schedules slow successful polls from their start and replaces evidence before it expires', async () => {
-    const source = fixture()
-    await run(
-      Effect.gen(function* () {
-        source.blockAccount(Effect.sleep(20_000))
-        const acquiring = yield* makeCachedBrokerRead(source.read, config).pipe(Effect.forkChild)
-        yield* TestClock.adjust(20_000)
-        const read = yield* Fiber.join(acquiring)
-        const initialCalls = source.calls.length
-        expect((yield* read.accountConfiguration).evidence.observedAt).toBe('1970-01-01T00:00:00.000Z')
-        yield* TestClock.adjust(30_000)
-        yield* settle
-        expect((yield* read.accountConfiguration).evidence.observedAt).toBe('1970-01-01T00:00:30.000Z')
-        expect((yield* read.account).evidence.observedAt).toBe('1970-01-01T00:00:50.000Z')
-        expect(source.calls.length).toBe(initialCalls * 2)
-        yield* TestClock.adjust(10_000)
-        yield* read.account
-      }),
-    )
-  })
-
-  test('rejects expired evidence while a background poll is blocked', async () => {
-    const source = fixture()
-    await run(
-      Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        source.blockAccount(Effect.never)
-        yield* TestClock.adjust(30_000)
-        const clock = yield* Clock.Clock
-        yield* read.account.pipe(Effect.provideService(Clock.Clock, clockAt(clock, 59_999)))
-        const error = yield* Effect.flip(readStableBrokerSnapshot(read, currentUtcInstant)).pipe(
-          Effect.provideService(Clock.Clock, clockAt(clock, 60_000)),
-        )
-        expect(error.message).toBe('Broker snapshot cache is stale')
-        expect(error).toBeInstanceOf(BrokerReadError)
-        if (error instanceof BrokerReadError) expect(error.retryable).toBe(true)
-      }),
-    )
-  })
-
-  test('bounds freshness by the full capture start when later observations finish after early history reads', async () => {
-    const source = fixture()
-    await run(
-      Effect.gen(function* () {
-        source.blockAccount(Effect.sleep(20_000))
-        const fresh: BrokerReadShape = {
-          ...source.read,
-          positions: Effect.sleep(20_000).pipe(Effect.andThen(source.read.positions)),
-          accountConfiguration: Effect.sleep(20_000).pipe(Effect.andThen(source.read.accountConfiguration)),
-        }
-        const acquiring = yield* makeCachedBrokerRead(fresh, config).pipe(Effect.forkChild)
-        yield* TestClock.adjust(20_000)
-        const read = yield* Fiber.join(acquiring)
-        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
-        expect(snapshot.history.orders.observedAt).toBe('1970-01-01T00:00:20.000Z')
-        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:00:20.000Z')
-        source.blockAccount(Effect.never)
-        yield* TestClock.adjust(10_000)
-        const clock = yield* Clock.Clock
-        yield* read.account.pipe(Effect.provideService(Clock.Clock, clockAt(clock, 59_999)))
-        const expired = yield* Effect.result(read.account).pipe(
-          Effect.provideService(Clock.Clock, clockAt(clock, 60_000)),
-        )
-        expect(Result.isFailure(expired)).toBe(true)
-        if (Result.isFailure(expired)) expect(expired.failure.message).toBe('Broker snapshot cache is stale')
-      }),
-    )
-  })
-
-  test('invalidates cached reads on polling failure, preserves the typed error, and recovers on a later poll', async () => {
-    const source = fixture()
-    const failure = new BrokerReadError({
-      operation: 'account',
-      kind: BrokerReadErrorKind.Authentication,
-      retryable: false,
-      message: 'fixture account authentication failed',
-      requestId: 'failed-request',
-    })
-    await run(
-      Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        source.failAccount(failure)
-        yield* TestClock.adjust(30_000)
-        yield* settle
-        expect(yield* Effect.flip(read.account)).toBe(failure)
-        expect(yield* Effect.flip(read.positions)).toBe(failure)
-        source.failAccount(undefined)
-        source.setEquity('800000000')
-        yield* TestClock.adjust(30_000)
-        yield* settle
-        expect((yield* read.account).value.equityMicros).toBe('800000000')
-      }),
-    )
-  })
-
-  test('prevents an in-flight poll from republishing a snapshot after mutation invalidation', async () => {
-    const source = fixture()
-    let cancellations = 0
-    await run(
-      Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
         const started = yield* Deferred.make<void>()
-        const release = yield* Deferred.make<void>()
+        let cancelled = 0
         source.blockAccount(
           Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.onInterrupt(() =>
+            Effect.andThen(Effect.never),
+            Effect.ensuring(
               Effect.sync(() => {
-                cancellations += 1
+                cancelled += 1
               }),
             ),
           ),
         )
-        yield* TestClock.adjust(30_000)
-        yield* Deferred.await(started)
-        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
-        const refreshStarted = yield* Deferred.make<void>()
-        const finishRefresh = yield* Deferred.make<void>()
-        source.blockAccount(
-          Deferred.succeed(refreshStarted, undefined).pipe(Effect.andThen(Deferred.await(finishRefresh))),
+        const pending = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 1000).pipe(
+          Effect.result,
+          Effect.forkChild({ startImmediately: true }),
         )
-        yield* read.projection.invalidate
-        yield* Deferred.await(refreshStarted)
-        expect(cancellations).toBe(1)
-        yield* Deferred.succeed(release, undefined)
-        expect((yield* Effect.flip(read.account)).message).toContain('invalidation')
-        yield* Deferred.succeed(finishRefresh, undefined)
-        yield* settle
-        yield* read.account
-      }),
-    )
-  })
-
-  test('refreshes immediately after a mutation so the one-second reconciliation can observe updated state', async () => {
-    const source = fixture()
-    await run(
-      Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        yield* TestClock.adjust(1_000)
-        source.setEquity('900000000')
-        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
-        yield* read.projection.invalidate
-        yield* TestClock.adjust(1_000)
-        yield* settle
-        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
-        expect(snapshot.account.value.equityMicros).toBe('900000000')
-        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:00:01.000Z')
-        expect(source.calls.length).toBe(24)
-      }),
-    )
-  })
-
-  test('keeps cached reads unavailable throughout a slow mutation and refreshes after it settles', async () => {
-    const source = fixture()
-    await run(
-      Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
-        const started = yield* Deferred.make<void>()
-        const release = yield* Deferred.make<void>()
-        const mutation = yield* read.projection
-          .withMutation(Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))))
-          .pipe(Effect.forkChild)
         yield* Deferred.await(started)
-        yield* read.projection.invalidate
-        yield* TestClock.adjust(90_000)
-        yield* settle
-        for (const observation of [
-          read.account.pipe(Effect.asVoid),
-          read.positions.pipe(Effect.asVoid),
-          read.projection.snapshot.pipe(Effect.asVoid),
-        ]) {
-          const result = yield* Effect.result(observation)
-          expect(Result.isFailure(result)).toBe(true)
-          if (Result.isFailure(result)) {
-            expect(result.failure.retryable).toBe(true)
-            expect(result.failure.message).toContain('mutations are in flight')
-          }
-        }
-        expect(source.calls.length).toBe(12)
-        source.setEquity('900000000')
-        yield* Deferred.succeed(release, undefined)
-        yield* Fiber.join(mutation)
-        yield* TestClock.adjust(1_000)
-        yield* settle
-        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
-        expect(snapshot.account.value.equityMicros).toBe('900000000')
-        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:01:31.000Z')
-        expect(source.calls.length).toBe(24)
+        yield* TestClock.adjust(1000)
+        const result = yield* Fiber.join(pending)
+        expect(Result.isFailure(result)).toBe(true)
+        expect(cancelled).toBe(1)
       }),
     )
   })
-
-  test('waits for the broker consistency boundary before refreshing post-mutation state', async () => {
+  test('captures complete stable history with its original poll start and validates durable bytes', async () => {
+    const source = fixture()
+    const value = await run(
+      Effect.gen(function* () {
+        return yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+      }),
+    )
+    expect(Result.isSuccess(decodeObservedBrokerSnapshot(value))).toBe(true)
+    expect(value.observedAt).toBe(value.startedAt)
+    expect(value.snapshot.account.value.id).toBe(accountId)
+    expect(source.calls.length).toBeGreaterThan(3)
+  })
+  test('routine and final submit reads never invoke the direct source', async () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
-        source.setDelayedEquity('900000000', 1_000)
-        yield* read.projection.withMutation(Effect.void)
-        yield* TestClock.adjust(999)
-        yield* read.projection.invalidate
-        yield* settle
-        expect(Result.isFailure(yield* Effect.result(read.account))).toBe(true)
-        expect(source.calls.length).toBe(12)
-        yield* TestClock.adjust(1)
-        yield* settle
-        const snapshot = yield* readStableBrokerSnapshot(read, currentUtcInstant)
-        expect(snapshot.account.value.equityMicros).toBe('900000000')
-        expect(snapshot.account.evidence.observedAt).toBe('1970-01-01T00:00:01.000Z')
-        expect(source.calls.length).toBe(24)
+        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const initial = source.calls.length
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: Effect.succeed(value),
+            readForSubmit: () => Effect.succeed(value),
+            invalidate: Effect.void,
+          }),
+        )
+        yield* Effect.all([
+          projected.account,
+          projected.positions,
+          projected.orders({ status: OrderCollection.Open, limit: 10 }),
+          projected.accountConfiguration,
+        ])
+        expect(source.calls.length).toBe(initial)
+        expect(projected.projection?.fresh).toBe(source.read)
       }),
     )
   })
-
-  test('waits for every overlapping mutation before publishing a refreshed snapshot', async () => {
+  test('invalidates before mutation and on interruption without triggering inline polling', async () => {
     const source = fixture()
     await run(
       Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
-        const firstStarted = yield* Deferred.make<void>()
-        const firstRelease = yield* Deferred.make<void>()
-        const secondStarted = yield* Deferred.make<void>()
-        const secondRelease = yield* Deferred.make<void>()
-        const first = yield* read.projection
-          .withMutation(Deferred.succeed(firstStarted, undefined).pipe(Effect.andThen(Deferred.await(firstRelease))))
-          .pipe(Effect.forkChild)
-        yield* Deferred.await(firstStarted)
-        const second = yield* read.projection
-          .withMutation(Deferred.succeed(secondStarted, undefined).pipe(Effect.andThen(Deferred.await(secondRelease))))
-          .pipe(Effect.forkChild)
-        yield* Deferred.await(secondStarted)
-        yield* Deferred.succeed(firstRelease, undefined)
-        yield* Fiber.join(first)
-        yield* TestClock.adjust(30_000)
-        yield* settle
-        expect((yield* Effect.flip(read.account)).message).toContain('mutations are in flight')
-        expect(source.calls.length).toBe(12)
-        source.setEquity('800000000')
-        yield* Deferred.succeed(secondRelease, undefined)
-        yield* Fiber.join(second)
-        yield* TestClock.adjust(1_000)
-        yield* settle
-        expect((yield* read.account).value.equityMicros).toBe('800000000')
-        expect(source.calls.length).toBe(24)
+        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        let invalidations = 0
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: Effect.succeed(value),
+            readForSubmit: () => Effect.succeed(value),
+            invalidate: Effect.sync(() => {
+              invalidations += 1
+            }),
+          }),
+        )
+        const wrap = projected.projection?.withMutation
+        if (wrap === undefined) throw new Error('missing projection')
+        yield* wrap(Effect.sync(() => expect(invalidations).toBe(1)))
+        expect(invalidations).toBe(2)
+        const started = yield* Deferred.make<void>()
+        const pending = yield* wrap(Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* Deferred.await(started)
+        expect(invalidations).toBe(3)
+        yield* Fiber.interrupt(pending)
+        expect(invalidations).toBe(4)
       }),
     )
   })
-
-  test('starts a new consistency window when another mutation settles before the previous refresh', async () => {
+  test('rejects stale, future, foreign-account and falsely refreshed observations', async () => {
     const source = fixture()
-    await run(
+    const value = await run(
       Effect.gen(function* () {
-        const read = yield* makeCachedBrokerRead(source.read, config)
-        if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
-        source.setDelayedEquity('800000000', 1_500)
-        yield* read.projection.withMutation(Effect.void)
-        yield* TestClock.adjust(500)
-        yield* read.projection.withMutation(Effect.void)
-        yield* TestClock.adjust(500)
-        expect(Result.isFailure(yield* Effect.result(read.account))).toBe(true)
-        expect(source.calls.length).toBe(12)
-        yield* TestClock.adjust(500)
-        yield* settle
-        expect((yield* read.account).value.equityMicros).toBe('800000000')
-        expect(source.calls.length).toBe(24)
+        return yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
       }),
     )
-  })
-
-  test.each(['failure', 'defect', 'interruption'] as const)(
-    'releases the mutation hold and refreshes after %s',
-    async (outcome) => {
-      const source = fixture()
-      await run(
-        Effect.gen(function* () {
-          const read = yield* makeCachedBrokerRead(source.read, config)
-          if (read.projection === undefined) return yield* Effect.die(new Error('cache projection missing'))
-          const started = yield* Deferred.make<void>()
-          const release = yield* Deferred.make<void>()
-          const operation = Deferred.succeed(started, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.andThen(outcome === 'failure' ? Effect.fail('fixture failure') : Effect.die('fixture defect')),
-          )
-          const mutation = yield* read.projection.withMutation(operation).pipe(Effect.forkChild)
-          yield* Deferred.await(started)
-          expect((yield* Effect.flip(read.account)).message).toContain('mutations are in flight')
-          source.setEquity('700000000')
-          if (outcome === 'interruption') {
-            yield* Fiber.interrupt(mutation)
-          } else {
-            yield* Deferred.succeed(release, undefined)
-            const exit = yield* Fiber.await(mutation)
-            expect(Exit.isFailure(exit)).toBe(true)
-            if (Exit.isFailure(exit)) expect(Cause.hasDies(exit.cause)).toBe(outcome === 'defect')
-          }
-          yield* TestClock.adjust(1_000)
-          yield* settle
-          expect((yield* read.account).value.equityMicros).toBe('700000000')
-          expect(source.calls.length).toBe(24)
-        }),
+    for (const [candidate, identity, now] of [
+      [value, accountId, '1970-01-01T00:01:00.000Z'],
+      [value, 'other-account', value.completedAt],
+      [{ ...value, startedAt: '1970-01-01T00:00:01.000Z' }, accountId, value.completedAt],
+      [{ ...value, observedAt: '1970-01-01T00:00:00.001Z' }, accountId, '1970-01-01T00:00:01.000Z'],
+    ] as const) {
+      const result = await run(
+        validateObservedBrokerSnapshot(candidate, identity, now, config.maxAgeMs).pipe(Effect.result),
       )
-    },
-  )
-
-  test('interrupts the polling request exactly once and expires escaped reads on scope closure', async () => {
-    const source = fixture()
-    let finalizations = 0
-    const escaped = await run(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const read = yield* makeCachedBrokerRead(source.read, config)
-          const started = yield* Deferred.make<void>()
-          source.blockAccount(
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  finalizations += 1
-                }),
-              ),
-            ),
-          )
-          yield* TestClock.adjust(30_000)
-          yield* Deferred.await(started)
-          return read
-        }),
-      ),
-    )
-    expect(finalizations).toBe(1)
-    expect((await Effect.runPromise(Effect.flip(escaped.account))).message).toContain('invalidation')
-    const calls = source.calls.length
-    await run(TestClock.adjust(120_000))
-    expect(source.calls.length).toBe(calls)
-  })
-
-  test.each([
-    [10_000, 30_000],
-    [45_000, 15_000],
-  ] as const)(
-    'bounds acquisition with a %i ms poll interval and cancels the request',
-    async (pollIntervalMs, deadlineMs) => {
-      const source = fixture()
-      let finalizations = 0
-      const failure = await run(
-        Effect.gen(function* () {
-          const started = yield* Deferred.make<void>()
-          source.blockAccount(
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  finalizations += 1
-                }),
-              ),
-            ),
-          )
-          const fiber = yield* makeCachedBrokerRead(source.read, { ...config, pollIntervalMs }).pipe(Effect.forkChild)
-          yield* Deferred.await(started)
-          yield* TestClock.adjust(deadlineMs)
-          return yield* Effect.flip(Fiber.join(fiber))
-        }),
-      )
-      expect(failure.kind).toBe(BrokerReadErrorKind.Timeout)
-      expect(finalizations).toBe(1)
-    },
-  )
-
-  test('propagates defects during initial acquisition', async () => {
-    const source = fixture()
-    source.blockAccount(Effect.die(new Error('fixture poll defect')))
-    const exit = await Effect.runPromiseExit(makeCachedBrokerRead(source.read, config).pipe(Effect.scoped))
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.hasDies(exit.cause)).toBe(true)
-  })
-
-  test('validates polling configuration at startup', async () => {
-    for (const maxAgeMs of ['10000', '30000']) {
-      const provider = ConfigProvider.fromEnv({
-        env: { BAYN_BROKER_POLL_INTERVAL_MS: '30000', BAYN_BROKER_CACHE_MAX_AGE_MS: maxAgeMs },
-      })
-      const error = await Effect.runPromise(
-        Effect.flip(brokerSnapshotCacheConfig).pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider)),
-      )
-      expect(error.kind).toBe(BrokerReadErrorKind.Configuration)
-      expect(error.message).toContain('exceed its poll interval')
+      expect(Result.isFailure(result)).toBe(true)
     }
-    const defaults = await Effect.runPromise(
+  })
+  test('fails closed when the durable projection is unavailable', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: Effect.fail(
+              new BrokerReadError({
+                operation: 'preflight',
+                kind: BrokerReadErrorKind.Timeout,
+                retryable: true,
+                message: 'unavailable',
+              }),
+            ),
+            readForSubmit: () => Effect.die('unavailable submit'),
+            invalidate: Effect.void,
+          }),
+        )
+        expect(Result.isFailure(yield* projected.account.pipe(Effect.result))).toBe(true)
+        expect(source.calls).toHaveLength(0)
+      }),
+    )
+  })
+  test('requires a poll interval shorter than maximum cache age', async () => {
+    const result = await Effect.runPromise(
       brokerSnapshotCacheConfig.pipe(
-        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: {} })),
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromUnknown({ BAYN_BROKER_POLL_INTERVAL_MS: 30_000, BAYN_BROKER_CACHE_MAX_AGE_MS: 30_000 }),
+        ),
+        Effect.result,
       ),
     )
-    expect(defaults).toEqual(config)
+    expect(Result.isFailure(result)).toBe(true)
   })
 })

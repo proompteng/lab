@@ -1,3 +1,5 @@
+import { BrokerObservationsLive } from '../db/broker-observations'
+import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { JevBatchStoreLive } from '../db/jev-batch-postgres'
 import { JevPositionStoreLive } from '../db/jev-position-postgres'
@@ -68,8 +70,15 @@ export const WriterFencedCycleStoreResourceLive = WriterFencedCycleStoreLive
 
 export const WriterFenceResourceLive = WriterFenceLive
 
+const BrokerObservationResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
+  Layer.unwrap(
+    Effect.map(brokerSnapshotCacheConfig, (cache) =>
+      BrokerObservationsLive(config.alpaca.expectedAccountId, config.build.sourceRevision, cache.maxAgeMs),
+    ),
+  )
+
 export const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
-  AlpacaBrokerResourcesLive(config.alpaca)
+  AlpacaBrokerResourcesLive(config.alpaca).pipe(Layer.provide(BrokerObservationResourceLive(config)))
 
 export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
 
@@ -152,7 +161,10 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
     cycleObservability,
     SignalArchiveHealthLive(plan),
     JournalResourceLive(plan.config),
-    BrokerReadOnlyResourcesLive(plan.config.alpaca),
+    BrokerReadOnlyResourcesLive(plan.config.alpaca).pipe(
+      Layer.provide(BrokerObservationResourceLive(plan.config)),
+      Layer.provide(postgres),
+    ),
   ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
@@ -210,7 +222,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
             ),
           ),
         ),
-    BrokerSessionResourceLive(plan.config),
+    BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
     executionPersistence,
     WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))
