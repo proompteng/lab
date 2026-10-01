@@ -214,6 +214,12 @@ bound cycles retain settlement handling. Migration 0071 repairs an already autho
 before its cutoff, under the writer fence, with clear matching authority, exact reconciliation, flat positions and
 no unresolved mutations or open orders. Manual restrictions and financial history remain protected.
 
+When authority rollover has already terminalized an unused pre-submission cycle with a provenance restriction,
+discovery may acquire a new immutable attempt under the recovered execution authority. It must find no snapshot or
+decision evidence and reconstruct the original draft exactly from the currently approved strategy, account, mandate,
+broker calendar and execution policy. The previous terminal record is retained. The existing rearm delay, submission
+cutoff and fresh decision/risk gates still apply; other restrictions and changed contracts do not use this path.
+
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
 order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
