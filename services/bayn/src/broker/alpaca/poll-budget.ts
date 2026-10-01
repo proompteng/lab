@@ -77,12 +77,16 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
     })
   return {
     beginCapture: Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis
-      yield* Ref.update(state, (current) => ({
-        ...current,
-        scheduledStartAtMs: Math.max(now, nextPollAt(current)),
-        requests: 0,
-      }))
+      while (true) {
+        const now = yield* Clock.currentTimeMillis
+        const delayMs = yield* Ref.modify(state, (current) =>
+          nextPollAt(current) > now
+            ? [nextPollAt(current) - now, current]
+            : [0, { ...current, scheduledStartAtMs: now, requests: 0 }],
+        )
+        if (delayMs === 0) return
+        yield* Effect.sleep(delayMs)
+      }
     }),
     decorate: (client: HttpClient.HttpClient): HttpClient.HttpClient =>
       HttpClient.transform(client, (response) => reserve.pipe(Effect.andThen(response), Effect.tap(observe))),

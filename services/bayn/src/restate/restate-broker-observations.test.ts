@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import type { ObjectContext } from '@restatedev/restate-sdk'
+import { Clock, Effect, Fiber } from 'effect'
+import { HttpClient, HttpClientResponse } from 'effect/http'
+import { TestClock } from 'effect/testing'
+
+import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 
 const controllerKey = 'a'.repeat(64)
@@ -7,7 +12,13 @@ const sourceRevision = 'b'.repeat(40)
 const config = { controllerKey, sourceRevision, pollIntervalMs: 10_000, operationTimeoutMs: 30_000 }
 type State = { sourceRevision: string; epoch: number; sequence: number; lastSnapshotHash?: string }
 const harness = (
-  input: { runtime?: Partial<BrokerObservationRuntime>; state?: State; key?: string; elapsedMs?: number } = {},
+  input: {
+    runtime?: Partial<BrokerObservationRuntime>
+    state?: State
+    key?: string
+    elapsedMs?: number
+    now?: () => Promise<number>
+  } = {},
 ) => {
   let state: State | null = input.state ?? null
   let activations = 0
@@ -33,7 +44,7 @@ const harness = (
   })
   const context = {
     key: input.key ?? controllerKey,
-    date: { now: async () => (clockReads++ % 2 === 0 ? 0 : (input.elapsedMs ?? 0)) },
+    date: { now: input.now ?? (async () => (clockReads++ % 2 === 0 ? 0 : (input.elapsedMs ?? 0))) },
     console: { warn: () => undefined },
     request: () => ({ attemptCompletedSignal: new AbortController().signal }),
     get: async () => state,
@@ -80,6 +91,59 @@ describe('Restate broker observation owner', () => {
     expect(h.calls()).toEqual({ activations: 1, polls: 2 })
     expect(h.deliveries[0]?.idempotencyKey).toBe(h.deliveries[1]?.idempotencyKey)
     expect(h.state()?.epoch).toBe(1)
+  })
+  test('repeated activation waits for the background HTTP budget before refreshing', async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const execute = Effect.runPromiseWith(yield* Effect.context<never>())
+        const budget = yield* makeBrokerObservationBudget
+        const starts: number[] = []
+        const client = budget.decorate(
+          HttpClient.make((request) =>
+            Effect.gen(function* () {
+              starts.push(yield* Clock.currentTimeMillis)
+              return HttpClientResponse.fromWeb(request, new Response('{}'))
+            }),
+          ),
+        )
+        const h = harness({
+          now: () => execute(Clock.currentTimeMillis),
+          runtime: {
+            poll: (signal) =>
+              execute(
+                Effect.gen(function* () {
+                  yield* budget.beginCapture
+                  yield* Effect.all(
+                    Array.from({ length: 34 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
+                    { concurrency: 2 },
+                  )
+                  return {
+                    _tag: 'Published',
+                    snapshotHash: 'c'.repeat(64),
+                    nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
+                  } as const
+                }),
+                { signal },
+              ),
+          },
+        })
+        yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision }))
+        for (const capture of [2, 3]) {
+          const pending = yield* Effect.promise(() => h.handlers.activate(h.context, { sourceRevision })).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          )
+          yield* TestClock.adjust(20_399)
+          expect(starts).toHaveLength((capture - 1) * 34)
+          expect(h.deliveries).toHaveLength(capture - 1)
+          yield* TestClock.adjust(1)
+          yield* Fiber.join(pending)
+          expect(starts.slice((capture - 1) * 34)).toEqual(Array.from({ length: 34 }, () => (capture - 1) * 20_400))
+        }
+        expect(h.state()?.epoch).toBe(1)
+        expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([20_400, 20_400, 20_400])
+        expect(new Set(h.deliveries.map((delivery) => delivery.idempotencyKey)).size).toBe(1)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
   })
   test('rotation revokes old epochs and survives reconstruction from durable state', async () => {
     const h = harness({ state: { sourceRevision: 'd'.repeat(40), epoch: 7, sequence: 19 } })

@@ -53,13 +53,55 @@ describe('broker observation HTTP budget', () => {
           { concurrency: 2 },
         )
         expect(yield* budget.nextPollNotBeforeMs).toBe(20_400)
-        yield* budget.beginCapture
-        yield* client.get(url)
+        const early = yield* budget.beginCapture.pipe(
+          Effect.andThen(client.get(url)),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(20_399)
+        expect(source.starts).toHaveLength(34)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(20_400)
+        yield* TestClock.adjust(1)
+        yield* Fiber.join(early)
+        expect(source.starts[34]).toBe(20_400)
         expect(yield* budget.nextPollNotBeforeMs).toBe(21_000)
-        yield* TestClock.adjust(30_000)
+        yield* TestClock.adjust(9_600)
         yield* budget.beginCapture
         yield* client.get(url)
         expect(yield* budget.nextPollNotBeforeMs).toBe(30_600)
+      }),
+    )
+  })
+  test('interrupting an early capture preserves its outstanding request cost', async () => {
+    await run(
+      Effect.gen(function* () {
+        const budget = yield* makeBrokerObservationBudget
+        const source = transport()
+        const client = budget.decorate(source.client)
+        yield* budget.beginCapture
+        yield* Effect.all(
+          Array.from({ length: 34 }, () => client.get(url)),
+          { concurrency: 2 },
+        )
+        const cancelled = yield* budget.beginCapture.pipe(
+          Effect.andThen(client.get(url)),
+          Effect.timeout(5_000),
+          Effect.result,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(5_000)
+        expect(Result.isFailure(yield* Fiber.join(cancelled))).toBe(true)
+        expect(source.starts).toHaveLength(34)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(20_400)
+        const resumed = yield* budget.beginCapture.pipe(
+          Effect.andThen(client.get(url)),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(15_399)
+        expect(source.starts).toHaveLength(34)
+        yield* TestClock.adjust(1)
+        yield* Fiber.join(resumed)
+        expect(source.starts[34]).toBe(20_400)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(21_000)
       }),
     )
   })

@@ -60,10 +60,10 @@ export const acquireBrokerObservationRuntime = (
         poll: (signal) =>
           managed.runPromise(
             Effect.gen(function* () {
+              yield* budget.beginCapture
               const persistence = yield* store
               const ticket = yield* persistence.begin
               const capture = Effect.gen(function* () {
-                yield* budget.beginCapture
                 const broker = yield* ScopedRef.get(brokerRuntimes)
                 return yield* Effect.tryPromise({
                   try: (captureSignal) =>

@@ -49,12 +49,14 @@ at the default cadence. The background client's transport counts every actual at
 pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
 100 background calls per minute on average, or half a smaller reported account limit. Complete captures keep their
 existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
-remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing or unusable reset
-evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
+remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
+or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
 journals the next permissible poll time for successful, invalidated and failed captures. Larger captures extend the
-poll cadence rather than adding artificial delays inside a full history scan. Existing capture deadlines and cache
-expiry still apply; an incomplete capture cannot publish. Execution requests use their existing client and consume the remaining shared
-account quota; the background budget does not impose a global limit on other account callers.
+poll cadence rather than adding artificial delays inside a full history scan. Every capture, including repeated
+activation, waits for that deadline before starting its durable ticket and bounded acquisition. Interruption during
+the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
+capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
+the background budget does not impose a global limit on other account callers.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
