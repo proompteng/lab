@@ -26,6 +26,7 @@ spec:
                 renderWithLovely: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "-1"
+                  argocd.argoproj.io/compare-options: ServerSideDiff=true
                 automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:
