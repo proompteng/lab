@@ -1,29 +1,21 @@
-import { Clock, Config, DateTime, Effect, Queue, Ref, Schema, type Scope } from 'effect'
+import { Config, DateTime, Effect, Schema } from 'effect'
 
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
-import { ReconciliationError } from '../../simulation-reconciliation/broker-reconciler-model'
 import { currentUtcInstant } from '../../time'
-import { BrokerReadError, BrokerReadErrorKind, configurationError, safeCause } from './failures'
+import { BrokerReadError, configurationError } from './failures'
+import { OrderCollection, SortDirection, type BrokerReadShape } from './model'
 import {
-  OrderCollection,
-  SortDirection,
-  mutationConsistencyDelayMs,
-  type AccountConfigurationObservation,
-  type BrokerReadProjection,
-  type BrokerReadShape,
-  type FillActivityPage,
-  type Order,
-  type ReadResult,
-  type StableBrokerSnapshot,
-} from './model'
+  BrokerObservations,
+  observationTimes,
+  observationUnavailable,
+  type ObservedBrokerSnapshot,
+} from './observed-snapshot'
 
 export interface BrokerSnapshotCacheConfig {
   readonly pollIntervalMs: number
   readonly maxAgeMs: number
 }
-
 const interval = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60_000 }))
-
 export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig, BrokerReadError> = Config.all({
   pollIntervalMs: Config.schema(interval, 'BAYN_BROKER_POLL_INTERVAL_MS').pipe(Config.withDefault(30_000)),
   maxAgeMs: Config.schema(interval, 'BAYN_BROKER_CACHE_MAX_AGE_MS').pipe(Config.withDefault(60_000)),
@@ -43,234 +35,77 @@ export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig,
   ),
 )
 
-interface CachedSnapshot {
-  readonly snapshot: StableBrokerSnapshot
-  readonly configuration: ReadResult<AccountConfigurationObservation>
-  readonly openOrders: ReadResult<readonly Order[]>
-  readonly recentOrders: ReadResult<readonly Order[]>
-  readonly recentFills: ReadResult<FillActivityPage>
-  readonly observedAtMs: number
-}
-
-type CacheState =
-  | { readonly _tag: 'Invalidated'; readonly generation: number }
-  | { readonly _tag: 'Mutating'; readonly generation: number; readonly pendingMutations: number }
-  | { readonly _tag: 'Settling'; readonly generation: number; readonly refreshAfterMs: number }
-  | { readonly _tag: 'Ready'; readonly generation: number; readonly value: CachedSnapshot }
-  | { readonly _tag: 'Failed'; readonly generation: number; readonly error: BrokerReadError }
-
-const unavailable = (message: string) =>
-  new BrokerReadError({
-    operation: 'preflight',
-    kind: BrokerReadErrorKind.Timeout,
-    retryable: true,
-    message,
-  })
-
-const snapshotError = (cause: ReconciliationError): BrokerReadError =>
-  new BrokerReadError({
-    operation: 'preflight',
-    kind: BrokerReadErrorKind.InvalidResponse,
-    retryable:
-      cause.failure?._tag === 'Snapshot' &&
-      (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
-    message: 'Broker snapshot polling could not establish a stable history',
-    cause,
-  })
-
-const openOrdersQuery = { status: OrderCollection.Open, limit: 1 } as const
-const recentOrdersQuery = { status: OrderCollection.All, limit: 1, direction: SortDirection.Descending } as const
-const recentFillsQuery = { pageSize: 1, direction: SortDirection.Descending } as const
-
-export const makeCachedBrokerRead = (
+export const captureBrokerObservation = (
   fresh: BrokerReadShape,
-  config: BrokerSnapshotCacheConfig,
-): Effect.Effect<BrokerReadShape, BrokerReadError, Scope.Scope> =>
+  startedAt: string,
+  timeoutMs: number,
+): Effect.Effect<ObservedBrokerSnapshot, BrokerReadError> =>
   Effect.gen(function* () {
-    const state = yield* Ref.make<CacheState>({ _tag: 'Invalidated', generation: 0 })
-    const nextPollAt = yield* Ref.make(0)
-    const refresh = yield* Queue.dropping<void>(1)
-    const pollTimeoutMs = Math.min(config.maxAgeMs - config.pollIntervalMs, config.maxAgeMs / 2)
-    const invalidate = Ref.update(
-      state,
-      (current): CacheState =>
-        current._tag === 'Mutating' || current._tag === 'Settling'
-          ? { ...current, generation: current.generation + 1 }
-          : { _tag: 'Invalidated', generation: current.generation + 1 },
-    ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
-    const beginMutation = Ref.update(
-      state,
-      (current): CacheState => ({
-        _tag: 'Mutating',
-        generation: current.generation + 1,
-        pendingMutations: current._tag === 'Mutating' ? current.pendingMutations + 1 : 1,
-      }),
-    ).pipe(Effect.andThen(Queue.offer(refresh, undefined)), Effect.asVoid)
-    const endMutation = Clock.currentTimeMillis.pipe(
-      Effect.flatMap((now) =>
-        Ref.update(
-          state,
-          (current): CacheState =>
-            current._tag === 'Mutating' && current.pendingMutations > 1
-              ? { ...current, generation: current.generation + 1, pendingMutations: current.pendingMutations - 1 }
-              : {
-                  _tag: 'Settling',
-                  generation: current.generation + 1,
-                  refreshAfterMs: now + mutationConsistencyDelayMs,
-                },
-        ),
-      ),
-      Effect.andThen(Queue.offer(refresh, undefined)),
-      Effect.asVoid,
+    const value = yield* Effect.all(
+      {
+        snapshot: readStableBrokerSnapshot(fresh, currentUtcInstant),
+        configuration: fresh.accountConfiguration,
+        openOrders: fresh.orders({ status: OrderCollection.Open, limit: 1 }),
+        recentOrders: fresh.orders({ status: OrderCollection.All, limit: 1, direction: SortDirection.Descending }),
+        recentFills: fresh.fillActivities({ pageSize: 1, direction: SortDirection.Descending }),
+      },
+      { concurrency: 2 },
     )
-    const withMutation: BrokerReadProjection['withMutation'] = (effect) =>
-      Effect.acquireUseRelease(
-        beginMutation,
-        () => effect,
-        () => endMutation,
-      )
-    yield* Effect.addFinalizer(() => invalidate)
-    const poll = Effect.gen(function* () {
-      const startedAt = yield* Clock.currentTimeMillis
-      yield* Ref.set(nextPollAt, startedAt + config.pollIntervalMs)
-      const current = yield* Ref.get(state)
-      if (current._tag === 'Mutating') return
-      if (current._tag === 'Settling' && startedAt < current.refreshAfterMs) {
-        yield* Ref.set(nextPollAt, current.refreshAfterMs)
-        return
-      }
-      const generation = current.generation
-      const value = yield* Effect.all(
-        {
-          snapshot: readStableBrokerSnapshot(fresh, currentUtcInstant).pipe(
-            Effect.mapError((cause) => (cause instanceof ReconciliationError ? snapshotError(cause) : cause)),
-          ),
-          configuration: fresh.accountConfiguration,
-          openOrders: fresh.orders(openOrdersQuery),
-          recentOrders: fresh.orders(recentOrdersQuery),
-          recentFills: fresh.fillActivities(recentFillsQuery),
-        },
-        { concurrency: 2 },
-      ).pipe(
-        Effect.flatMap((value) =>
-          Clock.currentTimeMillis.pipe(
-            Effect.flatMap((finishedAt) =>
-              finishedAt - startedAt >= pollTimeoutMs
-                ? Effect.fail(unavailable('Broker snapshot polling exceeded its deadline'))
-                : Effect.succeed(value),
-            ),
-          ),
-        ),
-        Effect.timeoutOrElse({
-          duration: pollTimeoutMs,
-          orElse: () => Effect.fail(unavailable('Broker snapshot polling exceeded its deadline')),
-        }),
-        Effect.onError((cause) =>
-          Ref.update(
-            state,
-            (current): CacheState =>
-              current.generation === generation
-                ? {
-                    _tag: 'Failed',
-                    generation,
-                    error: new BrokerReadError({
-                      operation: 'preflight',
-                      kind: BrokerReadErrorKind.InvalidResponse,
-                      retryable: false,
-                      message: 'Broker snapshot polling failed',
-                      cause: safeCause({ cause }),
-                    }),
-                  }
-                : current,
-          ),
-        ),
-        Effect.catch((error) =>
-          Ref.update(
-            state,
-            (current): CacheState =>
-              current.generation === generation ? { _tag: 'Failed', generation, error } : current,
-          ).pipe(Effect.andThen(Effect.fail(error))),
-        ),
-      )
-      const observedAtMs = Math.min(
-        startedAt,
-        ...[
-          value.snapshot.account.evidence.observedAt,
-          value.snapshot.positions.evidence.observedAt,
-          value.snapshot.history.orders.observedAt,
-          value.configuration.evidence.observedAt,
-          value.openOrders.evidence.observedAt,
-          value.recentOrders.evidence.observedAt,
-          value.recentFills.evidence.observedAt,
-        ].map((at) => DateTime.toEpochMillis(DateTime.makeUnsafe(at))),
-      )
-      yield* Ref.update(
-        state,
-        (current): CacheState =>
-          current.generation === generation
-            ? { _tag: 'Ready', generation, value: { ...value, observedAtMs } }
-            : current,
-      )
-    }).pipe(Effect.withSpan('broker.snapshot.poll'))
+    const completedAt = yield* currentUtcInstant
+    const candidate = { ...value, startedAt, completedAt, observedAt: startedAt }
+    const observedAt = DateTime.formatIso(DateTime.makeUnsafe(Math.min(...observationTimes(candidate).map(Date.parse))))
+    return { ...candidate, observedAt }
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof BrokerReadError
+        ? cause
+        : observationUnavailable('Broker polling could not establish a stable history', cause),
+    ),
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () => Effect.fail(observationUnavailable('Broker observation polling exceeded its deadline')),
+    }),
+    Effect.withSpan('broker.observation.poll'),
+  )
 
-    yield* poll
-    yield* Effect.gen(function* () {
-      const next = yield* Ref.get(nextPollAt)
-      const now = yield* Clock.currentTimeMillis
-      yield* Effect.sleep(Math.max(0, next - now)).pipe(Effect.raceFirst(Queue.take(refresh)))
-      yield* poll.pipe(Effect.raceFirst(Queue.take(refresh)))
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning('Broker snapshot polling failed').pipe(
-          Effect.annotateLogs({
-            'broker.operation': error.operation,
-            'broker.failure_kind': error.kind,
-            'broker.retryable': error.retryable,
-          }),
-        ),
-      ),
-      Effect.tap(() =>
-        Ref.get(state).pipe(
-          Effect.flatMap((current) =>
-            current._tag === 'Invalidated'
-              ? Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Ref.set(nextPollAt, now)))
-              : current._tag === 'Settling'
-                ? Ref.set(nextPollAt, current.refreshAfterMs)
-                : Effect.void,
-          ),
-        ),
-      ),
-      Effect.forever,
-      Effect.forkScoped,
-    )
-
-    const cached = Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis
-      const current = yield* Ref.get(state)
-      if (current._tag === 'Failed') return yield* current.error
-      if (current._tag === 'Mutating')
-        return yield* unavailable('Broker snapshot cache is unavailable while broker mutations are in flight')
-      if (current._tag === 'Settling')
-        return yield* unavailable('Broker snapshot cache is waiting for the broker mutation consistency window')
-      if (current._tag === 'Invalidated')
-        return yield* unavailable('Broker snapshot cache is waiting for a poll after invalidation')
-      if (now < current.value.observedAtMs || now - current.value.observedAtMs >= config.maxAgeMs)
-        return yield* unavailable('Broker snapshot cache is stale')
-      return current.value
-    })
-
+export const makeProjectedBrokerRead = (
+  fresh: BrokerReadShape,
+): Effect.Effect<BrokerReadShape, never, BrokerObservations> =>
+  Effect.map(BrokerObservations, (observations) => {
+    const cached = observations.read
+    const invalidate = observations.invalidate.pipe(Effect.orDie)
     return {
       ...fresh,
-      projection: { fresh, invalidate, withMutation, snapshot: cached.pipe(Effect.map((value) => value.snapshot)) },
+      projection: {
+        fresh,
+        invalidate,
+        snapshot: cached.pipe(Effect.map((value) => value.snapshot)),
+        submissionSnapshot: (intentId) =>
+          observations.readForSubmit(intentId).pipe(
+            Effect.map((value) => ({
+              account: value.snapshot.account,
+              positions: value.snapshot.positions,
+              openOrders: value.openOrders,
+            })),
+          ),
+        withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          invalidate.pipe(Effect.andThen(effect), Effect.ensuring(invalidate)),
+      },
       account: cached.pipe(Effect.map((value) => value.snapshot.account)),
       positions: cached.pipe(Effect.map((value) => value.snapshot.positions)),
       accountConfiguration: cached.pipe(Effect.map((value) => value.configuration)),
       orders: (query) => {
         const { status, limit, direction, ...filters } = query ?? {}
-        if (Object.keys(filters).length === 0 && limit === 1) {
+        if (Object.keys(filters).length === 0 && limit !== undefined) {
           if (status === OrderCollection.Open && direction === undefined)
-            return cached.pipe(Effect.map((value) => value.openOrders))
-          if (status === OrderCollection.All && direction === SortDirection.Descending)
+            return cached.pipe(
+              Effect.flatMap((value) =>
+                value.openOrders.value.length >= 1 && limit > 1
+                  ? Effect.fail(observationUnavailable('Broker observation contains an active order'))
+                  : Effect.succeed(value.openOrders),
+              ),
+            )
+          if (status === OrderCollection.All && limit === 1 && direction === SortDirection.Descending)
             return cached.pipe(Effect.map((value) => value.recentOrders))
         }
         return fresh.orders(query)
