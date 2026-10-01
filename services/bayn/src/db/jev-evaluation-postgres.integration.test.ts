@@ -123,8 +123,12 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* JevEvaluationStore
-        const claims = yield* Effect.all([store.begin(request), store.begin(request)], { concurrency: 2 })
-        expect(claims.map((claim) => claim.status).sort()).toEqual([JevClaim.Acquired, JevClaim.Pending])
+        const claims = yield* Effect.all(
+          Array.from({ length: 8 }, () => store.begin(request)),
+          { concurrency: 8 },
+        )
+        expect(claims.filter((claim) => claim.status === JevClaim.Acquired)).toHaveLength(1)
+        expect(claims.filter((claim) => claim.status === JevClaim.Pending)).toHaveLength(7)
         yield* store.record(request, receipt)
         yield* store.record(request, receipt)
         expect(yield* store.begin(request)).toEqual({ status: JevClaim.Recorded, receipt, resolution: recorded })

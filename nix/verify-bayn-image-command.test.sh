@@ -63,6 +63,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(127)
 		}
+	case "bayn-inference-cost":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/inference-cost-command.js"}, os.Args[1:]...)
+		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(127)
+		}
 	case "node":
 		if exists("/node-fail") {
 			os.Exit(99)
@@ -80,6 +86,8 @@ func main() {
 		switch os.Args[1] {
 		case "/app/services/bayn/dist/forward-performance-command.js":
 			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256>] | --help")
+		case "/app/services/bayn/dist/inference-cost-command.js":
+			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --help")
 		case "/app/services/bayn/dist/backtest-command.js":
 			fmt.Println("Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help")
 		case "/app/services/bayn/dist/streaming-diagnostics-command.js":
@@ -103,12 +111,12 @@ mkdir -p \
 
 install -m 0555 "${work}/runtime" "${root}/nix/store/test-node/bin/node"
 ln -s /nix/store/test-node/bin/node "${root}/bin/node"
-for command in forward-performance backtest; do
+for command in forward-performance backtest inference-cost; do
   mkdir -p "${root}/nix/store/test-bayn-${command}/bin"
   install -m 0555 "${work}/runtime" "${root}/nix/store/test-bayn-${command}/bin/bayn-${command}"
   ln -s "/nix/store/test-bayn-${command}/bin/bayn-${command}" "${root}/bin/bayn-${command}"
 done
-for command in forward-performance-command backtest-command restate-execution-server streaming-diagnostics-command; do
+for command in forward-performance-command inference-cost-command backtest-command restate-execution-server streaming-diagnostics-command; do
   : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   chmod 0444 "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   ln -s "/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js" \

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
+import { cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
 
-import { Cause, Effect, Result } from 'effect'
+import { Cause, Clock, Effect, Fiber, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import {
   AccountStatus,
@@ -36,7 +38,7 @@ import {
 import {
   isPersistedGrantExecutionAuthority,
   makeAuthorityGuardedBrokerMutation,
-  refreshExecutionBrokerSubmitSnapshot,
+  confirmExecutionBrokerState,
   validateExecutionBrokerSubmitSnapshot,
   validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorization,
@@ -229,6 +231,8 @@ interface ScenarioInput {
   readonly accountObservedAt?: string
   readonly positionsObservedAt?: string
   readonly ordersObservedAt?: string
+  readonly positionsConfirmedAt?: string
+  readonly ordersConfirmedAt?: string
   readonly brokerAccount?: Account
   readonly brokerAccountAtRead?: (orderReads: number) => Account
   readonly positions?: readonly Position[]
@@ -271,7 +275,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       const snapshots = input.positionSnapshots
       const positions = snapshots?.[Math.min(positionReads, snapshots.length - 1)] ?? input.positions ?? []
       positionReads += 1
-      return readResult(positions, input.positionsObservedAt)
+      return readResult(positions, input.positionsConfirmedAt ?? input.positionsObservedAt)
     }),
     orders: (query) =>
       Effect.sync(() => {
@@ -280,7 +284,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
         const snapshots = input.orderSnapshots
         const orders = snapshots?.[Math.min(orderReads, snapshots.length - 1)] ?? input.openOrders ?? []
         orderReads += 1
-        return readResult(orders, input.ordersObservedAt)
+        return readResult(orders, input.ordersConfirmedAt ?? input.ordersObservedAt)
       }),
     orderById: () => unusedRead,
     orderByClientId: () => unusedRead,
@@ -320,9 +324,24 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
     input.finalSubmitAuthorization ??
     ((proposedIntent, transmit) =>
       Effect.gen(function* () {
-        const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(grant.limits, proposedIntent, {
-          brokerRead,
-        })
+        const cachedPositions = input.positionSnapshots?.[0] ?? input.positions ?? []
+        const cachedOrders = input.orderSnapshots?.[0] ?? input.openOrders ?? []
+        // Earlier native reconciliation supplies the cache; the live read supplies its next observation.
+        positionReads = input.positionSnapshots === undefined ? 0 : 1
+        orderReads = input.orderSnapshots === undefined ? 0 : 1
+        const cached = cachedBrokerStateFixture(input.brokerAccount ?? account(), cachedPositions, cachedOrders)
+        const snapshot = yield* confirmExecutionBrokerState(
+          {
+            ...cached,
+            state: {
+              ...cached.state,
+              positionsObservedAt: input.positionsObservedAt ?? cached.state.positionsObservedAt,
+              ordersObservedAt: input.ordersObservedAt ?? cached.state.ordersObservedAt,
+            },
+          },
+          proposedIntent.intentId,
+          submissionProjectionFixture(brokerRead),
+        )
         const persisted = yield* persistedCapitalGrants.read()
         if (persisted === undefined) return yield* Effect.fail({ _tag: 'PersistedCapitalGrantMissing' as const })
         const observedAt = yield* currentUtcInstant
@@ -363,6 +382,55 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 describe('final broker mutation authority', () => {
+  test('uses one coherent submission projection and never its direct reader', async () => {
+    const unusedRead = Effect.die('Unexpected broker GET during submission')
+    const fresh: BrokerReadShape = {
+      account: unusedRead,
+      positions: unusedRead,
+      orders: () => unusedRead,
+      accountConfiguration: unusedRead,
+      assetBySymbol: () => unusedRead,
+      orderById: () => unusedRead,
+      orderByClientId: () => unusedRead,
+      fillActivities: () => unusedRead,
+      feeActivities: () => unusedRead,
+      marketCalendar: () => unusedRead,
+    }
+    let reads = 0
+    const cached: BrokerReadShape = {
+      ...fresh,
+      projection: {
+        fresh,
+        snapshot: unusedRead,
+        invalidate: Effect.void,
+        withMutation: (effect) => effect,
+        submissionSnapshot: (id) =>
+          Effect.sync(() => {
+            expect(id).toBe(intent().intentId)
+            reads += 1
+            return { account: readResult(account()), positions: readResult([position()]), openOrders: readResult([]) }
+          }),
+      },
+    }
+    const snapshot = await Effect.runPromise(
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), intent().intentId, cached),
+    )
+    expect(snapshot.positions).toEqual([position()])
+    expect(snapshot.account).toEqual(account())
+    expect(reads).toBe(1)
+  })
+
+  test('denies submission when its observation projection is absent', async () => {
+    const raw = submissionProjectionFixture({} as BrokerReadShape).projection!.fresh
+    expect(
+      (
+        await Effect.runPromiseExit(
+          confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent().intentId, raw),
+        )
+      )._tag,
+    ).toBe('Failure')
+  })
+
   test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(
     'revalidates the same persisted grant contract for %s submission',
     async (environment) => {
@@ -374,22 +442,59 @@ describe('final broker mutation authority', () => {
     },
   )
 
-  test('refreshes exposure and the immutable grant immediately before one live submit', async () => {
+  test('overlaps the three broker confirmations instead of adding their network delays', async () => {
+    const starts: number[] = []
+    const delayedRead = <A>(value: A) =>
+      Effect.gen(function* () {
+        starts.push(yield* Clock.currentTimeMillis)
+        yield* Effect.sleep('100 millis')
+        return readResult(value)
+      })
+    const unused = Effect.die('unrelated read during confirmation')
+    const read: BrokerReadShape = {
+      account: delayedRead(account()),
+      positions: delayedRead([]),
+      orders: () => delayedRead([]),
+      accountConfiguration: unused,
+      assetBySymbol: () => unused,
+      orderById: () => unused,
+      orderByClientId: () => unused,
+      feeActivities: () => unused,
+      fillActivities: () => unused,
+      marketCalendar: () => unused,
+    }
+    const elapsed = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(activeAt))
+        const operation = yield* confirmExecutionBrokerState(
+          cachedBrokerStateFixture(account()),
+          intent().intentId,
+          submissionProjectionFixture(read),
+        ).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust('100 millis')
+        return (yield* Fiber.join(operation)) - Date.parse(activeAt)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(elapsed).toBe(100)
+    expect(starts).toEqual([Date.parse(activeAt), Date.parse(activeAt), Date.parse(activeAt)])
+  })
+
+  test('confirms the reconciled exposure once and revalidates the immutable grant before submit', async () => {
     const observed = await runLiveSubmit()
 
     expect(observed.exit._tag).toBe('Success')
     expect(observed.submits).toBe(1)
     expect(observed.grantReads).toBe(1)
-    expect(observed.positionReads).toBe(3)
-    expect(observed.orderReads).toBe(3)
-    expect(observed.orderLimit).toBe(defaultLimits.maxOpenOrders)
+    expect(observed.positionReads).toBe(1)
+    expect(observed.orderReads).toBe(1)
+    expect(observed.orderLimit).toBe(1)
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))
     expect(observed.trace.indexOf('clock')).toBeGreaterThan(observed.trace.indexOf('grant'))
     expect(observed.trace.indexOf('authorize')).toBeGreaterThan(observed.trace.indexOf('clock'))
     expect(observed.trace.at(-1)).toBe('submit')
   })
 
-  test('rejects a fill that moves between the position and open-order reads', async () => {
+  test('rejects a fill that changes positions after the cached reconciliation', async () => {
     const filledPosition = position()
     const observed = await runLiveSubmit({
       positionSnapshots: [[], [filledPosition]],
@@ -400,7 +505,7 @@ describe('final broker mutation authority', () => {
     expect(observed.positionReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
-    expect(observed.trace).toEqual(['positions', 'orders', 'positions'])
+    expect(observed.trace).toEqual(['positions', 'orders', 'account'])
   })
 
   test('rejects an open order that appears while the final broker snapshot is collected', async () => {
@@ -416,26 +521,26 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('uses account safety state observed after exposure stabilization', async () => {
+  test('uses current account safety state during concurrent confirmation', async () => {
     const observed = await runLiveSubmit({
       brokerAccountAtRead: (orderReads) =>
-        orderReads >= 2 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
+        orderReads >= 1 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(1)
     expect(observed.grantReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
 
-  test('rejects account safety drift observed during the final exposure confirmation', async () => {
+  test('rejects account safety drift during the final confirmation', async () => {
     const observed = await runLiveSubmit({
       brokerAccountAtRead: (orderReads) =>
-        orderReads >= 3 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
+        orderReads >= 1 ? account({ tradingBlocked: true }) : account({ tradingBlocked: false }),
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerAccountUnavailable')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(1)
     expect(observed.grantReads).toBe(1)
     expect(observed.submits).toBe(0)
   })
@@ -656,28 +761,28 @@ describe('final broker mutation authority', () => {
     expect(observed.submits).toBe(0)
   })
 
-  test('rejects exposure drift observed after the final account safety read', async () => {
+  test('rejects exposure drift from the cached reconciliation', async () => {
     const observed = await runLiveSubmit({
-      positionSnapshots: [[], [], [position()]],
+      positionSnapshots: [[], [position()]],
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerPositionSnapshotChanged')
-    expect(observed.positionReads).toBe(3)
+    expect(observed.positionReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
   })
 
-  test('rejects open-order drift observed after the final account safety read', async () => {
+  test('rejects open-order drift from the cached reconciliation', async () => {
     const competingOrder = order({
       brokerOrderId: 'fd3123e2-97bd-4cb8-821b-934ecad616ba',
       clientOrderId: 'post-account-external-order',
     })
     const observed = await runLiveSubmit({
-      orderSnapshots: [[], [], [competingOrder]],
+      orderSnapshots: [[], [competingOrder]],
     })
 
     expect(failureTag(observed.exit)).toBe('BrokerOpenOrderSnapshotChanged')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(2)
     expect(observed.grantReads).toBe(0)
     expect(observed.submits).toBe(0)
   })
@@ -693,7 +798,7 @@ describe('final broker mutation authority', () => {
     })
 
     expect(observed.exit._tag).toBe('Success')
-    expect(observed.orderReads).toBe(3)
+    expect(observed.orderReads).toBe(2)
     expect(observed.submits).toBe(1)
   })
 
@@ -714,6 +819,20 @@ describe('final broker mutation authority', () => {
     const observed = await runLiveSubmit({ brokerAccount: account({ observedAt: '2026-07-28T08:00:00.001Z' }) })
 
     expect(failureTag(observed.exit)).toBe('BrokerStateObservationInFuture')
+    expect(observed.submits).toBe(0)
+  })
+
+  test.each([
+    ['positions', { positionsConfirmedAt: '2026-07-28T08:00:00.001Z' }, 'BrokerStateObservationInFuture'],
+    ['orders', { ordersConfirmedAt: '2026-07-28T08:00:00.001Z' }, 'BrokerStateObservationInFuture'],
+    ['positions', { positionsConfirmedAt: 'invalid' }, 'BrokerStateObservationInvalid'],
+    ['orders', { ordersConfirmedAt: 'invalid' }, 'BrokerStateObservationInvalid'],
+    ['positions', { positionsConfirmedAt: '2026-07-28T07:54:59.999Z' }, 'BrokerStateStale'],
+    ['orders', { ordersConfirmedAt: '2026-07-28T07:54:59.999Z' }, 'BrokerStateStale'],
+  ] as const)('rejects empty %s confirmations with invalid clocks (%s)', async (_name, snapshot, tag) => {
+    const observed = await runLiveSubmit(snapshot)
+
+    expect(failureTag(observed.exit)).toBe(tag)
     expect(observed.submits).toBe(0)
   })
 
@@ -761,7 +880,7 @@ describe('final broker mutation authority', () => {
     })
     const observed = await runLiveSubmit({
       grant,
-      persistedAtRead: (positionReads) => (positionReads < 2 ? active : revoked),
+      persistedAtRead: (positionReads) => (positionReads < 1 ? active : revoked),
     })
 
     expect(observed.trace.indexOf('grant')).toBeGreaterThan(observed.trace.lastIndexOf('positions'))

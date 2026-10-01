@@ -146,11 +146,17 @@ validate manifests before an authorized apply.
 
 - Normal deployments use committed CI/CD and GitOps. Direct cluster mutation requires explicit authorization or an
   authorized emergency procedure. Do not deploy from a worktree or use legacy direct-cluster helpers for releases.
+- An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
+  Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
+  affected resources. For Kargo-managed applications, verify the eligible image, selected Freight, and the authorized
+  Stage's generated `kargo/<stage>` commit. Sync only that commit and preserve Kargo metadata and existing automation
+  and retention settings.
+  Scope expansion, unrequested destructive pruning, and credential or permission changes still require approval.
 - Kargo owns application image promotion. Follow [release automation](docs/release-automation.md) for artifact
   eligibility, enrollment, promotion, evidence, and recovery. The path is reviewed `main` merge, successful immutable
   image publication, Warehouse/Freight, exact automatic Stage promotion, generated `kargo/<stage>`, Argo reconciliation,
   workload rollout, and live proof. Do not bypass gates with SHA/digest bumps, release branches, deployment PRs,
-  release automerge, manual Argo sync, direct `kubectl` deployment, or operator-created/retagged image aliases.
+  release automerge, direct `kubectl` deployment, or operator-created/retagged image aliases.
 - Preserve the release contract's OCI annotations, immutable and run-qualified tags, and external `analysis`/`bilig`
   exceptions. CI receipts come from the selected image's annotations. Multi-image receipt builders withhold every
   discoverable Kargo alias until all images, terminal validation, and artifact uploads succeed; preparation tags must

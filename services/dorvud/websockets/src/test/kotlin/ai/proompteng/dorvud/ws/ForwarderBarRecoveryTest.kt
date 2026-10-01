@@ -12,7 +12,11 @@ import io.ktor.http.headersOf
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -24,6 +28,7 @@ import org.apache.kafka.clients.producer.RecordMetadata
 import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -68,6 +73,51 @@ class ForwarderBarRecoveryTest {
     }
     return producer
   }
+
+  @Test
+  fun `canceling bar recovery interrupts blocked Kafka publication and leaves the bar retryable`() =
+    runBlocking {
+      val entered = CompletableDeferred<Unit>()
+      val interrupted = CompletableDeferred<Unit>()
+      val blockedProducer = mockk<KafkaProducer<String, String>>(relaxed = true)
+      every { blockedProducer.send(any<ProducerRecord<String, String>>(), any<Callback>()) } answers {
+        entered.complete(Unit)
+        try {
+          Thread.sleep(3000)
+          CompletableFuture.completedFuture(mockk<RecordMetadata>())
+        } catch (error: InterruptedException) {
+          interrupted.complete(Unit)
+          throw error
+        }
+      }
+      val client = HttpClient(MockEngine { respond(response(listOf("19:59"))) })
+      val app = ForwarderApp(config, nowMs = { Instant.parse("2026-09-18T20:01:00Z").toEpochMilli() }, httpClient = client)
+      val sequence = SeqTracker()
+      val caller = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+      val recovery = launch(caller) { app.reconcileBars(blockedProducer, sequence, listOf("SPY")) }
+      try {
+        withTimeout(5000) { entered.await() }
+        withTimeout(1000) {
+          withContext(caller) { assertTrue(app.isAlive()) }
+          recovery.cancelAndJoin()
+          interrupted.await()
+        }
+        val records = ConcurrentLinkedQueue<ProducerRecord<String, String>>()
+        val retryProducer = producer(records)
+        app.reconcileBars(retryProducer, sequence, listOf("SPY"))
+        app.reconcileBars(retryProducer, sequence, listOf("SPY"))
+        assertEquals(1, records.size)
+        val envelope = Json.decodeFromString<Envelope<JsonElement>>(records.single().value())
+        assertEquals("2026-09-18T19:59:00Z", envelope.eventTs.toString())
+        assertEquals("2026-09-18T20:01:00Z", envelope.ingestTs.toString())
+        assertEquals("rest", envelope.source)
+      } finally {
+        recovery.cancelAndJoin()
+        caller.close()
+        app.stop()
+        client.close()
+      }
+    }
 
   @Test
   fun `retries a failed Kafka acknowledgement and skips the bar once acknowledged`() =

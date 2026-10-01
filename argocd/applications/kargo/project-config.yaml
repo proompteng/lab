@@ -8,7 +8,7 @@ metadata:
 spec:
   promotionPolicies:
     - stageSelector:
-        name: codex-devbox
+        name: devbox
       autoPromotionEnabled: true
     - stageSelector:
         name: proompteng
@@ -42,7 +42,7 @@ spec:
       autoPromotionEnabled: true
     - stageSelector:
         name: hermes-toolchain
-      autoPromotionEnabled: true
+      autoPromotionEnabled: false
     - stageSelector:
         name: jangar
       autoPromotionEnabled: true
@@ -75,4 +75,7 @@ spec:
       autoPromotionEnabled: true
     - stageSelector:
         name: restate
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: rune
       autoPromotionEnabled: true
