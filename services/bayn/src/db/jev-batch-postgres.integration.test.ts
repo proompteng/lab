@@ -15,7 +15,7 @@ import {
   Schema,
 } from 'effect'
 import { TestClock } from 'effect/testing'
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { operationalError } from '../errors'

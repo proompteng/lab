@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
-import type { SqlError } from 'effect/unstable/sql/SqlError'
+import type { SqlError } from 'effect/sql/SqlError'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
 import { strictParseOptions } from '../schemas'

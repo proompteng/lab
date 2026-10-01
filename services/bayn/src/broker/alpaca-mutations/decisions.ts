@@ -36,7 +36,7 @@ const Uuid = Schema.String.check(
 )
 const decodeIntent = Schema.decodeUnknownResult(IntentSchema, inputParseOptions)
 const decodeOrderId = Schema.decodeUnknownResult(Uuid)
-const decodeJsonResponseBody = Schema.decodeUnknownResult(Schema.UnknownFromJsonString)
+const decodeJsonResponseBody = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
 
 export interface ResolvedMutationCapability {
   readonly connection: BrokerConnection

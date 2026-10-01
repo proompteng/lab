@@ -249,7 +249,7 @@ const makeAccountingInterpreterDataFirst = (
                 ) VALUES (
                   ${candidate.receiptId}, ${candidate.schemaVersion}, ${candidate.intentId ?? null},
                   ${candidate.brokerEventId}, ${candidate.tigerBeetleClusterId}, ${candidate.tigerBeetleLedger},
-                  ${candidate.accountIds}, ${candidate.transferIds}, ${candidate.debitMicros}, ${candidate.creditMicros},
+                  ${candidate.accountIds}::numeric[], ${candidate.transferIds}::numeric[], ${candidate.debitMicros}, ${candidate.creditMicros},
                   ${candidate.contentHash}, ${candidate.recordedAt}
                 )
                 ON CONFLICT (broker_event_id) DO NOTHING

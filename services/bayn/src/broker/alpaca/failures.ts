@@ -1,5 +1,5 @@
 import { Data, Schema } from 'effect'
-import { HttpClientError } from 'effect/unstable/http'
+import { HttpClientError } from 'effect/http'
 import { Pipeable } from '../../pipeable'
 
 export enum BrokerReadErrorKind {

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer } from 'node:http'
-import { Undici } from '@effect/platform-node'
+import * as Undici from '@effect/platform-node/Undici'
 import { Cause, Effect, Exit, Redacted } from 'effect'
-import { HttpClient } from 'effect/unstable/http'
+import { HttpClient } from 'effect/http'
 
 import { JevClient, JevClientLive, JevError } from './client'
 import { JevFailure } from './contract'

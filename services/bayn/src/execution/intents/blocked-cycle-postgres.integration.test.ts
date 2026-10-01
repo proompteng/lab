@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import { Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
@@ -42,7 +42,6 @@ import { BlockedCycleIntentStoreLive } from './blocked-cycle-postgres'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const accountId = 'preopen-authority-recovery-test'
 const planHash = '1'.repeat(64)
 const brokerIdentity = Result.getOrThrow(
@@ -132,7 +131,7 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
         content_hash, status, discrepancies, reconciled_at
       ) VALUES (
         ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
-        ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${activationReconciledAt}
+        ${reconciliationHash}, 'EXACT', ${sql.json([])}, ${activationReconciledAt}
       )
     `
     yield* sql`
@@ -212,7 +211,7 @@ const seedRepairableCycle = (
       ) VALUES (
         ${canonicalHashV1({ reconciliation: 'current' })}, 'bayn.paper-reconciliation.v1',
         ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'current-content' })},
-        'EXACT', ${sql.json(encodeSqlJson([]))}, ${fixture.reconciledAt}
+        'EXACT', ${sql.json([])}, ${fixture.reconciledAt}
       )
     `
   })
@@ -310,7 +309,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         ) VALUES (
           ${canonicalHashV1({ reconciliation: 'unused-generation' })}, 'bayn.paper-reconciliation.v1',
           ${accountId}, ${exactHash}, ${exactHash}, ${exactHash},
-          'EXACT', ${sql.json(encodeSqlJson([]))}, ${fixture.reconciledAt}
+          'EXACT', ${sql.json([])}, ${fixture.reconciledAt}
         )`
         expect(yield* rotate).toMatchObject({
           generationHash: successorHash,
@@ -530,7 +529,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         ) VALUES (
           ${canonicalHashV1({ reconciliation: 'retired' })}, 'bayn.paper-reconciliation.v1',
           ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'retired-content' })},
-          'EXACT', ${sql.json(encodeSqlJson([]))}, ${fixture.reconciledAt}
+          'EXACT', ${sql.json([])}, ${fixture.reconciledAt}
         )`
         const settlement = yield* blocked.settleCurrentTerminalGeneration({
           accountId,
@@ -682,7 +681,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             ${canonicalHashV1({ reconciliation: 'post-settlement' })}, 'bayn.paper-reconciliation.v1',
             ${accountId}, ${exactHash}, ${exactHash},
             ${canonicalHashV1({ reconciliation: 'post-settlement-content' })},
-            'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+            'EXACT', ${sql.json([])}, ${reconciledAt}
           )
         `
         const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
@@ -734,7 +733,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         ) VALUES (
           ${discrepancyId}, 'bayn.paper-reconciliation.v1', ${accountId},
           ${canonicalHashV1({ cash: discrepancy.expected })}, ${canonicalHashV1({ cash: discrepancy.observed })},
-          ${canonicalHashV1(discrepancy)}, 'DISCREPANCY', ${sql.json(encodeSqlJson([discrepancy]))},
+          ${canonicalHashV1(discrepancy)}, 'DISCREPANCY', ${sql.json([discrepancy])},
           ${fixture.reconciledAt}
         )`
         const settlement = yield* blocked.settleCurrentTerminalGeneration({
@@ -761,7 +760,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         ) VALUES (
           ${canonicalHashV1({ reconciliation: 'fees-reflected' })}, 'bayn.paper-reconciliation.v1',
           ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'fees-reflected-content' })},
-          'EXACT', ${sql.json(encodeSqlJson([]))}, ${instant(Date.parse(fixture.reconciledAt) + 1_000)}
+          'EXACT', ${sql.json([])}, ${instant(Date.parse(fixture.reconciledAt) + 1_000)}
         )`
         const rotated = yield* authority.ensureAuthorityGeneration(request)
         return {
