@@ -153,6 +153,22 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(brokerPolls).toBeGreaterThanOrEqual(1)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
+          const journal = yield* Effect.tryPromise({
+            try: async (signal) => {
+              const response = await fetch(`${admin}/query`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  query: `SELECT COUNT(*) AS journal_entries FROM sys_journal WHERE id = '${accepted.invocationId}'`,
+                }),
+                headers: { 'content-type': 'application/json', accept: 'application/json' },
+                signal,
+              })
+              if (!response.ok) throw new Error(`Local Restate journal query failed with HTTP ${response.status}`)
+              return response.json() as Promise<unknown>
+            },
+            catch: (cause) => cause,
+          })
+          expect(journal).toMatchObject({ rows: [{ journal_entries: 0 }] })
           const replay = yield* sendRestateInvocation(url, body, options)
           expect(replay.invocationId).toBe(accepted.invocationId)
           expect(

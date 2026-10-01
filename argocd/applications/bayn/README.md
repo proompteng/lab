@@ -61,7 +61,8 @@ out after that verified native binding. The worker advertises exactly `BaynExecu
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
 `activate`, `deactivate`, `tick` and `status`, and every broker-observation handler, remain private. The activation
-result and journal are retained for seven days. The Job's verified log includes `activationInvocationId`, allowing
+result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job's
+verified log includes `activationInvocationId`, allowing
 the handoff and its completed successor proof to be inspected after the successful hook is removed.
 
 The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the

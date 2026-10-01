@@ -135,7 +135,7 @@ describe('native Restate execution server', () => {
       ty: 'SHARED',
       ingressPrivate: false,
       idempotencyRetention: 7 * 24 * 60 * 60_000,
-      journalRetention: 7 * 24 * 60 * 60_000,
+      journalRetention: 0,
     })
     expect(
       services[0]?.handlers

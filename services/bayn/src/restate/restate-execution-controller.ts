@@ -659,7 +659,7 @@ export const makeBaynExecutionController = (
         {
           ingressPrivate: false,
           idempotencyRetention: executionControllerActivationRetentionMs,
-          journalRetention: executionControllerActivationRetentionMs,
+          journalRetention: 0,
           retryPolicy: executionControllerCommandRetryPolicy,
           ...executionControllerDeploymentHandlerTimeouts(
             config.operationTimeoutMs,
