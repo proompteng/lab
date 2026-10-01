@@ -14,6 +14,44 @@ const metricAllowlist = (config: string, name: string): RegExp => {
   return new RegExp(`^(?:${JSON.parse(encoded)})$`)
 }
 
+test('CNPG relabeling retains the complete bounded database diagnostics and collector failures', () => {
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const allow = metricAllowlist(config, 'cnpg_metrics')
+  const manifest = YAML.parse(readRepoFile('argocd/applications/bayn/postgres-monitoring.yaml'))
+  const queries = YAML.parse(manifest.data.queries) as Record<
+    string,
+    { metrics: Array<Record<string, { usage: string }>> }
+  >
+  // Exercise the retained metric names produced by the configured exporter; labels are not themselves metric samples.
+  for (const [query, { metrics }] of Object.entries(queries)) {
+    for (const metric of metrics) {
+      for (const [name, definition] of Object.entries(metric)) {
+        if (definition.usage === 'LABEL') continue
+        expect(allow.test(`cnpg_${query}_${name};`)).toBe(true)
+      }
+    }
+  }
+  for (const sample of [
+    'up;',
+    'cnpg_collector_last_collection_error;',
+    'cnpg_collector_collection_errors_total;',
+    'cnpg_collector_collection_duration_seconds;',
+    'cnpg_pg_settings_setting;track_io_timing',
+    'cnpg_pg_settings_setting;track_wal_io_timing',
+    'cnpg_pg_settings_setting;fsync',
+    'cnpg_collector_wal_bytes;',
+    'cnpg_pg_stat_checkpointer_sync_time;',
+  ])
+    expect(allow.test(sample)).toBe(true)
+  for (const sample of [
+    'cnpg_bayn_unbounded_future_metric;',
+    'cnpg_bayn_io_write_seconds_total_extra;',
+    'cnpg_pg_settings_setting;application_name',
+    'unrelated_metric;',
+  ])
+    expect(allow.test(sample)).toBe(false)
+})
+
 test('Ceph exporter discovery is per pod and keeps complete latency-counter pairs', () => {
   const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
   expect(config).toContain('label = "app=rook-ceph-exporter"')

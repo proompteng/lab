@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
+import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { canonicalHashV1 } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
@@ -49,6 +50,34 @@ const order = (side: OrderSide, atMs = at, shares = 10n) => ({
   arrivalQuote: quote(atMs + 100),
 })
 const flat = () => Result.getOrThrow(createControlPortfolio('100000000000'))
+
+test('the explicit reserve experiment lowers late entry size while the legacy/default path is unchanged', async () => {
+  const policy = await Effect.runPromise(
+    loadQuoteBoundExecutionRiskPolicy('control-fixture', fixture.protocol.universe),
+  )
+  const portfolio = { ...flat(), tradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros) - 21_000_000_000n }
+  const input = {
+    portfolio,
+    policy,
+    protocol: fixture.protocol,
+    targetWeight: 0.2,
+    symbol: 'AAPL',
+    referencePriceMicros: 100_000_000n,
+    atMs: at,
+    feeMultiplierPpm: 1_000_000,
+  }
+  const legacy = Result.getOrThrow(controlEntryQuantity(input))
+  const explicit = Result.getOrThrow(
+    controlEntryQuantity({ ...input, turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment }),
+  )
+  const reserved = Result.getOrThrow(
+    controlEntryQuantity({ ...input, turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit }),
+  )
+  expect(legacy).toBe(explicit)
+  expect(reserved).toBeGreaterThan(0n)
+  expect(reserved).toBeLessThan(legacy)
+  expect(reserved * 100n * 2n).toBeLessThanOrEqual(21_000_000_000n)
+})
 const entry = () => Result.getOrThrow(applyControlOrder(flat(), order(OrderSide.Buy))).portfolio
 const exiting = () =>
   Result.getOrThrow(
