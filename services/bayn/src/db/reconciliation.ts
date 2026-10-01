@@ -186,7 +186,7 @@ const decodePreviousReconciliation = Schema.decodeUnknownEffect(PreviousReconcil
 const decodeContent = Schema.decodeUnknownEffect(ReconciliationContentRow, strictParseOptions)
 const decodeFinalExecutionRiskContext = Schema.decodeUnknownEffect(FinalExecutionRiskContextRow, strictParseOptions)
 const decodeRiskContext = Schema.decodeUnknownEffect(ReconciliationRiskContextRow, strictParseOptions)
-const encodeDiscrepancies = Schema.encodeSync(Schema.fromJsonString(Schema.Array(DiscrepancySchema)))
+const encodeDiscrepancies = Schema.encodeSync(Schema.Array(DiscrepancySchema))
 
 const storeError = (
   operation: ReconciliationStoreError['operation'],

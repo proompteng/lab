@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { NodeFileSystem } from '@effect/platform-node'
 import { Duration, Effect, FileSystem, Redacted } from 'effect'
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
 import { AlpacaHistoricalKind, decodeAlpacaHistoricalQuery, type AlpacaHistoricalQuery } from './model'
 import { makeAlpacaHistoricalClient } from './client'

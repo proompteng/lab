@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import {
   type CycleEconomicsObservation,

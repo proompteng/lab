@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { Deferred, Effect, Fiber, Redacted, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
 import { provideTestLayer } from '../effect-test-support'
 import { canonicalHashV1 } from '../hash'

@@ -66,7 +66,7 @@ export interface RestateExecutionActivationConfig {
 
 const restateExecutionActivationTransportConfig = Config.all({
   activationGeneration: Config.schema(Sha256Schema, 'BAYN_EXECUTION_ACTIVATION_GENERATION'),
-  bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
+  bootstrapToken: Config.Redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
   ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
     Config.withDefault('http://restate.restate.svc.cluster.local:8080'),
   ),

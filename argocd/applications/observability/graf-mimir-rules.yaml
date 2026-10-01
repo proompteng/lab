@@ -3054,8 +3054,14 @@ data:
               and on(job, namespace, service)
               (
                 max by (job, namespace, service) (
-                  bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"}
+                  bayn_execution_session_ready{job="bayn",namespace="bayn",service="bayn"}
                 ) == 0
+              )
+              unless on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="decision_lagging"}
+                ) == 1
               )
             for: 1m
             labels:
@@ -3064,8 +3070,8 @@ data:
               service: bayn
               notify: email
             annotations:
-              summary: Bayn execution session is not ready before submission opens
-              description: A realized unbound execution session is within ten minutes of submission open or already inside its submission window, but durable authority, reconciliation, broker binding, controller, or runtime preflight is not ready.
+              summary: Bayn execution session is not ready in its submission window
+              description: A realized unbound execution session is within ten minutes of submission open or inside its submission window, but its durable prerequisites, signal inputs or evaluation path are unavailable.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionDecisionLagging
             expr: |
@@ -3094,10 +3100,16 @@ data:
               )
               and on(job, namespace, service)
               (
+                max by (job, namespace, service) (
+                  bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="decision_lagging"}
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
                 time() >=
                 max by (job, namespace, service) (
-                  bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
-                ) + 120
+                  bayn_cycle_decision_deadline_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
+                )
               )
               and on(job, namespace, service)
               (
@@ -3113,8 +3125,8 @@ data:
               service: bayn
               notify: email
             annotations:
-              summary: Bayn execution decision is lagging after submission open
-              description: Bayn's durable execution preflight is healthy, but the current session is still missing an immutable decision binding more than two minutes after submission opened.
+              summary: Bayn execution decision is lagging after its observation deadline
+              description: Bayn's durable execution preflight is healthy, but the current attempt is still missing an immutable decision after the first complete rolling observation or attempt start plus the strategy evaluation allowance.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleObservationUnavailable
             expr: |
