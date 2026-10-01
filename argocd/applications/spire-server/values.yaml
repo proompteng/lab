@@ -1,0 +1,76 @@
+global:
+  spire:
+    clusterName: galactic
+    trustDomain: galactic.proompteng.ai
+    caSubject:
+      country: US
+      organization: proompteng
+      commonName: Galactic SPIRE CA
+    recommendations:
+      enabled: true
+      prometheus: false
+    namespaces:
+      create: false
+      server:
+        name: spire-server
+        create: false
+      system:
+        name: spire-system
+        create: false
+  installAndUpgradeHooks:
+    enabled: false
+  deleteHooks:
+    enabled: false
+spire-server:
+  replicaCount: 1
+  persistence:
+    type: pvc
+    storageClass: rook-ceph-block
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  nodeAttestor:
+    k8sPSAT:
+      serviceAccountAllowList:
+        - spire-system:spire-agent
+  controllerManager:
+    enabled: true
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+    identities:
+      clusterSPIFFEIDs:
+        default:
+          enabled: false
+        oidc-discovery-provider:
+          enabled: false
+        test-keys:
+          enabled: false
+        identity-canary:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: spire-test
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: spire-identity-canary
+          workloadSelectorTemplates:
+            - k8s:sa:identity-canary
+          ttl: 2m
+          fallback: false
+  externalControllerManagers:
+    enabled: false
+spire-agent:
+  enabled: false
+spiffe-csi-driver:
+  enabled: false
+spiffe-oidc-discovery-provider:
+  enabled: false
