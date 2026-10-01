@@ -56,6 +56,8 @@ const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
 type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+mod terminal_rpc;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpstreamWebSocketError {
     StaleGuestBinding,
@@ -472,6 +474,8 @@ async fn terminal_websocket(
         .into_iter()
         .filter(|(name, _)| matches!(name.as_str(), "reconnect" | "since" | "cols" | "rows"))
         .collect::<Vec<_>>();
+    let attachment = terminal_rpc::attachment(&terminal_id, &terminal_query);
+    let rpc = guest.rpc.clone();
     let query = serde_urlencoded::to_string(terminal_query).unwrap_or_default();
     let url = format!(
         "ws://{}/v1/terminals/{terminal_id}/ws{}{}",
@@ -486,8 +490,12 @@ async fn terminal_websocket(
         .max_message_size(MAX_WEBSOCKET_MESSAGE)
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER)
         .protocols([protocol])
-        .on_upgrade(move |socket| {
-            bridge_websocket(socket, url, guest.token().to_owned(), activity, agent_id)
+        .on_upgrade(move |socket| async move {
+            if let Some(rpc) = rpc {
+                terminal_rpc::bridge(socket, rpc, attachment, activity, agent_id).await;
+            } else {
+                bridge_websocket(socket, url, guest.token().to_owned(), activity, agent_id).await;
+            }
         })
         .into_response()
 }
