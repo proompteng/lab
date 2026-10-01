@@ -78,7 +78,7 @@ const readUnsignedDiscoveryStatus = (session: ClientHttp2Session): Promise<numbe
   })
 
 describe('native Restate execution server', () => {
-  test('discovers only the account-keyed controller and its narrow bootstrap', async () => {
+  test('discovers the account-keyed controller, observation owner and narrow bootstrap', async () => {
     const handler = makeRestateExecutionEndpointHandler(
       { controllerKey, operationTimeoutMs: 30_000, planHash, sourceRevision },
       {
@@ -88,6 +88,7 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [],
+      { runtime: { activate: () => Promise.resolve(), poll: () => Promise.resolve(null) }, pollIntervalMs: 30_000 },
     )
     const port = await reservePort()
 
@@ -123,6 +124,7 @@ describe('native Restate execution server', () => {
         name: 'BaynExecutionBootstrap',
         handlers: ['start'],
       },
+      { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
     ])
   })
 
@@ -174,6 +176,7 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [requestIdentityKey],
+      { runtime: { activate: () => Promise.resolve(), poll: () => Promise.resolve(null) }, pollIntervalMs: 30_000 },
     )
     const port = await reservePort()
 

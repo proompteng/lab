@@ -45,7 +45,11 @@ import {
   makeExecutionProgram,
   type ExecutionProgramDependencies,
 } from './runtime-program'
-import { cachedBrokerStateFixture, nativeBrokerStateFixture } from './broker-state-cache.fixture'
+import {
+  cachedBrokerStateFixture,
+  nativeBrokerStateFixture,
+  submissionProjectionFixture,
+} from './broker-state-cache.fixture'
 import { makeBrokerStateCache } from './broker-state-cache'
 import { WriterFenceError } from './writer-fence'
 
@@ -57,6 +61,7 @@ const authorizeFinalBrokerSubmit = <A, E, R>(
 ) =>
   authorizeCachedFinalBrokerSubmit(authority, intent, transmit, {
     ...deps,
+    brokerRead: submissionProjectionFixture(deps.brokerRead),
     brokerStateCache: {
       ...deps.brokerStateCache,
       take: () =>
@@ -173,7 +178,7 @@ const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
 
 const stableBrokerRead = (positions: readonly Position[] = [], account: Account = brokerAccount()): BrokerReadShape => {
   const unusedRead = Effect.die(new Error('stable broker fixture used an unrelated broker read'))
-  return {
+  return submissionProjectionFixture({
     account: Effect.succeed(readResult(account)),
     accountConfiguration: unusedRead,
     assetBySymbol: () => unusedRead,
@@ -184,7 +189,7 @@ const stableBrokerRead = (positions: readonly Position[] = [], account: Account 
     feeActivities: () => unusedRead,
     fillActivities: () => unusedRead,
     marketCalendar: () => unusedRead,
-  }
+  })
 }
 
 const finalLiveFixture = () => {
@@ -1673,6 +1678,43 @@ describe('execution with the native reconciliation cache', () => {
     expect(posts).toBe(0)
     expect(Exit.isFailure(await Effect.runPromiseExit(cache.take(observedAt, 1000)))).toBe(true)
   })
+  test('normal final submission never calls the direct broker reader', async () => {
+    const { fixture, cache, deps } = setup()
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+    let directReads = 0
+    const direct = stableBrokerRead([], brokerAccount())
+    const read = {
+      ...direct,
+      projection: {
+        fresh: {
+          ...direct,
+          account: Effect.sync(() => {
+            directReads += 1
+          }).pipe(Effect.andThen(direct.account)),
+          positions: Effect.sync(() => {
+            directReads += 1
+          }).pipe(Effect.andThen(direct.positions)),
+          orders: (query: Parameters<typeof direct.orders>[0]) =>
+            Effect.sync(() => {
+              directReads += 1
+            }).pipe(Effect.andThen(direct.orders(query))),
+        },
+        invalidate: Effect.void,
+        withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+        snapshot: Effect.die('not used by this final confirmation fixture'),
+        submissionSnapshot: () =>
+          Effect.succeed({
+            account: readResult(brokerAccount()),
+            positions: readResult([]),
+            openOrders: readResult([]),
+          }),
+      },
+    }
+    await Effect.runPromise(
+      authorizeCachedFinalBrokerSubmit(fixture.authority, fixture.intent, Effect.void, { ...deps, brokerRead: read }),
+    )
+    expect(directReads).toBe(0)
+  })
   test('interrupting confirmation cancels the broker read and keeps the reservation consumed', async () => {
     const { fixture, cache, deps } = setup()
     await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
@@ -1691,14 +1733,18 @@ describe('execution with the native reconciliation cache', () => {
             ...deps,
             brokerRead: {
               ...deps.brokerRead,
-              account: Deferred.succeed(started, undefined).pipe(
-                Effect.andThen(Effect.never),
-                Effect.ensuring(
-                  Effect.sync(() => {
-                    cancelled = true
-                  }),
-                ),
-              ),
+              projection: {
+                ...submissionProjectionFixture(deps.brokerRead).projection!,
+                submissionSnapshot: () =>
+                  Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        cancelled = true
+                      }),
+                    ),
+                  ),
+              },
             },
           },
         ).pipe(Effect.forkChild({ startImmediately: true }))

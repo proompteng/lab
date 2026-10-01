@@ -137,7 +137,7 @@ const finalBrokerAuthorization = (
       dependencies.riskPolicy.maxBrokerStateAgeMs,
     )
     yield* dependencies.verifyBrokerStateVersion(cached.version, intent.intentId)
-    const snapshot = yield* confirmExecutionBrokerState(cached, capital.limits, dependencies.brokerRead).pipe(
+    const snapshot = yield* confirmExecutionBrokerState(cached, intent.intentId, dependencies.brokerRead).pipe(
       withObservedStage('bayn.execution.broker-state-confirmation', { dependency: 'broker' }),
     )
     const riskContext = yield* dependencies.readFinalExecutionRiskContext(yield* dependencies.currentUtcInstant)
