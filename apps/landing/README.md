@@ -44,6 +44,11 @@ Traefik's connection source, so the application never trusts caller-supplied for
 The BFF also restores an in-progress Codex device login from the guest after a browser reconnect; it does not start a
 replacement attempt or invalidate the code already shown to the user.
 
+The Codex view keeps model and reasoning choices in the message composer. Prompt suggestions prepare a draft for
+review before submission. Commands, output, diffs, and reasoning summaries expand inline. Responses support Markdown
+tables, task lists, and code blocks with copy feedback. The conversation follows new events while the reader is at
+the bottom. Reading earlier messages preserves the scroll position until the reader chooses **Jump to latest**.
+
 1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
    The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway
    origin. HTTPS is required except for the exact `http://localhost` development host.
