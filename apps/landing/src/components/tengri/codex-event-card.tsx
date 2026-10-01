@@ -30,8 +30,10 @@ export function CodexEventCard({
 }: CodexEventCardProps) {
   if (kind === 'user-message') {
     return (
-      <article aria-label="Your message" className="min-w-0 text-sm leading-6 text-zinc-100">
-        <div className="mb-2 text-xs font-semibold text-zinc-400">You</div>
+      <article
+        aria-label="Your message"
+        className="ml-auto w-fit min-w-0 max-w-[85%] text-right text-sm leading-6 text-zinc-100"
+      >
         <Markdown text={text} />
       </article>
     )
@@ -194,8 +196,7 @@ export function CodexEventCard({
 
   if (!text || kind === 'thread-state' || kind === 'unknown') return null
   return (
-    <article aria-label="Codex response" className="min-w-0 text-sm leading-6 text-zinc-200">
-      <div className="mb-2 text-xs font-semibold text-zinc-300">Codex</div>
+    <article aria-label="Codex response" className="min-w-0 text-left text-sm leading-6 text-zinc-200">
       <Markdown text={text} />
     </article>
   )
