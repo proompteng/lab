@@ -104,15 +104,15 @@ const main = Effect.scoped(
       validateBacktestSourceReceipt(sourceReceiptText, args.sourceReceiptHash),
     )
     const prepared = yield* Effect.fromResult(prepareBacktest(parsed, sourceReceipt))
-    const jevKey = yield* Config.redacted('BAYN_JEV_API_KEY')
+    const jevKey = yield* Config.Redacted('BAYN_JEV_API_KEY')
     const databaseInput = yield* Config.all({
-      postgresUrl: Config.redacted('BAYN_BACKTEST_POSTGRES_URL'),
-      tigerBeetleAddress: Config.string('BAYN_BACKTEST_TIGERBEETLE_ADDRESS'),
+      postgresUrl: Config.Redacted('BAYN_BACKTEST_POSTGRES_URL'),
+      tigerBeetleAddress: Config.String('BAYN_BACKTEST_TIGERBEETLE_ADDRESS'),
       tigerBeetleCluster: Config.schema(
         Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
         'BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID',
       ),
-      tigerBeetleLedger: Config.int('BAYN_BACKTEST_TIGERBEETLE_LEDGER'),
+      tigerBeetleLedger: Config.Int('BAYN_BACKTEST_TIGERBEETLE_LEDGER'),
     })
     const databases: ReplayDatabaseConfig = {
       operationTimeoutMs: 30_000,

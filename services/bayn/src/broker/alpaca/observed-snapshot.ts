@@ -1,6 +1,6 @@
 import { Context, Effect, Schema } from 'effect'
 
-import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
+import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
 import { canonicalHashV1 } from '../../hash'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import {
@@ -71,14 +71,14 @@ const order = Schema.Struct({
   accountId: Schema.String,
   brokerOrderId: Schema.String,
   clientOrderId: Schema.String,
-  createdAt: UtcInstantSchema,
-  updatedAt: Schema.optionalKey(UtcInstantSchema),
-  submittedAt: Schema.optionalKey(UtcInstantSchema),
-  filledAt: Schema.optionalKey(UtcInstantSchema),
-  expiredAt: Schema.optionalKey(UtcInstantSchema),
-  canceledAt: Schema.optionalKey(UtcInstantSchema),
-  failedAt: Schema.optionalKey(UtcInstantSchema),
-  replacedAt: Schema.optionalKey(UtcInstantSchema),
+  createdAt: UtcSourceTimestampSchema,
+  updatedAt: Schema.optionalKey(UtcSourceTimestampSchema),
+  submittedAt: Schema.optionalKey(UtcSourceTimestampSchema),
+  filledAt: Schema.optionalKey(UtcSourceTimestampSchema),
+  expiredAt: Schema.optionalKey(UtcSourceTimestampSchema),
+  canceledAt: Schema.optionalKey(UtcSourceTimestampSchema),
+  failedAt: Schema.optionalKey(UtcSourceTimestampSchema),
+  replacedAt: Schema.optionalKey(UtcSourceTimestampSchema),
   replacedBy: Schema.optionalKey(Schema.String),
   replaces: Schema.optionalKey(Schema.String),
   assetId: Schema.String,
@@ -110,7 +110,7 @@ const fill = Schema.Struct({
   quantityMicros: micros,
   side: Schema.Enum(OrderSide),
   symbol: Schema.String,
-  transactionTime: UtcInstantSchema,
+  transactionTime: UtcSourceTimestampSchema,
   brokerOrderId: Schema.String,
   type: Schema.Enum(TradeActivityType),
   orderStatus: Schema.optionalKey(Schema.Enum(OrderStatus)),

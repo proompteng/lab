@@ -1,5 +1,5 @@
 import { Duration, Effect, Layer, Schedule } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { CycleObservabilityError } from './cycle/store'
 import { DatabaseError } from './db/database-error'
