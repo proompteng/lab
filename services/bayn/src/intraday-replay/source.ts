@@ -294,7 +294,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
     const snapshot = yield* fs.open(snapshotPath, { flag: 'r+' })
     yield* fs.remove(snapshotPath)
     yield* Stream.runForEach(fs.stream(path), (chunk) => snapshot.writeAll(chunk))
-    yield* snapshot.seek(0, 'start')
+    yield* snapshot.seek(0n, 'start')
     const source = {
       runId,
       sourceManifestHash,
@@ -393,7 +393,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
     const preflight = read()
     yield* Stream.runDrain(preflight.stream)
     yield* preflight.verify
-    yield* snapshot.seek(0, 'start')
+    yield* snapshot.seek(0n, 'start')
     const replay = read()
     const pull = yield* Stream.toPull(replay.stream)
     let pending: readonly HistoricalMarketArrival[] = []

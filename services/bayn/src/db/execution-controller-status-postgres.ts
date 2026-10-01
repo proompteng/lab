@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import {
   ExecutionControllerOutcome,
@@ -21,9 +21,9 @@ const StatusRow = Schema.Struct({
   controller_key: ExecutionControllerKeySchema,
   plan_hash: Sha256Schema,
   active: Schema.Boolean,
-  epoch: Schema.BigIntFromString,
-  next_sequence: Schema.BigIntFromString,
-  last_sequence: Schema.NullOr(Schema.BigIntFromString),
+  epoch: Schema.BigInt,
+  next_sequence: Schema.BigInt,
+  last_sequence: Schema.NullOr(Schema.BigInt),
   last_outcome: Schema.NullOr(Schema.Enum(ExecutionControllerOutcome)),
   last_receipt_hash: Schema.NullOr(Sha256Schema),
   completed_at: Schema.NullOr(UtcInstantSchema),
