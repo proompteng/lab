@@ -9,6 +9,8 @@ The two Helm applications use the existing Lovely renderer and its Helm 3 toolch
 The server and controller manager run in the restricted `spire-server` namespace. The agent and SPIFFE CSI driver
 run in the privileged `spire-system` namespace. ApplicationSet owns namespace creation and security labels; these
 applications render no Namespace objects. Helm install, upgrade, delete, and test hooks are excluded.
+The server Application uses Argo's server-side diff so Kubernetes defaults on its StatefulSet and PVC template are
+compared through an API server dry-run. Storage configuration remains part of the comparison.
 
 The SPIRE trust domain is `galactic.proompteng.ai`. Existing Istio certificates continue to use `cluster.local`.
 This rollout does not change Istio or application authentication. There is no default registration for other pods.
