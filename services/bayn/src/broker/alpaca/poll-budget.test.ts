@@ -24,7 +24,7 @@ const transport = (
 }
 
 describe('broker observation HTTP budget', () => {
-  test.each([14, 34])('paces every attempt in a %s-call paginated capture', async (count) => {
+  test.each([14, 34, 52])('charges every attempt in a %s-call paginated capture to its next poll', async (count) => {
     await run(
       Effect.gen(function* () {
         const budget = yield* makeBrokerObservationBudget
@@ -36,30 +36,34 @@ describe('broker observation HTTP budget', () => {
         ).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(count * 600)
         yield* Fiber.join(pending)
-        expect(source.starts).toEqual(Array.from({ length: count }, (_, index) => index * 600))
+        expect(source.starts).toEqual(Array.from({ length: count }, () => 0))
         expect(yield* budget.nextPollNotBeforeMs).toBe(count * 600)
       }),
     )
   })
-  test('limits background attempts to 100 in a minute even with concurrent callers', async () => {
+  test('preserves unpaid request cost across captures and starts a new budget after it elapses', async () => {
     await run(
       Effect.gen(function* () {
         const budget = yield* makeBrokerObservationBudget
         const source = transport()
         const client = budget.decorate(source.client)
-        const pending = yield* Effect.all(
-          Array.from({ length: 101 }, () => client.get(url)),
-          { concurrency: 8 },
-        ).pipe(Effect.forkChild({ startImmediately: true }))
-        yield* TestClock.adjust(59_999)
-        expect(source.starts).toHaveLength(100)
-        yield* TestClock.adjust(1)
-        yield* Fiber.join(pending)
-        expect(source.starts[100]).toBe(60_000)
+        yield* budget.beginCapture
+        yield* Effect.all(
+          Array.from({ length: 34 }, () => client.get(url)),
+          { concurrency: 2 },
+        )
+        expect(yield* budget.nextPollNotBeforeMs).toBe(20_400)
+        yield* budget.beginCapture
+        yield* client.get(url)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(21_000)
+        yield* TestClock.adjust(30_000)
+        yield* budget.beginCapture
+        yield* client.get(url)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(30_600)
       }),
     )
   })
-  test('reserves pacing slots without serializing network responses', async () => {
+  test('preserves capture concurrency instead of spacing network requests', async () => {
     await run(
       Effect.gen(function* () {
         const budget = yield* makeBrokerObservationBudget
@@ -69,13 +73,13 @@ describe('broker observation HTTP budget', () => {
           Effect.forkChild({ startImmediately: true }),
         )
         yield* TestClock.adjust(600)
-        expect(source.starts).toEqual([0, 600])
+        expect(source.starts).toEqual([0, 0])
         yield* TestClock.adjust(5_000)
         yield* Fiber.join(pending)
       }),
     )
   })
-  test('counts and paces actual transient retry attempts', async () => {
+  test('charges actual transient retry attempts to the next poll', async () => {
     await run(
       Effect.gen(function* () {
         const budget = yield* makeBrokerObservationBudget
@@ -86,7 +90,7 @@ describe('broker observation HTTP budget', () => {
         const pending = yield* client.get(url).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(600)
         expect((yield* Fiber.join(pending)).status).toBe(200)
-        expect(source.starts).toEqual([0, 600])
+        expect(source.starts).toEqual([0, 1])
         expect(yield* budget.nextPollNotBeforeMs).toBe(1_200)
       }),
     )
@@ -140,11 +144,12 @@ describe('broker observation HTTP budget', () => {
         )
         yield* TestClock.adjust(2_400)
         yield* Fiber.join(pending)
-        expect(source.starts).toEqual([0, 1_200, 2_400])
+        expect(source.starts).toEqual([0, 0, 0])
+        expect(yield* budget.nextPollNotBeforeMs).toBe(3_600)
       }),
     )
   })
-  test('capture cancellation releases the reservation and client replacement preserves the quota reset', async () => {
+  test('capture cancellation and client replacement preserve the quota reset', async () => {
     await run(
       Effect.gen(function* () {
         const budget = yield* makeBrokerObservationBudget

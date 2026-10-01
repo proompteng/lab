@@ -45,14 +45,15 @@ failures; waiting cannot make unavailable data usable or clear an authority rest
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
-at the default cadence. The background client's transport spaces every actual attempt, including startup verification,
-pagination and transient retries, by at least 600 milliseconds: at most 100 background calls per minute, or half a
-smaller reported account limit. Response headers showing one-quarter or less of account quota remaining, and HTTP
-429 responses, defer further background reads until the later of reset and `Retry-After`; missing or unusable reset
+at the default cadence. The background client's transport counts every actual attempt, including startup verification,
+pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
+100 background calls per minute on average, or half a smaller reported account limit. Complete captures keep their
+existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
+remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing or unusable reset
 evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
-journals the next permissible poll time for successful, invalidated and failed captures. Larger captures slow the
-poll cadence rather than exceeding the background budget. Existing capture deadlines and cache expiry still apply;
-an incomplete capture cannot publish. Execution requests use their existing client and consume the remaining shared
+journals the next permissible poll time for successful, invalidated and failed captures. Larger captures extend the
+poll cadence rather than adding artificial delays inside a full history scan. Existing capture deadlines and cache
+expiry still apply; an incomplete capture cannot publish. Execution requests use their existing client and consume the remaining shared
 account quota; the background budget does not impose a global limit on other account callers.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
