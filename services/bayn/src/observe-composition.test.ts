@@ -937,6 +937,8 @@ const sandboxExecutionProgram = (
     _tag: 'ExecutionProgram',
     schemaVersion: 'bayn.execution-program.v1',
     authority,
+    recordReconciliation: () => Effect.void,
+    invalidateBrokerState: Effect.void,
     dryRunSubmit: () => unused,
     submit: () => unused,
     cancel: () => unused,

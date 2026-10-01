@@ -254,7 +254,7 @@ func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 		t.Fatalf("bootstrapUserHome() error = %v", err)
 	}
 
-	for _, path := range []string{"workspace", ".cache", ".local/bin", ".bun", ".cargo", "go/bin", ".codex"} {
+	for _, path := range []string{"workspace", ".cache", ".cache/apt/lists", ".cache/apt/archives", ".local/bin", ".bun", ".cargo", "go/bin", ".codex"} {
 		info, err := os.Stat(filepath.Join(home, path))
 		if err != nil {
 			t.Fatalf("stat %s: %v", path, err)

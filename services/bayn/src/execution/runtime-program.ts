@@ -23,15 +23,22 @@ import {
   makeAuthorityGuardedBrokerMutation,
   constrainExecutionCapitalLimits,
   executionCapitalLimitsFromPolicy,
-  refreshExecutionBrokerSubmitSnapshot,
+  confirmExecutionBrokerState,
   validateExecutionBrokerSubmitSnapshot,
   validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorizationFailure,
 } from './mutation-authority'
 import { WriterFence, WriterFenceError, type WriterFenceService } from './writer-fence'
 import { Pipeable } from '../pipeable'
+import type { BrokerStateCache, BrokerStateVersion } from './broker-state-cache'
+import { withObservedStage } from '../telemetry'
 
 export interface ExecutionProgramDependencies {
+  readonly brokerStateCache: BrokerStateCache
+  readonly verifyBrokerStateVersion: (
+    version: BrokerStateVersion,
+    intentId: string,
+  ) => Effect.Effect<void, FinalSubmitAuthorizationFailure>
   readonly brokerRead: BrokerReadShape
   readonly brokerMutation: BrokerMutationShape
   readonly intentStore: IntentStoreService
@@ -125,7 +132,14 @@ const finalBrokerAuthorization = (
   dependencies: ExecutionProgramDependencies,
 ): Effect.Effect<void, FinalSubmitAuthorizationFailure> => {
   return Effect.gen(function* () {
-    const snapshot = yield* refreshExecutionBrokerSubmitSnapshot(capital.limits, intent, dependencies)
+    const cached = yield* dependencies.brokerStateCache.take(
+      yield* dependencies.currentUtcInstant,
+      dependencies.riskPolicy.maxBrokerStateAgeMs,
+    )
+    yield* dependencies.verifyBrokerStateVersion(cached.version, intent.intentId)
+    const snapshot = yield* confirmExecutionBrokerState(cached, intent.intentId, dependencies.brokerRead).pipe(
+      withObservedStage('bayn.execution.broker-state-confirmation', { dependency: 'broker' }),
+    )
     const riskContext = yield* dependencies.readFinalExecutionRiskContext(yield* dependencies.currentUtcInstant)
     const observedAt = yield* dependencies.currentUtcInstant
     const refreshedAuthority =
@@ -277,6 +291,8 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
     _tag: 'ExecutionProgram' as const,
     schemaVersion: 'bayn.execution-program.v1' as const,
     authority,
+    recordReconciliation: dependencies.brokerStateCache.record,
+    invalidateBrokerState: dependencies.brokerStateCache.invalidate,
     dryRunSubmit: (intentId: string) =>
       provideCoordinatorDependencies(dryRunSubmit(intentId), defaultCoordinatorDependencies),
     submit: (intentId: string, consistencyDelayMs: number, submitExpiresAt: string) => {
@@ -288,9 +304,15 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
       )
     },
     cancel: (intentId: string, consistencyDelayMs: number) =>
-      provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(
+          provideCoordinatorDependencies(cancel(intentId, consistencyDelayMs), defaultCoordinatorDependencies),
+        ),
+      ),
     recover: (intentId: string, operation: MutationOperation) =>
-      provideCoordinatorDependencies(recover(intentId, operation), defaultCoordinatorDependencies),
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(provideCoordinatorDependencies(recover(intentId, operation), defaultCoordinatorDependencies)),
+      ),
   })
 }
 

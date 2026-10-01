@@ -214,7 +214,7 @@ spec:
                       - /data
                 managedNamespaceMetadata:
                   labels:
-                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted
                     external-secrets.proompteng.ai/enabled: "true"
