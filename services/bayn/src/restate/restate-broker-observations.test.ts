@@ -19,12 +19,14 @@ const harness = (
     elapsedMs?: number
     now?: () => Promise<number>
     sleep?: (milliseconds: number) => Promise<void>
+    budgetDeadline?: number
   } = {},
 ) => {
   let state: State | null = input.state ?? null
+  let budgetDeadline = input.budgetDeadline ?? null
   let activations = 0
   let polls = 0
-  let clockReads = 0
+  let now = 0
   const sleeps: number[] = []
   const deliveries: Array<{
     parameter: { sourceRevision: string; epoch: number; sequence: number }
@@ -38,26 +40,38 @@ const harness = (
       (async () => {
         activations += 1
       }),
-    poll:
-      input.runtime?.poll ??
-      (async () => {
-        polls += 1
-        return { _tag: 'Published', snapshotHash: 'c'.repeat(64), nextPollNotBeforeMs: 0 }
-      }),
+    poll: async (signal) => {
+      const result = await (
+        input.runtime?.poll ??
+        (async () => {
+          polls += 1
+          return { _tag: 'Published', snapshotHash: 'c'.repeat(64), nextPollNotBeforeMs: 0 } as const
+        })
+      )(signal)
+      now += input.elapsedMs ?? 0
+      return result
+    },
   })
   const context = {
     key: input.key ?? controllerKey,
-    date: { now: input.now ?? (async () => (clockReads++ % 2 === 0 ? 0 : (input.elapsedMs ?? 0))) },
+    date: { now: input.now ?? (async () => now) },
     console: { warn: () => undefined },
     request: () => ({ attemptCompletedSignal: new AbortController().signal }),
-    get: async () => state,
-    set: (_key: string, value: State) => {
-      state = value
+    get: async (key: string) => (key === 'polling' ? state : budgetDeadline),
+    set: (key: string, value: State | number) => {
+      if (key === 'polling') {
+        if (typeof value === 'number') throw new Error('unexpected numeric owner state')
+        state = value
+      } else {
+        if (typeof value !== 'number') throw new Error('unexpected budget state')
+        budgetDeadline = value
+      }
     },
     run: async (_name: string, action: () => Promise<unknown>) => action(),
     sleep: async (duration: { milliseconds: number }) => {
       sleeps.push(duration.milliseconds)
-      await input.sleep?.(duration.milliseconds)
+      if (input.sleep === undefined) now += duration.milliseconds
+      else await input.sleep(duration.milliseconds)
     },
     genericSend: (delivery: (typeof deliveries)[number]) => {
       deliveries.push(delivery)
@@ -71,7 +85,15 @@ const harness = (
       }
     }
   ).object
-  return { handlers, context, deliveries, sleeps, calls: () => ({ activations, polls }), state: () => state }
+  return {
+    handlers,
+    context,
+    deliveries,
+    sleeps,
+    calls: () => ({ activations, polls }),
+    state: () => state,
+    budgetDeadline: () => budgetDeadline,
+  }
 }
 
 describe('Restate broker observation owner', () => {
@@ -213,6 +235,73 @@ describe('Restate broker observation owner', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })
+  test.each([sourceRevision, 'd'.repeat(40)])(
+    'a replacement worker preserves debt from source %s before activation',
+    async (previousRevision) => {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const execute = Effect.runPromiseWith(yield* Effect.context<never>())
+          const makeWorker = (state?: State, budgetDeadline?: number) =>
+            Effect.gen(function* () {
+              const budget = yield* makeBrokerObservationBudget
+              const requests: number[] = []
+              const client = budget.decorate(
+                HttpClient.make((request) =>
+                  Effect.gen(function* () {
+                    requests.push(yield* Clock.currentTimeMillis)
+                    return HttpClientResponse.fromWeb(request, new Response('{}'))
+                  }),
+                ),
+              )
+              const h = harness({
+                ...(state === undefined ? {} : { state }),
+                ...(budgetDeadline === undefined ? {} : { budgetDeadline }),
+                now: () => execute(Clock.currentTimeMillis),
+                sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
+                runtime: {
+                  nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
+                  poll: (signal) =>
+                    execute(
+                      Effect.gen(function* () {
+                        yield* budget.beginCapture
+                        yield* Effect.all(
+                          Array.from({ length: 34 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
+                          { concurrency: 2 },
+                        )
+                        return {
+                          _tag: 'Published',
+                          snapshotHash: 'c'.repeat(64),
+                          nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
+                        } as const
+                      }),
+                      { signal },
+                    ),
+                },
+              })
+              return { ...h, requests }
+            })
+          const first = yield* makeWorker()
+          yield* Effect.promise(() => first.handlers.activate(first.context, { sourceRevision }))
+          const stored = first.state()
+          const deadline = first.budgetDeadline()
+          expect(deadline).toBe(20_400)
+          if (stored === null || deadline === null) throw new Error('missing durable observation state')
+          const replacement = yield* makeWorker({ ...stored, sourceRevision: previousRevision }, deadline)
+          const pending = yield* Effect.promise(() =>
+            replacement.handlers.activate(replacement.context, { sourceRevision }),
+          ).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* TestClock.adjust(20_399)
+          expect(replacement.requests).toEqual([])
+          expect(replacement.sleeps).toEqual([20_400])
+          yield* TestClock.adjust(1)
+          yield* Fiber.join(pending)
+          expect(replacement.requests).toEqual(Array.from({ length: 34 }, () => 20_400))
+          expect(replacement.budgetDeadline()).toBe(40_800)
+          expect(replacement.state()?.epoch).toBe(previousRevision === sourceRevision ? 1 : 2)
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+    },
+  )
   test('rotation revokes old epochs and survives reconstruction from durable state', async () => {
     const h = harness({ state: { sourceRevision: 'd'.repeat(40), epoch: 7, sequence: 19 } })
     await h.handlers.activate(h.context, { sourceRevision })
@@ -290,18 +379,31 @@ describe('Restate broker observation owner', () => {
   test.each(['Published', 'Invalidated', 'Unavailable'] as const)(
     'preserves the HTTP budget deadline for a %s capture',
     async (tag) => {
+      let captures = 0
       const h = harness({
         runtime: {
-          poll: async () =>
-            tag === 'Published'
-              ? { _tag: tag, snapshotHash: 'f'.repeat(64), nextPollNotBeforeMs: 20_400 }
-              : { _tag: tag, nextPollNotBeforeMs: 20_400 },
+          poll: async () => {
+            const nextPollNotBeforeMs = ++captures * 20_400
+            return tag === 'Published'
+              ? { _tag: tag, snapshotHash: 'f'.repeat(64), nextPollNotBeforeMs }
+              : { _tag: tag, nextPollNotBeforeMs }
+          },
         },
         elapsedMs: 1_000,
       })
       await h.handlers.activate(h.context, { sourceRevision })
       await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
       expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([19_400, 19_400])
+    },
+  )
+  test.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    'refuses a corrupt durable budget %s without starting a broker poll',
+    async (budgetDeadline) => {
+      const h = harness({ budgetDeadline })
+      const state = await h.handlers.activate(h.context, { sourceRevision })
+      expect(state.lastSnapshotHash).toBeUndefined()
+      expect(h.calls().polls).toBe(0)
+      expect(h.budgetDeadline()).toBe(budgetDeadline)
     },
   )
   test.each([{ sourceRevision: 'd'.repeat(40) }, { sourceRevision, interval: 1 }])(

@@ -5,6 +5,11 @@ import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 
 const key = 'polling'
+const budgetKey = 'next-poll-not-before-ms'
+const BudgetDeadlineSchema = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+)
 export const brokerObservationJsonSerde = restate.serde.json.schema<unknown>({})
 const BindingSchema = Schema.Struct({ sourceRevision: GitSourceRevisionSchema })
 const TickSchema = Schema.Struct({
@@ -64,12 +69,18 @@ export const makeBaynBrokerObservations = (
     startedAt: number,
   ): Promise<{ readonly poll: BrokerObservationPoll; readonly startedAt: number }> => {
     let captureStartedAt = startedAt
+    let notBefore = 0
     try {
-      const notBefore = await ctx.run(
-        'read broker observation budget',
-        () => runtime.nextPollNotBeforeMs(ctx.request().attemptCompletedSignal),
-        { maxRetryAttempts: 0 },
+      const stored = await ctx.get<unknown>(budgetKey)
+      notBefore = Math.max(
+        stored === null ? 0 : decode(BudgetDeadlineSchema, stored),
+        await ctx.run(
+          'read broker observation budget',
+          () => runtime.nextPollNotBeforeMs(ctx.request().attemptCompletedSignal),
+          { maxRetryAttempts: 0 },
+        ),
       )
+      ctx.set(budgetKey, notBefore)
       if (notBefore > startedAt) {
         await ctx.sleep({ milliseconds: notBefore - startedAt })
         captureStartedAt = await ctx.date.now()
@@ -79,10 +90,12 @@ export const makeBaynBrokerObservations = (
         () => runtime.poll(ctx.request().attemptCompletedSignal),
         { maxRetryAttempts: 0 },
       )
-      return { poll, startedAt: captureStartedAt }
+      notBefore = Math.max(notBefore, poll.nextPollNotBeforeMs)
+      ctx.set(budgetKey, notBefore)
+      return { poll: { ...poll, nextPollNotBeforeMs: notBefore }, startedAt: captureStartedAt }
     } catch {
       ctx.console.warn('Broker observation poll failed before publication')
-      return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }, startedAt: captureStartedAt }
+      return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: notBefore }, startedAt: captureStartedAt }
     }
   }
   const nextDelay = (poll: BrokerObservationPoll, startedAt: number, completedAt: number) =>

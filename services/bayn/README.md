@@ -51,7 +51,8 @@ pagination and transient retries. Each attempt charges at least 600 milliseconds
 existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
 or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
-journals the next permissible poll time for successful, invalidated and failed captures. Larger captures extend the
+journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
+captures, so worker replacement and source rotation preserve outstanding cost. Larger captures extend the
 poll cadence rather than adding artificial delays inside a full history scan. Before each capture, including repeated
 activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
 and its database ticket. Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
