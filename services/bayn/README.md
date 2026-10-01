@@ -202,7 +202,10 @@ Once durable completion evidence is verified, the cycle may settle its restricte
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
 A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
-accounting and flatness checks. A bound pending or active cycle keeps its existing generation while recovery manages
+accounting and flatness checks. An untouched same-plan cycle is preserved through this rollover, including fee-driven
+cash discrepancies, incomplete reconciliation passes and execution-pass failures. Migration 0088 aligns the persisted
+rearm predicate with this preservation; it does not repair historical records or clear authority by itself.
+A bound pending or active cycle keeps its existing generation while recovery manages
 the position; it cannot attempt authority rollover until the cycle is terminal.
 An automatic failure before a research generation records any decision or intent can also settle that unused
 generation when its plan has no pending or active cycle. Recovery still requires fresh exact reconciliation and the
@@ -462,6 +465,21 @@ lineage. Image publication alone does not authorize the revised strategy.
 - `GET /readyz`: current dependency and execution-readiness projection.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
+
+`executionSession` in `/v1/status` reports the current session's business readiness separately from process health and
+startup ownership. `PREOPEN` and `WARMUP` require realized PAPER authority, clear kill state, exact reconciliation,
+zero unresolved mutations, an account-bound broker and a matching active Restate controller with a durable pass.
+They do not require a snapshot before the first full rolling window exists. `INPUT_UNAVAILABLE`,
+`EVALUATION_UNAVAILABLE`, `DECISION_LAGGING`, `BLOCKED` and `RECOVERY_ONLY` are not ready. An ordinary no-trade result is
+`ABSTAINING`; it is distinct from a blocked session. `BaynExecutionBootstrap` verifies startup ownership and handoff,
+so its completion alone does not establish trading readiness.
+
+For the pinned Jev protocol, the first complete observation is 30 minutes and two seconds after submission opens.
+The decision deadline adds the protocol's maximum decision lag to the later of that observation and the attempt's
+creation time. A later intraday attempt receives its own allowance; repeated waiting passes cannot extend it.
+`bayn_cycle_first_observation_timestamp_seconds`, `bayn_cycle_decision_deadline_timestamp_seconds`,
+`bayn_execution_session_ready` and `bayn_execution_session_condition` expose the same projection to monitoring.
+These facts establish session operation, not economic qualification or permission to bypass native admission.
 
 Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
 and its readiness or lifecycle reason. `JEV_POSITION_HELD` identifies a reconciled position that remains open. Snapshot
