@@ -3,12 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,18 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/creack/pty"
+	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 	"golang.org/x/sys/unix"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
-
-func TestTerminalOutputFrameIncludesTypeSequenceAndPayload(t *testing.T) {
-	t.Parallel()
-	frame := outputFrame(terminalChunk{sequence: 42, data: []byte("hello")})
-	if frame[0] != outputFrameType || binary.BigEndian.Uint32(frame[1:5]) != 42 || string(frame[5:]) != "hello" {
-		t.Fatalf("outputFrame() = %v", frame)
-	}
-}
 
 func TestTerminalAppendPreservesOutputWhileSessionIsClosing(t *testing.T) {
 	t.Parallel()
@@ -140,13 +131,12 @@ func TestCreateTerminalCanBeReconciledAfterRequestCancellation(t *testing.T) {
 	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 	server := &apiServer{terminals: manager}
-	request := httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(`{"creationId":"terminal-creation-cancelled","cwd":"/","columns":80,"rows":24}`))
-	cancelledContext, cancel := context.WithCancel(request.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	request = request.WithContext(cancelledContext)
-	response := httptest.NewRecorder()
-
-	server.handleCreateTerminal(response, request)
+	_, callErr := (&guestRPCServer{api: server}).CreateTerminal(ctx, &pb.TerminalCreate{CreationId: "terminal-creation-cancelled", Cwd: "/", Columns: 80, Rows: 24})
+	if status.Code(callErr) != codes.Canceled {
+		t.Fatalf("canceled creation = %v", callErr)
+	}
 
 	sessions := manager.list()
 	if len(sessions) != 1 {
@@ -172,19 +162,17 @@ func TestCreateTerminalReportsCreatedAndIdempotentReplay(t *testing.T) {
 	manager := newTerminalManager(workspace, "/bin/sh", workspace.root)
 	t.Cleanup(manager.close)
 	server := &apiServer{terminals: manager}
-	body := `{"creationId":"terminal-creation-status","cwd":"/","columns":80,"rows":24}`
-
-	first := httptest.NewRecorder()
-	server.handleCreateTerminal(first, httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(body)))
-	if first.Code != http.StatusCreated {
-		t.Fatalf("first create status = %d, want %d", first.Code, http.StatusCreated)
+	request := &pb.TerminalCreate{CreationId: "terminal-creation-status", Cwd: "/", Columns: 80, Rows: 24}
+	rpc := &guestRPCServer{api: server}
+	first, err := rpc.CreateTerminal(context.Background(), request)
+	if err != nil || !first.Created {
+		t.Fatalf("initial creation = %v, %v", first, err)
+	}
+	replayed, err := rpc.CreateTerminal(context.Background(), request)
+	if err != nil || replayed.Created || replayed.Session.Id != first.Session.Id {
+		t.Fatalf("replayed creation = %v, %v", replayed, err)
 	}
 
-	replayed := httptest.NewRecorder()
-	server.handleCreateTerminal(replayed, httptest.NewRequest(http.MethodPost, "/v1/terminals", strings.NewReader(body)))
-	if replayed.Code != http.StatusOK {
-		t.Fatalf("replayed create status = %d, want %d", replayed.Code, http.StatusOK)
-	}
 }
 
 func TestTerminalManagerRunsInteractiveShell(t *testing.T) {
@@ -368,151 +356,68 @@ func TestStaleTerminalDetachDoesNotRemoveReconnectedClient(t *testing.T) {
 	}
 }
 
+func attachTestTerminal(t *testing.T, client pb.NanoagentServiceClient, id, token string, since uint32) grpc.BidiStreamingClient[pb.TerminalInput, pb.TerminalOutput] {
+	t.Helper()
+	stream, err := client.AttachTerminal(rpcTestContext(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&pb.TerminalInput{Action: &pb.TerminalInput_Attach{Attach: &pb.TerminalAttach{Id: id, ReconnectToken: token, Since: since}}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stream.CloseSend() })
+	return stream
+}
+func assertTerminalReady(t *testing.T, stream grpc.BidiStreamingClient[pb.TerminalInput, pb.TerminalOutput], token string) {
+	t.Helper()
+	message, err := stream.Recv()
+	if err != nil || message.GetReady().GetToken() != token {
+		t.Fatalf("terminal ready = %v, %v", message, err)
+	}
+}
+func assertTerminalOutput(t *testing.T, stream grpc.BidiStreamingClient[pb.TerminalInput, pb.TerminalOutput], sequence uint32, output string) {
+	t.Helper()
+	message, err := stream.Recv()
+	if err != nil || message.GetOutput().GetSequence() != sequence || string(message.GetOutput().GetData()) != output {
+		t.Fatalf("terminal output = %v, %v", message, err)
+	}
+}
 func TestTerminalReconnectReplacesDuplicateClientAndReplaysFromCursor(t *testing.T) {
-	t.Parallel()
+	api := testAPIServer(t)
 	token := strings.Repeat("a", 24)
-	session := &terminalSession{
-		id:          strings.Repeat("s", 24),
-		sequence:    2,
-		bufferBytes: 6,
-		buffer: []terminalChunk{
-			{sequence: 1, data: []byte("one")},
-			{sequence: 2, data: []byte("two")},
-		},
-		connections: make(map[string]*terminalConnection),
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		connection, err := websocket.Accept(writer, request, nil)
-		if err != nil {
-			return
-		}
-		since, _ := strconv.ParseUint(request.URL.Query().Get("since"), 10, 32)
-		attached, err := session.attach(connection, request.URL.Query().Get("reconnect"), uint32(since))
-		if err != nil {
-			_ = connection.Close(websocket.StatusPolicyViolation, "attach failed")
-			return
-		}
-		defer session.detach(attached)
-		defer attached.close(websocket.StatusNormalClosure, "test complete")
-		for {
-			if _, _, err := connection.Read(request.Context()); err != nil {
-				return
-			}
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	websocketURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	first, _, err := websocket.Dial(ctx, websocketURL+"?reconnect="+token, nil)
-	if err != nil {
-		t.Fatalf("dial first terminal client: %v", err)
-	}
-	defer first.CloseNow()
-	assertTerminalReady(t, ctx, first, token)
-	assertTerminalOutput(t, ctx, first, 1, "one")
-	assertTerminalOutput(t, ctx, first, 2, "two")
-
-	second, _, err := websocket.Dial(ctx, websocketURL+"?reconnect="+token+"&since=1", nil)
-	if err != nil {
-		t.Fatalf("dial replacement terminal client: %v", err)
-	}
-	defer second.CloseNow()
-	assertTerminalReady(t, ctx, second, token)
-	assertTerminalOutput(t, ctx, second, 2, "two")
-
+	session := &terminalSession{id: strings.Repeat("s", 24), sequence: 2, bufferBytes: 6, buffer: []terminalChunk{{sequence: 1, data: []byte("one")}, {sequence: 2, data: []byte("two")}}, connections: make(map[string]*terminalConnection)}
+	api.terminals.sessions[session.id] = session
+	client, _ := rpcTestClient(t, api)
+	first := attachTestTerminal(t, client, session.id, token, 0)
+	assertTerminalReady(t, first, token)
+	assertTerminalOutput(t, first, 1, "one")
+	assertTerminalOutput(t, first, 2, "two")
+	second := attachTestTerminal(t, client, session.id, token, 1)
+	assertTerminalReady(t, second, token)
+	assertTerminalOutput(t, second, 2, "two")
 	session.mu.Lock()
 	connections := len(session.connections)
 	session.mu.Unlock()
 	if connections != 1 {
-		t.Fatalf("terminal connections = %d, want one replacement", connections)
+		t.Fatalf("terminal connections = %d, want 1", connections)
 	}
-	if _, _, err := first.Read(ctx); err == nil {
+	if _, err := first.Recv(); err == nil {
 		t.Fatal("replaced terminal client remained connected")
 	}
 }
-
 func TestTerminalReconnectResetsCursorOutsideReplayBuffer(t *testing.T) {
-	t.Parallel()
-	session := &terminalSession{
-		id:             strings.Repeat("s", 24),
-		sequence:       7,
-		bufferBytes:    5,
-		buffer:         []terminalChunk{{sequence: 7, data: []byte("fresh")}},
-		connections:    make(map[string]*terminalConnection),
-		lastActivityAt: time.Now().UTC(),
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		connection, err := websocket.Accept(writer, request, nil)
-		if err != nil {
-			return
-		}
-		attached, err := session.attach(connection, request.URL.Query().Get("reconnect"), 3)
-		if err != nil {
-			_ = connection.Close(websocket.StatusPolicyViolation, "attach failed")
-			return
-		}
-		defer session.detach(attached)
-		defer attached.close(websocket.StatusNormalClosure, "test complete")
-		for {
-			if _, _, err := connection.Read(request.Context()); err != nil {
-				return
-			}
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	api := testAPIServer(t)
+	session := &terminalSession{id: strings.Repeat("s", 24), sequence: 7, bufferBytes: 5, buffer: []terminalChunk{{sequence: 7, data: []byte("fresh")}}, connections: make(map[string]*terminalConnection), lastActivityAt: time.Now().UTC()}
+	api.terminals.sessions[session.id] = session
+	client, _ := rpcTestClient(t, api)
 	token := strings.Repeat("b", 24)
-	connection, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"?reconnect="+token, nil)
-	if err != nil {
-		t.Fatalf("dial terminal client: %v", err)
+	stream := attachTestTerminal(t, client, session.id, token, 3)
+	assertTerminalReady(t, stream, token)
+	reset, err := stream.Recv()
+	if err != nil || reset.GetReset_().GetReason() != "buffer_miss" {
+		t.Fatalf("terminal reset = %v, %v", reset, err)
 	}
-	defer connection.CloseNow()
-	assertTerminalReady(t, ctx, connection, token)
-	messageType, payload, err := connection.Read(ctx)
-	if err != nil {
-		t.Fatalf("read terminal reset: %v", err)
-	}
-	var reset struct {
-		Type   string `json:"type"`
-		Reason string `json:"reason"`
-	}
-	if messageType != websocket.MessageText || json.Unmarshal(payload, &reset) != nil ||
-		reset.Type != "reset" || reset.Reason != "buffer_miss" {
-		t.Fatalf("terminal reset = %s", payload)
-	}
-	assertTerminalOutput(t, ctx, connection, 7, "fresh")
-}
-
-func assertTerminalReady(t *testing.T, ctx context.Context, connection *websocket.Conn, token string) {
-	t.Helper()
-	messageType, payload, err := connection.Read(ctx)
-	if err != nil {
-		t.Fatalf("read terminal ready: %v", err)
-	}
-	var ready struct {
-		Type  string `json:"type"`
-		Token string `json:"token"`
-	}
-	if messageType != websocket.MessageText || json.Unmarshal(payload, &ready) != nil ||
-		ready.Type != "ready" || ready.Token != token {
-		t.Fatalf("terminal ready = %s", payload)
-	}
-}
-
-func assertTerminalOutput(t *testing.T, ctx context.Context, connection *websocket.Conn, sequence uint32, output string) {
-	t.Helper()
-	messageType, payload, err := connection.Read(ctx)
-	if err != nil {
-		t.Fatalf("read terminal output: %v", err)
-	}
-	if messageType != websocket.MessageBinary || len(payload) < 5 || binary.BigEndian.Uint32(payload[1:5]) != sequence ||
-		string(payload[5:]) != output {
-		t.Fatalf("terminal output = type %d payload %v", messageType, payload)
-	}
+	assertTerminalOutput(t, stream, 7, "fresh")
 }
 
 func TestTerminalReplayBufferBoundsBytesAndChunkCount(t *testing.T) {
@@ -544,10 +449,10 @@ func TestTerminalConnectionQueueRejectsSlowClient(t *testing.T) {
 		outbound:   make(chan terminalDelivery, 1),
 		token:      strings.Repeat("a", 24),
 	}
-	if !connection.enqueue(terminalMessage{messageType: websocket.MessageText, payload: []byte("first")}) {
+	if !connection.enqueue(&pb.TerminalOutput{Event: &pb.TerminalOutput_Error{Error: "first"}}) {
 		t.Fatal("first terminal delivery was rejected")
 	}
-	if connection.enqueue(terminalMessage{messageType: websocket.MessageText, payload: []byte("second")}) {
+	if connection.enqueue(&pb.TerminalOutput{Event: &pb.TerminalOutput_Error{Error: "second"}}) {
 		t.Fatal("full terminal queue accepted another delivery")
 	}
 	if !connection.closed.Load() {
@@ -1037,7 +942,7 @@ func TestDelayedTerminalCleanupSkipsReusedProcessIDs(t *testing.T) {
 	}
 	manager.sessions[session.id] = session
 
-	manager.finishExitedSession(session, []byte(`{"type":"exit","exitCode":0}`))
+	manager.finishExitedSession(session, &pb.TerminalOutput{Event: &pb.TerminalOutput_ExitCode{ExitCode: 0}})
 	for _, expectedProcessID := range []int{701, 700} {
 		select {
 		case actual := <-signals:
@@ -1153,7 +1058,7 @@ func TestFinishExitedSessionCleansRemainingProcessSession(t *testing.T) {
 	}
 	manager.sessions[session.id] = session
 
-	manager.finishExitedSession(session, []byte(`{"type":"exit","exitCode":0}`))
+	manager.finishExitedSession(session, &pb.TerminalOutput{Event: &pb.TerminalOutput_ExitCode{ExitCode: 0}})
 
 	for _, expected := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
 		select {
