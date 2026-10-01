@@ -1,5 +1,5 @@
 import { ConfigProvider, Effect } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 
 export const historyFixtureRequest = {
   schemaVersion: 'bayn.alpaca-backfill.v1',

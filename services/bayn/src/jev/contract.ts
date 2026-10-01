@@ -42,7 +42,7 @@ const Question = Schema.Union([
   Schema.Struct({
     type: Schema.Literal('score'),
     instructions: Instructions,
-    criteria: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isLengthBetween(2, 10)),
+    criteria: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isMinLength(2), Schema.isMaxLength(10)),
   }),
 ])
 

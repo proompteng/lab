@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result } from 'effect'
-import type { SqlError } from 'effect/unstable/sql/SqlError'
+import type { SqlError } from 'effect/sql/SqlError'
 
 import { MutationOperation } from '../../../broker/alpaca-mutations'
 import { decideMutationAppend, storeError } from '../decisions'

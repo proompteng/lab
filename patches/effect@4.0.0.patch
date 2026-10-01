@@ -1,0 +1,90 @@
+diff --git a/dist/sql/SqlClient.d.ts b/dist/sql/SqlClient.d.ts
+index 15ecc056e80bbc296a818988567d0eb0f5f48135..ad44f39dcff8ab58616f0851eaa0472b4f8735ad 100644
+--- a/dist/sql/SqlClient.d.ts
++++ b/dist/sql/SqlClient.d.ts
+@@ -38,6 +38,7 @@ export interface SqlClient extends Constructor {
+      * The transaction service for this client.
+      */
+     readonly transactionService: Context.Service<TransactionConnection, TransactionConnection.Service>;
++    readonly transactionSemaphoreService: Context.Service<Semaphore.Semaphore>;
+     /**
+      * Use the Reactivity service to create a reactive query.
+      */
+@@ -188,7 +189,10 @@ export declare const makeWithTransaction: <I, S>(options: {
+     readonly onCommitFailure?: ((conn: NoInfer<S>) => Effect.Effect<void, SqlError>) | undefined;
+     readonly rollback: (conn: NoInfer<S>) => Effect.Effect<void, SqlError>;
+     readonly rollbackSavepoint: (conn: NoInfer<S>, id: number) => Effect.Effect<void, SqlError>;
+-}) => <R, E, A>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E | SqlError, R>;
++}) => {
++    <R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R>;
++    readonly transactionSemaphoreService: Context.Service<Semaphore.Semaphore>;
++};
+ /**
+  * Phantom identifier for the scoped transaction connection service associated
+  * with a SQL client.
+diff --git a/dist/sql/SqlClient.js b/dist/sql/SqlClient.js
+index 1fc213f4b1cfa4f2c98202a65debb48dc822a5f2..0034586c21c329f7557caafdc2c000e32c186be2 100644
+--- a/dist/sql/SqlClient.js
++++ b/dist/sql/SqlClient.js
+@@ -74,6 +74,7 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+     [TypeId]: TypeId,
+     safe: undefined,
+     withTransaction,
++    transactionSemaphoreService: withTransaction.transactionSemaphoreService,
+     transactionService,
+     reserve: transactionAcquirer,
+     withoutTransforms() {
+@@ -168,7 +169,7 @@ const isNoTransactionError = error => {
+  */
+ export const makeWithTransaction = options => {
+   const transactionSemaphore = Context.Service(`effect/sql/SqlClient/TransactionSemaphore/${transactionSemaphoreIdCounter++}`);
+-  return effect => Effect.uninterruptibleMask(restore => Effect.useSpan("sql.transaction", {
++  const withTransaction = effect => Effect.uninterruptibleMask(restore => Effect.useSpan("sql.transaction", {
+     kind: "client"
+   }, span => Effect.withFiber(fiber => {
+     for (const [key, value] of options.spanAttributes) {
+@@ -204,6 +205,7 @@ export const makeWithTransaction = options => {
+     }, true)), scope ? eff => Effect.onExitPrimitive(eff, exit => Scope.close(scope, exit), true) : identity));
+     return id === 0 ? transaction : Context.getUnsafe(services, transactionSemaphore).withPermit(transaction);
+   })));
++  return Object.assign(withTransaction, { transactionSemaphoreService: transactionSemaphore });
+ };
+ /**
+  * Creates a unique context service tag for the active transaction connection of
+diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
+index 7bac29faa9942353bbefbf4601801627f069683d..3b5ac1fe5c29fc2543fe1990f21c6d6033afcda1 100644
+--- a/src/sql/SqlClient.ts
++++ b/src/sql/SqlClient.ts
+@@ -66,6 +66,7 @@ export interface SqlClient extends Constructor {
+    * The transaction service for this client.
+    */
+   readonly transactionService: Context.Service<TransactionConnection, TransactionConnection.Service>
++  readonly transactionSemaphoreService: Context.Service<Semaphore.Semaphore>
+
+   /**
+    * Use the Reactivity service to create a reactive query.
+@@ -235,6 +236,7 @@ export const make = Effect.fnUntraced(function*(options: SqlClient.MakeOptions)
+       [TypeId]: TypeId as typeof TypeId,
+       safe: undefined as any,
+       withTransaction,
++      transactionSemaphoreService: withTransaction.transactionSemaphoreService,
+       transactionService,
+       reserve: transactionAcquirer,
+       withoutTransforms(): any {
+@@ -390,7 +392,7 @@ export const makeWithTransaction = <I, S>(options: {
+   const transactionSemaphore = Context.Service<Semaphore.Semaphore>(
+     `effect/sql/SqlClient/TransactionSemaphore/${transactionSemaphoreIdCounter++}`
+   )
+-  return <R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
++  const withTransaction = <R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+     Effect.uninterruptibleMask((restore) =>
+       Effect.useSpan(
+         "sql.transaction",
+@@ -462,6 +464,7 @@ export const makeWithTransaction = <I, S>(options: {
+           })
+       )
+     )
++  return Object.assign(withTransaction, { transactionSemaphoreService: transactionSemaphore })
+ }
+
+ /**

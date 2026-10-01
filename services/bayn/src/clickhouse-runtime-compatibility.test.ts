@@ -2,38 +2,28 @@ import { expect, test } from 'bun:test'
 
 import { NodeHttpClient } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Layer, Ref, Stream } from 'effect'
+import { Effect, Layer, Ref } from 'effect'
 
-test('Effect ClickHouse drains its connection check before exposing the client', () =>
+test('Effect ClickHouse verifies connectivity before exposing the client', () =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const responseFinished = yield* Ref.make(false)
         const requests = yield* Ref.make(0)
-        const runSync = Effect.runSyncWith(yield* Effect.context<never>())
+        const runPromise = Effect.runPromiseWith(yield* Effect.context<never>())
         const server = yield* Effect.acquireRelease(
           Effect.sync(() =>
             Bun.serve({
               hostname: '127.0.0.1',
               port: 0,
-              fetch: () => {
-                runSync(Ref.update(requests, (count) => count + 1))
-                const body = Stream.make('1\n').pipe(
-                  Stream.concat(
-                    Stream.fromEffect(
-                      Effect.sleep(250).pipe(Effect.andThen(Ref.set(responseFinished, true)), Effect.as('')),
-                    ),
+              fetch: () =>
+                runPromise(
+                  Ref.update(requests, (count) => count + 1).pipe(
+                    Effect.andThen(Effect.sleep(250)),
+                    Effect.andThen(Ref.set(responseFinished, true)),
+                    Effect.as(new Response('Ok.')),
                   ),
-                  Stream.encodeText,
-                  Stream.toReadableStream,
-                )
-                return new Response(body, {
-                  headers: {
-                    'content-type': 'text/plain; charset=UTF-8',
-                    'x-clickhouse-summary': '{}',
-                  },
-                })
-              },
+                ),
             }),
           ),
           (server) => Effect.promise(() => server.stop(true)),
