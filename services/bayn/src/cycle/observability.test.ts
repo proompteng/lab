@@ -128,3 +128,50 @@ test('continues to fail closed when the current authority kill remains active', 
     alerts: { cycleFailed: true, killActive: true },
   })
 })
+
+test('waits for a newly created intraday cycle to acquire its first snapshot', () => {
+  if (projection.last === null) throw new Error('missing fixture cycle')
+  const now = Date.parse(checkedAt)
+  const current = {
+    ...projection.last,
+    phase: CycleState.Pending,
+    terminalAt: null,
+    terminalReason: null,
+    publicationDeadlineAt: null,
+    createdAt: new Date(now - 10_000).toISOString(),
+    updatedAt: new Date(now - 10_000).toISOString(),
+  }
+  const state = { ...projection, current, last: null, unfinishedCycleCount: 1 }
+  const status = deriveCycleOperationsStatus(state, now, Authority.Execution, thresholds)
+  expect(status).toMatchObject({
+    condition: CycleOperationsCondition.Waiting,
+    reason: CycleOperationsReason.AwaitingSignalPublication,
+    alerts: { cycleStalled: false },
+  })
+  const stale = deriveCycleOperationsStatus(state, now + 50_000, Authority.Execution, thresholds)
+  expect(stale).toMatchObject({
+    condition: CycleOperationsCondition.Stalled,
+    reason: CycleOperationsReason.AttemptStale,
+    alerts: { cycleStalled: true },
+  })
+})
+
+test('uses the actual publication deadline for a cycle with a scheduled publication', () => {
+  if (projection.last === null) throw new Error('missing fixture cycle')
+  const now = Date.parse(checkedAt)
+  const current = {
+    ...projection.last,
+    phase: CycleState.Pending,
+    terminalAt: null,
+    terminalReason: null,
+    publicationDeadlineAt: new Date(now + 30_000).toISOString(),
+  }
+  const state = { ...projection, current, last: null, unfinishedCycleCount: 1 }
+  expect(deriveCycleOperationsStatus(state, now, Authority.Execution, thresholds).condition).toBe(
+    CycleOperationsCondition.Waiting,
+  )
+  expect(deriveCycleOperationsStatus(state, now + 30_000, Authority.Execution, thresholds)).toMatchObject({
+    condition: CycleOperationsCondition.Stalled,
+    reason: CycleOperationsReason.MissedPublicationDeadline,
+  })
+})

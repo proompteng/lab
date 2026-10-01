@@ -57,7 +57,7 @@ describe('bounded Jev observation diagnostics', () => {
   test.each([JevObservationField.Account, JevObservationField.Positions, JevObservationField.Orders])(
     'identifies stale %s evidence without exposing account data',
     (field) => {
-      const error = failure(withBrokerTime(field, 10_001))
+      const error = failure(withBrokerTime(field, 60_000))
       expect(error.observationCheck).toBe(JevObservationCheck.PortfolioStale)
       expect(error.observationField).toBe(field)
       expect(error.message).toContain(`[PORTFOLIO_STALE:${field}]`)
@@ -91,4 +91,14 @@ describe('bounded Jev observation diagnostics', () => {
     const { candidateEvidencePolicy: _policy, ...protocol } = payload.protocol
     expect(failure({ ...payload, protocol }).observationCheck).toBe(JevObservationCheck.Feed)
   })
+})
+
+test.each([
+  JevObservationField.Account,
+  JevObservationField.Positions,
+  JevObservationField.Orders,
+  JevObservationField.Reconciliation,
+])('accepts a reconciled cached %s observation without applying the quote lifetime', (field) => {
+  expect(Result.isSuccess(reproduceJevCandidateObservation(withBrokerTime(field, 23_039)))).toBe(true)
+  expect(Result.isSuccess(reproduceJevCandidateObservation(withBrokerTime(field, 59_999)))).toBe(true)
 })
