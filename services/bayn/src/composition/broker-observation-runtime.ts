@@ -92,15 +92,15 @@ export const acquireBrokerObservationRuntime = (
                     'broker.failure_kind': result.failure.kind,
                   }),
                 )
-                return null
+                return { _tag: 'Unavailable' } as const
               }
               const publication = yield* persistence.publish(ticket, result.success).pipe(Effect.result)
               if (Result.isFailure(publication)) {
                 yield* persistence.failed(ticket)
                 yield* Effect.logWarning('Broker observation publication failed')
-                return null
+                return { _tag: 'Unavailable' } as const
               }
-              if (!publication.success) return null
+              if (!publication.success) return { _tag: 'Invalidated' } as const
               yield* Effect.logInfo('Broker observation published').pipe(
                 Effect.annotateLogs({
                   'broker.snapshot_hash': observedBrokerSnapshotHash(result.success),
@@ -108,7 +108,7 @@ export const acquireBrokerObservationRuntime = (
                   'broker.source_revision': plan.config.build.sourceRevision,
                 }),
               )
-              return observedBrokerSnapshotHash(result.success)
+              return { _tag: 'Published', snapshotHash: observedBrokerSnapshotHash(result.success) } as const
             }).pipe(Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate))),
             { signal },
           ),

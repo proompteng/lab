@@ -16,6 +16,7 @@ const harness = (
   const deliveries: Array<{
     parameter: { sourceRevision: string; epoch: number; sequence: number }
     idempotencyKey: string
+    delay: { milliseconds: number }
   }> = []
   const object = makeBaynBrokerObservations(config, {
     activate:
@@ -27,7 +28,7 @@ const harness = (
       input.runtime?.poll ??
       (async () => {
         polls += 1
-        return 'c'.repeat(64)
+        return { _tag: 'Published', snapshotHash: 'c'.repeat(64) }
       }),
   })
   const context = {
@@ -40,8 +41,7 @@ const harness = (
       state = value
     },
     run: async (_name: string, action: () => Promise<unknown>) => action(),
-    genericSend: (delivery: (typeof deliveries)[number] & { delay: { milliseconds: number } }) => {
-      expect(delivery.delay.milliseconds).toBe(Math.max(1000, config.pollIntervalMs - (input.elapsedMs ?? 0)))
+    genericSend: (delivery: (typeof deliveries)[number]) => {
       deliveries.push(delivery)
     },
   } as unknown as ObjectContext
@@ -96,7 +96,11 @@ describe('Restate broker observation owner', () => {
   })
   test('failed polls omit readiness and keep the background loop progressing', async () => {
     let failures = true
-    const h = harness({ runtime: { poll: async () => (failures ? null : 'e'.repeat(64)) } })
+    const h = harness({
+      runtime: {
+        poll: async () => (failures ? { _tag: 'Unavailable' } : { _tag: 'Published', snapshotHash: 'e'.repeat(64) }),
+      },
+    })
     expect((await h.handlers.activate(h.context, { sourceRevision })).lastSnapshotHash).toBeUndefined()
     failures = false
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
@@ -105,10 +109,40 @@ describe('Restate broker observation owner', () => {
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 2 })
     expect(h.state()?.lastSnapshotHash).toBeUndefined()
     expect(h.state()?.sequence).toBe(3)
+    expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([30_000, 30_000, 30_000])
   })
   test.each([250, 29_500, 40_000])('includes a %s ms capture in the poll cadence', async (elapsedMs) => {
     const h = harness({ elapsedMs })
     await h.handlers.activate(h.context, { sourceRevision })
+    await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
+    expect(h.deliveries).toHaveLength(2)
+    expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([
+      Math.max(1_000, config.pollIntervalMs - elapsedMs),
+      Math.max(1_000, config.pollIntervalMs - elapsedMs),
+    ])
+  })
+  test('retries an invalidated publication after the consistency window instead of the regular poll interval', async () => {
+    const h = harness({ runtime: { poll: async () => ({ _tag: 'Invalidated' }) }, elapsedMs: 250 })
+    await h.handlers.activate(h.context, { sourceRevision })
+    expect(h.deliveries[0]?.delay.milliseconds).toBe(1_000)
+    expect(h.state()?.lastSnapshotHash).toBeUndefined()
+    await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
+    expect(h.state()?.lastSnapshotHash).toBeUndefined()
+    expect(h.deliveries[1]?.delay.milliseconds).toBe(1_000)
+  })
+  test('returns to the regular cadence once a raced publication succeeds', async () => {
+    let invalidated = true
+    const h = harness({
+      runtime: {
+        poll: async () => (invalidated ? { _tag: 'Invalidated' } : { _tag: 'Published', snapshotHash: 'f'.repeat(64) }),
+      },
+      elapsedMs: 250,
+    })
+    await h.handlers.activate(h.context, { sourceRevision })
+    invalidated = false
+    await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
+    expect(h.state()?.lastSnapshotHash).toBe('f'.repeat(64))
+    expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([1_000, 29_750])
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
     expect(h.deliveries).toHaveLength(2)
   })

@@ -1,6 +1,7 @@
 import * as restate from '@restatedev/restate-sdk'
 import { Result, Schema } from 'effect'
 
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 
 const key = 'polling'
@@ -17,9 +18,14 @@ export const BrokerObservationOwnerStateSchema = Schema.Struct({
 })
 type State = typeof BrokerObservationOwnerStateSchema.Type
 
+export type BrokerObservationPoll =
+  | { readonly _tag: 'Published'; readonly snapshotHash: string }
+  | { readonly _tag: 'Invalidated' }
+  | { readonly _tag: 'Unavailable' }
+
 export interface BrokerObservationRuntime {
   readonly activate: (signal: AbortSignal) => Promise<void>
-  readonly poll: (signal: AbortSignal) => Promise<string | null>
+  readonly poll: (signal: AbortSignal) => Promise<BrokerObservationPoll>
 }
 export interface BrokerObservationOwnerConfig {
   readonly controllerKey: string
@@ -51,7 +57,7 @@ export const makeBaynBrokerObservations = (
       delay: { milliseconds: delayMs },
       idempotencyKey: `broker-observations:${state.sourceRevision}:${state.epoch}:${state.sequence}`,
     })
-  const sample = async (ctx: restate.ObjectContext): Promise<string | null> => {
+  const sample = async (ctx: restate.ObjectContext): Promise<BrokerObservationPoll> => {
     try {
       return await ctx.run(
         'poll and publish broker observation',
@@ -60,9 +66,11 @@ export const makeBaynBrokerObservations = (
       )
     } catch {
       ctx.console.warn('Broker observation poll failed before publication')
-      return null
+      return { _tag: 'Unavailable' }
     }
   }
+  const nextDelay = (poll: BrokerObservationPoll, elapsedMs: number) =>
+    poll._tag === 'Invalidated' ? mutationConsistencyDelayMs : Math.max(1_000, config.pollIntervalMs - elapsedMs)
   return restate.object({
     name: 'BaynBrokerObservations',
     handlers: {
@@ -80,16 +88,16 @@ export const makeBaynBrokerObservations = (
             { maxRetryAttempts: 0 },
           )
         const startedAt = await ctx.date.now()
-        const snapshotHash = await sample(ctx)
+        const poll = await sample(ctx)
         const sameRevision = current?.sourceRevision === config.sourceRevision
         const state: State = {
           sourceRevision: config.sourceRevision,
           epoch: sameRevision ? current.epoch : (current?.epoch ?? 0) + 1,
           sequence: sameRevision ? current.sequence : 1,
-          ...(snapshotHash === null ? {} : { lastSnapshotHash: snapshotHash }),
+          ...(poll._tag === 'Published' ? { lastSnapshotHash: poll.snapshotHash } : {}),
         }
         ctx.set(key, state)
-        schedule(ctx, state, Math.max(1_000, config.pollIntervalMs - ((await ctx.date.now()) - startedAt)))
+        schedule(ctx, state, nextDelay(poll, (await ctx.date.now()) - startedAt))
         return state
       }),
       poll: restate.handlers.object.exclusive(async (ctx: restate.ObjectContext, candidate: unknown) => {
@@ -106,15 +114,15 @@ export const makeBaynBrokerObservations = (
         )
           return
         const startedAt = await ctx.date.now()
-        const snapshotHash = await sample(ctx)
+        const poll = await sample(ctx)
         const next: State = {
           sourceRevision: current.sourceRevision,
           epoch: current.epoch,
           sequence: current.sequence + 1,
-          ...(snapshotHash === null ? {} : { lastSnapshotHash: snapshotHash }),
+          ...(poll._tag === 'Published' ? { lastSnapshotHash: poll.snapshotHash } : {}),
         }
         ctx.set(key, next)
-        schedule(ctx, next, Math.max(1_000, config.pollIntervalMs - ((await ctx.date.now()) - startedAt)))
+        schedule(ctx, next, nextDelay(poll, (await ctx.date.now()) - startedAt))
       }),
       status: restate.handlers.object.shared(async (ctx: restate.ObjectSharedContext, _candidate: unknown) => {
         if (ctx.key !== config.controllerKey)

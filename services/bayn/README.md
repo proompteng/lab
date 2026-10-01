@@ -29,6 +29,9 @@ for elapsed polling time, with a one-second minimum delay. Capture is bounded by
 and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
 observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
 poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
+If a successful capture races a mutation or newer broker evidence and cannot publish, its successor retries after
+one second. A failed capture keeps the regular polling cadence. Both paths remain unavailable until a cut passes all
+publication and freshness checks.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -492,12 +495,12 @@ discrepancies, unknown mutations, pending orders, stale evidence and authority c
 the version before broker I/O; cancellation, recovery and failed reconciliation invalidate it. Replaying the consumed
 reconciliation cannot refill it. Only a new native exact reconciliation supplies another version.
 
-Transmission confirms positions, open orders and account once concurrently, replacing seven sequential broker GETs.
-Position, order or cash drift from the cached cut denies transmission. Current account blocks and buying power,
-persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. This is a bounded
-REST observation cache, not an order-update stream or an atomic broker snapshot; it does not remove the broker's
-external-writer race. The confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within
-`order_acknowledgement`, after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
+Transmission reads positions, open orders and account from the shared observation in one payload without broker GETs.
+Position, order or cash drift from the reconciled cut denies transmission. Observed account blocks and buying power,
+persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. An external broker
+change becomes visible on the next complete background poll; the observation is not an atomic broker lock. The
+confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within `order_acknowledgement`,
+after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 
 The read-only forward-performance command can isolate one durable mandate. Take the exact
 `capitalActivation.generationHash` from `/v1/status` when `capitalActivation._tag` is `Realized`, and run it in the

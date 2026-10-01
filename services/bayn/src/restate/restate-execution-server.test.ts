@@ -88,7 +88,10 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [],
-      { runtime: { activate: () => Promise.resolve(), poll: () => Promise.resolve(null) }, pollIntervalMs: 30_000 },
+      {
+        runtime: { activate: () => Promise.resolve(), poll: () => Promise.resolve({ _tag: 'Unavailable' }) },
+        pollIntervalMs: 30_000,
+      },
     )
     const port = await reservePort()
 
@@ -176,7 +179,10 @@ describe('native Restate execution server', () => {
       },
       'd'.repeat(64),
       [requestIdentityKey],
-      { runtime: { activate: () => Promise.resolve(), poll: () => Promise.resolve(null) }, pollIntervalMs: 30_000 },
+      {
+        runtime: { activate: () => Promise.resolve(), poll: () => Promise.resolve({ _tag: 'Unavailable' }) },
+        pollIntervalMs: 30_000,
+      },
     )
     const port = await reservePort()
 
