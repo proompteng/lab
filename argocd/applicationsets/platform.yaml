@@ -37,6 +37,13 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
                 ignoreDifferences:
+                  - group: apps
+                    kind: StatefulSet
+                    name: spire-server
+                    namespace: spire-server
+                    jqPathExpressions:
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
                   - group: admissionregistration.k8s.io
                     kind: ValidatingWebhookConfiguration
                     name: spire-server-spire-controller-manager-webhook

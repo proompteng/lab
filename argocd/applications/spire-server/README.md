@@ -11,6 +11,8 @@ run in the privileged `spire-system` namespace. ApplicationSet owns namespace cr
 applications render no Namespace objects. Helm install, upgrade, delete, and test hooks are excluded.
 The server Application uses Argo's server-side diff so Kubernetes defaults on its StatefulSet and PVC template are
 compared through an API server dry-run. Storage configuration remains part of the comparison.
+The nested PVC template's generated `apiVersion` and `kind` are excluded from diff because Argo removes those two
+fields from its predicted state. Capacity, storage class, access modes, and retention remain compared.
 
 The SPIRE trust domain is `galactic.proompteng.ai`. Existing Istio certificates continue to use `cluster.local`.
 This rollout does not change Istio or application authentication. There is no default registration for other pods.
