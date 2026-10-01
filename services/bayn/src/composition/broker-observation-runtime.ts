@@ -58,9 +58,17 @@ export const acquireBrokerObservationRuntime = (
             { signal },
           ),
         nextPollNotBeforeMs: (signal) => managed.runPromise(budget.nextPollNotBeforeMs, { signal }),
-        poll: (signal) =>
+        preparePoll: (signal) => managed.runPromise(budget.prepareCapture, { signal }),
+        poll: (signal, reservation) =>
           managed.runPromise(
             Effect.gen(function* () {
+              if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))) {
+                yield* Effect.flatMap(store, (value) => value.invalidate)
+                return {
+                  _tag: 'Unavailable',
+                  nextPollNotBeforeMs: Math.max(reservation.interruptedNotBeforeMs, yield* budget.nextPollNotBeforeMs),
+                } as const
+              }
               yield* budget.beginCapture
               const persistence = yield* store
               const ticket = yield* persistence.begin

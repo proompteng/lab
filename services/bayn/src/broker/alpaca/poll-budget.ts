@@ -1,9 +1,10 @@
 import { Clock, Effect, Ref } from 'effect'
 import { HttpClient, type HttpClientResponse } from 'effect/http'
+import { randomUUID } from 'node:crypto'
 
 const accountLimit = 200
 const minimumRequestCostMs = 600
-const quotaWindowMs = 60_000
+export const brokerObservationQuotaWindowMs = 60_000
 
 interface PollBudgetState {
   readonly scheduledStartAtMs: number
@@ -30,6 +31,7 @@ const resetTime = (value: string | undefined): number => {
 }
 
 export const makeBrokerObservationBudget = Effect.gen(function* () {
+  const pendingCapture = yield* Ref.make<string | null>(null)
   const state = yield* Ref.make<PollBudgetState>({
     scheduledStartAtMs: yield* Clock.currentTimeMillis,
     requests: 0,
@@ -70,7 +72,7 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
       const resetAtMs = Math.max(resetTime(response.headers['x-ratelimit-reset']), retryAtMs)
       yield* Ref.update(state, (current) => {
         const limit = reportedLimit === undefined || reportedLimit === 0 ? current.limit : reportedLimit
-        const requestCostMs = Math.max(minimumRequestCostMs, Math.ceil((quotaWindowMs * 2) / limit))
+        const requestCostMs = Math.max(minimumRequestCostMs, Math.ceil((brokerObservationQuotaWindowMs * 2) / limit))
         const depleted =
           response.status === 429 || (remaining !== undefined && remaining <= Math.max(1, Math.floor(limit / 4)))
         return {
@@ -79,12 +81,24 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
           requestCostMs,
           quotaResetAtMs: Math.max(
             current.quotaResetAtMs,
-            depleted ? (resetAtMs > now ? resetAtMs : now + quotaWindowMs) : 0,
+            depleted ? (resetAtMs > now ? resetAtMs : now + brokerObservationQuotaWindowMs) : 0,
           ),
         }
       })
     })
   return {
+    prepareCapture: Effect.gen(function* () {
+      const token = yield* Effect.sync(randomUUID)
+      yield* Ref.set(pendingCapture, token)
+      return token
+    }),
+    claimCapture: (token: string, startDeadlineMs: number) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        return yield* Ref.modify(pendingCapture, (pending) =>
+          pending === token ? [now <= startDeadlineMs, null] : [false, pending],
+        )
+      }),
     beginCapture: Effect.gen(function* () {
       while (true) {
         const now = yield* Clock.currentTimeMillis

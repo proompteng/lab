@@ -2,6 +2,7 @@ import * as restate from '@restatedev/restate-sdk'
 import { Result, Schema } from 'effect'
 
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
+import { brokerObservationQuotaWindowMs } from '../broker/alpaca/poll-budget'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 
 const key = 'polling'
@@ -32,7 +33,15 @@ export type BrokerObservationPoll = (
 export interface BrokerObservationRuntime {
   readonly activate: (signal: AbortSignal) => Promise<void>
   readonly nextPollNotBeforeMs: (signal: AbortSignal) => Promise<number>
-  readonly poll: (signal: AbortSignal) => Promise<BrokerObservationPoll>
+  readonly preparePoll: (signal: AbortSignal) => Promise<string>
+  readonly poll: (
+    signal: AbortSignal,
+    reservation: {
+      readonly captureToken: string
+      readonly captureStartDeadlineMs: number
+      readonly interruptedNotBeforeMs: number
+    },
+  ) => Promise<BrokerObservationPoll>
 }
 export interface BrokerObservationOwnerConfig {
   readonly controllerKey: string
@@ -51,6 +60,7 @@ export const makeBaynBrokerObservations = (
   runtime: BrokerObservationRuntime,
   hooks: readonly restate.HooksProvider[] = [],
 ) => {
+  const abortTimeoutMs = config.operationTimeoutMs * 3
   const verifyKey = (ctx: restate.ObjectContext) => {
     if (ctx.key !== config.controllerKey) throw new restate.TerminalError('broker observation account binding mismatch')
   }
@@ -70,6 +80,7 @@ export const makeBaynBrokerObservations = (
   ): Promise<{ readonly poll: BrokerObservationPoll; readonly startedAt: number }> => {
     let captureStartedAt = startedAt
     let notBefore = 0
+    let interruptedNotBeforeMs = 0
     try {
       const stored = await ctx.get<unknown>(budgetKey)
       notBefore = Math.max(
@@ -85,9 +96,23 @@ export const makeBaynBrokerObservations = (
         await ctx.sleep({ milliseconds: notBefore - startedAt })
         captureStartedAt = await ctx.date.now()
       }
+      const captureToken = await ctx.run(
+        'prepare broker observation capture',
+        () => runtime.preparePoll(ctx.request().attemptCompletedSignal),
+        { maxRetryAttempts: 0 },
+      )
+      captureStartedAt = await ctx.date.now()
+      const captureStartDeadlineMs = captureStartedAt + config.operationTimeoutMs
+      interruptedNotBeforeMs = captureStartDeadlineMs + abortTimeoutMs + brokerObservationQuotaWindowMs
+      ctx.set(budgetKey, interruptedNotBeforeMs)
       const poll = await ctx.run(
         'poll and publish broker observation',
-        () => runtime.poll(ctx.request().attemptCompletedSignal),
+        () =>
+          runtime.poll(ctx.request().attemptCompletedSignal, {
+            captureToken,
+            captureStartDeadlineMs,
+            interruptedNotBeforeMs,
+          }),
         { maxRetryAttempts: 0 },
       )
       notBefore = Math.max(notBefore, poll.nextPollNotBeforeMs)
@@ -95,7 +120,10 @@ export const makeBaynBrokerObservations = (
       return { poll: { ...poll, nextPollNotBeforeMs: notBefore }, startedAt: captureStartedAt }
     } catch {
       ctx.console.warn('Broker observation poll failed before publication')
-      return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: notBefore }, startedAt: captureStartedAt }
+      return {
+        poll: { _tag: 'Unavailable', nextPollNotBeforeMs: Math.max(notBefore, interruptedNotBeforeMs) },
+        startedAt: captureStartedAt,
+      }
     }
   }
   const nextDelay = (poll: BrokerObservationPoll, startedAt: number, completedAt: number) =>
@@ -169,7 +197,7 @@ export const makeBaynBrokerObservations = (
       hooks: [...hooks],
       retryPolicy: { maxAttempts: 3, onMaxAttempts: 'pause', initialInterval: 1_000, maxInterval: 10_000 },
       inactivityTimeout: { milliseconds: config.operationTimeoutMs * 2 },
-      abortTimeout: { milliseconds: config.operationTimeoutMs * 3 },
+      abortTimeout: { milliseconds: abortTimeoutMs },
     },
   })
 }

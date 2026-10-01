@@ -276,4 +276,35 @@ describe('broker observation HTTP budget', () => {
       }),
     )
   })
+  test('capture tickets cannot repeat requests or cross worker instances', async () => {
+    await run(
+      Effect.gen(function* () {
+        const first = yield* makeBrokerObservationBudget
+        const replacement = yield* makeBrokerObservationBudget
+        const source = transport()
+        const token = yield* first.prepareCapture
+        expect(yield* first.claimCapture(token, 30_000)).toBe(true)
+        yield* first.decorate(source.client).get(url)
+        expect(yield* first.claimCapture(token, 30_000)).toBe(false)
+        expect(yield* replacement.claimCapture(token, 30_000)).toBe(false)
+        expect(source.starts).toEqual([0])
+      }),
+    )
+  })
+  test('an unused ticket expires before a late replay can send requests', async () => {
+    await run(
+      Effect.gen(function* () {
+        const budget = yield* makeBrokerObservationBudget
+        const source = transport()
+        const expired = yield* budget.prepareCapture
+        yield* TestClock.adjust(30_001)
+        expect(yield* budget.claimCapture(expired, 30_000)).toBe(false)
+        expect(source.starts).toEqual([])
+        const current = yield* budget.prepareCapture
+        expect(yield* budget.claimCapture(current, 60_000)).toBe(true)
+        yield* budget.decorate(source.client).get(url)
+        expect(source.starts).toEqual([30_001])
+      }),
+    )
+  })
 })

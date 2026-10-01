@@ -20,6 +20,7 @@ const harness = (
     now?: () => Promise<number>
     sleep?: (milliseconds: number) => Promise<void>
     budgetDeadline?: number
+    runResults?: Map<string, unknown>
   } = {},
 ) => {
   let state: State | null = input.state ?? null
@@ -35,19 +36,20 @@ const harness = (
   }> = []
   const object = makeBaynBrokerObservations(config, {
     nextPollNotBeforeMs: input.runtime?.nextPollNotBeforeMs ?? (async () => 0),
+    preparePoll: input.runtime?.preparePoll ?? (async () => 'test-capture'),
     activate:
       input.runtime?.activate ??
       (async () => {
         activations += 1
       }),
-    poll: async (signal) => {
+    poll: async (signal, reservation) => {
       const result = await (
         input.runtime?.poll ??
         (async () => {
           polls += 1
           return { _tag: 'Published', snapshotHash: 'c'.repeat(64), nextPollNotBeforeMs: 0 } as const
         })
-      )(signal)
+      )(signal, reservation)
       now += input.elapsedMs ?? 0
       return result
     },
@@ -67,7 +69,12 @@ const harness = (
         budgetDeadline = value
       }
     },
-    run: async (_name: string, action: () => Promise<unknown>) => action(),
+    run: async (name: string, action: () => Promise<unknown>) => {
+      if (input.runResults?.has(name)) return input.runResults.get(name)
+      const value = await action()
+      input.runResults?.set(name, value)
+      return value
+    },
     sleep: async (duration: { milliseconds: number }) => {
       sleeps.push(duration.milliseconds)
       if (input.sleep === undefined) now += duration.milliseconds
@@ -140,9 +147,12 @@ describe('Restate broker observation owner', () => {
           sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
           runtime: {
             nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-            poll: (signal) =>
+            preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
+            poll: (signal, reservation) =>
               execute(
                 Effect.gen(function* () {
+                  if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)))
+                    return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
                   yield* budget.beginCapture
                   yield* Effect.all(
                     Array.from({ length: 34 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
@@ -199,9 +209,12 @@ describe('Restate broker observation owner', () => {
           sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
           runtime: {
             nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-            poll: (signal) =>
+            preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
+            poll: (signal, reservation) =>
               execute(
                 Effect.gen(function* () {
+                  if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)))
+                    return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
                   polls.push(yield* Clock.currentTimeMillis)
                   yield* budget.beginCapture
                   yield* Effect.all(
@@ -260,9 +273,18 @@ describe('Restate broker observation owner', () => {
                 sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
                 runtime: {
                   nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-                  poll: (signal) =>
+                  preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
+                  poll: (signal, reservation) =>
                     execute(
                       Effect.gen(function* () {
+                        if (
+                          !(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))
+                        ) {
+                          return {
+                            _tag: 'Unavailable',
+                            nextPollNotBeforeMs: reservation.interruptedNotBeforeMs,
+                          } as const
+                        }
                         yield* budget.beginCapture
                         yield* Effect.all(
                           Array.from({ length: 34 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
@@ -298,6 +320,100 @@ describe('Restate broker observation owner', () => {
           expect(replacement.requests).toEqual(Array.from({ length: 34 }, () => 20_400))
           expect(replacement.budgetDeadline()).toBe(40_800)
           expect(replacement.state()?.epoch).toBe(previousRevision === sourceRevision ? 1 : 2)
+        }).pipe(Effect.provide(TestClock.layer())),
+      )
+    },
+  )
+  test.each(['activation', 'journal-replay'] as const)(
+    'replacement %s retains the cost of an interrupted 52-call capture',
+    async (mode) => {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const execute = Effect.runPromiseWith(yield* Effect.context<never>())
+          const journal = mode === 'journal-replay' ? new Map<string, unknown>() : undefined
+          const makeWorker = (
+            interrupted: boolean,
+            state?: State,
+            budgetDeadline?: number,
+            runResults?: Map<string, unknown>,
+          ) =>
+            Effect.gen(function* () {
+              const budget = yield* makeBrokerObservationBudget
+              const requests: number[] = []
+              let preparations = 0
+              const client = budget.decorate(
+                HttpClient.make((request) =>
+                  Effect.gen(function* () {
+                    requests.push(yield* Clock.currentTimeMillis)
+                    return HttpClientResponse.fromWeb(
+                      request,
+                      new Response('{}', { headers: { 'x-ratelimit-limit': '100' } }),
+                    )
+                  }),
+                ),
+              )
+              const h = harness({
+                ...(state === undefined ? {} : { state }),
+                ...(budgetDeadline === undefined ? {} : { budgetDeadline }),
+                ...(runResults === undefined ? {} : { runResults }),
+                now: () => execute(Clock.currentTimeMillis),
+                sleep: (milliseconds) => execute(Effect.sleep(milliseconds)),
+                runtime: {
+                  nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
+                  preparePoll: (signal) => {
+                    preparations += 1
+                    return execute(budget.prepareCapture, { signal })
+                  },
+                  poll: (signal, reservation) =>
+                    execute(
+                      Effect.gen(function* () {
+                        if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)))
+                          return {
+                            _tag: 'Unavailable',
+                            nextPollNotBeforeMs: reservation.interruptedNotBeforeMs,
+                          } as const
+                        yield* budget.beginCapture
+                        yield* Effect.all(
+                          Array.from({ length: 52 }, () => client.get('https://paper-api.alpaca.markets/v2/account')),
+                          { concurrency: 2 },
+                        )
+                        if (interrupted) return yield* Effect.die('worker interrupted before capture result')
+                        return {
+                          _tag: 'Published',
+                          snapshotHash: 'c'.repeat(64),
+                          nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
+                        } as const
+                      }),
+                      { signal },
+                    ),
+                },
+              })
+              return { ...h, requests, preparations: () => preparations }
+            })
+          const first = yield* makeWorker(true, undefined, undefined, journal)
+          expect(
+            (yield* Effect.promise(() => first.handlers.activate(first.context, { sourceRevision }))).lastSnapshotHash,
+          ).toBeUndefined()
+          expect(first.requests).toHaveLength(52)
+          expect(first.budgetDeadline()).toBe(180_000)
+          if (mode === 'journal-replay') {
+            const replayed = yield* makeWorker(false, undefined, 0, journal)
+            const result = yield* Effect.promise(() => replayed.handlers.activate(replayed.context, { sourceRevision }))
+            expect(result.lastSnapshotHash).toBeUndefined()
+            expect(replayed.preparations()).toBe(0)
+            expect(replayed.requests).toEqual([])
+            expect(replayed.budgetDeadline()).toBe(180_000)
+          }
+          const replacement = yield* makeWorker(false, first.state() ?? undefined, first.budgetDeadline() ?? undefined)
+          const pending = yield* Effect.promise(() =>
+            replacement.handlers.activate(replacement.context, { sourceRevision }),
+          ).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* TestClock.adjust(179_999)
+          expect(replacement.requests).toEqual([])
+          yield* TestClock.adjust(1)
+          expect((yield* Fiber.join(pending)).lastSnapshotHash).toBe('c'.repeat(64))
+          expect(replacement.requests).toEqual(Array.from({ length: 52 }, () => 180_000))
+          expect(replacement.budgetDeadline()).toBe(242_400)
         }).pipe(Effect.provide(TestClock.layer())),
       )
     },

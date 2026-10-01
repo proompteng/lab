@@ -55,7 +55,12 @@ journals and retains the next permissible poll time in durable account state for
 captures, so worker replacement and source rotation preserve outstanding cost. Larger captures extend the
 poll cadence rather than adding artificial delays inside a full history scan. Before each capture, including repeated
 activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
-and its database ticket. Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
+and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
+allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
+deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
+its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
+timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
+Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
 the background budget does not impose a global limit on other account callers.
