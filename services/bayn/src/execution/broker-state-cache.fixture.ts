@@ -1,8 +1,22 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 import { IsoDateSchema } from '../schemas'
-import type { Account, Position, Order } from '../broker/alpaca'
+import { OrderCollection, type Account, type Position, type Order, type BrokerReadShape } from '../broker/alpaca'
 import { AccountStatus, Authority, KillState, ReconciliationStatus } from './contracts'
 import type { CachedBrokerState } from './broker-state-cache'
+
+export const submissionProjectionFixture = (read: BrokerReadShape): BrokerReadShape => ({
+  ...read,
+  projection: {
+    fresh: read,
+    invalidate: Effect.void,
+    withMutation: (effect) => effect,
+    snapshot: Effect.die('This final-submission fixture does not supply reconciliation history'),
+    submissionSnapshot: () =>
+      Effect.all([read.positions, read.orders({ status: OrderCollection.Open, limit: 1 }), read.account], {
+        concurrency: 3,
+      }).pipe(Effect.map(([positions, openOrders, account]) => ({ account, positions, openOrders }))),
+  },
+})
 
 export const cachedBrokerStateFixture = (
   account: Account,

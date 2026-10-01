@@ -469,14 +469,19 @@ const recoverAtBroker = (
           decideRecoveryFailure(error),
         ),
       onSuccess: (result) =>
-        persistRecoveryDecision(
-          services,
-          stored.intent.intentId,
-          operation,
-          interrupted.requestHash,
-          interrupted,
-          decideRecoverySuccess(stored.intent, operation, interrupted, result, submitted),
-        ),
+        Effect.gen(function* () {
+          const decision = decideRecoverySuccess(stored.intent, operation, interrupted, result, submitted)
+          if (decision._tag === 'RecoveryFound' && recoveryObservationRequiresPersistence(interrupted, decision))
+            yield* services.broker.projection?.withMutation(Effect.void) ?? Effect.void
+          return yield* persistRecoveryDecision(
+            services,
+            stored.intent.intentId,
+            operation,
+            interrupted.requestHash,
+            interrupted,
+            decision,
+          )
+        }),
     }),
   )
 
