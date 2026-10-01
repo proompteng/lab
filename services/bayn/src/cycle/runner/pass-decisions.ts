@@ -44,6 +44,13 @@ export interface CyclePassLogFacts {
 export const retainAutonomousCyclePassObservation = (
   observation: CyclePassObservation,
 ): RetainedAutonomousCyclePassObservation => {
+  if (observation.outcome === 'WAITING')
+    return {
+      result: 'SUCCESS',
+      outcome: 'WAITING',
+      observedAt: observation.observedAt,
+      waitReason: observation.waitReason,
+    }
   if (observation.outcome === 'FAILED') {
     return {
       result: 'FAILURE',
@@ -75,6 +82,12 @@ const cycleAnnotations = (cycle: AutonomousCycle): Readonly<Partial<Record<strin
 })
 
 export const cyclePassLogFacts = (observation: CyclePassObservation): CyclePassLogFacts => {
+  if (observation.outcome === 'WAITING')
+    return {
+      level: 'INFO',
+      message: 'Bayn autonomous cycle pass is awaiting a fresh broker observation',
+      annotations: { waitReason: observation.waitReason, observedAt: observation.observedAt },
+    }
   if (observation.outcome === 'FAILED') {
     return {
       level: 'ERROR',

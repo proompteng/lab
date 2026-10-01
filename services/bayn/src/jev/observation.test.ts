@@ -11,13 +11,13 @@ const withBrokerTime = (field: JevObservationField, ageMs: number) => {
   const payload = observation.payload
   const at = new Date(Date.parse(payload.observedAt) - ageMs).toISOString()
   const original = payload.portfolio.brokerState
+  const wholeCut = field === JevObservationField.Reconciliation && ageMs >= 0
   const state = {
     ...original,
-    account: { ...original.account, ...(field === JevObservationField.Account ? { observedAt: at } : {}) },
-    ...(field === JevObservationField.Positions ? { positionsObservedAt: at } : {}),
-    ...(field === JevObservationField.Orders ? { ordersObservedAt: at } : {}),
+    account: { ...original.account, ...(wholeCut || field === JevObservationField.Account ? { observedAt: at } : {}) },
+    ...(wholeCut || field === JevObservationField.Positions ? { positionsObservedAt: at } : {}),
+    ...(wholeCut || field === JevObservationField.Orders ? { ordersObservedAt: at } : {}),
   }
-  // Preserve a genuine reconciliation of the altered fixture so the temporal predicate is actually reached.
   const hash = Result.getOrThrow(reconciledStateHash(state))
   return {
     ...payload,
@@ -57,7 +57,7 @@ describe('bounded Jev observation diagnostics', () => {
   test.each([JevObservationField.Account, JevObservationField.Positions, JevObservationField.Orders])(
     'identifies stale %s evidence without exposing account data',
     (field) => {
-      const error = failure(withBrokerTime(field, 10_001))
+      const error = failure(withBrokerTime(field, 60_000))
       expect(error.observationCheck).toBe(JevObservationCheck.PortfolioStale)
       expect(error.observationField).toBe(field)
       expect(error.message).toContain(`[PORTFOLIO_STALE:${field}]`)
@@ -91,4 +91,14 @@ describe('bounded Jev observation diagnostics', () => {
     const { candidateEvidencePolicy: _policy, ...protocol } = payload.protocol
     expect(failure({ ...payload, protocol }).observationCheck).toBe(JevObservationCheck.Feed)
   })
+})
+
+test.each([
+  JevObservationField.Account,
+  JevObservationField.Positions,
+  JevObservationField.Orders,
+  JevObservationField.Reconciliation,
+])('accepts a reconciled cached %s observation without applying the quote lifetime', (field) => {
+  expect(Result.isSuccess(reproduceJevCandidateObservation(withBrokerTime(field, 23_039)))).toBe(true)
+  expect(Result.isSuccess(reproduceJevCandidateObservation(withBrokerTime(field, 59_999)))).toBe(true)
 })

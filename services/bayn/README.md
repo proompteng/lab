@@ -33,6 +33,18 @@ If a successful capture races a mutation or newer broker evidence and cannot pub
 one second. A failed capture keeps the regular polling cadence. Both paths remain unavailable until a cut passes all
 publication and freshness checks.
 
+Jev validates cached account, position, order and reconciliation timestamps against the sixty-second broker
+observation ceiling, independently of its ten-second quote limit. A configured shorter cache lifetime still applies
+at the projection read, and final risk authorization retains its existing freshness checks.
+A mutation or newer retained broker event can invalidate a successful cut before the next poll. While that cut is
+still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
+Each waiting pass rechecks the projection. Expiry, a failed poll, wrong source revision or corrupt evidence remain
+failures; waiting cannot make unavailable data usable or clear an authority restriction.
+
+Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
+Market-data subscriptions have separate limits. The cache preserves response rate-limit headers; these fixes keep
+the thirty-second poll rather than increasing broker traffic to match the market quote clock.
+
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
 intent's own start event; other mutations or newer durable broker evidence invalidate it. Submit/cancel invalidate

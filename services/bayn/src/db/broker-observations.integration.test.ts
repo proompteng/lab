@@ -6,6 +6,7 @@ import { TestClock } from 'effect/testing'
 
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
 import { observedBrokerSnapshotHash, type BrokerObservationTicket } from '../broker/alpaca/observed-snapshot'
+import { BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeBrokerObservationStore } from './broker-observations'
@@ -155,6 +156,69 @@ describePostgres('Durable per-account broker observations', () => {
         yield* store.publish(third, snapshot(third))
         yield* store.failed(second)
         expect(yield* store.read).toEqual(snapshot(third))
+      }),
+    ))
+  test('waits for a post-mutation cut only within the lifetime of a successful observation', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const first = yield* store.begin
+        yield* advanceToTicket(first)
+        yield* store.publish(first, snapshot(first))
+        yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
+        yield* advanceToTicket(first, 1000)
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.ObservationPending)
+        yield* store.invalidate
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.ObservationPending)
+        yield* advanceToTicket(first, 60_000)
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
+      }),
+    ))
+  test('does not classify a failed poll, foreign revision or corrupt invalidated cut as an expected wait', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const first = yield* store.begin
+        yield* advanceToTicket(first)
+        yield* store.publish(first, snapshot(first))
+        yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
+        yield* advanceToTicket(first, 1000)
+        const foreign = makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000)
+        expect((yield* Effect.flip(foreign.read)).kind).toBe(BrokerReadErrorKind.Timeout)
+        yield* sql`UPDATE broker_observations SET snapshot_hash = ${'0'.repeat(64)} WHERE account_id = ${accountId}`
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
+        yield* sql`UPDATE broker_observations SET snapshot_hash = ${observedBrokerSnapshotHash(snapshot(first))} WHERE account_id = ${accountId}`
+        const second = yield* store.begin
+        yield* store.failed(second)
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
+      }),
+    ))
+  test('activation cannot classify a predecessor revision cut as a successful current-revision wait', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const first = yield* store.begin
+        yield* advanceToTicket(first)
+        yield* store.publish(first, snapshot(first))
+        yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
+        yield* advanceToTicket(first, 1000)
+        const successor = makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000)
+        yield* successor.activate
+        expect((yield* Effect.flip(successor.read)).kind).toBe(BrokerReadErrorKind.Timeout)
+      }),
+    ))
+  test('a failed poll at the previous completion timestamp remains a failure after a mutation', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const first = yield* store.begin
+        yield* advanceToTicket(first)
+        yield* store.publish(first, snapshot(first))
+        yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
+        yield* advanceToTicket(first, 1000)
+        const second = { ...(yield* store.begin), startedAt: first.startedAt }
+        yield* store.failed(second)
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
       }),
     ))
   test('permits only the currently reserved intent start and denies concurrent starts', async () =>
