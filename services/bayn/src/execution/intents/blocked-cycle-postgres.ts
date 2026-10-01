@@ -260,8 +260,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             ON cycle.account_id = generation.account_id
            AND cycle.qualification_run_id = generation.research_plan_hash
            AND cycle.strategy_protocol_hash = generation.strategy_protocol_hash
-          WHERE generation.requires_blocked_cycle
-            AND generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
+          WHERE generation.activation_schema_version = 'bayn.paper-authority-generation.v3'
             AND cycle.schema_version IN ('bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
             AND cycle.identity_schema_version IN (
               'bayn.autonomous-cycle-identity.v3',
@@ -407,7 +406,11 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           (
             SELECT CASE
               WHEN activation_schema_version = 'bayn.paper-authority-generation.v3'
-                AND (requires_blocked_cycle OR legacy_failure_restriction)
+                AND (
+                  requires_blocked_cycle
+                  OR legacy_failure_restriction
+                  OR EXISTS (SELECT 1 FROM preserved_cycles)
+                )
               THEN research_plan_hash
               ELSE NULL
             END

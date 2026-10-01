@@ -4,12 +4,17 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 
 ## Read the bounded state
 
-1. Read `GET /v1/status` and record `build`, `qualification`, `cycle`, `authority`, and `broker`.
+1. Read `GET /v1/status` and record `build`, `executionSession`, `cycle`, `authority`, and `broker`.
 2. Confirm `authority.brokerOrders=false` and `authority.capitalPromotion=false` before any OBSERVE investigation.
 3. Use `cycle.current.cycleId`, `cycle.last.cycleId`, the selected sessions, cutoff, phase, and reason to correlate
    structured Bayn logs. Cycle IDs are intentionally absent from Prometheus labels.
 4. Compare the durable mutation event count before and after the observation window. Do not infer zero mutation from
    readiness alone.
+5. Match `executionSession.executionSessionDate` to the broker calendar and its `controllerPlanHash` to the approved
+   plan. Verify the Restate controller's source revision against `build.sourceRevision` during release acceptance.
+   `PREOPEN` and `WARMUP` are usable prerequisites before a full signal window exists. A completed bootstrap proves
+   ownership, not session readiness. `RECOVERY_ONLY`, `BLOCKED`, `INPUT_UNAVAILABLE`, `EVALUATION_UNAVAILABLE` and
+   `DECISION_LAGGING` require investigation; ordinary `ABSTAINING` does not imply a system failure.
 
 ## Trace one lifecycle pass
 
@@ -47,13 +52,17 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
 - `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
-  `bayn_execution_session_preflight_ready`. From ten minutes before submission opens until its cutoff, preflight
+  `executionSession.condition`. From ten minutes before submission opens until its cutoff, readiness
   requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
   covering the latest mutation, zero unresolved mutations, an account-bound/readable broker, and an active readable
-  Restate controller. Repair the failed prerequisite through its existing owner. Do not move the session window,
+  Restate controller with a matching plan and a durable completion. No snapshot binding is required before the first
+  full observation. After warmup, unavailable signal inputs or inference also close readiness. Ordinary abstention
+  remains ready. Repair the failed prerequisite through its existing owner. Do not move the session window,
   force a decision, or create another execution process.
-- `BaynExecutionDecisionLagging`: the session preflight is healthy and submission has opened, but the ACTIVE cycle is
-  still missing its immutable `decisionHash`. Follow the current Restate tick trace through decision construction,
+- `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
+  `bayn_cycle_decision_deadline_timestamp_seconds`. For the current Jev protocol, the first full observation is 30
+  minutes and two seconds after submission opens. The deadline adds the protocol's maximum decision lag to the later
+  of that observation and the attempt's creation time. Follow the current Restate tick trace through decision construction,
   risk evaluation, and the PostgreSQL decision bind. Do not synthesize a decision or submit directly to the broker.
   If no decision is durably bound by `submissionCutoffAt`, Bayn must classify the cycle as
   `MISSED_SUBMISSION_CUTOFF` and close readiness rather than wait until execution close.

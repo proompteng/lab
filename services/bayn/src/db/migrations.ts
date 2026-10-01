@@ -1,3 +1,4 @@
+import preserveReconciliationRearmCycle from '../../migrations/0088_preserve_reconciliation_rearm_cycle'
 import brokerObservations from '../../migrations/0087_broker_observations'
 import executionWaitingStatus from '../../migrations/0074_execution_waiting_status'
 import candidateObservations from '../../migrations/0075_candidate_observations'
@@ -89,6 +90,7 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '88_preserve_reconciliation_rearm_cycle': preserveReconciliationRearmCycle,
   '87_broker_observations': brokerObservations,
   '86_settled_observe_recovery': settledObserveRecovery,
   '84_jev_entry_batch_plan_v3': jevEntryBatchPlanV3,
