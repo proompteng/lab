@@ -1,5 +1,5 @@
 import { Data, Effect, Match, Schema } from 'effect'
-import { isSqlError, type SqlErrorReason } from 'effect/unstable/sql/SqlError'
+import { isSqlError, type SqlErrorReason } from 'effect/sql/SqlError'
 
 import { Pipeable } from '../pipeable'
 import { withObservedStage } from '../telemetry'

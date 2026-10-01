@@ -4,7 +4,6 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
-  Brain,
   ChevronDown,
   Command,
   ExternalLink,
@@ -12,7 +11,7 @@ import {
   Plus,
   Square,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   codexOptionsForSelection,
   codexReasoningLabels,
@@ -59,6 +58,7 @@ import { runTengriAction, TengriRequestError } from './client'
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
+  const composerHelpId = useId()
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [models, setModels] = useState<TengriCodexModel[] | null>(null)
@@ -706,9 +706,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   return (
-    <div className="@container/agent flex h-full min-h-0 flex-col bg-zinc-900">
+    <div className="@container/agent flex h-full min-h-0 flex-col bg-zinc-950">
       <div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-zinc-800 px-4">
-        <Command className="size-4 shrink-0 text-zinc-400" aria-hidden="true" />
         <span className="text-sm font-medium text-zinc-200">Codex</span>
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-400" aria-label="Agent status">
           <span
@@ -784,9 +783,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 .map(renderEvent),
             ]}
             {activeTurnId && !renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId) ? (
-              <div className="flex items-center gap-2 text-xs text-zinc-400" role="status">
-                <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                Codex is working…
+              <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
+                <span className="tengri-thinking-shimmer inline-block">Thinking</span>
               </div>
             ) : null}
           </div>
@@ -848,17 +846,18 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <form
             aria-label="Message composer"
             aria-busy={replayRecovering}
-            className="w-full rounded-xl border border-zinc-700/80 bg-zinc-800/60 shadow-sm transition-colors focus-within:border-zinc-500 motion-reduce:transition-none"
+            className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 shadow-sm transition-colors focus-within:border-zinc-500 motion-reduce:transition-none"
             onSubmit={(event) => {
               event.preventDefault()
               void send()
             }}
           >
-            <div className="flex items-end gap-3 p-3">
+            <div className="px-4 pt-3 pb-1">
               <textarea
                 ref={promptRef}
                 data-window-default-focus
                 aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
+                aria-describedby={composerHelpId}
                 disabled={replayRecovering || Boolean(threadId && !threadReady)}
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
@@ -876,7 +875,17 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                       ? 'Steer the current turn…'
                       : 'Message your agent…'
                 }
-                className="max-h-40 min-h-12 min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+                className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+              />
+            </div>
+            <div className="flex items-end gap-2 px-2 pb-2">
+              <CodexModelPicker
+                disabled={Boolean(activeTurnId) || submitting || replayRecovering}
+                error={modelError}
+                models={models}
+                onChange={selectOptions}
+                onRetry={() => setModelReload((version) => version + 1)}
+                selection={selection}
               />
               <button
                 type={showStopAction ? 'button' : 'submit'}
@@ -890,7 +899,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   Boolean(threadId && !threadReady)
                 }
                 onClick={showStopAction ? () => void interruptTurn() : undefined}
-                className={`grid size-9 shrink-0 place-items-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-30 motion-reduce:transition-none ${showStopAction ? 'bg-zinc-100 text-zinc-900 hover:bg-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                className="grid size-8 shrink-0 place-items-center rounded-full bg-zinc-100 text-zinc-900 outline-none transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-400 disabled:bg-zinc-700 disabled:text-zinc-400 motion-reduce:transition-none"
               >
                 {submitting || interrupting ? (
                   <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -901,18 +910,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 )}
               </button>
             </div>
-            <div className="border-t border-zinc-700/50 px-2 py-1.5">
-              <CodexModelPicker
-                disabled={Boolean(activeTurnId) || submitting || replayRecovering}
-                error={modelError}
-                models={models}
-                onChange={selectOptions}
-                onRetry={() => setModelReload((version) => version + 1)}
-                selection={selection}
-              />
-            </div>
           </form>
-          <p className="mt-2 text-center text-[11px] text-zinc-400">
+          <p id={composerHelpId} className="sr-only">
             {activeTurnId
               ? 'Send a message to steer, or stop the response.'
               : 'Enter to send · Shift + Enter for a new line'}
@@ -1022,18 +1021,18 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
     { label: 'Review recent changes', text: 'Review the recent changes in this workspace for bugs and regressions.' },
   ]
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center py-6">
-      <h2 className="text-xl font-medium tracking-tight text-zinc-100">Start a conversation</h2>
+    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col items-center justify-center py-6 text-center">
+      <h2 className="text-2xl font-medium tracking-tight text-zinc-100">Let’s build</h2>
       <p className="mt-2 max-w-md text-sm leading-6 text-zinc-400">
-        Ask Codex to explore, change, or run something in your workspace.
+        Explore, change, or run something in your workspace.
       </p>
-      <div className="mt-6 flex flex-col items-start gap-1">
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
         {suggestions.map((suggestion) => (
           <button
             key={suggestion.label}
             type="button"
             onClick={() => onSelectPrompt(suggestion.text)}
-            className="group inline-flex min-h-9 items-center gap-3 rounded-md px-2 text-sm text-zinc-400 outline-none transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
+            className="group inline-flex min-h-9 items-center gap-2 rounded-full border border-zinc-700/60 bg-zinc-800/30 px-3 text-xs text-zinc-300 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
           >
             <ArrowUpRight
               className="size-3.5 text-zinc-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 motion-reduce:transition-none"
@@ -1065,12 +1064,12 @@ function CodexModelPicker({
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
   const selectClass =
-    'h-8 w-full min-w-0 appearance-none rounded-md bg-transparent py-1 pr-6 pl-2 text-xs text-zinc-300 outline-none transition-colors hover:bg-zinc-700/60 focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 motion-reduce:transition-none [&_option]:bg-zinc-800'
+    'h-8 min-w-0 max-w-full appearance-none rounded-md bg-transparent py-1 pr-6 pl-2 text-xs text-zinc-300 outline-none transition-colors [field-sizing:content] hover:bg-zinc-700/60 focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 motion-reduce:transition-none [&_option]:bg-zinc-800'
   return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <div className="min-w-0 flex-1 space-y-1">
+      <div className="flex flex-wrap items-center justify-end gap-1">
         <label
-          className="relative min-w-36 max-w-64 flex-1 text-xs text-zinc-400"
+          className="relative flex min-w-0 max-w-full text-xs text-zinc-400"
           title={
             disabled
               ? 'Model settings are available when the response and conversation recovery finish.'
@@ -1111,14 +1110,13 @@ function CodexModelPicker({
           />
         </label>
         <label
-          className="relative flex w-40 items-center text-xs text-zinc-400"
+          className="relative flex min-w-0 max-w-full items-center text-xs text-zinc-400"
           title={
             disabled
               ? 'Reasoning settings are available when the response and conversation recovery finish.'
               : 'Reasoning effort'
           }
         >
-          <Brain className="ml-2 size-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
           <span className="sr-only">Reasoning</span>
           <select
             aria-label="Reasoning effort"

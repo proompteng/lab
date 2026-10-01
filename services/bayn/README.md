@@ -202,7 +202,10 @@ Once durable completion evidence is verified, the cycle may settle its restricte
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
 A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
-accounting and flatness checks. A bound pending or active cycle keeps its existing generation while recovery manages
+accounting and flatness checks. An untouched same-plan cycle is preserved through this rollover, including fee-driven
+cash discrepancies, incomplete reconciliation passes and execution-pass failures. Migration 0088 aligns the persisted
+rearm predicate with this preservation; it does not repair historical records or clear authority by itself.
+A bound pending or active cycle keeps its existing generation while recovery manages
 the position; it cannot attempt authority rollover until the cycle is terminal.
 An automatic failure before a research generation records any decision or intent can also settle that unused
 generation when its plan has no pending or active cycle. Recovery still requires fresh exact reconciliation and the
@@ -213,6 +216,12 @@ including restrictions after market open. Its snapshot, decision and intent hist
 bound cycles retain settlement handling. Migration 0071 repairs an already authority-blocked, untouched cycle only
 before its cutoff, under the writer fence, with clear matching authority, exact reconciliation, flat positions and
 no unresolved mutations or open orders. Manual restrictions and financial history remain protected.
+
+When authority rollover has already terminalized an unused pre-submission cycle with a provenance restriction,
+discovery may acquire a new immutable attempt under the recovered execution authority. It must find no snapshot or
+decision evidence and reconstruct the original draft exactly from the currently approved strategy, account, mandate,
+broker calendar and execution policy. The previous terminal record is retained. The existing rearm delay, submission
+cutoff and fresh decision/risk gates still apply; other restrictions and changed contracts do not use this path.
 
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
@@ -262,9 +271,13 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
   or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
   and writer permit. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
   cancellation invalidates the transport and the next request creates its replacement without replaying a mutation.
-- The pinned Effect PostgreSQL adapter has a package patch for interrupted reservations. It registers release ownership
-  before requesting a pool slot and returns connections delivered after cancellation. The integration regression cancels
-  two queued writers and verifies that both pool slots remain usable; proving only one subsequent query misses a one-slot leak.
+- The pinned Effect 4 PostgreSQL adapter owns connections through its native protocol pool. Interrupted reservations
+  return their pool slots. The integration regression cancels two queued writers and verifies that every pool slot
+  remains usable; proving only one subsequent query misses a one-slot leak.
+  Pool maintenance and connection deadlines use the live clock, so replay time jumps do not drive transport timers.
+- The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
+  with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
+  transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
@@ -457,6 +470,21 @@ lineage. Image publication alone does not authorize the revised strategy.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+`executionSession` in `/v1/status` reports the current session's business readiness separately from process health and
+startup ownership. `PREOPEN` and `WARMUP` require realized PAPER authority, clear kill state, exact reconciliation,
+zero unresolved mutations, an account-bound broker and a matching active Restate controller with a durable pass.
+They do not require a snapshot before the first full rolling window exists. `INPUT_UNAVAILABLE`,
+`EVALUATION_UNAVAILABLE`, `DECISION_LAGGING`, `BLOCKED` and `RECOVERY_ONLY` are not ready. An ordinary no-trade result is
+`ABSTAINING`; it is distinct from a blocked session. `BaynExecutionBootstrap` verifies startup ownership and handoff,
+so its completion alone does not establish trading readiness.
+
+For the pinned Jev protocol, the first complete observation is 30 minutes and two seconds after submission opens.
+The decision deadline adds the protocol's maximum decision lag to the later of that observation and the attempt's
+creation time. A later intraday attempt receives its own allowance; repeated waiting passes cannot extend it.
+`bayn_cycle_first_observation_timestamp_seconds`, `bayn_cycle_decision_deadline_timestamp_seconds`,
+`bayn_execution_session_ready` and `bayn_execution_session_condition` expose the same projection to monitoring.
+These facts establish session operation, not economic qualification or permission to bypass native admission.
+
 Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
 and its readiness or lifecycle reason. `JEV_POSITION_HELD` identifies a reconciled position that remains open. Snapshot
 waits retain the affected symbol, missing timestamp, required feature definition and window, or first available time when known.
@@ -499,6 +527,9 @@ Transmission reads positions, open orders and account from the shared observatio
 Position, order or cash drift from the reconciled cut denies transmission. Observed account blocks and buying power,
 persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. An external broker
 change becomes visible on the next complete background poll; the observation is not an atomic broker lock. The
+projection preserves broker order and fill source timestamps at their original precision (up to nine fractional
+digits) and validates the complete payload before publishing availability. Poll and observation clocks remain
+canonical millisecond UTC instants; source event precision does not change freshness or mutation fences. The
 confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within `order_acknowledgement`,
 after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 

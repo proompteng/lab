@@ -1,5 +1,5 @@
 import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result } from 'effect'
-import { Headers, HttpClient, HttpClientRequest } from 'effect/unstable/http'
+import { Headers, HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'

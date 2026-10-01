@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Result } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { BrokerObservations } from './broker/alpaca/observed-snapshot'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
