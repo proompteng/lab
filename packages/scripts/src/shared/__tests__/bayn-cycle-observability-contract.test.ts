@@ -68,6 +68,9 @@ describe('Bayn cycle operations alert contract', () => {
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_open_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('- 600')
+    expect(expressions.BaynExecutionWindowUnready).toMatch(
+      /unless on\(job, namespace, service\)[\s\S]+condition="decision_lagging"/,
+    )
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_execution_session_preflight_ready{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_bound{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_deadline_timestamp_seconds{')

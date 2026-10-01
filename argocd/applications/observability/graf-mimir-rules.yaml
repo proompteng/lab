@@ -3057,6 +3057,12 @@ data:
                   bayn_execution_session_ready{job="bayn",namespace="bayn",service="bayn"}
                 ) == 0
               )
+              unless on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="decision_lagging"}
+                ) == 1
+              )
             for: 1m
             labels:
               severity: warning
