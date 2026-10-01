@@ -1,5 +1,5 @@
 import { Clock, Context, Data, Duration, Effect, Layer, pipe } from 'effect'
-import { HttpClient } from 'effect/unstable/http'
+import { HttpClient } from 'effect/http'
 
 import type { BrokerConnection } from '../connection'
 import { BrokerReadError } from './failures'

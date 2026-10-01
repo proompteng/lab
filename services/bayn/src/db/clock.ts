@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg'
-import type { Fragment } from 'effect/unstable/sql/Statement'
+import type { Fragment } from 'effect/sql/Statement'
 
 /** Evaluated by PostgreSQL inside each consuming statement. */
 export interface DatabaseClock {

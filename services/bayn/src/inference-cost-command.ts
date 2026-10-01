@@ -67,10 +67,10 @@ const readJson = (path: string) =>
   )
 
 export const inferenceCostConfig = Config.all({
-  accountId: Config.redacted('BAYN_ALPACA_ACCOUNT_ID'),
-  url: Config.redacted('BAYN_POSTGRES_URL'),
-  tls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
-  caPath: Config.string('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
+  accountId: Config.Redacted('BAYN_ALPACA_ACCOUNT_ID'),
+  url: Config.Redacted('BAYN_POSTGRES_URL'),
+  tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
+  caPath: Config.String('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
 })
 
 const readSession = (sessionDate: string) =>
