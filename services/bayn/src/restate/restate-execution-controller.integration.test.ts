@@ -55,13 +55,15 @@ describeRestate('Real Restate execution deployment activation', () => {
     const observations = makeBaynBrokerObservations(
       { ...config, pollIntervalMs: 1_000 },
       {
+        nextPollNotBeforeMs: async () => 0,
+        preparePoll: async () => 'test-capture',
         activate: async () => {
           brokerActivations += 1
         },
         poll: async () => {
           brokerPolls += 1
           if (!brokerReady) throw new Error('Broker observation dependency is temporarily unavailable')
-          return { _tag: 'Published', snapshotHash: 'e'.repeat(64) }
+          return { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 }
         },
       },
     )
