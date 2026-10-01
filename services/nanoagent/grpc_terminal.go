@@ -2,35 +2,26 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"io"
 	"sync"
 
-	"github.com/coder/websocket"
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// Reuses the session's bounded output queue, replay and reconnect ownership for
-// both transports. Only the transport writer translates the browser framing.
 type grpcTerminalWriter struct {
 	stream      grpc.BidiStreamingServer[pb.TerminalInput, pb.TerminalOutput]
 	done        chan struct{}
 	once        sync.Once
 	mu          sync.Mutex
-	closeCode   websocket.StatusCode
+	closeCode   codes.Code
 	closeReason string
 }
 
-func (writer *grpcTerminalWriter) Write(ctx context.Context, kind websocket.MessageType, payload []byte) error {
-	output, err := protoTerminalOutput(kind, payload)
-	if err != nil {
-		return err
-	}
+func (writer *grpcTerminalWriter) Write(ctx context.Context, output *pb.TerminalOutput) error {
 	completed := make(chan struct{})
 	go func() {
 		select {
@@ -40,15 +31,15 @@ func (writer *grpcTerminalWriter) Write(ctx context.Context, kind websocket.Mess
 				return
 			default:
 			}
-			_ = writer.Close(websocket.StatusPolicyViolation, "Terminal client is too slow")
+			_ = writer.Close(codes.ResourceExhausted, "Terminal client is too slow")
 		case <-completed:
 		}
 	}()
-	err = writer.stream.Send(output)
+	err := writer.stream.Send(output)
 	close(completed)
 	return err
 }
-func (writer *grpcTerminalWriter) Close(code websocket.StatusCode, reason string) error {
+func (writer *grpcTerminalWriter) Close(code codes.Code, reason string) error {
 	writer.once.Do(func() {
 		writer.mu.Lock()
 		writer.closeCode, writer.closeReason = code, reason
@@ -58,53 +49,15 @@ func (writer *grpcTerminalWriter) Close(code websocket.StatusCode, reason string
 	return nil
 }
 func (writer *grpcTerminalWriter) CloseNow() error {
-	return writer.Close(websocket.StatusAbnormalClosure, "Terminal disconnected")
+	return writer.Close(codes.Unavailable, "Terminal disconnected")
 }
 func (writer *grpcTerminalWriter) result() error {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
-	if writer.closeCode == websocket.StatusNormalClosure {
+	if writer.closeCode == codes.OK {
 		return nil
 	}
-	return status.Error(codes.ResourceExhausted, writer.closeReason)
-}
-
-func protoTerminalOutput(kind websocket.MessageType, payload []byte) (*pb.TerminalOutput, error) {
-	if kind == websocket.MessageBinary {
-		if len(payload) < 5 || payload[0] != outputFrameType {
-			return nil, errors.New("invalid terminal output frame")
-		}
-		return &pb.TerminalOutput{Event: &pb.TerminalOutput_Output{Output: &pb.TerminalData{Sequence: binary.BigEndian.Uint32(payload[1:5]), Data: payload[5:]}}}, nil
-	}
-	var control struct {
-		Type        string `json:"type"`
-		SessionID   string `json:"sessionId"`
-		Token       string `json:"token"`
-		BufferStart uint32 `json:"bufferStart"`
-		BufferEnd   uint32 `json:"bufferEnd"`
-		Reason      string `json:"reason"`
-		ExitCode    int32  `json:"exitCode"`
-		Message     string `json:"message"`
-	}
-	if err := json.Unmarshal(payload, &control); err != nil {
-		return nil, err
-	}
-	output := &pb.TerminalOutput{}
-	switch control.Type {
-	case "ready":
-		output.Event = &pb.TerminalOutput_Ready{Ready: &pb.TerminalReady{SessionId: control.SessionID, Token: control.Token, BufferStart: control.BufferStart, BufferEnd: control.BufferEnd}}
-	case "reset":
-		output.Event = &pb.TerminalOutput_Reset_{Reset_: &pb.TerminalReset{Reason: control.Reason, BufferStart: control.BufferStart, BufferEnd: control.BufferEnd}}
-	case "exit":
-		output.Event = &pb.TerminalOutput_ExitCode{ExitCode: control.ExitCode}
-	case "error":
-		output.Event = &pb.TerminalOutput_Error{Error: control.Message}
-	case "pong":
-		output.Event = &pb.TerminalOutput_Pong{Pong: &pb.Empty{}}
-	default:
-		return nil, errors.New("invalid terminal control frame")
-	}
-	return output, nil
+	return status.Error(writer.closeCode, writer.closeReason)
 }
 
 func (server *guestRPCServer) AttachTerminal(stream grpc.BidiStreamingServer[pb.TerminalInput, pb.TerminalOutput]) error {
@@ -126,7 +79,7 @@ func (server *guestRPCServer) AttachTerminal(stream grpc.BidiStreamingServer[pb.
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
 	defer session.detach(attached)
-	defer attached.close(websocket.StatusNormalClosure, "Terminal disconnected")
+	defer attached.close(codes.OK, "Terminal disconnected")
 	if attach.Columns > 0 && attach.Rows > 0 {
 		session.resize(uint16(attach.Columns), uint16(attach.Rows))
 	}
@@ -184,11 +137,10 @@ func (server *guestRPCServer) AttachTerminal(stream grpc.BidiStreamingServer[pb.
 				session.resize(uint16(action.Resize.Columns), uint16(action.Resize.Rows))
 			case *pb.TerminalInput_Signal:
 				if err := session.signal(action.Signal); err != nil {
-					payload, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
-					attached.enqueue(terminalMessage{messageType: websocket.MessageText, payload: payload})
+					attached.enqueue(&pb.TerminalOutput{Event: &pb.TerminalOutput_Error{Error: err.Error()}})
 				}
 			case *pb.TerminalInput_Ping:
-				attached.enqueue(terminalMessage{messageType: websocket.MessageText, payload: []byte(`{"type":"pong"}`)})
+				attached.enqueue(&pb.TerminalOutput{Event: &pb.TerminalOutput_Pong{Pong: &pb.Empty{}}})
 			case *pb.TerminalInput_Terminate:
 				server.api.terminals.terminate(session.id)
 				return nil

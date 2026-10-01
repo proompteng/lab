@@ -22,36 +22,25 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Authenticated `/v1/evidence` advertises `guestProtocolVersion: 1`. Tengri selects gRPC for version 1 and retains the
-legacy HTTP API for running guests that omit the field. An unsupported version, identity mismatch, or RPC failure
-fails visibly. RPC failures never retry through HTTP. Existing guests retain their image until sleep/resume; the
-current guest keeps the HTTP routes below so an older controller can still operate it during rollback.
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and protocol version. Guest control is
+gRPC-only: the former REST, NDJSON event streams, and terminal WebSocket endpoints have been removed. There is no
+HTTP discovery, negotiation, or fallback. Guests without this protocol must sleep/resume with the current image.
+Controller and guest releases must use a compatible protobuf contract; an older HTTP-only controller cannot operate
+this guest.
 
-Probes, evidence, editor traffic, and arbitrary application previews continue to use HTTP/WebSocket.
+HTTP remains for process probes and application content:
 
 - `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes;
-- `GET /v1/evidence`: guest boot ID, kernel release, architecture, and microVM identity;
-- `GET /v1/files`, `GET /v1/files/content`, and `GET /v1/files/search`: bounded file discovery and reads;
-- `PUT /v1/files/content`, `POST /v1/files/directory`, `POST /v1/files/move`, and `DELETE /v1/files`: atomic mutations;
-- `GET /v1/files/watch`: bounded, replayable filesystem events;
-- `POST /v1/terminals`, `GET /v1/terminals`, and `DELETE /v1/terminals/{id}`: PTY lifecycle;
-- `GET /v1/terminals/{id}/ws`: interactive terminal attachment, resize, signals, replay, and reconnect;
-- `POST /v1/codex/call`: authenticated Codex account, login, thread, turn, steering, and interruption calls;
-- `GET /v1/codex/login`: the current device-login attempt, so a reconnecting desktop can resume it without
-  invalidating the displayed code;
-- `GET /v1/codex/events`: bounded, replayable Codex app-server events;
-- `POST /v1/codex/approvals/{id}`: resolve a pending Codex approval request;
-- `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.
+- `/v1/preview/{port}/{path...}`: authenticated HTTP and WebSocket proxying to an allowed loopback application or VS Code.
 
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
 stops searches and event streams.
 
-File-content reads return a strong SHA-256 ETag. Writes require `expectedRevision`, either the exact lowercase
-64-hex revision from the read or `missing` for create-only writes. Successful writes return the new revision; stale
-writes return HTTP 409. A workspace lock serializes revision comparison and mutation for Nanoagent API writers.
-gRPC carries the revision in the response and reports stale writes as `ABORTED` with `OperationFailure` details;
-Tengri preserves the existing public conflict response and current revision.
+`ReadFile` returns bytes and their strong SHA-256 revision. `WriteFile` requires `expected_revision`, either the exact
+lowercase 64-hex revision from the read or `missing` for create-only writes. Successful writes return the new revision;
+stale writes return `ABORTED` with the current revision in `OperationFailure` details. A workspace lock serializes
+revision comparison and mutation for Nanoagent API writers. Tengri preserves the public conflict response and revision.
 Direct filesystem writers, including shell commands and Codex, do not participate in that lock; their changes are
 reported through file events and require editor reconciliation. The API does not claim atomic conditional writes
 against arbitrary external processes.
@@ -170,7 +159,7 @@ controller and guest; the automatic Tengri Warehouse and Stage promote only the 
 
 ## VS Code workbench
 
-Authenticated `POST /v1/editor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
+Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
 platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
 on the persistent home volume, outside Firecracker's 512 MiB rootfs. Each image build verifies the native Linux archive;
 first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.

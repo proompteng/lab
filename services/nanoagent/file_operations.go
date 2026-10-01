@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"net/http"
+	"google.golang.org/grpc/codes"
 	"os"
 	"path/filepath"
 )
@@ -13,9 +13,10 @@ type fileWriteInput struct {
 	ExpectedRevision string
 }
 type operationError struct {
-	status          int
-	message         string
-	currentRevision string
+	code             codes.Code
+	resourceTooLarge bool
+	message          string
+	currentRevision  string
 }
 
 func (err *operationError) Error() string { return err.message }
@@ -38,12 +39,12 @@ func (server *apiServer) listFiles(requested string) (fileList, error) {
 		return fileList{}, err
 	}
 	if !info.IsDir() {
-		return fileList{}, &operationError{status: http.StatusBadRequest, message: "path is not a directory"}
+		return fileList{}, &operationError{code: codes.InvalidArgument, message: "path is not a directory"}
 	}
 	entries, err := readDirectoryEntries(directory, maxDirectoryEntries)
 	if err != nil {
 		if errors.Is(err, errTooManyDirectoryEntries) {
-			return fileList{}, &operationError{status: http.StatusRequestEntityTooLarge, message: err.Error()}
+			return fileList{}, &operationError{code: codes.ResourceExhausted, resourceTooLarge: true, message: err.Error()}
 		}
 		return fileList{}, err
 	}
@@ -60,11 +61,11 @@ func (server *apiServer) listFiles(requested string) (fileList, error) {
 
 func (server *apiServer) writeFile(input fileWriteInput) (writeFileResponse, error) {
 	if !isValidExpectedRevision(input.ExpectedRevision) {
-		return writeFileResponse{}, &operationError{status: http.StatusBadRequest, message: "expectedRevision must be a lowercase SHA256 or missing"}
+		return writeFileResponse{}, &operationError{code: codes.InvalidArgument, message: "expectedRevision must be a lowercase SHA256 or missing"}
 	}
 	content := input.Content
 	if len(content) > maxFileBytes {
-		return writeFileResponse{}, &operationError{status: http.StatusRequestEntityTooLarge, message: errFileTooLarge.Error()}
+		return writeFileResponse{}, &operationError{code: codes.ResourceExhausted, resourceTooLarge: true, message: errFileTooLarge.Error()}
 	}
 
 	server.fileMutationMu.Lock()
@@ -78,7 +79,7 @@ func (server *apiServer) writeFile(input fileWriteInput) (writeFileResponse, err
 		return writeFileResponse{}, err
 	}
 	if target == server.workspace.root {
-		return writeFileResponse{}, &operationError{status: http.StatusBadRequest, message: "cannot overwrite the home root"}
+		return writeFileResponse{}, &operationError{code: codes.InvalidArgument, message: "cannot overwrite the home root"}
 	}
 	relative, err := server.workspace.relative(input.Path)
 	if err != nil {
@@ -89,7 +90,7 @@ func (server *apiServer) writeFile(input fileWriteInput) (writeFileResponse, err
 		return writeFileResponse{}, err
 	}
 	if state.revision != input.ExpectedRevision {
-		return writeFileResponse{}, &operationError{status: http.StatusConflict, message: "file revision changed", currentRevision: state.revision}
+		return writeFileResponse{}, &operationError{code: codes.Aborted, message: "file revision changed", currentRevision: state.revision}
 	}
 	parent := filepath.Dir(relative)
 	if err := server.workspace.safeRoot.MkdirAll(parent, 0o750); err != nil {
@@ -143,14 +144,14 @@ func (server *apiServer) createDirectory(input pathRequest) (fileEntry, error) {
 		return fileEntry{}, err
 	}
 	if target == server.workspace.root {
-		return fileEntry{}, &operationError{status: http.StatusConflict, message: "home root already exists"}
+		return fileEntry{}, &operationError{code: codes.Aborted, message: "home root already exists"}
 	}
 	relative, err := server.workspace.relative(input.Path)
 	if err != nil {
 		return fileEntry{}, err
 	}
 	if _, err := server.workspace.safeRoot.Lstat(relative); err == nil {
-		return fileEntry{}, &operationError{status: http.StatusConflict, message: "path already exists"}
+		return fileEntry{}, &operationError{code: codes.Aborted, message: "path already exists"}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fileEntry{}, err
 	}
@@ -178,7 +179,7 @@ func (server *apiServer) moveFile(input moveFileRequest) (fileEntry, error) {
 		return fileEntry{}, err
 	}
 	if source == server.workspace.realRoot {
-		return fileEntry{}, &operationError{status: http.StatusBadRequest, message: "cannot move the home root"}
+		return fileEntry{}, &operationError{code: codes.InvalidArgument, message: "cannot move the home root"}
 	}
 	sourceRelative, err := server.workspace.relative(input.SourcePath)
 	if err != nil {
@@ -204,14 +205,14 @@ func (server *apiServer) moveFile(input moveFileRequest) (fileEntry, error) {
 		return fileEntry{}, err
 	}
 	if destination == server.workspace.root {
-		return fileEntry{}, &operationError{status: http.StatusBadRequest, message: "cannot replace the home root"}
+		return fileEntry{}, &operationError{code: codes.InvalidArgument, message: "cannot replace the home root"}
 	}
 	destinationRelative, err := server.workspace.relative(input.DestinationPath)
 	if err != nil {
 		return fileEntry{}, err
 	}
 	if _, err := server.workspace.safeRoot.Lstat(destinationRelative); err == nil {
-		return fileEntry{}, &operationError{status: http.StatusConflict, message: "destination already exists"}
+		return fileEntry{}, &operationError{code: codes.Aborted, message: "destination already exists"}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fileEntry{}, err
 	}
@@ -231,7 +232,7 @@ func (server *apiServer) moveFile(input moveFileRequest) (fileEntry, error) {
 		rawDestination,
 	)
 	if err != nil {
-		return fileEntry{}, &operationError{status: http.StatusConflict, message: err.Error()}
+		return fileEntry{}, &operationError{code: codes.Aborted, message: err.Error()}
 	}
 	renamePublished := false
 	defer func() {
@@ -274,7 +275,7 @@ func (server *apiServer) deleteFile(input deleteFileRequest) (struct{}, error) {
 		return struct{}{}, err
 	}
 	if target == server.workspace.realRoot {
-		return struct{}{}, &operationError{status: http.StatusBadRequest, message: "cannot delete the home root"}
+		return struct{}{}, &operationError{code: codes.InvalidArgument, message: "cannot delete the home root"}
 	}
 	relative, err := server.workspace.relative(input.Path)
 	if err != nil {
@@ -291,7 +292,7 @@ func (server *apiServer) deleteFile(input deleteFileRequest) (struct{}, error) {
 	}
 	if err != nil {
 		if info.IsDir() && !input.Recursive {
-			return struct{}{}, &operationError{status: http.StatusConflict, message: "directory is not empty; recursive deletion was not authorized"}
+			return struct{}{}, &operationError{code: codes.Aborted, message: "directory is not empty; recursive deletion was not authorized"}
 		}
 		return struct{}{}, err
 	}

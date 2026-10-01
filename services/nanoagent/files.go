@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/codes"
 	"io"
 	"mime"
 	"net/http"
@@ -31,21 +31,10 @@ type fileList struct {
 	Entries []fileEntry `json:"entries"`
 }
 
-type writeFileRequest struct {
-	Content          string `json:"content"`
-	ExpectedRevision string `json:"expectedRevision"`
-	Path             string `json:"path"`
-}
-
 type writeFileResponse struct {
 	Path     string `json:"path"`
 	Size     int64  `json:"size"`
 	Revision string `json:"revision"`
-}
-
-type revisionConflictResponse struct {
-	Error           string `json:"error"`
-	CurrentRevision string `json:"currentRevision,omitempty"`
 }
 
 type pathRequest struct {
@@ -85,15 +74,6 @@ var workspaceSearchExcludedRootNames = map[string]struct{}{
 	".cache": {},
 	".cargo": {},
 	".local": {},
-}
-
-func (server *apiServer) handleListFiles(writer http.ResponseWriter, request *http.Request) {
-	result, err := server.listFiles(request.URL.Query().Get("path"))
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusOK, result)
 }
 
 func readDirectoryEntries(directory *os.File, limit int) ([]os.DirEntry, error) {
@@ -145,111 +125,6 @@ func (server *apiServer) readFileSnapshot(requested string) (fileReadSnapshot, e
 		contentType = http.DetectContentType(content)
 	}
 	return fileReadSnapshot{content: content, contentType: contentType, revision: revision}, nil
-}
-
-func (server *apiServer) handleReadFile(writer http.ResponseWriter, request *http.Request) {
-	snapshot, err := server.readFileSnapshot(request.URL.Query().Get("path"))
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writer.Header().Set("Content-Type", snapshot.contentType)
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.Header().Set("ETag", `"`+snapshot.revision+`"`)
-	writer.WriteHeader(http.StatusOK)
-	_, _ = writer.Write(snapshot.content)
-}
-
-func (server *apiServer) handleWriteFile(writer http.ResponseWriter, request *http.Request) {
-	var input writeFileRequest
-	if !decodeJSON(writer, request, &input) {
-		return
-	}
-	if !isValidExpectedRevision(input.ExpectedRevision) {
-		writeAPIError(writer, http.StatusBadRequest, "expectedRevision must be a lowercase SHA256 or missing")
-		return
-	}
-	content, err := base64.StdEncoding.DecodeString(input.Content)
-	if err != nil {
-		writeAPIError(writer, http.StatusBadRequest, "content must be base64 encoded")
-		return
-	}
-	result, err := server.writeFile(fileWriteInput{Path: input.Path, Content: content, ExpectedRevision: input.ExpectedRevision})
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusOK, result)
-}
-
-func (server *apiServer) handleCreateDirectory(writer http.ResponseWriter, request *http.Request) {
-	var input pathRequest
-	if !decodeJSON(writer, request, &input) {
-		return
-	}
-	result, err := server.createDirectory(input)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusCreated, result)
-}
-
-func (server *apiServer) handleMoveFile(writer http.ResponseWriter, request *http.Request) {
-	var input moveFileRequest
-	if !decodeJSON(writer, request, &input) {
-		return
-	}
-	result, err := server.moveFile(input)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusOK, result)
-}
-
-func (server *apiServer) handleDeleteFile(writer http.ResponseWriter, request *http.Request) {
-	var input deleteFileRequest
-	if !decodeJSON(writer, request, &input) {
-		return
-	}
-	_, err := server.deleteFile(input)
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
-}
-
-func (server *apiServer) handleSearchFiles(writer http.ResponseWriter, request *http.Request) {
-	query := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("query")))
-	if query == "" || len(query) > 256 {
-		writeAPIError(writer, http.StatusBadRequest, "query must contain between 1 and 256 characters")
-		return
-	}
-	root, err := server.workspace.resolveExisting(request.URL.Query().Get("path"))
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	limit := 100
-	if value := request.URL.Query().Get("limit"); value != "" {
-		if parsed, parseErr := parseBoundedInt(value, 1, 200); parseErr == nil {
-			limit = parsed
-		} else {
-			writeAPIError(writer, http.StatusBadRequest, "limit must be between 1 and 200")
-			return
-		}
-	}
-	result, err := server.searchFiles(request.Context(), root, query, limit, maxSearchVisitedEntries)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return
-		}
-		writeWorkspaceError(writer, err)
-		return
-	}
-	writeJSON(writer, http.StatusOK, result)
 }
 
 func (server *apiServer) searchFiles(
@@ -421,13 +296,6 @@ func isValidExpectedRevision(revision string) bool {
 	return true
 }
 
-func writeRevisionConflict(writer http.ResponseWriter, currentRevision string) {
-	writeJSON(writer, http.StatusConflict, revisionConflictResponse{
-		Error:           "file revision does not match expectedRevision",
-		CurrentRevision: currentRevision,
-	})
-}
-
 func syncWorkspaceDirectories(workspace workspace, relatives ...string) error {
 	return syncWorkspaceDirectoriesWith(workspace, syncWorkspaceDirectory, relatives...)
 }
@@ -504,15 +372,6 @@ func sortFileEntries(entries []fileEntry) {
 	})
 }
 
-func writeWorkspaceError(writer http.ResponseWriter, err error) {
-	failure := workspaceFailure(err)
-	if failure.currentRevision != "" {
-		writeRevisionConflict(writer, failure.currentRevision)
-		return
-	}
-	writeAPIError(writer, failure.status, failure.message)
-}
-
 func workspaceFailure(err error) *operationError {
 	var operation *operationError
 	if errors.As(err, &operation) {
@@ -520,21 +379,21 @@ func workspaceFailure(err error) *operationError {
 	}
 	switch {
 	case errors.Is(err, errInternalPath):
-		return &operationError{status: http.StatusNotFound, message: "path is not visible"}
+		return &operationError{code: codes.NotFound, message: "path is not visible"}
 	case errors.Is(err, errPathOutsideWorkspace):
-		return &operationError{status: http.StatusForbidden, message: "path must remain inside the user home"}
+		return &operationError{code: codes.PermissionDenied, message: "path must remain inside the user home"}
 	case errors.Is(err, os.ErrNotExist):
-		return &operationError{status: http.StatusNotFound, message: "path does not exist"}
+		return &operationError{code: codes.NotFound, message: "path does not exist"}
 	case errors.Is(err, os.ErrPermission):
-		return &operationError{status: http.StatusForbidden, message: "path is not accessible"}
+		return &operationError{code: codes.PermissionDenied, message: "path is not accessible"}
 	case errors.Is(err, errFileTooLarge):
-		return &operationError{status: http.StatusRequestEntityTooLarge, message: errFileTooLarge.Error()}
+		return &operationError{code: codes.ResourceExhausted, resourceTooLarge: true, message: errFileTooLarge.Error()}
 	case errors.Is(err, errNotRegularFile):
-		return &operationError{status: http.StatusBadRequest, message: errNotRegularFile.Error()}
+		return &operationError{code: codes.InvalidArgument, message: errNotRegularFile.Error()}
 	case errors.Is(err, errNotDirectory):
-		return &operationError{status: http.StatusInternalServerError, message: errNotDirectory.Error()}
+		return &operationError{code: codes.Internal, message: errNotDirectory.Error()}
 	default:
-		return &operationError{status: http.StatusInternalServerError, message: "filesystem operation failed"}
+		return &operationError{code: codes.Internal, message: "filesystem operation failed"}
 	}
 }
 

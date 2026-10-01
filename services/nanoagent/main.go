@@ -356,6 +356,6 @@ func newHandler(api *apiServer) http.Handler {
 	mux.HandleFunc("GET /livez", live)
 	mux.HandleFunc("GET /readyz", ready)
 	mux.HandleFunc("GET /healthz", live)
-	mux.Handle("/v1/", api.authenticatedRoutes())
+	mux.Handle("/v1/", api.previewRoutes())
 	return api.rpcHandler(mux)
 }
