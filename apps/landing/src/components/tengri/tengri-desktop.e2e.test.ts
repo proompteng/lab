@@ -2521,12 +2521,11 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   await expect(conversation.getByText('Codex', { exact: true })).toHaveCount(0)
   await expect(user).toHaveCSS('text-align', 'right')
   await expect(response).toHaveCSS('text-align', 'left')
-  for (const row of [user, response]) {
-    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(row).toHaveCSS('border-radius', '0px')
-    await expect(row).toHaveCSS('padding-top', '0px')
-    await expect(row).toHaveCSS('padding-bottom', '0px')
-  }
+  await expect(user).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('border-radius', '0px')
+  await expect(response).toHaveCSS('padding-top', '0px')
+  await expect(response).toHaveCSS('padding-bottom', '0px')
   const [userBounds, responseBounds, conversationBounds] = await Promise.all([
     user.boundingBox(),
     response.boundingBox(),
@@ -3739,7 +3738,7 @@ test('prepares suggested prompts and grows multiline drafts without sending them
       reasoningEffort: 'medium',
       text: Array.from({ length: 12 }, (_, index) => `Draft line ${index + 1}`).join('\n'),
     })
-  await expect(chrome.getByRole('heading', { name: 'Start a conversation' })).toHaveCount(0)
+  await expect(chrome.getByRole('heading', { name: 'Let’s build' })).toHaveCount(0)
   await expect(chrome.getByRole('button', { name: 'Stop response' })).toBeEnabled()
 })
 

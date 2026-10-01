@@ -32,7 +32,7 @@ export function CodexEventCard({
     return (
       <article
         aria-label="Your message"
-        className="ml-auto w-fit min-w-0 max-w-[85%] text-right text-sm leading-6 text-zinc-100"
+        className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-2xl bg-zinc-900 px-4 py-2.5 text-right text-sm leading-6 text-zinc-100"
       >
         <Markdown text={text} />
       </article>
@@ -125,24 +125,24 @@ export function CodexEventCard({
   if (kind === 'tool-call' || kind === 'tool-output' || kind === 'file-diff') {
     const presentation = {
       'file-diff': { label: 'Changes', icon: FileDiff },
-      'tool-call': { label: 'Operation', icon: TerminalSquare },
+      'tool-call': { label: 'Command', icon: TerminalSquare },
       'tool-output': { label: 'Output', icon: TerminalSquare },
     }[kind]
     const Icon = presentation.icon
     const preview = text.trim().split('\n')[0] || presentation.label
     return (
       <article aria-label={`Codex ${presentation.label.toLowerCase()}`} className="min-w-0 text-sm">
-        <details className="group rounded-lg border border-zinc-800 bg-zinc-900/40">
-          <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2.5 rounded-lg px-3 text-zinc-400 outline-none marker:content-none transition-colors hover:bg-zinc-800/60 hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none">
+        <details className="group">
+          <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md text-zinc-400 outline-none marker:content-none transition-colors hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none">
             <Icon className="size-3.5 shrink-0" aria-hidden="true" />
             <span className="shrink-0 text-xs font-medium">{presentation.label}</span>
-            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-400">{preview}</span>
             <ChevronRight
               className="size-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
               aria-hidden="true"
             />
+            <span className="min-w-0 truncate font-mono text-xs text-zinc-400">{preview}</span>
           </summary>
-          <pre className="max-h-80 overflow-auto border-t border-zinc-800 px-3 py-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-zinc-300">
+          <pre className="mt-2 max-h-80 overflow-auto rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-zinc-300">
             {kind === 'file-diff'
               ? text.split('\n').map((line, index) => (
                   <span

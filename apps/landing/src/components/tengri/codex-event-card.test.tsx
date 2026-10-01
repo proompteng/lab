@@ -6,7 +6,7 @@ import { CodexLogin } from './agent-chat'
 import { CodexEventCard } from './codex-event-card'
 
 describe('Codex event rows', () => {
-  test('keeps user and assistant roles accessible without decorative card chrome', () => {
+  test('keeps user and assistant message roles accessible', () => {
     const userHtml = renderToString(createElement(CodexEventCard, { kind: 'user-message', text: 'Build the page' }))
     const assistantHtml = renderToString(
       createElement(CodexEventCard, { kind: 'assistant-text', text: 'I will inspect the current layout first.' }),
@@ -16,7 +16,6 @@ describe('Codex event rows', () => {
     expect(assistantHtml).toContain('aria-label="Codex response"')
     expect(userHtml).not.toContain('<svg')
     expect(assistantHtml).not.toContain('<svg')
-    expect(userHtml).not.toContain('rounded-2xl')
     expect(assistantHtml).not.toContain('rounded-2xl')
   })
 
