@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { Clock, Deferred, Effect, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
@@ -353,6 +353,8 @@ describe('Alpaca broker session acquisition retry', () => {
       currentTimeMillis: Effect.sync(readTime),
       currentTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
       currentTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
+      monotonicTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
+      monotonicTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
       sleep: () => Effect.void,
     }
     const cause = new BrokerReadError({

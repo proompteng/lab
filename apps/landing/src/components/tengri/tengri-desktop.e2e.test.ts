@@ -2238,6 +2238,84 @@ test('uses one composer control for sending, steering, and stopping a response',
   await expect(action).toBeDisabled()
 })
 
+test('shows a text highlight while thinking and keeps reduced-motion status readable', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'none' })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const thinking = chrome.getByRole('status', { name: 'Agent activity' })
+  await expect(thinking).toHaveCount(0)
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Inspect the workspace.')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect(thinking).toHaveText('Thinking')
+  await expect(thinking.locator('svg')).toHaveCount(0)
+  await expect(chrome.getByText('Codex is working…', { exact: true })).toHaveCount(0)
+  const label = thinking.getByText('Thinking', { exact: true })
+  const sweep = await label.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const frames = element
+      .getAnimations()
+      .flatMap((animation) => (animation.effect instanceof KeyframeEffect ? animation.effect.getKeyframes() : []))
+    return {
+      backgroundSize: Number.parseFloat(style.backgroundSize),
+      positions: frames.map((frame) => Number.parseFloat(String(frame.backgroundPositionX))),
+    }
+  })
+  expect(sweep.backgroundSize).toBeGreaterThan(100)
+  expect(sweep.positions).toHaveLength(2)
+  expect(sweep.positions[0]).toBeGreaterThan(sweep.positions[1])
+  for (const [name, progress] of [
+    ['left', 0.3],
+    ['right', 0.7],
+  ] as const) {
+    await label.evaluate((element, fraction) => {
+      const animation = element.getAnimations()[0]
+      if (!animation?.effect) throw new Error('Thinking animation is missing')
+      animation.pause()
+      animation.currentTime = Number(animation.effect.getComputedTiming().duration) * fraction
+    }, progress)
+    const path = testInfo.outputPath(`thinking-highlight-${name}.png`)
+    await thinking.screenshot({ path })
+    await testInfo.attach(`thinking-highlight-${name}`, { path, contentType: 'image/png' })
+  }
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(label).toHaveCSS('animation-name', 'none')
+  await expect(label).not.toHaveCSS('color', 'rgba(0, 0, 0, 0)')
+  await expect(thinking).toHaveText('Thinking')
+  await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'active' })
+  await expect(label).toHaveCSS('animation-name', 'none')
+  await expect(label).not.toHaveCSS('color', 'rgba(0, 0, 0, 0)')
+  await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'none' })
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'approval-thinking',
+    approvalId: 'approval-thinking',
+    text: 'Run the workspace checks?',
+    rawJson: '{"params":{"availableDecisions":["accept","decline"]}}',
+  })
+  await expect(chrome.getByRole('button', { name: 'Deny', exact: true })).toBeVisible()
+  await expect(thinking).toHaveCount(0)
+  await chrome.getByRole('button', { name: 'Deny', exact: true }).click()
+  await expect(thinking).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 2,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+  })
+  await expect(thinking).toHaveCount(0)
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeDisabled()
+})
+
 test('steers a recovered in-progress turn when sending during thread resume', async ({ page }) => {
   const mock = await mockTengri(page, {
     resumeThreadDelayMs: 400,
@@ -2516,15 +2594,25 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   expect(outputCharacterWidths.symbols).toBeCloseTo(outputCharacterWidths.wide, 1)
   const user = chrome.getByRole('article', { name: 'Your message' })
   const response = chrome.getByRole('article', { name: 'Codex response' }).first()
-  for (const row of [user, response]) {
-    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(row).toHaveCSS('border-radius', '0px')
-    await expect(row).toHaveCSS('padding-top', '0px')
-    await expect(row).toHaveCSS('padding-bottom', '0px')
-  }
-  const [userBounds, responseBounds] = await Promise.all([user.boundingBox(), response.boundingBox()])
-  if (!userBounds || !responseBounds) throw new Error('Transcript rows are missing')
-  expect(userBounds.x).toBe(responseBounds.x)
+  const conversation = chrome.getByRole('log', { name: 'Conversation' })
+  await expect(conversation.getByText('You', { exact: true })).toHaveCount(0)
+  await expect(conversation.getByText('Codex', { exact: true })).toHaveCount(0)
+  await expect(user).toHaveCSS('text-align', 'right')
+  await expect(response).toHaveCSS('text-align', 'left')
+  await expect(user).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('border-radius', '0px')
+  await expect(response).toHaveCSS('padding-top', '0px')
+  await expect(response).toHaveCSS('padding-bottom', '0px')
+  const [userBounds, responseBounds, conversationBounds] = await Promise.all([
+    user.boundingBox(),
+    response.boundingBox(),
+    conversation.boundingBox(),
+  ])
+  if (!userBounds || !responseBounds || !conversationBounds) throw new Error('Transcript rows are missing')
+  expect(userBounds.x).toBeGreaterThan(responseBounds.x)
+  expect(userBounds.x + userBounds.width).toBeCloseTo(conversationBounds.x + conversationBounds.width, 0)
+  expect(responseBounds.x).toBeCloseTo(conversationBounds.x, 0)
   await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
   await expect(chrome).toHaveScreenshot('tengri-compact-chat.png')
   await chrome.getByRole('button', { name: 'Approve once', exact: true }).click()
@@ -2541,6 +2629,22 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   await expect(chrome.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(response).toBeVisible()
+  await expect(async () => {
+    const [narrowUserBounds, narrowResponseBounds, narrowConversationBounds] = await Promise.all([
+      user.boundingBox(),
+      response.boundingBox(),
+      conversation.boundingBox(),
+    ])
+    if (!narrowUserBounds || !narrowResponseBounds || !narrowConversationBounds) {
+      throw new Error('Narrow transcript rows are missing')
+    }
+    expect(narrowUserBounds.x).toBeGreaterThan(narrowResponseBounds.x)
+    expect(narrowUserBounds.x + narrowUserBounds.width).toBeCloseTo(
+      narrowConversationBounds.x + narrowConversationBounds.width,
+      0,
+    )
+    expect(narrowResponseBounds.x).toBeCloseTo(narrowConversationBounds.x, 0)
+  }).toPass({ timeout: 10_000 })
   await page.mouse.move(0, 0)
   await expect(chrome).toHaveScreenshot('tengri-compact-chat-narrow.png')
 })
@@ -3714,7 +3818,7 @@ test('prepares suggested prompts and grows multiline drafts without sending them
       reasoningEffort: 'medium',
       text: Array.from({ length: 12 }, (_, index) => `Draft line ${index + 1}`).join('\n'),
     })
-  await expect(chrome.getByRole('heading', { name: 'Start a conversation' })).toHaveCount(0)
+  await expect(chrome.getByRole('heading', { name: 'Let’s build' })).toHaveCount(0)
   await expect(chrome.getByRole('button', { name: 'Stop response' })).toBeEnabled()
 })
 

@@ -33,7 +33,8 @@ const loadReplayCheckpoint = (runId: string, sourceManifestHash: string) =>
     ORDER BY ordinal DESC LIMIT 1`
     const decoded = yield* Schema.decodeUnknownEffect(
       Schema.Array(Schema.Struct({ checkpoint_hash: Sha256Schema, payload: ReplayBrokerCheckpointSchema })).check(
-        Schema.isLengthBetween(1, 1),
+        Schema.isMinLength(1),
+        Schema.isMaxLength(1),
       ),
     )(rows)
     const row = decoded[0]

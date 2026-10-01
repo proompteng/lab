@@ -1,5 +1,5 @@
 import { Clock, Config, Effect, FileSystem, Path, Redacted, Result, Schema } from 'effect'
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest } from 'effect/http'
 import { MarketCalendarResponseSchema } from '../src/broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../src/broker/alpaca/normalizers'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../src/hash'
@@ -130,8 +130,8 @@ export const backfillAlpacaHistory = (input: unknown, directory: string) =>
     const fs = yield* FileSystem.FileSystem
     const http = yield* HttpClient.HttpClient
     const credentials = yield* Config.all({
-      key: Config.redacted('BAYN_ALPACA_KEY_ID'),
-      secret: Config.redacted('BAYN_ALPACA_SECRET_KEY'),
+      key: Config.Redacted('BAYN_ALPACA_KEY_ID'),
+      secret: Config.Redacted('BAYN_ALPACA_SECRET_KEY'),
     })
     const historical = yield* makeAlpacaHistoricalClient(http, credentials)
     yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 })
