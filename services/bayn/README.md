@@ -23,7 +23,7 @@ projection. Final submission reads account, positions and orders from one payloa
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
-`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 30,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
+`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
 for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
 and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
@@ -42,8 +42,9 @@ Each waiting pass rechecks the projection. Expiry, a failed poll, wrong source r
 failures; waiting cannot make unavailable data usable or clear an authority restriction.
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
-Market-data subscriptions have separate limits. The cache preserves response rate-limit headers; these fixes keep
-the thirty-second poll rather than increasing broker traffic to match the market quote clock.
+Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
+with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
+at the default cadence. Additional pages, retries, startup checks and order operations also consume the account quota.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved

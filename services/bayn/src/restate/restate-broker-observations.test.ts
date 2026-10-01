@@ -4,7 +4,7 @@ import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './res
 
 const controllerKey = 'a'.repeat(64)
 const sourceRevision = 'b'.repeat(40)
-const config = { controllerKey, sourceRevision, pollIntervalMs: 30_000, operationTimeoutMs: 30_000 }
+const config = { controllerKey, sourceRevision, pollIntervalMs: 10_000, operationTimeoutMs: 30_000 }
 type State = { sourceRevision: string; epoch: number; sequence: number; lastSnapshotHash?: string }
 const harness = (
   input: { runtime?: Partial<BrokerObservationRuntime>; state?: State; key?: string; elapsedMs?: number } = {},
@@ -109,9 +109,9 @@ describe('Restate broker observation owner', () => {
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 2 })
     expect(h.state()?.lastSnapshotHash).toBeUndefined()
     expect(h.state()?.sequence).toBe(3)
-    expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([30_000, 30_000, 30_000])
+    expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([10_000, 10_000, 10_000])
   })
-  test.each([250, 29_500, 40_000])('includes a %s ms capture in the poll cadence', async (elapsedMs) => {
+  test.each([250, 9_500, 40_000])('includes a %s ms capture in the poll cadence', async (elapsedMs) => {
     const h = harness({ elapsedMs })
     await h.handlers.activate(h.context, { sourceRevision })
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
@@ -142,7 +142,7 @@ describe('Restate broker observation owner', () => {
     invalidated = false
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
     expect(h.state()?.lastSnapshotHash).toBe('f'.repeat(64))
-    expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([1_000, 29_750])
+    expect(h.deliveries.map((delivery) => delivery.delay.milliseconds)).toEqual([1_000, 9_750])
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
     expect(h.deliveries).toHaveLength(2)
   })
