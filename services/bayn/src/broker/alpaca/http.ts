@@ -1,6 +1,7 @@
-import { NodeHttpClient, Undici } from '@effect/platform-node'
+import { NodeHttpClient } from '@effect/platform-node'
+import * as Undici from '@effect/platform-node/Undici'
 import { Cause, Context, Effect, Layer, pipe, Redacted, Result, Scope } from 'effect'
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http'
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'

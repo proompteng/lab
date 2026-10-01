@@ -42,6 +42,15 @@ export const UtcOrderTimestampSchema = Schema.String.check(
     expected: 'a canonical UTC ordering timestamp (YYYY-MM-DDTHH:mm:ss.nnnnnnnnnZ)',
   }),
 )
+export const UtcSourceTimestampSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) => {
+      const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
+      return match !== null && isUtcOrderTimestamp(`${match[1]}.${(match[2] ?? '').padEnd(9, '0')}Z`)
+    },
+    { expected: 'a valid UTC source timestamp with up to nine fractional digits' },
+  ),
+)
 export const Sha256Schema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 export const ImageDigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))
 export const ImageRepositorySchema = Schema.String.check(Schema.isPattern(/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+$/))

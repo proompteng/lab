@@ -7,8 +7,8 @@ import { Config, Effect, Exit, Option, Schedule, Scope } from 'effect'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
 
-const admin = Effect.runSync(Config.option(Config.string('BAYN_TEST_RESTATE_ADMIN_URL'))).pipe(Option.getOrUndefined)
-const ingress = Effect.runSync(Config.option(Config.string('BAYN_TEST_RESTATE_INGRESS_URL'))).pipe(
+const admin = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_ADMIN_URL'))).pipe(Option.getOrUndefined)
+const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_INGRESS_URL'))).pipe(
   Option.getOrUndefined,
 )
 const describeRestate = admin === undefined || ingress === undefined ? describe.skip : describe

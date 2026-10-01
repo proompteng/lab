@@ -3,9 +3,9 @@ import { createConnection, createServer, type Socket } from 'node:net'
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Schema } from 'effect'
-import type { Connection } from 'effect/unstable/sql/SqlConnection'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import type { Connection } from 'effect/sql/SqlConnection'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { PostgresClientLive } from '../db/postgres-client'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
@@ -49,6 +49,61 @@ describePostgres('PostgreSQL writer fence lifecycle', () => {
   afterAll(async () => {
     await runtime?.dispose()
     await contender?.dispose()
+  })
+
+  test('the custom socket honors PostgreSQL URL host and port overrides', () => {
+    const url = new URL(testUrl)
+    url.searchParams.set('host', '127.0.0.1')
+    url.searchParams.set('port', url.port || '5432')
+    url.port = '1'
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(yield* sql`SELECT 1 AS value`).toEqual([{ value: 1 }])
+      }).pipe(
+        Effect.provide(
+          PostgresClientLive({ ...config, postgres: { ...config.postgres, url: Redacted.make(url.toString()) } }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      ),
+    )
+  })
+
+  test('nested SQL transactions serialize their savepoints and preserve sibling writes after rollback', async () => {
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        yield* fence.transaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO writer_fence_test VALUES (1)`
+            const started = yield* Deferred.make<void>()
+            const release = yield* Deferred.make<void>()
+            const first = yield* sql
+              .withTransaction(
+                sql`INSERT INTO writer_fence_test VALUES (2)`.pipe(
+                  Effect.andThen(Deferred.succeed(started, undefined)),
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(Effect.fail('rollback nested transaction')),
+                ),
+              )
+              .pipe(Effect.result, Effect.forkChild({ startImmediately: true }))
+            yield* Deferred.await(started).pipe(Effect.raceFirst(Fiber.join(first)))
+            const second = yield* sql
+              .withTransaction(sql`INSERT INTO writer_fence_test VALUES (3)`)
+              .pipe(Effect.forkChild({ startImmediately: true }))
+            yield* Effect.yieldNow
+            expect(second.pollUnsafe()).toBeUndefined()
+            yield* Deferred.succeed(release, undefined)
+            expect(yield* Fiber.join(first)).toEqual(Result.fail('rollback nested transaction'))
+            yield* Fiber.join(second)
+          }),
+        )
+        return yield* sql`SELECT id FROM writer_fence_test ORDER BY id`
+      }),
+    )
+    expect(rows).toEqual([{ id: 1 }, { id: 3 }])
   })
 
   test('the server cancels stalled SQL before the pass deadline and rolls back its writer transaction', async () => {

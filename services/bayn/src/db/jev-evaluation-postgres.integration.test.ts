@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, FileSystem, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 
 import resolutionMigration from '../../migrations/0077_jev_evaluation_resolution'
 import { CycleStore, CycleStoreLive } from '../cycle/store'

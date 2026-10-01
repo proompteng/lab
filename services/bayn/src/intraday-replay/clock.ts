@@ -38,7 +38,10 @@ export const makeSimulatedExecutionClock = (runId: string, sourceManifestHash: s
         ),
         Effect.flatMap(
           Schema.decodeUnknownEffect(
-            Schema.Array(Schema.Struct({ account_id: Schema.Literal(accountId) })).check(Schema.isLengthBetween(1, 1)),
+            Schema.Array(Schema.Struct({ account_id: Schema.Literal(accountId) })).check(
+              Schema.isMinLength(1),
+              Schema.isMaxLength(1),
+            ),
           ),
         ),
         Effect.asVoid,

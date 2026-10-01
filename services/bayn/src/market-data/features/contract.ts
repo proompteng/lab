@@ -66,7 +66,7 @@ export const RollingMarketFeatureMaterialSchema = Schema.Struct({
   sessionPolicy: Schema.Enum(MarketFeatureSessionPolicy),
   windowStartMs: Timestamp,
   windowEndMs: Timestamp,
-  inputs: Schema.Array(MarketFeatureInputSchema).check(Schema.isLengthBetween(30, 30)),
+  inputs: Schema.Array(MarketFeatureInputSchema).check(Schema.isMinLength(30), Schema.isMaxLength(30)),
   values: RollingMarketValuesSchema,
 })
 export const RollingMarketFeatureSchema = Schema.Struct({

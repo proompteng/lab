@@ -18,7 +18,7 @@ const main = Effect.gen(function* () {
   )
     return yield* new JevEvidenceError({ message: 'Invalid Jev restart worker arguments' })
   const requestId = yield* Schema.decodeUnknownEffect(Sha256Schema)(rawRequestId)
-  const postgresUrl = yield* Config.redacted('BAYN_TEST_POSTGRES_URL')
+  const postgresUrl = yield* Config.Redacted('BAYN_TEST_POSTGRES_URL')
   const parsed = new URL(Redacted.value(postgresUrl))
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
     return yield* new JevEvidenceError({ message: 'Jev restart worker requires a local _test database' })

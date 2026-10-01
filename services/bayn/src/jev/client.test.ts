@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Cause, Effect, Exit, Fiber, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevClient, JevClientLive, JevError } from './client'
