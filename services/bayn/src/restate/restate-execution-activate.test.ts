@@ -13,6 +13,7 @@ import {
 } from './restate-execution-activate'
 
 const config: RestateExecutionActivationConfig = {
+  activationAttemptId: '5c25a32e-938a-47d1-8e8c-0b254679a591',
   activationGeneration: '1'.repeat(64),
   controllerKey: 'a'.repeat(64),
   ingressOrigin: 'http://restate.example.test:8080',
@@ -55,48 +56,21 @@ describe('native Restate execution activation', () => {
     expect(released).toBe(true)
   })
 
-  test('binds retries to one activation generation and reactivation to a new generation', () => {
-    const idempotencyKey = restateExecutionActivationIdempotencyKey(
-      config.activationGeneration,
-      config.sourceRevision,
-      config.controllerKey,
-      config.planHash,
-    )
+  test('binds one activation process to its exact deployment generation and controller', () => {
+    const idempotencyKey = restateExecutionActivationIdempotencyKey(config)
     expect(idempotencyKey).toMatch(/^bayn-execution-[0-9a-f]{64}$/)
     expect(idempotencyKey.length).toBeLessThanOrEqual(128)
     expect(restateExecutionActivationRequest(config, token).headers['idempotency-key']).toBe(idempotencyKey)
-    expect(
-      restateExecutionActivationIdempotencyKey(
-        '2'.repeat(64),
-        config.sourceRevision,
-        config.controllerKey,
-        config.planHash,
-      ),
-    ).not.toBe(idempotencyKey)
-    expect(
-      restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        'd'.repeat(40),
-        config.controllerKey,
-        config.planHash,
-      ),
-    ).not.toBe(idempotencyKey)
-    expect(
-      restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        config.sourceRevision,
-        'e'.repeat(64),
-        config.planHash,
-      ),
-    ).not.toBe(idempotencyKey)
-    expect(
-      restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        config.sourceRevision,
-        config.controllerKey,
-        'f'.repeat(64),
-      ),
-    ).not.toBe(idempotencyKey)
+    expect(restateExecutionActivationIdempotencyKey({ ...config, activationGeneration: '2'.repeat(64) })).not.toBe(
+      idempotencyKey,
+    )
+    expect(restateExecutionActivationIdempotencyKey({ ...config, sourceRevision: 'd'.repeat(40) })).not.toBe(
+      idempotencyKey,
+    )
+    expect(restateExecutionActivationIdempotencyKey({ ...config, controllerKey: 'e'.repeat(64) })).not.toBe(
+      idempotencyKey,
+    )
+    expect(restateExecutionActivationIdempotencyKey({ ...config, planHash: 'f'.repeat(64) })).not.toBe(idempotencyKey)
     expect(
       restateExecutionActivationRequest({ ...config, activationGeneration: '2'.repeat(64) }, token).headers[
         'idempotency-key'
@@ -131,33 +105,27 @@ describe('native Restate execution activation', () => {
       sourceRevision: config.sourceRevision,
       previousBinding,
     })
-    expect(request.headers['idempotency-key']).toBe(
-      restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        config.sourceRevision,
-        config.controllerKey,
-        config.planHash,
-        previousBinding,
-      ),
-    )
-    expect(request.headers['idempotency-key']).not.toBe(
-      restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        config.sourceRevision,
-        config.controllerKey,
-        config.planHash,
-      ),
-    )
+    expect(request.headers['idempotency-key']).toBe(restateExecutionActivationIdempotencyKey(rotating))
+    expect(request.headers['idempotency-key']).not.toBe(restateExecutionActivationIdempotencyKey(config))
     expect(
-      restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        config.sourceRevision,
-        config.controllerKey,
-        config.planHash,
-        { ...previousBinding, planHash: 'f'.repeat(64) },
-      ),
+      restateExecutionActivationIdempotencyKey({
+        ...rotating,
+        previousBinding: { ...previousBinding, planHash: 'f'.repeat(64) },
+      }),
     ).not.toBe(request.headers['idempotency-key'])
     expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBeLessThan(900_000)
+  })
+
+  test('keeps transport retries stable while giving a new activation process a fresh invocation', () => {
+    const first = { ...config, activationAttemptId: '5c25a32e-938a-47d1-8e8c-0b254679a591' }
+    const retry = { ...first, activationAttemptId: '5c25a32e-938a-47d1-8e8c-0b254679a592' }
+
+    expect(restateExecutionActivationRequest(first, token).headers['idempotency-key']).toBe(
+      restateExecutionActivationRequest({ ...first }, token).headers['idempotency-key'],
+    )
+    expect(restateExecutionActivationRequest(retry, token).headers['idempotency-key']).not.toBe(
+      restateExecutionActivationRequest(first, token).headers['idempotency-key'],
+    )
   })
 
   test('verifies the active controller plan after the current worker completed a successor pass', () => {

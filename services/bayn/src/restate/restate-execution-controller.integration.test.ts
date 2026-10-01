@@ -8,6 +8,7 @@ import { decodeExecutionControllerState } from '../execution/controller'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { makeBaynBrokerObservations } from './restate-broker-observations'
+import { restateExecutionActivationRequest } from './restate-execution-activate'
 import { executionActivationAuthorizationHash, makeBaynExecutionController } from './restate-execution-controller'
 import { awaitRestateInvocation, sendRestateInvocation } from './restate-invocation-client'
 
@@ -18,7 +19,7 @@ const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_IN
 const describeRestate = admin === undefined || ingress === undefined ? describe.skip : describe
 
 describeRestate('Real Restate execution deployment activation', () => {
-  test('shared activation warms the private broker owner and waits for private ticks without locking them out', async () => {
+  test('new activation attempts recover after dependency failure while retained replay stays idempotent', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
     for (const target of [admin, ingress]) {
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
@@ -34,6 +35,7 @@ describeRestate('Real Restate execution deployment activation', () => {
     }
     let brokerActivations = 0
     let brokerPolls = 0
+    let brokerReady = false
     let controllerActivations = 0
     const advanced: number[] = []
     const controller = makeBaynExecutionController(config, {
@@ -58,16 +60,19 @@ describeRestate('Real Restate execution deployment activation', () => {
         },
         poll: async () => {
           brokerPolls += 1
+          if (!brokerReady) throw new Error('Broker observation dependency is temporarily unavailable')
           return { _tag: 'Published', snapshotHash: 'e'.repeat(64) }
         },
       },
     )
-    const body = {
-      schemaVersion: 'bayn.execution-deployment-activation.v1',
-      controllerKey: config.controllerKey,
-      planHash: config.planHash,
-      sourceRevision: config.sourceRevision,
+    const deployment = {
+      ...config,
+      activationAttemptId: randomUUID(),
+      activationGeneration: '1'.repeat(64),
+      ingressOrigin: ingress,
     }
+    const firstRequest = restateExecutionActivationRequest(deployment, token)
+    const body = firstRequest.body
     const invoke = (key: string, method: string, authorization?: string) =>
       Effect.tryPromise({
         try: (signal) =>
@@ -128,12 +133,40 @@ describeRestate('Real Restate execution deployment activation', () => {
             expect(denied.status).toBe(400)
             expect(yield* Effect.promise(() => denied.text())).toContain('the invoked service is not public')
           }
-          const url = `${ingress}/restate/send/BaynExecutionController/${config.controllerKey}/activateDeployment`
+          const url = `${ingress}${firstRequest.path}`
+          const failedOptions = { timeoutMs: 5_000, headers: firstRequest.headers }
+          const failed = yield* sendRestateInvocation(url, body, failedOptions)
+          const failure = yield* Effect.flip(
+            awaitRestateInvocation(ingress, failed.invocationId, {
+              maximumAttempts: 100,
+              pollIntervalMs: 100,
+              requestTimeoutMs: 5_000,
+            }),
+          )
+          expect(failure).toMatchObject({
+            operation: 'await',
+            cause: { message: 'Restate invocation output returned HTTP 400' },
+          })
+          expect(controllerActivations).toBe(0)
+          brokerReady = true
+          const failedReplay = yield* sendRestateInvocation(url, body, failedOptions)
+          expect(failedReplay.invocationId).toBe(failed.invocationId)
+          expect(
+            yield* Effect.flip(
+              awaitRestateInvocation(ingress, failedReplay.invocationId, {
+                maximumAttempts: 1,
+                pollIntervalMs: 100,
+                requestTimeoutMs: 5_000,
+              }),
+            ),
+          ).toMatchObject({ operation: 'await' })
+          const retry = restateExecutionActivationRequest({ ...deployment, activationAttemptId: randomUUID() }, token)
           const options = {
             timeoutMs: 5_000,
-            headers: { authorization: `Bearer ${token}`, 'idempotency-key': randomUUID() },
+            headers: retry.headers,
           }
-          const accepted = yield* sendRestateInvocation(url, body, options)
+          const accepted = yield* sendRestateInvocation(url, retry.body, options)
+          expect(accepted.invocationId).not.toBe(failed.invocationId)
           const output = yield* awaitRestateInvocation(ingress, accepted.invocationId, {
             maximumAttempts: 100,
             pollIntervalMs: 100,
@@ -158,7 +191,7 @@ describeRestate('Real Restate execution deployment activation', () => {
               const response = await fetch(`${admin}/query`, {
                 method: 'POST',
                 body: JSON.stringify({
-                  query: `SELECT COUNT(*) AS journal_entries FROM sys_journal WHERE id = '${accepted.invocationId}'`,
+                  query: `SELECT COUNT(*) AS journal_entries FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
                 }),
                 headers: { 'content-type': 'application/json', accept: 'application/json' },
                 signal,

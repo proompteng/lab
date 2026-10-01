@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { NodeRuntime } from '@effect/platform-node'
 import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
 
@@ -56,6 +57,7 @@ export class RestateExecutionActivationError extends Data.TaggedError('RestateEx
 }> {}
 
 export interface RestateExecutionActivationConfig {
+  readonly activationAttemptId: string
   readonly activationGeneration: string
   readonly controllerKey: string
   readonly ingressOrigin: string
@@ -81,20 +83,22 @@ export const restateExecutionActivationCompletionWindowMs = (operationTimeoutMs:
   executionControllerDeploymentHandlerTimeouts(operationTimeoutMs, true).inactivityTimeout
 
 export const restateExecutionActivationIdempotencyKey = (
-  activationGeneration: string,
-  sourceRevision: string,
-  controllerKey: string,
-  planHash: string,
-  previousBinding?: ExecutionControllerBinding,
+  config: Pick<
+    RestateExecutionActivationConfig,
+    'activationAttemptId' | 'activationGeneration' | 'sourceRevision' | 'controllerKey' | 'planHash' | 'previousBinding'
+  >,
 ): string =>
   `bayn-execution-${sha256(
     [
       'bayn.execution-deployment-activation.v1',
-      activationGeneration,
-      sourceRevision,
-      controllerKey,
-      planHash,
-      ...(previousBinding === undefined ? [] : [previousBinding.sourceRevision, previousBinding.planHash]),
+      config.activationGeneration,
+      config.activationAttemptId,
+      config.sourceRevision,
+      config.controllerKey,
+      config.planHash,
+      ...(config.previousBinding === undefined
+        ? []
+        : [config.previousBinding.sourceRevision, config.previousBinding.planHash]),
     ].join('\u0000'),
   )}`
 
@@ -113,13 +117,7 @@ export const restateExecutionActivationRequest = (config: RestateExecutionActiva
     },
     headers: {
       authorization: `Bearer ${token}`,
-      'idempotency-key': restateExecutionActivationIdempotencyKey(
-        config.activationGeneration,
-        config.sourceRevision,
-        config.controllerKey,
-        config.planHash,
-        config.previousBinding,
-      ),
+      'idempotency-key': restateExecutionActivationIdempotencyKey(config),
     },
     timeoutMs: restateInvocationAcceptTimeoutMs,
   }
@@ -213,6 +211,7 @@ export const activateRestateExecutionController = (
     const state = yield* Effect.fromResult(verifyRestateExecutionActivation(config, output))
     yield* Effect.logInfo('Bayn native Restate execution controller activation verified').pipe(
       Effect.annotateLogs({
+        activationAttemptId: config.activationAttemptId,
         activationInvocationId: receipt.invocationId,
         controllerKey: config.controllerKey,
         epoch: state.epoch,
@@ -259,6 +258,7 @@ export const restateExecutionActivationProgram = Effect.gen(function* () {
   )
   const configured: RestateExecutionActivationConfig = {
     ...controller,
+    activationAttemptId: yield* Effect.sync(randomUUID),
     activationGeneration,
     ingressOrigin,
     ...(previousBinding === undefined ? {} : { previousBinding }),
