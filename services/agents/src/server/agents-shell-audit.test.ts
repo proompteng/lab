@@ -410,6 +410,28 @@ describe('agents-shell activity audit', () => {
     expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(encoded)
   })
 
+  it('redacts OpenSSL passphrases in separate and attached command and argv operands', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'openssl pkcs12 -passin pass:synthetic-private-input -passout pass:synthetic-private-output',
+      'openssl pkcs12 "-passin" "pass:synthetic-private-input" -passout=pass:synthetic-private-output',
+      'openssl pkcs12 "-passin=pass:synthetic-private-input" "-passout=pass:synthetic-private-output"',
+      'openssl enc -aes-256-cbc -pass pass:synthetic-private-input',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'openssl',
+      args: ['pkcs12', '-passin', 'pass:synthetic-private-input', '-passout=pass:synthetic-private-output'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-private-input')
+      expect(content).not.toContain('synthetic-private-output')
+    }
+    expect(JSON.stringify(records())).toContain('pkcs12')
+  })
+
   it.each([
     {
       command: 'docker login --password-stdin registry.example.test',

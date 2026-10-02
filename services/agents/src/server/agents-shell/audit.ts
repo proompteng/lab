@@ -12,7 +12,7 @@ export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
 const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
-  /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|pass|cert|proxy-cert))$/i
+  /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?pass(?:in|out)?)$/i
 const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password)$/i
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
@@ -21,7 +21,7 @@ const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
 const CREDENTIAL_COMMAND =
-  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|docker[ \t]+login|podman[ \t]+login)\b((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
+  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker[ \t]+login|podman[ \t]+login)\b((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
 const shortCredentialOptions = (command: string) => {
@@ -59,6 +59,10 @@ const argumentRedactor = (command: string) => {
       }
     }
     if (VALUELESS_SECRET_OPTION.test(token)) return word
+    const separator = token.indexOf('=')
+    if (separator > 0 && SECRET_OPTION.test(token.slice(0, separator))) {
+      return `${token.slice(0, separator)}=[REDACTED]`
+    }
     const option = options.find((value) => token.startsWith(value))
     if (option) {
       if (token === option) {
@@ -123,7 +127,7 @@ const redactText = (value: string, secrets: string[]) => {
     )
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
     .replace(
-      /((?:^|\s)--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|pass|cert|proxy-cert)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g,
+      /((?:^|\s)(?:--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?pass(?:in|out)?)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g,
       '$1[REDACTED]',
     )
     .replace(/(^|[^A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '$1[REDACTED_EMAIL]')
