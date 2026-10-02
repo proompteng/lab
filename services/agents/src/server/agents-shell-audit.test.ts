@@ -631,6 +631,30 @@ describe('agents-shell activity audit', () => {
     ).toBe(true)
   })
 
+  it('omits explicit body arguments and GitHub secret operations', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'gh secret set DEPLOY_KEY --body synthetic-github-secret',
+      'gh secret set DEPLOY_KEY -b synthetic-github-secret',
+      "'/usr/bin/gh' --hostname example.test se''cret set DEPLOY_KEY -bsynthetic-github-secret",
+      'gh api repos/owner/repo/actions/secrets/DEPLOY_KEY --method PUT -f encrypted_value=synthetic-github-secret',
+      'gh pr create --body=synthetic-github-secret',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'gh',
+      args: ['secret', 'set', 'DEPLOY_KEY', '-b', 'synthetic-github-secret'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-github-secret')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
   it('preserves valueless user switches outside credential-owning commands', () => {
     const records = captureAudit()
     const config = configFixture()
