@@ -329,6 +329,51 @@ describe('PostgreSQL retained-log summaries', () => {
     expect(result).toMatchObject({ statementDurationMs: { count: 3 }, commitDurationMs: { count: 1, total: 10 } })
   })
 
+  it('recognizes every canonical COMMIT and END chain form in statement and execute records', () => {
+    const messages: string[] = []
+    for (const keyword of ['COMMIT', 'END']) {
+      for (const modifier of ['', ' WORK', ' TRANSACTION']) {
+        for (const chain of ['', ' AND CHAIN', ' AND NO CHAIN']) {
+          const command = `${keyword}${modifier}${chain}`
+          messages.push(`duration: 2001 ms  statement: ${command}`)
+          messages.push(`duration: 2001 ms  execute S_1: ${command.toLowerCase().replaceAll(' ', '\t')};  `)
+        }
+      }
+    }
+    expect(messages).toHaveLength(36)
+    writeFileSync(
+      join(root, 'commits.log'),
+      messages.map((message) => record('2026-01-02T14:00:00Z', message)).join('\n'),
+    )
+    expect(summarizePostgresLog(root, { path: 'commits.log', startAt, endAt })).toMatchObject({
+      statementDurationMs: { count: 36, total: 72036 },
+      commitDurationMs: { count: 36, total: 72036, minimum: 2001, maximum: 2001, p95: 2001 },
+      slowCommitsOverOneSecond: 36,
+    })
+  })
+
+  it('excludes invalid, multi-statement and separately scoped commit forms', () => {
+    const commands = [
+      'COMMIT AND CHAIN; SELECT 1',
+      'END; COMMIT',
+      'COMMIT AND NO CHAIN WORK',
+      'COMMIT NO CHAIN',
+      'COMMIT WORK TRANSACTION',
+      "SELECT 'END AND CHAIN'",
+      "COMMIT PREPARED 'synthetic'",
+      'COMMIT /* not parsed */',
+    ]
+    writeFileSync(
+      join(root, 'excluded-commits.log'),
+      commands.map((command) => record('2026-01-02T14:00:00Z', `duration: 2001 ms  statement: ${command}`)).join('\n'),
+    )
+    expect(summarizePostgresLog(root, { path: 'excluded-commits.log', startAt, endAt })).toMatchObject({
+      statementDurationMs: { count: 8 },
+      commitDurationMs: { count: 0, total: null },
+      slowCommitsOverOneSecond: 0,
+    })
+  })
+
   it('enforces line and record limits instead of silently truncating a summary', () => {
     writeFileSync(join(root, 'long.log'), 'x'.repeat(1024 * 1024 + 1))
     expect(() => summarizePostgresLog(root, { path: 'long.log', startAt, endAt })).toThrow(/line limit/)

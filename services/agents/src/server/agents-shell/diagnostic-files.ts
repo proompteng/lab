@@ -363,7 +363,7 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
           if (
             samples === statements &&
             value !== null &&
-            /^duration:\s+\d+(?:\.\d+)?\s+ms\s+(?:statement|execute [^:]*):\s*COMMIT(?:\s+(?:WORK|TRANSACTION))?\s*;?\s*$/i.test(
+            /^duration:\s+\d+(?:\.\d+)?\s+ms\s+(?:statement|execute\s+[^:]*):\s*(?:COMMIT|END)(?:\s+(?:WORK|TRANSACTION))?(?:\s+AND\s+(?:NO\s+)?CHAIN)?\s*;?\s*$/i.test(
               message,
             )
           ) {

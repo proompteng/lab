@@ -273,6 +273,35 @@ describe('diagnostic MCP boundaries', () => {
     })
   })
 
+  it('counts chained commits and END through the registered diagnostic', async () => {
+    writeFileSync(
+      join(root, 'chain.log'),
+      ['COMMIT WORK AND NO CHAIN;', 'END TRANSACTION AND CHAIN;']
+        .map((command) =>
+          JSON.stringify({
+            record: {
+              log_time: '2026-01-02T14:00:00Z',
+              message: `duration: 2000 ms  execute S_1: ${command}`,
+            },
+          }),
+        )
+        .join('\n'),
+    )
+    const result = await client.callTool({
+      name: 'postgres_log_summary',
+      arguments: {
+        path: 'chain.log',
+        startAt: '2026-01-02T13:30:00Z',
+        endAt: '2026-01-02T20:00:00Z',
+      },
+    })
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      commitDurationMs: { count: 2, total: 4000 },
+      slowCommitsOverOneSecond: 2,
+    })
+  })
+
   it('retains authorization requirements for diagnostics', async () => {
     await client.close()
     await server.close()

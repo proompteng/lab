@@ -67,6 +67,13 @@ sync-duration distributions, replication-timeout counts, and the count of observ
 Durations are milliseconds. Quantiles use nearest rank over retained in-range samples. No observed samples produce
 null duration statistics, not zero latency. SQL text, database/user identifiers and raw log messages are not returned.
 
+The commit subset recognizes a single canonical `COMMIT` or `END` statement, with optional `WORK` or `TRANSACTION`
+and `AND [NO] CHAIN`, case-insensitively and with an optional trailing semicolon. This follows the PostgreSQL
+[COMMIT](https://www.postgresql.org/docs/18/sql-commit.html) and
+[END](https://www.postgresql.org/docs/18/sql-end.html) grammar. It is not a SQL parser: commented or multi-statement
+queries and two-phase `COMMIT PREPARED` stay in statement timings, not this current-transaction commit subset.
+Its count is therefore a recognized subset of retained timings, not the database's total commit count.
+
 The response includes the complete file hash, first/last recognized timestamps, first/last in-range timestamps,
 out-of-range counts, and malformed, unrecognized, undated and invalid-numeric record counts. It always returns
 `sessionCoverage: "not_proven"`. A complete read of retained logs does not establish retention coverage or identify
