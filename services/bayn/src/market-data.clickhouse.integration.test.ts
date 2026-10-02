@@ -5,7 +5,7 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Cause, Effect, Exit, Layer, ManagedRuntime } from 'effect'
 
 import { persistedMarketDataContract } from './testing/persisted-snapshot-fixture'
-import { config } from './testing/runtime-fixtures'
+import { historicalSignalConfig } from './testing/historical-signal-fixture'
 import type { IntradaySnapshotQuery } from './market-data/intraday/model'
 import { makeIntradayMarketDataQueries } from './market-data/intraday/queries'
 import { makeMarketDataQueries } from './market-data/queries'
@@ -267,8 +267,11 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
     const rows = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* ClickhouseClient.ClickhouseClient
-        return yield* makeMarketDataQueries(sql, { clickhouse: config.clickhouse }, persistedMarketDataContract)
-          .loadCyclePublicationManifests
+        return yield* makeMarketDataQueries(
+          sql,
+          { historicalSignal: historicalSignalConfig },
+          persistedMarketDataContract,
+        ).loadCyclePublicationManifests
       }),
     )
 
