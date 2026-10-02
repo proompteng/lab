@@ -70,6 +70,13 @@ the wait preserves the outstanding budget. Existing capture deadlines and cache 
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
 the background budget does not impose a global limit on other account callers.
 
+One serialized execution pass reads its unfinished cycle once and advances acquisition, activation and decision
+binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
+repeating an admission transition fails closed. Each transition checks the current clock, and restart begins with a
+fresh durable cycle read. Already committed intents retain exact immutable intent/decision validation without
+repeating their writer-fenced commit transaction. Missing or incomplete intents still use that transaction. Mutable
+intent state is read again after reconciliation, and close planning reuses only the closure read by its owning pass.
+
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
 intent's own start event; other mutations or newer durable broker evidence invalidate it. Submit/cancel invalidate

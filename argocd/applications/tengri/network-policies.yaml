@@ -113,6 +113,17 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: spire-server
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: server
+              app.kubernetes.io/instance: spire
+      ports:
+        - protocol: TCP
+          port: 8081
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:

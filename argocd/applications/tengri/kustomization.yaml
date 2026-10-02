@@ -7,6 +7,7 @@ resources:
 - service-account.yaml
 - auth-nonces.yaml
 - rbac.yaml
+- spire-admission.yaml
 - deployment.yaml
 - services.yaml
 - ingressroute.yaml
@@ -16,9 +17,9 @@ resources:
 configMapGenerator:
 - name: tengri-release
   literals:
-  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:2e64aefeaa1b1453961b65c5f4ac66e6de6e044961920251281676ef4e0f00b3
+  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:2a340c354bbcd98edb3a1eb2c5805ee84d272d8305298645e1da1e3a5884ddad
 configurations:
 - kustomizeconfig.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/tengri
-  digest: sha256:05d12e341140bd643bc564baf5bb09c32b0f6491de586cd3810d63d571c4559c
+  digest: sha256:5dd389f2081cbf4dd2d3d4a1b7e000e476a92fa814c2ff9fb2dcfc31e36d4f41
