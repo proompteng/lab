@@ -136,7 +136,7 @@ func guestAgentConfig(domain, socket string) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"agent": map[string]any{
 			"data_dir": filepath.Join(spireRuntimeDirectory, "data"), "log_level": "INFO",
-			"server_address": "spire-server.spire-server.svc.cluster.local", "server_port": 8081,
+			"server_address": "spire-server.spire-server.svc.cluster.local", "server_port": 443,
 			"socket_path": socket, "trust_domain": domain,
 			"trust_bundle_path": filepath.Join(spireRuntimeDirectory, "bundle.pem"),
 		},
