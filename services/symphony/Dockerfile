@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE_VERSION=24.11.1
 ARG CODEX_VERSION=0.153.4
