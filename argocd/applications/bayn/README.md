@@ -54,7 +54,16 @@ through the common market-data interface and binds each run to its source manife
 The `bayn-execution-controller` `RestateDeployment` is the single execution scheduler. It starts with read-only broker
 access and no capital authority. A source-versioned Argo sync hook authenticates to the Restate ingress, verifies the
 exact source/image/strategy/account plan and current native binding, then idempotently activates or rotates the
-account-keyed native controller. The public Bayn deployment rolls out after that verified native binding.
+account-keyed native controller through its shared `activateDeployment` handler. The public Bayn deployment rolls
+out after that verified native binding. The worker advertises exactly `BaynExecutionController` and
+`BaynBrokerObservations`; deployment activation does not have a separate service or object.
+
+The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
+Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
+`activate`, `deactivate`, `tick` and `status`, and every broker-observation handler, remain private. The activation
+result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job's
+verified log includes `activationInvocationId`, allowing
+the handoff and its completed successor proof to be inspected after the successful hook is removed.
 
 The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the
 operator-added `pod-template-hash`, so retained draining ReplicaSets cannot satisfy spreading for the current revision and
@@ -87,11 +96,13 @@ denied before and after restart.
 Before merging this layer, require the `restate-operator-crds`, `restate-operator`, and `restate` Argo applications to
 be `Synced` and `Healthy`, and verify the Restate request-identity foundation described in
 `argocd/applications/restate/README.md`. The bootstrap `SealedSecret` uses sync wave `-2` and the repository's
-current-generation health gate; the `RestateDeployment` follows in wave `-1`, activation runs in wave `0`, and the
+current-generation health gate; its name remains `bayn-execution-bootstrap` to preserve the existing credential
+identity and ciphertext. Both callers read it through `BAYN_EXECUTION_ACTIVATION_TOKEN`. The `RestateDeployment`
+follows in wave `-1`, activation runs in wave `0`, and the
 read-only status deployment follows in wave `1`. A missing Secret, unregistered worker, native-binding mismatch, or
 activation-verification failure blocks the sync before the public status rollout.
 
-After the normal Argo sync, verify the handoff without printing credentials or invoking the bootstrap handler by hand:
+After the normal Argo sync, verify the handoff without printing credentials or invoking activation by hand:
 
 ```sh
 kubectl get application -n argocd bayn restate-operator-crds restate-operator restate -o wide
@@ -114,7 +125,13 @@ Expected:
 - the operator reports two ready worker replicas at the committed image digest, spread across eligible hostnames, and
   drains the previous revision;
 - the activation hook completes once for the exact committed plan and source;
-- zero legacy lifecycle registrations exist and Restate exposes only the account-keyed native controller service;
+- zero legacy lifecycle registrations exist and Restate exposes the account-keyed native controller and private
+  `BaynBrokerObservations` object through the existing worker endpoint, with `activateDeployment` as the sole public
+  handler;
+- migration 87 is applied before endpoint registration; deployment activation drains the predecessor, publishes a fresh
+  source-bound `broker_observations` projection, then activates the native controller. PostgreSQL reads prove its
+  timestamp advances across background polls and its source revision matches the promoted image. Unavailable,
+  expired or invalidated observations block execution instead of issuing broker GETs from normal submission;
 - delayed native ticks project fresh controller status while the worker's static broker/capital configuration remains
   read-only/none; any effective execution authority must still come only from the separately sealed and validated
   durable capital generation;
@@ -125,7 +142,7 @@ Expected:
 The expected impact is two ready execution-worker pods plus two read-only status pods, two stateless broker-proxy pods,
 and narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS, and broker network paths. The workers have no
 service-account token and accept Restate requests only from the `restate` namespace. The activation Job has no broker
-egress and its token-authenticated bootstrap call is made only by the labeled GitOps hook.
+egress and its token-authenticated deployment activation call is made only by the labeled GitOps hook.
 
 ### Research mandate rotation
 
@@ -160,7 +177,7 @@ updates the activation endpoint of the existing research build lineage while pre
 build. The native hook still verifies the exact controller binding before the status service rolls out.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
-writer of the generated deployment branch. Its bootstrap generation uses the immutable image digest hash; the
+writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
 existing runtime idempotency key also binds source revision, account controller key, plan, and previous binding.
 
 For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
@@ -176,6 +193,32 @@ change, move the account-keyed binding to a compatible native replacement, or de
 returns to OBSERVE-only operation. Never recreate the retired legacy controller. Do not delete Restate registrations,
 CRDs, PVCs, durable state, or controller pods by hand. Confirm exact reconciliation, zero unresolved mutations, and no
 broker-ledger advance before and after the handoff.
+
+### Execution activation service migration
+
+This is a hard route migration from `BaynExecutionBootstrap/start` to
+`BaynExecutionController/<account-key>/activateDeployment`, with the single
+`bayn.execution-deployment-activation.v1` request contract. Worker and activation Job must use the same promoted
+image. Native controller state, tick and mutation contracts, account keys and credentials are unchanged. No legacy
+handler is served by the replacement endpoint.
+
+Each activation process generates one attempt UUID, combined with the immutable deployment binding in its
+idempotency key. Transport retries within that process reuse the same invocation. A new process, including the
+Job's `OnFailure` container retry, gets a new attempt identity so a retained terminal failure cannot block a
+recovered dependency for seven days. Native account ownership and controller mutations remain idempotent across
+attempts. Successful results retain their invocation ID for inspection; the completed request journal containing
+the bearer header is discarded.
+
+Removing a service from discovery does not remove its existing Restate metadata. Operator 3.0.1 keeps an old
+deployment while it is latest for any service or has nonterminal invocations; see its
+[registration](https://github.com/restatedev/restate-operator/blob/v3.0.1/src/controllers/restatedeployment/registration.rs)
+and [cleanup](https://github.com/restatedev/restate-operator/blob/v3.0.1/src/controllers/restatedeployment/cleanup.rs)
+contracts. The first rollout therefore needs a separately reviewed registration retirement through the existing
+GitOps procedure. Before retiring only `BaynExecutionBootstrap`, prove that no nonterminal invocation targets it,
+that both current services point to the exact replacement deployment, and that its authenticated activation has a
+completed successor receipt with fresh broker observations. Preserve native state, retained invocation evidence and
+registrations still used by either current service. Verify the retired service is absent and the old worker drains
+afterward. Do not add a compatibility registration or restore the historical destructive lifecycle hook.
 
 ## Legacy Restate registration retirement
 

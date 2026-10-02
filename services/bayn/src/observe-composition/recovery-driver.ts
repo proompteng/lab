@@ -1,7 +1,7 @@
 import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
-import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
+import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
 import {
@@ -19,6 +19,7 @@ import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
@@ -60,7 +61,7 @@ type RecoveryFirstDecisionBuilder = (
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
 
-/** Owned by one serialized pass, discarded before its post-mutation continuation. Transmission still refreshes at the writer fence. */
+/** Owned by one serialized pass, discarded before its post-mutation continuation. */
 export const reconciliationForPreparation = <R>(
   initial: ReconciliationPassResult | undefined,
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
@@ -274,6 +275,13 @@ const attemptMutationIdleReconciliation = (
     ),
   )
 
+const isPendingBrokerReconciliation = (error: CycleRunnerError): boolean =>
+  error.operation === 'reconcile' &&
+  error.cause instanceof OperationalError &&
+  error.cause.operation === 'reconciliation' &&
+  error.cause.cause instanceof BrokerReadError &&
+  error.cause.cause.kind === BrokerReadErrorKind.ObservationPending
+
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -283,7 +291,11 @@ const reconcileMutationBeforeExternallyDrivenAdvance = (
     const nowNanos = yield* Clock.currentTimeNanos
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-    if (decision._tag === 'RECONCILE') return yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    if (
+      decision._tag === 'RECONCILE' ||
+      (state.lastFailure !== undefined && isPendingBrokerReconciliation(state.lastFailure))
+    )
+      return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
     return undefined
   })
@@ -324,8 +336,29 @@ const makeRecoveryFirstCycleDriverEffect = (
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
     const nextDelayMs = recoveryFirstCycleNextDelayMs(input)
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
+      Effect.tap((result) =>
+        capability._tag === 'RecoveryOnly' ? Effect.void : capability.executionProgram.recordReconciliation(result),
+      ),
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) && capability._tag !== 'RecoveryOnly'
+          ? capability.executionProgram.invalidateBrokerState
+          : Effect.void,
+      ),
     )
+    const observeReconciliationFailure = (error: CycleRunnerError) => {
+      if (isPendingBrokerReconciliation(error))
+        return currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) =>
+            observeMutationPass(startup, { outcome: 'WAITING', observedAt, waitReason: 'BROKER_OBSERVATION_PENDING' }),
+          ),
+          Effect.map((observation) => ({ observation })),
+        )
+      return currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+        Effect.map((observation) => ({ observation })),
+      )
+    }
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
         ? restrictMutationLoopFailure(error).pipe(
@@ -345,9 +378,7 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.andThen(Effect.fail(restrictionError)),
           ),
         ),
-        Effect.andThen(currentUtcInstant),
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-        Effect.map((observation) => ({ observation })),
+        Effect.andThen(observeReconciliationFailure(error)),
       )
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
@@ -400,11 +431,7 @@ const makeRecoveryFirstCycleDriverEffect = (
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
     const runCycleAdvance = reconciliationPreflight.pipe(
       Effect.matchEffect({
-        onFailure: (error) =>
-          currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-            Effect.map((observation) => ({ observation })),
-          ),
+        onFailure: observeReconciliationFailure,
         onSuccess: (preflight) =>
           advanceCycle(preflight).pipe(
             Effect.flatMap((advanced) =>

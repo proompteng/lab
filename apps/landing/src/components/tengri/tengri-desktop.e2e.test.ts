@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
+import { codexModelFixtures } from './codex-models.fixture'
 
 const user = {
   id: '424242',
@@ -134,6 +135,10 @@ type MockOptions = {
   agent?: typeof readyAgent | null
   blockDraftStorage?: boolean
   codexAuthenticated?: boolean
+  codexModels?: typeof codexModelFixtures
+  failCodexModels?: boolean
+  legacyCodexModels?: boolean
+  paginateCodexModels?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
   failCodexAccountUntilReleased?: boolean
@@ -629,6 +634,28 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           email: options.codexAuthenticated === false ? '' : 'ada@example.test',
           plan: options.codexAuthenticated === false ? '' : 'pro',
         }
+        break
+      case 'codex-models':
+        if (options.legacyCodexModels) {
+          await route.fulfill({
+            status: 412,
+            json: {
+              error: 'Model selection needs an updated guest. Chat continues with existing Codex settings.',
+              code: 'model_selection_unavailable',
+            },
+          })
+          return
+        }
+        if (options.failCodexModels) {
+          await route.fulfill({ status: 503, json: { error: 'Codex model catalog unavailable' } })
+          return
+        }
+        result = options.paginateCodexModels
+          ? {
+              models: codexModelFixtures.slice(action.cursor ? 1 : 0, action.cursor ? 2 : 1),
+              nextCursor: action.cursor ? null : 'models-2',
+            }
+          : { models: options.codexModels ?? codexModelFixtures, nextCursor: null }
         break
       case 'codex-login-status':
         result = options.activeCodexLogin
@@ -1360,6 +1387,176 @@ test('offers old-editor drafts for download without overwriting guest files or e
   await expect(code).toHaveCount(0)
 })
 
+test('selects and persists Codex models and reasoning for subsequent turns', async ({ page }) => {
+  const mock = await mockTengri(page, { preserveDraftStorageOnReload: true, paginateCodexModels: true })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
+  const reasoning = chrome.getByRole('combobox', { name: 'Reasoning effort' })
+  await expect(model).toHaveValue('gpt-6.1-sol')
+  await expect(model).toBeEnabled()
+  await reasoning.selectOption('high')
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({
+      model: 'gpt-6.1-sol',
+      reasoningEffort: 'high',
+      text: 'Read the workspace',
+    })
+  expect(mock.actions.find((action) => action.action === 'create-thread')).toMatchObject({
+    model: 'gpt-6.1-sol',
+    reasoningEffort: 'high',
+  })
+  await expect(model).toBeDisabled()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+  })
+  await expect(model).toBeEnabled()
+  await page.reload()
+  await expect(reasoning).toHaveValue('high')
+  await expect(reasoning).toBeEnabled()
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'resume-thread').at(-1))
+    .toMatchObject({
+      model: 'gpt-6.1-sol',
+      reasoningEffort: 'high',
+    })
+  await model.selectOption('gpt-5.6-luna')
+  await expect(reasoning).toHaveValue('default')
+  await expect(reasoning.locator('option[value="high"]')).toHaveCount(0)
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected model')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
+    .toMatchObject({
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+      text: 'Use the selected model',
+    })
+})
+
+test('reports a model catalog outage and retries without creating a conversation', async ({ page }) => {
+  const options = { failCodexModels: true }
+  const mock = await mockTengri(page, options)
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('alert')).toContainText('Codex model catalog unavailable')
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
+  options.failCodexModels = false
+  await chrome.getByRole('button', { name: 'Retry models' }).click()
+  await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeEnabled()
+})
+
+for (const savedThread of [false, true]) {
+  test(`continues ${savedThread ? 'saved' : 'new'} conversations while model selection awaits a guest update`, async ({
+    page,
+  }) => {
+    const options = { legacyCodexModels: true }
+    const mock = await mockTengri(page, options)
+    if (savedThread) {
+      await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+    }
+    await page.goto('/')
+    const chrome = page.getByRole('region', { name: 'Chrome window' })
+    await expect(chrome.getByRole('alert')).toContainText('Chat continues with existing Codex settings')
+    await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
+    await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Continue in this workspace')
+    await chrome.getByRole('button', { name: 'Send message' }).click()
+    await expect.poll(() => mock.actions.some((action) => action.action === 'send-turn')).toBe(true)
+    for (const action of mock.actions.filter((action) =>
+      ['create-thread', 'resume-thread', 'send-turn'].includes(String(action.action)),
+    )) {
+      expect(action).not.toHaveProperty('model')
+      expect(action).not.toHaveProperty('reasoningEffort')
+    }
+    expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(!savedThread)
+    await emitCodexEvent(page, {
+      sequence: 1,
+      kind: 'thread-state',
+      method: 'turn/completed',
+      threadId: savedThread ? 'thread-existing' : 'thread-1',
+      turnId: 'turn-1',
+      itemId: '',
+      approvalId: '',
+      text: '',
+      rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+    })
+    options.legacyCodexModels = false
+    await chrome.getByRole('button', { name: 'Retry models' }).click()
+    await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+    await chrome.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('high')
+    await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected settings')
+    await chrome.getByRole('button', { name: 'Send message' }).click()
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
+      .toMatchObject({ model: 'gpt-6.1-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
+  })
+}
+
+for (const unavailable of ['model', 'effort']) {
+  test(`can replace a saved unavailable ${unavailable} after conversation recovery fails`, async ({ page }) => {
+    const mock = await mockTengri(page, {
+      resumeThreadErrors: [{ status: 400, error: 'Saved Codex settings are unavailable' }],
+    })
+    await page.addInitScript((unavailable) => {
+      localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing')
+      localStorage.setItem(
+        'tengri-codex-options:microvm-ada',
+        JSON.stringify({
+          model: unavailable === 'model' ? 'removed-model' : 'gpt-5.6-luna',
+          reasoningEffort: 'high',
+        }),
+      )
+    }, unavailable)
+    await page.goto('/')
+    const chrome = page.getByRole('region', { name: 'Chrome window' })
+    await expect(chrome.getByText('Saved Codex settings are unavailable', { exact: true })).toBeVisible()
+    const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
+    await expect(model).toBeEnabled()
+    if (unavailable === 'model') await model.selectOption('gpt-6.1-sol')
+    const reasoning = chrome.getByRole('combobox', { name: 'Reasoning effort' })
+    await expect(reasoning).toBeEnabled()
+    await reasoning.selectOption('low')
+    await chrome.getByRole('button', { name: 'Retry conversation recovery' }).click()
+    await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+    expect(mock.actions.filter((action) => action.action === 'resume-thread').at(-1)).toMatchObject({
+      model: unavailable === 'model' ? 'gpt-6.1-sol' : 'gpt-5.6-luna',
+      reasoningEffort: 'low',
+    })
+    expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
+    await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Continue this conversation')
+    await chrome.getByRole('button', { name: 'Send message' }).click()
+    await expect.poll(() => mock.actions.some((action) => action.action === 'send-turn')).toBe(true)
+  })
+}
+
+test('keeps an unavailable default visible until the user selects an available model', async ({ page }) => {
+  await mockTengri(page, { codexModels: codexModelFixtures.slice(1) })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
+  await expect(chrome.getByRole('alert')).toContainText('This model is unavailable')
+  await expect(model).toHaveValue('gpt-6.1-sol')
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  await model.selectOption('gpt-5.6-luna')
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  await expect(chrome.getByRole('alert')).toHaveCount(0)
+})
+
 test('persists Finder changes and exposes a localhost preview from Chrome', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.goto('/')
@@ -2041,6 +2238,84 @@ test('uses one composer control for sending, steering, and stopping a response',
   await expect(action).toBeDisabled()
 })
 
+test('shows a text highlight while thinking and keeps reduced-motion status readable', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'none' })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const thinking = chrome.getByRole('status', { name: 'Agent activity' })
+  await expect(thinking).toHaveCount(0)
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Inspect the workspace.')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect(thinking).toHaveText('Thinking')
+  await expect(thinking.locator('svg')).toHaveCount(0)
+  await expect(chrome.getByText('Codex is working…', { exact: true })).toHaveCount(0)
+  const label = thinking.getByText('Thinking', { exact: true })
+  const sweep = await label.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const frames = element
+      .getAnimations()
+      .flatMap((animation) => (animation.effect instanceof KeyframeEffect ? animation.effect.getKeyframes() : []))
+    return {
+      backgroundSize: Number.parseFloat(style.backgroundSize),
+      positions: frames.map((frame) => Number.parseFloat(String(frame.backgroundPositionX))),
+    }
+  })
+  expect(sweep.backgroundSize).toBeGreaterThan(100)
+  expect(sweep.positions).toHaveLength(2)
+  expect(sweep.positions[0]).toBeGreaterThan(sweep.positions[1])
+  for (const [name, progress] of [
+    ['left', 0.3],
+    ['right', 0.7],
+  ] as const) {
+    await label.evaluate((element, fraction) => {
+      const animation = element.getAnimations()[0]
+      if (!animation?.effect) throw new Error('Thinking animation is missing')
+      animation.pause()
+      animation.currentTime = Number(animation.effect.getComputedTiming().duration) * fraction
+    }, progress)
+    const path = testInfo.outputPath(`thinking-highlight-${name}.png`)
+    await thinking.screenshot({ path })
+    await testInfo.attach(`thinking-highlight-${name}`, { path, contentType: 'image/png' })
+  }
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(label).toHaveCSS('animation-name', 'none')
+  await expect(label).not.toHaveCSS('color', 'rgba(0, 0, 0, 0)')
+  await expect(thinking).toHaveText('Thinking')
+  await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'active' })
+  await expect(label).toHaveCSS('animation-name', 'none')
+  await expect(label).not.toHaveCSS('color', 'rgba(0, 0, 0, 0)')
+  await page.emulateMedia({ reducedMotion: 'no-preference', forcedColors: 'none' })
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'approval-thinking',
+    approvalId: 'approval-thinking',
+    text: 'Run the workspace checks?',
+    rawJson: '{"params":{"availableDecisions":["accept","decline"]}}',
+  })
+  await expect(chrome.getByRole('button', { name: 'Deny', exact: true })).toBeVisible()
+  await expect(thinking).toHaveCount(0)
+  await chrome.getByRole('button', { name: 'Deny', exact: true }).click()
+  await expect(thinking).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 2,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+  })
+  await expect(thinking).toHaveCount(0)
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeDisabled()
+})
+
 test('steers a recovered in-progress turn when sending during thread resume', async ({ page }) => {
   const mock = await mockTengri(page, {
     resumeThreadDelayMs: 400,
@@ -2277,7 +2552,7 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   }
   await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(1)
   await expect(page.getByRole('textbox', { name: 'Steer the current turn' })).toBeEnabled()
-  await expect(page.getByRole('article', { name: 'Codex response' }).first()).toHaveText(
+  await expect(page.getByRole('article', { name: 'Codex response' }).first().locator('p')).toHaveText(
     'The terminal background is continuous. Corner handles are easy to grab.',
   )
   await expect(page.getByText('The browser checks pass. Tooltips stay above the icons.', { exact: true })).toHaveCount(
@@ -2297,6 +2572,7 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   const chrome = page.getByRole('region', { name: 'Chrome window' })
   await expect(chrome.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible()
   await expect(chrome.getByRole('button', { name: 'Approve for session', exact: true })).toHaveCount(0)
+  await chrome.getByRole('article', { name: 'Codex output' }).locator('summary').click()
   const outputCharacterWidths = await chrome
     .getByRole('article', { name: 'Codex output' })
     .locator('pre')
@@ -2318,15 +2594,25 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   expect(outputCharacterWidths.symbols).toBeCloseTo(outputCharacterWidths.wide, 1)
   const user = chrome.getByRole('article', { name: 'Your message' })
   const response = chrome.getByRole('article', { name: 'Codex response' }).first()
-  for (const row of [user, response]) {
-    await expect(row).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(row).toHaveCSS('border-radius', '0px')
-    await expect(row).toHaveCSS('padding-top', '0px')
-    await expect(row).toHaveCSS('padding-bottom', '0px')
-  }
-  const [userBounds, responseBounds] = await Promise.all([user.boundingBox(), response.boundingBox()])
-  if (!userBounds || !responseBounds) throw new Error('Transcript rows are missing')
-  expect(userBounds.x).toBe(responseBounds.x)
+  const conversation = chrome.getByRole('log', { name: 'Conversation' })
+  await expect(conversation.getByText('You', { exact: true })).toHaveCount(0)
+  await expect(conversation.getByText('Codex', { exact: true })).toHaveCount(0)
+  await expect(user).toHaveCSS('text-align', 'right')
+  await expect(response).toHaveCSS('text-align', 'left')
+  await expect(user).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  await expect(response).toHaveCSS('border-radius', '0px')
+  await expect(response).toHaveCSS('padding-top', '0px')
+  await expect(response).toHaveCSS('padding-bottom', '0px')
+  const [userBounds, responseBounds, conversationBounds] = await Promise.all([
+    user.boundingBox(),
+    response.boundingBox(),
+    conversation.boundingBox(),
+  ])
+  if (!userBounds || !responseBounds || !conversationBounds) throw new Error('Transcript rows are missing')
+  expect(userBounds.x).toBeGreaterThan(responseBounds.x)
+  expect(userBounds.x + userBounds.width).toBeCloseTo(conversationBounds.x + conversationBounds.width, 0)
+  expect(responseBounds.x).toBeCloseTo(conversationBounds.x, 0)
   await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
   await expect(chrome).toHaveScreenshot('tengri-compact-chat.png')
   await chrome.getByRole('button', { name: 'Approve once', exact: true }).click()
@@ -2343,6 +2629,22 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   await expect(chrome.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(response).toBeVisible()
+  await expect(async () => {
+    const [narrowUserBounds, narrowResponseBounds, narrowConversationBounds] = await Promise.all([
+      user.boundingBox(),
+      response.boundingBox(),
+      conversation.boundingBox(),
+    ])
+    if (!narrowUserBounds || !narrowResponseBounds || !narrowConversationBounds) {
+      throw new Error('Narrow transcript rows are missing')
+    }
+    expect(narrowUserBounds.x).toBeGreaterThan(narrowResponseBounds.x)
+    expect(narrowUserBounds.x + narrowUserBounds.width).toBeCloseTo(
+      narrowConversationBounds.x + narrowConversationBounds.width,
+      0,
+    )
+    expect(narrowResponseBounds.x).toBeCloseTo(narrowConversationBounds.x, 0)
+  }).toPass({ timeout: 10_000 })
   await page.mouse.move(0, 0)
   await expect(chrome).toHaveScreenshot('tengri-compact-chat-narrow.png')
 })
@@ -3482,4 +3784,312 @@ test('renders native Finder and Settings layouts with accessible navigation', as
   expect(bounds).not.toBeNull()
   expect(bounds!.width).toBeLessThanOrEqual(390)
   await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeVisible()
+})
+
+test('prepares suggested prompts and grows multiline drafts without sending them', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const prompt = chrome.getByRole('textbox', { name: 'Message your agent' })
+  await chrome.getByRole('button', { name: 'Explore the project', exact: true }).click()
+  await expect(prompt).toBeFocused()
+  await expect(prompt).toHaveValue('Explore this workspace and explain how the project is organized.')
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+  const initialHeight = (await prompt.boundingBox())!.height
+  await prompt.press('Shift+Enter')
+  await expect(prompt).toHaveValue('Explore this workspace and explain how the project is organized.\n')
+  await prompt.press('End')
+  await prompt.fill(Array.from({ length: 12 }, (_, index) => `Draft line ${index + 1}`).join('\n'))
+  await expect.poll(async () => (await prompt.boundingBox())!.height).toBeGreaterThan(initialHeight)
+  expect((await prompt.boundingBox())!.height).toBeLessThanOrEqual(160)
+  expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+  await chrome.getByRole('combobox', { name: 'Model', exact: true }).selectOption('gpt-5.6-luna')
+  await chrome.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('medium')
+  await page.setViewportSize({ width: 390, height: 680 })
+  await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeInViewport()
+  await expect(chrome.getByRole('combobox', { name: 'Reasoning effort' })).toBeInViewport()
+  await expect(chrome.getByRole('button', { name: 'Send message' })).toBeInViewport()
+  expect(await chrome.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await prompt.press('Enter')
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'medium',
+      text: Array.from({ length: 12 }, (_, index) => `Draft line ${index + 1}`).join('\n'),
+    })
+  await expect(chrome.getByRole('heading', { name: 'Let’s build' })).toHaveCount(0)
+  await expect(chrome.getByRole('button', { name: 'Stop response' })).toBeEnabled()
+})
+
+test('keeps opened tool output stable during streaming and renders copyable structured responses', async ({ page }) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: [
+              {
+                id: 'user-1',
+                type: 'userMessage',
+                content: [{ type: 'text', text: 'Inspect the project and run its checks.' }],
+              },
+              { id: 'output-1', type: 'commandExecution', aggregatedOutput: 'Checking types…\n' },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-1')
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: async (text: string) => {
+          const fixture = window as typeof window & { copiedCode?: string; failClipboard?: boolean }
+          if (fixture.failClipboard) throw new Error('Clipboard denied')
+          fixture.copiedCode = text
+        },
+      },
+    })
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const output = chrome.getByRole('article', { name: 'Codex output' })
+  await expect(chrome.getByRole('article', { name: 'Your message' })).toContainText(
+    'Inspect the project and run its checks.',
+  )
+  await expect(output.locator('pre')).not.toBeVisible()
+  await output.locator('summary').click()
+  const event = { threadId: 'thread-1', turnId: 'turn-1', approvalId: '', rawJson: '{}' }
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 1,
+    itemId: 'output-1',
+    kind: 'tool-output',
+    method: 'item/commandExecution/outputDelta',
+    text: 'Typecheck passed.\n',
+  })
+  await expect(output.locator('pre')).toBeVisible()
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 2,
+    itemId: 'output-1',
+    kind: 'tool-output',
+    method: 'item/commandExecution/outputDelta',
+    text: 'All checks passed.\n',
+  })
+  await expect(output.locator('pre')).toBeVisible()
+  await expect(output.locator('pre')).toHaveText('Checking types…\nTypecheck passed.\nAll checks passed.\n')
+  const response =
+    'The project checks pass.\n\n### Verification\n\n| Check | Result |\n| --- | --- |\n| Types | Passed |\n| Tests | Passed |\n\n- [x] Read the project\n- [ ] Review the change\n\nRun the checks again with:\n\n```sh\nbun run lint\nbun test\n```'
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 3,
+    itemId: 'answer-1',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+    text: response,
+  })
+  await expect(chrome.getByRole('cell', { name: 'Types', exact: true })).toBeVisible()
+  await expect(chrome.getByRole('article', { name: 'Codex response' }).locator('pre code')).toHaveCSS(
+    'background-color',
+    'rgba(0, 0, 0, 0)',
+  )
+  await expect(chrome.getByRole('checkbox').first()).toBeChecked()
+  await expect(chrome.getByRole('checkbox').last()).not.toBeChecked()
+  await emitCodexEvent(page, {
+    ...event,
+    sequence: 4,
+    itemId: 'approval-1',
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    approvalId: 'approval-1',
+    text: 'Run bun test in /workspace?',
+    rawJson: JSON.stringify({ params: { availableDecisions: ['accept', 'decline'] } }),
+  })
+  await expect(chrome.getByLabel('Agent status')).toHaveText('Approval needed')
+  await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
+  await expect(chrome).toHaveScreenshot('tengri-agent-response.png')
+  await chrome.getByRole('button', { name: 'Copy code block' }).click()
+  await expect(chrome.getByRole('button', { name: 'Copy code block' })).toHaveText('Copied')
+  expect(await page.evaluate(() => (window as typeof window & { copiedCode?: string }).copiedCode)).toBe(
+    'bun run lint\nbun test\n',
+  )
+  await page.evaluate(() => {
+    ;(window as typeof window & { failClipboard?: boolean }).failClipboard = true
+  })
+  await chrome.getByRole('button', { name: 'Copy code block' }).click()
+  await expect(chrome.getByRole('button', { name: 'Copy code block' })).toHaveText('Copy failed')
+  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Chrome window"]').analyze()
+  expect(
+    accessibility.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
+  ).toEqual([])
+})
+
+test('keeps streamed output expanded when replay recovery moves it into restored history', async ({ page }) => {
+  const text = 'Output before reconnect.\n'
+  const mock = await mockTengri(page, {
+    resumeThreadEventSequence: 2,
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: [{ id: 'output-1', type: 'commandExecution', aggregatedOutput: text }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Run the project checks.')
+  await chrome.getByRole('button', { name: 'Send message' }).click()
+  await expect(chrome.getByRole('button', { name: 'Stop response' })).toBeEnabled()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'output-1',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'tool-output',
+    method: 'item/commandExecution/outputDelta',
+    text,
+  })
+  const output = chrome.getByRole('article', { name: 'Codex output' })
+  await output.locator('summary').click()
+  await expect(output.locator('pre')).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 2,
+    threadId: 'thread-1',
+    turnId: '',
+    itemId: '',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'warning',
+    method: 'tengri/replayWarning',
+    text: 'Replay window exceeded',
+  })
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(1)
+  await expect(chrome.getByRole('textbox', { name: 'Steer the current turn' })).toBeEnabled()
+  await expect(output.locator('pre')).toBeVisible()
+  await expect(output.locator('pre')).toHaveText(text)
+})
+
+test('preserves the reading position while new events arrive and returns to the latest message on request', async ({
+  page,
+}) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: Array.from({ length: 24 }, (_, index) => ({
+              id: `answer-${index}`,
+              type: 'agentMessage',
+              text: `Workspace finding ${index + 1}. ${'A detailed explanation of the change. '.repeat(12)}`,
+            })),
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const conversation = chrome.getByTestId('agent-conversation-scroll')
+  await expect(chrome.getByRole('article', { name: 'Codex response' })).toHaveCount(24)
+  await expect
+    .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
+    .toBeLessThan(2)
+  await conversation.evaluate((element) => {
+    element.scrollTop = 0
+  })
+  await expect(chrome.getByRole('button', { name: 'Jump to latest' })).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'answer-new',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+    text: 'The newest streamed message.',
+  })
+  await expect(chrome.getByText('The newest streamed message.', { exact: true })).toBeAttached()
+  expect(await conversation.evaluate((element) => element.scrollTop)).toBe(0)
+  await chrome.getByRole('textbox', { name: 'Steer the current turn' }).fill('A long draft\n'.repeat(10))
+  expect(await conversation.evaluate((element) => element.scrollTop)).toBe(0)
+  await chrome.getByRole('button', { name: 'Jump to latest' }).click()
+  await expect
+    .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
+    .toBeLessThan(2)
+  await expect(chrome.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0)
+  await chrome.getByRole('textbox', { name: 'Steer the current turn' }).fill('A short draft')
+  await expect
+    .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
+    .toBeLessThan(2)
+  await chrome.getByRole('textbox', { name: 'Steer the current turn' }).fill('A long draft\n'.repeat(10))
+  await expect
+    .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
+    .toBeLessThan(2)
+  await emitCodexEvent(page, {
+    sequence: 2,
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'answer-new',
+    approvalId: '',
+    rawJson: '{}',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+    text: '\n\nMore detail.\n'.repeat(12),
+  })
+  await expect
+    .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
+    .toBeLessThan(2)
+})
+
+test('makes device login readable and copyable at desktop and narrow widths', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-08-26T12:34:00.000Z'))
+  await mockTengri(page, { codexAuthenticated: false, activeCodexLogin: true })
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: async (text: string) => {
+          ;(window as typeof window & { copiedLoginCode?: string }).copiedLoginCode = text
+        },
+      },
+    })
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  await expect(chrome.getByRole('heading', { name: 'Connect Codex', exact: true })).toBeVisible()
+  await expect(chrome.getByRole('link', { name: 'Open verification' })).toHaveAttribute(
+    'href',
+    'https://auth.openai.com/device',
+  )
+  await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
+  await expect(chrome).toHaveScreenshot('tengri-agent-login.png')
+  await chrome.getByRole('button', { name: 'Copy code', exact: true }).click()
+  await expect(chrome.getByRole('button', { name: 'Copy code', exact: true })).toHaveText('Copied')
+  expect(await page.evaluate(() => (window as typeof window & { copiedLoginCode?: string }).copiedLoginCode)).toBe(
+    'TENG-RI99',
+  )
+  await chrome.getByRole('button', { name: 'Restart device login' }).click()
+  await expect(chrome.getByText('TENG-RI01')).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 680 })
+  await expect(chrome.getByRole('button', { name: 'Copy code', exact: true })).toBeInViewport()
+  await expect(chrome.getByRole('link', { name: 'Open verification' })).toBeInViewport()
+  const accessibility = await new AxeBuilder({ page }).include('[aria-label="Chrome window"]').analyze()
+  expect(
+    accessibility.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
+  ).toEqual([])
 })

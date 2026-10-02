@@ -308,6 +308,8 @@ durableTest(
             currentTimeMillisUnsafe: providerClock.currentTimeMillisUnsafe.bind(providerClock),
             currentTimeNanosUnsafe: providerClock.currentTimeNanosUnsafe.bind(providerClock),
             currentTimeNanos: providerClock.currentTimeNanos,
+            monotonicTimeNanosUnsafe: providerClock.monotonicTimeNanosUnsafe.bind(providerClock),
+            monotonicTimeNanos: providerClock.monotonicTimeNanos,
             currentTimeMillis: providerClock.currentTimeMillis.pipe(
               Effect.tap(() => Effect.sleep('25 millis').pipe(Effect.provideService(Clock.Clock, providerClock))),
             ),

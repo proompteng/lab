@@ -30,10 +30,14 @@ const SourcePositionSchema = Schema.Struct({
   startOffset: UnsignedMicrosSchema,
   endOffsetExclusive: UnsignedMicrosSchema,
 })
+const UnobservedArchivePartitionSchema = Schema.Struct({
+  topic: StrictNonEmptyStringSchema,
+  partition: NonNegativeIntegerSchema,
+})
 export const BacktestSourceManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest-source.v1'),
   encoding: Schema.Literal('ndjson-gzip'),
-  transport: Schema.Literals(['captured-kafka', 'alpaca-rest']),
+  transport: Schema.Literals(['captured-kafka', 'alpaca-rest', 'archive-reconstruction']),
   dataSha256: Sha256Schema,
   recordCount: PositiveIntegerSchema,
   coverageStartMs: NonNegativeIntegerSchema,
@@ -42,6 +46,7 @@ export const BacktestSourceManifestSchema = Schema.Struct({
   lastAvailableAtMs: NonNegativeIntegerSchema,
   origin: StrictNonEmptyStringSchema,
   positions: Schema.Array(SourcePositionSchema).check(Schema.isMinLength(1)),
+  archiveUnobservedPartitions: Schema.optionalKey(Schema.Array(UnobservedArchivePartitionSchema)),
   universe: Schema.Struct({
     universeId: StrictNonEmptyStringSchema,
     universeSymbolHash: Sha256Schema,
@@ -78,6 +83,23 @@ const CapturedKafkaSourceReceiptSchema = Schema.Struct({
 
 export const BacktestSourceReceiptSchema = Schema.Union([
   CapturedKafkaSourceReceiptSchema,
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.archive-reconstruction-receipt.v1'),
+    recordedAt: UtcInstantSchema,
+    origin: StrictNonEmptyStringSchema,
+    queryHashes: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
+    archiveResponseHashes: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
+    sourceDataSha256: Sha256Schema,
+    normalization: Schema.Literal('bayn.archive-envelope-reconstruction.v1'),
+    originalStreamAvailability: Schema.Literal('NOT_OBSERVED'),
+    completeness: Schema.Literal('RETAINED_ROWS_ONLY'),
+    emptyPartitions: Schema.Literal('NO_RETAINED_RECORDS_NOT_PROOF_OF_EMPTY_LOG'),
+    archiveUnobservedPartitions: Schema.optionalKey(Schema.Array(UnobservedArchivePartitionSchema)),
+    coverageStartMs: NonNegativeIntegerSchema,
+    coverageEndMs: NonNegativeIntegerSchema,
+    universe: BacktestSourceManifestSchema.fields.universe,
+    positions: BacktestSourceManifestSchema.fields.positions,
+  }),
   Schema.Struct({
     schemaVersion: Schema.Literal('bayn.alpaca-rest-replay-receipt.v2'),
     recordedAt: UtcInstantSchema,
@@ -130,14 +152,30 @@ export type BacktestSourceReceipt = Result.Result.Success<ReturnType<typeof vali
 
 export const validateBacktestSourceCuts = (manifest: BacktestSourceManifest, capture: BacktestSourceReceipt) =>
   Result.gen(function* () {
-    const capturedKafka = capture.value.schemaVersion === 'bayn.replay-source-capture.v1'
-    if ((manifest.transport === 'captured-kafka') !== capturedKafka)
+    const expectedTransport =
+      capture.value.schemaVersion === 'bayn.replay-source-capture.v1'
+        ? 'captured-kafka'
+        : capture.value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v2'
+          ? 'alpaca-rest'
+          : 'archive-reconstruction'
+    if (manifest.transport !== expectedTransport)
       return yield* Result.fail(fail('Source transport differs from its independently pinned receipt'))
     if (
-      capture.value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v2' &&
+      capture.value.schemaVersion !== 'bayn.replay-source-capture.v1' &&
       capture.value.sourceDataSha256 !== manifest.dataSha256
     )
-      return yield* Result.fail(fail('REST replay bytes differ from the dataset export receipt'))
+      return yield* Result.fail(fail('Reconstructed replay bytes differ from the export receipt'))
+    if (
+      capture.value.schemaVersion === 'bayn.archive-reconstruction-receipt.v1' &&
+      capture.value.origin !== manifest.origin
+    )
+      return yield* Result.fail(fail('Archive reconstruction origin differs from the receipt'))
+    if (
+      capture.value.schemaVersion === 'bayn.archive-reconstruction-receipt.v1' &&
+      (yield* canonicalHashV1Result(manifest.archiveUnobservedPartitions ?? [])) !==
+        (yield* canonicalHashV1Result(capture.value.archiveUnobservedPartitions ?? []))
+    )
+      return yield* Result.fail(fail('Unobserved archive partitions differ from the reconstruction receipt'))
     const cuts = (
       value: Pick<BacktestSourceManifest, 'coverageStartMs' | 'coverageEndMs' | 'universe' | 'positions'>,
     ) => ({
@@ -185,14 +223,38 @@ export const validateBacktestSourceManifest = (input: unknown) =>
     )
       return yield* Result.fail(fail('Technical regeneration requires its bound source topic'))
     const expected = backtestSourcePartitions(manifest)
+    const unobserved = manifest.archiveUnobservedPartitions ?? []
     if (
-      manifest.positions.length !== expected.length ||
+      manifest.transport === 'archive-reconstruction' &&
+      manifest.positions.some((position) => position.startOffset === position.endOffsetExclusive)
+    )
+      return yield* Result.fail(
+        fail('No-record archive partitions must be declared unobserved, not assigned empty log offsets'),
+      )
+    if (manifest.transport !== 'archive-reconstruction' && manifest.archiveUnobservedPartitions !== undefined)
+      return yield* Result.fail(fail('Only archive reconstruction can declare unobserved partitions'))
+    const suppliedTopology = [...manifest.positions, ...unobserved].sort(
+      (a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition,
+    )
+    if (
+      suppliedTopology.length !== expected.length ||
       expected.some((partition, index) => {
-        const supplied = manifest.positions[index]
+        const supplied = suppliedTopology[index]
         return supplied?.topic !== partition.topic || supplied.partition !== partition.partition
       })
     )
       return yield* Result.fail(fail('Source cuts must include every partition in the declared source topology'))
+    if (
+      unobserved.some((partition, index) => {
+        const previous = unobserved[index - 1]
+        return (
+          previous !== undefined &&
+          (previous.topic > partition.topic ||
+            (previous.topic === partition.topic && previous.partition >= partition.partition))
+        )
+      })
+    )
+      return yield* Result.fail(fail('Unobserved archive partition declarations must be unique and ordered'))
     if (
       manifest.positions.some((position, index) => {
         const previous = manifest.positions[index - 1]
@@ -232,7 +294,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
     const snapshot = yield* fs.open(snapshotPath, { flag: 'r+' })
     yield* fs.remove(snapshotPath)
     yield* Stream.runForEach(fs.stream(path), (chunk) => snapshot.writeAll(chunk))
-    yield* snapshot.seek(0, 'start')
+    yield* snapshot.seek(0n, 'start')
     const source = {
       runId,
       sourceManifestHash,
@@ -292,7 +354,13 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
               return yield* fail('Arrival is outside frozen source partition bounds')
             if (previous === undefined && offset !== BigInt(bound.startOffset))
               return yield* fail('Source omits the first data record of a declared partition cut')
-            if (previous !== undefined && offset !== BigInt(previous) + 1n)
+            // Archive envelopes retain original coordinates, not every record in the underlying Kafka log.
+            // The separately hashed reconstruction receipt explicitly limits completeness to retained rows.
+            if (
+              manifest.transport !== 'archive-reconstruction' &&
+              previous !== undefined &&
+              offset !== BigInt(previous) + 1n
+            )
               return yield* fail('Source partition cuts must contain every consecutive source offset')
             if (
               (last !== undefined && compareArrivalPositions(arrivalPosition(last), arrivalPosition(event)) > 0) ||
@@ -325,7 +393,7 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
     const preflight = read()
     yield* Stream.runDrain(preflight.stream)
     yield* preflight.verify
-    yield* snapshot.seek(0, 'start')
+    yield* snapshot.seek(0n, 'start')
     const replay = read()
     const pull = yield* Stream.toPull(replay.stream)
     let pending: readonly HistoricalMarketArrival[] = []

@@ -40,9 +40,9 @@ export const runHistoryJob = (input: unknown) =>
     if (job.operation === 'export')
       return yield* exportHistoricalDataset(job.request, job.datasetDirectory, job.outputDirectory, job.featureJar)
     const storage = yield* Config.all({
-      url: Config.string('BAYN_HISTORY_CLICKHOUSE_URL'),
-      username: Config.string('BAYN_HISTORY_CLICKHOUSE_USERNAME'),
-      password: Config.redacted('BAYN_HISTORY_CLICKHOUSE_PASSWORD'),
+      url: Config.String('BAYN_HISTORY_CLICKHOUSE_URL'),
+      username: Config.String('BAYN_HISTORY_CLICKHOUSE_USERNAME'),
+      password: Config.Redacted('BAYN_HISTORY_CLICKHOUSE_PASSWORD'),
     })
     const program = Effect.gen(function* () {
       if (job.operation === 'publish')

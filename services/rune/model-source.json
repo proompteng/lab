@@ -1,0 +1,25 @@
+{
+  "repository": "Surogate/rune-26b-a4b-GGUF",
+  "revision": "c6b360d47895bb77bdf3805a13ee5a5557ab1921",
+  "servedModel": "rune-v3-c6b360d47895",
+  "files": [
+    "chat_template.jinja",
+    "config.json",
+    "generation_config.json",
+    "model-00001-of-00011.safetensors",
+    "model-00002-of-00011.safetensors",
+    "model-00003-of-00011.safetensors",
+    "model-00004-of-00011.safetensors",
+    "model-00005-of-00011.safetensors",
+    "model-00006-of-00011.safetensors",
+    "model-00007-of-00011.safetensors",
+    "model-00008-of-00011.safetensors",
+    "model-00009-of-00011.safetensors",
+    "model-00010-of-00011.safetensors",
+    "model-00011-of-00011.safetensors",
+    "model.safetensors.index.json",
+    "processor_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json"
+  ]
+}

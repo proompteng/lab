@@ -58,6 +58,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
 
+      - name: Set up Go for guest interoperability
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
       - name: Validate controller and generated CRD
         working-directory: services/tengri
         run: |
@@ -65,6 +71,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked --all-targets
+          bash test-rpc-interop.sh
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
           diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
@@ -146,10 +153,22 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          load: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
           tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
+
+      - name: Verify guest administrator access
+        if: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
+        env:
+          GUEST_ADMIN_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          docker run --rm --interactive --user 1000:1000 \
+            --cap-add ALL --security-opt seccomp=unconfined \
+            --entrypoint /bin/bash "$GUEST_ADMIN_IMAGE" -s -- --runtime \
+            < services/nanoagent/test-guest-admin.sh
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

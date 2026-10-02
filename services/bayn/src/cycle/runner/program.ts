@@ -7,6 +7,7 @@ import { CycleState, type AutonomousCycle } from '../model'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
 import { CycleStore, type CycleDecisionBindingEvidence } from '../store'
 import { isTerminalCycleState } from '../transitions'
+import { canRearmUnboundPreSubmissionCycle } from './calendar-decisions'
 import {
   calendarQueryFailureError,
   finishRecoveryResult,
@@ -114,11 +115,11 @@ const discoverIntradayCyclePass = <R>(
           }),
         ),
       )
-      recoveredBlockedCycle =
-        Option.isSome(prior) &&
-        prior.value.mode === Authority.Execution &&
-        prior.value.contentHash === existing.value.bindings.decisionHash &&
-        prior.value.bindings.authorityGenerationHash !== context.authorityGenerationHash
+      recoveredBlockedCycle = Option.isNone(prior)
+        ? canRearmUnboundPreSubmissionCycle(existing.value, candidate, calendar.value, executionSession)
+        : prior.value.mode === Authority.Execution &&
+          prior.value.contentHash === existing.value.bindings.decisionHash &&
+          prior.value.bindings.authorityGenerationHash !== context.authorityGenerationHash
     }
     const entryAttemptOrdinal = Option.isSome(existing)
       ? nextIntradayEntryAttemptOrdinal(existing.value, observedAt, recoveredBlockedCycle)

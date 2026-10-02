@@ -1,3 +1,5 @@
+import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
+import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 import { createServer } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
@@ -9,8 +11,7 @@ import { acquireNativeExecutionRuntime } from '../composition/native-execution-r
 import { resolveOptionalExecutionControllerBinding } from '../execution/controller'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import {
-  executionBootstrapAuthorizationHash,
-  makeBaynExecutionBootstrap,
+  executionActivationAuthorizationHash,
   makeBaynExecutionController,
   type ExecutionControllerConfig,
   type NativeExecutionRuntime,
@@ -25,13 +26,13 @@ export class RestateExecutionServerError extends Data.TaggedError('RestateExecut
 }> {}
 
 export const restateExecutionServerConfig = Config.all({
-  bootstrapToken: Config.redacted('BAYN_EXECUTION_BOOTSTRAP_TOKEN'),
+  activationToken: Config.Redacted('BAYN_EXECUTION_ACTIVATION_TOKEN'),
   previousPlanHash: Config.option(Config.schema(Sha256Schema, 'BAYN_EXECUTION_PREVIOUS_PLAN_HASH')),
   previousSourceRevision: Config.option(
     Config.schema(GitSourceRevisionSchema, 'BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
   ),
-  port: Config.port('PORT').pipe(Config.withDefault(9080)),
-  requestIdentityKeys: Config.nonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
+  port: Config.Port('PORT').pipe(Config.withDefault(9080)),
+  requestIdentityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
 })
 
 const RestateRequestIdentityKeySchema = Schema.Trim.check(Schema.isPattern(/^publickeyv1_[1-9A-HJ-NP-Za-km-z]{43,44}$/))
@@ -47,25 +48,33 @@ export const decodeRestateRequestIdentityKeys = (candidate: string) =>
 export const makeRestateExecutionEndpointHandler = (
   config: ExecutionControllerConfig,
   runtime: NativeExecutionRuntime,
-  bootstrapAuthorizationHash: string,
+  activationAuthorizationHash: string,
   identityKeys: readonly string[],
+  brokerObservations: { readonly runtime: BrokerObservationRuntime; readonly pollIntervalMs: number },
   hooks: readonly restate.HooksProvider[] = [],
 ) => {
-  const controller = makeBaynExecutionController(config, runtime, hooks)
-  const bootstrap = makeBaynExecutionBootstrap(config, controller, bootstrapAuthorizationHash, hooks)
-  return restate.createEndpointHandler({ services: [controller, bootstrap], identityKeys: [...identityKeys] })
+  const observations = makeBaynBrokerObservations(
+    { ...config, pollIntervalMs: brokerObservations.pollIntervalMs },
+    brokerObservations.runtime,
+    hooks,
+  )
+  const controller = makeBaynExecutionController({ ...config, activationAuthorizationHash }, runtime, hooks)
+  return restate.createEndpointHandler({
+    services: [controller, observations],
+    identityKeys: [...identityKeys],
+  })
 }
 
 export const restateExecutionServerProgram = Effect.gen(function* () {
-  const [{ bootstrapToken, port, previousPlanHash, previousSourceRevision, requestIdentityKeys }, plan] =
+  const [{ activationToken, port, previousPlanHash, previousSourceRevision, requestIdentityKeys }, plan] =
     yield* Effect.all([restateExecutionServerConfig, loadApplicationPlan])
-  const bootstrapAuthorizationHash = yield* Effect.fromResult(
-    executionBootstrapAuthorizationHash(Redacted.value(bootstrapToken)),
+  const activationAuthorizationHash = yield* Effect.fromResult(
+    executionActivationAuthorizationHash(Redacted.value(activationToken)),
   ).pipe(
     Effect.mapError(
       (cause) =>
         new RestateExecutionServerError({
-          message: 'native Restate bootstrap token is invalid',
+          message: 'native Restate activation token is invalid',
           cause,
         }),
     ),
@@ -93,12 +102,20 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     ),
   )
   const { config, runtime } = yield* acquireNativeExecutionRuntime(plan, previousBinding)
+  const brokerObservations = yield* acquireBrokerObservationRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),
     serviceVersion: config.sourceRevision,
   })
   const server = createServer(
-    makeRestateExecutionEndpointHandler(config, runtime, bootstrapAuthorizationHash, identityKeys, telemetry.hooks),
+    makeRestateExecutionEndpointHandler(
+      config,
+      runtime,
+      activationAuthorizationHash,
+      identityKeys,
+      brokerObservations,
+      telemetry.hooks,
+    ),
   )
   yield* acquireRestateHttp2Server(server, port)
   yield* Effect.logInfo('Bayn native Restate execution endpoint is listening').pipe(
