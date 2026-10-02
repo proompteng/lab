@@ -30,10 +30,8 @@ whose parent is that agent and whose selector is `unix:uid:1000`; a Kubernetes a
 privileged registrations. A host `ClusterSPIFFEID` cannot describe this VM-local Unix process, because that controller
 adds a host Kubernetes Pod selector to every registration.
 
-The Kubernetes Service exposes SPIRE gRPC on port 443 and forwards it to the Pod listener on 8081. A temporary
-`grpc-guests` Service alias also exposes port 8081 to recover guests shipped with the listener port in their client
-configuration. Remove that alias after the corrected client uses Service port 443 in active guests. Both Service
-ports forward to the same authenticated SPIRE listener.
+The Kubernetes Service exposes SPIRE gRPC on port 443 and forwards it to the Pod listener on 8081. Guest agents
+connect to `spire-server.spire-server.svc.cluster.local:443`.
 
 This Application pre-creates `tengri/spire-guest-bundle` and name-restricted publisher RBAC at sync wave -1. The server's
 built-in bundle publisher preserves `spire-system/spire-bundle` and also writes public PEM authorities to the guest

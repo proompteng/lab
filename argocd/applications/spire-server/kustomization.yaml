@@ -17,17 +17,6 @@ helmCharts:
     valuesFile: values.yaml
 patches:
   - target:
-      kind: Service
-      name: spire-server
-    patch: |-
-      - op: add
-        path: /spec/ports/-
-        value:
-          name: grpc-guests
-          port: 8081
-          targetPort: grpc
-          protocol: TCP
-  - target:
       kind: Pod
       name: spire-server-test-connection
     patch: |-
