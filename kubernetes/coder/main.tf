@@ -482,7 +482,7 @@ resource "coder_script" "bootstrap_tools" {
 
     export PATH="$HOME/.local/bin:$PATH"
     export BUN_INSTALL="$HOME/.bun"
-    BOOTSTRAP_BUN_VERSION="1.4.0"
+    BOOTSTRAP_BUN_VERSION="1.4.2"
     mkdir -p "$BUN_INSTALL" "$HOME/.local/bin" /tmp/coder-script-data/bin
     case ":$PATH:" in
       *:"$BUN_INSTALL/bin":*) ;;

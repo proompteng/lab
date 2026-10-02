@@ -18,7 +18,7 @@ export interface BrokerSnapshotCacheConfig {
 }
 const interval = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: maximumBrokerObservationAgeMs }))
 export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig, BrokerReadError> = Config.all({
-  pollIntervalMs: Config.schema(interval, 'BAYN_BROKER_POLL_INTERVAL_MS').pipe(Config.withDefault(30_000)),
+  pollIntervalMs: Config.schema(interval, 'BAYN_BROKER_POLL_INTERVAL_MS').pipe(Config.withDefault(10_000)),
   maxAgeMs: Config.schema(interval, 'BAYN_BROKER_CACHE_MAX_AGE_MS').pipe(
     Config.withDefault(maximumBrokerObservationAgeMs),
   ),

@@ -66,7 +66,7 @@ TigerBeetle operator code lives in the standalone `proompteng/tigresse` reposito
 - Nix with flakes enabled. The repo-level toolchain is provided by `nix develop`.
 - Without Nix, install the equivalent tools manually:
   - Node `24.11.1`
-  - Bun `1.4.0`
+  - Bun `1.4.2`
   - Go `1.25.5` for repo parity; Go services support `1.24+`
   - Ruby `3.4.7` + Bundler `2.7+` for `services/dernier`
   - Python:

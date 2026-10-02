@@ -3,7 +3,7 @@
 ARG GO_BASE_IMAGE=mirror.gcr.io/golang
 ARG GO_VERSION=1.25.5
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG NODE_BASE_IMAGE=mirror.gcr.io/node
 ARG NODE_VERSION=24.11.1
 ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
@@ -318,8 +318,8 @@ RUN mkdir -p "$HOME" && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
     test "$(npm config get prefix)" = "$HOME/.local" && \
-    test "$(bun --version)" = '1.4.0' && \
-    test "$(bunx --version)" = '1.4.0' && \
+    test "$(bun --version)" = '1.4.2' && \
+    test "$(bunx --version)" = '1.4.2' && \
     test "$(uv --version | cut -d' ' -f2)" = '0.11.14' && \
     test "$(go version | cut -d' ' -f3)" = 'go1.25.5' && \
     test "$(go env GOROOT)" = "$HOME/.local/go" && \
