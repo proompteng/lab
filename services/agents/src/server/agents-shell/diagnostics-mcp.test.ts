@@ -242,6 +242,37 @@ describe('diagnostic MCP boundaries', () => {
     })
   })
 
+  it('returns distinct protocol timings through the diagnostic output schema', async () => {
+    writeFileSync(
+      join(root, 'phases.log'),
+      ['parse S_1: SELECT 1', 'bind S_1: SELECT 1', 'execute S_1: SELECT 1', '']
+        .map((suffix, index) =>
+          JSON.stringify({
+            record: {
+              log_time: '2026-01-02T14:00:00Z',
+              message: `duration: ${index + 1} ms  ${suffix}`,
+            },
+          }),
+        )
+        .join('\n'),
+    )
+    const result = await client.callTool({
+      name: 'postgres_log_summary',
+      arguments: {
+        path: 'phases.log',
+        startAt: '2026-01-02T13:30:00Z',
+        endAt: '2026-01-02T20:00:00Z',
+      },
+    })
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      parseDurationMs: { count: 1, total: 1 },
+      bindDurationMs: { count: 1, total: 2 },
+      statementDurationMs: { count: 1, total: 3 },
+      unattributedDurationMs: { count: 1, total: 4 },
+    })
+  })
+
   it('retains authorization requirements for diagnostics', async () => {
     await client.close()
     await server.close()

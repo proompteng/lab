@@ -295,6 +295,9 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
       }
       const severities = { DEBUG: 0, INFO: 0, LOG: 0, NOTICE: 0, WARNING: 0, ERROR: 0, FATAL: 0, PANIC: 0, UNKNOWN: 0 }
       const statements: number[] = []
+      const parses: number[] = []
+      const binds: number[] = []
+      const unattributed: number[] = []
       const commits: number[] = []
       const checkpoints: number[] = []
       const restartpoints: number[] = []
@@ -351,8 +354,14 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
         const message = record.message
         const duration = message.match(/^duration:\s+(\d+(?:\.\d+)?)\s+ms\b/)
         if (duration) {
-          const value = addDuration(duration[1], 1, statements)
+          const suffix = message.slice(duration[0].length).trimStart()
+          let samples = unattributed
+          if (/^(?:statement:|execute\s+[^:]*:)/i.test(suffix)) samples = statements
+          else if (/^parse\s+[^:]*:/i.test(suffix)) samples = parses
+          else if (/^bind\s+[^:]*:/i.test(suffix)) samples = binds
+          const value = addDuration(duration[1], 1, samples)
           if (
+            samples === statements &&
             value !== null &&
             /^duration:\s+\d+(?:\.\d+)?\s+ms\s+(?:statement|execute [^:]*):\s*COMMIT(?:\s+(?:WORK|TRANSACTION))?\s*;?\s*$/i.test(
               message,
@@ -387,6 +396,9 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
         severities,
         quantileMethod: 'nearest_rank' as const,
         statementDurationMs: durationSummary(statements),
+        parseDurationMs: durationSummary(parses),
+        bindDurationMs: durationSummary(binds),
+        unattributedDurationMs: durationSummary(unattributed),
         commitDurationMs: durationSummary(commits),
         checkpointSyncMs: durationSummary(checkpoints),
         restartpointSyncMs: durationSummary(restartpoints),

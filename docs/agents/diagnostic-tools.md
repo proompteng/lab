@@ -56,6 +56,12 @@ limited to 32 MiB, 250,000 physical lines and 1 MiB per line. The reader support
 optionally prefixed by a Kubernetes UTC timestamp. Timestamp bounds and records retain up to nine fractional digits
 during comparisons and in returned timestamps. Sub-millisecond intervals are not rounded to zero.
 
+`statementDurationMs` includes only explicitly labeled `statement` and `execute` duration records. Parse and bind
+timings have separate `parseDurationMs` and `bindDurationMs` aggregates. Bare duration records and unknown timing
+suffixes remain in `unattributedDurationMs`; they are not assumed to be statement execution. PostgreSQL can emit
+Parse, Bind and Execute durations independently, including without query text. See the
+[PostgreSQL logging contract](https://www.postgresql.org/docs/18/runtime-config-logging.html).
+
 The fixed parser returns severity counts, statement and COMMIT duration distributions, checkpoint/restartpoint
 sync-duration distributions, replication-timeout counts, and the count of observed commits longer than one second.
 Durations are milliseconds. Quantiles use nearest rank over retained in-range samples. No observed samples produce

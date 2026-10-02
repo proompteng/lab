@@ -269,6 +269,29 @@ describe('PostgreSQL retained-log summaries', () => {
     expect(result.sessionCoverage).toBe('not_proven')
   })
 
+  it('separates execution, parse, bind and unattributed duration records', () => {
+    const messages = [
+      'duration: 1 ms  parse S_1: COMMIT',
+      'duration: 2 ms  bind S_1: COMMIT',
+      'duration: 3 ms  execute S_1: COMMIT;',
+      'duration: 4 ms  statement: SELECT 1',
+      'duration: 5 ms',
+      'duration: 6 ms  unknown timing format',
+    ]
+    writeFileSync(
+      join(root, 'phases.log'),
+      messages.map((message) => record('2026-01-02T14:00:00Z', message)).join('\n'),
+    )
+    expect(summarizePostgresLog(root, { path: 'phases.log', startAt, endAt })).toMatchObject({
+      inRangeRecords: 6,
+      statementDurationMs: { count: 2, total: 7, minimum: 3, maximum: 4, p50: 3, p95: 4 },
+      parseDurationMs: { count: 1, total: 1 },
+      bindDurationMs: { count: 1, total: 2 },
+      unattributedDurationMs: { count: 2, total: 11 },
+      commitDurationMs: { count: 1, total: 3 },
+    })
+  })
+
   it('accepts PostgreSQL UTC log timestamps and excludes undated events', () => {
     writeFileSync(
       join(root, 'postgres.log'),
