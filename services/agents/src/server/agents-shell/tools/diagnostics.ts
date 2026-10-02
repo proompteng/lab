@@ -20,7 +20,7 @@ import { toolSecurityMeta, type EffectTool, type EffectToolContext } from '../mc
 import { jsonTextResult } from '../results'
 import { resolveWorkspacePath } from '../workspace-policy'
 
-const readDiagnostic = <I extends { path: string; sessionId?: string }, O extends { sizeBytes: number }>(
+const readDiagnostic = <I extends { path: string; sessionId?: string }, O extends { path: string; sizeBytes: number }>(
   name: string,
   input: I,
   { runner, auth }: EffectToolContext,
@@ -36,7 +36,7 @@ const readDiagnostic = <I extends { path: string; sessionId?: string }, O extend
       })
       runner.audit('diagnostic_read', auth, {
         tool: name,
-        pathHash: createHash('sha256').update(path).digest('hex'),
+        pathHash: createHash('sha256').update(result.path).digest('hex'),
         sizeBytes: result.sizeBytes,
       })
       return jsonTextResult(result)

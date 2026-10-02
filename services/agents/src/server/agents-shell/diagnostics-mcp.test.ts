@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -48,6 +49,44 @@ afterEach(async () => {
 })
 
 describe('diagnostic MCP boundaries', () => {
+  it('audits the file actually opened when a permitted path changes after authorization', async () => {
+    const audit = vi.spyOn(runner, 'audit')
+    const resolveCwd = runner.resolveCwd.bind(runner)
+    const content = JSON.stringify({
+      record: { log_time: '2026-01-02T14:00:00Z', message: 'duration: 1 ms  statement: COMMIT' },
+    })
+    for (const name of ['file_read_range', 'evidence_inspect', 'postgres_log_summary']) {
+      const path = join(root, `${name}.json`)
+      const target = join(root, `${name}-target.json`)
+      writeFileSync(path, '{}')
+      writeFileSync(target, content)
+      const check = vi.spyOn(runner, 'resolveCwd').mockImplementationOnce((...args) => {
+        const result = resolveCwd(...args)
+        unlinkSync(path)
+        symlinkSync(target, path)
+        return result
+      })
+      try {
+        const args =
+          name === 'evidence_inspect'
+            ? { path, format: 'json' }
+            : name === 'postgres_log_summary'
+              ? { path, startAt: '2026-01-02T13:30:00Z', endAt: '2026-01-02T20:00:00Z' }
+              : { path }
+        const result = await client.callTool({ name, arguments: args })
+        expect(result.isError).not.toBe(true)
+        expect(result.structuredContent).toMatchObject({ path: target })
+        expect(audit).toHaveBeenCalledWith('diagnostic_read', expect.anything(), {
+          tool: name,
+          pathHash: createHash('sha256').update(target).digest('hex'),
+          sizeBytes: Buffer.byteLength(content),
+        })
+      } finally {
+        check.mockRestore()
+      }
+    }
+  })
+
   it('rechecks ownership if the path changes after the initial authorization', async () => {
     const worktree = join(root, 'worktrees', 'lab', 'other-owner')
     mkdirSync(worktree, { recursive: true })
