@@ -40,6 +40,26 @@ const controllerID = "spiffe://" + fixtureDomain + "/ns/tengri/sa/tengri"
 const bffID = "spiffe://" + fixtureDomain + "/ns/proompteng/sa/proompteng"
 const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/nanoagent/pod/interop-agent"
 
+func TestSPIREAgentServiceEndpoint(t *testing.T) {
+	config, err := guestAgentConfig(fixtureDomain, "/tmp/nanoagent-spire/agent.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Agent struct {
+			ServerAddress string `json:"server_address"`
+			ServerPort    int    `json:"server_port"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(config, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	// The Kubernetes Service maps port 443 to the SPIRE Pod's port 8081.
+	if decoded.Agent.ServerAddress != "spire-server.spire-server.svc.cluster.local" || decoded.Agent.ServerPort != 443 {
+		t.Fatalf("guest must use SPIRE's Kubernetes Service endpoint on port 443, got %s:%d", decoded.Agent.ServerAddress, decoded.Agent.ServerPort)
+	}
+}
+
 func TestSPIREAgentConfiguration(t *testing.T) {
 	binary := os.Getenv("SPIRE_AGENT_VALIDATE_BINARY")
 	if binary == "" {
