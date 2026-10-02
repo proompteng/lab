@@ -16,7 +16,7 @@ const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)$/i
 const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)$/i
 const SHELL_INPUT =
-  /<<|[<>]\(|\$\(|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])/i
+  /<<|[<>]\(|\$\(|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post|body)-(?:data|file)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)/i
 const COMPACT_CREDENTIAL_OPTION = /^-[puUbEa]$/
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/

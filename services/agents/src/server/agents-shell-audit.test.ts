@@ -601,6 +601,36 @@ describe('agents-shell activity audit', () => {
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
   })
 
+  it('omits named HTTP request-body inputs across commands while retaining GET targets', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'wget --post-data=\'{"ssn":"synthetic-personal-body"}\' https://example.test',
+      "wget --body-data 'synthetic-personal-body' --method=PUT https://example.test",
+      "wg''et --po''st-data=synthetic-personal-body https://example.test",
+      "http --raw 'synthetic-personal-body' POST https://example.test",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'wget',
+      args: ['--body-data', 'synthetic-personal-body', 'https://example.test'],
+    })
+    writeAuditLog(config, 'probe', null, { command: 'wget --quiet https://example.test' })
+    writeAuditLog(config, 'probe', null, { command: 'git diff --raw HEAD' })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-personal-body')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+      expect(content).toContain('wget --quiet https://example.test')
+      expect(content).toContain('git diff --raw HEAD')
+    }
+    expect(
+      records()
+        .slice(0, -2)
+        .every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]'),
+    ).toBe(true)
+  })
+
   it('preserves valueless user switches outside credential-owning commands', () => {
     const records = captureAudit()
     const config = configFixture()

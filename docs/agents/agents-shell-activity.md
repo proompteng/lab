@@ -45,10 +45,12 @@ emit credentials or task text without identifiable field names; shell syntax can
 matching. Output omission does not depend on parsing commands. Exit status, byte counts, duration, and command metadata
 remain available. Inspect retained output through the authorized MCP caller rather than Loki.
 Commands and argv using stdin/fd credential switches, stdin paths, stdin-backed Kubernetes manifests, or curl's stdin
-configuration (`--config -` or `-K -`), or curl request bodies (`--data*`, `--json`, `--form*`, `-d`, or `-F`) are omitted
+configuration (`--config -` or `-K -`), or HTTP request bodies are omitted
 in full and marked `[OMITTED_SHELL_INPUT]`. Inline shell bodies in here-strings, here-documents, process substitutions,
 and command substitutions receive the same treatment. The audit retains the tool, job ID, timing, outcome, and byte
 counts without parsing out that input.
+HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
+`--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. Ordinary GET targets remain visible.
 Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation
 text and goal objectives.
 Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess
