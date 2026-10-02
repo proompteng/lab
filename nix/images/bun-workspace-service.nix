@@ -169,6 +169,7 @@ let
         rm -rf "$out"
         mkdir -p "$out"
         cp -R "$BUN_INSTALL_CACHE_DIR/." "$out/"
+        bash ${./relativize-bun-cache.sh} "$out" "$BUN_INSTALL_CACHE_DIR"
       else
         bash ${./prune-bun-dependency-metadata.sh} "$out"
       fi

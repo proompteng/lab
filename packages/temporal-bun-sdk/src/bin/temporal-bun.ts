@@ -430,7 +430,7 @@ export function projectTemplates(name: string): Template[] {
             effect: '^3.2.0',
           },
           devDependencies: {
-            'bun-types': '^1.4.0',
+            'bun-types': '^1.4.2',
           },
         },
         null,
@@ -577,7 +577,7 @@ function parseArgs(argv: string[]) {
       path: 'Dockerfile',
       contents: `# syntax=docker/dockerfile:1.6
 
-FROM oven/bun:1.4.0
+FROM oven/bun:1.4.2
 WORKDIR /app
 
 COPY package.json bunfig.toml tsconfig.json ./

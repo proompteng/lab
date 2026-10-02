@@ -78,7 +78,7 @@ executables, and copyright files remain. Native image checks exercise Python SSL
 The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
 messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
 The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
-compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, Rust/Cargo
+compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.2, uv 0.11.14, Go 1.25.5, Rust/Cargo
 1.90.0, and native GCC 13.3.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox
 prerequisite instead of showing a bundled-helper fallback warning after device login.
 

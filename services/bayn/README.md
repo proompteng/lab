@@ -23,27 +23,52 @@ projection. Final submission reads account, positions and orders from one payloa
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
-`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 30,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
+`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
 for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
 and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
 observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
 poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
 If a successful capture races a mutation or newer broker evidence and cannot publish, its successor retries after
-one second. A failed capture keeps the regular polling cadence. Both paths remain unavailable until a cut passes all
-publication and freshness checks.
+one second, subject to the background HTTP budget. A failed capture keeps the regular polling cadence or waits for
+the budget deadline, whichever is later. Both paths remain unavailable until a cut passes all publication and
+freshness checks.
 
 Jev validates cached account, position, order and reconciliation timestamps against the sixty-second broker
 observation ceiling, independently of its ten-second quote limit. A configured shorter cache lifetime still applies
 at the projection read, and final risk authorization retains its existing freshness checks.
+Maximum-hold, model and protective exits use the same broker ceiling. An expired or future broker observation still
+rejects the exit; accepting a cached position does not extend a model response or executable quote's deadline.
 A mutation or newer retained broker event can invalidate a successful cut before the next poll. While that cut is
 still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
-Each waiting pass rechecks the projection. Expiry, a failed poll, wrong source revision or corrupt evidence remain
-failures; waiting cannot make unavailable data usable or clear an authority restriction.
+Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
+normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
+Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
+wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
+authority restriction.
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
-Market-data subscriptions have separate limits. The cache preserves response rate-limit headers; these fixes keep
-the thirty-second poll rather than increasing broker traffic to match the market quote clock.
+Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
+with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
+at the default cadence. The background client's transport counts every actual attempt, including startup verification,
+pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
+100 background calls per minute on average, or half a smaller reported account limit. Complete captures keep their
+existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
+remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
+or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
+journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
+captures, so worker replacement and source rotation preserve outstanding cost. Larger captures extend the
+poll cadence rather than adding artificial delays inside a full history scan. Before each capture, including repeated
+activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
+and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
+allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
+deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
+its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
+timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
+Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
+the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
+capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
+the background budget does not impose a global limit on other account callers.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -51,6 +76,9 @@ intent's own start event; other mutations or newer durable broker evidence inval
 before transmission and after completion, failure or interruption. Unknown or unresolved requests block submission;
 settled observations remain available to native reconciliation and lookup-only recovery so an unknown outcome cannot
 deadlock its own recovery. Observing an account never grants trading authority.
+Submit and cancel check the writer fence in their durable reservation transaction; there is no separate empty
+precheck transaction. Final submit authorization and mutation outcome persistence retain their existing transactional
+fences.
 A later poll must start after the existing one-second broker consistency window. Lookup-only recovery invalidates a
 cut when it finds new durable order state. Restarting a worker does not create a second cache or bypass reservations.
 
