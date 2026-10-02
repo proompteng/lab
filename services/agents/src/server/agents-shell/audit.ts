@@ -13,11 +13,10 @@ export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization)[\w-]*|--user)$/i
-const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|payload|_meta)$/i
+const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|stderr|payload|_meta)$/i
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
-const PRIVATE_KUBERNETES_RESOURCE = /\b(secrets?|sec|agentruns?)(?=[\s/.,"';]|$)/i
 const CREDENTIAL_COMMAND =
   /\b(curl|mysql|mariadb|sshpass|redis-cli|docker[ \t]+login|podman[ \t]+login)\b((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
@@ -161,10 +160,6 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
     if (value !== null && typeof value === 'object') {
       const omitted = 'kind' in value ? bodyOmission(value.kind) : undefined
       if (omitted) return omitted
-      const omittedOutput =
-        'command' in value && typeof value.command === 'string' && /\bkubectl\b/.test(value.command)
-          ? bodyOmission(value.command.match(PRIVATE_KUBERNETES_RESOURCE)?.[1])
-          : undefined
       const owningCommand = 'command' in value && typeof value.command === 'string' ? value.command : command
       const result: Record<string, unknown> = {}
       const entries = Object.entries(value)
@@ -176,9 +171,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
           ? '[REDACTED]'
           : OMITTED_BODY.test(key)
             ? '[OMITTED]'
-            : omittedOutput && (key === 'stdout' || key === 'stderr')
-              ? omittedOutput
-              : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
+            : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
       }
       if (Object.keys(result).length < entries.length) truncated = true
       return result

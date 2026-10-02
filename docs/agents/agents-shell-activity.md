@@ -7,7 +7,7 @@ Open [Grafana Explore](https://grafana.k8s.proompteng.ai/explore), select the **
 ```
 
 Each JSON event includes `ts`, `event`, `schemaVersion`, a pseudonymous `subjectHash`, and `payload`.
-Tool calls also include `requestId`, `toolCallId`, and `tool`. Expand a log line to inspect its arguments and result.
+Tool calls also include `requestId`, `toolCallId`, and `tool`. Expand a log line to inspect its arguments and result metadata.
 Rejected authorization and unknown-tool calls retain metadata only. Their arguments, response content, and supplied
 unknown tool names are excluded from audit records.
 
@@ -21,13 +21,13 @@ Filter by a tool or follow one call:
 {namespace="agents"} |= "agents-shell audit" | json | toolCallId="<call-id>"
 ```
 
-| Event                                                               | Activity                                                                                                                                                                                                  |
-| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tool_call_started`                                                 | Every call's known tool name and authorization result. Authorized calls also include sanitized arguments.                                                                                                 |
-| `tool_call_finished`                                                | Outcome and duration for every call, plus a sanitized result preview for authorized calls. `error` means an MCP tool error. `failed` means process failure. `running` means a background job has started. |
-| `shell_job_started`                                                 | Job ID, command, working directory, and timeout.                                                                                                                                                          |
-| `shell_job_finished`                                                | Job ID, duration, exit code, signal, timeout state, and retained output previews.                                                                                                                         |
-| Existing Git, patch, search, kubectl, and repository-session events | Process and workspace activity associated with the current tool call.                                                                                                                                     |
+| Event                                                               | Activity                                                                                                                                                                                                 |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tool_call_started`                                                 | Every call's known tool name and authorization result. Authorized calls also include sanitized arguments.                                                                                                |
+| `tool_call_finished`                                                | Outcome and duration for every call, plus sanitized result metadata for authorized calls. `error` means an MCP tool error. `failed` means process failure. `running` means a background job has started. |
+| `shell_job_started`                                                 | Job ID, command, working directory, and timeout.                                                                                                                                                         |
+| `shell_job_finished`                                                | Job ID, duration, exit code, signal, timeout state, output byte counts, and truncation state.                                                                                                            |
+| Existing Git, patch, search, kubectl, and repository-session events | Process and workspace activity associated with the current tool call.                                                                                                                                    |
 
 For `shell_start`, use `payload.jobId` from its result to identify the job. Its later `shell_job_finished` event retains
 the original call ID even after the initiating request has returned. `shell_read` and `shell_status` create their own
@@ -39,13 +39,16 @@ Audit sanitization removes known credential environment values, credential field
 formats, authorization strings, database connection URLs, URL passwords, and email addresses. Typed patch bodies,
 `read_file` contents, delegated task text, stdin, and MCP metadata are omitted. OAuth subjects are hashed, and usernames and email
 claims are excluded. Sanitization changes audit records only. Authorized MCP results retain their original content.
-Kubernetes Secret/SecretList and AgentRun/AgentRunList bodies are omitted, including inline implementation text and goal
-objectives. Output from commands selecting these resources is also omitted, including JSONPath projections and later
-background-job reads. Exit status, byte counts, duration, and command metadata remain available.
+Raw stdout and stderr are omitted from every audit event, including later background-job reads. Arbitrary programs can
+emit credentials or task text without identifiable field names; shell syntax can also hide a resource name from command
+matching. Output omission does not depend on parsing commands. Exit status, byte counts, duration, and command metadata
+remain available. Inspect retained output through the authorized MCP caller rather than Loki.
+Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation
+text and goal objectives.
 Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess
 output, which can contain task text in worker records or logs.
 
-Each string preview is limited to 4,000 encoded JSON bytes. The payload has a shared 12,000-byte budget, a maximum
+Each retained string is limited to 4,000 encoded JSON bytes. The payload has a shared 12,000-byte budget, a maximum
 nesting depth of four, 20 entries per array, and 30 fields per object. `payloadTruncated=true` marks omitted preview
 data. `stdoutTruncated` and `stderrTruncated` describe the shell's separate output-buffer limits.
 

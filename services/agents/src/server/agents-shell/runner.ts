@@ -296,8 +296,6 @@ export class AgentsShellRunner {
           signal,
           timedOut: job.timedOut,
           durationMs: performance.now() - startedAt,
-          stdout: job.stdout.buffer.toString('utf8'),
-          stderr: job.stderr.buffer.toString('utf8'),
           stdoutBytes: job.stdout.totalBytes,
           stderrBytes: job.stderr.totalBytes,
           stdoutTruncated: job.stdout.truncated,
