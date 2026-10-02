@@ -1,5 +1,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { fileURLToPath } from 'node:url'
 import { Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { sha256 } from '../src/hash'
 import {
   MatchedStudyInputSchema,
@@ -9,6 +11,34 @@ import {
 import { SignalStudyFailure } from '../src/intraday-replay/signal-study'
 import { validateBacktestSourceReceipt } from '../src/intraday-replay/source'
 import { strictParseOptions } from '../src/schemas'
+
+const verifyRegisteredCheckout = (sourceRevision: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+    // Bind the source executing this command, independently of the caller's working directory.
+    const cwd = fileURLToPath(new URL('../../../', import.meta.url))
+    const git = (args: readonly string[]) =>
+      Effect.gen(function* () {
+        const child = yield* spawner.spawn(ChildProcess.make('git', args, { cwd, stdin: 'ignore', stderr: 'ignore' }))
+        const [output, exitCode] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(child.stdout)), child.exitCode],
+          { concurrency: 'unbounded' },
+        )
+        if (Number(exitCode) !== 0)
+          return yield* new SignalStudyFailure({ message: 'Cannot verify the executing Git checkout' })
+        return output.trim()
+      }).pipe(
+        Effect.scoped,
+        Effect.timeout('10 seconds'),
+        Effect.mapError(
+          (cause) => new SignalStudyFailure({ message: 'Registered checkout verification failed', cause }),
+        ),
+      )
+    if ((yield* git(['rev-parse', 'HEAD'])) !== sourceRevision)
+      return yield* new SignalStudyFailure({ message: 'Executing checkout revision differs from registration' })
+    if ((yield* git(['status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=none'])) !== '')
+      return yield* new SignalStudyFailure({ message: 'Executing checkout must be clean and fully committed' })
+  })
 
 export const runMatchedCommand = (args: readonly string[]) =>
   Effect.gen(function* () {
@@ -56,6 +86,7 @@ export const runMatchedCommand = (args: readonly string[]) =>
       Schema.fromJsonString(MatchedRegistrationSchema),
       strictParseOptions,
     )(registeredText)
+    yield* verifyRegisteredCheckout(registration.sourceRevision)
     for (const witness of input.witnesses) {
       if (sha256(yield* fs.readFile(witness.path)) !== witness.sha256)
         return yield* new SignalStudyFailure({ message: 'Private witness hash differs' })
@@ -64,6 +95,7 @@ export const runMatchedCommand = (args: readonly string[]) =>
       validateBacktestSourceReceipt(yield* fs.readFileString(receiptPath), receiptHash),
     )
     const report = yield* runMatchedEntryStudy(input, registration, arrivals, receipt)
+    yield* verifyRegisteredCheckout(registration.sourceRevision)
     yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
     const stdio = yield* Stdio.Stdio
     yield* Stream.run(

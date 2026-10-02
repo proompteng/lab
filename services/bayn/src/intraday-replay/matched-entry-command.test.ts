@@ -1,7 +1,10 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
-import { Effect, FileSystem, Result } from 'effect'
+import { fileURLToPath } from 'node:url'
+import { Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
+import { TestClock } from 'effect/testing'
 import { canonicalHashV1, sha256 } from '../hash'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { makeJevObservation } from '../jev/observation'
@@ -149,13 +152,59 @@ test('offline command reproduces native observations, prices shared lifecycle on
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped()
+      const checkout = yield* fs.makeTempDirectoryScoped()
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+      const git = (args: readonly string[]) =>
+        ChildProcess.make('git', args, { cwd: checkout, stdin: 'ignore', stderr: 'ignore' })
+      expect(Number(yield* spawner.exitCode(git(['init', '--quiet'])))).toBe(0)
+      yield* fs.writeFileString(`${checkout}/source.ts`, 'export const value = 1\n')
+      expect(Number(yield* spawner.exitCode(git(['add', 'source.ts'])))).toBe(0)
+      expect(
+        Number(
+          yield* spawner.exitCode(
+            git([
+              '-c',
+              'user.name=Test',
+              '-c',
+              'user.email=test@example.invalid',
+              'commit',
+              '--quiet',
+              '-m',
+              'fixture',
+            ]),
+          ),
+        ),
+      ).toBe(0)
+      const sourceRevision = (yield* spawner.string(git(['rev-parse', 'HEAD']))).trim()
+      let changeDuringEvaluation = false
+      let revisionReads = 0
+      const run = (args: readonly string[]) =>
+        runMatchedCommand(args).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              if (command._tag !== 'StandardCommand' || command.command !== 'git')
+                return Effect.die('Unexpected process in offline matched command')
+              expect(command.options.cwd).toBe(fileURLToPath(new URL('../../../../', import.meta.url)))
+              const changed =
+                changeDuringEvaluation && command.args[0] === 'rev-parse' && ++revisionReads === 2
+                  ? fs.writeFileString(`${checkout}/source.ts`, 'export const value = 4\n')
+                  : Effect.void
+              return changed.pipe(
+                Effect.andThen(
+                  spawner.spawn(ChildProcess.make('git', command.args, { ...command.options, cwd: checkout })),
+                ),
+              )
+            }),
+          ),
+        )
       const arrivals = `${directory}/arrivals.gz`
       yield* fs.writeFile(arrivals, gzipSync(data.body))
       const inputPath = `${directory}/input.json`
       const registeredPath = `${directory}/registration.json`
       const receiptPath = `${directory}/receipt.json`
       const inputText = JSON.stringify(data.input)
-      const registeredText = JSON.stringify(data.registration)
+      const registeredText = JSON.stringify({ ...data.registration, sourceRevision })
       const receiptText = JSON.stringify(data.receipt.value)
       yield* fs.writeFileString(inputPath, inputText)
       yield* fs.writeFileString(registeredPath, registeredText)
@@ -179,7 +228,39 @@ test('offline command reproduces native observations, prices shared lifecycle on
         '--output',
         outputPath,
       ]
-      const report = yield* runMatchedCommand(args)
+      const mismatchedText = JSON.stringify({ ...data.registration, sourceRevision: '0'.repeat(40) })
+      yield* fs.writeFileString(registeredPath, mismatchedText)
+      expect(
+        Result.isFailure(
+          yield* run(args.map((v) => (v === sha256(registeredText) ? sha256(mismatchedText) : v))).pipe(Effect.result),
+        ),
+      ).toBeTrue()
+      expect(yield* fs.exists(outputPath)).toBeFalse()
+      yield* fs.writeFileString(registeredPath, registeredText)
+      yield* fs.writeFileString(`${checkout}/source.ts`, 'export const value = 2\n')
+      expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
+      expect(yield* fs.exists(outputPath)).toBeFalse()
+      expect(Number(yield* spawner.exitCode(git(['add', 'source.ts'])))).toBe(0)
+      expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
+      expect(yield* fs.exists(outputPath)).toBeFalse()
+      expect(
+        Number(yield* spawner.exitCode(git(['restore', '--source=HEAD', '--staged', '--worktree', 'source.ts']))),
+      ).toBe(0)
+      yield* fs.writeFileString(`${checkout}/untracked.ts`, 'export const value = 3\n')
+      expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
+      expect(yield* fs.exists(outputPath)).toBeFalse()
+      yield* fs.remove(`${checkout}/untracked.ts`)
+      changeDuringEvaluation = true
+      expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
+      expect(revisionReads).toBe(2)
+      expect(yield* fs.exists(outputPath)).toBeFalse()
+      changeDuringEvaluation = false
+      expect(Number(yield* spawner.exitCode(git(['restore', 'source.ts'])))).toBe(0)
+      yield* fs.rename(`${checkout}/.git`, `${checkout}/git-metadata`)
+      expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
+      expect(yield* fs.exists(outputPath)).toBeFalse()
+      yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
+      const report = yield* run(args)
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.momentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
@@ -191,10 +272,10 @@ test('offline command reproduces native observations, prices shared lifecycle on
       const { reportHash, ...material } = report
       expect(canonicalHashV1(material)).toBe(reportHash)
       expect(JSON.parse(yield* fs.readFileString(outputPath))).toEqual(report)
-      expect(Result.isFailure(yield* runMatchedCommand(args).pipe(Effect.result))).toBeTrue()
+      expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
       expect(
         Result.isFailure(
-          yield* runMatchedCommand(args.map((v) => (v === sha256(inputText) ? '0'.repeat(64) : v))).pipe(Effect.result),
+          yield* run(args.map((v) => (v === sha256(inputText) ? '0'.repeat(64) : v))).pipe(Effect.result),
         ),
       ).toBeTrue()
       const late = {
@@ -251,3 +332,58 @@ test('offline command reproduces native observations, prices shared lifecycle on
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 }, 30_000)
+
+test.each(['timeout', 'interruption', 'defect'] as const)(
+  'checkout verification releases its process exactly once after %s and writes no report',
+  async (termination) => {
+    const data = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped()
+        const inputText = JSON.stringify(data.input)
+        const registrationText = JSON.stringify(data.registration)
+        yield* fs.writeFileString(`${directory}/input.json`, inputText)
+        yield* fs.writeFileString(`${directory}/registration.json`, registrationText)
+        const started = yield* Deferred.make<void>()
+        let finalized = 0
+        const worker = yield* runMatchedCommand([
+          '--input',
+          `${directory}/input.json`,
+          '--input-sha256',
+          sha256(inputText),
+          '--registration',
+          `${directory}/registration.json`,
+          '--registration-sha256',
+          sha256(registrationText),
+          '--arrivals',
+          `${directory}/absent.gz`,
+          '--source-receipt',
+          `${directory}/absent.json`,
+          '--source-receipt-sha256',
+          '0'.repeat(64),
+          '--output',
+          `${directory}/report.json`,
+        ]).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.acquireRelease(Deferred.succeed(started, undefined), () =>
+                Effect.sync(() => {
+                  finalized += 1
+                }),
+              ).pipe(Effect.andThen(termination === 'defect' ? Effect.die('synthetic Git defect') : Effect.never)),
+            ),
+          ),
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(started)
+        if (termination === 'timeout') yield* TestClock.adjust('10 seconds')
+        if (termination === 'interruption') yield* Fiber.interrupt(worker)
+        expect(Exit.isFailure(yield* Fiber.await(worker))).toBeTrue()
+        expect(finalized).toBe(1)
+        expect(yield* fs.exists(`${directory}/report.json`)).toBeFalse()
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(NodeServices.layer)),
+    )
+  },
+)

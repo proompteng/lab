@@ -28,7 +28,9 @@ Decode registrations with `MatchedRegistrationSchema`:
 
 Freeze the code, threshold/prompt/protocol, universe, arrival model, costs and execution assumptions before the first
 prospective market open. Independently record the registration byte SHA-256 and code revision in a review receipt.
-Check the actual checkout against `sourceRevision`. The command checks definition/protocol/assumptions, five
+The command requires its executing Git checkout to be clean and match `sourceRevision`, before evaluation and again
+before writing the report. Staged, unstaged and untracked changes fail; a different caller working directory cannot
+substitute another checkout. The command also checks definition/protocol/assumptions, five
 consecutive retained calendar sessions and the pre-open timestamp; it cannot prove that an asserted timestamp
 was recorded prospectively. The independent review receipt must establish that fact.
 
