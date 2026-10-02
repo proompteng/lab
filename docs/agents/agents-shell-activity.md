@@ -52,7 +52,7 @@ in full and marked `[OMITTED_SHELL_INPUT]`. Pipelines and inline shell bodies in
 substitutions, and command substitutions receive the same treatment, independent of the receiving program. Logical
 `||` control flow remains visible. The audit retains the tool, job ID, timing, outcome, and byte counts without parsing
 out that input. Dollar expressions are conservatively omitted as opaque input, including dollar characters in quoted
-text. Brace and glob expansion markers (`{`, `}`, `[`, `]`, and `*`) receive the same conservative treatment,
+text. Parenthesized shell groups are also omitted in full. Brace and glob expansion markers (`{`, `}`, `[`, `]`, and `*`) receive the same conservative treatment,
 including quoted literals. The audit does not resolve expansions that can hide executable names, options, or operations.
 Explicit inline code passed to shell/Python command modes, Node/Bun eval/print modes, or shell `eval`, `trap`, and
 `alias` builtins is omitted as an opaque body, as are embedded SSH `ProxyCommand`, `RemoteCommand`, `LocalCommand`, and `KnownHostsCommand` bodies. Script-file paths
