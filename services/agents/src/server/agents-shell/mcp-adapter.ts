@@ -118,11 +118,7 @@ const mapToolError = (config: AgentsShellConfig, error: unknown): CallToolResult
 const callEffectTool = (tool: EffectTool, value: unknown) =>
   Effect.gen(function* () {
     const toolContext = yield* AgentsShellServices
-    const input = yield* Effect.tryPromise({
-      try: () => decodeInput(tool, value),
-      catch: (error) => error,
-    })
-    const result = yield* tool.handler(input, toolContext)
+    const result = yield* tool.handler(value, toolContext)
     return yield* Effect.tryPromise({
       try: () => validateOutput(tool, result),
       catch: (error) => error,
@@ -157,26 +153,28 @@ export const installEffectToolHandlers = (
         const startedAt = performance.now()
         const { runner, auth } = context
         let authorized = false
-        let authorizationError: CallToolResult | undefined
+        let input: unknown
+        let requestError: CallToolResult | undefined
         try {
           if (tool) {
             requireScopes(auth, tool.scopes)
             authorized = true
+            input = await decodeInput(tool, request.params.arguments ?? {})
           }
         } catch (error) {
-          authorizationError = mapToolError(context.config, error)
+          requestError = mapToolError(context.config, error)
         }
         runner.audit('tool_call_started', auth, {
           authorized,
-          ...(authorized ? { arguments: request.params.arguments ?? {} } : {}),
+          ...(authorized && !requestError ? { arguments: input } : {}),
         })
         let result: CallToolResult
         try {
           result =
-            authorizationError ??
+            requestError ??
             (tool
               ? await Effect.runPromise(
-                  callEffectTool(tool, request.params.arguments ?? {}).pipe(
+                  callEffectTool(tool, input).pipe(
                     Effect.catchAll((error) => Effect.succeed(mapToolError(context.config, error))),
                     Effect.provide(toolLayer),
                   ),
@@ -195,7 +193,9 @@ export const installEffectToolHandlers = (
               : content?.ok === false
                 ? 'failed'
                 : 'succeeded',
-          ...(authorized && !tool?.name.startsWith('agent_') ? { result: content ?? result.content } : {}),
+          ...(authorized && !result.isError && !tool?.name.startsWith('agent_')
+            ? { result: content ?? result.content }
+            : {}),
         })
         return result
       },

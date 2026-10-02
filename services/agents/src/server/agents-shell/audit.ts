@@ -12,7 +12,7 @@ export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
 const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
-  /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization)[\w-]*|--user)$/i
+  /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|pass|cert|proxy-cert))$/i
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|stderr|payload|_meta)$/i
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
@@ -24,7 +24,7 @@ const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 const shortCredentialOptions = (command: string) => {
   const [executable = '', operation] = command.trim().split(/\s+/)
   const name = executable.split('/').at(-1)
-  if (name === 'curl') return ['-u', '-U']
+  if (name === 'curl') return ['-u', '-U', '-b', '-E']
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
   if (name === 'redis-cli') return ['-a']
   if ((name === 'docker' || name === 'podman') && operation === 'login') return ['-p']
@@ -105,11 +105,14 @@ const redactText = (value: string, secrets: string[]) => {
       '$1[REDACTED]',
     )
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/((?:^|\s)--user(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g, '$1[REDACTED]')
+    .replace(
+      /((?:^|\s)--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|pass|cert|proxy-cert)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g,
+      '$1[REDACTED]',
+    )
     .replace(/(^|[^A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '$1[REDACTED_EMAIL]')
 }
 
-export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
+export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitAdministrativeArguments = false) => {
   const secrets = Object.entries(process.env)
     .filter(
       ([key, value]) =>
@@ -169,7 +172,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
         remaining -= Buffer.byteLength(JSON.stringify(loggedKey)) + 1
         result[loggedKey] = SECRET_KEY.test(key.replaceAll(/[^a-z]/gi, ''))
           ? '[REDACTED]'
-          : OMITTED_BODY.test(key)
+          : OMITTED_BODY.test(key) || (omitAdministrativeArguments && /^(?:arguments|args|command)$/i.test(key))
             ? '[OMITTED]'
             : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
       }
@@ -190,7 +193,7 @@ export const writeAuditLog = (
   payload: Record<string, unknown>,
   context = toolAuditContext.getStore() ?? null,
 ) => {
-  const sanitized = sanitizeAuditPayload(payload)
+  const sanitized = sanitizeAuditPayload(payload, context?.tool === 'kubectl_admin')
   const line = JSON.stringify({
     msg: 'agents-shell audit',
     schemaVersion: 1,

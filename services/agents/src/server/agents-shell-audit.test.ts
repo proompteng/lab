@@ -332,6 +332,68 @@ describe('agents-shell activity audit', () => {
     expect(JSON.stringify(records())).not.toContain('[OMITTED_KUBERNETES_SECRET]')
   })
 
+  it('keeps administrative kubectl operands out of both sinks while preserving MCP results', async () => {
+    const records = captureAudit()
+    const { client, config } = await connect()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    writeFileSync(join(config.workspaceRoot, 'kubectl'), "#!/bin/bash\nprintf '%s' created\n", { mode: 0o755 })
+    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
+    for (const args of [
+      ['create', 'secret', 'generic', 'demo', '--from-literal=auth=private-literal-value'],
+      ['patch', 'secret', 'demo', '-p', '{"data":{"auth.json":"private-patch-value"}}'],
+    ]) {
+      const response = await client.callTool({ name: 'kubectl_admin', arguments: { args } })
+      expect(response.structuredContent).toMatchObject({ stdout: 'created', exitCode: 0 })
+    }
+    for (const value of ['private-literal-value', 'private-patch-value']) {
+      expect(JSON.stringify(records())).not.toContain(value)
+      expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(value)
+    }
+    expect(records().find(({ event }) => event === 'tool_call_started')).toMatchObject({
+      tool: 'kubectl_admin',
+      payload: { arguments: '[OMITTED]' },
+    })
+    expect(records().find(({ event }) => event === 'kubectl_admin')).toMatchObject({
+      payload: { command: '[OMITTED]' },
+    })
+  })
+
+  it('redacts long authentication and literal-data options in raw text and argv', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    writeAuditLog(config, 'probe', null, {
+      command:
+        'curl --proxy-user name:private-proxy-value --oauth2-bearer private-bearer-value -b session=private-cookie-value -E fixture.p12:private-cert-value; kubectl create secret generic demo --from-literal=auth=private-shell-literal',
+      args: [
+        '--proxy-user',
+        'name:private-argv-proxy',
+        '--oauth2-bearer=private-argv-bearer',
+        '--from-literal',
+        'auth=private-argv-literal',
+        '-b',
+        'session=private-argv-cookie',
+        '-E',
+        'fixture.p12:private-argv-cert',
+      ],
+    })
+    for (const value of [
+      'private-proxy-value',
+      'private-bearer-value',
+      'private-shell-literal',
+      'private-argv-proxy',
+      'private-argv-bearer',
+      'private-argv-literal',
+      'private-cookie-value',
+      'private-cert-value',
+      'private-argv-cookie',
+      'private-argv-cert',
+    ]) {
+      expect(JSON.stringify(records())).not.toContain(value)
+      expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(value)
+    }
+  })
+
   it('keeps stdout auditing when the file sink fails', () => {
     const records = captureAudit()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -432,6 +494,18 @@ describe('agents-shell activity audit', () => {
       'error',
     ])
     expect(JSON.stringify(events)).not.toContain('unknown-token-value')
+  })
+
+  it('does not export invalid authorized arguments or validation-error bodies', async () => {
+    const records = captureAudit()
+    const { client } = await connect()
+    const response = await client.callTool({ name: 'read_file', arguments: { path: ['private-invalid-value'] } })
+    expect(response.isError).toBe(true)
+    expect(JSON.stringify(response)).toContain('private-invalid-value')
+    expect(JSON.stringify(records())).not.toContain('private-invalid-value')
+    expect(records()[0]).toMatchObject({ payload: { authorized: true } })
+    expect(records()[0].payload).not.toHaveProperty('arguments')
+    expect(records()[1].payload).not.toHaveProperty('result')
   })
 
   it('keeps rejected-call audit metadata independent of arguments and unknown-tool names', async () => {
