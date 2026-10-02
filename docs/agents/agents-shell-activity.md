@@ -59,6 +59,7 @@ Explicit inline code passed to shell/Python command modes, Node/Bun eval/print m
 and ordinary proxy-jump targets remain visible. Quoted arguments embedding a known credential-owning command
 are also omitted, independent of the outer executable. This covers nested remote commands without interpreting their body.
 Codex CLI and `cx-codex-run` input is omitted to keep inline task text out of audit logs.
+The `search` tool retains operation metadata without search patterns or its derived command.
 HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
 `--body`, `--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. GitHub authentication and secret
 operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET

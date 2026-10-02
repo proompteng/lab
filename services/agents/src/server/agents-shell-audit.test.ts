@@ -425,6 +425,25 @@ describe('agents-shell activity audit', () => {
     })
   })
 
+  it('omits search patterns and derived commands while retaining authorized matches', async () => {
+    const records = captureAudit()
+    const { client, config } = await connect()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    const query = 'syntheticPrivateSearchPattern'
+    writeFileSync(join(config.workspaceRoot, 'fixture.txt'), `${query}\n`)
+    const response = await client.callTool({ name: 'search', arguments: { query } })
+    expect(JSON.stringify(response.structuredContent)).toContain(query)
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')])
+      expect(content).not.toContain(query)
+    expect(records().find(({ event }) => event === 'tool_call_started')).toMatchObject({
+      tool: 'search',
+      payload: { arguments: '[OMITTED]' },
+    })
+    expect(records().find(({ event }) => event === 'search')).toMatchObject({
+      payload: { command: '[OMITTED_SHELL_INPUT]' },
+    })
+  })
+
   it('redacts long authentication and literal-data options in raw text and argv', () => {
     const records = captureAudit()
     const config = configFixture()

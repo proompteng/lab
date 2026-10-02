@@ -324,7 +324,9 @@ export const writeAuditLog = (
   payload: Record<string, unknown>,
   context = toolAuditContext.getStore() ?? null,
 ) => {
-  const omitToolArguments = context !== null && (context.tool === 'kubectl_admin' || context.tool.startsWith('agent_'))
+  const omitToolArguments =
+    context !== null &&
+    (context.tool === 'search' || context.tool === 'kubectl_admin' || context.tool.startsWith('agent_'))
   const sanitized = sanitizeAuditPayload(payload, omitToolArguments)
   const line = JSON.stringify({
     msg: 'agents-shell audit',
