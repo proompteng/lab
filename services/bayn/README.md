@@ -37,6 +37,8 @@ freshness checks.
 Jev validates cached account, position, order and reconciliation timestamps against the sixty-second broker
 observation ceiling, independently of its ten-second quote limit. A configured shorter cache lifetime still applies
 at the projection read, and final risk authorization retains its existing freshness checks.
+Maximum-hold, model and protective exits use the same broker ceiling. An expired or future broker observation still
+rejects the exit; accepting a cached position does not extend a model response or executable quote's deadline.
 A mutation or newer retained broker event can invalidate a successful cut before the next poll. While that cut is
 still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
 Each waiting pass rechecks the projection. Expiry, a failed poll, wrong source revision or corrupt evidence remain
