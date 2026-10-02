@@ -56,6 +56,8 @@ const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
 type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+mod terminal_rpc;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpstreamWebSocketError {
     StaleGuestBinding,
@@ -472,13 +474,8 @@ async fn terminal_websocket(
         .into_iter()
         .filter(|(name, _)| matches!(name.as_str(), "reconnect" | "since" | "cols" | "rows"))
         .collect::<Vec<_>>();
-    let query = serde_urlencoded::to_string(terminal_query).unwrap_or_default();
-    let url = format!(
-        "ws://{}/v1/terminals/{terminal_id}/ws{}{}",
-        guest.base_url().trim_start_matches("http://"),
-        if query.is_empty() { "" } else { "?" },
-        query,
-    );
+    let attachment = terminal_rpc::attachment(&terminal_id, &terminal_query);
+    let rpc = guest.rpc.clone();
     let activity = state.activity;
     let agent_id = ticket.agent_id;
     websocket
@@ -486,8 +483,8 @@ async fn terminal_websocket(
         .max_message_size(MAX_WEBSOCKET_MESSAGE)
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER)
         .protocols([protocol])
-        .on_upgrade(move |socket| {
-            bridge_websocket(socket, url, guest.token().to_owned(), activity, agent_id)
+        .on_upgrade(move |socket| async move {
+            terminal_rpc::bridge(socket, rpc, attachment, activity, agent_id).await;
         })
         .into_response()
 }
@@ -981,21 +978,6 @@ async fn proxy_http(
     response
         .body(body)
         .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
-}
-
-async fn bridge_websocket(
-    mut browser: axum::extract::ws::WebSocket,
-    target: String,
-    token: String,
-    activity: ActivityTracker,
-    agent_id: String,
-) {
-    activity.touch(&agent_id);
-    let Ok((upstream, _)) = connect_upstream_websocket(&target, &token, None).await else {
-        let _ = browser.send(AxumMessage::Close(None)).await;
-        return;
-    };
-    bridge_open_websocket(browser, upstream, activity, agent_id).await;
 }
 
 async fn connect_upstream_websocket(

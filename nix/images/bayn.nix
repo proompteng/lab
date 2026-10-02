@@ -37,8 +37,8 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-JJtvgVEqNlZJX3jgAW3wopj70SIuwSUW/I9SrTbUp1c=";
-    aarch64-linux = "sha256-Z/y9SN1aSn5D0HquExpW65owSB/zFdLnBCPLiEt0o68=";
+    x86_64-linux = "sha256-cForVI2QjRUTRbHOS9uA6OWaBAlNsCr4WEZSh/xdY6I=";
+    aarch64-linux = "sha256-1RYvlPtLj++GgxINSfdH0GJgm+Brd8BB3YHsudueaWo=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"

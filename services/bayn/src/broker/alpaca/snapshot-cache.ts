@@ -6,6 +6,7 @@ import { BrokerReadError, configurationError } from './failures'
 import { OrderCollection, SortDirection, type BrokerReadShape } from './model'
 import {
   BrokerObservations,
+  maximumBrokerObservationAgeMs,
   observationTimes,
   observationUnavailable,
   type ObservedBrokerSnapshot,
@@ -15,10 +16,12 @@ export interface BrokerSnapshotCacheConfig {
   readonly pollIntervalMs: number
   readonly maxAgeMs: number
 }
-const interval = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60_000 }))
+const interval = Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: maximumBrokerObservationAgeMs }))
 export const brokerSnapshotCacheConfig: Effect.Effect<BrokerSnapshotCacheConfig, BrokerReadError> = Config.all({
-  pollIntervalMs: Config.schema(interval, 'BAYN_BROKER_POLL_INTERVAL_MS').pipe(Config.withDefault(30_000)),
-  maxAgeMs: Config.schema(interval, 'BAYN_BROKER_CACHE_MAX_AGE_MS').pipe(Config.withDefault(60_000)),
+  pollIntervalMs: Config.schema(interval, 'BAYN_BROKER_POLL_INTERVAL_MS').pipe(Config.withDefault(10_000)),
+  maxAgeMs: Config.schema(interval, 'BAYN_BROKER_CACHE_MAX_AGE_MS').pipe(
+    Config.withDefault(maximumBrokerObservationAgeMs),
+  ),
 }).pipe(
   Effect.mapError((cause) =>
     configurationError({ operation: 'configuration', message: 'Invalid broker cache configuration', cause }),

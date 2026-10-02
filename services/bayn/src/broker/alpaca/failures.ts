@@ -6,6 +6,7 @@ export enum BrokerReadErrorKind {
   Configuration = 'CONFIGURATION',
   Transport = 'TRANSPORT',
   Timeout = 'TIMEOUT',
+  ObservationPending = 'OBSERVATION_PENDING',
   Authentication = 'AUTHENTICATION',
   Forbidden = 'FORBIDDEN',
   NotFound = 'NOT_FOUND',
