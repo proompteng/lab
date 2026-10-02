@@ -22,6 +22,7 @@ const (
 )
 
 type apiConfig struct {
+	identity            *guestIdentity
 	bootstrapToken      string
 	codexBinary         string
 	codeServerBinary    string
@@ -34,6 +35,7 @@ type apiConfig struct {
 }
 
 type apiServer struct {
+	identity         *guestIdentity
 	bootstrapToken   string
 	codex            *codexSupervisor
 	editor           *editorSupervisor
@@ -73,6 +75,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	transport.Proxy = nil
 	server := &apiServer{
 		bootstrapToken:   config.bootstrapToken,
+		identity:         config.identity,
 		evidence:         config.evidence,
 		fileWatcher:      files,
 		previewRequests:  newPreviewRequestTracker(),

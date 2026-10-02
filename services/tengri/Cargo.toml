@@ -29,12 +29,17 @@ sha2 = "0.10.9"
 thiserror = "2.0.17"
 tokio = { version = "1.53.1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = "0.1.17"
-tokio-tungstenite = "0.28.0"
+tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
 tonic = "0.14.6"
 tonic-prost = "0.14.6"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.18.1", features = ["v4"] }
+spiffe = { version = "0.16.1", features = ["x509-source"] }
+spiffe-rustls = { version = "0.8.0", default-features = false, features = ["aws-lc-rs"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+tower = { version = "0.5.2", features = ["util"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14.6"
