@@ -53,7 +53,8 @@ lookup failures in package scripts without changing executable permissions or ro
 `postgres_log_summary` accepts an existing artifact `path`, inclusive UTC `startAt`, exclusive UTC `endAt`, optional
 `sessionId`, and optional `expectedSha256`. The interval must be positive and no longer than 24 hours. Files are
 limited to 32 MiB, 250,000 physical lines and 1 MiB per line. The reader supports CNPG PostgreSQL JSON records,
-optionally prefixed by a Kubernetes UTC timestamp.
+optionally prefixed by a Kubernetes UTC timestamp. Timestamp bounds and records retain up to nine fractional digits
+during comparisons and in returned timestamps. Sub-millisecond intervals are not rounded to zero.
 
 The fixed parser returns severity counts, statement and COMMIT duration distributions, checkpoint/restartpoint
 sync-duration distributions, replication-timeout counts, and the count of observed commits longer than one second.

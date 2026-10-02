@@ -169,6 +169,51 @@ describe('PostgreSQL retained-log summaries', () => {
   const record = (time: string, message: string, severity = 'LOG') =>
     JSON.stringify({ level: 'info', ts: time, record: { log_time: time, error_severity: severity, message } })
 
+  it('preserves nanosecond precision at inclusive and exclusive interval boundaries', () => {
+    writeFileSync(
+      join(root, 'precise.log'),
+      [
+        record('2026-01-02T14:00:00.000099999Z', 'duration: 1 ms  statement: COMMIT'),
+        record('2026-01-02T14:00:00.000100000Z', 'duration: 2 ms  statement: COMMIT'),
+        record('2026-01-02T14:00:00.000899999Z', 'duration: 3 ms  statement: COMMIT'),
+        record('2026-01-02T14:00:00.000900000Z', 'duration: 4 ms  statement: COMMIT'),
+      ].join('\n'),
+    )
+    expect(
+      summarizePostgresLog(root, {
+        path: 'precise.log',
+        startAt: '2026-01-02T14:00:00.000100000Z',
+        endAt: '2026-01-02T14:00:00.000900000Z',
+      }),
+    ).toMatchObject({
+      startAt: '2026-01-02T14:00:00.0001Z',
+      endAt: '2026-01-02T14:00:00.0009Z',
+      inRangeRecords: 2,
+      outOfRangeRecords: 2,
+      firstInRangeAt: '2026-01-02T14:00:00.0001Z',
+      lastInRangeAt: '2026-01-02T14:00:00.000899999Z',
+      commitDurationMs: { count: 2, total: 5 },
+    })
+  })
+
+  it('round-trips a timestamp one nanosecond before the Unix epoch', () => {
+    writeFileSync(
+      join(root, 'epoch.log'),
+      record('1969-12-31T23:59:59.999999999Z', 'duration: 1 ms  statement: COMMIT'),
+    )
+    expect(
+      summarizePostgresLog(root, {
+        path: 'epoch.log',
+        startAt: '1969-12-31T23:59:59.999999999Z',
+        endAt: '1970-01-01T00:00:00Z',
+      }),
+    ).toMatchObject({
+      firstObservedAt: '1969-12-31T23:59:59.999999999Z',
+      inRangeRecords: 1,
+      commitDurationMs: { count: 1, total: 1 },
+    })
+  })
+
   it('aggregates only in-range observations and never returns SQL or raw messages', () => {
     const content =
       [

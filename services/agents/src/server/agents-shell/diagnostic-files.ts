@@ -236,10 +236,23 @@ export const inspectEvidence = (root: string, input: EvidenceInput, authorize?: 
 const timestamp = (value: unknown) => {
   if (typeof value !== 'string') return null
   const iso = value.replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?) UTC$/, '$1T$2Z')
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(iso)) return null
-  const time = Date.parse(iso)
-  if (!Number.isFinite(time) || new Date(time).toISOString().slice(0, 19) !== iso.slice(0, 19)) return null
-  return time
+  const match = iso.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/)
+  if (!match) return null
+  const wholeSecond = Date.parse(`${match[1]}Z`)
+  if (!Number.isFinite(wholeSecond) || new Date(wholeSecond).toISOString().slice(0, 19) !== match[1]) return null
+  return BigInt(wholeSecond) * 1_000_000n + BigInt((match[2] ?? '').padEnd(9, '0'))
+}
+
+const timestampIso = (nanoseconds: bigint) => {
+  let seconds = nanoseconds / 1_000_000_000n
+  let fraction = nanoseconds % 1_000_000_000n
+  if (fraction < 0n) {
+    seconds -= 1n
+    fraction += 1_000_000_000n
+  }
+  const wholeSecond = new Date(Number(seconds * 1000n)).toISOString().slice(0, 19)
+  const decimal = fraction.toString().padStart(9, '0').replace(/0+$/, '').padEnd(3, '0')
+  return `${wholeSecond}.${decimal}Z`
 }
 
 const object = (value: unknown): Record<string, unknown> | null =>
@@ -262,7 +275,7 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
   const end = timestamp(input.endAt)
   if (start === null || end === null) throw new Error('A valid UTC timestamp is required for each interval bound')
   if (end <= start) throw new Error('The requested interval must have positive duration')
-  if (end - start > 24 * 60 * 60 * 1000) throw new Error('The requested interval cannot exceed 24 hours')
+  if (end - start > 86_400_000_000_000n) throw new Error('The requested interval cannot exceed 24 hours')
 
   return readCompleteFile(
     root,
@@ -285,10 +298,10 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
       const commits: number[] = []
       const checkpoints: number[] = []
       const restartpoints: number[] = []
-      let first: number | null = null
-      let last: number | null = null
-      let firstInRange: number | null = null
-      let lastInRange: number | null = null
+      let first: bigint | null = null
+      let last: bigint | null = null
+      let firstInRange: bigint | null = null
+      let lastInRange: bigint | null = null
       const addDuration = (raw: string, scale: number, values: number[]) => {
         const value = Number(raw) * scale
         if (!Number.isFinite(value) || value > Number.MAX_SAFE_INTEGER / RECORD_LIMIT) {
@@ -322,14 +335,14 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
           counts.recordsWithoutTimestamp += 1
           return
         }
-        first = first === null ? time : Math.min(first, time)
-        last = last === null ? time : Math.max(last, time)
+        if (first === null || time < first) first = time
+        if (last === null || time > last) last = time
         if (time < start || time >= end) {
           counts.outOfRangeRecords += 1
           return
         }
-        firstInRange = firstInRange === null ? time : Math.min(firstInRange, time)
-        lastInRange = lastInRange === null ? time : Math.max(lastInRange, time)
+        if (firstInRange === null || time < firstInRange) firstInRange = time
+        if (lastInRange === null || time > lastInRange) lastInRange = time
         counts.inRangeRecords += 1
         const severityValue = record.error_severity ?? row?.level
         const severity = typeof severityValue === 'string' ? severityValue.toUpperCase() : 'UNKNOWN'
@@ -360,10 +373,10 @@ export const summarizePostgresLog = (root: string, input: PostgresLogInput, auth
           counts.replicationTimeouts += 1
         }
       })
-      const iso = (value: number | null) => (value === null ? null : new Date(value).toISOString())
+      const iso = (value: bigint | null) => (value === null ? null : timestampIso(value))
       return {
-        startAt: new Date(start).toISOString(),
-        endAt: new Date(end).toISOString(),
+        startAt: timestampIso(start),
+        endAt: timestampIso(end),
         sessionCoverage: 'not_proven' as const,
         firstObservedAt: iso(first),
         lastObservedAt: iso(last),

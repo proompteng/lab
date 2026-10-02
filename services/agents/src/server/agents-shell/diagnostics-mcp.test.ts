@@ -178,6 +178,31 @@ describe('diagnostic MCP boundaries', () => {
     })
   })
 
+  it('returns exact sub-millisecond timestamps through the log-summary output schema', async () => {
+    writeFileSync(
+      join(root, 'precise.log'),
+      JSON.stringify({
+        record: {
+          log_time: '2026-01-02T14:00:00.000123456Z',
+          message: 'duration: 1 ms  statement: COMMIT',
+        },
+      }),
+    )
+    const result = await client.callTool({
+      name: 'postgres_log_summary',
+      arguments: {
+        path: 'precise.log',
+        startAt: '2026-01-02T14:00:00.0001Z',
+        endAt: '2026-01-02T14:00:00.0009Z',
+      },
+    })
+    expect(result.isError).not.toBe(true)
+    expect(result.structuredContent).toMatchObject({
+      inRangeRecords: 1,
+      firstInRangeAt: '2026-01-02T14:00:00.000123456Z',
+    })
+  })
+
   it('retains authorization requirements for diagnostics', async () => {
     await client.close()
     await server.close()
