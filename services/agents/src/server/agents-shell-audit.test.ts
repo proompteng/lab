@@ -1122,6 +1122,25 @@ api repos/owner/repo/issues \
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
   })
 
+  it('omits inline agent runner task input in raw commands and argv', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "cx-codex-run 'syntheticPrivateTaskBody'",
+      "'/usr/local/bin/cx-codex-run' --model test-model 'syntheticPrivateTaskBody'",
+      "codex exec 'syntheticPrivateTaskBody'",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, { command: 'cx-codex-run', args: ['syntheticPrivateTaskBody'] })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticPrivateTaskBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
   it('omits curl flags that construct query input without a literal URL query', () => {
     const records = captureAudit()
     const config = configFixture()

@@ -45,6 +45,7 @@ const curlShortOperandIndex = (token: string) => {
 }
 const usesShellInput = (text: string) => {
   if (/[\r\n]/.test(text) || text.length > MAX_FIELD_BYTES || SHELL_INPUT.test(normalizeShellWord(text))) return true
+  if (/\b(?:cx-codex-run|codex)\b/.test(normalizeShellWord(text))) return true
   const words = text.match(SHELL_WORD) ?? []
   if (
     words.some((word) => commandName(word) === 'curl') &&
