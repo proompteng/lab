@@ -15,12 +15,25 @@ The nested PVC template's generated `apiVersion` and `kind` are excluded from di
 fields from its predicted state. Capacity, storage class, access modes, and retention remain compared.
 
 The SPIRE trust domain is `galactic.proompteng.ai`. Existing Istio certificates continue to use `cluster.local`.
-This rollout does not change Istio or application authentication. There is no default registration for other pods.
-The controller registers only pods in `spire-test` with the canary label and `identity-canary` service account.
+Istio configuration is unchanged. There is no default registration for other pods. The controller registers the
+`spire-test` canaries and explicit Proompteng and Tengri workloads through `ClusterSPIFFEID` resources, with namespace,
+Pod, service-account, and container selectors. These application registrations use two-minute X.509-SVID lifetimes.
 
 The server authenticates agents with Kubernetes projected service account tokens restricted to
-`spire-system:spire-agent`. Agents inspect workload processes with host PID access, root, and `SYS_PTRACE`, and query
-the secure kubelet endpoint. The SPIFFE CSI driver mounts each node's Workload API socket into the canary pods.
+`spire-system:spire-agent` under the existing `galactic` profile. Agents inspect workload processes with host PID access,
+root, and `SYS_PTRACE`, and query the secure kubelet endpoint. The SPIFFE CSI driver mounts the node's Workload API socket
+into the registered application Pods.
+
+Firecracker guest processes use their own rootless agent under `galactic-guests`. Only `tengri:nanoagent` PSATs for
+audience `spire-server` are accepted, and the agent ID contains its attested Pod UID. Tengri creates a `ClusterStaticEntry`
+whose parent is that agent and whose selector is `unix:uid:1000`; a Kubernetes admission policy prevents unrelated or
+privileged registrations. A host `ClusterSPIFFEID` cannot describe this VM-local Unix process, because that controller
+adds a host Kubernetes Pod selector to every registration.
+
+This Application pre-creates `tengri/spire-guest-bundle` and name-restricted publisher RBAC at sync wave -1. The server's
+built-in bundle publisher preserves `spire-system/spire-bundle` and also writes public PEM authorities to the guest
+ConfigMap. ApplicationSet ignores only the generated `/data` field; namespace creation remains owned by the Tengri
+Application. No signing keys or workload private keys enter these ConfigMaps.
 
 ## Talos configuration
 
