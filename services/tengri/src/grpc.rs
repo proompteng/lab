@@ -2319,9 +2319,6 @@ fn map_guest_error(error: GuestError) -> Status {
         GuestError::Api { status, message } if status == reqwest::StatusCode::FORBIDDEN => {
             Status::permission_denied(message)
         }
-        GuestError::MissingCodexSnapshotCursor => Status::failed_precondition(
-            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent",
-        ),
         GuestError::MissingFileRevision
         | GuestError::InvalidFileRevision
         | GuestError::FileRevisionMismatch => Status::failed_precondition(
@@ -2373,16 +2370,6 @@ mod tests {
                 tonic::Code::Unimplemented
             );
         }
-    }
-
-    #[test]
-    fn missing_codex_snapshot_cursor_reports_the_destructive_recovery() {
-        let status = map_guest_error(GuestError::MissingCodexSnapshotCursor);
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
-        assert_eq!(
-            status.message(),
-            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent"
-        );
     }
 
     #[test]

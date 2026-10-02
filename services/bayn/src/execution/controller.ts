@@ -46,26 +46,14 @@ export const resolveOptionalExecutionControllerBinding = (
     : Result.fail('native Restate controller rotation requires both previous binding fields')
 }
 
-const ExecutionControllerBootstrapV2Schema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v2'),
+export const ExecutionDeploymentActivationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.execution-deployment-activation.v1'),
   controllerKey: Sha256Schema,
   planHash: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
+  previousBinding: Schema.optionalKey(ExecutionControllerBindingSchema),
 })
-
-const ExecutionControllerBootstrapV3Schema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.execution-controller-bootstrap.v3'),
-  controllerKey: Sha256Schema,
-  planHash: Sha256Schema,
-  sourceRevision: GitSourceRevisionSchema,
-  previousBinding: ExecutionControllerBindingSchema,
-})
-
-export const ExecutionControllerBootstrapSchema = Schema.Union([
-  ExecutionControllerBootstrapV2Schema,
-  ExecutionControllerBootstrapV3Schema,
-])
-export type ExecutionControllerBootstrap = typeof ExecutionControllerBootstrapSchema.Type
+export type ExecutionDeploymentActivation = typeof ExecutionDeploymentActivationSchema.Type
 
 export const ExecutionControllerTickSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-controller-tick.v1'),
@@ -133,7 +121,7 @@ export type ExecutionControllerTickDecision =
   | { readonly _tag: 'Advance'; readonly command: AdvanceExecutionCommand }
   | { readonly _tag: 'Ignored'; readonly reason: 'Inactive' | 'StaleEpoch' | 'StaleSequence' }
 
-export type ExecutionControllerBootstrapDecision =
+export type ExecutionDeploymentActivationDecision =
   | {
       readonly _tag: 'Activate'
       readonly state: ExecutionControllerState | null
@@ -206,18 +194,18 @@ export const decideExecutionControllerActivation = (
   return conflict('activate', 'execution controller activation conflicts with durable controller state')
 }
 
-export const decideExecutionControllerBootstrap = (
+export const decideExecutionDeploymentActivation = (
   state: ExecutionControllerState | null,
-  request: ExecutionControllerBootstrap,
-): Result.Result<ExecutionControllerBootstrapDecision, ExecutionControllerDecisionError> => {
+  request: ExecutionDeploymentActivation,
+): Result.Result<ExecutionDeploymentActivationDecision, ExecutionControllerDecisionError> => {
   if (state === null) {
-    return request.schemaVersion === 'bayn.execution-controller-bootstrap.v2'
+    return request.previousBinding === undefined
       ? Result.succeed({ _tag: 'Activate', state })
       : conflict('activate', 'execution controller rotation expected durable controller state')
   }
   if (sameBinding(state, request)) return Result.succeed({ _tag: 'Activate', state })
-  if (request.schemaVersion === 'bayn.execution-controller-bootstrap.v2') {
-    return conflict('activate', 'execution controller bootstrap conflicts with durable controller state')
+  if (request.previousBinding === undefined) {
+    return conflict('activate', 'execution controller deployment activation conflicts with durable controller state')
   }
   if (!sameBinding(state, request.previousBinding)) {
     return conflict('activate', 'execution controller rotation does not match the expected previous binding')
@@ -368,8 +356,8 @@ export const decodeExecutionControllerActivation = Schema.decodeUnknownResult(
   ExecutionControllerActivationSchema,
   strictParseOptions,
 )
-export const decodeExecutionControllerBootstrap = Schema.decodeUnknownResult(
-  ExecutionControllerBootstrapSchema,
+export const decodeExecutionDeploymentActivation = Schema.decodeUnknownResult(
+  ExecutionDeploymentActivationSchema,
   strictParseOptions,
 )
 export const decodeExecutionControllerTick = Schema.decodeUnknownResult(
@@ -388,3 +376,18 @@ export const decodeExecutionAdvanceStepResult = Schema.decodeUnknownResult(
   ExecutionAdvanceStepResultSchema,
   strictParseOptions,
 )
+
+export const executionControllerSuccessorPassCompleted = (
+  state: ExecutionControllerState | null,
+  activation: Pick<ExecutionControllerActivation, 'epoch' | 'firstSequence' | 'planHash' | 'sourceRevision'>,
+): state is ExecutionControllerState & {
+  readonly lastCompletion: NonNullable<ExecutionControllerState['lastCompletion']>
+} =>
+  state !== null &&
+  state.active &&
+  state.epoch === activation.epoch &&
+  state.planHash === activation.planHash &&
+  state.sourceRevision === activation.sourceRevision &&
+  state.lastCompletion !== undefined &&
+  state.lastCompletion.sequence > activation.firstSequence &&
+  state.nextSequence === state.lastCompletion.sequence + 1

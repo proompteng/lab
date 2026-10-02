@@ -23,6 +23,8 @@ import {
   type FillActivityPage,
 } from './model'
 
+export const maximumBrokerObservationAgeMs = 60_000
+
 const micros = Schema.String.check(Schema.isPattern(/^-?\d+$/))
 const evidence = Schema.Struct({
   requestId: Schema.String,

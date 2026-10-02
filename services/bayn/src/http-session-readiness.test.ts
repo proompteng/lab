@@ -41,6 +41,7 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
         executionSessionDate: '2026-10-01',
         phase: CycleState.Active,
         snapshotId: null,
+        publicationDeadlineAt: null,
         decisionHash: null,
         terminalReason: null,
         submissionOpenAt: '2026-10-01T13:30:00.000Z',
