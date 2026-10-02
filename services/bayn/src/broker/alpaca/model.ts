@@ -1,4 +1,4 @@
-import type { Undici } from '@effect/platform-node'
+import type * as Undici from '@effect/platform-node/Undici'
 import { Context, DateTime, Effect, Option, Schema, type Result } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
@@ -385,7 +385,46 @@ export interface FillActivitiesQuery {
   readonly pageToken?: string
 }
 
+export interface Observed<A> {
+  readonly value: A
+  readonly evidence: ReadEvidence
+}
+
+export interface OrderRead {
+  readonly rows: readonly Observed<Order>[]
+  readonly observedAt: string
+}
+
+export interface BrokerHistory {
+  readonly orders: OrderRead
+  readonly fills: readonly Observed<FillActivity>[]
+  readonly fees: readonly Observed<FeeActivity>[]
+}
+
+export interface StableBrokerSnapshot {
+  readonly account: ReadResult<Account>
+  readonly positions: ReadResult<readonly Position[]>
+  readonly history: BrokerHistory
+}
+
+export const mutationConsistencyDelayMs = 1_000
+
+export interface BrokerSubmissionSnapshot {
+  readonly account: ReadResult<Account>
+  readonly positions: ReadResult<readonly Position[]>
+  readonly openOrders: ReadResult<readonly Order[]>
+}
+
+export interface BrokerReadProjection {
+  readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
+  readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
+  readonly fresh: BrokerReadShape
+  readonly invalidate: Effect.Effect<void>
+  readonly withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+}
+
 export interface BrokerReadShape {
+  readonly projection?: BrokerReadProjection
   readonly account: Effect.Effect<ReadResult<Account>, BrokerReadError>
   readonly accountConfiguration: Effect.Effect<ReadResult<AccountConfigurationObservation>, BrokerReadError>
   readonly assetBySymbol: (symbol: string) => Effect.Effect<ReadResult<AssetObservation>, BrokerReadError>

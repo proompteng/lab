@@ -6,6 +6,7 @@ import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result }
 import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
+import type { AutonomousCyclePassObservation } from './runtime-state'
 import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
@@ -937,6 +938,8 @@ const sandboxExecutionProgram = (
     _tag: 'ExecutionProgram',
     schemaVersion: 'bayn.execution-program.v1',
     authority,
+    recordReconciliation: () => Effect.void,
+    invalidateBrokerState: Effect.void,
     dryRunSubmit: () => unused,
     submit: () => unused,
     cancel: () => unused,
@@ -4966,6 +4969,104 @@ test('reconciliation cancels a slow broker read before the aggregate pass deadli
     operation: 'account',
     retryable: true,
   })
+})
+
+test('a pending broker cut waits without cycle or order I/O and rechecks expiry on the next pass', async () => {
+  const fixture = await executionLifecycleFixture()
+  const services = makeExactReconciliationServices(Authority.Execution)
+  const passes: AutonomousCyclePassObservation[] = []
+  let reads = 0
+  let kind = BrokerReadErrorKind.ObservationPending
+  const forbidden = () => Effect.die(new Error('an unavailable observation cannot acquire, bind or mutate'))
+  const cycleStore: CycleStoreShape = {
+    readOldestUnfinished: forbidden,
+    acquire: forbidden,
+    read: forbidden,
+    readAuthoritySlot: forbidden,
+    readDecisionDocument: forbidden,
+    bindSnapshot: forbidden,
+    activate: forbidden,
+    bindDecision: forbidden,
+    finish: forbidden,
+    block: forbidden,
+  }
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      const driver = yield* Effect.fromResult(
+        makeRecoveryFirstCycleDriver(
+          fixture.input,
+          {
+            cycleBindingId: cycle.identity.qualificationRunId,
+            recordPass: (pass) =>
+              Effect.sync(() => {
+                passes.push(pass)
+              }),
+          },
+          fixture.preparation,
+          fixture.policy,
+          { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+          forbidden,
+          'mutation autonomous cycle loop',
+        ),
+      ).pipe(Effect.flatten)
+      const first = yield* driver.advance
+      expect(first.observation).toMatchObject({
+        result: 'SUCCESS',
+        outcome: 'WAITING',
+        waitReason: 'BROKER_OBSERVATION_PENDING',
+      })
+      expect('result' in first).toBe(false)
+      yield* driver.advance
+      expect(reads).toBe(2)
+      kind = BrokerReadErrorKind.Timeout
+      const expired = yield* driver.advance
+      expect(expired.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
+      expect(reads).toBe(3)
+      kind = BrokerReadErrorKind.RateLimited
+      yield* TestClock.adjust(30_000)
+      const rateLimited = yield* driver.advance
+      expect(rateLimited.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
+      expect(passes).toEqual([first.observation, first.observation, expired.observation, rateLimited.observation])
+    }).pipe(
+      Effect.provideService(BrokerRead, {
+        ...services.brokerRead,
+        account: Effect.suspend(() => {
+          reads += 1
+          return Effect.fail(
+            new BrokerReadError({ operation: 'preflight', kind, retryable: true, message: `cache read ${kind}` }),
+          )
+        }),
+      }),
+      Effect.provideService(CycleStore, cycleStore),
+      Effect.provideService(BrokerEventStore, services.executionStore),
+      Effect.provideService(FillAccountingStore, services.executionStore),
+      Effect.provideService(ValuationStore, services.executionStore),
+      Effect.provideService(ReconciliationStore, services.executionStore),
+      Effect.provideService(AuthorityGenerationStore, services.executionStore),
+      Effect.provideService(AuthorityRestrictionStore, services.executionStore),
+      Effect.provideService(IntentStore, { commit: forbidden, read: forbidden }),
+      Effect.provideService(MutationStore, {
+        authorizeSubmit: forbidden,
+        beginSubmit: forbidden,
+        submitAccepted: forbidden,
+        submitRejected: forbidden,
+        submitDenied: forbidden,
+        submitUnknown: forbidden,
+        beginCancel: forbidden,
+        cancelAccepted: forbidden,
+        cancelUnknown: forbidden,
+        recoveryFound: forbidden,
+        recoveryNotFound: forbidden,
+        recoveryUnknown: forbidden,
+        latest: forbidden,
+      }),
+      Effect.provideService(WriterFence, services.writerFence),
+      Effect.provideService(CandidateObservationStore, { record: forbidden, latestJevWindowEnd: forbidden }),
+      provideJevTestServices,
+      Effect.provide(TestClock.layer()),
+    ),
+  )
 })
 
 test.each([false, true])(

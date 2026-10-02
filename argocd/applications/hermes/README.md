@@ -18,7 +18,7 @@ NetworkPolicy enforcement probe. Hermes and OpenClaw must never use the Discord 
 - Mirrored amd64 manifest: `registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b`.
 - Squid egress proxy: `docker.io/ubuntu/squid:6.6-24.04_edge` pinned by digest in `egress-proxy.yaml`.
 - Lab toolchain: the dedicated multi-architecture Nix OCI image is pinned by index digest in the Kargo-managed StatefulSet reference;
-  it is restricted to Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`,
+  it is restricted to Node `24.11.1`, Bun/Bunx `1.4.2`, Go `1.25.5`, Helm `3.19.1`, Kustomize `5.8.0`, kubeconform `0.7.0`,
   ShellCheck `0.11.0`, jq `1.8.1`, and yq `4.49.2`.
 
 The pinned upstream release is mirrored by the dispatchable `hermes-agent-mirror` workflow. That workflow runs only from

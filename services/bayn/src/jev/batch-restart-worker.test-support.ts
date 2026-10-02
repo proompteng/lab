@@ -16,7 +16,7 @@ const main = Effect.gen(function* () {
   if (!['claim', 'record', 'recover'].includes(mode ?? '') || checkpointPath === undefined || resultPath === undefined)
     return yield* new JevEvidenceError({ message: 'Invalid Jev batch worker arguments' })
   const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema)(rawId)
-  const url = yield* Config.redacted('BAYN_TEST_POSTGRES_URL')
+  const url = yield* Config.Redacted('BAYN_TEST_POSTGRES_URL')
   const parsed = new URL(Redacted.value(url))
   if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
     return yield* new JevEvidenceError({ message: 'Jev batch worker requires a local _test database' })

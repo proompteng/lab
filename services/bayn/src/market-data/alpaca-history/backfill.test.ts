@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { ConfigProvider, Effect, FileSystem, Layer, Result, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { backfillAlpacaHistory } from '../../../tools/backfill'
 import { canonicalHashV1Result } from '../../hash'
 import { readHistoricalChunk, readHistoricalDataset } from './dataset'

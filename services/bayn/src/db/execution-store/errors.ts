@@ -1,5 +1,5 @@
 import { Effect, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { capitalGrantFailureDetails, type CapitalGrantAlgebraFailure } from '../../execution/capital-grant-algebra'
 import { ReconciliationStoreError } from '../reconciliation'

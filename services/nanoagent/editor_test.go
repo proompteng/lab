@@ -87,7 +87,8 @@ func TestEditorBrowserFixture(t *testing.T) {
 		t.Fatal("TENGRI_EDITOR_TEST_HOME is required")
 	}
 	api, err := newAPIServer(apiConfig{bootstrapToken: "editor-browser-fixture", codeServerBinary: binary,
-		homeRoot: home, workspaceRoot: filepath.Join(home, "workspace"), shell: "/bin/bash"})
+		homeRoot: home, workspaceRoot: filepath.Join(home, "workspace"), shell: "/bin/bash",
+		evidence: evidence{MicroVMID: "editor-fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestEditorBrowserFixture(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /_test/shutdown", func(w http.ResponseWriter, r *http.Request) { once.Do(func() { close(done) }) })
 	mux.Handle("/", newHandler(api))
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Handler: mux, Protocols: guestHTTPProtocols(), ReadHeaderTimeout: 5 * time.Second}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
 	t.Log("Nanoagent editor browser fixture listening on 8080")

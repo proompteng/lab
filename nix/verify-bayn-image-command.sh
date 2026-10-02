@@ -63,6 +63,8 @@ resolve_image_entry() {
 
 forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
 forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
+cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
+cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
 replay_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
 replay_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
@@ -71,6 +73,8 @@ streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-d
 
 test -x "${forward_wrapper}"
 test -f "${forward_command}"
+test -x "${cost_wrapper}"
+test -f "${cost_command}"
 test -x "${replay_wrapper}"
 test -f "${replay_command}"
 test -f "${execution_server}"
@@ -102,6 +106,15 @@ actual="$(
 expected='Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
 if [[ "${actual}" != "${expected}" ]]; then
   printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
+  exit 1
+fi
+
+cost_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --env NODE_ENV=production --entrypoint /bin/bayn-inference-cost "${image_id}" --help)"
+expected_cost='Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --help'
+if [[ "${cost_actual}" != "${expected_cost}" ]]; then
+  printf 'Unexpected Bayn inference-cost help output: %s\n' "${cost_actual}" >&2
   exit 1
 fi
 

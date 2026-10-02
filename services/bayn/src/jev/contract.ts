@@ -1,4 +1,5 @@
 import { Data, Result, Schema } from 'effect'
+import type { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 
 import { canonicalHashV1Result, canonicalJsonV1Result } from '../hash'
 import {
@@ -41,7 +42,7 @@ const Question = Schema.Union([
   Schema.Struct({
     type: Schema.Literal('score'),
     instructions: Instructions,
-    criteria: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isLengthBetween(2, 10)),
+    criteria: Schema.Array(StrictNonEmptyStringSchema).check(Schema.isMinLength(2), Schema.isMaxLength(10)),
   }),
 ])
 
@@ -86,6 +87,8 @@ export class JevContractError extends Data.TaggedError('JevContractError')<{
   readonly message: string
   readonly question?: string
   readonly cause?: unknown
+  readonly observationCheck?: JevObservationCheck
+  readonly observationField?: JevObservationField
 }> {}
 
 export const prepareJevRequest = (input: unknown) =>
