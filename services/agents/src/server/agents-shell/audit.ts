@@ -326,7 +326,10 @@ export const writeAuditLog = (
 ) => {
   const omitToolArguments =
     context !== null &&
-    (context.tool === 'search' || context.tool === 'kubectl_admin' || context.tool.startsWith('agent_'))
+    (context.tool.startsWith('shell_') ||
+      context.tool === 'search' ||
+      context.tool === 'kubectl_admin' ||
+      context.tool.startsWith('agent_'))
   const sanitized = sanitizeAuditPayload(payload, omitToolArguments)
   const line = JSON.stringify({
     msg: 'agents-shell audit',

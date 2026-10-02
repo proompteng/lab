@@ -7,10 +7,11 @@ Open [Grafana Explore](https://grafana.k8s.proompteng.ai/explore), select the **
 ```
 
 Each JSON event includes `ts`, `event`, `schemaVersion`, a pseudonymous `subjectHash`, and `payload`.
-Tool calls also include `requestId`, `toolCallId`, and `tool`. Expand a log line to inspect its arguments and result metadata.
+Tool calls also include `requestId`, `toolCallId`, and `tool`. Expand a log line to inspect its operation and result metadata.
 Rejected authorization, invalid-input, and unknown-tool calls retain metadata only. Their arguments, response content,
-and supplied unknown tool names are excluded from audit records. Administrative kubectl and delegated-agent calls
-retain metadata only because their operands can contain Secret data, task bodies, or task-derived agent names.
+and supplied unknown tool names are excluded from audit records. Free-form shell, search, administrative kubectl, and delegated-agent calls
+retain metadata only because their operands can contain credentials, task bodies, or task-derived names. Shell command bodies are omitted,
+including commands returned by later job reads; executable aliases and wrappers make credential semantics unknowable.
 
 Filter by a tool or follow one call:
 
@@ -24,9 +25,9 @@ Filter by a tool or follow one call:
 
 | Event                                                               | Activity                                                                                                                                                                                                 |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tool_call_started`                                                 | Every call's known tool name and authorization result. Validated authorized calls include sanitized arguments, except administrative kubectl and delegated-agent calls.                                  |
+| `tool_call_started`                                                 | Every call's known tool name and authorization result. Validated authorized calls include sanitized arguments, except free-form shell, search, administrative kubectl, and delegated-agent calls.        |
 | `tool_call_finished`                                                | Outcome and duration for every call, plus sanitized result metadata for authorized calls. `error` means an MCP tool error. `failed` means process failure. `running` means a background job has started. |
-| `shell_job_started`                                                 | Job ID, command, working directory, and timeout.                                                                                                                                                         |
+| `shell_job_started`                                                 | Job ID, working directory, and timeout; command body omitted.                                                                                                                                            |
 | `shell_job_finished`                                                | Job ID, duration, exit code, signal, timeout state, output byte counts, and truncation state.                                                                                                            |
 | Existing Git, patch, search, kubectl, and repository-session events | Process and workspace activity associated with the current tool call.                                                                                                                                    |
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -1691,6 +1691,34 @@ api repos/owner/repo/issues \
       tool: 'shell_kill',
       payload: { outcome: 'error' },
     })
+  })
+
+  it('omits aliased executable input across actual shell calls and later job reads', async () => {
+    const records = captureAudit()
+    const { client, config, runner } = await connect()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    const executable = join(config.workspaceRoot, 'credential-client')
+    const alias = join(config.workspaceRoot, 'client')
+    writeFileSync(executable, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 })
+    symlinkSync(executable, alias)
+    const credential = 'synthetic-alias-credential'
+    const command = `${alias} -u name:${credential} https://example.test`
+    const foreground = await client.callTool({ name: 'shell_run', arguments: { command } })
+    expect(foreground.isError).not.toBe(true)
+    expect(foreground.structuredContent).toMatchObject({ ok: true, exitCode: 0 })
+    expect(JSON.stringify(foreground.structuredContent)).toContain(credential)
+    const background = await client.callTool({ name: 'shell_start', arguments: { command } })
+    const { jobId } = parseJob(background.structuredContent)
+    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 3_000 })
+    const read = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+    expect(JSON.stringify(read.structuredContent)).toContain(credential)
+    const status = await client.callTool({ name: 'shell_status', arguments: { jobId } })
+    expect(JSON.stringify(status.structuredContent)).toContain(credential)
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain(credential)
+      expect(content).not.toContain(alias)
+    }
+    expect(records().filter(({ event }) => event === 'shell_job_finished')).toHaveLength(2)
   })
 
   it('records timeout completion after shell_start has returned', async () => {
