@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
   CallToolRequestSchema,
@@ -10,6 +12,7 @@ import * as ParseResult from 'effect/ParseResult'
 import * as Schema from 'effect/Schema'
 
 import { AuthChallengeError, buildBearerChallenge, requireScopes, type AuthContext } from './auth'
+import { toolAuditContext } from './audit'
 import { CONNECTOR_LINK_SCOPES } from './constants'
 import type { AgentsShellConfig } from './config'
 import { errorMessage } from './errors'
@@ -26,6 +29,7 @@ export type EffectToolContext = {
   config: AgentsShellConfig
   runner: AgentsShellRunner
   auth: AuthContext
+  requestId: string
 }
 
 export class AgentsShellServices extends Context.Tag('agents-shell/Services')<
@@ -151,17 +155,42 @@ export const installEffectToolHandlers = (
 
   server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const tool = toolByName.get(request.params.name)
-    if (!tool) return errorResult(`Tool ${request.params.name} not found`)
-
-    try {
-      return await Effect.runPromise(
-        callEffectTool(tool, request.params.arguments ?? {}).pipe(
-          Effect.catchAll((error) => Effect.succeed(mapToolError(context.config, error))),
-          Effect.provide(toolLayer),
-        ),
-      )
-    } catch (error) {
-      return mapToolError(context.config, error)
-    }
+    return toolAuditContext.run(
+      { requestId: context.requestId, toolCallId: randomUUID(), tool: tool?.name ?? 'unknown' },
+      async () => {
+        const startedAt = performance.now()
+        const { runner, auth } = context
+        runner.audit('tool_call_started', auth, {
+          requestedTool: request.params.name,
+          arguments: request.params.arguments ?? {},
+        })
+        let result: CallToolResult
+        try {
+          result = tool
+            ? await Effect.runPromise(
+                callEffectTool(tool, request.params.arguments ?? {}).pipe(
+                  Effect.catchAll((error) => Effect.succeed(mapToolError(context.config, error))),
+                  Effect.provide(toolLayer),
+                ),
+              )
+            : errorResult(`Tool ${request.params.name} not found`)
+        } catch (error) {
+          result = mapToolError(context.config, error)
+        }
+        const content = result.structuredContent
+        runner.audit('tool_call_finished', auth, {
+          durationMs: performance.now() - startedAt,
+          outcome: result.isError
+            ? 'error'
+            : content?.status === 'running'
+              ? 'running'
+              : content?.ok === false
+                ? 'failed'
+                : 'succeeded',
+          result: content ?? result.content,
+        })
+        return result
+      },
+    )
   })
 }
