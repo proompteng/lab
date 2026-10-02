@@ -19,6 +19,7 @@ const VALUELESS_SECRET_OPTION =
 const SHELL_INPUT =
   /[?#{}*[\]]|<<|(?<!\|)\|(?!\|)|[<>]\(|\$|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|(?<![\w-])--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\b(?:kubectl|k)\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post-(?:data|file)|body(?:-(?:data|file))?)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)|\bgh\b[^\r\n;|&]*?\b(?:auth|secrets?)\b|\bgh\b[^\r\n;|&]*?\bapi\b[^\r\n;|&]*?\s(?:--(?:raw-field|field|input)(?:=|\s|$)|-[fF])|\bopenssl\b[^\r\n;|&]*?\bpasswd\b|\bgit(?:\s+[^\r\n;|&]*?\bcredential\b|-credential(?:-[\w-]+)?\b)|\b(?:sh|bash|dash|ksh|zsh|fish|python(?:\d(?:\.\d+)?)?)(?=\s)[^\r\n;|&]*?\s(?:--command(?:=|\s|$)|-[A-Za-z]*c)|\b(?:node|bun)(?=\s)[^\r\n;|&]*?\s(?:--(?:eval|print)(?:=|\s|$)|-[A-Za-z]*[ep])|\b(?:eval|trap|alias)(?:\s|$)|(?:^|\s)--(?:url-query|request-target)(?:=|\s|$)|(?:\b|-o)(?:proxy|remote|local|knownhosts)command(?:=|\s)/i
 const COMPACT_CREDENTIAL_OPTION = /^-[puUbEaNP]$/
+const CURL_SHORT_FLAGS = '012346aBfgGhiIjJklLMnNOpqRsSvVZ:'
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
 const CONTAINER_GLOBAL_OPERAND =
@@ -35,10 +36,27 @@ const commandName = (word: string) => {
   const name = normalizeShellWord(word).split('/').at(-1) ?? ''
   return name === 'k' ? 'kubectl' : name
 }
+const curlShortOperandIndex = (token: string) => {
+  if (!token.startsWith('-') || token.startsWith('--')) return -1
+  for (let index = 1; index < token.length; index++) {
+    if (!CURL_SHORT_FLAGS.includes(token[index])) return index
+  }
+  return -1
+}
 const usesShellInput = (text: string) => {
   if (text.length > MAX_FIELD_BYTES || SHELL_INPUT.test(normalizeShellWord(text.replaceAll(/\\\r?\n/g, ''))))
     return true
-  return (text.match(SHELL_WORD) ?? []).some((word) => {
+  const words = text.match(SHELL_WORD) ?? []
+  if (
+    words.some((word) => commandName(word) === 'curl') &&
+    words.some((word) => {
+      const token = normalizeShellWord(word)
+      const index = curlShortOperandIndex(token)
+      return index > 0 && ['d', 'F'].includes(token[index])
+    })
+  )
+    return true
+  return words.some((word) => {
     const words = normalizeShellWord(word).match(SHELL_WORD) ?? []
     return words.length > 1 && words.some((value) => CREDENTIAL_COMMAND.test(commandName(value)))
   })
@@ -125,6 +143,18 @@ const argumentRedactor = (command: string) => {
         return word
       }
       return `${option}[REDACTED]`
+    }
+    if (token.startsWith('-') && !token.startsWith('--')) {
+      const operandIndex = name === 'curl' ? curlShortOperandIndex(token) : null
+      for (let index = 2; index < token.length; index++) {
+        if (operandIndex !== null && index !== operandIndex) continue
+        if (!options.some((value) => COMPACT_CREDENTIAL_OPTION.test(value) && value[1] === token[index])) continue
+        if (index === token.length - 1) {
+          redactNext = true
+          return word
+        }
+        return `${token.slice(0, index + 1)}[REDACTED]`
+      }
     }
     if (SECRET_OPTION.test(token)) {
       redactNext = true

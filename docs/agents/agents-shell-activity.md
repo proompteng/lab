@@ -73,6 +73,10 @@ GitHub API payload fields (`-f`, `-F`, `--raw-field`, `--field`) and `--input` b
 in full. Git credential-protocol commands and helpers also receive whole-input omission. OpenSSH key
 passphrases (`ssh-keygen -N` and `-P`) are redacted while key-file paths and ordinary SSH/SCP port operands remain visible.
 OpenSSL password-generation input is omitted in full; literal TLS PSK and SRP credential operands are redacted.
+Credential short options inside groups receive conservative redaction, including attached operands and operands in
+the following argument. Curl grouping stops at its first value-taking option, preserving ordinary output paths;
+grouped data/form options receive whole-input omission. Ordinary groups without credential options, such as curl's
+`-svf`, remain visible.
 Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation
 text and goal objectives.
 Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess

@@ -189,6 +189,65 @@ describe('agents-shell activity audit', () => {
     expect(serialized).toContain('ssh -p 2222')
   })
 
+  it('redacts credentials inside grouped short options in commands and argv', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'curl -suadmin:syntheticGroupedCredential https://example.test',
+      "'/usr/bin/cu'\"rl\" '-sLuadmin:syntheticGroupedCredential' https://example.test",
+      'curl -sUproxyuser:syntheticGroupedCredential https://example.test',
+      'curl -sbcookie=syntheticGroupedCredential https://example.test',
+      'curl -sEsyntheticGroupedCredential https://example.test',
+      'mysql -vpsyntheticGroupedCredential',
+      'ssh-keygen -qNsyntheticGroupedCredential -f fixture.key',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    for (const args of [
+      ['-suadmin:syntheticGroupedCredential', 'https://example.test'],
+      ['-sLu', 'admin:syntheticGroupedCredential', 'https://example.test'],
+      ['-sUproxyuser:syntheticGroupedCredential', 'https://example.test'],
+      ['-uadmin:syntheticGroupedCredential', 'https://example.test'],
+    ])
+      writeAuditLog(config, 'probe', null, { command: 'curl', args })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticGroupedCredential')
+      expect(content).not.toContain('proxyuser')
+      expect(content).toContain('[REDACTED]')
+    }
+    writeAuditLog(config, 'probe', null, {
+      command: 'curl -svf https://example.test',
+      args: ['-svf', 'https://example.test'],
+    })
+    expect(records().at(-1)?.payload).toEqual({
+      command: 'curl -svf https://example.test',
+      args: ['-svf', 'https://example.test'],
+    })
+    writeAuditLog(config, 'probe', null, { command: 'curl -sooutput.txt https://example.test' })
+    expect(records().at(-1)?.payload.command).toBe('curl -sooutput.txt https://example.test')
+  })
+
+  it('omits HTTP body operands inside curl short-option groups', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'curl -LsdsyntheticGroupedBody https://example.test',
+      "'/usr/bin/cu'\"rl\" '-sF' 'custom=syntheticGroupedBody' https://example.test",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'curl',
+      args: ['-Lsd', 'syntheticGroupedBody', 'https://example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticGroupedBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
   it.each([
     { command: 'mkdir -p /workspace/build', args: ['-p', '/workspace/build'] },
     { command: 'git log -p HEAD', args: ['log', '-p', 'HEAD'] },
