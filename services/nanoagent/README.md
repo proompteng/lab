@@ -13,9 +13,22 @@ unauthenticated.
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
 [`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves authenticated gRPC
-over HTTP/2 without TLS on its existing port 8080. Each unary and streaming RPC checks the same per-MicroVM bootstrap
-credential in `authorization` metadata. This migration retains the existing transport trust and requires no SPIRE,
-service mesh, additional listener, or Talos configuration.
+over HTTP/2 with SPIRE mutual TLS on port 8443. Each unary and streaming RPC also checks the per-MicroVM bootstrap
+credential in `authorization` metadata. Port 8080 serves only unauthenticated health probes and cannot dispatch RPCs
+or previews. No Talos machine configuration or service mesh change is required.
+
+Nanoagent supervises SPIRE 1.15.3 inside the Firecracker guest. Its `galactic-guests` PSAT agent is attested with a
+Pod-bound token for audience `spire-server`; its workload selector is Unix UID 1000. The issued identity includes the
+current Pod UID. The TLS listener accepts only `spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri`; the controller pins
+the guest's exact `spiffe://galactic.proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>` identity. The Go SPIFFE source watches
+certificate and bundle updates, so new connections use renewed credentials without restarting Nanoagent.
+
+The agent binary is installed under the persistent home from a versioned, SHA-256-pinned musl release archive. Build
+stages verify both the native binary and the generated agent configuration. Only the installer and version receipt
+enter the 512 MiB rootfs. Agent keys, attestation token, and data remain in private `/tmp/nanoagent-spire` files.
+Tengri refreshes the token and public bundle over mTLS; the refresh RPC rejects another Pod UID and private material
+in place of CA certificates. Terminal and Codex children receive no SPIFFE or SPIRE configuration variables. A guest
+administrator owns that guest's identity; its Pod-bound parent cannot attest another guest or the controller.
 
 The service covers editor startup, bounded file discovery and atomic mutations, PTY lifecycle, Codex calls and
 approvals, file/Codex server streams, and a bidirectional terminal stream. File content travels as protobuf bytes.
@@ -30,8 +43,8 @@ this guest.
 
 HTTP remains for process probes and application content:
 
-- `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes;
-- `/v1/preview/{port}/{path...}`: authenticated HTTP and WebSocket proxying to an allowed loopback application or VS Code.
+- `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes on plain port 8080;
+- `/v1/preview/{port}/{path...}`: mTLS-authenticated HTTPS and secure WebSocket proxying on port 8443 to an allowed loopback application or VS Code.
 
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation

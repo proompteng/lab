@@ -349,6 +349,7 @@ pub fn build_pod(
         },
         spec: Some(PodSpec {
             automount_service_account_token: Some(false),
+            service_account_name: Some("nanoagent".to_owned()),
             containers: vec![build_container(microvm, bootstrap_secret)],
             enable_service_links: Some(false),
             node_selector: Some(node_selector),
@@ -418,7 +419,39 @@ pub fn has_current_storage_layout(microvm: &MicroVM) -> bool {
 }
 
 fn build_volumes(home_claim: &str) -> Vec<Volume> {
+    use k8s_openapi::api::core::v1::{
+        ConfigMapVolumeSource, KeyToPath, ProjectedVolumeSource, ServiceAccountTokenProjection,
+        VolumeProjection,
+    };
     vec![
+        Volume {
+            name: "spire-attestation".to_owned(),
+            projected: Some(ProjectedVolumeSource {
+                default_mode: Some(0o440),
+                sources: Some(vec![VolumeProjection {
+                    service_account_token: Some(ServiceAccountTokenProjection {
+                        audience: Some("spire-server".to_owned()),
+                        expiration_seconds: Some(3600),
+                        path: "token".to_owned(),
+                    }),
+                    ..Default::default()
+                }]),
+            }),
+            ..Default::default()
+        },
+        Volume {
+            name: "spire-bundle".to_owned(),
+            config_map: Some(ConfigMapVolumeSource {
+                name: "spire-guest-bundle".to_owned(),
+                items: Some(vec![KeyToPath {
+                    key: "bundle.pem".to_owned(),
+                    path: "bundle.pem".to_owned(),
+                    mode: Some(0o444),
+                }]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         Volume {
             name: "home".to_owned(),
             persistent_volume_claim: Some(PersistentVolumeClaimVolumeSource {
@@ -485,6 +518,11 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
     ]);
     let mut env = vec![
         EnvVar {
+            name: "SPIFFE_TRUST_DOMAIN".to_owned(),
+            value: Some("galactic.proompteng.ai".to_owned()),
+            ..Default::default()
+        },
+        EnvVar {
             name: "MICROVM_ID".to_owned(),
             value_from: Some(EnvVarSource {
                 field_ref: Some(k8s_openapi::api::core::v1::ObjectFieldSelector {
@@ -541,25 +579,47 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             ..EnvVar::default()
         },
     ]);
-    let volume_mounts = vec![VolumeMount {
-        name: "tmp".to_owned(),
-        mount_path: "/tmp".to_owned(),
-        ..VolumeMount::default()
-    }];
+    let volume_mounts = vec![
+        VolumeMount {
+            name: "tmp".to_owned(),
+            mount_path: "/tmp".to_owned(),
+            ..Default::default()
+        },
+        VolumeMount {
+            name: "spire-attestation".to_owned(),
+            mount_path: "/var/run/secrets/spire".to_owned(),
+            read_only: Some(true),
+            ..Default::default()
+        },
+        VolumeMount {
+            name: "spire-bundle".to_owned(),
+            mount_path: "/var/run/secrets/spire-bundle".to_owned(),
+            read_only: Some(true),
+            ..Default::default()
+        },
+    ];
 
     Container {
         name: "nanoagent".to_owned(),
         image: Some(microvm.spec.image.clone()),
         image_pull_policy: Some("IfNotPresent".to_owned()),
         env: Some(env),
-        ports: Some(vec![ContainerPort {
-            name: Some("guest-api".to_owned()),
-            container_port: 8080,
-            protocol: Some("TCP".to_owned()),
-            ..ContainerPort::default()
-        }]),
+        ports: Some(vec![
+            ContainerPort {
+                name: Some("guest-tls".to_owned()),
+                container_port: 8443,
+                protocol: Some("TCP".to_owned()),
+                ..Default::default()
+            },
+            ContainerPort {
+                name: Some("guest-api".to_owned()),
+                container_port: 8080,
+                protocol: Some("TCP".to_owned()),
+                ..ContainerPort::default()
+            },
+        ]),
         readiness_probe: Some(http_probe("/readyz", 5, 3)),
-        startup_probe: Some(http_probe("/readyz", 5, 180)),
+        startup_probe: Some(http_probe("/readyz", 5, 210)),
         liveness_probe: Some(http_probe("/livez", 15, 3)),
         resources: Some(ResourceRequirements {
             limits: Some(fixed.clone()),
@@ -971,6 +1031,32 @@ mod tests {
         let spec = pod.spec.expect("pod spec");
         assert_eq!(spec.runtime_class_name.as_deref(), Some("kata-fc"));
         assert_eq!(spec.automount_service_account_token, Some(false));
+        assert_eq!(spec.service_account_name.as_deref(), Some("nanoagent"));
+        let attestation = spec
+            .volumes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|volume| volume.name == "spire-attestation")
+            .unwrap()
+            .projected
+            .as_ref()
+            .unwrap();
+        assert_eq!(attestation.default_mode, Some(0o440));
+        let token = attestation.sources.as_ref().unwrap()[0]
+            .service_account_token
+            .as_ref()
+            .unwrap();
+        assert_eq!(token.audience.as_deref(), Some("spire-server"));
+        assert_eq!(token.expiration_seconds, Some(3600));
+        assert!(
+            spec.volumes
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|volume| volume.csi.is_none()),
+            "a host Workload API socket cannot attest processes inside the guest kernel"
+        );
         assert_eq!(
             spec.node_selector
                 .as_ref()
@@ -1075,7 +1161,7 @@ mod tests {
         assert_eq!(tmp_mounts[0].mount_path, "/tmp");
         assert!(spec.init_containers.is_none());
         let volumes = spec.volumes.as_ref().expect("volumes");
-        assert_eq!(volumes.len(), 2);
+        assert_eq!(volumes.len(), 4);
     }
 
     #[test]
@@ -1122,10 +1208,10 @@ mod tests {
         );
         let startup_probe = container.startup_probe.as_ref().expect("startup probe");
         assert_eq!(startup_probe.period_seconds, Some(5));
-        assert_eq!(startup_probe.failure_threshold, Some(180));
+        assert_eq!(startup_probe.failure_threshold, Some(210));
         assert_eq!(
             startup_probe.period_seconds.unwrap() * startup_probe.failure_threshold.unwrap(),
-            15 * 60,
+            1050,
         );
         assert_eq!(
             probe_path(container.liveness_probe.as_ref().expect("liveness probe")),

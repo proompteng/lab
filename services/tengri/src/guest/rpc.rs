@@ -21,24 +21,29 @@ pub struct RpcClient {
 }
 
 impl RpcClient {
-    pub fn new(address: &str, token: &str) -> Result<Self, GuestError> {
-        let endpoint = Channel::from_shared(address.to_owned())
-            .map_err(|_| GuestError::Api {
-                status: StatusCode::BAD_GATEWAY,
-                message: "Invalid Nanoagent address".into(),
-            })?
-            .connect_timeout(GUEST_CONNECT_TIMEOUT);
+    pub fn new(channel: Channel, token: &str) -> Result<Self, GuestError> {
         let authorization =
             MetadataValue::try_from(format!("Bearer {token}")).map_err(|_| GuestError::Api {
                 status: StatusCode::UNAUTHORIZED,
                 message: "Invalid Nanoagent credentials".into(),
             })?;
         Ok(Self {
-            client: Client::new(endpoint.connect_lazy())
+            client: Client::new(channel)
                 .max_decoding_message_size(MAX_GUEST_JSON_BYTES)
                 .max_encoding_message_size(MAX_GUEST_JSON_BYTES),
             authorization,
         })
+    }
+
+    #[cfg(test)]
+    pub fn fixture(address: &str, token: &str) -> Result<Self, GuestError> {
+        Self::new(
+            Channel::from_shared(address.to_owned())
+                .map_err(anyhow::Error::from)?
+                .connect_timeout(GUEST_CONNECT_TIMEOUT)
+                .connect_lazy(),
+            token,
+        )
     }
 
     fn request<T>(&self, value: T, timeout: Option<Duration>) -> Request<T> {
@@ -50,6 +55,27 @@ impl RpcClient {
             request.set_timeout(timeout);
         }
         request
+    }
+
+    pub async fn refresh_spire_bootstrap(
+        &self,
+        pod_uid: &str,
+        token: Vec<u8>,
+        trust_bundle: Vec<u8>,
+    ) -> Result<(), GuestError> {
+        self.client
+            .clone()
+            .refresh_spire_bootstrap(self.request(
+                proto::SpireBootstrap {
+                    pod_uid: pod_uid.to_owned(),
+                    token,
+                    trust_bundle,
+                },
+                Some(GUEST_UNARY_TIMEOUT),
+            ))
+            .await
+            .map_err(rpc_error)?;
+        Ok(())
     }
 
     pub async fn verify_identity(&self, pod_uid: &str) -> Result<(), GuestError> {

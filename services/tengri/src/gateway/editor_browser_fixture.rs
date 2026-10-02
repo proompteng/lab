@@ -57,15 +57,21 @@ async fn editor_browser_acceptance_fixture() {
             .to_owned(),
         )
         .unwrap(),
+        crate::identity::WorkloadIdentity::Fixture,
     )
     .unwrap();
     let issue_state = state.clone();
     let issue = get(move |Query(query): Query<HashMap<String, String>>| {
         let state = issue_state.clone();
         async move {
-            let guest = GuestClient::for_agent(state.client.clone(), "tengri", "editor-fixture")
-                .await
-                .unwrap();
+            let guest = GuestClient::for_agent(
+                state.client.clone(),
+                "tengri",
+                "editor-fixture",
+                &crate::identity::WorkloadIdentity::Fixture,
+            )
+            .await
+            .unwrap();
             guest.open_editor().await.unwrap();
             let ticket = state
                 .tickets
@@ -85,9 +91,14 @@ async fn editor_browser_acceptance_fixture() {
     let files = get(move |Query(query): Query<HashMap<String, String>>| {
         let state = files_state.clone();
         async move {
-            let guest = GuestClient::for_agent(state.client.clone(), "tengri", "editor-fixture")
-                .await
-                .unwrap();
+            let guest = GuestClient::for_agent(
+                state.client.clone(),
+                "tengri",
+                "editor-fixture",
+                &crate::identity::WorkloadIdentity::Fixture,
+            )
+            .await
+            .unwrap();
             let files = guest.list_files(query.get("path").unwrap()).await.unwrap();
             axum::Json(json!({"path": files.path, "entries": files.entries}))
         }
