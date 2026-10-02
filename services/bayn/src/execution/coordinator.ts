@@ -30,7 +30,7 @@ import {
 } from './coordinator-decisions'
 import { IntentStore, type IntentStoreError, type StoredIntent } from './intents/domain'
 import { MutationStore, MutationStoreError, type MutationEvent } from './mutations'
-import { WriterFence, WriterFenceError } from './writer-fence'
+import type { WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { Pipeable } from '../pipeable'
 
@@ -53,7 +53,6 @@ export interface DryRunSubmit extends DryRunSubmitDecision {}
 interface MutationServices {
   readonly mutations: MutationStore['Service']
   readonly broker: BrokerMutation['Service']
-  readonly fence: WriterFence['Service']
 }
 
 interface RecoveryServices {
@@ -251,8 +250,7 @@ const startSubmit = (
   consistencyDelayMs: number,
   closeOnly: boolean,
 ) =>
-  services.fence.check.pipe(
-    Effect.andThen(requireActiveSubmitRiskDecision(stored)),
+  requireActiveSubmitRiskDecision(stored).pipe(
     Effect.andThen(currentInstant),
     Effect.flatMap((occurredAt) =>
       liftDecision(nextInstant(MutationOperation.Submit, stored.updatedAt, occurredAt)).pipe(
@@ -298,7 +296,6 @@ const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
-    fence: WriterFence,
   }).pipe(Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)))
 
 export const submit = Pipeable.by<
@@ -349,8 +346,7 @@ const startCancel = (
   brokerOrderId: string,
   consistencyDelayMs: number,
 ) =>
-  services.fence.check.pipe(
-    Effect.andThen(currentInstant),
+  currentInstant.pipe(
     Effect.flatMap((occurredAt) =>
       liftDecision(nextInstant(MutationOperation.Cancel, stored.updatedAt, occurredAt)).pipe(
         Effect.flatMap((nextOccurredAt) =>
@@ -402,7 +398,6 @@ const cancelDataFirst = (intentId: string, consistencyDelayMs: number) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
-    fence: WriterFence,
   }).pipe(Effect.flatMap((services) => runCancel(services, intentId, consistencyDelayMs)))
 
 export const cancel = Pipeable.dual(2, cancelDataFirst)
