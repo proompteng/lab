@@ -21,11 +21,11 @@ const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
 const CREDENTIAL_COMMAND =
-  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker[ \t]+login|podman[ \t]+login)\b((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
+  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker["']*[ \t]+["']*login|podman["']*[ \t]+["']*login)\b(["']*)((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
 const shortCredentialOptions = (command: string) => {
-  const [executable = '', operation] = command.trim().split(/\s+/)
+  const [executable = '', operation] = command.replaceAll(/["']/g, '').trim().split(/\s+/)
   const name = executable.split('/').at(-1)
   if (name === 'curl') return ['-u', '-U', '-b', '-E']
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
@@ -36,6 +36,7 @@ const shortCredentialOptions = (command: string) => {
 }
 
 const argumentRedactor = (command: string) => {
+  command = command.replaceAll(/["']/g, '')
   let options = shortCredentialOptions(command)
   let wrapper = /(?:^|\/)sshpass(?:\s|$)/.test(command)
   let wrapperOperand = false
@@ -86,9 +87,9 @@ const argumentRedactor = (command: string) => {
 }
 
 const redactShortOptions = (text: string) =>
-  text.replace(CREDENTIAL_COMMAND, (_match, command: string, args: string) => {
+  text.replace(CREDENTIAL_COMMAND, (_match, command: string, quotes: string, args: string) => {
     const redact = argumentRedactor(command)
-    return command + args.replace(SHELL_WORD, (word) => redact(word))
+    return command + quotes + args.replace(SHELL_WORD, (word) => redact(word))
   })
 
 const bodyOmission = (kind: unknown) => {
@@ -133,7 +134,7 @@ const redactText = (value: string, secrets: string[]) => {
     .replace(/(^|[^A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '$1[REDACTED_EMAIL]')
 }
 
-export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitAdministrativeArguments = false) => {
+export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitToolArguments = false) => {
   const secrets = Object.entries(process.env)
     .filter(
       ([key, value]) =>
@@ -193,7 +194,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitAdmin
         remaining -= Buffer.byteLength(JSON.stringify(loggedKey)) + 1
         result[loggedKey] = SECRET_KEY.test(key.replaceAll(/[^a-z]/gi, ''))
           ? '[REDACTED]'
-          : OMITTED_BODY.test(key) || (omitAdministrativeArguments && /^(?:arguments|args|command)$/i.test(key))
+          : OMITTED_BODY.test(key) || (omitToolArguments && /^(?:arguments|args|command|agentRunName)$/i.test(key))
             ? '[OMITTED]'
             : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
       }
@@ -214,7 +215,8 @@ export const writeAuditLog = (
   payload: Record<string, unknown>,
   context = toolAuditContext.getStore() ?? null,
 ) => {
-  const sanitized = sanitizeAuditPayload(payload, context?.tool === 'kubectl_admin')
+  const omitToolArguments = context !== null && (context.tool === 'kubectl_admin' || context.tool.startsWith('agent_'))
+  const sanitized = sanitizeAuditPayload(payload, omitToolArguments)
   const line = JSON.stringify({
     msg: 'agents-shell audit',
     schemaVersion: 1,

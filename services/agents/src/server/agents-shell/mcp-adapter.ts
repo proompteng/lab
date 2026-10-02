@@ -189,7 +189,9 @@ export const installEffectToolHandlers = (
           outcome: result.isError
             ? 'error'
             : content?.status === 'running'
-              ? 'running'
+              ? tool?.name === 'shell_start'
+                ? 'running'
+                : 'succeeded'
               : content?.ok === false
                 ? 'failed'
                 : 'succeeded',

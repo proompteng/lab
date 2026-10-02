@@ -240,6 +240,8 @@ describe('agents-shell activity audit', () => {
   it('keeps delegated task text out of agent_status process and tool audit while retaining the response', async () => {
     const records = captureAudit()
     const { client, config } = await connect()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    const agentRunName = 'private-agent-task-derived-name'
     const agentRun = {
       kind: 'AgentRun',
       spec: {
@@ -254,15 +256,20 @@ describe('agents-shell activity audit', () => {
       { mode: 0o755 },
     )
     vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
-    const response = await client.callTool({ name: 'agent_status', arguments: { agentRunName: 'fixture' } })
-    expect(response.structuredContent).toMatchObject({ agentRun })
+    const response = await client.callTool({ name: 'agent_status', arguments: { agentRunName } })
+    expect(response.structuredContent).toMatchObject({ agentRunName, agentRun })
     for (const value of [
       'private-agent-summary',
       'private-agent-task',
       'private-agent-objective',
       'private-agent-job-task',
-    ])
+    ]) {
       expect(JSON.stringify(records())).not.toContain(value)
+      expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(value)
+    }
+    expect(records().find(({ event }) => event === 'tool_call_started')).toMatchObject({
+      payload: { arguments: '[OMITTED]' },
+    })
     expect(records().find(({ event }) => event === 'agent_status_get_agentrun_finished')).toMatchObject({
       payload: { exitCode: 0 },
     })
@@ -430,6 +437,28 @@ describe('agents-shell activity audit', () => {
       expect(content).not.toContain('synthetic-private-output')
     }
     expect(JSON.stringify(records())).toContain('pkcs12')
+  })
+
+  it('redacts credential operands after quoted executable paths', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const executable of ['"/usr/bin/curl"', "'/usr/bin/curl'", '"curl"']) {
+      writeAuditLog(config, 'probe', null, {
+        command: `${executable} -u name:synthetic-private-quoted https://example.test`,
+      })
+      writeAuditLog(config, 'probe', null, {
+        command: executable,
+        args: ['-u', 'name:synthetic-private-quoted', 'https://example.test'],
+      })
+    }
+    writeAuditLog(config, 'probe', null, {
+      command: '"/usr/bin/docker" "login" -p synthetic-private-quoted registry.example.test',
+    })
+    expect(JSON.stringify(records())).not.toContain('synthetic-private-quoted')
+    expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain('synthetic-private-quoted')
+    expect(records()[0].payload.command).toContain('"/usr/bin/curl"')
+    expect(records().at(-1)?.payload.command).toContain('registry.example.test')
   })
 
   it.each([
@@ -612,6 +641,25 @@ describe('agents-shell activity audit', () => {
       toolCallId: foreground?.toolCallId,
       payload: { result: { stdout: '[OMITTED]', stdoutBytes: 18 } },
     })
+  })
+
+  it('records a completed poll as succeeded while its background job is still running', async () => {
+    const records = captureAudit()
+    const { client, runner } = await connect()
+    const started = await client.callTool({ name: 'shell_start', arguments: { command: 'sleep 10' } })
+    const { jobId } = parseJob(started.structuredContent)
+    try {
+      const response = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+      expect(response.structuredContent).toMatchObject({ status: 'running', jobId })
+      expect(
+        records().find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_read'),
+      ).toMatchObject({
+        payload: { outcome: 'succeeded', result: { status: 'running' } },
+      })
+    } finally {
+      await client.callTool({ name: 'shell_kill', arguments: { jobId } })
+      await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
+    }
   })
 
   it('records timeout completion after shell_start has returned', async () => {
