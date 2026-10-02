@@ -16,8 +16,8 @@ const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)$/i
 const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)$/i
 const SHELL_INPUT =
-  /<<|(?<!\|)\|(?!\|)|[<>]\(|\$\(|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post-(?:data|file)|body(?:-(?:data|file))?)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)|\bgh\b[^\r\n;|&]*?\b(?:auth|secrets?)\b|\bgit(?:\s+[^\r\n;|&]*?\bcredential\b|-credential(?:-[\w-]+)?\b)/i
-const COMPACT_CREDENTIAL_OPTION = /^-[puUbEa]$/
+  /<<|(?<!\|)\|(?!\|)|[<>]\(|\$\(|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|(?<![\w-])--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post-(?:data|file)|body(?:-(?:data|file))?)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)|\bgh\b[^\r\n;|&]*?\b(?:auth|secrets?)\b|\bgit(?:\s+[^\r\n;|&]*?\bcredential\b|-credential(?:-[\w-]+)?\b)|\b(?:sh|bash|dash|ksh|zsh|fish|python(?:\d(?:\.\d+)?)?)(?=\s)[^\r\n;|&]*?\s(?:--command(?:=|\s|$)|-[A-Za-z]*c)|\b(?:node|bun)(?=\s)[^\r\n;|&]*?\s(?:--(?:eval|print)(?:=|\s|$)|-[A-Za-z]*[ep])|(?:\b|-o)proxycommand(?:=|\s)/i
+const COMPACT_CREDENTIAL_OPTION = /^-[puUbEaNP]$/
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
 const CONTAINER_GLOBAL_OPERAND =
@@ -26,10 +26,11 @@ const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|std
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
-const CREDENTIAL_COMMAND = /^(?:curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker|podman)$/
+const CREDENTIAL_COMMAND = /^(?:curl|mysql|mariadb|sshpass|ssh-keygen|redis-cli|kubectl|openssl|docker|podman)$/
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
-const usesShellInput = (text: string) => SHELL_INPUT.test(text.replaceAll(/["'\\]/g, ''))
+const usesShellInput = (text: string) =>
+  text.length > MAX_FIELD_BYTES || SHELL_INPUT.test(text.replaceAll(/["'\\]/g, ''))
 const normalizeShellWord = (word: string) => word.replaceAll(/["'\\]/g, '')
 
 const shortCredentialOptions = (command: string) => {
@@ -37,6 +38,7 @@ const shortCredentialOptions = (command: string) => {
   const name = executable.split('/').at(-1)
   if (name === 'curl') return ['-u', '-U', '-b', '-E', '--user', '--proxy-user']
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
+  if (name === 'ssh-keygen') return ['-N', '-P']
   if (name === 'redis-cli') return ['-a']
   if (name === 'kubectl' && operation === 'patch') return ['-p']
   if (name === 'openssl') {
@@ -163,7 +165,7 @@ const redactText = (value: string, secrets: string[]) => {
       /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)(?:["']?\s|$))[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       '$1[REDACTED]',
     )
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
+    .replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/@?#]+@/gi, '$1[REDACTED]@')
     .replace(
       /((?:^|\s)(?:--(?:oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g,
       '$1[REDACTED]',
@@ -191,6 +193,11 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitToolA
       return '[TRUNCATED]'
     }
     if (typeof value === 'string') {
+      if (value.length > MAX_FIELD_BYTES) {
+        truncated = true
+        remaining -= Buffer.byteLength(JSON.stringify('[TRUNCATED]'))
+        return '[TRUNCATED]'
+      }
       const text = redactText(value, secrets)
       const limit = Math.min(remaining, MAX_FIELD_BYTES)
       let end = text.length

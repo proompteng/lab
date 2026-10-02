@@ -202,12 +202,13 @@ describe('agents-shell activity audit', () => {
   it('bounds audit processing time for a long plain output token', () => {
     const records = captureAudit()
     const startedAt = performance.now()
-    writeAuditLog(configFixture(), 'probe', null, {
-      details: 'a'.repeat(50_000),
-      command: `curl --operation ${'a'.repeat(50_000)}"`,
-    })
+    for (const token of ['a'.repeat(50_000), 'a-'.repeat(25_000), 'curl '.repeat(10_000)])
+      writeAuditLog(configFixture(), 'probe', null, {
+        details: token,
+        command: `curl --operation ${token}"`,
+      })
     expect(performance.now() - startedAt).toBeLessThan(1_000)
-    expect(records()[0].payloadTruncated).toBe(true)
+    expect(records().every((record) => record.payloadTruncated)).toBe(true)
   })
 
   it('omits Kubernetes Secret documents with arbitrary keys and encoded values in both sinks', () => {
@@ -721,6 +722,106 @@ describe('agents-shell activity audit', () => {
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
     writeAuditLog(config, 'probe', null, { command: 'git status || git diff' })
     expect(records().at(-1)?.payload.command).toBe('git status || git diff')
+  })
+
+  it('redacts ssh-keygen passphrases without masking SSH and SCP port operands', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'ssh-keygen -t ed25519 -N syntheticNewKeyPassphrase -f fixture.key',
+      'ssh-keygen -p -P syntheticOldKeyPassphrase -N syntheticNewKeyPassphrase -f fixture.key',
+      "'/usr/bin/ssh-key'\"gen\" '-PsyntheticOldKeyPassphrase' '-NsyntheticNewKeyPassphrase' -f fixture.key",
+      'ssh-keygen -N=syntheticNewKeyPassphrase -f fixture.key',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'ssh-keygen',
+      args: ['-p', '-P', 'syntheticOldKeyPassphrase', '-N', 'syntheticNewKeyPassphrase', '-f', 'fixture.key'],
+    })
+    writeAuditLog(config, 'probe', null, { command: 'ssh -p 2222 example.test' })
+    writeAuditLog(config, 'probe', null, { command: 'scp -P2222 example.test:fixture.txt fixture.txt' })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticOldKeyPassphrase')
+      expect(content).not.toContain('syntheticNewKeyPassphrase')
+      expect(content).toContain('fixture.key')
+      expect(content).toContain('ssh -p 2222 example.test')
+      expect(content).toContain('scp -P2222 example.test:fixture.txt fixture.txt')
+      expect(content).toContain('[REDACTED]')
+    }
+  })
+
+  it('redacts URI credentials across protocols while preserving plain server addresses', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const protocol of ['nats', 'tls', 'ftp', 'sftp', 'smtp', 'amqp', 'mqtt', 'https']) {
+      writeAuditLog(config, 'probe', null, {
+        command: `client --server ${protocol}://user:syntheticUriPassword!part@example.test:4222/path`,
+      })
+      writeAuditLog(config, 'probe', null, {
+        command: 'client',
+        args: ['--server', `${protocol}://syntheticUriToken!part@example.test:4222/path`],
+      })
+    }
+    writeAuditLog(config, 'probe', null, { command: 'nats --server nats://example.test:4222 server info' })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticUriPassword')
+      expect(content).not.toContain('syntheticUriToken')
+      expect(content).toContain('[REDACTED]@example.test:4222/path')
+      expect(content).toContain('nats --server nats://example.test:4222 server info')
+    }
+  })
+
+  it('omits explicit interpreter code bodies while retaining script-file paths', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "bash -lc 'curl -u admin:syntheticInterpreterBody https://example.test'",
+      "'/bin/ba'\"sh\" --norc --command='printf syntheticInterpreterBody'",
+      'python3.12 -Ic \'print("syntheticInterpreterBody")\'',
+      'node --eval=\'process.stdout.write("syntheticInterpreterBody")\'',
+      'node -pe \'"syntheticInterpreterBody"\'',
+      'bun -e \'console.log("syntheticInterpreterBody")\'',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'python3',
+      args: ['-c', 'print("syntheticInterpreterBody")'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticInterpreterBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    for (const command of ['bash fixture.sh', 'python3 fixture.py', 'node fixture.js', 'bun run fixture.ts']) {
+      writeAuditLog(config, 'probe', null, { command })
+      expect(records().at(-1)?.payload.command).toBe(command)
+    }
+  })
+
+  it('omits embedded SSH proxy command bodies without changing ordinary proxy jumps', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "ssh -oProxyCommand='sshpass -p syntheticProxyBody ssh gateway nc %h %p' example.test",
+      "ssh -o 'ProxyCommand=sshpass -p syntheticProxyBody ssh gateway nc %h %p' example.test",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'ssh',
+      args: ['-o', 'ProxyCommand=sshpass -p syntheticProxyBody ssh gateway nc %h %p', 'example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticProxyBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    writeAuditLog(config, 'probe', null, { command: 'ssh -oProxyJump=gateway -p2222 example.test' })
+    expect(records().at(-1)?.payload.command).toBe('ssh -oProxyJump=gateway -p2222 example.test')
   })
 
   it('preserves valueless user switches outside credential-owning commands', () => {
