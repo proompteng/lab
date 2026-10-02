@@ -404,6 +404,39 @@ recovery behavior, and evidence boundaries.
 
 ## Operations
 
+### Runtime and historical-report configuration
+
+The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
+does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
+required for archive health and evidence reads; this separation does not alter broker, authority, risk or provenance
+configuration.
+
+The read-only forward-performance command has an explicit historical snapshot configuration in addition to its
+account-bound runtime configuration. Supply all eight settings from the intended immutable daily publication, even
+when invoking the command from a running service container:
+
+| Setting                        | Historical input                 |
+| ------------------------------ | -------------------------------- |
+| `BAYN_SIGNAL_SNAPSHOT_ID`      | Immutable daily snapshot SHA-256 |
+| `BAYN_SIGNAL_PUBLICATION_ASOF` | Publication date, `YYYY-MM-DD`   |
+| `BAYN_SIGNAL_CALENDAR_VERSION` | Exact calendar identity          |
+| `BAYN_SIGNAL_DATA_START`       | First data date                  |
+| `BAYN_SIGNAL_DATA_END`         | Last data date                   |
+| `BAYN_SIGNAL_LOOKBACK_START`   | Lookback start date              |
+| `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
+| `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
+
+After supplying these values, use `node dist/forward-performance-command.js --authority-generation <generation-hash>`
+to scope the report. Missing or malformed historical settings, including inconsistent evaluation bounds, fail
+configuration before evidence reads. They never select a default snapshot or imply zero trades or zero performance.
+Historical SIP verification retains its explicit evaluation start; intraday archive evidence and immutable receipt
+identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
+`BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
+
+For upgrades from a binary that still requires daily snapshot settings at live startup, publish and select the new
+binary before removing those settings from service, controller and activation manifests. Before rolling back to such
+an older binary, restore all eight manifest settings first. No database migration or evidence rewrite is involved.
+
 ### Private inference operating-cost report
 
 Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed

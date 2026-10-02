@@ -13,6 +13,12 @@ import {
 } from './config'
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
+import { loadApplicationPlan } from './application-plan'
+import { executionControllerConfig, executionControllerPlanHash } from './composition/native-execution-runtime'
+import { loadForwardPerformanceConfig } from './forward-performance/config'
+import { canonicalHashV1OrThrow } from './hash'
+import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
+import { historicalSignalConfig } from './testing/historical-signal-fixture'
 
 const sourceRevision = 'a'.repeat(40)
 const imageRepository = 'registry.ide-newton.ts.net/lab/bayn'
@@ -60,17 +66,6 @@ const baseParsedConfig: ParsedRuntimeConfig = {
     url: 'http://clickhouse.test:8123',
     username: 'bayn',
     password: Redacted.make(clickhousePassword),
-    snapshotId: 'f'.repeat(64),
-    publicationAsOf: '2026-07-17',
-    calendarVersion: 'alpaca-us-equity-calendar-v1',
-    bounds: {
-      schemaVersion: 'bayn.evaluation-bounds.v1',
-      dataStart: '2017-01-03',
-      dataEnd: '2026-07-17',
-      lookbackStart: '2017-01-03',
-      evaluationStart: '2018-01-03',
-      evaluationEnd: '2026-07-17',
-    },
   },
   postgres: {
     url: Redacted.make(postgresUrl),
@@ -364,7 +359,7 @@ describe('pure runtime configuration resolution', () => {
     }
   })
 
-  test('validates provenance, PostgreSQL TLS, bounds, and cycle timing before runtime startup', () => {
+  test('validates provenance, PostgreSQL TLS and cycle timing before runtime startup', () => {
     expectFailure(
       { cyclePollIntervalMs: 300_000 },
       {
@@ -385,15 +380,6 @@ describe('pure runtime configuration resolution', () => {
       _tag: 'Failure',
       failure: { _tag: 'ProductionProvenanceRequiresEmbeddedMetadata' },
     })
-    const invalidBounds = resolveRuntimeConfig(
-      resolutionInput({
-        clickhouse: {
-          ...baseParsedConfig.clickhouse,
-          bounds: { ...baseParsedConfig.clickhouse.bounds, evaluationEnd: '2016-01-01' },
-        },
-      }),
-    )
-    expect(invalidBounds).toMatchObject({ _tag: 'Failure', failure: { _tag: 'InvalidEvaluationBounds' } })
   })
 })
 
@@ -411,14 +397,6 @@ const runtimeEnvironment = new Map([
   ['BAYN_CLICKHOUSE_URL', 'http://clickhouse.test:8123'],
   ['BAYN_CLICKHOUSE_USERNAME', 'bayn'],
   ['BAYN_CLICKHOUSE_PASSWORD', 'secret'],
-  ['BAYN_SIGNAL_SNAPSHOT_ID', 'f'.repeat(64)],
-  ['BAYN_SIGNAL_PUBLICATION_ASOF', '2026-07-17'],
-  ['BAYN_SIGNAL_CALENDAR_VERSION', 'alpaca-us-equity-calendar-v1'],
-  ['BAYN_SIGNAL_DATA_START', '2017-01-03'],
-  ['BAYN_SIGNAL_DATA_END', '2026-07-17'],
-  ['BAYN_SIGNAL_LOOKBACK_START', '2017-01-03'],
-  ['BAYN_SIGNAL_EVALUATION_START', '2018-01-03'],
-  ['BAYN_SIGNAL_EVALUATION_END', '2026-07-17'],
   ['BAYN_POSTGRES_URL', 'postgresql://bayn:secret@postgres.test:5432/bayn'],
   ['BAYN_TIGERBEETLE_ADDRESSES', 'tigerbeetle.test:3000'],
 ])
@@ -429,6 +407,72 @@ const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<
   )
 
 describe('runtime configuration loading', () => {
+  test('loads the live service without historical snapshot settings', async () => {
+    const loaded = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
+    expect(loaded.clickhouse).toEqual({
+      url: 'http://clickhouse.test:8123',
+      username: 'bayn',
+      password: Redacted.make('secret'),
+    })
+  })
+
+  test('requires explicit historical inputs when loading a forward-performance report', async () => {
+    const missing = await Effect.runPromise(
+      Effect.result(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment)),
+    )
+    expect(missing).toMatchObject({
+      _tag: 'Failure',
+      failure: { component: 'config', operation: 'historical-signal', retryable: false },
+    })
+    const environment = new Map(runtimeEnvironment)
+    for (const [key, value] of Object.entries({
+      BAYN_SIGNAL_SNAPSHOT_ID: historicalSignalConfig.snapshotId,
+      BAYN_SIGNAL_PUBLICATION_ASOF: historicalSignalConfig.publicationAsOf,
+      BAYN_SIGNAL_CALENDAR_VERSION: historicalSignalConfig.calendarVersion,
+      BAYN_SIGNAL_DATA_START: historicalSignalConfig.bounds.dataStart,
+      BAYN_SIGNAL_DATA_END: historicalSignalConfig.bounds.dataEnd,
+      BAYN_SIGNAL_LOOKBACK_START: historicalSignalConfig.bounds.lookbackStart,
+      BAYN_SIGNAL_EVALUATION_START: historicalSignalConfig.bounds.evaluationStart,
+      BAYN_SIGNAL_EVALUATION_END: historicalSignalConfig.bounds.evaluationEnd,
+    }))
+      environment.set(key, value)
+    const report = await Effect.runPromise(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), environment))
+    expect(report.historicalSignal).toEqual(historicalSignalConfig)
+    expect(report.clickhouse).toEqual({
+      url: 'http://clickhouse.test:8123',
+      username: 'bayn',
+      password: Redacted.make('secret'),
+    })
+  })
+
+  test('keeps strategy and controller identities independent of stale historical settings', async () => {
+    const environment = new Map(runtimeEnvironment)
+    const parameterHash = canonicalHashV1OrThrow(Result.getOrThrow(loadActiveStrategyProtocol()))
+    environment.set('BAYN_PROVENANCE_MODE', 'development')
+    environment.set('BAYN_STRATEGY_BEHAVIOR_HASH', activeStrategyBehaviorHash)
+    environment.set('BAYN_STRATEGY_PARAMETER_HASH', parameterHash)
+    const baseline = await Effect.runPromise(provideEnvironment(loadApplicationPlan, environment))
+    for (const suffix of [
+      'SNAPSHOT_ID',
+      'PUBLICATION_ASOF',
+      'CALENDAR_VERSION',
+      'DATA_START',
+      'DATA_END',
+      'LOOKBACK_START',
+      'EVALUATION_START',
+      'EVALUATION_END',
+    ])
+      environment.set(`BAYN_SIGNAL_${suffix}`, 'not-a-live-runtime-input')
+    const stale = await Effect.runPromise(provideEnvironment(loadApplicationPlan, environment))
+
+    expect(stale.parameterHash).toBe('86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd')
+    expect(stale.parameterHash).toBe(baseline.parameterHash)
+    expect(stale.strategyProtocolHash).toBe(baseline.strategyProtocolHash)
+    const firstController = Result.getOrThrow(executionControllerConfig(baseline))
+    expect(firstController.planHash).toBe(executionControllerPlanHash)
+    expect(Result.getOrThrow(executionControllerConfig(stale))).toEqual(firstController)
+  })
+
   test('a configured Kafka adapter requires identity and clock policy', async () => {
     const environment = new Map(runtimeEnvironment)
     const archive = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
