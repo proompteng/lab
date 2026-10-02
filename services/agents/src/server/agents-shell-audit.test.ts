@@ -861,19 +861,27 @@ api repos/owner/repo/issues \
     }
   })
 
-  it('omits embedded SSH proxy command bodies without changing ordinary proxy jumps', () => {
+  it('omits embedded SSH command bodies without changing ordinary proxy jumps', () => {
     const records = captureAudit()
     const config = configFixture()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
     for (const command of [
       "ssh -oProxyCommand='sshpass -p syntheticProxyBody ssh gateway nc %h %p' example.test",
       "ssh -o 'ProxyCommand=sshpass -p syntheticProxyBody ssh gateway nc %h %p' example.test",
+      "ssh -o 'RemoteCommand=curl -u admin:syntheticProxyBody https://example.test' example.test",
+      "ssh -oLocalCommand='curl -u admin:syntheticProxyBody https://example.test' -oPermitLocalCommand=yes example.test",
+      "ssh -o 'KnownHostsCommand=curl -u admin:syntheticProxyBody https://example.test' example.test",
     ])
       writeAuditLog(config, 'probe', null, { command })
     writeAuditLog(config, 'probe', null, {
       command: 'ssh',
       args: ['-o', 'ProxyCommand=sshpass -p syntheticProxyBody ssh gateway nc %h %p', 'example.test'],
     })
+    for (const option of ['RemoteCommand', 'LocalCommand', 'KnownHostsCommand'])
+      writeAuditLog(config, 'probe', null, {
+        command: 'ssh',
+        args: ['-o', `${option}=curl -u admin:syntheticProxyBody https://example.test`, 'example.test'],
+      })
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
       expect(content).not.toContain('syntheticProxyBody')
       expect(content).toContain('[OMITTED_SHELL_INPUT]')
