@@ -143,7 +143,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerImage).toContain('ciToolchain')
     expect(arcRunnerImage).toContain('imageName = "ghcr.io/actions/actions-runner"')
     expect(arcRunnerImage).toContain(
-      'imageDigest = "sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29"',
+      'imageDigest = "sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4"',
     )
     expect(arcRunnerImage).not.toContain('ghcr.io/actions/actions-runner:latest')
     expect(arcRunnerImage).toContain('LAB_ARC_RUNNER_TOOLCHAIN=1')

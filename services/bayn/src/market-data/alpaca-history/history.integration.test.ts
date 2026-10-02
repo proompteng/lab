@@ -4,7 +4,7 @@ import { expect, test } from 'bun:test'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { NodeServices } from '@effect/platform-node'
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Result, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { backfillAlpacaHistory } from '../../../tools/backfill'
 import { publishHistoricalDataset, restoreHistoricalDataset } from '../../../tools/history-store'
 import { exportHistoricalDataset } from '../../../tools/history-export'
@@ -14,13 +14,15 @@ import {
   validateBacktestSourceReceipt,
 } from '../../intraday-replay/source'
 import { sha256 } from '../../hash'
+import { technicalFeatureMatchesBars } from '../features/technical-contract'
+import { observedBarsAt } from '../streaming/projection'
 import { readHistoricalDataset, readHistoricalChunk, HistoricalDatasetFailure } from './dataset'
 import { baynTestClickhouseUrl, baynTestClickhouseGuardToken } from '../../test-environment.test-support'
 import { historyFixtureCredentials, historyFixtureHttp, historyFixtureRequest } from './history-fixture.test-support'
 
 const settings = Effect.runSync(
   Config.all({
-    jar: Config.option(Config.string('BAYN_TEST_DORVUD_JAR')),
+    jar: Config.option(Config.String('BAYN_TEST_DORVUD_JAR')),
   }),
 )
 const featureTest = Option.isSome(settings.jar) ? test : test.skip
@@ -158,6 +160,26 @@ featureTest(
           ).toBeGreaterThan(0)
         const source = yield* openBacktestSource(`${output}/arrivals.ndjson.gz`, manifest, '2'.repeat(64), receipt)
         yield* source.finish
+        const cursor = yield* source.cursor
+        expect(manifest.regeneratedTechnicalFeaturesRecordedAtMs).toBe(manifest.regeneratedFeaturesRecordedAtMs)
+        expect(cursor.projection.technicalRejections).toHaveLength(0)
+        for (const symbol of ['AAPL', 'SPY']) {
+          const features = cursor.projection.technicalFeatures.get(symbol) ?? []
+          expect(features.length).toBeGreaterThan(0)
+          expect(features.every((feature) => feature.value.computedAtMs > feature.availableAtMs)).toBe(true)
+          const latest = features[0]
+          if (latest === undefined) throw new Error('Missing regenerated technical feature')
+          const endMs = latest.value.material.windowEndMs
+          const bars = observedBarsAt(
+            cursor.projection,
+            symbol,
+            BigInt(endMs - 30 * 60_000) * 1_000_000n,
+            BigInt(endMs) * 1_000_000n,
+            manifest.lastAvailableAtMs,
+          ).map((bar) => bar.value)
+          expect(bars).toHaveLength(30)
+          expect(yield* Effect.fromResult(technicalFeatureMatchesBars(latest.value, bars))).toBe(true)
+        }
         expect(exported.boundaryRecordsExcluded).toBe(0)
         const modified = yield* fs.readFileString(`${output}/source-receipt.json`)
         expect(

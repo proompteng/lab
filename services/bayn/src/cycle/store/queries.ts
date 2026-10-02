@@ -383,12 +383,30 @@ export const makeCycleQueries = (
             AND snapshot.content_hash = ${pricing.contentHash}
             AND snapshot.observed_at = ${pricing.observedAt}::timestamptz)`
         : sql`true`
+    const jev =
+      document.mode === legacyExecutionAuthorityToken &&
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v1'
+        ? document.strategyDecision.evidence
+        : undefined
+    const jevEvidence =
+      jev === undefined
+        ? sql`true`
+        : sql`EXISTS (
+      SELECT 1 FROM jev_batch_plans AS plan
+      JOIN jev_batch_results AS result USING (batch_id)
+      JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
+      WHERE plan.batch_id = ${jev.batchPlan.batchId} AND plan.payload = ${sql.json(jev.batchPlan)}
+        AND result.result_hash = ${jev.batchResult.resultHash} AND result.payload = ${sql.json(jev.batchResult)}
+        AND observation.payload = ${sql.json(jev.observation)}
+        AND plan.cycle_id = ${document.bindings.cycleId}
+    )`
     return sql<Record<string, unknown>>`
       SELECT EXISTS (
         SELECT 1
         FROM reconciliations AS reconciliation
         WHERE ${snapshotEvidence}
           AND ${pricingEvidence}
+          AND ${jevEvidence}
           AND ${riskContextEvidence}
           AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
           AND reconciliation.account_id = ${document.bindings.accountId}

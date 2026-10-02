@@ -4,7 +4,7 @@ import { createServer } from 'node:http'
 import { NodeHttpClient } from '@effect/platform-node'
 import { ConfigProvider, Deferred, Effect, Exit, Fiber, Layer, Logger, References } from 'effect'
 import { TestClock } from 'effect/testing'
-import { OtlpSerialization, OtlpTracer } from 'effect/unstable/observability'
+import { OtlpSerialization, OtlpTracer } from 'effect/observability'
 
 import { decodeOtlpTraceEndpoint, telemetryRuntimeConfig, withObservedSpan, withObservedStage } from './telemetry'
 

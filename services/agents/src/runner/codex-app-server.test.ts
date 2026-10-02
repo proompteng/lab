@@ -281,6 +281,7 @@ describe('codex app-server runner adapter', () => {
           message: 'automatic continuation failed',
           codexErrorInfo: null,
           additionalDetails: null,
+          misalignment: null,
         }),
       }),
       stop: () => undefined,
@@ -832,6 +833,7 @@ describe('codex app-server runner adapter', () => {
         message: 'policy denied',
         codexErrorInfo: null,
         additionalDetails: 'approval mode rejected the command',
+        misalignment: null,
       })
     }
 

@@ -4,6 +4,7 @@ import { DateTime, Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from '../../execution/contracts'
 import { CycleState, CycleTerminalReason } from '../model'
+import { EntryAllocationReason } from '../entry-allocation-observation'
 import {
   decodeCycleObservabilityProjectionRows,
   projectCycleObservabilityRow,
@@ -67,6 +68,7 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   current_snapshot_id: null,
   current_decision_hash: null,
   current_terminal_reason: null,
+  current_publication_deadline_at: null,
   current_submission_open_at: null,
   current_submission_cutoff_at: null,
   current_execution_open_at: null,
@@ -82,6 +84,7 @@ const emptyRow = (): CycleObservabilityProjectionRow => ({
   last_snapshot_id: null,
   last_decision_hash: null,
   last_terminal_reason: null,
+  last_publication_deadline_at: null,
   last_submission_open_at: null,
   last_submission_cutoff_at: null,
   last_execution_open_at: null,
@@ -154,6 +157,37 @@ const currentCycleRow = (): CycleObservabilityProjectionRow => ({
 })
 
 describe('cycle observability projection', () => {
+  test('retains a bounded allocation explanation on the last cycle when the next session is already active', () => {
+    const current = currentCycleRow()
+    const row = {
+      ...current,
+      last_cycle_id: '9'.repeat(64),
+      last_account_id: current.current_account_id,
+      last_signal_session_date: current.current_signal_session_date,
+      last_execution_session_date: current.current_execution_session_date,
+      last_state: CycleState.NoTrade,
+      last_submission_open_at: current.current_submission_open_at,
+      last_submission_cutoff_at: current.current_submission_cutoff_at,
+      last_execution_open_at: current.current_execution_open_at,
+      last_execution_close_at: current.current_execution_close_at,
+      last_created_at: current.current_created_at,
+      last_updated_at: current.current_updated_at,
+      last_entry_allocation: {
+        noTrade: true,
+        positiveTarget: true,
+        flat: true,
+        allocationCapitalMicros: '0',
+        priorRecordedTurnoverMicros: '1100000000',
+        maximumTurnoverMicros: '1000000000',
+      },
+    }
+    const projection = Result.getOrThrow(projectCycleObservabilityRow(row))
+    expect(projection.last?.entryAllocationReason).toBe(EntryAllocationReason.TurnoverBudgetExhausted)
+    expect(projection.current?.entryAllocationReason).toBeUndefined()
+    expect(projection.last?.terminalReason).toBeNull()
+    expect(Result.isSuccess(decodeCycleObservabilityProjectionRows([row]))).toBe(true)
+  })
+
   test('decodes the unknown SQL projection once at the adapter boundary', () => {
     expect(decodeCycleObservabilityProjectionRows([emptyRow()])).toEqual(Result.succeed([emptyRow()]))
     expect(decodeCycleObservabilityProjectionRows([{ ...emptyRow(), unfinished_cycle_count: '0' }])).toMatchObject({

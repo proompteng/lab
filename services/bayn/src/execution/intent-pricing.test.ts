@@ -74,6 +74,48 @@ describe('execution intent pricing', () => {
     ).toEqual(Result.succeed({ expectedExecutionPriceMicros: 215_200_000n, notionalLimitMicros: 430_400_000n }))
   })
 
+  test('fills the retained IWM exit within its allowance and rejects a worse arrival price', () => {
+    const reference = 289_180_000n
+    const quantity = 68_000_000n
+    const pricing = Result.getOrThrow(
+      deriveExecutionIntentPricing({
+        ...input,
+        side: OrderSide.Sell,
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+        referencePriceMicros: reference,
+        quantityMicros: quantity,
+        limitSlippageBps: 10n,
+      }),
+    )
+    expect(pricing.expectedExecutionPriceMicros).toBe(288_900_000n)
+    const simulate = (limitPriceMicros: bigint, slippageBps: number, availableLiquidityPpm = 1_000_000) =>
+      Result.getOrThrow(
+        simulateIntradayReplayIocCore({
+          order: { side: OrderSide.Sell, quantityMicros: quantity, limitPriceMicros },
+          quote: { priceMicros: reference, displayedQuantityMicros: quantity },
+          executionModel: intradayMomentumExecutionModel,
+          assumptions: { slippageBps, availableLiquidityPpm },
+        }),
+      )
+    expect(simulate(reference, 1)).toMatchObject({ status: 'canceled', filledQuantityMicros: 0n })
+    expect(simulate(pricing.expectedExecutionPriceMicros, 1)).toMatchObject({
+      status: 'filled',
+      filledQuantityMicros: quantity,
+      fillPriceMicros: 289_150_000n,
+    })
+    expect(simulate(pricing.expectedExecutionPriceMicros, 1, 500_000)).toMatchObject({
+      status: 'filled',
+      filledQuantityMicros: 34_000_000n,
+      fillPriceMicros: 289_150_000n,
+      unfilledRemainder: 'canceled',
+    })
+    expect(simulate(pricing.expectedExecutionPriceMicros, 11)).toMatchObject({
+      status: 'canceled',
+      filledQuantityMicros: 0n,
+    })
+  })
+
   test('preserves the legacy adverse MARKET/DAY execution model', () => {
     expect(deriveExecutionIntentPricing(input)).toEqual(
       Result.succeed({

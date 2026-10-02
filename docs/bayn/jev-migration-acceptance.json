@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "bayn.jev-migration-acceptance.v1",
+  "frozenAt": "2026-09-21T08:09:08Z",
+  "status": "FROZEN_BEFORE_FINAL_CANDIDATE",
+  "scope": "Acceptance targets for the authorized PAPER account. These are research objectives, not projected or promised returns, and do not alter runtime financial authority.",
+  "baseline": {
+    "sessions": ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"],
+    "summarySha256": "e9fc2df98981f4f210559aa5504eb137a3aec51bb581d692967a51f7126a5c0a",
+    "allocationUsd": 100000,
+    "completedEpisodesPerSession": 0.6,
+    "filledNotionalPerSessionUsd": "6184.508",
+    "recordedWeekNetPnlUsd": "28.02",
+    "weekNetAfterAdditional10BpsUsd": "-2.90254",
+    "includeBlockedAndZeroTradeSessions": true
+  },
+  "requiredOutcomes": {
+    "completedEpisodesPerSessionAtLeast": 10,
+    "filledBuyPlusSellNotionalPerSessionUsdAtLeast": 100000,
+    "netPnlOver20SessionsUsdAtLeast": 5000,
+    "netPnlVsBestMatchedControlAtLeastMultiplier": "1.25",
+    "minimumNetAfterDroppingBestSessionUsdExclusive": 0,
+    "allOutcomesRequiredTogether": true
+  },
+  "evaluation": {
+    "consecutiveSessions": 20,
+    "clock": "First full regular market session after candidate source, parameters, prompts, cost model and universe are locked. Register the resulting 20-session calendar before the first open.",
+    "minimumCompletedEpisodes": 200,
+    "sameCalendarForEveryCandidateAndControl": true,
+    "noOutcomeDependentExclusions": true,
+    "heldOutResultsCannotBeUsedForRetuning": true,
+    "prospectiveDataRequired": true,
+    "historicalDevelopmentIsNotQualification": true,
+    "episode": "One verified flat-to-position-to-flat inventory interval, including every partial fill, fee and exit. Orders, canceled attempts and partial exit fills are not episodes.",
+    "volume": "Absolute filled buy plus sell notional. Submitted or canceled notional is excluded.",
+    "profits": "Realized and marked open P&L at executable bid, less spread, execution slippage, regulatory and broker fees, model charges and allocated data charges. Deduct each cost once. Require reconciled flat closes; unresolved positions or fills make results inconclusive.",
+    "uncertainty": {
+      "resamplingUnit": "two-consecutive-session circular blocks",
+      "replicates": 10000,
+      "seed": 20260921,
+      "oneSided95PercentLowerBoundForMeanNetPnlGreaterThan": 0
+    }
+  },
+  "controls": [
+    "Current deployed Bayn strategy with its actual single-position, close-of-session lifecycle.",
+    "A repeated-entry deterministic momentum policy using the same verified inputs, timing, sizing, risk, execution and position management as the Jev candidate.",
+    "The candidate with Jev outputs removed, with selection rules fixed using development data only."
+  ],
+  "riskAcceptance": {
+    "allocationUsd": 100000,
+    "maximumMarkedPeakToTroughDrawdownUsd": 2500,
+    "maximumSessionLossUsd": 1000,
+    "existingBrokerRiskPolicyHash": "a0f680ac1db91a7d1950960034950048b68659629da29ead1cc79852725d01a0",
+    "existingMaximumOrderAndSymbolNotionalUsd": 40000,
+    "existingMaximumGrossAndNetExposureUsd": 100000,
+    "existingMaximumDailyTradedNotionalUsd": 200000,
+    "exitAuthorityPreserved": true,
+    "leverageOrShortingExpansion": false,
+    "activityQuotasDoNotForceOrders": true
+  },
+  "executionEvidence": {
+    "allInputsAvailableBeforeDecision": true,
+    "batchDecisionTime": "Maximum completion time of every response actually used to filter or rank candidates, plus state construction, durable persistence and routing delay.",
+    "missingQuotesOrAmbiguousSizes": "Retain unresolved outcomes. Never substitute complete fills or remove the selected opportunity.",
+    "liquidity": "Use quote evidence and explicitly verified size units, with partial fills, IOC expiration and risk-reducing exit retries.",
+    "stress": {
+      "additionalCostBpsOnEachFilledLeg": 10,
+      "netMustRemainPositive": true,
+      "p95ObservedFullBatchLatency": true
+    },
+    "modelCost": {
+      "usdPerMillionInputTokens": "0.042",
+      "usdPerMillionOutputTokens": "0",
+      "source": "https://docs.typesafe.ai/models",
+      "verifiedDate": "2026-09-21",
+      "countFailedAndRejectedCalls": true,
+      "useGreaterOfTariffEstimateOrActualInvoice": true
+    },
+    "paperLimitations": "Alpaca paper fills do not establish executable size, impact or latency slippage. PAPER profit alone cannot establish live-money profitability."
+  },
+  "changeControl": "Preserve this version and all failures. Any material policy or protocol revision gets a new version and a fresh untouched evaluation window. Do not lower these success thresholds to fit observed results.",
+  "delivery": "One active Jev strategy after reviewed merge and automatic Kargo/GitOps migration. No active legacy strategy fallback. Preserve immutable history and risk-reducing management without Jev."
+}

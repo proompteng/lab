@@ -150,10 +150,8 @@ export const compareEquity = (snapshot: ReconciliationSnapshot): ReconciliationD
     }),
     Result.flatMap(({ expected, observed }) =>
       pipe(
-        // Separate account and position reads carry independently moving market marks.
-        snapshot.positions.some(
-          (position) => position.quantityMicros !== '0' && position.observedAt !== snapshot.account.observedAt,
-        )
+        // Separate responses are not atomic, even when their receipt timestamps coincide.
+        snapshot.positions.some((position) => position.quantityMicros !== '0')
           ? Result.succeed<readonly DiscrepancyInput[]>([])
           : compareValue(
               snapshot.accountId,

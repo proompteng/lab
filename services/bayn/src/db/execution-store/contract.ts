@@ -26,6 +26,8 @@ export interface PositionSnapshotReceipt {
   readonly deduplicated: boolean
 }
 
+export type HistoryEventInput = Extract<BrokerEventInput, { readonly _tag: 'Order' | 'Fill' }>
+
 export interface EnsureAuthorityGenerationInput {
   readonly generationHash: string
   readonly maximum: Authority
@@ -55,6 +57,9 @@ export class ExecutionStoreError extends Data.TaggedError('ExecutionStoreError')
 }> {}
 
 export interface BrokerEventStoreShape {
+  readonly completeHistory: (
+    inputs: readonly HistoryEventInput[],
+  ) => Effect.Effect<ReadonlySet<string>, ExecutionStoreError>
   readonly ingest: (input: BrokerEventInput) => Effect.Effect<EventReceipt, ExecutionStoreError>
   readonly ingestPositions: (
     input: PositionSnapshotInput,
@@ -63,6 +68,7 @@ export interface BrokerEventStoreShape {
 
 export interface FillAccountingStoreShape {
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
+  readonly verifyCompleted: (inputs: readonly FillEventInput[]) => Effect.Effect<void, ExecutionStoreError>
 }
 
 export interface ValuationStoreShape {

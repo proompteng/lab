@@ -121,6 +121,24 @@ describe('advanceExecutionOnce', () => {
     expect(settling.receiptHash).not.toBe(holding.receiptHash)
   })
 
+  test('a pending broker cut remains a waiting receipt after the transient result is discarded', async () => {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'WAITING',
+      observedAt: '2026-08-13T17:00:01.000Z',
+      waitReason: 'BROKER_OBSERVATION_PENDING',
+    } as const
+    const first = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    const replay = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    expect(first).toEqual(replay)
+    expect(first).toMatchObject({
+      _tag: 'Waiting',
+      reason: { _tag: 'RecoveryWaiting' },
+      observation,
+      nextDelayMs: 30_000,
+    })
+  })
+
   test('hashes only bounded failure facts and maps interpreter errors for Restate retry', async () => {
     const observedAt = '2026-08-13T17:00:01.000Z'
     const failed = (message: string) =>

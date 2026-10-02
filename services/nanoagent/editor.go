@@ -212,15 +212,3 @@ func installEditorIntegration(root string) error {
 	_, err = settings.WriteString(`{"workbench.colorTheme":"Default Dark Modern","workbench.startupEditor":"none","window.menuBarVisibility":"compact","workbench.secondarySideBar.defaultVisibility":"hidden","remote.extensionKind":{"vscode.typescript-language-features":["workspace","-web"]},"telemetry.telemetryLevel":"off","files.autoSave":"off","files.hotExit":"onExitAndWindowClose"}`)
 	return err
 }
-
-func (server *apiServer) handleOpenEditor(writer http.ResponseWriter, request *http.Request) {
-	if server.editor == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "VS Code is not installed in this guest. Sleep and resume the agent to install the current guest image.")
-		return
-	}
-	if err := server.editor.ensure(request.Context()); err != nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, err.Error())
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]any{"port": editorPort})
-}

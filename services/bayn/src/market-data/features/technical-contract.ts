@@ -51,7 +51,7 @@ export const TechnicalMarketFeatureMaterialSchema = Schema.Struct({
   ...RollingMarketFeatureMaterialSchema.fields,
   schemaVersion: Schema.Enum(TechnicalFeatureContract),
   definitionId: Schema.Enum(TechnicalFeatureDefinition),
-  inputs: Schema.Array(MarketFeatureInputSchema).check(Schema.isLengthBetween(1, 390)),
+  inputs: Schema.Array(MarketFeatureInputSchema).check(Schema.isMinLength(1), Schema.isMaxLength(390)),
   values: TechnicalMarketValuesSchema,
 })
 export const TechnicalMarketFeatureSchema = Schema.Struct({

@@ -3,7 +3,12 @@ import { PgClient } from '@effect/sql-pg'
 
 import { operationalError } from '../../errors'
 import { marketDataOperationError } from '../errors'
-import { IntradayMarketData, type IntradayMarketDataService, type IntradaySnapshotQuery } from '../intraday/model'
+import {
+  IntradayMarketData,
+  IntradaySnapshotPurpose,
+  type IntradayMarketDataService,
+  type IntradaySnapshotQuery,
+} from '../intraday/model'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { KafkaMarketProjection } from './kafka'
 import { recoverStreamingSnapshotReference, streamingSnapshotReference } from './reference'
@@ -18,7 +23,9 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
     const observed = new Map<string, StreamingVerifiedMarketSnapshot>()
     const loadSnapshot = (query: IntradaySnapshotQuery) =>
       Effect.gen(function* () {
-        const cut = yield* kafka.read.pipe(
+        const cut = yield* (
+          query.purpose === IntradaySnapshotPurpose.Liquidation ? kafka.readForLiquidation : kafka.read
+        ).pipe(
           Effect.mapError((cause) => marketDataOperationError('load', 'Kafka market projection is not ready', cause)),
         )
         const snapshot = yield* Effect.fromResult(constructStreamingSnapshot(cut, query)).pipe(
@@ -60,6 +67,19 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
     return {
       check: kafka.read.pipe(
         Effect.asVoid,
+        Effect.tapError((cause) =>
+          kafka.status.pipe(
+            Effect.flatMap((status) =>
+              Effect.logWarning('Execution market projection check failed', {
+                epoch: status.epoch,
+                ready: status.ready,
+                sequence: status.sequence,
+                operation: cause.operation,
+                reason: cause.message,
+              }),
+            ),
+          ),
+        ),
         Effect.mapError((cause) => marketDataOperationError('check', 'Kafka projection is rebuilding', cause)),
       ),
       loadSnapshot,

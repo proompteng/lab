@@ -6,8 +6,127 @@ import { TestClock } from 'effect/testing'
 import { makeReplayTimeline } from './session'
 import { canonicalHashV1, sha256 } from '../hash'
 import { retainedReplayFixture as fixture } from '../testing/retained-replay-fixture'
-import { openBacktestSource, validateBacktestSourceReceipt } from './source'
+import {
+  openBacktestSource,
+  validateBacktestSourceCuts,
+  validateBacktestSourceManifest,
+  validateBacktestSourceReceipt,
+} from './source'
 import { Result } from 'effect'
+
+const archiveTopology = (positions: ReturnType<typeof fixture>['manifest']['positions']) => ({
+  positions: positions.filter((position) => position.startOffset !== position.endOffsetExclusive),
+  archiveUnobservedPartitions: positions
+    .filter((position) => position.startOffset === position.endOffsetExclusive)
+    .map(({ topic, partition }) => ({ topic, partition })),
+})
+
+test('archive reconstruction cannot masquerade as a directly captured Kafka stream or prove live availability', () => {
+  const data = fixture()
+  const manifest = { ...data.manifest, transport: 'archive-reconstruction' as const }
+  const { capturedAt, ...cut } = data.capture.value as Extract<
+    typeof data.capture.value,
+    { schemaVersion: 'bayn.replay-source-capture.v1' }
+  >
+  const receipt = {
+    ...cut,
+    schemaVersion: 'bayn.archive-reconstruction-receipt.v1',
+    recordedAt: capturedAt,
+    origin: manifest.origin,
+    queryHashes: ['1'.repeat(64)],
+    archiveResponseHashes: ['2'.repeat(64)],
+    sourceDataSha256: manifest.dataSha256,
+    normalization: 'bayn.archive-envelope-reconstruction.v1',
+    originalStreamAvailability: 'NOT_OBSERVED',
+    completeness: 'RETAINED_ROWS_ONLY',
+    emptyPartitions: 'NO_RETAINED_RECORDS_NOT_PROOF_OF_EMPTY_LOG',
+  }
+  const text = JSON.stringify(receipt)
+  const verified = Result.getOrThrow(validateBacktestSourceReceipt(text, sha256(text)))
+  expect(Result.isSuccess(validateBacktestSourceCuts(manifest, verified))).toBe(true)
+  expect(Result.isFailure(validateBacktestSourceCuts({ ...manifest, transport: 'captured-kafka' }, verified))).toBe(
+    true,
+  )
+  expect(Result.isFailure(validateBacktestSourceCuts({ ...manifest, dataSha256: '3'.repeat(64) }, verified))).toBe(true)
+  const claimedLive = JSON.stringify({ ...receipt, originalStreamAvailability: 'OBSERVED' })
+  expect(Result.isFailure(validateBacktestSourceReceipt(claimedLive, sha256(claimedLive)))).toBe(true)
+})
+
+test('archive reconstruction rejects invented empty cuts while captured empty cuts remain valid', () => {
+  const data = fixture()
+  const positions = data.manifest.positions.map((position, index) =>
+    index === 0 ? { ...position, endOffsetExclusive: position.startOffset } : position,
+  )
+  expect(Result.isSuccess(validateBacktestSourceManifest({ ...data.manifest, positions }))).toBe(true)
+  expect(
+    Result.isFailure(
+      validateBacktestSourceManifest({ ...data.manifest, positions, transport: 'archive-reconstruction' }),
+    ),
+  ).toBe(true)
+})
+
+test('archive reconstruction accounts for partitions without retained rows without inventing empty log offsets', () => {
+  const data = fixture()
+  const missing = data.manifest.positions[0]
+  if (missing === undefined) throw new Error('Fixture partition missing')
+  const partition = { topic: missing.topic, partition: missing.partition }
+  const manifest = {
+    ...data.manifest,
+    transport: 'archive-reconstruction' as const,
+    ...archiveTopology(data.manifest.positions.slice(1)),
+    archiveUnobservedPartitions: [
+      partition,
+      ...archiveTopology(data.manifest.positions.slice(1)).archiveUnobservedPartitions,
+    ],
+  }
+  expect(Result.isSuccess(validateBacktestSourceManifest(manifest))).toBe(true)
+  expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, archiveUnobservedPartitions: [] }))).toBe(true)
+  expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, positions: data.manifest.positions }))).toBe(
+    true,
+  )
+  expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, transport: 'captured-kafka' }))).toBe(true)
+  expect(
+    Result.isFailure(
+      validateBacktestSourceManifest({ ...manifest, archiveUnobservedPartitions: [partition, partition] }),
+    ),
+  ).toBe(true)
+})
+
+for (const { name, rolling, technical } of [
+  { name: 'original features', rolling: false, technical: false },
+  { name: 'regenerated rolling only', rolling: true, technical: false },
+  { name: 'regenerated technical only', rolling: false, technical: true },
+  { name: 'both regenerated feature families', rolling: true, technical: true },
+])
+  test(`captured source binds separate rolling and technical partition counts: ${name}`, () => {
+    const { regeneratedFeaturesRecordedAtMs: _recordedAt, ...base } = fixture().manifest
+    const topics = { ...base.universe.topics, technicalFeatures: 'torghut.technical-features.v1' }
+    const expectedCounts = [
+      [topics.bars, 3],
+      [topics.quotes, 13],
+      [topics.trades, 3],
+      [topics.features, rolling ? 1 : 3],
+      [topics.technicalFeatures, technical ? 1 : 3],
+    ] as const
+    const manifest = {
+      ...base,
+      transport: 'captured-kafka' as const,
+      universe: { ...base.universe, topics },
+      ...(rolling ? { regeneratedFeaturesRecordedAtMs: base.lastAvailableAtMs } : {}),
+      ...(technical ? { regeneratedTechnicalFeaturesRecordedAtMs: base.lastAvailableAtMs } : {}),
+      positions: expectedCounts
+        .flatMap(([topic, count]) =>
+          Array.from({ length: count }, (_, partition) => ({
+            topic,
+            partition,
+            startOffset: '0',
+            endOffsetExclusive: '1',
+          })),
+        )
+        .toSorted((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition),
+    }
+    expect(Result.getOrThrow(validateBacktestSourceManifest(manifest))).toEqual(manifest)
+  })
 
 test('retained source preflights its bytes and advances only available records across the whole file', async () => {
   const data = fixture()
@@ -41,7 +160,7 @@ test('a delayed source tail is consumed after trading stops without advancing ex
       yield* fs.writeFile(path, gzipSync(data.body))
       const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
       yield* TestClock.setTime(closeMs - 1)
-      const advance = yield* makeReplayTimeline(
+      const { advanceTo: advance } = yield* makeReplayTimeline(
         source,
         {
           advanceTo: (at) =>
@@ -81,6 +200,10 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
         { body: data.body, manifest: { ...data.manifest, firstAvailableAtMs: data.manifest.firstAvailableAtMs - 1 } },
         { body: data.body, manifest: { ...data.manifest, lastAvailableAtMs: data.manifest.lastAvailableAtMs + 1 } },
         { body: data.body, manifest: { ...data.manifest, positions: [] } },
+        {
+          body: data.body,
+          manifest: { ...data.manifest, regeneratedTechnicalFeaturesRecordedAtMs: data.manifest.lastAvailableAtMs },
+        },
         { body: data.body, manifest: { ...data.manifest, positions: [...data.manifest.positions].reverse() } },
         { body: reversed, manifest: { ...data.manifest, dataSha256: sha256(gzipSync(reversed)) } },
         {
@@ -100,6 +223,59 @@ test('retained source rejects changed bytes, count, bounds, ordering and duplica
           ))._tag,
         ).toBe('Failure')
       }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('archive reconstruction admits bound retained-coordinate gaps without weakening captured-stream completeness', async () => {
+  const data = fixture()
+  const bound = data.manifest.positions.find(
+    (value) => BigInt(value.endOffsetExclusive) - BigInt(value.startOffset) > 2n,
+  )
+  if (bound === undefined) throw new Error('Expected a multi-record fixture partition')
+  const missingOffset = String(BigInt(bound.startOffset) + 1n)
+  const events = data.events.filter(
+    ({ record }) =>
+      record.topic !== bound.topic || record.partition !== bound.partition || record.offset !== missingOffset,
+  )
+  const body = gzipSync(events.map((event) => JSON.stringify(event)).join('\n') + '\n')
+  const manifest = {
+    ...data.manifest,
+    transport: 'archive-reconstruction' as const,
+    ...archiveTopology(data.manifest.positions),
+    recordCount: events.length,
+    dataSha256: sha256(body),
+  }
+  const text = JSON.stringify({
+    ...data.capture.value,
+    schemaVersion: 'bayn.archive-reconstruction-receipt.v1',
+    capturedAt: undefined,
+    recordedAt: '2026-09-10T00:00:00.000Z',
+    origin: manifest.origin,
+    queryHashes: ['1'.repeat(64)],
+    archiveResponseHashes: ['2'.repeat(64)],
+    sourceDataSha256: manifest.dataSha256,
+    positions: manifest.positions,
+    archiveUnobservedPartitions: manifest.archiveUnobservedPartitions,
+    normalization: 'bayn.archive-envelope-reconstruction.v1',
+    originalStreamAvailability: 'NOT_OBSERVED',
+    completeness: 'RETAINED_ROWS_ONLY',
+    emptyPartitions: 'NO_RETAINED_RECORDS_NOT_PROOF_OF_EMPTY_LOG',
+  })
+  const capture = Result.getOrThrow(validateBacktestSourceReceipt(text, sha256(text)))
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, body)
+      const source = yield* openBacktestSource(path, manifest, data.input.source.runId, capture)
+      yield* source.finish
+      expect((yield* source.cursor).processedRecords).toBe(events.length)
+      expect(
+        (yield* Effect.exit(
+          openBacktestSource(path, { ...manifest, transport: 'captured-kafka' }, data.input.source.runId, data.capture),
+        ))._tag,
+      ).toBe('Failure')
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

@@ -356,11 +356,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
             AND jsonb_array_length(reconciliation.discrepancies) = 0
             AND reconciliation.reconciled_at > state.updated_at
             AND reconciliation.reconciled_at < ${activatedAt}
-            AND NOT EXISTS (
-              SELECT 1
-              FROM mutation_events AS mutation
-              JOIN intents AS intent ON intent.intent_id = mutation.intent_id
-              WHERE intent.account_id = ${identity.accountId}
+            AND observe_recovery_account_settled(
+              state.generation_hash, ${identity.accountId}, reconciliation.reconciled_at
             ) AS eligible
           FROM authority_state AS state
           JOIN authority_generations AS previous_generation

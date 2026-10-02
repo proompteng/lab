@@ -4,6 +4,8 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.AlpacaBarPayload
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonObject
 import java.nio.file.Files
 import java.security.DigestOutputStream
 import java.security.MessageDigest
@@ -218,6 +220,24 @@ class RetainedFeatureReplayTest {
     }
     val actual = result.technical.map { Json.decodeFromString<TechnicalMarketFeature>(it.record.value) }
     assertEquals(expected, actual)
+    val wireJson = Json { encodeDefaults = true }
+    result.technical.forEachIndexed { index, arrival ->
+      val material = Json.parseToJsonElement(arrival.record.value).jsonObject.getValue("material")
+      assertEquals(actual[index].featureId, featureHash(material))
+      assertEquals(wireJson.encodeToString(expected[index]), arrival.record.value)
+    }
+    val firstValues =
+      Json
+        .parseToJsonElement(
+          result.technical
+            .first()
+            .record.value,
+        ).jsonObject
+        .getValue("material")
+        .jsonObject
+        .getValue("values")
+        .jsonObject
+    assertEquals(JsonNull, firstValues.getValue("ema12PriceMicros").jsonObject.getValue("value"))
     assertEquals(71, actual.size)
     assertEquals(
       TechnicalReadiness.WARMING,

@@ -4,11 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +17,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/creack/pty"
+	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 	"golang.org/x/sys/unix"
+	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -33,7 +31,6 @@ const (
 	terminalIdleTimeout  = 30 * time.Minute
 	terminalCleanupDelay = 2 * time.Second
 	terminalQueueDepth   = 128
-	outputFrameType      = byte(1)
 	terminalSessionEnv   = "TENGRI_TERMINAL_SESSION"
 )
 
@@ -46,39 +43,33 @@ type terminalSessionView struct {
 	Attached       bool      `json:"attached"`
 }
 
-type createTerminalRequest struct {
-	Columns    uint16 `json:"columns"`
-	CreationID string `json:"creationId"`
-	Cwd        string `json:"cwd"`
-	Rows       uint16 `json:"rows"`
-}
-
 type terminalChunk struct {
 	sequence uint32
 	data     []byte
 }
 
-type terminalMessage struct {
-	messageType websocket.MessageType
-	payload     []byte
-}
-
 type terminalDelivery struct {
-	messages   []terminalMessage
+	messages   []*pb.TerminalOutput
 	closeAfter bool
-	status     websocket.StatusCode
+	status     codes.Code
 	reason     string
 }
 
+type terminalWriter interface {
+	Write(context.Context, *pb.TerminalOutput) error
+	Close(codes.Code, string) error
+	CloseNow() error
+}
+
 type terminalConnection struct {
-	connection *websocket.Conn
+	connection terminalWriter
 	closed     atomic.Bool
 	done       chan struct{}
 	outbound   chan terminalDelivery
 	token      string
 }
 
-func newTerminalConnection(connection *websocket.Conn, token string) *terminalConnection {
+func newTerminalConnection(connection terminalWriter, token string) *terminalConnection {
 	result := &terminalConnection{
 		connection: connection,
 		done:       make(chan struct{}),
@@ -100,7 +91,7 @@ func (connection *terminalConnection) writeLoop() {
 					return
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				err := connection.connection.Write(ctx, message.messageType, message.payload)
+				err := connection.connection.Write(ctx, message)
 				cancel()
 				if err != nil {
 					connection.abort()
@@ -115,11 +106,11 @@ func (connection *terminalConnection) writeLoop() {
 	}
 }
 
-func (connection *terminalConnection) enqueue(messages ...terminalMessage) bool {
+func (connection *terminalConnection) enqueue(messages ...*pb.TerminalOutput) bool {
 	return connection.deliver(terminalDelivery{messages: messages})
 }
 
-func (connection *terminalConnection) closeAfter(status websocket.StatusCode, reason string, messages ...terminalMessage) bool {
+func (connection *terminalConnection) closeAfter(status codes.Code, reason string, messages ...*pb.TerminalOutput) bool {
 	return connection.deliver(terminalDelivery{messages: messages, closeAfter: true, status: status, reason: reason})
 }
 
@@ -133,12 +124,12 @@ func (connection *terminalConnection) deliver(delivery terminalDelivery) bool {
 	case connection.outbound <- delivery:
 		return true
 	default:
-		connection.close(websocket.StatusPolicyViolation, "Terminal client is too slow")
+		connection.close(codes.ResourceExhausted, "Terminal client is too slow")
 		return false
 	}
 }
 
-func (connection *terminalConnection) close(status websocket.StatusCode, reason string) {
+func (connection *terminalConnection) close(status codes.Code, reason string) {
 	if !connection.closed.CompareAndSwap(false, true) {
 		return
 	}
@@ -172,6 +163,7 @@ type terminalSession struct {
 	processCleanupOnce     sync.Once
 	processCleanupDone     chan struct{}
 	terminal               *os.File
+	inputPermit            chan struct{}
 	mu                     sync.Mutex
 	ioMu                   sync.Mutex
 	sequence               uint32
@@ -403,7 +395,7 @@ func (manager *terminalManager) terminateSession(session *terminalSession, reaso
 	session.connections = make(map[string]*terminalConnection)
 	session.mu.Unlock()
 	for _, connection := range connections {
-		connection.close(websocket.StatusNormalClosure, reason)
+		connection.close(codes.OK, reason)
 	}
 	manager.cleanupProcessSession(session)
 	session.closeTerminal()
@@ -558,7 +550,7 @@ func (manager *terminalManager) drainTerminalOutput(session *terminalSession) {
 	}
 }
 
-func terminalExitPayload(err error) []byte {
+func terminalExitPayload(err error) *pb.TerminalOutput {
 	exitCode := 0
 	if err != nil {
 		var exitError *exec.ExitError
@@ -568,8 +560,7 @@ func terminalExitPayload(err error) []byte {
 			exitCode = -1
 		}
 	}
-	payload, _ := json.Marshal(map[string]any{"type": "exit", "exitCode": exitCode})
-	return payload
+	return &pb.TerminalOutput{Event: &pb.TerminalOutput_ExitCode{ExitCode: int32(exitCode)}}
 }
 
 func (manager *terminalManager) beginProcessExit(session *terminalSession) {
@@ -584,7 +575,7 @@ func (manager *terminalManager) beginProcessExit(session *terminalSession) {
 	session.mu.Unlock()
 }
 
-func (manager *terminalManager) finishExitedSession(session *terminalSession, exitPayload []byte) {
+func (manager *terminalManager) finishExitedSession(session *terminalSession, exitPayload *pb.TerminalOutput) {
 	manager.beginProcessExit(session)
 	session.mu.Lock()
 	if session.closed {
@@ -604,9 +595,9 @@ func (manager *terminalManager) finishExitedSession(session *terminalSession, ex
 	session.closeTerminal()
 	for _, connection := range connections {
 		connection.closeAfter(
-			websocket.StatusNormalClosure,
+			codes.OK,
 			"Terminal session exited",
-			terminalMessage{messageType: websocket.MessageText, payload: exitPayload},
+			exitPayload,
 		)
 	}
 }
@@ -687,13 +678,13 @@ func (session *terminalSession) append(payload []byte) {
 		connections = append(connections, connection)
 	}
 	session.mu.Unlock()
-	frame := outputFrame(chunk)
+	frame := terminalOutput(chunk)
 	for _, connection := range connections {
-		connection.enqueue(terminalMessage{messageType: websocket.MessageBinary, payload: frame})
+		connection.enqueue(frame)
 	}
 }
 
-func (session *terminalSession) attach(connection *websocket.Conn, token string, since uint32) (*terminalConnection, error) {
+func (session *terminalSession) attach(connection terminalWriter, token string, since uint32) (*terminalConnection, error) {
 	if err := validateReconnectToken(token); err != nil {
 		return nil, err
 	}
@@ -708,41 +699,28 @@ func (session *terminalSession) attach(connection *websocket.Conn, token string,
 	session.mu.Lock()
 	if session.closed || session.closing {
 		session.mu.Unlock()
-		attached.close(websocket.StatusNormalClosure, "Terminal session is closed")
+		attached.close(codes.OK, "Terminal session is closed")
 		return nil, errors.New("terminal session is closed")
 	}
 	previous := session.connections[token]
 	if previous == nil && len(session.connections) >= maxTerminalClients {
 		session.mu.Unlock()
-		attached.close(websocket.StatusPolicyViolation, "Too many terminal clients")
+		attached.close(codes.ResourceExhausted, "Too many terminal clients")
 		return nil, errors.New("at most four clients may attach to a terminal session")
 	}
 	session.connections[token] = attached
 	session.lastActivityAt = time.Now().UTC()
 	bufferStart := session.bufferStart()
 	bufferEnd := session.sequence
-	ready, _ := json.Marshal(map[string]any{
-		"type":        "ready",
-		"sessionId":   session.id,
-		"token":       token,
-		"bufferStart": bufferStart,
-		"bufferEnd":   bufferEnd,
-	})
-	messages := []terminalMessage{{messageType: websocket.MessageText, payload: ready}}
+	messages := []*pb.TerminalOutput{{Event: &pb.TerminalOutput_Ready{Ready: &pb.TerminalReady{SessionId: session.id, Token: token, BufferStart: bufferStart, BufferEnd: bufferEnd}}}}
 	resetReason := terminalReplayResetReason(since, bufferStart, bufferEnd)
 	if resetReason != "" {
-		reset, _ := json.Marshal(map[string]any{
-			"type":        "reset",
-			"reason":      resetReason,
-			"bufferStart": bufferStart,
-			"bufferEnd":   bufferEnd,
-		})
-		messages = append(messages, terminalMessage{messageType: websocket.MessageText, payload: reset})
+		messages = append(messages, &pb.TerminalOutput{Event: &pb.TerminalOutput_Reset_{Reset_: &pb.TerminalReset{Reason: resetReason, BufferStart: bufferStart, BufferEnd: bufferEnd}}})
 		since = 0
 	}
 	for _, chunk := range session.buffer {
 		if chunk.sequence > since {
-			messages = append(messages, terminalMessage{messageType: websocket.MessageBinary, payload: outputFrame(chunk)})
+			messages = append(messages, terminalOutput(chunk))
 		}
 	}
 	if !attached.enqueue(messages...) {
@@ -752,7 +730,7 @@ func (session *terminalSession) attach(connection *websocket.Conn, token string,
 	}
 	session.mu.Unlock()
 	if previous != nil {
-		previous.close(websocket.StatusNormalClosure, "Reconnected")
+		previous.close(codes.OK, "Reconnected")
 	}
 	return attached, nil
 }
@@ -783,22 +761,53 @@ func (session *terminalSession) bufferStart() uint32 {
 }
 
 func (session *terminalSession) input(payload []byte) {
+	_ = session.inputContext(context.Background(), payload)
+}
+
+func (session *terminalSession) inputContext(ctx context.Context, payload []byte) error {
 	if len(payload) == 0 {
-		return
+		return nil
 	}
 	session.mu.Lock()
 	if session.closed || session.closing {
 		session.mu.Unlock()
-		return
+		return nil
 	}
 	session.lastActivityAt = time.Now().UTC()
 	terminal := session.terminal
+	if session.inputPermit == nil {
+		session.inputPermit = make(chan struct{}, 1)
+		session.inputPermit <- struct{}{}
+	}
+	permit := session.inputPermit
 	session.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-permit:
+	}
+	defer func() { permit <- struct{}{} }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Keep terminal writes outside ioMu so closeTerminal can interrupt a
 	// blocked PTY write during session shutdown. os.File permits concurrent
 	// use of Write and Close; the control operations below still serialize
 	// their descriptor access with Close.
-	_, _ = terminal.Write(payload)
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = terminal.SetWriteDeadline(time.Now())
+		close(interrupted)
+	})
+	_, err := terminal.Write(payload)
+	if !stop() {
+		<-interrupted
+	}
+	_ = terminal.SetWriteDeadline(time.Time{})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 func (session *terminalSession) resize(columns, rows uint16) {
@@ -1137,12 +1146,8 @@ func terminalSignal(name string) (syscall.Signal, error) {
 	}
 }
 
-func outputFrame(chunk terminalChunk) []byte {
-	frame := make([]byte, 5+len(chunk.data))
-	frame[0] = outputFrameType
-	binary.BigEndian.PutUint32(frame[1:5], chunk.sequence)
-	copy(frame[5:], chunk.data)
-	return frame
+func terminalOutput(chunk terminalChunk) *pb.TerminalOutput {
+	return &pb.TerminalOutput{Event: &pb.TerminalOutput_Output{Output: &pb.TerminalData{Sequence: chunk.sequence, Data: chunk.data}}}
 }
 
 func clampTerminalDimension(value, fallback, minimum, maximum uint16) uint16 {
@@ -1172,106 +1177,6 @@ func validTerminalCreationID(value string) bool {
 		return false
 	}
 	return true
-}
-
-func (server *apiServer) handleCreateTerminal(writer http.ResponseWriter, request *http.Request) {
-	var input createTerminalRequest
-	if !decodeJSON(writer, request, &input) {
-		return
-	}
-	session, created, err := server.terminals.create(input.CreationID, input.Cwd, input.Columns, input.Rows)
-	if err != nil {
-		if strings.Contains(err.Error(), "four terminal") {
-			writeAPIError(writer, http.StatusConflict, err.Error())
-		} else {
-			writeWorkspaceError(writer, err)
-		}
-		return
-	}
-	if request.Context().Err() != nil {
-		return
-	}
-	status := http.StatusOK
-	if created {
-		status = http.StatusCreated
-	}
-	writeJSON(writer, status, session)
-}
-
-func (server *apiServer) handleListTerminals(writer http.ResponseWriter, _ *http.Request) {
-	writeJSON(writer, http.StatusOK, map[string]any{"sessions": server.terminals.list()})
-}
-
-func (server *apiServer) handleTerminateTerminal(writer http.ResponseWriter, request *http.Request) {
-	if !server.terminals.terminate(request.PathValue("id")) {
-		writeAPIError(writer, http.StatusNotFound, "terminal session was not found")
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
-}
-
-func (server *apiServer) handleTerminalWebSocket(writer http.ResponseWriter, request *http.Request) {
-	session, found := server.terminals.get(request.PathValue("id"))
-	if !found {
-		writeAPIError(writer, http.StatusNotFound, "terminal session was not found")
-		return
-	}
-	connection, err := websocket.Accept(writer, request, &websocket.AcceptOptions{
-		OriginPatterns: []string{"*"},
-	})
-	if err != nil {
-		return
-	}
-	connection.SetReadLimit(1 << 20)
-	since := uint64(0)
-	if raw := request.URL.Query().Get("since"); raw != "" {
-		since, _ = strconv.ParseUint(raw, 10, 32)
-	}
-	attached, err := session.attach(connection, request.URL.Query().Get("reconnect"), uint32(since))
-	if err != nil {
-		_ = connection.Close(websocket.StatusPolicyViolation, "Invalid terminal connection")
-		return
-	}
-	defer session.detach(attached)
-	defer attached.close(websocket.StatusNormalClosure, "Terminal disconnected")
-	if columns, err := strconv.ParseUint(request.URL.Query().Get("cols"), 10, 16); err == nil {
-		if rows, rowsErr := strconv.ParseUint(request.URL.Query().Get("rows"), 10, 16); rowsErr == nil {
-			session.resize(uint16(columns), uint16(rows))
-		}
-	}
-	for {
-		messageType, payload, err := connection.Read(request.Context())
-		if err != nil {
-			return
-		}
-		if messageType == websocket.MessageBinary {
-			session.input(payload)
-			continue
-		}
-		var control struct {
-			Type    string `json:"type"`
-			Columns uint16 `json:"cols"`
-			Rows    uint16 `json:"rows"`
-			Signal  string `json:"signal"`
-		}
-		if json.Unmarshal(payload, &control) != nil {
-			continue
-		}
-		switch control.Type {
-		case "resize":
-			session.resize(control.Columns, control.Rows)
-		case "ping":
-			attached.enqueue(terminalMessage{messageType: websocket.MessageText, payload: []byte(`{"type":"pong"}`)})
-		case "signal":
-			if err := session.signal(control.Signal); err != nil {
-				payload, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
-				attached.enqueue(terminalMessage{messageType: websocket.MessageText, payload: payload})
-			}
-		case "terminate":
-			server.terminals.terminate(session.id)
-			return
-		}
-	}
 }
 
 func randomToken(length int) (string, error) {

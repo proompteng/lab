@@ -3,7 +3,14 @@
 This runbook deploys Hermes as Tuslagch's production runtime, migrates non-secret OpenClaw user data, transfers the Discord
 channel without dual writers, and retains a tested rollback path. All `kubectl` commands use an explicit namespace.
 
-## Steady-state reconciliation
+## Disabled state
+
+Hermes is currently stopped through GitOps. The gateway and proxy have zero replicas, backups are suspended, and the
+Application follows `main`. Kargo automatic promotion and Argo Stage authorization are disabled. The data and backup PVCs
+are retained. The procedures below describe the enabled service and must not be used to restart it without a reviewed
+re-enablement that restores the Kargo source, authorization, promotion policy, replicas, schedule, rollout alert label, and `hermes_rollout_enabled` recording rule.
+
+## Steady-state reconciliation after re-enablement
 
 The completed production cutover uses `automation: auto` on the verified
 `kargo/hermes-toolchain` branch. Kargo remains the only image promotion owner.
@@ -115,7 +122,7 @@ test "$toolchain_platforms" = linux/amd64,linux/arm64
 for platform in linux/amd64 linux/arm64; do
   crane config --platform "$platform" "$toolchain_ref" | jq -e '
     .config.Labels["proompteng.ai/toolchain.node"] == "24.11.1" and
-    .config.Labels["proompteng.ai/toolchain.bun"] == "1.4.0" and
+    .config.Labels["proompteng.ai/toolchain.bun"] == "1.4.2" and
     .config.Labels["proompteng.ai/toolchain.go"] == "1.25.5" and
     .config.Labels["proompteng.ai/toolchain.helm"] == "3.19.1" and
     .config.Labels["proompteng.ai/toolchain.kustomize"] == "5.8.0" and
@@ -357,8 +364,8 @@ digest and platform labels from that reference.
      test "$(command -v shellcheck)" = /opt/lab-toolchain/bin/shellcheck
      test "$(command -v yq)" = /opt/lab-toolchain/bin/yq
      test "$(node --version)" = v24.11.1
-     test "$(bun --version)" = 1.4.0
-     test "$(bunx --version)" = 1.4.0
+     test "$(bun --version)" = 1.4.2
+     test "$(bunx --version)" = 1.4.2
      test "$(go version)" = "go version go1.25.5 linux/amd64"
      test "$(helm version --template "{{.Version}}")" = v3.19.1
      test "$(jq --version)" = jq-1.8.1

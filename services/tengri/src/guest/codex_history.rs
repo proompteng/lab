@@ -6,7 +6,7 @@ use std::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{CodexCallResult, GuestClient, GuestError, MAX_GUEST_JSON_BYTES};
+use super::{CodexCallResult, CodexOptions, GuestClient, GuestError, MAX_GUEST_JSON_BYTES};
 
 #[cfg(test)]
 mod tests;
@@ -50,15 +50,22 @@ impl GuestClient {
     pub async fn resume_codex_thread(
         &self,
         thread_id: &str,
+        options: &CodexOptions,
     ) -> Result<CodexThreadSnapshot, GuestError> {
-        tokio::time::timeout(HISTORY_TIMEOUT, self.load_codex_history(thread_id))
+        tokio::time::timeout(HISTORY_TIMEOUT, self.load_codex_history(thread_id, options))
             .await
             .map_err(|_| GuestError::CodexHistoryTimeout)?
     }
 
-    async fn load_codex_history(&self, thread_id: &str) -> Result<CodexThreadSnapshot, GuestError> {
+    async fn load_codex_history(
+        &self,
+        thread_id: &str,
+        options: &CodexOptions,
+    ) -> Result<CodexThreadSnapshot, GuestError> {
         let params = json!({
             "threadId": thread_id,
+            "model": options.model,
+            "config": options.thread_config(),
             "cwd": "/workspace",
             "runtimeWorkspaceRoots": ["/workspace"],
             "approvalPolicy": "on-request",

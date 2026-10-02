@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -157,36 +156,6 @@ func TestBootstrapToolchainRejectsRelativeCommands(t *testing.T) {
 	}
 }
 
-func TestEvidenceHandler(t *testing.T) {
-	t.Parallel()
-
-	want := evidence{MicroVMID: "firecracker-canary", State: "ready"}
-	server := testAPIServer(t)
-	server.evidence = want
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodGet, "/v1/evidence", nil)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d", response.Code)
-	}
-	var got evidence
-	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got != want {
-		t.Fatalf("evidence = %#v, want %#v", got, want)
-	}
-}
-
-func TestEvidenceHandlerRequiresAuthentication(t *testing.T) {
-	t.Parallel()
-	server := testAPIServer(t)
-	response := httptest.NewRecorder()
-	server.authenticatedRoutes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/evidence", nil))
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d", response.Code)
-	}
-}
-
 func TestProbeHandlers(t *testing.T) {
 	t.Parallel()
 
@@ -254,7 +223,7 @@ func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 		t.Fatalf("bootstrapUserHome() error = %v", err)
 	}
 
-	for _, path := range []string{"workspace", ".cache", ".local/bin", ".bun", ".cargo", "go/bin", ".codex"} {
+	for _, path := range []string{"workspace", ".cache", ".cache/apt/lists", ".cache/apt/archives", ".local/bin", ".bun", ".cargo", "go/bin", ".codex"} {
 		info, err := os.Stat(filepath.Join(home, path))
 		if err != nil {
 			t.Fatalf("stat %s: %v", path, err)

@@ -317,7 +317,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'argocd.argoproj.io/sync-wave': '5',
     })
     expect(websocketDeployment.spec.template.metadata.annotations).toMatchObject({
-      'torghut.proompteng.ai/ws-config-generation': 'bayn-intraday-symbol-budget-v2',
+      'torghut.proompteng.ai/ws-config-generation': 'bayn-jev-latest-iex-v1',
     })
   })
 

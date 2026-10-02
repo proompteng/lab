@@ -100,9 +100,8 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     } else if (action.action === 'revoke-preview-session') {
       await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
     } else if (action.action === 'list-files') {
-      const response = await request.get(`http://127.0.0.1:8080/v1/files?path=${encodeURIComponent(action.path)}`, {
-        headers: { Authorization: 'Bearer editor-browser-fixture' },
-      })
+      const response = await request.get(`http://127.0.0.1:33082/_test/files?path=${encodeURIComponent(action.path)}`)
+      expect(response.ok()).toBeTruthy()
       result = await response.json()
     } else if (action.action === 'codex-account') result = { authenticated: false, email: '', plan: '' }
     else if (action.action === 'codex-login-status') result = { active: false }

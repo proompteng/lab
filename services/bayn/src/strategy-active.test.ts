@@ -11,7 +11,7 @@ import {
 } from './strategy'
 
 describe('active strategy composition', () => {
-  test('selects the reviewed full-session intraday definition and protocol at the production boundary', () => {
+  test('selects the native Jev definition and protocol at the production boundary', () => {
     const protocol = Result.getOrThrow(loadActiveStrategyProtocol())
     const parameterHash = canonicalHashV1OrThrow(protocol)
     const provenance = makeRuntimeProvenance({
@@ -30,14 +30,14 @@ describe('active strategy composition', () => {
 
     const runtime = makeActiveStrategyRuntime(protocol, provenance)
 
-    expect(runtime.definition.name).toBe('intraday-momentum')
+    expect(runtime.definition.name).toBe('jev')
     expect(runtime.definition.holdingPeriod).toBe('INTRADAY')
     expect(runtime.definition.parameters).toBe(protocol)
     expect(runtime.provenance.strategy).toEqual({
-      name: 'intraday-momentum',
+      name: 'jev',
       behaviorHash: activeStrategyBehaviorHash,
       parameterHash,
-      parameterSchemaVersion: 'bayn.intraday-momentum.protocol.v3',
+      parameterSchemaVersion: 'bayn.jev.protocol.v1',
     })
   })
 })

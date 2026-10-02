@@ -11,24 +11,54 @@ adapter blocks observations. ClickHouse remains the historical archive and does 
 
 The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
 
-A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving inputs.
-Offsets are committed only after incorporation or explicit rejection. The projection retains 61 bar minutes, 512
-quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Windows that need
-discarded rejection history fail verification. An observation older than retained history fails.
+A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving entry inputs.
+Liquidation snapshots require the quote topic's complete partition cut and a fresh verified quote for each held
+symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
+through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
+quotes, and invalidated assignments do. This does not authorize entry pricing during bootstrap or change order risk.
+Transport positions advance only after incorporation or explicit rejection, including drained control offsets.
+Each consumer epoch uses a new group and explicit bootstrap offsets. It never resumes from Kafka-committed offsets,
+so it does not write OffsetCommit requests. An offset-coordinator write failure cannot discard a usable in-memory
+projection. Assignment, heartbeat and fetch failures still invalidate the epoch and require reconstruction.
+Durable decision snapshots retain their source cuts and PostgreSQL references independently of the ephemeral consumer.
+The projection retains 61 bar minutes, 512
+quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
+remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
+Windows that need the applicable discarded rejection history fail verification. Liquidation checks quote retention
+for its requested held symbols independently of other symbols and bar/trade history; an observation older than a
+required symbol's retained quote history fails.
 Reassignment discards the old projection. One scoped supervisor owns the client. Connection attempts are bounded;
 after exhaustion it retries after a 30-second cooldown without waiting for a strategy read. Reads and status checks
 cannot launch a client. Scope closure cancels both consumption and scheduled reconnection, then closes the client.
+Invalidation belongs to its consumer epoch. A delayed callback from a closed consumer cannot invalidate its replacement;
+an invalidation without a cause still revokes reads and triggers the same bounded rebuild. Readiness requires both
+completed bootstrap and no retained failure. Measurements report bootstrap completion and read availability separately,
+and failed worker checks retain the epoch and bounded failure reason without transport credentials or raw exception data.
 The transport owns each SDK stream in the consume callback, before Node can run stream construction. It installs an
 error listener immediately and destroys any stream delivered after consumer shutdown. Constructor errors invalidate
 the projection and still reject iteration. Node subprocess tests cover late delivery, constructor failure, consumption
 after close, and normal shutdown using the real Kafka SDK streams.
+The pinned Kafka 2.12.1 package patch incrementally deserializes fetched responses into the Readable queue, stopping
+at its high-water mark. A broker's response remains in flight until drained, so buffer pressure cannot trigger more
+fetches for that broker. Offsets advance after the batch is delivered, including control-only batches. Node tests
+exercise multiple brokers, oversized responses, duplicate offsets, control markers, interruption and decoder errors.
+The bounded response fix is submitted as [upstream PR #426](https://github.com/platformatic/kafka/pull/426).
+Remove the patch when a published release contains both changes and passes the retained Node regressions.
+The patch also backports upstream [offset-refresh invalidation](https://github.com/platformatic/kafka/pull/422).
+Responses suspended by backpressure retain their fetch epoch; a rebalance discards their undelivered records.
+Delayed deserialization hooks release their broker and resume fetching from the restored offsets.
+Kafka still returns atomic compressed record batches; this bounds queued message expansion, not the size of an
+individual broker batch. The memory regression uses the real stream with generated broker responses, not a live broker.
 The execution worker checks projection availability on successful mutation-capable passes, including waiting
 before the first strategy window. The persisted pass reports an unavailable projection to public readiness.
 This check preserves reconciliation and close recovery. A blocked current session also reports failed readiness
 until its close instead of being classified as historical waiting.
 
 Snapshots bind the consumer epoch, local receipt sequence, transport positions, raw rows and selected feature
-payloads. Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
+payloads. Jev's `quote-window-trade.v1` candidate policy retains matched rolling and technical feature receipts even
+when raw evidence excludes their candidate. The exclusion still prevents a signal request. A missing receipt in an
+older cut may reflect that older filtering contract, so it cannot prove that the worker never received the feature.
+Separate pricing snapshots are retained when execution uses a different quote cut. PostgreSQL commits
 immutable references in the decision transaction. Restart verification requires the exact committed reference.
 Flink failure does not disable broker reconciliation or the existing close-window recovery path. Migration 0066
 adds intraday protocol v3 to the durable authority contracts while preserving v1/v2 history.
@@ -40,7 +70,7 @@ node dist/streaming-diagnostics-command.js --since 2026-09-11T19:00:00Z
 ```
 
 This bounded probe uses the configured Bayn Kafka identity and the production consumer/reducer. It captures source
-bounds, consumes retained records, commits incorporated offsets in a unique group, verifies exact feature-to-bar
+bounds, consumes retained records at explicit offsets in a unique group without committing offsets, verifies exact feature-to-bar
 matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
 input joins observed now; it does not claim those features were available in a past trading session. The image
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
@@ -125,9 +155,12 @@ for subsequent strategy research, not a new claimed trading edge. The original i
 optional topic is unconfigured.
 
 Frozen replay sources can include `universe.topics.technicalFeatures`. That topic and its retained source bytes are
-bound to the run and reproduced cut. Raw, rolling and technical topics must be distinct. The regeneration timestamp
-applies only to rolling features, retaining actual computation time separately from simulated availability. Original
-technical records must pass the normal computation-to-arrival clock bound. The historical economic study
+bound to the run and reproduced cut. Raw, rolling and technical topics must be distinct. Rolling regeneration binds
+`regeneratedFeaturesRecordedAtMs`; technical regeneration separately requires
+`regeneratedTechnicalFeaturesRecordedAtMs` in the source manifest and every reproduced cut. Both preserve actual
+computation time and validate it against the corresponding regeneration receipt while retaining modeled availability.
+The rolling marker alone cannot admit backdated technical arrivals. Original technical records and live consumers
+must pass the normal computation-to-arrival clock bound. The historical economic study
 under `docs/bayn/evidence/2026-09-11-native-replay/` did not include technical indicators or modify the baseline.
 
 Enable the consumer after the reviewed producer/topic deployment. `Kafka technical feature incorporated` logs report
@@ -196,13 +229,29 @@ use `counterfactual-current-asset-eligibility`; it cannot be described as histor
 must match the input build; source invocations identify their build verification as `development-configured`.
 
 The `bayn.backtest-source.v1` manifest requires `encoding: "ndjson-gzip"` and binds the SHA-256 of the complete compressed NDJSON file, record count, export
-coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka` or `alpaca-rest` transport. Each line uses
+coverage interval, first/last arrival, partition bounds, universe, origin, delivery policy, and explicit `captured-kafka`, `alpaca-rest`, or `archive-reconstruction` transport. Each line uses
 `HistoricalMarketArrivalSchema`. The reader verifies the entire file before execution, then reads bounded chunks
 while retaining the production projection. It rejects duplicate/reversed Kafka coordinates, reversed availability,
 records outside the frozen cuts, and changed bytes/counts. The current Torghut capture profile independently requires
 three bar partitions, thirteen quote partitions, three trade partitions, and three retained feature partitions.
-The offline regenerated feature stream has its own single partition. Every partition needs a cut, including empty
-cuts with equal start/end offsets. Record-derived partition inventories cannot establish source completeness.
+The offline regenerated feature stream has its own single partition. Captured streams require every partition cut,
+including empty cuts with equal start/end offsets. Record-derived partition inventories cannot establish captured
+source completeness.
+
+Archive reconstruction uses a separately hashed `bayn.archive-reconstruction-receipt.v1`: it binds the original query
+hashes, archived response hashes, normalized source hash, retained-coordinate cuts and explicit original-delivery
+limitations. It declares `originalStreamAvailability: NOT_OBSERVED` and `completeness: RETAINED_ROWS_ONLY`; it cannot
+masquerade as a Kafka capture. Original offsets can have gaps where other records were not retained in the archive
+export. Unknown partition offsets are not invented: `archiveUnobservedPartitions` declares each topology partition
+without retained rows, in both manifest and receipt. Declared cuts and unobserved partitions together must match the
+complete known topology exactly, without duplicates or overlaps. Such a declaration is not proof that a Kafka log
+was empty. Records from an unobserved partition, reversed/duplicate coordinates, endpoint substitutions and changed
+receipt bytes still fail. Captured Kafka and REST consecutive-offset checks remain unchanged.
+
+Archive ingestion timestamps and conservatively delayed per-partition ordering are a development delivery model,
+not the original consumer receipt sequence. Missing bars, feature joins, pricing, and close liquidity remain missing
+and can make a session inconclusive. Neither a complete file hash nor a successful mechanical simulation promotes an
+archive reconstruction into prospective qualification evidence.
 The independently pinned receipt must cover the full exchange session. The file must match its exact first/last arrivals; a quiet opening or closing interval does not fabricate missing events.
 Every partition cut must also equal the independently captured offset receipt. Its separately supplied SHA-256 is
 trusted configuration, outside the editable session input; replacing the receipt without that authority is rejected.
@@ -238,7 +287,7 @@ flat reconciliation. The standing mandate may then create the next distinct atte
 the entry cutoff remains open. Each attempt evaluates fresh signals across the strategy candidates. The v4 cycle
 identity and unique PostgreSQL authority slot record an increasing attempt ordinal without a session-wide quota;
 replay uses the same rule through the production engine. No retry reuses an intent, decision, cycle ID, or broker order.
-Entry limit prices include the production risk policy's bounded allowance, and the modeled arrival price must still
+Entry and quote-backed close limit prices include the production risk policy's bounded allowance, and the modeled arrival price must still
 satisfy that limit before a fill is possible.
 
 For captured Kafka, the required receipt uses `bayn.replay-source-capture.v1` with `capturedAt`, `origin`, `coverageStartMs`,

@@ -1,5 +1,5 @@
 import { Clock, Duration, Effect, FileSystem, Option, Redacted, Ref, Result, Schema, Semaphore } from 'effect'
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result, canonicalJsonV1Result, renderCanonicalJsonFailure, sha256 } from '../../hash'
 import { utcInstantFromEpochMillis } from '../../time'
@@ -10,6 +10,7 @@ import {
   StrictNonEmptyStringSchema,
   SymbolSchema,
   UtcInstantSchema,
+  UtcOrderTimestampSchema,
   strictParseOptions,
 } from '../../schemas'
 import {
@@ -56,8 +57,8 @@ const QueryIdentitySchema = Schema.Struct({
   kind: Schema.Enum(AlpacaHistoricalKind),
   endpointPath: StrictNonEmptyStringSchema,
   symbols: Schema.Array(SymbolSchema),
-  start: UtcInstantSchema,
-  end: UtcInstantSchema,
+  start: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
+  end: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
   asof: IsoDateSchema,
   feed: Schema.Literal(alpacaHistoricalFeed),
   sort: Schema.Literal('asc'),

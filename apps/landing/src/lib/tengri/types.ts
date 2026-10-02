@@ -1,6 +1,12 @@
+import type { TengriCodexOptions } from './codex-models'
+
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
-export type TengriErrorCode = 'conversation_not_found' | 'file_conflict' | 'capacity_full'
+export type TengriErrorCode =
+  | 'conversation_not_found'
+  | 'file_conflict'
+  | 'capacity_full'
+  | 'model_selection_unavailable'
 
 export type TengriCondition = {
   type: string
@@ -161,9 +167,10 @@ export type TengriAction =
   | { action: 'codex-account'; agentId: string }
   | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
-  | { action: 'create-thread'; agentId: string }
-  | { action: 'resume-thread'; agentId: string; threadId: string }
-  | { action: 'send-turn'; agentId: string; threadId: string; text: string }
+  | { action: 'codex-models'; agentId: string; cursor?: string }
+  | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
+  | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
+  | ({ action: 'send-turn'; agentId: string; threadId: string; text: string } & TengriCodexOptions)
   | { action: 'steer-turn'; agentId: string; threadId: string; turnId: string; text: string }
   | { action: 'interrupt-turn'; agentId: string; threadId: string; turnId: string }
   | {

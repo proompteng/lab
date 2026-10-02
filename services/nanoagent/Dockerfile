@@ -3,7 +3,7 @@
 ARG GO_BASE_IMAGE=mirror.gcr.io/golang
 ARG GO_VERSION=1.25.5
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG NODE_BASE_IMAGE=mirror.gcr.io/node
 ARG NODE_VERSION=24.11.1
 ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
@@ -21,6 +21,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
+COPY internal ./internal
 COPY vscode-extension ./vscode-extension
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
@@ -95,6 +96,7 @@ RUN set -eux; \
       python3 \
       python3-venv \
       ripgrep \
+      sudo \
       tar \
       tini \
       xz-utils; \
@@ -115,15 +117,29 @@ RUN set -eux; \
     else \
       useradd --uid 1000 --gid 1000 --home-dir /home/nanoagent --shell /bin/bash --create-home nanoagent; \
     fi; \
-    mkdir -p /home/nanoagent/.cache /home/nanoagent/.codex /home/nanoagent/.local/bin /home/nanoagent/workspace; \
+    mkdir -p /home/nanoagent/.cache/apt/lists /home/nanoagent/.cache/apt/archives \
+      /home/nanoagent/.codex /home/nanoagent/.local/bin /home/nanoagent/workspace; \
     ln -s /home/nanoagent/workspace /workspace; \
     chown -R 1000:1000 /home/nanoagent; \
+    printf 'nanoagent ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/nanoagent; \
+    chmod 0440 /etc/sudoers.d/nanoagent; \
+    visudo -cf /etc/sudoers.d/nanoagent; \
+    printf '%s\n' \
+      'Dir::State::lists "/home/nanoagent/.cache/apt/lists";' \
+      'Dir::Cache::archives "/home/nanoagent/.cache/apt/archives";' \
+      > /etc/apt/apt.conf.d/99tengri; \
     test -x /bin/bash
 
 COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
+
+FROM runtime AS guest-admin-smoke
+
+USER 1000:1000
+RUN --mount=type=bind,source=test-guest-admin.sh,target=/tmp/test-guest-admin.sh,readonly \
+    bash /tmp/test-guest-admin.sh --filesystem > /tmp/guest-admin-validation.txt
 
 FROM runtime AS c-toolchain-runtime
 
@@ -302,8 +318,8 @@ RUN mkdir -p "$HOME" && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
     test "$(npm config get prefix)" = "$HOME/.local" && \
-    test "$(bun --version)" = '1.4.0' && \
-    test "$(bunx --version)" = '1.4.0' && \
+    test "$(bun --version)" = '1.4.2' && \
+    test "$(bunx --version)" = '1.4.2' && \
     test "$(uv --version | cut -d' ' -f2)" = '0.11.14' && \
     test "$(go version | cut -d' ' -f3)" = 'go1.25.5' && \
     test "$(go env GOROOT)" = "$HOME/.local/go" && \
@@ -362,6 +378,7 @@ RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
 
 FROM runtime-with-toolchain AS guest-rootfs
 
+COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version

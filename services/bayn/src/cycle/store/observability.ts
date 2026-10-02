@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import {
   type CycleEconomicsObservation,
@@ -11,6 +11,8 @@ import {
   type ReconciliationObservation,
 } from '../observability'
 import { CycleState, CycleTerminalReason } from '../model'
+import { describeEntryAllocation, EntryAllocationFactsSchema } from '../entry-allocation-observation'
+import { lastEntryAllocationQuery } from './entry-allocation-query'
 import { Authority, KillState, ReconciliationStatus } from '../../execution/contracts'
 import {
   IsoDateSchema,
@@ -123,6 +125,7 @@ const ProjectionRowSchema = Schema.Struct({
   current_snapshot_id: NullableSha256,
   current_decision_hash: NullableSha256,
   current_terminal_reason: NullableTerminalReason,
+  current_publication_deadline_at: NullableDate,
   current_submission_open_at: NullableDate,
   current_submission_cutoff_at: NullableDate,
   current_execution_open_at: NullableDate,
@@ -138,6 +141,7 @@ const ProjectionRowSchema = Schema.Struct({
   last_snapshot_id: NullableSha256,
   last_decision_hash: NullableSha256,
   last_terminal_reason: NullableTerminalReason,
+  last_publication_deadline_at: NullableDate,
   last_submission_open_at: NullableDate,
   last_submission_cutoff_at: NullableDate,
   last_execution_open_at: NullableDate,
@@ -145,6 +149,7 @@ const ProjectionRowSchema = Schema.Struct({
   last_created_at: NullableDate,
   last_updated_at: NullableDate,
   last_terminal_at: NullableInstant,
+  last_entry_allocation: Schema.optionalKey(Schema.NullOr(EntryAllocationFactsSchema)),
   selected_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   account_mismatch: Schema.Boolean,
   unfinished_cycle_count: NonNegativeIntegerSchema,
@@ -260,6 +265,7 @@ const snapshotFromRow = (
     snapshotId: row[`${prefix}_snapshot_id`],
     decisionHash: row[`${prefix}_decision_hash`],
     terminalReason: row[`${prefix}_terminal_reason`],
+    publicationDeadlineAt: row[`${prefix}_publication_deadline_at`]?.toISOString() ?? null,
     submissionOpenAt: submissionOpenAt.toISOString(),
     submissionCutoffAt: submissionCutoffAt.toISOString(),
     executionOpenAt: executionOpenAt.toISOString(),
@@ -267,6 +273,9 @@ const snapshotFromRow = (
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     terminalAt: row[`${prefix}_terminal_at`]?.toISOString() ?? null,
+    ...(prefix === 'last' && row.last_entry_allocation !== undefined
+      ? { entryAllocationReason: describeEntryAllocation(row.last_entry_allocation) }
+      : {}),
   })
 }
 
@@ -482,6 +491,9 @@ const makeCycleObservability = Effect.gen(function* () {
             FROM autonomous_cycle_shadow_decisions AS decision
             JOIN observed_cycle AS cycle ON cycle.cycle_id = decision.cycle_id
             LIMIT 1
+          ),
+          last_entry_allocation AS (
+            ${lastEntryAllocationQuery(sql)}
           ),
           cycle_intents AS (
             SELECT intent.*
@@ -746,6 +758,7 @@ const makeCycleObservability = Effect.gen(function* () {
             current.snapshot_id AS current_snapshot_id,
             current.decision_hash AS current_decision_hash,
             current.terminal_reason AS current_terminal_reason,
+            current.publication_deadline_at AS current_publication_deadline_at,
             current.submission_open_at AS current_submission_open_at,
             current.submission_cutoff_at AS current_submission_cutoff_at,
             current.execution_open_at AS current_execution_open_at,
@@ -761,6 +774,7 @@ const makeCycleObservability = Effect.gen(function* () {
             last.snapshot_id AS last_snapshot_id,
             last.decision_hash AS last_decision_hash,
             last.terminal_reason AS last_terminal_reason,
+            last.publication_deadline_at AS last_publication_deadline_at,
             last.submission_open_at AS last_submission_open_at,
             last.submission_cutoff_at AS last_submission_cutoff_at,
             last.execution_open_at AS last_execution_open_at,
@@ -768,6 +782,7 @@ const makeCycleObservability = Effect.gen(function* () {
             last.created_at AS last_created_at,
             last.updated_at AS last_updated_at,
             last.terminal_at AS last_terminal_at,
+            (SELECT facts FROM last_entry_allocation) AS last_entry_allocation,
             (SELECT account_id FROM selected_account) AS selected_account_id,
             (
               (SELECT account_id FROM requested_account) IS NOT NULL
