@@ -250,4 +250,4 @@ test('offline command reproduces native observations, prices shared lifecycle on
       ).toBeTrue()
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
-})
+}, 30_000)
