@@ -166,6 +166,26 @@ describe('agents-shell activity audit', () => {
     expect(JSON.stringify(records())).toContain('[TRUNCATED]')
   })
 
+  it('redacts attached and separate short password options in commands and argument arrays', () => {
+    const records = captureAudit()
+    writeAuditLog(configFixture(), 'probe', authFixture(), {
+      command: 'mysql -pmysql-password; sshpass -p separate-password ssh host.test',
+      args: ['-p', 'array-password', '-pattached-array-password'],
+    })
+    const serialized = JSON.stringify(records())
+    for (const value of ['mysql-password', 'separate-password', 'array-password', 'attached-array-password'])
+      expect(serialized).not.toContain(value)
+    expect(serialized).toContain('[REDACTED]')
+  })
+
+  it('bounds audit processing time for a long plain output token', () => {
+    const records = captureAudit()
+    const startedAt = performance.now()
+    writeAuditLog(configFixture(), 'probe', null, { stdout: 'a'.repeat(50_000) })
+    expect(performance.now() - startedAt).toBeLessThan(1_000)
+    expect(records()[0].payloadTruncated).toBe(true)
+  })
+
   it('keeps stdout auditing when the file sink fails', () => {
     const records = captureAudit()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -268,6 +288,31 @@ describe('agents-shell activity audit', () => {
     expect(JSON.stringify(events)).not.toContain('unknown-token-value')
   })
 
+  it('keeps rejected-call audit metadata independent of arguments and unknown-tool names', async () => {
+    const records = captureAudit()
+    const { client, runner } = await connect(authFixture([]))
+    const denied = await client.callTool({ name: 'shell_run', arguments: { command: 'attacker-data'.repeat(10_000) } })
+    const unknown = await client.callTool({
+      name: 'unknown-attacker-name'.repeat(1_000),
+      arguments: { data: 'attacker-data'.repeat(10_000) },
+    })
+    expect(denied.isError).toBe(true)
+    expect(unknown.isError).toBe(true)
+    expect(runner.jobs.size).toBe(0)
+    const events = records()
+    expect(events).toHaveLength(4)
+    expect(Buffer.byteLength(JSON.stringify(events))).toBeLessThan(1_600)
+    expect(JSON.stringify(events)).not.toContain('attacker-data')
+    expect(JSON.stringify(events)).not.toContain('unknown-attacker-name')
+    expect(
+      events.filter(({ event }) => event === 'tool_call_started').map(({ payload }) => payload.authorized),
+    ).toEqual([false, false])
+    expect(events.filter(({ event }) => event === 'tool_call_finished').map(({ payload }) => payload.outcome)).toEqual([
+      'error',
+      'error',
+    ])
+  })
+
   it('keeps concurrent tool calls and background completion attached to their originating calls', async () => {
     const records = captureAudit()
     const { client, runner } = await connect()
@@ -304,13 +349,13 @@ describe('agents-shell activity audit', () => {
     const { client, runner } = await connect()
     const started = await client.callTool({
       name: 'shell_start',
-      arguments: { command: "printf 'before timeout\\n'; sleep 5", timeoutSeconds: 1 },
+      arguments: { command: 'sleep 5', timeoutSeconds: 1 },
     })
     const { jobId } = parseJob(started.structuredContent)
     await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 3_000 })
     expect(records().find(({ event }) => event === 'shell_job_finished')).toMatchObject({
       tool: 'shell_start',
-      payload: { status: 'timed_out', timedOut: true, stdout: 'before timeout\n' },
+      payload: { status: 'timed_out', timedOut: true },
     })
   })
 })

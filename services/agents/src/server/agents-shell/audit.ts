@@ -12,7 +12,7 @@ export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
 const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
-  /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization)[\w-]*|-u|--user)$/i
+  /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization)[\w-]*|-[up]|--user)$/i
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|payload|_meta)$/i
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
@@ -30,12 +30,12 @@ const redactText = (value: string, secrets: string[]) => {
       '[REDACTED]',
     )
     .replace(
-      /((?:[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*)["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:^|[\s"'({,;])[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/((?:^|\s)(?:-u\s*|--user(?:=|\s+)))(?:"[^"]*"|'[^']*'|[^\s;]+)/g, '$1[REDACTED]')
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED_EMAIL]')
+    .replace(/((?:^|\s)(?:-[up]\s*|--user(?:=|\s+)))(?:"[^"]*"|'[^']*'|[^\s;]+)/g, '$1[REDACTED]')
+    .replace(/(^|[^A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '$1[REDACTED_EMAIL]')
 }
 
 export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {

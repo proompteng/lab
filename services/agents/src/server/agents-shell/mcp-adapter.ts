@@ -118,10 +118,6 @@ const mapToolError = (config: AgentsShellConfig, error: unknown): CallToolResult
 const callEffectTool = (tool: EffectTool, value: unknown) =>
   Effect.gen(function* () {
     const toolContext = yield* AgentsShellServices
-    yield* Effect.try({
-      try: () => requireScopes(toolContext.auth, tool.scopes),
-      catch: (error) => error,
-    })
     const input = yield* Effect.tryPromise({
       try: () => decodeInput(tool, value),
       catch: (error) => error,
@@ -160,20 +156,32 @@ export const installEffectToolHandlers = (
       async () => {
         const startedAt = performance.now()
         const { runner, auth } = context
+        let authorized = false
+        let authorizationError: CallToolResult | undefined
+        try {
+          if (tool) {
+            requireScopes(auth, tool.scopes)
+            authorized = true
+          }
+        } catch (error) {
+          authorizationError = mapToolError(context.config, error)
+        }
         runner.audit('tool_call_started', auth, {
-          requestedTool: request.params.name,
-          arguments: request.params.arguments ?? {},
+          authorized,
+          ...(authorized ? { arguments: request.params.arguments ?? {} } : {}),
         })
         let result: CallToolResult
         try {
-          result = tool
-            ? await Effect.runPromise(
-                callEffectTool(tool, request.params.arguments ?? {}).pipe(
-                  Effect.catchAll((error) => Effect.succeed(mapToolError(context.config, error))),
-                  Effect.provide(toolLayer),
-                ),
-              )
-            : errorResult(`Tool ${request.params.name} not found`)
+          result =
+            authorizationError ??
+            (tool
+              ? await Effect.runPromise(
+                  callEffectTool(tool, request.params.arguments ?? {}).pipe(
+                    Effect.catchAll((error) => Effect.succeed(mapToolError(context.config, error))),
+                    Effect.provide(toolLayer),
+                  ),
+                )
+              : errorResult(`Tool ${request.params.name} not found`))
         } catch (error) {
           result = mapToolError(context.config, error)
         }
@@ -187,7 +195,7 @@ export const installEffectToolHandlers = (
               : content?.ok === false
                 ? 'failed'
                 : 'succeeded',
-          result: content ?? result.content,
+          ...(authorized ? { result: content ?? result.content } : {}),
         })
         return result
       },

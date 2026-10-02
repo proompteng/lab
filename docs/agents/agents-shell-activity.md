@@ -8,6 +8,8 @@ Open [Grafana Explore](https://grafana.k8s.proompteng.ai/explore), select the **
 
 Each JSON event includes `ts`, `event`, `schemaVersion`, a pseudonymous `subjectHash`, and `payload`.
 Tool calls also include `requestId`, `toolCallId`, and `tool`. Expand a log line to inspect its arguments and result.
+Rejected authorization and unknown-tool calls retain metadata only. Their arguments, response content, and supplied
+unknown tool names are excluded from audit records.
 
 Filter by a tool or follow one call:
 
@@ -19,13 +21,13 @@ Filter by a tool or follow one call:
 {namespace="agents"} |= "agents-shell audit" | json | toolCallId="<call-id>"
 ```
 
-| Event                                                               | Activity                                                                                                                                                                                       |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tool_call_started`                                                 | Tool name and sanitized arguments, including rejected and unknown calls.                                                                                                                       |
-| `tool_call_finished`                                                | Tool outcome, duration, and sanitized result preview. `error` means an MCP tool error. `failed` means a returned process result reports failure. `running` means a background job has started. |
-| `shell_job_started`                                                 | Job ID, command, working directory, and timeout.                                                                                                                                               |
-| `shell_job_finished`                                                | Job ID, duration, exit code, signal, timeout state, and retained output previews.                                                                                                              |
-| Existing Git, patch, search, kubectl, and repository-session events | Process and workspace activity associated with the current tool call.                                                                                                                          |
+| Event                                                               | Activity                                                                                                                                                                                                  |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tool_call_started`                                                 | Every call's known tool name and authorization result. Authorized calls also include sanitized arguments.                                                                                                 |
+| `tool_call_finished`                                                | Outcome and duration for every call, plus a sanitized result preview for authorized calls. `error` means an MCP tool error. `failed` means process failure. `running` means a background job has started. |
+| `shell_job_started`                                                 | Job ID, command, working directory, and timeout.                                                                                                                                                          |
+| `shell_job_finished`                                                | Job ID, duration, exit code, signal, timeout state, and retained output previews.                                                                                                                         |
+| Existing Git, patch, search, kubectl, and repository-session events | Process and workspace activity associated with the current tool call.                                                                                                                                     |
 
 For `shell_start`, use `payload.jobId` from its result to identify the job. Its later `shell_job_finished` event retains
 the original call ID even after the initiating request has returned. `shell_read` and `shell_status` create their own
