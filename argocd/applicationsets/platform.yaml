@@ -37,6 +37,12 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
                 ignoreDifferences:
+                  - group: ""
+                    kind: ConfigMap
+                    name: spire-guest-bundle
+                    namespace: tengri
+                    jsonPointers:
+                      - /data
                   - group: apps
                     kind: StatefulSet
                     name: spire-server
