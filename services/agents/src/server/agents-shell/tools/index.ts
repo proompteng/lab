@@ -1,4 +1,5 @@
 import { createDelegatedAgentTools } from './delegated-agent'
+import { createDiagnosticTools } from './diagnostics'
 import { createFileTools } from './file'
 import { createGitTools } from './git'
 import { createGuideTools } from './guide'
@@ -10,6 +11,7 @@ import { createShellTools } from './shell'
 export const createAgentsShellTools = () => [
   ...createRepoSessionTools(),
   ...createFileTools(),
+  ...createDiagnosticTools(),
   ...createPatchTools(),
   ...createGuideTools(),
   ...createShellTools(),

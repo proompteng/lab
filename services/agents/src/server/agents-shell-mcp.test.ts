@@ -313,6 +313,9 @@ describe('agents-shell MCP tools', () => {
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
       [
         'repo_session_open',
+        'file_read_range',
+        'evidence_inspect',
+        'postgres_log_summary',
         'repo_session_status',
         'repo_session_close',
         'search',
@@ -398,7 +401,12 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(21_000)
+    const diagnosticNames = new Set(['file_read_range', 'evidence_inspect', 'postgres_log_summary'])
+    const existingTools = rawTools.filter((tool) => !diagnosticNames.has(tool.name ?? ''))
+    const diagnosticTools = rawTools.filter((tool) => diagnosticNames.has(tool.name ?? ''))
+    expect(Buffer.byteLength(JSON.stringify({ tools: existingTools }))).toBeLessThan(21_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: diagnosticTools }))).toBeLessThan(6_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(27_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
@@ -1177,6 +1185,13 @@ fi
       expect((result.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
         'get\npods\n-n\nagents\n-o\nwide\n',
       )
+
+      const prefixed = await client.callTool({
+        name: 'kubectl',
+        arguments: { args: ['-n', 'agents', 'get', 'pods'] },
+      })
+      expect(prefixed.isError).not.toBe(true)
+      expect((prefixed.structuredContent as { stdout?: string } | undefined)?.stdout).toBe('-n\nagents\nget\npods\n')
 
       const blocked = await client.callTool({
         name: 'kubectl',

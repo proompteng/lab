@@ -41,6 +41,7 @@ export type EffectTool<I = any, O = any> = {
   description: string
   inputSchema: Schema.Schema<I, any, never>
   outputSchema?: Schema.Schema<O, any, never>
+  strictInput?: boolean
   annotations: ToolAnnotations
   scopes: string[]
   securitySchemes: OAuth2SecurityScheme[]
@@ -72,7 +73,7 @@ const formatParseError = (error: ParseResult.ParseError) => ParseResult.TreeForm
 
 const decodeInput = async <I>(tool: EffectTool<I>, value: unknown): Promise<I> =>
   Effect.runPromise(
-    Schema.decodeUnknown(tool.inputSchema)(value).pipe(
+    Schema.decodeUnknown(tool.inputSchema)(value, { onExcessProperty: tool.strictInput ? 'error' : 'ignore' }).pipe(
       Effect.mapError(
         (error) =>
           new Error(`Input validation error: Invalid arguments for tool ${tool.name}: ${formatParseError(error)}`),

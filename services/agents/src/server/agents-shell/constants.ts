@@ -54,6 +54,8 @@ Default direct ChatGPT repo workflow:
 6. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
 7. Close clean sessions when finished. Dirty sessions are preserved unless repo_session_close is explicitly forced.
 
+Use file_read_range for version-bound UTF-8 paging, evidence_inspect for complete bounded JSON/NDJSON integrity checks, and postgres_log_summary for fixed aggregate analysis of existing CNPG PostgreSQL log files. These offline readers do not accept code, SQL, commands or URLs. They do not establish export/session completeness or authorize a denied operation.
+
 Use shell_run for short commands. Use shell_start/read/status/kill for longer work. Default tool timeout is 60 seconds and the server cap is 1800 seconds. Git operations should use git or git_write; cluster operations should use kubectl or kubectl_admin. Do not use agent_start/status/read/cancel for direct multi-session ChatGPT work unless the user explicitly requests delegated AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
 
 export const SERVER_INSTRUCTIONS =
