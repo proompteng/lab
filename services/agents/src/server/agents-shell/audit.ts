@@ -12,12 +12,64 @@ export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
 const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
-  /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization)[\w-]*|-[up]|--user)$/i
+  /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization)[\w-]*|--user)$/i
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|payload|_meta)$/i
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
 const PRIVATE_KUBERNETES_RESOURCE = /\b(secrets?|sec|agentruns?)(?=[\s/.,"';]|$)/i
+const CREDENTIAL_COMMAND =
+  /\b(curl|mysql|mariadb|sshpass|redis-cli|docker[ \t]+login|podman[ \t]+login)\b((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
+const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
+
+const shortCredentialOptions = (command: string) => {
+  const [executable = '', operation] = command.trim().split(/\s+/)
+  const name = executable.split('/').at(-1)
+  if (name === 'curl') return ['-u', '-U']
+  if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
+  if (name === 'redis-cli') return ['-a']
+  if ((name === 'docker' || name === 'podman') && operation === 'login') return ['-p']
+  return []
+}
+
+const argumentRedactor = (command: string) => {
+  let options = shortCredentialOptions(command)
+  let wrapper = /(?:^|\/)sshpass(?:\s|$)/.test(command)
+  let wrapperOperand = false
+  let redactNext = false
+  return <T>(word: T): T | string => {
+    if (redactNext) {
+      redactNext = false
+      return '[REDACTED]'
+    }
+    if (typeof word !== 'string') return word
+    const option = options.find((value) => word.startsWith(value))
+    if (option) {
+      if (word === option) {
+        redactNext = true
+        return word
+      }
+      return `${option}[REDACTED]`
+    }
+    if (SECRET_OPTION.test(word)) {
+      redactNext = true
+      return word
+    }
+    if (wrapperOperand) wrapperOperand = false
+    else if (wrapper && ['-f', '-d', '-P'].includes(word)) wrapperOperand = true
+    else if (wrapper && !word.startsWith('-')) {
+      wrapper = false
+      options = shortCredentialOptions(word)
+    }
+    return word
+  }
+}
+
+const redactShortOptions = (text: string) =>
+  text.replace(CREDENTIAL_COMMAND, (_match, command: string, args: string) => {
+    const redact = argumentRedactor(command)
+    return command + args.replace(SHELL_WORD, (word) => redact(word))
+  })
 
 const bodyOmission = (kind: unknown) => {
   switch (typeof kind === 'string' ? kind.toLowerCase() : '') {
@@ -40,7 +92,7 @@ const redactText = (value: string, secrets: string[]) => {
   if (omitted) return omitted
   let text = value
   for (const secret of secrets) text = text.replaceAll(secret, '[REDACTED]')
-  return text
+  return redactShortOptions(text)
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED]')
     .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9+/_.=~-]+/gi, '[REDACTED]')
     .replace(/((?:authorization|(?:set-)?cookie)\s*:\s*)[^"'\r\n]+/gi, '$1[REDACTED]')
@@ -54,7 +106,7 @@ const redactText = (value: string, secrets: string[]) => {
       '$1[REDACTED]',
     )
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/((?:^|\s)(?:-[up]\s*|--user(?:=|\s+)))(?:"[^"]*"|'[^']*'|[^\s;]+)/g, '$1[REDACTED]')
+    .replace(/((?:^|\s)--user(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g, '$1[REDACTED]')
     .replace(/(^|[^A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '$1[REDACTED_EMAIL]')
 }
 
@@ -72,7 +124,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
     .sort((a, b) => b.length - a.length)
   let remaining = MAX_PAYLOAD_BYTES
   let truncated = false
-  const sanitize = (value: unknown, depth: number): unknown => {
+  const sanitize = (value: unknown, depth: number, command = ''): unknown => {
     if (remaining <= 0 || depth > 4) {
       truncated = true
       return '[TRUNCATED]'
@@ -98,11 +150,10 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
     }
     if (Array.isArray(value)) {
       const result: unknown[] = []
-      let redactNext = false
+      const redact = argumentRedactor(command)
       for (const item of value.slice(0, 20)) {
         if (remaining <= 0) break
-        result.push(sanitize(redactNext ? '[REDACTED]' : item, depth + 1))
-        redactNext = typeof item === 'string' && SECRET_OPTION.test(item)
+        result.push(sanitize(redact(item), depth + 1))
       }
       if (result.length < value.length) truncated = true
       return result
@@ -114,6 +165,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
         'command' in value && typeof value.command === 'string' && /\bkubectl\b/.test(value.command)
           ? bodyOmission(value.command.match(PRIVATE_KUBERNETES_RESOURCE)?.[1])
           : undefined
+      const owningCommand = 'command' in value && typeof value.command === 'string' ? value.command : command
       const result: Record<string, unknown> = {}
       const entries = Object.entries(value)
       for (const [key, item] of entries.slice(0, 30)) {
@@ -126,7 +178,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
             ? '[OMITTED]'
             : omittedOutput && (key === 'stdout' || key === 'stderr')
               ? omittedOutput
-              : sanitize(item, depth + 1)
+              : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
       }
       if (Object.keys(result).length < entries.length) truncated = true
       return result

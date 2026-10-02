@@ -169,19 +169,43 @@ describe('agents-shell activity audit', () => {
   it('redacts attached and separate short password options in commands and argument arrays', () => {
     const records = captureAudit()
     writeAuditLog(configFixture(), 'probe', authFixture(), {
-      command: 'mysql -pmysql-password; sshpass -p separate-password ssh host.test',
+      command:
+        'mysql -pmysql-password; sshpass -p separate-password ssh -p 2222 host.test; curl -u "quoted-user:quoted password"; docker login -p container-password; redis-cli -a redis-password',
       args: ['-p', 'array-password', '-pattached-array-password'],
     })
     const serialized = JSON.stringify(records())
-    for (const value of ['mysql-password', 'separate-password', 'array-password', 'attached-array-password'])
+    for (const value of [
+      'mysql-password',
+      'separate-password',
+      'array-password',
+      'attached-array-password',
+      'quoted-user',
+      'quoted password',
+      'container-password',
+      'redis-password',
+    ])
       expect(serialized).not.toContain(value)
     expect(serialized).toContain('[REDACTED]')
+    expect(serialized).toContain('ssh -p 2222')
+  })
+
+  it.each([
+    { command: 'mkdir -p /workspace/build', args: ['-p', '/workspace/build'] },
+    { command: 'git log -p HEAD', args: ['log', '-p', 'HEAD'] },
+    { command: 'sort -u input', args: ['-u', 'input'] },
+  ])('retains ordinary short options and operands for $command', ({ command, args }) => {
+    const records = captureAudit()
+    writeAuditLog(configFixture(), 'probe', null, { command, args })
+    expect(records()[0].payload).toEqual({ command, args })
   })
 
   it('bounds audit processing time for a long plain output token', () => {
     const records = captureAudit()
     const startedAt = performance.now()
-    writeAuditLog(configFixture(), 'probe', null, { stdout: 'a'.repeat(50_000) })
+    writeAuditLog(configFixture(), 'probe', null, {
+      stdout: 'a'.repeat(50_000),
+      command: `curl --operation ${'a'.repeat(50_000)}"`,
+    })
     expect(performance.now() - startedAt).toBeLessThan(1_000)
     expect(records()[0].payloadTruncated).toBe(true)
   })
