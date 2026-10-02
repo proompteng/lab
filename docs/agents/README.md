@@ -16,6 +16,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Shell tool and command activity: `agents-shell-activity.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
 - Codex MCP integration: `codex-mcp-agents.md`
+- Bounded artifact readers: `diagnostic-tools.md`
 - Workflow-loop launches: `agentrun-workflow-loop-launch-guide.md`
 - CI validation: `ci-validation-plan.md`
 

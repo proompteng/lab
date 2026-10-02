@@ -1,8 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { realpathSync } from 'node:fs'
+import { dirname } from 'node:path'
 
 import { Effect } from 'effect'
 
 import { DEFAULT_WORKSPACE_SEARCH_EXCLUDES, READ_SCOPES, readOnlyAnnotations } from '../constants'
+import { readFileRange } from '../diagnostic-files'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { asPositiveInteger } from '../limits'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
@@ -67,9 +69,9 @@ export const createFileTools = (): EffectTool[] => [
     handler: (args: ReadFileInput, { config, runner, auth }) =>
       Effect.try({
         try: () => {
-          const path = args.sessionId
-            ? resolveWorkspacePath(runner.resolveRoot(args.sessionId, auth), args.path)
-            : resolveWorkspacePath(config.workspaceRoot, args.path)
+          const root = runner.resolveRoot(args.sessionId, auth)
+          const path = realpathSync(resolveWorkspacePath(root, args.path))
+          runner.resolveCwd(dirname(path), args.sessionId, auth)
           const maxBytes = asPositiveInteger(
             args.maxBytes,
             'maxBytes',
@@ -77,13 +79,14 @@ export const createFileTools = (): EffectTool[] => [
             config.maxOutputBytes,
             1,
           )
-          const buffer = readFileSync(path)
-          const slice = buffer.subarray(0, maxBytes)
+          const page = readFileRange(root, { path, maxBytes }, (openedPath) => {
+            runner.resolveCwd(dirname(openedPath), args.sessionId, auth)
+          })
           return jsonTextResult({
-            path,
-            content: slice.toString('utf8'),
-            bytes: buffer.length,
-            truncated: buffer.length > maxBytes,
+            path: page.path,
+            content: page.content,
+            bytes: page.sizeBytes,
+            truncated: !page.endOfFile,
           })
         },
         catch: agentsShellErrorFromUnknown,

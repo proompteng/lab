@@ -435,9 +435,16 @@ let
     yq
   ] ++ cxTools;
 
+  agentsShellEnv = pkgs.runCommand "agents-shell-env" { } ''
+    mkdir -p "$out/usr/bin"
+    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+    "$out/usr/bin/env" ${bun}/bin/bun --version >/dev/null
+  '';
+
   agentsShellContents = commonContents ++ [
     applyPatch
     pstackBundle
+    agentsShellEnv
     pkgs.gh
     pkgs.openssh
     pkgs.procps
