@@ -21,6 +21,7 @@ export interface CycleOperationsSnapshot {
   readonly snapshotId: string | null
   readonly decisionHash: string | null
   readonly terminalReason: CycleTerminalReason | null
+  readonly publicationDeadlineAt: string | null
   readonly submissionOpenAt: string
   readonly submissionCutoffAt: string
   readonly executionOpenAt: string
@@ -322,8 +323,13 @@ const lifecycleCondition = (
       return [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedSubmissionCutoff]
     }
     if (current.snapshotId === null) {
-      return nowMs >= Date.parse(current.submissionOpenAt)
-        ? [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedPublicationDeadline]
+      if (current.publicationDeadlineAt !== null)
+        return nowMs >= Date.parse(current.publicationDeadlineAt)
+          ? [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedPublicationDeadline]
+          : [CycleOperationsCondition.Waiting, CycleOperationsReason.AwaitingSignalPublication]
+      const startedAt = Math.max(Date.parse(current.createdAt), Date.parse(current.submissionOpenAt))
+      return nowMs - startedAt >= cycleStallThresholdMs
+        ? [CycleOperationsCondition.Stalled, CycleOperationsReason.AttemptStale]
         : [CycleOperationsCondition.Waiting, CycleOperationsReason.AwaitingSignalPublication]
     }
     if (nowMs < Date.parse(current.submissionOpenAt)) {
