@@ -426,17 +426,44 @@ describe('agents-shell activity audit', () => {
       'openssl pkcs12 "-passin" "pass:synthetic-private-input" -passout=pass:synthetic-private-output',
       'openssl pkcs12 "-passin=pass:synthetic-private-input" "-passout=pass:synthetic-private-output"',
       'openssl enc -aes-256-cbc -pass pass:synthetic-private-input',
+      'openssl enc -aes-256-cbc -k synthetic-private-input -K synthetic-private-output -kfile fixture.pwd',
+      'gpg --batch --passphrase synthetic-private-input',
     ])
       writeAuditLog(config, 'probe', null, { command })
     writeAuditLog(config, 'probe', null, {
       command: 'openssl',
       args: ['pkcs12', '-passin', 'pass:synthetic-private-input', '-passout=pass:synthetic-private-output'],
     })
+    writeAuditLog(config, 'probe', null, {
+      command: 'openssl',
+      args: ['enc', '-k', 'synthetic-private-input', '-K', 'synthetic-private-output', '-kfile', 'fixture.pwd'],
+    })
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
       expect(content).not.toContain('synthetic-private-input')
       expect(content).not.toContain('synthetic-private-output')
     }
     expect(JSON.stringify(records())).toContain('pkcs12')
+    expect(JSON.stringify(records())).toContain('-kfile fixture.pwd')
+  })
+
+  it('redacts prefixed passphrase options in raw commands and argv', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'curl --proxy-pass synthetic-private-proxy https://example.test',
+      'curl --proxy-pass=synthetic-private-proxy https://example.test',
+      '"/usr/bin/curl" "--proxy-pass=synthetic-private-proxy" https://example.test',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'curl',
+      args: ['--proxy-pass', 'synthetic-private-proxy', '--proxy-pass=synthetic-private-proxy'],
+      passphrase: 'synthetic-private-proxy',
+    })
+    expect(JSON.stringify(records())).not.toContain('synthetic-private-proxy')
+    expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain('synthetic-private-proxy')
+    expect(JSON.stringify(records())).toContain('https://example.test')
   })
 
   it('redacts credential operands after quoted executable paths', () => {

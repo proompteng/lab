@@ -10,9 +10,10 @@ export type ToolAuditContext = { requestId: string; toolCallId: string; tool: st
 
 export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
-const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|apikey|accesskey|privatekey|credential)s?$/i
+const SECRET_KEY =
+  /(?:authorization|cookie|password|passwd|passphrase|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
-  /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?pass(?:in|out)?)$/i
+  /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)$/i
 const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password)$/i
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
@@ -31,6 +32,7 @@ const shortCredentialOptions = (command: string) => {
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
   if (name === 'redis-cli') return ['-a']
   if (name === 'kubectl' && operation === 'patch') return ['-p']
+  if (name === 'openssl' && operation === 'enc') return ['-k', '-K']
   if ((name === 'docker' || name === 'podman') && operation === 'login') return ['-p']
   return []
 }
@@ -40,26 +42,28 @@ const argumentRedactor = (command: string) => {
   let options = shortCredentialOptions(command)
   let wrapper = /(?:^|\/)sshpass(?:\s|$)/.test(command)
   let wrapperOperand = false
-  let inspectKubectl = /(?:^|\/)kubectl$/.test(command.trim())
-  let kubectlOperand = false
+  const kubectl = /(?:^|\/)kubectl$/.test(command.trim())
+  let inspectOperation = /(?:^|\/)(?:kubectl|openssl)$/.test(command.trim())
+  let operationOperand = false
   let redactNext = false
   return <T>(word: T): T | string => {
     if (redactNext) {
       redactNext = false
-      kubectlOperand = false
+      operationOperand = false
       return '[REDACTED]'
     }
     if (typeof word !== 'string') return word
     const token = word.replaceAll(/["']/g, '')
-    if (inspectKubectl) {
-      if (kubectlOperand) kubectlOperand = false
-      else if (KUBECTL_GLOBAL_OPERAND.test(token)) kubectlOperand = true
+    if (inspectOperation) {
+      if (operationOperand) operationOperand = false
+      else if (kubectl && KUBECTL_GLOBAL_OPERAND.test(token)) operationOperand = true
       else if (!token.startsWith('-')) {
-        inspectKubectl = false
-        if (token === 'patch') options = ['-p']
+        inspectOperation = false
+        options = shortCredentialOptions(`${command} ${token}`)
       }
     }
     if (VALUELESS_SECRET_OPTION.test(token)) return word
+    if (options.includes('-K') && token === '-kfile') return word
     const separator = token.indexOf('=')
     if (separator > 0 && SECRET_OPTION.test(token.slice(0, separator))) {
       return `${token.slice(0, separator)}=[REDACTED]`
@@ -123,12 +127,12 @@ const redactText = (value: string, secrets: string[]) => {
       '[REDACTED]',
     )
     .replace(
-      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password)(?:["']?\s|$))[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password)(?:["']?\s|$))[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
     .replace(
-      /((?:^|\s)(?:--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?pass(?:in|out)?)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g,
+      /((?:^|\s)(?:--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s;]+)/g,
       '$1[REDACTED]',
     )
     .replace(/(^|[^A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '$1[REDACTED_EMAIL]')
@@ -138,7 +142,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitToolA
   const secrets = Object.entries(process.env)
     .filter(
       ([key, value]) =>
-        /(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|DATABASE_URL|DB_URL|CONNECTION_STRING)/i.test(
+        /(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|DATABASE_URL|DB_URL|CONNECTION_STRING)/i.test(
           key,
         ) &&
         value &&
