@@ -20,6 +20,7 @@ import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
@@ -352,7 +353,10 @@ const makeRecoveryFirstCycleDriverEffect = (
           Effect.flatMap((observedAt) =>
             observeMutationPass(startup, { outcome: 'WAITING', observedAt, waitReason: 'BROKER_OBSERVATION_PENDING' }),
           ),
-          Effect.map((observation) => ({ observation })),
+          Effect.map((observation) => ({
+            observation,
+            nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs),
+          })),
         )
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),

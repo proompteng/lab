@@ -210,6 +210,11 @@ impl GuestClient {
             .pod_ip
             .as_ref()
             .ok_or_else(|| GuestError::MissingGuestIp(agent_id.to_owned()))?;
+        let pod_uid = status
+            .pod_uid
+            .as_deref()
+            .filter(|uid| !uid.is_empty())
+            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
         let secret_name = format!("{}-bootstrap", microvm.name_any());
         let secrets: Api<Secret> = Api::namespaced(client, namespace);
         let secret = secrets.get(&secret_name).await?;
@@ -223,7 +228,7 @@ impl GuestClient {
 
         let base_url = format!("http://{guest_ip}:{GUEST_API_PORT}");
         let rpc = rpc::RpcClient::new(&base_url, &token)?;
-        rpc.verify_identity(agent_id).await?;
+        rpc.verify_identity(pod_uid).await?;
         Ok(Self {
             base_url,
             token,
@@ -371,6 +376,84 @@ fn validate_expected_revision(value: &str) -> Result<(), GuestError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn guest_connection_verifies_the_ready_pod_uid_instead_of_the_microvm_name() {
+        use rpc::test_server::TestService;
+        use std::sync::Arc;
+        use tokio_stream::wrappers::TcpListenerStream;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", GUEST_API_PORT))
+            .await
+            .unwrap();
+        let server = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(
+                    rpc::proto::nanoagent_service_server::NanoagentServiceServer::new(
+                        TestService {
+                            get_info: Some(Arc::new(|request| {
+                                assert_eq!(
+                                    request.metadata().get("authorization").unwrap(),
+                                    "Bearer fixture-token"
+                                );
+                                Ok(rpc::proto::GuestInfo {
+                                    microvm_id: "current-pod-uid".into(),
+                                    protocol_version: 1,
+                                })
+                            })),
+                            ..Default::default()
+                        },
+                    ),
+                )
+                .serve_with_incoming(TcpListenerStream::new(listener))
+                .await
+                .unwrap();
+        });
+        for (pod_uid, ready) in [
+            (Some("current-pod-uid"), true),
+            (Some("previous-pod-uid"), false),
+            (None, false),
+        ] {
+            let service = tower::service_fn(
+                move |request: http::Request<kube::client::Body>| async move {
+                    let value = if request.uri().path().ends_with("/microvms/agent-fixture") {
+                        serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"microvm-uid","generation":1},"spec":{
+                        "displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                        "resources":{"cpuMillis":2000,"memoryMib":4096,"workspaceGib":16},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
+                    },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":pod_uid}})
+                    } else {
+                        assert!(
+                            request
+                                .uri()
+                                .path()
+                                .ends_with("/secrets/agent-fixture-bootstrap")
+                        );
+                        serde_json::json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"agent-fixture-bootstrap"},"data":{"token":"Zml4dHVyZS10b2tlbg=="}})
+                    };
+                    Ok::<_, std::io::Error>(
+                        http::Response::builder()
+                            .header(http::header::CONTENT_TYPE, "application/json")
+                            .body(kube::client::Body::from(value.to_string().into_bytes()))
+                            .unwrap(),
+                    )
+                },
+            );
+            let result =
+                GuestClient::for_agent(Client::new(service, "tengri"), "tengri", "agent-fixture")
+                    .await;
+            assert_eq!(
+                result.is_ok(),
+                ready,
+                "pod UID {pod_uid:?}: {}",
+                result
+                    .err()
+                    .map(|error| error.to_string())
+                    .unwrap_or_default()
+            );
+        }
+        server.abort();
+    }
+
     #[tokio::test]
     async fn an_editor_session_cannot_bind_to_a_recreated_microvm() {
         let service = tower::service_fn(|request: http::Request<kube::client::Body>| async move {
