@@ -1099,7 +1099,7 @@ api repos/owner/repo/issues \
     expect(records().at(-1)?.payload.command).toBe('curl https://example.test')
   })
 
-  it('omits grouped shell command bodies before matching credential commands', () => {
+  it('omits grouped and redirected shell bodies before matching credential commands', () => {
     const records = captureAudit()
     const config = configFixture()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
@@ -1107,6 +1107,9 @@ api repos/owner/repo/issues \
       '(curl -u admin:syntheticSubshellCredential https://example.test)',
       '(curl -uadmin:syntheticSubshellCredential https://example.test)',
       'true && (mysql -psyntheticSubshellCredential)',
+      'curl</dev/null -u admin:syntheticSubshellCredential https://example.test',
+      'curl>out.txt -u admin:syntheticSubshellCredential https://example.test',
+      'curl 2>errors.txt -u admin:syntheticSubshellCredential https://example.test',
     ])
       writeAuditLog(config, 'probe', null, { command })
     writeAuditLog(config, 'probe', null, {
