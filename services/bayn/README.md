@@ -415,16 +415,16 @@ The read-only forward-performance command has an explicit historical snapshot co
 account-bound runtime configuration. Supply all eight settings from the intended immutable daily publication, even
 when invoking the command from a running service container:
 
-| Setting | Historical input |
-| --- | --- |
-| `BAYN_SIGNAL_SNAPSHOT_ID` | Immutable daily snapshot SHA-256 |
-| `BAYN_SIGNAL_PUBLICATION_ASOF` | Publication date, `YYYY-MM-DD` |
-| `BAYN_SIGNAL_CALENDAR_VERSION` | Exact calendar identity |
-| `BAYN_SIGNAL_DATA_START` | First data date |
-| `BAYN_SIGNAL_DATA_END` | Last data date |
-| `BAYN_SIGNAL_LOOKBACK_START` | Lookback start date |
-| `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date |
-| `BAYN_SIGNAL_EVALUATION_END` | Evaluation end date |
+| Setting                        | Historical input                 |
+| ------------------------------ | -------------------------------- |
+| `BAYN_SIGNAL_SNAPSHOT_ID`      | Immutable daily snapshot SHA-256 |
+| `BAYN_SIGNAL_PUBLICATION_ASOF` | Publication date, `YYYY-MM-DD`   |
+| `BAYN_SIGNAL_CALENDAR_VERSION` | Exact calendar identity          |
+| `BAYN_SIGNAL_DATA_START`       | First data date                  |
+| `BAYN_SIGNAL_DATA_END`         | Last data date                   |
+| `BAYN_SIGNAL_LOOKBACK_START`   | Lookback start date              |
+| `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
+| `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
 
 After supplying these values, use `node dist/forward-performance-command.js --authority-generation <generation-hash>`
 to scope the report. Missing or malformed historical settings, including inconsistent evaluation bounds, fail
