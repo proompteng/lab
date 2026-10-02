@@ -647,6 +647,11 @@ charge is an explicit incremental-cost scenario, not proof of zero operating cos
 without selecting favorable dates or erasing missing observations. Development comparisons do not satisfy the frozen
 prospective qualification protocol and never activate a different model, prompt, threshold or trading policy.
 
+For the bounded paired Jev-versus-relative-momentum experiment with shared protective exits, abstentions,
+cost coverage and prospective completeness gates, use the
+[matched entry study](../../docs/bayn/matched-entry-study.md). It remains an offline opportunity test and grants no
+strategy promotion or trading authority.
+
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
 15-minute hypothetical outcomes. It is a signal screen, and its overlapping hypotheses do not form a portfolio
