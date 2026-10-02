@@ -62,7 +62,7 @@ const shortCredentialOptions = (command: string) => {
 const argumentRedactor = (command: string) => {
   const words = command.match(SHELL_WORD) ?? []
   const executable = normalizeShellWord(words[0] ?? '')
-  const name = commandName(executable)
+  let name = commandName(executable)
   const globalOperand =
     name === 'kubectl'
       ? KUBECTL_GLOBAL_OPERAND
@@ -121,7 +121,12 @@ const argumentRedactor = (command: string) => {
     else if (wrapper && ['-f', '-d', '-P'].includes(token)) wrapperOperand = true
     else if (wrapper && !token.startsWith('-')) {
       wrapper = false
+      name = commandName(word)
       options = shortCredentialOptions(word)
+    }
+    if (name === 'curl') {
+      const url = token.replace(/^((?:--url=)?(?:[a-z][a-z0-9+.-]*:\/\/)?)[^/?#\s]+@/i, '$1[REDACTED]@')
+      if (url !== token) return url
     }
     return word
   }
@@ -173,7 +178,7 @@ const redactText = (value: string, secrets: string[]) => {
       '[REDACTED]',
     )
     .replace(
-      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies|no-cookies|keep-session-cookies)(?:["']?\s|$))[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:^|[\s"'({,;])[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/@?#]+@/gi, '$1[REDACTED]@')

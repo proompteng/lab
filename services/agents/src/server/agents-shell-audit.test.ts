@@ -418,6 +418,24 @@ describe('agents-shell activity audit', () => {
     expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(encoded)
   })
 
+  it('preserves Kubernetes Secret resource names and flags while redacting data assignments', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of ['kubectl get secret demo -n agents', 'kubectl get secrets -n agents', 'k get secret demo']) {
+      writeAuditLog(config, 'probe', null, { command })
+      expect(records().at(-1)?.payload.command).toBe(command)
+    }
+    writeAuditLog(config, 'probe', null, { command: 'kubectl', args: ['get', 'secrets', '-n', 'agents'] })
+    expect(records().at(-1)?.payload.args).toEqual(['get', 'secrets', '-n', 'agents'])
+    writeAuditLog(config, 'probe', null, { details: 'secret=syntheticAssignment; password: syntheticAssignment' })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticAssignment')
+      expect(content).toContain('kubectl get secret demo -n agents')
+      expect(content).toContain('kubectl get secrets -n agents')
+    }
+  })
+
   it('uses the kubectl credential policy for the repository k alias', () => {
     const records = captureAudit()
     const config = configFixture()
@@ -860,6 +878,38 @@ api repos/owner/repo/issues \
       expect(content).toContain('[REDACTED]@example.test:4222/path')
       expect(content).toContain('nats --server nats://example.test:4222 server info')
     }
+  })
+
+  it('redacts curl user information in scheme-less URLs', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'curl operator:syntheticNoSchemeValue@127.0.0.1:8080/path',
+      'curl --url operator:syntheticNoSchemeValue@localhost:8080/path',
+      'curl --url=operator:syntheticNoSchemeValue@localhost:8080/path',
+      "curl 'operator:syntheticNoScheme!'Value@localhost:8080/path",
+      'curl syntheticNoSchemeValue@localhost:8080/path',
+      'env curl operator:syntheticNoSchemeValue@localhost:8080/path',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    for (const args of [
+      ['--url', 'operator:syntheticNoSchemeValue@localhost:8080/path'],
+      ['--url=operator:syntheticNoSchemeValue@localhost:8080/path'],
+      ['syntheticNoSchemeValue@localhost:8080/path'],
+    ])
+      writeAuditLog(config, 'probe', null, { command: 'curl', args })
+    writeAuditLog(config, 'probe', null, {
+      command: 'sshpass',
+      args: ['-p', 'syntheticNoSchemeValue', 'curl', 'operator:syntheticNoSchemeValue@localhost:8080/path'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticNoScheme')
+      expect(content).not.toContain('operator:')
+      expect(content).toContain('[REDACTED]@localhost:8080/path')
+    }
+    writeAuditLog(config, 'probe', null, { command: 'curl --url localhost:8080/path' })
+    expect(records().at(-1)?.payload.command).toBe('curl --url localhost:8080/path')
   })
 
   it('omits URLs with query or fragment input independent of credential parameter names', () => {

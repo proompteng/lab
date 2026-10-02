@@ -60,6 +60,8 @@ HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; 
 operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET
 targets without URL queries or fragments remain visible. Inputs containing URLs with queries or fragments are
 omitted in full because those values can contain credentials under arbitrary or encoded parameter names.
+Curl user information is redacted even in URLs without a scheme. Secret values in assignments and data fields are
+redacted without consuming bare Kubernetes resource nouns, resource names, or following flags.
 Curl's `--url-query` and `--request-target` inputs receive the same omission because they can construct query input
 without a literal query in the URL. The repository's `k` alias uses the same credential and stdin-manifest policy as
 `kubectl`, including executable paths and global options.
