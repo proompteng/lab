@@ -13,12 +13,15 @@ export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 const SECRET_KEY = /(?:authorization|cookie|password|passwd|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|pass|cert|proxy-cert))$/i
+const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password)$/i
+const KUBECTL_GLOBAL_OPERAND =
+  /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|stderr|payload|_meta)$/i
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
 const CREDENTIAL_COMMAND =
-  /\b(curl|mysql|mariadb|sshpass|redis-cli|docker[ \t]+login|podman[ \t]+login)\b((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
+  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|docker[ \t]+login|podman[ \t]+login)\b((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
 const shortCredentialOptions = (command: string) => {
@@ -27,6 +30,7 @@ const shortCredentialOptions = (command: string) => {
   if (name === 'curl') return ['-u', '-U', '-b', '-E']
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
   if (name === 'redis-cli') return ['-a']
+  if (name === 'kubectl' && operation === 'patch') return ['-p']
   if ((name === 'docker' || name === 'podman') && operation === 'login') return ['-p']
   return []
 }
@@ -35,22 +39,35 @@ const argumentRedactor = (command: string) => {
   let options = shortCredentialOptions(command)
   let wrapper = /(?:^|\/)sshpass(?:\s|$)/.test(command)
   let wrapperOperand = false
+  let inspectKubectl = /(?:^|\/)kubectl$/.test(command.trim())
+  let kubectlOperand = false
   let redactNext = false
   return <T>(word: T): T | string => {
     if (redactNext) {
       redactNext = false
+      kubectlOperand = false
       return '[REDACTED]'
     }
     if (typeof word !== 'string') return word
-    const option = options.find((value) => word.startsWith(value))
+    const token = word.replaceAll(/["']/g, '')
+    if (inspectKubectl) {
+      if (kubectlOperand) kubectlOperand = false
+      else if (KUBECTL_GLOBAL_OPERAND.test(token)) kubectlOperand = true
+      else if (!token.startsWith('-')) {
+        inspectKubectl = false
+        if (token === 'patch') options = ['-p']
+      }
+    }
+    if (VALUELESS_SECRET_OPTION.test(token)) return word
+    const option = options.find((value) => token.startsWith(value))
     if (option) {
-      if (word === option) {
+      if (token === option) {
         redactNext = true
         return word
       }
       return `${option}[REDACTED]`
     }
-    if (SECRET_OPTION.test(word)) {
+    if (SECRET_OPTION.test(token)) {
       redactNext = true
       return word
     }
@@ -101,7 +118,7 @@ const redactText = (value: string, secrets: string[]) => {
       '[REDACTED]',
     )
     .replace(
-      /((?:^|[\s"'({,;])[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password)(?:["']?\s|$))[\w-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')

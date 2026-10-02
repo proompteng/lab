@@ -394,6 +394,34 @@ describe('agents-shell activity audit', () => {
     }
   })
 
+  it('redacts kubectl patch data in raw commands with global options and quoted flags', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    const encoded = Buffer.from('synthetic-private-patch').toString('base64')
+    const patch = JSON.stringify({ data: { 'auth.json': encoded } })
+    for (const command of [
+      `kubectl patch secret demo -p '${patch}'`,
+      `kubectl --context galactic-tailscale -n bayn patch secret demo "-p" '${patch}'`,
+      `kubectl --context=galactic-tailscale --insecure-skip-tls-verify patch secret demo -p '${patch}'`,
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    expect(JSON.stringify(records())).not.toContain(encoded)
+    expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(encoded)
+  })
+
+  it.each([
+    {
+      command: 'docker login --password-stdin registry.example.test',
+      args: ['login', '--password-stdin', 'registry.example.test'],
+    },
+    { command: 'mysql --skip-password production_db', args: ['--skip-password', 'production_db'] },
+  ])('preserves the target after valueless credential switches in $command', ({ command, args }) => {
+    const records = captureAudit()
+    writeAuditLog(configFixture(), 'probe', null, { command, args })
+    expect(records()[0].payload).toEqual({ command, args })
+  })
+
   it('keeps stdout auditing when the file sink fails', () => {
     const records = captureAudit()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
