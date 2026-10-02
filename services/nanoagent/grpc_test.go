@@ -76,10 +76,28 @@ func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("HTTP health status = %d", response.StatusCode)
 	}
-	legacy := performAuthorizedRequest(newHandler(api), http.MethodGet, "/v1/files?path=/", nil)
-	if legacy.Code != http.StatusOK {
-		t.Fatalf("legacy HTTP status = %d", legacy.Code)
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/v1/evidence"}, {"POST", "/v1/editor"},
+		{"GET", "/v1/files"}, {"GET", "/v1/files/search"}, {"GET", "/v1/files/watch"},
+		{"GET", "/v1/files/content"}, {"PUT", "/v1/files/content"}, {"POST", "/v1/files/directory"}, {"POST", "/v1/files/move"}, {"DELETE", "/v1/files"},
+		{"POST", "/v1/terminals"}, {"GET", "/v1/terminals"}, {"DELETE", "/v1/terminals/id"}, {"GET", "/v1/terminals/id/ws"},
+		{"POST", "/v1/codex/call"}, {"GET", "/v1/codex/login"}, {"GET", "/v1/codex/events"}, {"POST", "/v1/codex/approvals/id"},
+	} {
+		request, err := http.NewRequestWithContext(ctx, route.method, address+route.path, bytes.NewBufferString(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("removed route %s %s returned %d", route.method, route.path, response.StatusCode)
+		}
 	}
+
 }
 
 func TestRPCFileBytesRevisionAndConfinement(t *testing.T) {
@@ -101,7 +119,7 @@ func TestRPCFileBytesRevisionAndConfinement(t *testing.T) {
 		t.Fatalf("revision conflict: %v", err)
 	}
 	detail, ok := conflict.Details()[0].(*pb.OperationFailure)
-	if !ok || detail.HttpStatus != 409 || detail.CurrentRevision != written.Revision {
+	if !ok || detail.CurrentRevision != written.Revision {
 		t.Fatalf("revision conflict details = %v", conflict.Details())
 	}
 	for _, path := range []string{"/.tengri/private", "/.codex/private"} {
