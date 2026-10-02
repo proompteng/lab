@@ -476,7 +476,7 @@ describe('agents-shell activity audit', () => {
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
       expect(content).not.toContain('synthetic-private-hmac')
       expect(content).toContain('fixture.txt')
-      expect(content).toContain('[OMITTED_CREDENTIAL_INPUT]')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
       expect(content).toContain('-hmac-env KEY_ENV_VAR fixture.txt')
     }
   })
@@ -506,7 +506,51 @@ describe('agents-shell activity audit', () => {
     })
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
       expect(content).not.toContain('synthetic-private-stdin')
-      expect(content).toContain('[OMITTED_CREDENTIAL_INPUT]')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+  })
+
+  it('redacts OpenSSL cipher aliases without confusing key-file options', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    writeAuditLog(config, 'probe', null, {
+      command: 'openssl aes-256-cbc -k synthetic-cipher-password -K synthetic-cipher-key -kfile fixture.pwd',
+    })
+    writeAuditLog(config, 'probe', null, {
+      command: '"/usr/bin/openssl"',
+      args: ['aes-256-cbc', '-k', 'synthetic-cipher-password', '-K', 'synthetic-cipher-key', '-kfile', 'fixture.pwd'],
+    })
+    writeAuditLog(config, 'probe', null, { command: 'openssl x509 -key fixture.pem -in certificate.pem' })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-cipher-password')
+      expect(content).not.toContain('synthetic-cipher-key')
+      expect(content).toContain('-kfile fixture.pwd')
+      expect(content).toContain('openssl x509 -key fixture.pem -in certificate.pem')
+    }
+  })
+
+  it('omits inline shell bodies and stdin sources independent of their program', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "kubectl create secret generic demo --from-file=token=/dev/stdin <<< 'synthetic-inline-body'",
+      "printf 'synthetic-inline-body' | kubectl create secret generic demo --from-file=token=/dev/stdin",
+      "printf 'synthetic-inline-body' | kubectl create secret generic demo --from-file=token=/dev/fd/0",
+      "printf 'synthetic-inline-body' | kubectl apply -f -",
+      'cat <<EOF\nsynthetic-inline-body\nEOF',
+      "curl --data-binary @<(printf 'synthetic-inline-body') https://example.test",
+      "openssl dgst -macopt key:$(printf 'synthetic-inline-body') fixture.txt",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'kubectl',
+      args: ['create', 'secret', 'generic', 'demo', '--from-file=token=/dev/stdin', 'synthetic-inline-body'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-inline-body')
+      expect(content).toContain('[OMITTED_')
     }
   })
 
@@ -568,7 +612,7 @@ describe('agents-shell activity audit', () => {
     {
       command: 'docker login --password-stdin registry.example.test',
       args: ['login', '--password-stdin', 'registry.example.test'],
-      expected: { command: '[OMITTED_CREDENTIAL_INPUT]', args: '[OMITTED_CREDENTIAL_INPUT]' },
+      expected: { command: '[OMITTED_SHELL_INPUT]', args: '[OMITTED_SHELL_INPUT]' },
     },
     {
       command: 'mysql --skip-password production_db',

@@ -15,8 +15,9 @@ const SECRET_KEY =
 const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)$/i
 const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)$/i
-const CREDENTIAL_INPUT =
-  /--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b/i
+const SHELL_INPUT =
+  /<<|[<>]\(|\$\(|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)/i
+const COMPACT_CREDENTIAL_OPTION = /^-[puUbEa]$/
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|stderr|payload|_meta)$/i
@@ -27,7 +28,7 @@ const CREDENTIAL_COMMAND =
   /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker["']*[ \t]+["']*login|podman["']*[ \t]+["']*login)\b(["']*)((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
-const usesCredentialInput = (text: string) => CREDENTIAL_INPUT.test(text.replaceAll(/["'\\]/g, ''))
+const usesShellInput = (text: string) => SHELL_INPUT.test(text.replaceAll(/["'\\]/g, ''))
 
 const shortCredentialOptions = (command: string) => {
   const [executable = '', operation] = command.replaceAll(/["']/g, '').trim().split(/\s+/)
@@ -37,8 +38,7 @@ const shortCredentialOptions = (command: string) => {
   if (name === 'redis-cli') return ['-a']
   if (name === 'kubectl' && operation === 'patch') return ['-p']
   if (name === 'openssl') {
-    const options = ['-hmac', '-macopt', '-kdfopt', '-pkeyopt', '-pkeyopt_passin', '-sigopt']
-    return operation === 'enc' ? [...options, '-k', '-K'] : options
+    return ['-hmac', '-macopt', '-kdfopt', '-pkeyopt', '-pkeyopt_passin', '-sigopt', '-k', '-K']
   }
   if ((name === 'docker' || name === 'podman') && operation === 'login') return ['-p']
   return []
@@ -49,8 +49,7 @@ const argumentRedactor = (command: string) => {
   let options = shortCredentialOptions(command)
   let wrapper = /(?:^|\/)sshpass(?:\s|$)/.test(command)
   let wrapperOperand = false
-  const kubectl = /(?:^|\/)kubectl$/.test(command.trim())
-  let inspectOperation = /(?:^|\/)(?:kubectl|openssl)$/.test(command.trim())
+  let inspectOperation = /(?:^|\/)kubectl$/.test(command.trim())
   let operationOperand = false
   let redactNext = false
   return <T>(word: T): T | string => {
@@ -63,20 +62,22 @@ const argumentRedactor = (command: string) => {
     const token = word.replaceAll(/["']/g, '')
     if (inspectOperation) {
       if (operationOperand) operationOperand = false
-      else if (kubectl && KUBECTL_GLOBAL_OPERAND.test(token)) operationOperand = true
+      else if (KUBECTL_GLOBAL_OPERAND.test(token)) operationOperand = true
       else if (!token.startsWith('-')) {
         inspectOperation = false
         options = shortCredentialOptions(`${command} ${token}`)
       }
     }
     if (VALUELESS_SECRET_OPTION.test(token)) return word
-    if (options.includes('-K') && token === '-kfile') return word
     const separator = token.indexOf('=')
     if (separator > 0 && SECRET_OPTION.test(token.slice(0, separator))) {
       return `${token.slice(0, separator)}=[REDACTED]`
     }
     const option = options.find(
-      (value) => token === value || token.startsWith(`${value}=`) || (value.length === 2 && token.startsWith(value)),
+      (value) =>
+        token === value ||
+        token.startsWith(`${value}=`) ||
+        (COMPACT_CREDENTIAL_OPTION.test(value) && token.startsWith(value)),
     )
     if (option) {
       if (token === option) {
@@ -122,7 +123,7 @@ const bodyOmission = (kind: unknown) => {
 }
 
 const redactText = (value: string, secrets: string[]) => {
-  if (usesCredentialInput(value)) return '[OMITTED_CREDENTIAL_INPUT]'
+  if (usesShellInput(value)) return '[OMITTED_SHELL_INPUT]'
   const omitted = bodyOmission(value.match(PRIVATE_KUBERNETES_KIND)?.[1])
   if (omitted) return omitted
   let text = value
@@ -202,7 +203,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitToolA
       const owningCommand = 'command' in value && typeof value.command === 'string' ? value.command : command
       const args =
         'args' in value && Array.isArray(value.args) ? value.args.filter((item) => typeof item === 'string') : []
-      const privateInput = usesCredentialInput(`${owningCommand} ${args.join(' ')}`)
+      const privateInput = usesShellInput(`${owningCommand} ${args.join(' ')}`)
       const result: Record<string, unknown> = {}
       const entries = Object.entries(value)
       for (const [key, item] of entries.slice(0, 30)) {
@@ -212,7 +213,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitToolA
         result[loggedKey] = SECRET_KEY.test(key.replaceAll(/[^a-z]/gi, ''))
           ? '[REDACTED]'
           : privateInput && /^(?:command|args)$/i.test(key)
-            ? '[OMITTED_CREDENTIAL_INPUT]'
+            ? '[OMITTED_SHELL_INPUT]'
             : OMITTED_BODY.test(key) || (omitToolArguments && /^(?:arguments|args|command|agentRunName)$/i.test(key))
               ? '[OMITTED]'
               : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
