@@ -44,6 +44,9 @@ Raw stdout and stderr are omitted from every audit event, including later backgr
 emit credentials or task text without identifiable field names; shell syntax can also hide a resource name from command
 matching. Output omission does not depend on parsing commands. Exit status, byte counts, duration, and command metadata
 remain available. Inspect retained output through the authorized MCP caller rather than Loki.
+Commands and argv using credential-input switches for stdin or file descriptors are also omitted in full and marked
+`[OMITTED_CREDENTIAL_INPUT]`. Their input can appear in a pipeline, here-string, or here-document within the command.
+The audit retains the tool, job ID, timing, outcome, and byte counts without parsing out that input.
 Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation
 text and goal objectives.
 Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess

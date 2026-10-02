@@ -476,8 +476,49 @@ describe('agents-shell activity audit', () => {
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
       expect(content).not.toContain('synthetic-private-hmac')
       expect(content).toContain('fixture.txt')
-      expect(content).toContain('-hmac-stdin fixture.txt')
+      expect(content).toContain('[OMITTED_CREDENTIAL_INPUT]')
       expect(content).toContain('-hmac-env KEY_ENV_VAR fixture.txt')
+    }
+  })
+
+  it('omits shell credential-input commands and argv without parsing their input', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "docker login --password-stdin registry.example <<< 'synthetic-private-stdin'",
+      "printf 'synthetic-private-stdin' | docker login --password-stdin registry.example",
+      'docker login --pass"word"-stdin registry.example <<EOF\nsynthetic-private-stdin\nEOF',
+      "docker login --pass\\word-stdin registry.example <<< 'synthetic-private-stdin'",
+      "printf 'synthetic-private-stdin' | openssl dgst -hmac-stdin fixture.txt",
+      "printf 'synthetic-private-stdin' | openssl enc -passin stdin",
+      "printf 'synthetic-private-stdin' | openssl enc -passin fd:0",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'bash',
+      args: ['-c', "docker login --password-stdin registry.example <<< 'synthetic-private-stdin'"],
+    })
+    writeAuditLog(config, 'probe', null, {
+      command: 'docker',
+      args: ['login', '--password-stdin', 'registry.example', 'synthetic-private-stdin'],
+      stdin: 'synthetic-private-stdin',
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-private-stdin')
+      expect(content).toContain('[OMITTED_CREDENTIAL_INPUT]')
+    }
+  })
+
+  it('preserves curl targets after its valueless cookie switch', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    writeAuditLog(config, 'probe', null, { command: 'curl --junk-session-cookies https://example.test' })
+    writeAuditLog(config, 'probe', null, { command: 'curl', args: ['--junk-session-cookies', 'https://example.test'] })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).toContain('curl --junk-session-cookies https://example.test')
+      expect(content).toContain('"--junk-session-cookies","https://example.test"')
     }
   })
 
@@ -527,12 +568,17 @@ describe('agents-shell activity audit', () => {
     {
       command: 'docker login --password-stdin registry.example.test',
       args: ['login', '--password-stdin', 'registry.example.test'],
+      expected: { command: '[OMITTED_CREDENTIAL_INPUT]', args: '[OMITTED_CREDENTIAL_INPUT]' },
     },
-    { command: 'mysql --skip-password production_db', args: ['--skip-password', 'production_db'] },
-  ])('preserves the target after valueless credential switches in $command', ({ command, args }) => {
+    {
+      command: 'mysql --skip-password production_db',
+      args: ['--skip-password', 'production_db'],
+      expected: { command: 'mysql --skip-password production_db', args: ['--skip-password', 'production_db'] },
+    },
+  ])('applies stdin privacy and preserves ordinary valueless switches in $command', ({ command, args, expected }) => {
     const records = captureAudit()
     writeAuditLog(configFixture(), 'probe', null, { command, args })
-    expect(records()[0].payload).toEqual({ command, args })
+    expect(records()[0].payload).toEqual(expected)
   })
 
   it('keeps stdout auditing when the file sink fails', () => {

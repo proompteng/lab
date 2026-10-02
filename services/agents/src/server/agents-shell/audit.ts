@@ -14,7 +14,9 @@ const SECRET_KEY =
   /(?:authorization|cookie|password|passwd|passphrase|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)$/i
-const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password)$/i
+const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)$/i
+const CREDENTIAL_INPUT =
+  /--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b/i
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|stderr|payload|_meta)$/i
@@ -24,6 +26,8 @@ const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secre
 const CREDENTIAL_COMMAND =
   /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker["']*[ \t]+["']*login|podman["']*[ \t]+["']*login)\b(["']*)((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
+
+const usesCredentialInput = (text: string) => CREDENTIAL_INPUT.test(text.replaceAll(/["'\\]/g, ''))
 
 const shortCredentialOptions = (command: string) => {
   const [executable = '', operation] = command.replaceAll(/["']/g, '').trim().split(/\s+/)
@@ -118,6 +122,7 @@ const bodyOmission = (kind: unknown) => {
 }
 
 const redactText = (value: string, secrets: string[]) => {
+  if (usesCredentialInput(value)) return '[OMITTED_CREDENTIAL_INPUT]'
   const omitted = bodyOmission(value.match(PRIVATE_KUBERNETES_KIND)?.[1])
   if (omitted) return omitted
   let text = value
@@ -132,7 +137,7 @@ const redactText = (value: string, secrets: string[]) => {
       '[REDACTED]',
     )
     .replace(
-      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password)(?:["']?\s|$))[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)(?:["']?\s|$))[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
@@ -195,6 +200,9 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitToolA
       const omitted = 'kind' in value ? bodyOmission(value.kind) : undefined
       if (omitted) return omitted
       const owningCommand = 'command' in value && typeof value.command === 'string' ? value.command : command
+      const args =
+        'args' in value && Array.isArray(value.args) ? value.args.filter((item) => typeof item === 'string') : []
+      const privateInput = usesCredentialInput(`${owningCommand} ${args.join(' ')}`)
       const result: Record<string, unknown> = {}
       const entries = Object.entries(value)
       for (const [key, item] of entries.slice(0, 30)) {
@@ -203,9 +211,11 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, omitToolA
         remaining -= Buffer.byteLength(JSON.stringify(loggedKey)) + 1
         result[loggedKey] = SECRET_KEY.test(key.replaceAll(/[^a-z]/gi, ''))
           ? '[REDACTED]'
-          : OMITTED_BODY.test(key) || (omitToolArguments && /^(?:arguments|args|command|agentRunName)$/i.test(key))
-            ? '[OMITTED]'
-            : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
+          : privateInput && /^(?:command|args)$/i.test(key)
+            ? '[OMITTED_CREDENTIAL_INPUT]'
+            : OMITTED_BODY.test(key) || (omitToolArguments && /^(?:arguments|args|command|agentRunName)$/i.test(key))
+              ? '[OMITTED]'
+              : sanitize(item, depth + 1, key === 'args' ? owningCommand : '')
       }
       if (Object.keys(result).length < entries.length) truncated = true
       return result
