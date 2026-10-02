@@ -143,10 +143,11 @@ durableTest.each([
     const lifecycleObservations =
       scenario === 'partial-exit-reentry'
         ? [
+            { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 40, premium: 0.02 },
             ...Array.from({ length: 25 }, (_, index) => ({
               at: initialAtMs + (index + 1) * 1000,
               fullWindow: false,
-              offset: BigInt((index + 1) * 1000),
+              offset: BigInt((index + 2) * 1000),
               bidSize: 40,
               premium: 0.02,
             })),
@@ -551,10 +552,14 @@ durableTest.each([
             kill: KillState.Clear,
           })
           expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
-          expect((yield* broker.snapshot).orders).toEqual([])
-          expect(yield* sql`SELECT state, decision_hash FROM autonomous_cycles`).toEqual([
-            { state: 'PENDING', decision_hash: null },
+          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
+            { state: 'ACTIVE', bound: true },
           ])
+          expect(yield* sql`SELECT DISTINCT authority_generation_hash FROM intents`).toEqual([
+            { authority_generation_hash: recovered.generationHash },
+          ])
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
           expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
           return { _tag: 'IdleRecovery' as const }
         }
