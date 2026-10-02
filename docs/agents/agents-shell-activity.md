@@ -46,13 +46,14 @@ matching. Output omission does not depend on parsing commands. Exit status, byte
 remain available. Inspect retained output through the authorized MCP caller rather than Loki.
 Commands and argv using stdin/fd credential switches, stdin paths, stdin-backed Kubernetes manifests, or curl's stdin
 configuration (`--config -` or `-K -`), or HTTP request bodies are omitted
-in full and marked `[OMITTED_SHELL_INPUT]`. Inline shell bodies in here-strings, here-documents, process substitutions,
-and command substitutions receive the same treatment. The audit retains the tool, job ID, timing, outcome, and byte
-counts without parsing out that input.
+in full and marked `[OMITTED_SHELL_INPUT]`. Pipelines and inline shell bodies in here-strings, here-documents, process
+substitutions, and command substitutions receive the same treatment, independent of the receiving program. Logical
+`||` control flow remains visible. The audit retains the tool, job ID, timing, outcome, and byte counts without parsing
+out that input.
 HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
 `--body`, `--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. GitHub authentication and secret
 operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET
-targets remain visible.
+targets remain visible. Git credential-protocol commands and helpers also receive whole-input omission.
 Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation
 text and goal objectives.
 Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess

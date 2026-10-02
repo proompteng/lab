@@ -677,6 +677,52 @@ describe('agents-shell activity audit', () => {
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
   })
 
+  it('omits Git credential protocol commands and helpers in both sinks', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "printf 'password=%s\\n\\n' syntheticGitProtocolValue | git credential approve",
+      '\'/usr/bin/gi\'"t" -C /workspace credential reject syntheticGitProtocolValue',
+      'git credential-store store syntheticGitProtocolValue',
+      'git-credential-cache store syntheticGitProtocolValue',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'git',
+      args: ['credential', 'fill', 'syntheticGitProtocolValue'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticGitProtocolValue')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
+  it('omits opaque pipeline input without classifying its receiving program', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "printf '%s' syntheticPipelineInput | arbitrary-input-reader",
+      'printf syntheticPipelineInput |& arbitrary-input-reader',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'bash',
+      args: ['-c', "printf '%s' syntheticPipelineInput | arbitrary-input-reader"],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticPipelineInput')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'git status || git diff' })
+    expect(records().at(-1)?.payload.command).toBe('git status || git diff')
+  })
+
   it('preserves valueless user switches outside credential-owning commands', () => {
     const records = captureAudit()
     const config = configFixture()
