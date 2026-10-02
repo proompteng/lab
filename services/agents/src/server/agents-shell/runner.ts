@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 
 import { Effect } from 'effect'
 
-import { writeAuditLog } from './audit'
+import { toolAuditContext, writeAuditLog } from './audit'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
 import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
@@ -232,8 +232,13 @@ export class AgentsShellRunner {
     }
   }
 
-  audit(event: string, auth: AuthContext | null, payload: Record<string, unknown>) {
-    writeAuditLog(this.config, event, auth, payload)
+  audit(
+    event: string,
+    auth: AuthContext | null,
+    payload: Record<string, unknown>,
+    context = toolAuditContext.getStore() ?? null,
+  ) {
+    writeAuditLog(this.config, event, auth, payload, context)
   }
 
   runningJobs() {
@@ -245,6 +250,8 @@ export class AgentsShellRunner {
       throw new Error(`max concurrent jobs reached: ${this.config.maxConcurrentJobs}`)
     }
 
+    const auditContext = toolAuditContext.getStore() ?? null
+    const startedAt = performance.now()
     const child = spawn('/bin/bash', ['-lc', input.command], {
       cwd: input.cwd,
       env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
@@ -278,13 +285,24 @@ export class AgentsShellRunner {
       job.exitCode = code
       job.signal = signal
       job.finishedAt = new Date().toISOString()
-      this.audit('shell_job_finished', auth, {
-        jobId: job.id,
-        status: job.status,
-        exitCode: code,
-        signal,
-        timedOut: job.timedOut,
-      })
+      this.audit(
+        'shell_job_finished',
+        auth,
+        {
+          jobId: job.id,
+          command: input.command,
+          status: job.status,
+          exitCode: code,
+          signal,
+          timedOut: job.timedOut,
+          durationMs: performance.now() - startedAt,
+          stdoutBytes: job.stdout.totalBytes,
+          stderrBytes: job.stderr.totalBytes,
+          stdoutTruncated: job.stdout.truncated,
+          stderrTruncated: job.stderr.truncated,
+        },
+        auditContext,
+      )
     })
     child.on('error', (error) => appendTail(job.stderr, Buffer.from(String(error)), input.maxOutputBytes))
     job.timeout = setTimeout(() => {
@@ -435,16 +453,21 @@ export class AgentsShellRunner {
           const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
             (resolvePromise, reject) => {
               let settled = false
+              let drainTimeout: ReturnType<typeof setTimeout> | undefined
               const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
                 if (settled) return
                 settled = true
+                clearTimeout(drainTimeout)
                 child.stdout.destroy()
                 child.stderr.destroy()
                 resolvePromise({ exitCode, signal })
               }
 
               child.once('error', reject)
-              child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
+              child.once('exit', (exitCode, signal) => {
+                clearTimeout(timeout)
+                drainTimeout = setTimeout(() => finish(exitCode, signal), 250)
+              })
               child.once('close', (exitCode, signal) => finish(exitCode, signal))
             },
           ).finally(() => clearTimeout(timeout))

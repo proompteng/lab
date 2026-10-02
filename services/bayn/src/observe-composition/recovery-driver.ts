@@ -20,6 +20,7 @@ import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
@@ -48,6 +49,7 @@ import {
   reconciliationRunnerError,
   runMutationPassWithinTimeout,
   type ReconciliationPassError,
+  type PricingReconciliationRead,
 } from './decision-builder'
 import {
   deferPostMutationReconciliation,
@@ -59,7 +61,36 @@ import {
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconcileForPricing?: PricingReconciliationRead<ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
+
+const reconciliationReusableUntil = (
+  cached: ReconciliationPassResult,
+  authority: AuthorityState | undefined,
+  now: number,
+  maximumAgeMs: number,
+): number | undefined => {
+  if (
+    authority === undefined ||
+    cached.riskContext.authority?.generationHash !== authority.generationHash ||
+    cached.riskContext.authority.version !== authority.version ||
+    cached.report.reconciliation.status !== ReconciliationStatus.Exact ||
+    !cached.report.metrics.accountingExact ||
+    cached.riskContext.unknownMutationCount !== 0
+  )
+    return undefined
+  const state = cached.brokerState
+  const observations = [
+    state.account.observedAt,
+    state.positionsObservedAt,
+    state.ordersObservedAt,
+    cached.report.reconciliation.reconciledAt,
+    cached.riskContext.authorityObservedAt,
+  ]
+  if (observations.some((at) => at === null || !Number.isFinite(Date.parse(at)) || Date.parse(at) > now))
+    return undefined
+  return Math.min(...observations.map((at) => Date.parse(at ?? ''))) + maximumAgeMs
+}
 
 /** Owned by one serialized pass, discarded before its post-mutation continuation. */
 export const reconciliationForPreparation = <R>(
@@ -67,6 +98,7 @@ export const reconciliationForPreparation = <R>(
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
   readAuthority: Effect.Effect<AuthorityState | undefined, ReconciliationPassError, R>,
   maximumAgeMs: number,
+  pricingMaximumAgeMs = maximumAgeMs,
 ) =>
   Effect.gen(function* () {
     const previous = yield* Ref.make(initial)
@@ -85,35 +117,49 @@ export const reconciliationForPreparation = <R>(
               cached.riskContext.authority.version === authority.version))
         )
           return cached
-        if (cached !== undefined && authority !== undefined) {
-          const state = cached.brokerState
-          const observations = [
-            state.account.observedAt,
-            state.positionsObservedAt,
-            state.ordersObservedAt,
-            cached.report.reconciliation.reconciledAt,
-            cached.riskContext.authorityObservedAt,
-          ]
-          if (
-            cached.riskContext.authority?.generationHash === authority.generationHash &&
-            cached.riskContext.authority.version === authority.version &&
-            cached.report.reconciliation.status === ReconciliationStatus.Exact &&
-            cached.report.metrics.accountingExact &&
-            cached.riskContext.unknownMutationCount === 0 &&
-            observations.every(
-              (at) =>
-                at !== null &&
-                Number.isFinite(Date.parse(at)) &&
-                Date.parse(at) <= now &&
-                now - Date.parse(at) < maximumAgeMs,
-            )
-          )
-            return cached
-        }
+        if (cached !== undefined && now < (reconciliationReusableUntil(cached, authority, now, maximumAgeMs) ?? now))
+          return cached
         const current = yield* refresh
         yield* Ref.set(previous, current)
         return current
       }),
+      readForPricing: (minimumRemainingMs: number) =>
+        Effect.gen(function* () {
+          // Unlike the ordinary first use, pricing must prove prospective coverage even for preflight facts.
+          yield* Ref.set(preflightAvailable, false)
+          const cached = yield* Ref.get(previous)
+          const authority = yield* readAuthority
+          const now = yield* Clock.currentTimeMillis
+          const reusableUntil =
+            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, maximumAgeMs)
+          const freshUntil =
+            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, pricingMaximumAgeMs)
+          if (
+            cached !== undefined &&
+            reusableUntil !== undefined &&
+            freshUntil !== undefined &&
+            now + minimumRemainingMs < Math.min(reusableUntil, freshUntil)
+          )
+            return { reconciliation: cached, freshUntil: Math.min(reusableUntil, freshUntil) }
+          const reconciliation = yield* refresh
+          yield* Ref.set(previous, reconciliation)
+          const refreshedAuthority = yield* readAuthority
+          const refreshedAt = yield* Clock.currentTimeMillis
+          // Cadence controls reuse, not broker validity: short cadences may still refresh again after pricing.
+          const refreshedUntil = reconciliationReusableUntil(
+            reconciliation,
+            refreshedAuthority,
+            refreshedAt,
+            pricingMaximumAgeMs,
+          )
+          return {
+            reconciliation,
+            freshUntil:
+              refreshedUntil !== undefined && refreshedAt + minimumRemainingMs < refreshedUntil
+                ? refreshedUntil
+                : undefined,
+          }
+        }),
     }
   })
 
@@ -352,7 +398,10 @@ const makeRecoveryFirstCycleDriverEffect = (
           Effect.flatMap((observedAt) =>
             observeMutationPass(startup, { outcome: 'WAITING', observedAt, waitReason: 'BROKER_OBSERVATION_PENDING' }),
           ),
-          Effect.map((observation) => ({ observation })),
+          Effect.map((observation) => ({
+            observation,
+            nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs),
+          })),
         )
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
@@ -383,11 +432,12 @@ const makeRecoveryFirstCycleDriverEffect = (
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
         const authorityStore = yield* AuthorityGenerationStore
-        const { read: reconcileForAdvance } = yield* reconciliationForPreparation(
+        const { read: reconcileForAdvance, readForPricing } = yield* reconciliationForPreparation(
           preflight,
           reconcile,
           authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
           Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
+          policy.maxBrokerStateAgeMs,
         )
         const context: CycleRunContext<ObserveDecisionRuntime> = {
           cycleBindingId: startup.cycleBindingId,
@@ -396,7 +446,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           accountId: input.accountId,
           authorityGenerationHash: input.authorityGenerationHash,
           executionPolicy: preparation.executionPolicy,
-          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance),
+          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance, readForPricing),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
         const result = yield* runMutationPassWithinTimeout(
@@ -505,13 +555,14 @@ export const observeDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile) =>
+  (cycle, reconcile, reconcileForPricing) =>
     buildObserveCycleDecision({
       authorityGenerationHash: input.authorityGenerationHash,
       cycle,
       executionModel: preparation.executionModel,
       policy,
       reconcile,
+      ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
       strategy: input.strategy,
       decisionFinalizationHeadroomMs: executionDecisionFinalizationHeadroomMs(input),
       ...(input.intradayMarketData === undefined ? {} : { intradayMarketData: input.intradayMarketData }),
@@ -523,7 +574,8 @@ export const mutationDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile) =>
-    buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle, reconcile)).pipe(
-      Effect.mapError(decisionBuildError),
-    )
+  (cycle, reconcile, reconcileForPricing) =>
+    buildMutationShadowCycleDecision({
+      ...mutationDecisionInput(input, preparation, policy, cycle, reconcile),
+      ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
+    }).pipe(Effect.mapError(decisionBuildError))

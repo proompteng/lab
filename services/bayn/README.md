@@ -41,8 +41,11 @@ Maximum-hold, model and protective exits use the same broker ceiling. An expired
 rejects the exit; accepting a cached position does not extend a model response or executable quote's deadline.
 A mutation or newer retained broker event can invalidate a successful cut before the next poll. While that cut is
 still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
-Each waiting pass rechecks the projection. Expiry, a failed poll, wrong source revision or corrupt evidence remain
-failures; waiting cannot make unavailable data usable or clear an authority restriction.
+Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
+normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
+Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
+wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
+authority restriction.
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
@@ -67,12 +70,22 @@ the wait preserves the outstanding budget. Existing capture deadlines and cache 
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
 the background budget does not impose a global limit on other account callers.
 
+One serialized execution pass reads its unfinished cycle once and advances acquisition, activation and decision
+binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
+repeating an admission transition fails closed. Each transition checks the current clock, and restart begins with a
+fresh durable cycle read. Already committed intents retain exact immutable intent/decision validation without
+repeating their writer-fenced commit transaction. Missing or incomplete intents still use that transaction. Mutable
+intent state is read again after reconciliation, and close planning reuses only the closure read by its owning pass.
+
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
 intent's own start event; other mutations or newer durable broker evidence invalidate it. Submit/cancel invalidate
 before transmission and after completion, failure or interruption. Unknown or unresolved requests block submission;
 settled observations remain available to native reconciliation and lookup-only recovery so an unknown outcome cannot
 deadlock its own recovery. Observing an account never grants trading authority.
+Submit and cancel check the writer fence in their durable reservation transaction; there is no separate empty
+precheck transaction. Final submit authorization and mutation outcome persistence retain their existing transactional
+fences.
 A later poll must start after the existing one-second broker consistency window. Lookup-only recovery invalidates a
 cut when it finds new durable order state. Restarting a worker does not create a second cache or bypass reservations.
 
@@ -111,6 +124,14 @@ version-three batch must finish within its ten-second evidence lifetime. After t
 the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
 quote deadline for version-three decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
+
+Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
+headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
+limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
+deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
+still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
+final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
+freshness limits are unchanged; the preparation ordering does not guarantee submission.
 
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
@@ -640,6 +661,11 @@ output files. Current asset eligibility must be labeled counterfactual rather th
 charge is an explicit incremental-cost scenario, not proof of zero operating costs. Apply further cost/latency stress
 without selecting favorable dates or erasing missing observations. Development comparisons do not satisfy the frozen
 prospective qualification protocol and never activate a different model, prompt, threshold or trading policy.
+
+For the bounded paired Jev-versus-relative-momentum experiment with shared protective exits, abstentions,
+cost coverage and prospective completeness gates, use the
+[matched entry study](../../docs/bayn/matched-entry-study.md). It remains an offline opportunity test and grants no
+strategy promotion or trading authority.
 
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
