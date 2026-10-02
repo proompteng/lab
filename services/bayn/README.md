@@ -604,8 +604,8 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
 The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
-binds both. Native controller persistence still writes only the original v3 receipt. The analysis report never changes
-an immutable per-generation receipt or requires mixed-version replicas to read a new stored field.
+binds both. This read-only report never changes an immutable per-generation receipt or requires mixed-version replicas
+to read a new stored field.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
