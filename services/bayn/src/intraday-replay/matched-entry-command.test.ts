@@ -14,10 +14,12 @@ import { retainedReplayCaptureFixture } from '../testing/retained-replay-fixture
 import { compareArrivalPositions, arrivalPosition } from '../market-data/streaming/historical'
 import { runMatchedCommand } from '../../tools/matched-entry-study'
 import { matchedEntryDefinition, MatchedDataRole, runMatchedEntryStudy } from './matched-entry-study'
+import { ControlExit } from './control-portfolio'
+import { OrderSide } from '../execution/contracts'
 import { backtestSourcePartitions, type BacktestSourceManifest } from './source'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 
-const fixture = () => {
+const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => {
   const base = nativeJevFixture()
   const dates = ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'] as const
   const calendar = Result.getOrThrow(
@@ -57,7 +59,10 @@ const fixture = () => {
       sourceOffset: String(++offset),
       eventAt: new Date(t).toISOString(),
       ingestedAt: new Date(t).toISOString(),
-      bidSize: 1000,
+      ...(t === at + (transientStopAfterMs ?? -1)
+        ? { bidPrice: original.bidPrice * 0.99, askPrice: original.askPrice * 0.99 }
+        : {}),
+      bidSize: t === at + (partialExitAfterMs ?? -1) ? 1 : 1000,
       askSize: 1000,
     }
     events.push(...historicalRawArrivals({ bars: [], trades: [], quotes: [quote] }, t))
@@ -332,6 +337,47 @@ test('offline command reproduces native observations, prices shared lifecycle on
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 }, 30_000)
+
+test.each([
+  { latencyMs: 20_000, partialExit: false },
+  { latencyMs: 20_000, partialExit: true },
+  { latencyMs: 17_500, partialExit: true },
+])(
+  'long routing latency preserves idle five-second polls and skips only an actual pending exit: %j',
+  async ({ latencyMs, partialExit }) => {
+    const data = fixture(30_100, partialExit ? 50_100 : undefined)
+    const assumptions = { ...data.input.study.assumptions, latencyMs }
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped()
+        const arrivals = `${directory}/arrivals.gz`
+        yield* fs.writeFile(arrivals, gzipSync(data.body))
+        const report = yield* runMatchedEntryStudy(
+          { ...data.input, study: { ...data.input.study, assumptions } },
+          {
+            ...data.registration,
+            latencyMs: assumptions.latencyMs,
+            executionAssumptionsHash: canonicalHashV1(assumptions),
+          },
+          arrivals,
+          data.receipt,
+        )
+        const result = report.pairs[0]?.jev
+        expect(result?.status).toBe('RESOLVED')
+        expect(result?.problems).toEqual([])
+        expect(result?.episodes[0]?.reason).toBe(ControlExit.ProtectiveStop)
+        const observedAt = Date.parse(report.observations[0]?.observedAt ?? '')
+        expect(result?.episodes[0]?.exitedAtMs).toBe(observedAt + (partialExit ? 70_100 : 50_100))
+        expect(result?.orders).toHaveLength(partialExit ? 3 : 2)
+        expect(result?.orders.filter((order) => order.side === OrderSide.Sell).map((order) => order.atMs)).toEqual(
+          partialExit ? [observedAt + 50_100, observedAt + 70_100] : [observedAt + 50_100],
+        )
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+  30_000,
+)
 
 test.each(['timeout', 'interruption', 'defect'] as const)(
   'checkout verification releases its process exactly once after %s and writes no report',

@@ -433,6 +433,13 @@ export const runMatchedEntryStudy = (
               const state = states.get(symbol)
               if (state === undefined)
                 return yield* new SignalStudyFailure({ message: 'Missing matched lifecycle state' })
+              if (kind === MatchedEvent.Poll && state.exit !== null) return
+              // Each poll has a possible arrival task; only an actual pending route may consume it.
+              if (
+                kind === MatchedEvent.ExitArrival &&
+                (state.exit === null || state.exit.atMs + registration.latencyMs !== atMs)
+              )
+                return
               states.set(
                 symbol,
                 yield* Effect.fromResult(
@@ -448,13 +455,10 @@ export const runMatchedEntryStudy = (
         event(MatchedEvent.EntryDecision, terms.decidedAtMs)
         const entryAt = terms.decidedAtMs + registration.latencyMs
         event(MatchedEvent.EntryArrival, entryAt)
-        const stride =
-          Math.max(1, Math.ceil(registration.latencyMs / matchedEntryDefinition.pollIntervalMs)) *
-          matchedEntryDefinition.pollIntervalMs
         for (
           let at = entryAt + matchedEntryDefinition.pollIntervalMs;
           at + registration.latencyMs < terms.closeMs;
-          at += stride
+          at += matchedEntryDefinition.pollIntervalMs
         ) {
           event(MatchedEvent.Poll, at)
           event(MatchedEvent.ExitArrival, at + registration.latencyMs)

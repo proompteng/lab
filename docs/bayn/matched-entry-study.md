@@ -9,7 +9,8 @@ at least twenty different selections, a USD 10,000 whole-share budget per opport
 a 50 bp protective stop, a 15-minute maximum hold and the five-minute close window. Both rules use the original
 complete batch time, identical execution assumptions and mechanical management. One IOC entry is followed by
 persistent reducing exit retries; actual partial fills and consumed quote liquidity remain in the ledger.
-Routing work skips crossed polls. No model management is used.
+Idle management keeps the five-second cadence regardless of routing latency. Only an actual pending exit skips
+crossed polls; a partial exit retries on the next eligible poll after its arrival. No model management is used.
 
 This is an opportunity-label experiment. Labels can overlap, and naturally retained flat-entry opportunities are
 endogenous to the current strategy. Never sum their returns into portfolio P&L, turnover, trade frequency or
