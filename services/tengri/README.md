@@ -13,8 +13,10 @@ startup, terminal lifecycle, Codex calls, and approvals use unary gRPC. File and
 terminal input, output, resize, signals, and replay use one bidirectional stream. Tengri translates that stream into
 the existing browser WebSocket frames. Application previews and editor content keep their HTTP/WebSocket proxy.
 
-Tengri authenticates directly to gRPC `GetInfo` on guest port 8080 and verifies the MicroVM identity and protocol
-version. Guest control is gRPC-only: HTTP discovery, REST calls, NDJSON streams, and the guest terminal WebSocket
+Tengri authenticates directly to gRPC `GetInfo` on guest port 8080 and verifies the current guest Pod UID and protocol
+version. Nanoagent's `MICROVM_ID` comes from the Pod's downward-API `metadata.uid`; the controller compares it with
+`status.podUid`, binding the connection to the current guest incarnation. Guest control is gRPC-only: HTTP discovery,
+REST calls, NDJSON streams, and the guest terminal WebSocket
 transport have been removed. Failed or unsupported RPCs fail visibly. Existing HTTP-only guests must sleep/resume
 with a compatible guest image; an older HTTP-only controller cannot operate the new guest. The per-MicroVM bootstrap
 secret authenticates RPC metadata. Health probes and application/VS Code content retain their native HTTP protocols.
