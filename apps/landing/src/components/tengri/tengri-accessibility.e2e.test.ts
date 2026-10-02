@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
+import { codexModelFixtures } from './codex-models.fixture'
 
 const readyAgent = {
   id: 'microvm-ada',
@@ -69,9 +70,11 @@ async function mockReadyDesktop(page: Page) {
     const result =
       action.action === 'codex-account'
         ? { authenticated: true, email: 'ada@example.test', plan: 'pro' }
-        : action.action === 'list-files'
-          ? { path: action.path ?? '/', entries: [] }
-          : null
+        : action.action === 'codex-models'
+          ? { models: codexModelFixtures, nextCursor: null }
+          : action.action === 'list-files'
+            ? { path: action.path ?? '/', entries: [] }
+            : null
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ result }) })
   })
 }
@@ -82,7 +85,7 @@ test('exposes usable browser tabs, connection state, and contrast', async ({ pag
 
   await expect(page.getByRole('region', { name: 'Chrome window' })).toBeVisible()
   await expect(page.getByText('Connected', { exact: true })).toBeAttached()
-  await expect(page.getByText('pro', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Agent status')).toHaveText('Ready')
 
   const tablist = page.getByRole('tablist', { name: 'Browser tabs' })
   const firstTab = tablist.getByRole('tab', { name: /Tengri Agent/ })

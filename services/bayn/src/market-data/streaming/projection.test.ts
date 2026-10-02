@@ -1,16 +1,17 @@
+import { jevStalePricingSymbols } from '../../jev/trading-signals'
 import { replayHistoricalMarketArrivals } from './historical'
 import { featureAvailabilityMeasurement, projectionCoverageMeasurements } from './telemetry'
 import { reproduceStreamingSnapshot } from './replay'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { constructStreamingSnapshot } from './snapshot'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
-import type { IntradaySnapshotQuery } from '../intraday/model'
-import { canonicalHashV1 } from '../../hash'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../intraday/model'
+import { canonicalHashV1, sha256 } from '../../hash'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
 import {
@@ -42,6 +43,7 @@ const rawRecord = (
   offset: number,
   at: number,
   payload: object,
+  symbol = 'AAPL',
 ): KafkaMarketRecord => ({
   topic: universe.topics[channel],
   partition: 0,
@@ -52,7 +54,7 @@ const rawRecord = (
     delayClass: 'real_time_exchange_only',
     marketSession: 'regular',
     channel,
-    symbol: 'AAPL',
+    symbol,
     eventTs: new Date(at).toISOString(),
     ingestTs: new Date(channel === 'bars' ? at + 61_000 : at).toISOString(),
     version: 2,
@@ -393,6 +395,271 @@ const cutFor = (projection: ReturnType<typeof incorporate>): KafkaProjectionCut 
   }
 }
 describe('verified streaming decision snapshot', () => {
+  test('unheld symbol quote eviction does not invalidate a retained held-symbol liquidation quote', () => {
+    const symbols = ['AAPL', 'MSFT']
+    const multiple = { ...universe, symbols, universeSymbolHash: sha256(symbols.join(',')) }
+    let state = incorporateMarketRecord(emptyStreamingProjection('test-epoch'), quote, multiple, end + 2000)
+    state = incorporateMarketRecord(
+      state,
+      rawRecord('quotes', 2, end + 2000, { bp: 230, ap: 231, bs: 100, as: 100 }, 'MSFT'),
+      multiple,
+      end + 2000,
+    )
+    const liquidation = {
+      ...query,
+      universe: symbols,
+      universeSymbolHash: multiple.universeSymbolHash,
+      purpose: IntradaySnapshotPurpose.Liquidation,
+    }
+    expect(Result.isSuccess(constructStreamingSnapshot(cutFor(state), { ...liquidation, symbols }))).toBe(true)
+    for (let index = 0; index < 514; index++) {
+      state = incorporateMarketRecord(
+        state,
+        rawRecord('quotes', 1000 + index, end + 2001 + index, { bp: 230, ap: 231, bs: 100, as: 100 }, 'MSFT'),
+        multiple,
+        end + 4000 + index,
+      )
+    }
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), liquidation))
+    expect(snapshot.latestQuotes['AAPL']?.eventAt).toBe('2026-09-11T14:00:02.000000000Z')
+    expect(
+      Result.getOrThrow(
+        reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+      ),
+    ).toEqual(snapshot)
+    expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), { ...liquidation, symbols }))).toBe(true)
+  })
+
+  test.each(['bars', 'trades'] as const)(
+    'discarded valid %s history does not invalidate a retained liquidation quote',
+    (channel) => {
+      let state = incorporate([...raw(), featureRecord], end + 2000)
+      for (let index = 0; index < 514; index++) {
+        const record = rawRecord(
+          channel,
+          1000 + index,
+          channel === 'bars' ? end - 60_000 : end + 2001 + index,
+          channel === 'bars'
+            ? { o: 129, h: 131, l: 128, c: 130 + index / 1000, v: 100, vw: 130, n: 1 }
+            : { p: 130, s: 100 },
+        )
+        state = incorporateMarketRecord(state, record, universe, end + 4000 + index)
+      }
+      expect(state.minimumObservationMs).toBeGreaterThan(Date.parse(query.observedAt))
+      const liquidation = { ...query, purpose: IntradaySnapshotPurpose.Liquidation }
+      const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), liquidation))
+      expect(snapshot.latestQuotes['AAPL']).toEqual(
+        Result.getOrThrow(constructStreamingSnapshot(cutFor(incorporate([quote])), liquidation)).latestQuotes['AAPL'],
+      )
+      expect(
+        Result.getOrThrow(
+          reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+        ),
+      ).toEqual(snapshot)
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), query))).toBe(true)
+      for (let index = 0; index < 514; index++) {
+        state = incorporateMarketRecord(
+          state,
+          rawRecord('quotes', 1000 + index, end + 2001 + index, { bp: 130, ap: 131, bs: 100, as: 100 }),
+          universe,
+          end + 4000 + index,
+        )
+      }
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), liquidation))).toBe(true)
+    },
+  )
+
+  test.each(['bars', 'trades', 'features'] as const)(
+    'discarded %s rejections do not block liquidation, but discarded quote rejections do',
+    (channel) => {
+      let state = incorporate([...raw(), featureRecord], end + 2000)
+      for (let index = 0; index < 257; index++) {
+        state = incorporateMarketRecord(
+          state,
+          { topic: universe.topics[channel], partition: 0, offset: String(1000 + index), value: '{' },
+          universe,
+          end + 2500,
+        )
+      }
+      const liquidation = { ...query, purpose: IntradaySnapshotPurpose.Liquidation }
+      const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), liquidation))
+      expect(
+        Result.getOrThrow(
+          reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+        ),
+      ).toEqual(snapshot)
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), query))).toBe(true)
+      expect(
+        Result.isFailure(
+          constructStreamingSnapshot(cutFor(state), { ...query, purpose: IntradaySnapshotPurpose.EntryPricing }),
+        ),
+      ).toBe(true)
+      for (let index = 0; index < 257; index++) {
+        state = incorporateMarketRecord(
+          state,
+          { topic: universe.topics.quotes, partition: 0, offset: String(1000 + index), value: '{' },
+          universe,
+          index === 0 ? end + 2500 : end + 4000,
+        )
+      }
+      expect(
+        state.rejections.get(`${universe.topics.quotes}:0`)?.every((entry) => entry.availableAtMs > end + 3000),
+      ).toBe(true)
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), liquidation))).toBe(true)
+    },
+  )
+
+  test('liquidation reproduces a complete quote cut while entry history rebuilds', () => {
+    const state = incorporate([rawRecord('quotes', 2, end + 2000, { bp: 130, ap: 131, bs: 100, as: 100 })])
+    const cut = cutFor(state)
+    const rebuilding = {
+      ...cut,
+      bootstrap: {
+        ...cut.bootstrap,
+        partitions: cut.bootstrap.partitions.map((partition) =>
+          partition.topic === universe.topics.quotes ? partition : { ...partition, endOffset: '500' },
+        ),
+      },
+    }
+    const liquidation = { ...query, purpose: IntradaySnapshotPurpose.Liquidation }
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(rebuilding, liquidation))
+    const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+    expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
+    expect(Result.isFailure(constructStreamingSnapshot(rebuilding, query))).toBe(true)
+    expect(
+      Result.isFailure(
+        constructStreamingSnapshot(rebuilding, {
+          ...liquidation,
+          purpose: IntradaySnapshotPurpose.EntryPricing,
+        }),
+      ),
+    ).toBe(true)
+    const incompleteQuotes = {
+      ...rebuilding,
+      positions: rebuilding.positions.map((position) => ({ ...position, offset: '0' })),
+    }
+    expect(Result.isFailure(constructStreamingSnapshot(incompleteQuotes, liquidation))).toBe(true)
+    expect(
+      Result.isFailure(
+        constructStreamingSnapshot(
+          {
+            ...rebuilding,
+            bootstrap: { ...rebuilding.bootstrap, epoch: 'old-assignment' },
+          },
+          liquidation,
+        ),
+      ),
+    ).toBe(true)
+    const rejectedHistory = {
+      ...rebuilding,
+      projection: incorporateMarketRecord(
+        state,
+        { topic: universe.topics.bars, partition: 0, offset: '0', value: '{' },
+        universe,
+        end + 2500,
+      ),
+    }
+    const quoteOnly = Result.getOrThrow(constructStreamingSnapshot(rejectedHistory, liquidation))
+    expect(
+      Result.getOrThrow(
+        reproduceStreamingSnapshot(quoteOnly.manifest, Result.getOrThrow(persistIntradayRecordRows(quoteOnly))),
+      ),
+    ).toEqual(quoteOnly)
+    const rejectedQuote = {
+      ...rebuilding,
+      projection: incorporateMarketRecord(
+        state,
+        { topic: universe.topics.quotes, partition: 0, offset: '3', value: '{' },
+        universe,
+        end + 2500,
+      ),
+    }
+    expect(Result.isFailure(constructStreamingSnapshot(rejectedQuote, liquidation))).toBe(true)
+  })
+
+  test('Dorvud latest REST samples retain event time and reproduce the immutable decision snapshot', () => {
+    const fixture = Schema.decodeUnknownSync(Schema.Struct({ envelopes: Schema.Array(Schema.Unknown) }))(
+      JSON.parse(readFileSync(new URL('../../../../dorvud/fixtures/alpaca-latest-v1.json', import.meta.url), 'utf8')),
+    )
+    const records = fixture.envelopes.flatMap((value): KafkaMarketRecord[] => {
+      const sample = Schema.decodeUnknownSync(
+        Schema.Struct({ symbol: Schema.String, channel: Schema.Literals(['quotes', 'trades']) }),
+      )(value)
+      return sample.symbol === 'AAPL'
+        ? [
+            {
+              topic: universe.topics[sample.channel],
+              partition: 0,
+              offset: '1',
+              timestampMs: end + 3000,
+              value: JSON.stringify(value),
+            },
+          ]
+        : []
+    })
+    const bars = Array.from({ length: 30 }, (_, index) => barRecord(index))
+    const state = incorporate([...bars, ...records, featureRecord])
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(state), query))
+    expect(snapshot.latestQuotes['AAPL']?.eventAt).toBe('2026-09-11T14:00:02.123456789Z')
+    const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+    expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
+    expect(
+      snapshot.manifest.streaming.records.filter((record) =>
+        [universe.topics.quotes, universe.topics.trades].includes(record.sourceTopic),
+      ),
+    ).toHaveLength(2)
+    for (const missing of ['quotes', 'trades'] as const) {
+      const incomplete = incorporate([
+        ...bars,
+        ...records.filter((record) => record.topic !== universe.topics[missing]),
+        featureRecord,
+      ])
+      expect(Result.isFailure(constructStreamingSnapshot(cutFor(incomplete), query))).toBe(true)
+    }
+    const stale = { ...query, observedAt: new Date(end + 30_000).toISOString() }
+    expect(jevStalePricingSymbols(snapshot)).toEqual([])
+    expect(jevStalePricingSymbols(Result.getOrThrow(constructStreamingSnapshot(cutFor(state), stale)))).toEqual([
+      'AAPL',
+    ])
+  })
+
+  test.each([IntradaySnapshotPurpose.EntryPricing, IntradaySnapshotPurpose.Liquidation])(
+    '%s waits for a current quote when the latest received quote predates the requested range',
+    (purpose) => {
+      const old = rawRecord('quotes', 1, end - 120_000, { bp: 130, ap: 131, bs: 100, as: 100 })
+      const pricing = { ...query, purpose, rangeStartAt: new Date(end - 60_000).toISOString() }
+      const initial = incorporate([old])
+      const unavailable = constructStreamingSnapshot(cutFor(initial), pricing)
+      expect(Result.isFailure(unavailable)).toBe(true)
+      if (Result.isFailure(unavailable)) expect(unavailable.failure.reason).toBe('not-ready')
+      const fresh = rawRecord('quotes', 2, end + 2000, { bp: 130, ap: 131, bs: 100, as: 100 })
+      const available = incorporateMarketRecord(initial, fresh, universe, end + 3000)
+      const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(available), pricing))
+      expect(snapshot.latestQuotes['AAPL']?.eventAt).toBe('2026-09-11T14:00:02.000000000Z')
+      expect(snapshot.manifest.streaming.records).toHaveLength(1)
+    },
+  )
+
+  test.each(['quotes', 'trades'] as const)(
+    'signal evidence waits when the latest received %s record predates the requested range',
+    (channel) => {
+      const old = rawRecord(
+        channel,
+        1,
+        start - 1,
+        channel === 'quotes' ? { bp: 130, ap: 131, bs: 100, as: 100 } : { p: 130, s: 100 },
+      )
+      const current = incorporate([
+        ...raw().filter((record) => record.topic !== universe.topics[channel]),
+        old,
+        featureRecord,
+      ])
+      const unavailable = constructStreamingSnapshot(cutFor(current), query)
+      expect(Result.isFailure(unavailable)).toBe(true)
+      if (Result.isFailure(unavailable)) expect(unavailable.failure.reason).toBe('not-ready')
+    },
+  )
+
   test('later rejection cannot erase the rejection applicable to an earlier observation', () => {
     const initial = incorporate([...raw(), featureRecord], end + 2000)
     expect(Result.isSuccess(constructStreamingSnapshot(cutFor(initial), query))).toBe(true)
@@ -405,7 +672,7 @@ describe('verified streaming decision snapshot', () => {
     for (let index = 0; index < 256; index++)
       bounded = incorporateMarketRecord(bounded, malformed(String(101 + index)), universe, end + 2600 + index)
     expect(bounded.rejections.get(`${universe.topics.features}:0`)).toHaveLength(256)
-    expect(bounded.discardedRejectionsThroughMs).toBe(end + 2500)
+    expect(bounded.discardedRejectionsThroughMs.get(`${universe.topics.features}:0`)).toBe(end + 2500)
     expect(Result.isFailure(constructStreamingSnapshot(cutFor(bounded), query))).toBe(true)
   })
 

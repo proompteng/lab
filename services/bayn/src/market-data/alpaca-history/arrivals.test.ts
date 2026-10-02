@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { canonicalHashV1 } from '../../hash'
+import { advanceHistoricalMarketCursor, createHistoricalMarketCursor } from '../streaming/historical'
 import { decodeRawMarketRecord, RawMarketEventKind } from '../streaming/raw-events'
 import { restCaptureArrivals } from './arrivals'
 import type { StoredHistoricalCapture, VendorHistoricalProvenance } from './model'
@@ -76,6 +77,41 @@ test('REST normalization rounds nanoseconds up and preserves modeled provenance 
     })
   }
   expect(JSON.parse(events[0]?.record.value ?? '').symbol).toBe('AAPL')
+})
+
+test.each(['bid', 'ask', 'both'] as const)('preserves absent %s prices as rejected native records', (side) => {
+  const retained = {
+    ...quote,
+    ...(side === 'ask' || side === 'both' ? { askPrice: 0, askSize: 0 } : {}),
+    ...(side === 'bid' || side === 'both' ? { bidPrice: 0, bidSize: 0 } : {}),
+  }
+  const capture: StoredHistoricalCapture = {
+    kind: 'quotes',
+    rows: [retained],
+    provenance,
+    provenanceHash: '4'.repeat(64),
+  }
+  const arrivals = Result.getOrThrow(restCaptureArrivals({ ...base, capture }))
+  expect(arrivals.count).toBe(1)
+  const [event] = [...arrivals.arrivals]
+  if (event === undefined) throw new Error('expected the retained one-sided quote')
+  expect(JSON.parse(event.record.value).payload).toMatchObject({
+    bp: retained.bidPrice,
+    bs: retained.bidSize,
+    ap: retained.askPrice,
+    as: retained.askSize,
+  })
+  const decoded = decodeRawMarketRecord(event.record, universe)
+  expect(Result.isFailure(decoded)).toBe(true)
+  if (Result.isFailure(decoded)) expect(decoded.failure.message).toBe('invalid raw quote row')
+  const cursor = Result.getOrThrow(
+    advanceHistoricalMarketCursor(Result.getOrThrow(createHistoricalMarketCursor('5'.repeat(64), universe)), event),
+  )
+  expect(cursor.processedRecords).toBe(1)
+  expect(cursor.projection.quoteHistory.size).toBe(0)
+  expect(cursor.projection.rejections.get('quotes:0')).toMatchObject([
+    { availableAtMs: event.availableAtMs, offset: '0' },
+  ])
 })
 
 test('minute bars arrive only after completion and inclusive endpoint rows remain outside the regular session', () => {

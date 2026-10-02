@@ -12,7 +12,6 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -25,6 +24,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,9 +34,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -72,8 +73,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.CRC32
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import kotlin.system.exitProcess
 
 private val logger = KotlinLogging.logger {}
@@ -129,6 +128,21 @@ internal fun marketDataIdleRequiresReconnect(
       marketSessionState(now, marketType, marketHolidays),
       equityFeed,
     )
+
+internal fun coreIexProviderIdleRequiresReconnect(
+  subscribedAt: Instant?,
+  lastProviderMarketDataAt: Instant?,
+  now: Instant,
+  marketType: AlpacaMarketType,
+  marketHolidays: Set<LocalDate>,
+  equityFeed: EquityFeed?,
+  idleTimeoutMs: Long,
+): Boolean {
+  if (marketType != AlpacaMarketType.EQUITY || equityFeed != EquityFeed.Iex || subscribedAt == null) return false
+  if (!marketDataFreshnessGateActive(marketSessionState(now, marketType, marketHolidays), equityFeed)) return false
+  val lastProviderOrSubscriptionAt = maxOf(subscribedAt, lastProviderMarketDataAt ?: subscribedAt)
+  return now.toEpochMilli() - lastProviderOrSubscriptionAt.toEpochMilli() >= idleTimeoutMs
+}
 
 internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
@@ -342,6 +356,8 @@ class ForwarderApp(
   private val marketDataFeeds = config.marketDataFeedConfigs().map { MarketDataFeedRuntimeState(it, config, nowMs) }
   private val coreMarketDataFeed = marketDataFeeds.single { it.config.core }
   private val barRecovery = BarRecovery(Duration.ofHours(config.barsBackfillLookbackHours))
+  private val rest = AlpacaRestClient(config, this.httpClient)
+  private val latestMarketData = config.latestMarketData?.let { LatestMarketDataPoller(it, config.alpacaBaseUrl, rest, nowMs) }
   private val tradeUpdatesReconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
 
   fun start(): Job {
@@ -405,6 +421,16 @@ class ForwarderApp(
                 streamMarketDataLoop(producer, feed, symbolsTracker)
               }
             }.toMutableList()
+
+        config.latestMarketData?.let { latest ->
+          jobs +=
+            launch {
+              while (isActive) {
+                pollLatestMarketData(producer)
+                delay(latest.pollIntervalMs)
+              }
+            }
+        }
 
         if (tradeUpdatesEnabled) {
           val tradeStreamUrl = config.alpacaTradeStreamUrl
@@ -479,6 +505,7 @@ class ForwarderApp(
       alpacaMarketDataWs = coreMarketDataFeed.websocketStatus.get(),
       marketDataChannels = channelSnapshot,
       marketDataFeeds = feedSnapshot,
+      latestRestObservations = latestMarketData?.coverage(),
       marketDataUniverse =
         config.universeContract?.let { contract ->
           MarketDataUniverseInfo(
@@ -592,6 +619,7 @@ class ForwarderApp(
       var authOk = false
       var subscribedOk = false
       val subscribedSince = AtomicReference<Instant?>(null)
+      var lastProviderMarketDataAt: Instant? = null
       val lastOptionsMarketDataEventAt = AtomicReference<Instant?>(null)
       val starvationStatusPublished = AtomicBoolean(false)
       var readyNotified = false
@@ -975,6 +1003,7 @@ class ForwarderApp(
               else -> {
                 val observed = observedMarketDataMessage(msg)
                 if (observed != null) {
+                  lastProviderMarketDataAt = Instant.ofEpochMilli(nowMs())
                   metrics.recordProviderMessage(config.alpacaMarketType, feed.config.feed, observed.channel)
                   feed.channelFreshness.recordProviderEvent(observed.channel, observed.symbol)
                   if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && observed.isQuoteOrTrade) {
@@ -993,6 +1022,20 @@ class ForwarderApp(
                 }
               }
             }
+          }
+          if (
+            feed.config.core &&
+            coreIexProviderIdleRequiresReconnect(
+              subscribedAt = subscribedSince.get(),
+              lastProviderMarketDataAt = lastProviderMarketDataAt,
+              now = Instant.ofEpochMilli(nowMs()),
+              marketType = config.alpacaMarketType,
+              marketHolidays = config.optionsMarketHolidays,
+              equityFeed = feed.config.equityFeed,
+              idleTimeoutMs = config.marketDataReadIdleTimeoutMs,
+            )
+          ) {
+            error("alpaca IEX websocket received no provider market data for ${config.marketDataReadIdleTimeoutMs}ms")
           }
         }
       } finally {
@@ -1225,6 +1268,20 @@ class ForwarderApp(
     }
   }
 
+  internal suspend fun pollLatestMarketData(producer: KafkaProducer<String, String>) {
+    latestMarketData?.poll(coreMarketDataFeed.sequence::next) { envelope ->
+      val topic = requireNotNull(coreMarketDataFeed.config.topicFor(envelope.channel, config.alpacaMarketType))
+      recordLag(envelope, coreMarketDataFeed)
+      val delivered = CompletableDeferred<Unit>()
+      runInterruptible(Dispatchers.IO) {
+        sendKafka(producer, topic, envelope, onCompletion = { error ->
+          if (error == null) delivered.complete(Unit) else delivered.completeExceptionally(error)
+        })
+      }
+      delivered.await()
+    }
+  }
+
   internal suspend fun reconcileBars(
     producer: KafkaProducer<String, String>,
     seq: SeqTracker,
@@ -1234,38 +1291,41 @@ class ForwarderApp(
     val barsTopic = config.topics.bars1m ?: return
     if (symbols.isEmpty()) return
     val result =
-      barRecovery.reconcile(
-        now = Instant.ofEpochMilli(nowMs()),
-        symbols = symbols.toSet(),
-        fetch = { window -> fetchBackfillBars(symbols, window) },
-        publish = { bar ->
-          val eventTime = Instant.parse(bar.timestamp)
-          val env =
-            Envelope(
-              ingestTs = Instant.ofEpochMilli(nowMs()),
-              eventTs = eventTime,
-              feed = config.alpacaFeed,
-              channel = "bars",
-              symbol = bar.symbol,
-              seq = seq.next("bars:${bar.symbol}"),
-              payload = json.encodeToJsonElement(AlpacaBar.serializer(), bar),
-              provider = "alpaca",
-              marketSession = classifyMarketSession(eventTime).id,
-              delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "bars").id },
-              isFinal = true,
-              source = "rest",
-              version = 2,
-            )
-          recordLag(env, coreMarketDataFeed)
-          suspendCancellableCoroutine<Unit> { continuation ->
-            sendKafka(producer, barsTopic, env, "bars", coreMarketDataFeed, onCompletion = { error ->
-              if (continuation.isActive) {
-                if (error == null) continuation.resume(Unit) else continuation.resumeWithException(error)
-              }
-            })
-          }
-        },
-      )
+      withContext(Dispatchers.IO) {
+        barRecovery.reconcile(
+          now = Instant.ofEpochMilli(nowMs()),
+          symbols = symbols.toSet(),
+          fetch = { window -> fetchBackfillBars(symbols, window) },
+          publish = { bar ->
+            val eventTime = Instant.parse(bar.timestamp)
+            val env =
+              Envelope(
+                ingestTs = Instant.ofEpochMilli(nowMs()),
+                eventTs = eventTime,
+                feed = config.alpacaFeed,
+                channel = "bars",
+                symbol = bar.symbol,
+                seq = seq.next("bars:${bar.symbol}"),
+                payload = json.encodeToJsonElement(AlpacaBar.serializer(), bar),
+                provider = "alpaca",
+                marketSession = classifyMarketSession(eventTime).id,
+                delayClass = coreMarketDataFeed.config.equityFeed?.let { marketDataDelayClass(it, "bars").id },
+                isFinal = true,
+                source = "rest",
+                version = 2,
+              )
+            recordLag(env, coreMarketDataFeed)
+            val delivered = CompletableDeferred<Unit>()
+            // Stay on the recovery dispatcher so undispatched batches preserve send order.
+            runInterruptible {
+              sendKafka(producer, barsTopic, env, "bars", coreMarketDataFeed, onCompletion = { error ->
+                if (error == null) delivered.complete(Unit) else delivered.completeExceptionally(error)
+              })
+            }
+            delivered.await()
+          },
+        )
+      }
     logger.info {
       "bar recovery checked=${result.observed} published=${result.published} feed=${config.alpacaFeed} " +
         "start=${result.window.start} end=${result.window.end}"
@@ -1350,7 +1410,7 @@ class ForwarderApp(
       val query = alpacaTradesBackfillQuery(config, symbols, requestNow, pageToken)
       val response =
         decodeAlpacaTradesResponse(
-          httpClient
+          rest
             .get(url) {
               parameter("symbols", query.symbols)
               parameter("start", query.start)
@@ -1359,9 +1419,7 @@ class ForwarderApp(
               parameter("sort", query.sort)
               query.feed?.let { parameter("feed", it) }
               query.pageToken?.let { parameter("page_token", it) }
-              header("APCA-API-KEY-ID", config.alpacaKeyId)
-              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
-            }.body(),
+            },
           json,
         )
 
@@ -1408,9 +1466,8 @@ class ForwarderApp(
       val query = alpacaBarsBackfillQuery(config, symbols, window, pageToken)
       val response =
         decodeAlpacaBarsResponse(
-          httpClient
+          rest
             .get(url) {
-              expectSuccess = true
               parameter("symbols", query.symbols)
               parameter("timeframe", query.timeframe)
               parameter("start", query.start)
@@ -1419,9 +1476,7 @@ class ForwarderApp(
               parameter("sort", query.sort)
               query.feed?.let { parameter("feed", it) }
               query.pageToken?.let { parameter("page_token", it) }
-              header("APCA-API-KEY-ID", config.alpacaKeyId)
-              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
-            }.body(),
+            },
           json,
         )
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { codexModelIdSchema, codexReasoningEffortSchema } from './codex-models'
 
 const agentId = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
 export const MAX_EDITABLE_FILE_BYTES = 4 * 1024 * 1024
@@ -26,6 +27,10 @@ const codexId = z
   .min(1)
   .max(160)
   .regex(/^[a-zA-Z0-9._:-]+$/)
+const codexOptions = {
+  model: codexModelIdSchema.optional(),
+  reasoningEffort: codexReasoningEffortSchema.optional(),
+}
 const terminalCreationId = z
   .string()
   .min(16)
@@ -107,13 +112,15 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('codex-account'), agentId }),
   z.strictObject({ action: z.literal('codex-login-status'), agentId }),
   z.strictObject({ action: z.literal('codex-login'), agentId }),
-  z.strictObject({ action: z.literal('create-thread'), agentId }),
-  z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId }),
+  z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
+  z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
+  z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
   z.strictObject({
     action: z.literal('send-turn'),
     agentId,
     threadId: codexId,
     text: codexPrompt,
+    ...codexOptions,
   }),
   z.strictObject({
     action: z.literal('steer-turn'),

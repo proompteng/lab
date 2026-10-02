@@ -354,8 +354,9 @@ export const decideStableHistory = Pipeable.dual(2, decideStableHistoryDataFirst
 
 const readStableBrokerSnapshotDataFirst = (
   read: BrokerReadShape,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
+  read.projection?.snapshot ??
   Effect.gen(function* () {
     const beforeUntil = yield* now
     const before = yield* readHistory(read, beforeUntil)

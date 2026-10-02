@@ -343,6 +343,73 @@ test('rolling regeneration time cannot admit technical records computed after th
   expect(accepted.projection.technicalFeatures.get('AAPL')).toHaveLength(1)
 })
 
+test('explicit technical regeneration preserves computation time and reproduces the modeled input cut', () => {
+  const recordedAtMs = end + 86_400_000
+  const source = {
+    runId: 'c'.repeat(64),
+    sourceManifestHash: 'e'.repeat(64),
+    featureTopic: universe.topics.features,
+    technicalFeatureTopic: topic,
+    regeneratedTechnicalFeaturesRecordedAtMs: recordedAtMs,
+    deliveryModel: {
+      schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
+      description: 'Explicit regenerated technical availability',
+      tieBreak: 'availability-topic-partition-offset' as const,
+    },
+  }
+  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, universe, undefined, source))
+  const cursor = Result.getOrThrow(
+    advanceHistoricalMarketCursor(
+      {
+        ...empty,
+        projection: { ...initial(), epoch: empty.projection.epoch, availabilityMode: 'simulated' as const },
+      },
+      {
+        availableAtMs: end + 2200,
+        record: {
+          ...record(),
+          timestampMs: recordedAtMs,
+          value: JSON.stringify({ ...feature, computedAtMs: recordedAtMs }),
+        },
+      },
+    ),
+  )
+  expect(cursor.projection.technicalRejections).toHaveLength(0)
+  const simulated = Result.getOrThrow(constructSimulatedSnapshot(cursor, source, query))
+  const retained = simulated.manifest.streaming.technical?.features[0]
+  expect(retained?.value.computedAtMs).toBe(recordedAtMs)
+  expect(retained?.availableAtMs).toBe(end + 2200)
+  const rows = Result.getOrThrow(persistIntradayRecordRows(simulated))
+  expect(Result.getOrThrow(reproduceSimulatedSnapshot(simulated.manifest, rows)).manifest).toEqual(simulated.manifest)
+  expect(
+    Result.isFailure(
+      constructSimulatedSnapshot(
+        cursor,
+        { ...source, regeneratedTechnicalFeaturesRecordedAtMs: recordedAtMs - 1 },
+        query,
+      ),
+    ),
+  ).toBe(true)
+  const tooEarly = Result.getOrThrow(
+    createHistoricalMarketCursor(source.runId, universe, undefined, {
+      ...source,
+      regeneratedTechnicalFeaturesRecordedAtMs: recordedAtMs - 10_000,
+    }),
+  )
+  const rejected = Result.getOrThrow(
+    advanceHistoricalMarketCursor(tooEarly, {
+      availableAtMs: end + 2200,
+      record: {
+        ...record(),
+        timestampMs: recordedAtMs,
+        value: JSON.stringify({ ...feature, computedAtMs: recordedAtMs }),
+      },
+    }),
+  )
+  expect(rejected.projection.technicalFeatures.size).toBe(0)
+  expect(rejected.projection.technicalRejections[0]?.reason).toBe('technical-identity-or-availability')
+})
+
 test('live and simulated snapshots reproduce technical payload and provenance, rejecting tampering', () => {
   const ready = incorporateMarketRecord(initial(), record(), universe, end + 2200)
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(cut(ready), query))

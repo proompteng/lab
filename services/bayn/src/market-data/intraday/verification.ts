@@ -19,10 +19,12 @@ import type {
   IntradayTrade,
 } from './model'
 import {
+  IntradayCandidateEvidencePolicy,
   IntradayIngestionDelayDirection,
   IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   intradaySnapshotSymbols,
+  usesCandidateWindowTrade,
 } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
@@ -91,6 +93,7 @@ const ReplaySnapshotEnvelopeSchema = Schema.Struct({
     universeSymbolHash: Schema.String,
     symbols: Schema.Array(Schema.String),
     candidateSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
+    candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
     candidateExclusions: Schema.optionalKey(
       Schema.Array(
         Schema.Struct({
@@ -287,6 +290,14 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   }
   if (request.purpose !== undefined && request.symbols === undefined) {
     return Result.fail(failure('request', 'quote-only snapshots require an explicit canonical symbol subset'))
+  }
+  if (
+    request.candidateEvidencePolicy !== undefined &&
+    (request.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+      request.candidateSymbols === undefined ||
+      request.purpose !== undefined)
+  ) {
+    return Result.fail(failure('request', 'candidate evidence policy requires an independent decision query'))
   }
   if (request.candidateSymbols !== undefined) {
     const canonicalCandidates = [...new Set(request.candidateSymbols)].sort()
@@ -799,20 +810,29 @@ export const latestQuotes = (
   const expectedDelayMs = request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0
   const minimumDelay = millisecondsAsNanos(expectedDelayMs) - BigInt(clockSkewMs) * 1_000_000n
   const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs + clockSkewMs)
-  // Bind complete post-range evidence here. Executable freshness is symbol-local and is enforced by the strategy
-  // before selection; sparse IEX activity for one symbol must not invalidate fresh evidence for another symbol.
   for (const symbol of intradaySnapshotSymbols(request)) {
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
-    if (quote === undefined || intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt)) {
+    if (
+      quote === undefined ||
+      (!usesCandidateWindowTrade(request, symbol) &&
+        intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt))
+    ) {
       return Result.fail(
-        failure('not-ready', 'intraday snapshot lacks a post-range quote for every symbol', {
-          symbol,
-        }),
+        failure(
+          'not-ready',
+          usesCandidateWindowTrade(request, symbol)
+            ? 'intraday snapshot lacks a quote for candidate symbol'
+            : 'intraday snapshot lacks a post-range quote for every symbol',
+          {
+            symbol,
+          },
+        ),
       )
     }
     if (
       request.purpose === undefined &&
+      !usesCandidateWindowTrade(request, symbol) &&
       (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
     ) {
       return Result.fail(
@@ -920,6 +940,8 @@ export const candidateAvailability = (
     for (const quote of quotes) latest[quote.symbol] = quote
     for (const symbol of intradaySnapshotSymbols(request)) {
       const symbolRequest = { ...request, symbols: [symbol] }
+      const symbolQuotes = quotes.filter((quote) => quote.symbol === symbol)
+      const symbolTrades = trades.filter((trade) => trade.symbol === symbol)
       const available = Result.flatMap(
         validateBarCoverage(
           symbolRequest,
@@ -927,15 +949,48 @@ export const candidateAvailability = (
           clockSkewMs,
           publicationPolicy,
         ),
-        () =>
-          latestQuotes(
-            symbolRequest,
-            quotes.filter((quote) => quote.symbol === symbol),
-            trades.filter((trade) => trade.symbol === symbol),
-            clockSkewMs,
-          ),
+        () => latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
       )
-      if (Result.isSuccess(available)) continue
+      if (Result.isSuccess(available)) {
+        if (!candidates.has(symbol)) continue
+        const pricingEvidence = usesCandidateWindowTrade(request, symbol)
+          ? [available.success[symbol]]
+          : [available.success[symbol], symbolTrades.at(-1)]
+        const stale = pricingEvidence.find(
+          (evidence) =>
+            evidence !== undefined &&
+            intradayAgeNanos(request.observedAt, evidence.eventAt) > millisecondsAsNanos(request.maximumQuoteAgeMs),
+        )
+        if (stale !== undefined) {
+          const cause = failure(
+            'freshness',
+            usesCandidateWindowTrade(request, symbol)
+              ? 'intraday quote exceeds the decision-time freshness bound'
+              : 'intraday quote or trade exceeds the decision-time freshness bound',
+            {
+              symbol,
+              sourceTopic: stale.sourceTopic,
+              eventAt: stale.eventAt,
+              observedAt: request.observedAt,
+              maximumQuoteAgeMs: request.maximumQuoteAgeMs,
+            },
+          )
+          exclusions.push(Object.freeze({ symbol, reason: 'freshness', message: cause.message }))
+          continue
+        }
+        // The downstream signal contract requires a trade for every requested candidate; admitting a
+        // candidate with no trade rows at all would abort the whole batch, so it stays excluded here.
+        if (symbolTrades.length === 0) {
+          exclusions.push(
+            Object.freeze({
+              symbol,
+              reason: 'not-ready',
+              message: 'intraday snapshot lacks a trade for candidate symbol',
+            }),
+          )
+        }
+        continue
+      }
       const cause = available.failure
       if (
         candidates.has(symbol) &&
@@ -1040,6 +1095,9 @@ export const verifyIntradaySnapshot = (
       archiveWatermarks,
       maximumQuoteAgeMs: verifiedRequest.maximumQuoteAgeMs,
       minimumWatermarkLagMs: verifiedRequest.minimumWatermarkLagMs,
+      ...(verifiedRequest.candidateEvidencePolicy === undefined
+        ? {}
+        : { candidateEvidencePolicy: verifiedRequest.candidateEvidencePolicy }),
       barCount: bars.length,
       quoteCount: quotes.length,
       tradeCount: trades.length,
@@ -1212,6 +1270,9 @@ export const reverifyIntradayMarketSnapshot = (
       sourceTopics: manifest.sourceTopics,
       maximumQuoteAgeMs: manifest.maximumQuoteAgeMs,
       minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
+      ...(manifest.candidateEvidencePolicy === undefined
+        ? {}
+        : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
       archiveWatermarks: manifest.archiveWatermarks,
     }
     const verified = yield* verifyIntradaySnapshot(request, {

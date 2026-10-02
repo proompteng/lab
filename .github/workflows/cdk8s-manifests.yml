@@ -36,15 +36,15 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       - name: Cache Bun packages
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.4.0-${{ hashFiles('bun.lock') }}
+          key: ${{ runner.os }}-bun-1.4.2-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-1.4.0-
+            ${{ runner.os }}-bun-1.4.2-
 
       - name: Install dependencies
         run: >-

@@ -27,6 +27,7 @@ import type {
 } from '@/lib/tengri/types'
 import { parseTengriSigningSecrets, signTengriMetadata } from './internal-auth'
 import { readTengriBffSecret } from './runtime-secrets'
+import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -301,13 +302,31 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   }
 }
 
-export async function createCodexThread(subject: string, agentId: string): Promise<TengriCodexThread> {
-  const response = await unary<RawRecord>('createCodexThread', { agentId }, subject, 130_000)
+export async function listCodexModels(subject: string, agentId: string, cursor?: string) {
+  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, subject, 130_000)
+  try {
+    return parseCodexModelPage(stringValue(response.rawJson))
+  } catch {
+    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog')
+  }
+}
+
+export async function createCodexThread(
+  subject: string,
+  agentId: string,
+  options: TengriCodexOptions = {},
+): Promise<TengriCodexThread> {
+  const response = await unary<RawRecord>('createCodexThread', { agentId, ...options }, subject, 130_000)
   return normalizeCodexThread(response)
 }
 
-export async function resumeCodexThread(subject: string, agentId: string, threadId: string) {
-  const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId }, subject, 130_000)
+export async function resumeCodexThread(
+  subject: string,
+  agentId: string,
+  threadId: string,
+  options: TengriCodexOptions = {},
+) {
+  const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId, ...options }, subject, 130_000)
   return normalizeCodexThread(response)
 }
 
@@ -334,8 +353,16 @@ function normalizeCodexThread(response: RawRecord): TengriCodexThread {
   }
 }
 
-export async function sendCodexTurn(subject: string, agentId: string, threadId: string, text: string) {
-  return normalizeTurn(await unary<RawRecord>('sendCodexTurn', { agentId, threadId, text }, subject, 130_000))
+export async function sendCodexTurn(
+  subject: string,
+  agentId: string,
+  threadId: string,
+  text: string,
+  options: TengriCodexOptions = {},
+) {
+  return normalizeTurn(
+    await unary<RawRecord>('sendCodexTurn', { agentId, threadId, text, ...options }, subject, 130_000),
+  )
 }
 
 export async function steerCodexTurn(subject: string, agentId: string, threadId: string, turnId: string, text: string) {
@@ -592,6 +619,15 @@ function callOptions(deadlineMs: number): grpc.CallOptions {
 
 function mapGrpcError(error: grpc.ServiceError, methodName: string) {
   switch (error.code) {
+    case grpc.status.UNIMPLEMENTED:
+      if (methodName === 'listCodexModels') {
+        return new TengriUnavailableError(
+          'Model selection is unavailable for this workspace. Chat continues with existing Codex settings.',
+          412,
+          'model_selection_unavailable',
+        )
+      }
+      return new TengriUnavailableError('Tengri control plane is unavailable', 503)
     case grpc.status.INVALID_ARGUMENT:
       return new TengriUnavailableError('Tengri request is invalid', 400)
     case grpc.status.UNAUTHENTICATED:

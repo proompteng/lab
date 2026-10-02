@@ -3,51 +3,39 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use axum::{Json, Router, http::StatusCode, routing::post};
+use crate::guest::rpc::{
+    proto,
+    test_server::{TestServer, TestService},
+};
+use reqwest::StatusCode;
 
 use super::*;
 
 struct Fixture {
     client: GuestClient,
     requests: Arc<Mutex<Vec<Value>>>,
-    server: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        self.server.abort();
-    }
+    _server: TestServer,
 }
 
 async fn fixture(replies: Vec<(StatusCode, Value)>) -> Fixture {
     let replies = Arc::new(Mutex::new(VecDeque::from(replies)));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let recorded = requests.clone();
-    let router = Router::new().route(
-        "/v1/codex/call",
-        post(move |Json(request): Json<Value>| {
-            recorded.lock().unwrap().push(request);
-            let reply = replies
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("unexpected Codex call");
-            async move { (reply.0, Json(reply.1)) }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    let server = TestServer::start(TestService {
+        codex_call: Some(Arc::new(move |request| {
+            let request = request.into_inner();
+            recorded.lock().unwrap().push(json!({"method": request.method, "params": serde_json::from_slice::<Value>(&request.params_json).unwrap()}));
+            let (status, reply) = replies.lock().unwrap().pop_front().expect("unexpected Codex call");
+            if status != StatusCode::OK {
+                return Err(if status == StatusCode::NOT_FOUND { tonic::Status::not_found(reply.to_string()) } else { tonic::Status::unavailable(reply.to_string()) });
+            }
+            Ok(proto::CodexResult { result_json: serde_json::to_vec(&reply["result"]).unwrap(), event_sequence: reply["eventSequence"].as_u64().unwrap() })
+        })), ..Default::default()
+    }).await;
     Fixture {
-        client: GuestClient {
-            http: reqwest::Client::new(),
-            base_url: format!("http://{address}"),
-            token: "fixture-token".into(),
-        },
+        client: server.guest.clone(),
         requests,
-        server,
+        _server: server,
     }
 }
 
@@ -110,7 +98,10 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
     .await;
     let snapshot = fixture
         .client
-        .resume_codex_thread("thread-one")
+        .resume_codex_thread(
+            "thread-one",
+            &CodexOptions::parse("gpt-6.1-sol".into(), "high".into()).unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(snapshot.event_sequence, 10);
@@ -138,7 +129,8 @@ async fn loads_all_pages_and_preserves_each_items_snapshot_cursor() {
         requests[0],
         json!({"method":"thread/resume", "params": {
             "threadId":"thread-one", "cwd":"/workspace", "runtimeWorkspaceRoots":["/workspace"],
-            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true
+            "approvalPolicy":"on-request", "sandbox":"danger-full-access", "excludeTurns":true,
+            "model":"gpt-6.1-sol", "config":{"model_reasoning_effort":"high"}
         }})
     );
     assert_eq!(
@@ -170,7 +162,7 @@ async fn legacy_threads_keep_the_atomic_full_snapshot_contract() {
     .await;
     let snapshot = fixture
         .client
-        .resume_codex_thread("thread-one")
+        .resume_codex_thread("thread-one", &CodexOptions::default())
         .await
         .unwrap();
     assert_eq!(snapshot.result, legacy);
@@ -179,8 +171,10 @@ async fn legacy_threads_keep_the_atomic_full_snapshot_contract() {
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["params"]["excludeTurns"], true);
+    assert_eq!(requests[0]["params"]["model"], Value::Null);
     assert_eq!(requests[1]["method"], "thread/resume");
     assert_eq!(requests[1]["params"]["excludeTurns"], false);
+    assert_eq!(requests[1]["params"]["model"], Value::Null);
 }
 
 #[tokio::test]
@@ -231,7 +225,7 @@ async fn rejects_broken_page_contracts_without_returning_partial_history() {
         assert!(
             fixture
                 .client
-                .resume_codex_thread("thread-one")
+                .resume_codex_thread("thread-one", &CodexOptions::default())
                 .await
                 .is_err()
         );
@@ -249,7 +243,10 @@ async fn propagates_upstream_failure_and_does_not_fall_back_to_deprecated_hydrat
     ])
     .await;
     assert!(matches!(
-        fixture.client.resume_codex_thread("thread-one").await,
+        fixture
+            .client
+            .resume_codex_thread("thread-one", &CodexOptions::default())
+            .await,
         Err(GuestError::Api {
             status: StatusCode::SERVICE_UNAVAILABLE,
             ..
@@ -268,7 +265,10 @@ async fn bounds_total_history_even_when_individual_pages_are_within_limits() {
     ])
     .await;
     assert!(matches!(
-        fixture.client.resume_codex_thread("thread-one").await,
+        fixture
+            .client
+            .resume_codex_thread("thread-one", &CodexOptions::default())
+            .await,
         Err(GuestError::ResponseTooLarge(MAX_GUEST_JSON_BYTES))
     ));
 }
@@ -281,7 +281,10 @@ async fn rejects_mismatched_thread_identity_and_unknown_history_mode() {
         }
         let fixture = fixture(vec![reply(10, response)]).await;
         assert!(matches!(
-            fixture.client.resume_codex_thread("thread-one").await,
+            fixture
+                .client
+                .resume_codex_thread("thread-one", &CodexOptions::default())
+                .await,
             Err(GuestError::InvalidCodexHistory(_))
         ));
         assert_eq!(fixture.requests.lock().unwrap().len(), 1);

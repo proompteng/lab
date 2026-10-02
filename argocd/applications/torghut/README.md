@@ -5,8 +5,8 @@ This directory contains the Argo CD application resources for the `torghut` name
 ## Active runtime
 
 This application retains `torghut-ws`, the `market-data-archive` Flink job, the live `torghut-ta` Flink job,
-ClickHouse and Keeper, notebooks, and their observability resources. Bayn reads the archive's `signal` tables
-in ClickHouse and owns its PostgreSQL database and ledger in the `bayn` namespace.
+ClickHouse and Keeper, notebooks, and their observability resources. Bayn consumes verified Kafka raw and feature
+streams and owns its PostgreSQL database and ledger in the `bayn` namespace.
 
 The Torghut API, simulation API, TA simulation job, Torghut PostgreSQL cluster, Torghut TigerBeetle cluster,
 and LLM guardrails exporter are retired. Their database migration and CA-reflector hooks, reconciliation
@@ -22,6 +22,22 @@ See [runtime retirement and recovery](runtime-retirement.md) for the removal sco
 rollout order, and recovery constraints. The post-deploy workflow verifies absence of the retired workloads,
 then verifies both retained Flink jobs, checkpoints, websocket/Kafka flow, and TA freshness. It observes the
 Kargo-owned rollout and does not contact the retired API endpoints.
+
+## Latest IEX observations for Bayn
+
+The websocket producer also polls IEX latest quotes and trades for
+`AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC`. The configured interval is two seconds after each pass, with a ten-second
+maximum provider event age. The existing 16 bar, seven quote and seven trade WebSocket subscriptions remain unchanged.
+
+Verify that the deployed TA consumer contains the `source=rest_latest` trade exclusion before activating this
+configuration. The exclusion was introduced in source `0f48bef14941942e4bf67f05f15777916db79d76`. Check the actual
+consumer image, restored Flink state and a completed checkpoint. Keep compatible exclusions during rollback because
+disabling polling does not remove retained samples.
+
+During a regular session, verify acknowledged provider timestamps for all nine symbols, their Kafka records and
+usable Bayn snapshots. After-hours HTTP success or readiness does not prove regular-session coverage or profitability.
+See the [producer contract](../../../services/dorvud/README.md#latest-quote-and-trade-observations) for sample semantics,
+failure handling and archive provenance limits.
 
 ## Recovering a failed stateful TA upgrade
 

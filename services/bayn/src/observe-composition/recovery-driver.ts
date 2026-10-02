@@ -1,6 +1,7 @@
+import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
-import { Clock, Duration, Effect, Ref, Result, Semaphore } from 'effect'
+import { Clock, Duration, Effect, Exit, Ref, Result, Semaphore } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import type { AutonomousCycle } from '../cycle'
 import {
@@ -18,9 +19,12 @@ import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
+import { AuthorityGenerationStore } from '../db/execution-store'
+import { ReconciliationStatus, type AuthorityState } from '../execution/contracts'
 import { currentUtcInstant } from '../time'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { reconstructBoundIntradaySnapshot, type CycleDecisionDocument } from '../shadow-decision-contract'
@@ -54,8 +58,64 @@ import {
 
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
+
+/** Owned by one serialized pass, discarded before its post-mutation continuation. */
+export const reconciliationForPreparation = <R>(
+  initial: ReconciliationPassResult | undefined,
+  refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
+  readAuthority: Effect.Effect<AuthorityState | undefined, ReconciliationPassError, R>,
+  maximumAgeMs: number,
+) =>
+  Effect.gen(function* () {
+    const previous = yield* Ref.make(initial)
+    const preflightAvailable = yield* Ref.make(initial !== undefined)
+    return {
+      read: Effect.gen(function* () {
+        const cached = yield* Ref.get(previous)
+        const firstUse = yield* Ref.getAndSet(preflightAvailable, false)
+        const now = yield* Clock.currentTimeMillis
+        const authority = yield* readAuthority
+        if (
+          cached !== undefined &&
+          firstUse &&
+          (authority === undefined ||
+            (cached.riskContext.authority?.generationHash === authority.generationHash &&
+              cached.riskContext.authority.version === authority.version))
+        )
+          return cached
+        if (cached !== undefined && authority !== undefined) {
+          const state = cached.brokerState
+          const observations = [
+            state.account.observedAt,
+            state.positionsObservedAt,
+            state.ordersObservedAt,
+            cached.report.reconciliation.reconciledAt,
+            cached.riskContext.authorityObservedAt,
+          ]
+          if (
+            cached.riskContext.authority?.generationHash === authority.generationHash &&
+            cached.riskContext.authority.version === authority.version &&
+            cached.report.reconciliation.status === ReconciliationStatus.Exact &&
+            cached.report.metrics.accountingExact &&
+            cached.riskContext.unknownMutationCount === 0 &&
+            observations.every(
+              (at) =>
+                at !== null &&
+                Number.isFinite(Date.parse(at)) &&
+                Date.parse(at) <= now &&
+                now - Date.parse(at) < maximumAgeMs,
+            )
+          )
+            return cached
+        }
+        const current = yield* refresh
+        yield* Ref.set(previous, current)
+        return current
+      }),
+    }
+  })
 
 const verifyDecisionBindingEvidence = (
   marketData: IntradayMarketDataService | undefined,
@@ -199,7 +259,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
 
 const attemptMutationIdleReconciliation = (
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ): Effect.Effect<ReconciliationPassResult, CycleRunnerError, ObserveDecisionRuntime> =>
   Clock.currentTimeNanos.pipe(
     Effect.tap((lastAttemptAtNanos) => Ref.set(cadence, { lastAttemptAtNanos })),
@@ -215,16 +275,27 @@ const attemptMutationIdleReconciliation = (
     ),
   )
 
+const isPendingBrokerReconciliation = (error: CycleRunnerError): boolean =>
+  error.operation === 'reconcile' &&
+  error.cause instanceof OperationalError &&
+  error.cause.operation === 'reconciliation' &&
+  error.cause.cause instanceof BrokerReadError &&
+  error.cause.cause.kind === BrokerReadErrorKind.ObservationPending
+
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
 ): Effect.Effect<ReconciliationPassResult | undefined, CycleRunnerError, ObserveDecisionRuntime> =>
   Effect.gen(function* () {
     const nowNanos = yield* Clock.currentTimeNanos
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-    if (decision._tag === 'RECONCILE') return yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    if (
+      decision._tag === 'RECONCILE' ||
+      (state.lastFailure !== undefined && isPendingBrokerReconciliation(state.lastFailure))
+    )
+      return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
     return undefined
   })
@@ -265,8 +336,29 @@ const makeRecoveryFirstCycleDriverEffect = (
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
     const nextDelayMs = recoveryFirstCycleNextDelayMs(input)
     const reconcile = boundedReconciliationPass(input.reconciliationPassTimeoutMs).pipe(
+      Effect.tap((result) =>
+        capability._tag === 'RecoveryOnly' ? Effect.void : capability.executionProgram.recordReconciliation(result),
+      ),
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) && capability._tag !== 'RecoveryOnly'
+          ? capability.executionProgram.invalidateBrokerState
+          : Effect.void,
+      ),
     )
+    const observeReconciliationFailure = (error: CycleRunnerError) => {
+      if (isPendingBrokerReconciliation(error))
+        return currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) =>
+            observeMutationPass(startup, { outcome: 'WAITING', observedAt, waitReason: 'BROKER_OBSERVATION_PENDING' }),
+          ),
+          Effect.map((observation) => ({ observation })),
+        )
+      return currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+        Effect.map((observation) => ({ observation })),
+      )
+    }
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
         ? restrictMutationLoopFailure(error).pipe(
@@ -286,21 +378,23 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.andThen(Effect.fail(restrictionError)),
           ),
         ),
-        Effect.andThen(currentUtcInstant),
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-        Effect.map((observation) => ({ observation })),
+        Effect.andThen(observeReconciliationFailure(error)),
       )
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
-        const pendingPreflight = yield* Ref.make(preflight)
-        const reconcileForAdvance = Ref.getAndSet(pendingPreflight, undefined).pipe(
-          Effect.flatMap((available) => (available === undefined ? reconcile : Effect.succeed(available))),
+        const authorityStore = yield* AuthorityGenerationStore
+        const { read: reconcileForAdvance } = yield* reconciliationForPreparation(
+          preflight,
+          reconcile,
+          authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
+          Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
         )
         const context: CycleRunContext<ObserveDecisionRuntime> = {
           cycleBindingId: startup.cycleBindingId,
-          strategyName: 'intraday-momentum',
+          strategyName: 'jev',
           strategyProtocolHash: preparation.strategyProtocolHash,
           accountId: input.accountId,
+          authorityGenerationHash: input.authorityGenerationHash,
           executionPolicy: preparation.executionPolicy,
           buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
@@ -337,11 +431,7 @@ const makeRecoveryFirstCycleDriverEffect = (
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
     const runCycleAdvance = reconciliationPreflight.pipe(
       Effect.matchEffect({
-        onFailure: (error) =>
-          currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-            Effect.map((observation) => ({ observation })),
-          ),
+        onFailure: observeReconciliationFailure,
         onSuccess: (preflight) =>
           advanceCycle(preflight).pipe(
             Effect.flatMap((advanced) =>

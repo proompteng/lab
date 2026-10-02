@@ -8,6 +8,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
     result: Schema.Literal('SUCCESS'),
     observedAt: UtcInstantSchema,
     outcome: Schema.Literals([
+      'WAITING',
       'WINDOW_CLOSED',
       'ALREADY_ACQUIRED',
       'ALREADY_TERMINAL',
@@ -24,9 +25,11 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
     Schema.makeFilter(
       (observation) =>
         (observation.recoveryAction === undefined || observation.outcome === 'RECOVERED') &&
-        (observation.recoveryAction === 'WAITING'
-          ? (observation.waitReason === undefined) !== (observation.readiness === undefined)
-          : observation.waitReason === undefined && observation.readiness === undefined),
+        (observation.outcome === 'WAITING'
+          ? observation.waitReason === 'BROKER_OBSERVATION_PENDING' && observation.readiness === undefined
+          : observation.recoveryAction === 'WAITING'
+            ? (observation.waitReason === undefined) !== (observation.readiness === undefined)
+            : observation.waitReason === undefined && observation.readiness === undefined),
       { expected: 'exactly one readiness or lifecycle reason on each tagged waiting pass and none on other passes' },
     ),
   ),

@@ -43,6 +43,7 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { verifyBrokerStateVersion } from './reconciliation'
 import { accountBrokerFees } from './broker-fees'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 
@@ -158,6 +159,20 @@ const order = () => ({
   status: OrderStatus.New,
   observedAt,
 })
+
+const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => {
+  const observedOrder = order()
+  return {
+    _tag: 'Order',
+    broker: Broker.Alpaca,
+    accountId,
+    sourceEventId: 'order-observation-1',
+    contentHash: canonicalHashV1(observedOrder),
+    occurredAt,
+    observedAt,
+    order: observedOrder,
+  }
+}
 
 const positionEvent = (
   sourceHash: string,
@@ -285,7 +300,22 @@ describePostgres('PostgreSQL execution persistence', () => {
           `${executionMandateFailureRestrictionPrefix} permanent failure`,
           '2026-08-28T14:34:00.000Z',
         )
-        return { initial, replay, lineage, restricted, promoted: yield* authority.readAuthorityState }
+        const promoted = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority('operator hold', '2026-08-28T14:35:00.000Z')
+        const held = yield* authority.readAuthorityState
+        yield* restriction.restrictAuthority(
+          `${executionMandateFailureRestrictionPrefix} later automatic failure`,
+          '2026-08-28T14:36:00.000Z',
+        )
+        return {
+          initial,
+          replay,
+          lineage,
+          restricted,
+          promoted,
+          held,
+          afterLaterFailure: yield* authority.readAuthorityState,
+        }
       }),
     )
 
@@ -315,6 +345,13 @@ describePostgres('PostgreSQL execution persistence', () => {
       reason: `${executionMandateFailureRestrictionPrefix} permanent failure`,
       version: 4,
     })
+    expect(result.held).toMatchObject({
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: 'operator hold',
+      version: 5,
+    })
+    expect(result.afterLaterFailure).toEqual(result.held)
   })
 
   test('deduplicates broker observations and derives valuation from one complete position snapshot', async () => {
@@ -448,6 +485,51 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(journalControl.postCount).toBe(3)
   })
 
+  test('batches completed broker history while retaining conflicts and incomplete fill recovery', async () => {
+    const observedOrder = orderEvent()
+    const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000', '100000000')
+    const preparedFill = fillEvent('fill-pending', OrderSide.Buy, '1000000', '101000000')
+    const unaccountedFill = fillEvent('fill-unaccounted', OrderSide.Buy, '1000000', '101000000')
+    const newOrder = { ...observedOrder, sourceEventId: 'order-observation-2' }
+
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const events = yield* BrokerEventStore
+        const accounting = yield* FillAccountingStore
+        yield* events.ingest(observedOrder)
+        yield* accounting.account(accountedFill)
+        yield* events.ingest(unaccountedFill)
+        journalControl.failPosts = true
+        const postingFailure = yield* accounting.account(preparedFill).pipe(Effect.flip)
+        journalControl.failPosts = false
+
+        const history = [observedOrder, accountedFill, preparedFill, unaccountedFill, newOrder]
+        const completed = yield* events.completeHistory(history)
+        yield* accounting.verifyCompleted([accountedFill])
+        const accountingMismatch = yield* accounting
+          .verifyCompleted([{ ...accountedFill, fill: { ...accountedFill.fill, quantityMicros: '2000000' } }])
+          .pipe(Effect.flip)
+        yield* accounting.account(preparedFill)
+        const completedAfterRecovery = yield* events.completeHistory(history)
+        yield* accounting.verifyCompleted([accountedFill, preparedFill])
+        const conflict = yield* events
+          .completeHistory([{ ...observedOrder, contentHash: hash('changed-order-content') }])
+          .pipe(Effect.flip)
+        return { completed, completedAfterRecovery, postingFailure, accountingMismatch, conflict }
+      }),
+    )
+
+    expect([...result.completed].sort()).toEqual([accountedFill.sourceEventId, observedOrder.sourceEventId])
+    expect([...result.completedAfterRecovery].sort()).toEqual([
+      accountedFill.sourceEventId,
+      preparedFill.sourceEventId,
+      observedOrder.sourceEventId,
+    ])
+    expect(result.postingFailure).toMatchObject({ operation: 'account', failure: 'ledger' })
+    expect(result.accountingMismatch).toMatchObject({ operation: 'account', failure: 'conflict' })
+    expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
+  })
+
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
     await runtime.runPromise(Effect.flatMap(BrokerEventStore, (events) => events.ingest(flatAccountEvent())))
     const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
@@ -494,6 +576,94 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(forward.brokerFeeRecords).toHaveLength(3)
     expect(forward.generationBrokerFeeIds).toEqual(['fee-0', 'fee-1', 'fee-2'])
     expect(forward.ambiguousBrokerFeeCount).toBe(0)
+  })
+
+  test('binds the submit cache to the latest exact reconciliation, broker observations and authority version', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const authority = yield* AuthorityGenerationStore
+        const events = yield* BrokerEventStore
+        const valuations = yield* ValuationStore
+        const store = yield* ReconciliationStore
+        const sql = yield* PgClient.PgClient
+        if (authority.readOrInitializeObserveAuthority === undefined)
+          return yield* Effect.die('missing native authority initializer')
+        const generationHash = hash('broker-state-cache-generation')
+        const state = yield* authority.readOrInitializeObserveAuthority({ generationHash, maximum: Authority.Observe })
+        const account = flatAccountEvent()
+        const accountReceipt = yield* events.ingest(account)
+        const positionsReceipt = yield* events.ingestPositions(positionSnapshot(hash('cache-empty-positions'), []))
+        const valuation = yield* valuations.value({
+          accountEventId: accountReceipt.eventId,
+          positionSnapshotId: positionsReceipt.snapshotId,
+        })
+        const snapshot = {
+          account: account.account,
+          positions: [],
+          positionsObservedAt: observedAt,
+          orders: [],
+          ordersObservedAt: observedAt,
+          fills: [],
+          fees: [],
+          valuation,
+          reconciledAt: '2026-08-28T14:32:00.000Z',
+        } as const
+        const exact = yield* store.reconcile(snapshot)
+        const version = {
+          reconciliationId: exact.reconciliation.reconciliationId,
+          reconciledAt: exact.reconciliation.reconciledAt,
+          authorityGenerationHash: generationHash,
+          authorityVersion: state.version,
+        }
+        yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent'))
+        const newer = yield* store.reconcile({ ...snapshot, reconciledAt: '2026-08-28T14:33:00.000Z' })
+        expect(
+          (yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent')).pipe(Effect.flip)).failure,
+        ).toBe('invariant')
+        const latestVersion = {
+          ...version,
+          reconciliationId: newer.reconciliation.reconciliationId,
+          reconciledAt: newer.reconciliation.reconciledAt,
+        }
+        yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent'))
+        expect(
+          (yield* verifyBrokerStateVersion(
+            sql,
+            accountId,
+            { ...latestVersion, authorityVersion: state.version + 1 },
+            hash('current-intent'),
+          ).pipe(Effect.flip)).failure,
+        ).toBe('invariant')
+        expect(
+          (yield* verifyBrokerStateVersion(
+            sql,
+            accountId,
+            { ...latestVersion, reconciledAt: '2026-08-28T14:35:00.000Z' },
+            hash('current-intent'),
+          ).pipe(Effect.flip)).failure,
+        ).toBe('invariant')
+        const laterAt = '2026-08-28T14:34:00.000Z'
+        yield* events.ingest({
+          ...account,
+          sourceEventId: 'new-cache-account',
+          observedAt: laterAt,
+          account: { ...account.account, observedAt: laterAt },
+        })
+        expect(
+          (yield* verifyBrokerStateVersion(sql, accountId, latestVersion, hash('current-intent')).pipe(Effect.flip))
+            .failure,
+        ).toBe('invariant')
+        yield* (yield* AuthorityRestrictionStore).restrictAuthority('cache test restriction', laterAt)
+        expect(
+          (yield* verifyBrokerStateVersion(
+            sql,
+            accountId,
+            { ...latestVersion, reconciledAt: laterAt },
+            hash('current-intent'),
+          ).pipe(Effect.flip)).failure,
+        ).toBe('invariant')
+      }),
+    )
   })
 
   test('persists exact and discrepant reconciliation history and never clears a safety restriction implicitly', async () => {

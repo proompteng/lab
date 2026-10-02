@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Schema } from 'effect'
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { canonicalHashV1 } from '../hash'
 import { ReplayBrokerFailure } from './broker'
@@ -57,6 +57,13 @@ durableTest(
                   counts: Schema.Array(
                     Schema.Struct({ intents: Schema.Number, fills: Schema.Number, transactions: Schema.Number }),
                   ),
+                  initialGenerationHash: Schema.String,
+                  authority: Schema.Struct({
+                    generationHash: Schema.String,
+                    maximum: Schema.String,
+                    effective: Schema.String,
+                    kill: Schema.String,
+                  }),
                   reconciliation: Schema.Struct({
                     report: Schema.Struct({
                       metrics: Schema.Struct({ accountingExact: Schema.Boolean }),
@@ -80,6 +87,12 @@ durableTest(
         expect(result.reconciliation.brokerState.unknownOrderCount).toBe(0)
         expect(result.reconciliation.riskContext.unknownMutationCount).toBe(0)
         expect(result.reconciliation.brokerState.account.cashMicros).toBe(checkpoint.state.ledger.cashMicros)
+        expect(result.authority).toEqual({
+          generationHash: result.initialGenerationHash,
+          maximum: 'PAPER',
+          effective: 'OBSERVE',
+          kill: 'ACTIVE',
+        })
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.timeout('25 seconds')),
     )
   },

@@ -95,6 +95,7 @@ export const SimulatedSnapshotSourceSchema = Schema.Struct({
   featureTopic: StrictNonEmptyStringSchema,
   technicalFeatureTopic: Schema.optionalKey(StrictNonEmptyStringSchema),
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
+  regeneratedTechnicalFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
 })
 export const SimulatedSnapshotEvidenceSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.simulated-input-cut.v1'),

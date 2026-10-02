@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Context, Data, Effect, Exit, Layer, Option, Schema, Semaphore } from 'effect'
-import type { Connection } from 'effect/unstable/sql/SqlConnection'
+import type { Connection } from 'effect/sql/SqlConnection'
 import { withObservedStage } from '../telemetry'
 
 const LOCK_NAMESPACE = 1_111_578_958 // ASCII "BAYN"
@@ -129,6 +129,7 @@ const acquire = Effect.gen(function* () {
                     Effect.andThen(checkHeld(connection, operation)),
                     Effect.andThen(effect),
                     Effect.provideService(sql.transactionService, [connection, 0]),
+                    Effect.provideService(sql.transactionSemaphoreService, Semaphore.makeUnsafe(1)),
                   ),
                 ),
               )

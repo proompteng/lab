@@ -32,7 +32,11 @@ import {
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
 } from '../reconciliation'
-import { isExecutionMandateFailureRestriction } from '../execution/mandate'
+import {
+  isExecutionMandateFailureRestriction,
+  isExecutionMandateRecoveryRestriction,
+  isRetiredOneShotMandateRestriction,
+} from '../execution/mandate'
 import {
   IsoDateSchema,
   Sha256Schema as Sha256,
@@ -61,6 +65,7 @@ import { Pipeable } from '../pipeable'
 import { accountBrokerFees, type BrokerFeeAccounting } from './broker-fees'
 import type { FeeActivity } from '../broker/alpaca'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
+import type { BrokerStateVersion } from '../execution/broker-state-cache'
 
 export interface IntentBinding {
   readonly intentId: string
@@ -181,7 +186,7 @@ const decodePreviousReconciliation = Schema.decodeUnknownEffect(PreviousReconcil
 const decodeContent = Schema.decodeUnknownEffect(ReconciliationContentRow, strictParseOptions)
 const decodeFinalExecutionRiskContext = Schema.decodeUnknownEffect(FinalExecutionRiskContextRow, strictParseOptions)
 const decodeRiskContext = Schema.decodeUnknownEffect(ReconciliationRiskContextRow, strictParseOptions)
-const encodeDiscrepancies = Schema.encodeSync(Schema.fromJsonString(Schema.Array(DiscrepancySchema)))
+const encodeDiscrepancies = Schema.encodeSync(Schema.Array(DiscrepancySchema))
 
 const storeError = (
   operation: ReconciliationStoreError['operation'],
@@ -217,9 +222,14 @@ const attempt = <A>(
   })
 
 const isTransientReconciliationRestriction = (reason: string | null): boolean =>
-  reason === 'reconciliation pass incomplete' || reason?.startsWith('reconciliation discrepancy ') === true
+  reason === 'reconciliation pass incomplete' ||
+  (reason?.startsWith('reconciliation discrepancy ') === true && isExecutionMandateFailureRestriction(reason))
+
+const isRecoverableRestriction = (reason: string | null): boolean =>
+  isExecutionMandateRecoveryRestriction(reason ?? undefined) || isRetiredOneShotMandateRestriction(reason ?? undefined)
 
 const shouldPromoteRestrictionReason = (currentReason: string | null, nextReason: string): boolean =>
+  (isRecoverableRestriction(currentReason) && !isRecoverableRestriction(nextReason)) ||
   (currentReason === 'reconciliation pass incomplete' && nextReason.startsWith('reconciliation discrepancy ')) ||
   (isTransientReconciliationRestriction(currentReason) &&
     !isTransientReconciliationRestriction(nextReason) &&
@@ -342,6 +352,50 @@ const readFinalExecutionRiskContextDataFirst = (
   )
 
 export const readFinalExecutionRiskContext = Pipeable.dual(3, readFinalExecutionRiskContextDataFirst)
+
+/** Called under the account writer fence; the current durable start reserves this cache version. */
+export const verifyBrokerStateVersion = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  version: BrokerStateVersion,
+  intentId: string,
+): Effect.Effect<void, ReconciliationStoreError> =>
+  runStore(
+    'risk-context',
+    Effect.gen(function* () {
+      const [row] = yield* sql<Record<string, unknown>>`
+    SELECT (
+      (SELECT reconciliation_id FROM reconciliations WHERE account_id = ${accountId}
+        ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1) = ${version.reconciliationId}
+      AND EXISTS (SELECT 1 FROM reconciliations WHERE account_id = ${accountId}
+        AND reconciliation_id = ${version.reconciliationId}
+        AND reconciled_at = ${version.reconciledAt}::timestamptz AND status = 'EXACT')
+      AND EXISTS (SELECT 1 FROM authority_state WHERE generation_hash = ${version.authorityGenerationHash}
+        AND version = ${version.authorityVersion}::bigint)
+      AND NOT EXISTS (
+        SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
+        WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= ${version.reconciledAt}::timestamptz
+          AND NOT (mutation.intent_id = ${intentId} AND mutation.event_type = 'SUBMIT_STARTED')
+      )
+      AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
+        AND observed_at > ${version.reconciledAt}::timestamptz)
+    ) AS valid
+  `.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ valid: Schema.NullOr(Schema.Boolean) })]),
+            strictParseOptions,
+          ),
+        ),
+      )
+      if (row.valid !== true)
+        return yield* storeError(
+          'risk-context',
+          'invariant',
+          'cached broker reconciliation version changed before submit',
+        )
+    }),
+  )
 
 export const makeReconciliation = (
   sql: PgClient.PgClient,

@@ -2,7 +2,9 @@ import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result } from 'effect'
 
 import {
+  IntradayCandidateEvidencePolicy,
   IntradaySnapshotFailure,
+  IntradaySnapshotPurpose,
   type IntradayBar,
   type IntradayQuote,
   type IntradayTrade,
@@ -25,7 +27,12 @@ import {
   rollingFeatureDefinitionMaterial,
 } from '../features/contract'
 import { sha256 } from '../../hash'
-import { observedBarsAt, type StreamingProjection, type ObservedMarketValue } from './projection'
+import {
+  discardedRejectionsOverlap,
+  observedBarsAt,
+  type StreamingProjection,
+  type ObservedMarketValue,
+} from './projection'
 import { technicalFeatureMatchesBars, type TechnicalMarketFeature } from '../features/technical-contract'
 import { technicalReceiptAvailableAt } from './technical-projection'
 import type { StreamingFeatureReceipt } from './snapshot'
@@ -46,9 +53,18 @@ export const selectStreamingInputs = (
     const observedAtMs = Date.parse(request.observedAt)
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
+    const symbols = request.symbols ?? request.universe
+    const observationEvicted =
+      request.purpose === IntradaySnapshotPurpose.Liquidation
+        ? symbols.some((symbol) => (state.minimumQuoteObservationMs.get(symbol) ?? 0) > observedAtMs)
+        : state.minimumObservationMs > observedAtMs
     if (
-      state.minimumObservationMs > observedAtMs ||
-      Date.parse(request.rangeStartAt) <= state.discardedRejectionsThroughMs
+      observationEvicted ||
+      discardedRejectionsOverlap(
+        state,
+        Date.parse(request.rangeStartAt),
+        request.purpose === IntradaySnapshotPurpose.Liquidation ? request.sourceTopics.quotes : undefined,
+      )
     )
       return yield* Result.fail(
         failure('not-ready', 'Streaming projection has no complete retained cut for this observation'),
@@ -56,7 +72,6 @@ export const selectStreamingInputs = (
     const session = request.calendar.sessions.find((entry) => entry.date === request.sessionDate)
     if (session === undefined)
       return yield* Result.fail(failure('request', 'Streaming snapshot has no bound exchange session'))
-    const symbols = request.symbols ?? request.universe
     const candidates = new Set(request.candidateSymbols)
     const entries: ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTrade>[] = []
     const featureReceipts: StreamingFeatureReceipt[] = []
@@ -64,7 +79,10 @@ export const selectStreamingInputs = (
     const publicationBars: IntradayBar[] = []
     const technicalReceipts: StreamingFeatureReceipt<TechnicalMarketFeature>[] = []
     const featureExclusions: IntradayCandidateExclusion[] = []
+    const missingRangeCompletionBars = new Set<string>()
     for (const [key, history] of state.rejections) {
+      if (request.purpose === IntradaySnapshotPurpose.Liquidation && !key.startsWith(`${request.sourceTopics.quotes}:`))
+        continue
       const rejection = history.find(
         (entry) => entry.availableAtMs >= Date.parse(request.rangeStartAt) && entry.availableAtMs <= observedAtMs,
       )
@@ -90,8 +108,9 @@ export const selectStreamingInputs = (
           }
         }
       }
-      if (quote !== undefined) entries.push(quote)
-      if (request.purpose === undefined && trade !== undefined) entries.push(trade)
+      if (quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= start) entries.push(quote)
+      if (request.purpose === undefined && trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start)
+        entries.push(trade)
       if (request.purpose !== undefined) continue
       if (state.technicalTopic !== undefined) {
         for (const candidate of state.technicalFeatures.get(symbol) ?? []) {
@@ -142,13 +161,21 @@ export const selectStreamingInputs = (
         break
       }
       if (selected !== undefined) featureReceipts.push(selected)
-      else if (candidates.has(symbol))
-        featureExclusions.push({
-          symbol,
-          reason: 'not-ready',
-          message: 'matching complete rolling feature is unavailable',
-        })
-      else
+      else if (candidates.has(symbol)) {
+        let message = 'matching complete rolling feature is unavailable'
+        if (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade) {
+          const present = new Set(bars.map((bar) => intradayInstantNanos(bar.value.eventAt)))
+          const missing: string[] = []
+          for (let at = start; at < end; at += 60_000_000_000n)
+            if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
+          if (!present.has(end - 60_000_000_000n)) missingRangeCompletionBars.add(symbol)
+          message =
+            missing.length > 0
+              ? `rolling window lacks ${missing.length} of ${Number((end - start) / 60_000_000_000n)} required minute bars: ${missing.join(', ')}`
+              : 'no observed rolling feature matches the complete bar window'
+        }
+        featureExclusions.push({ symbol, reason: 'not-ready', message })
+      } else
         return yield* Result.fail(
           new IntradaySnapshotFailure({
             reason: 'not-ready',
@@ -207,14 +234,20 @@ export const selectStreamingInputs = (
       publicationPolicy,
     )
     const exclusions = new Map(availability.exclusions.map((exclusion) => [exclusion.symbol, exclusion]))
-    for (const exclusion of featureExclusions)
-      if (!exclusions.has(exclusion.symbol)) exclusions.set(exclusion.symbol, exclusion)
+    for (const exclusion of featureExclusions) {
+      const current = exclusions.get(exclusion.symbol)
+      if (current === undefined || (current.reason === 'not-ready' && missingRangeCompletionBars.has(exclusion.symbol)))
+        exclusions.set(exclusion.symbol, exclusion)
+    }
     const excluded = new Set(exclusions.keys())
     if (request.purpose === undefined && candidates.size > 0 && [...candidates].every((symbol) => excluded.has(symbol)))
       return yield* Result.fail(
         failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
       )
-    const technicalFeatures = technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
+    const technicalFeatures =
+      request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
+        ? technicalReceipts
+        : technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
     const technical =
       state.technicalTopic === undefined
         ? undefined

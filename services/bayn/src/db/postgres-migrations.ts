@@ -1,6 +1,6 @@
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import type { RuntimeConfig } from '../config'
 import { classifyDatabaseError, databaseError, DatabaseError } from './database-error'

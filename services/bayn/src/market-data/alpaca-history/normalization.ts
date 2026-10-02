@@ -194,7 +194,8 @@ const normalizeQuote = (
   if (eventAt.success < startAt || eventAt.success > endAt) {
     return normalizationFailure(`quote ${symbol} event timestamp is outside the requested interval`)
   }
-  if (wire.bp > wire.ap) return normalizationFailure(`quote ${symbol} has a bid above its ask`)
+  if (wire.bp > wire.ap && !(wire.ap === 0 && wire.as === 0))
+    return normalizationFailure(`quote ${symbol} has a bid above its ask`)
   return Result.succeed({
     symbol,
     eventAt: eventAt.success,
