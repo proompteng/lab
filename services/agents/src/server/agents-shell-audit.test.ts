@@ -614,6 +614,32 @@ describe('agents-shell activity audit', () => {
     }
   })
 
+  it('redacts credentials after concatenated and escaped executable names and options', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'cu""rl -u admin:synthetic-concatenated-value https://example.test',
+      "cu''rl -U admin:synthetic-concatenated-value https://example.test",
+      String.raw`/usr/bin/cu\rl -\u admin:synthetic-concatenated-value https://example.test`,
+      'dock""er --context remote lo""gin -p synthetic-concatenated-value registry.test',
+      String.raw`my\sql -\psynthetic-concatenated-value database`,
+      'open""ssl aes-256-cbc -k synthetic-concatenated-value -in fixture.txt',
+      'printf example; cu""rl -u admin:synthetic-concatenated-value https://example.test | sort -u',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'cu""rl',
+      args: ['-u', 'admin:synthetic-concatenated-value', 'https://example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-concatenated-value')
+      expect(content).toContain('https://example.test')
+      expect(content).toContain('registry.test')
+      expect(content).toContain('fixture.txt')
+    }
+  })
+
   it('preserves curl targets after its valueless cookie switch', () => {
     const records = captureAudit()
     const config = configFixture()

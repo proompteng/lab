@@ -26,14 +26,14 @@ const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|std
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
-const CREDENTIAL_COMMAND =
-  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker|podman)\b(["']*)((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
+const CREDENTIAL_COMMAND = /^(?:curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker|podman)$/
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
 const usesShellInput = (text: string) => SHELL_INPUT.test(text.replaceAll(/["'\\]/g, ''))
+const normalizeShellWord = (word: string) => word.replaceAll(/["'\\]/g, '')
 
 const shortCredentialOptions = (command: string) => {
-  const [executable = '', operation] = command.replaceAll(/["']/g, '').trim().split(/\s+/)
+  const [executable = '', operation] = normalizeShellWord(command).trim().split(/\s+/)
   const name = executable.split('/').at(-1)
   if (name === 'curl') return ['-u', '-U', '-b', '-E']
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
@@ -48,7 +48,7 @@ const shortCredentialOptions = (command: string) => {
 
 const argumentRedactor = (command: string) => {
   const words = command.match(SHELL_WORD) ?? []
-  const executable = (words[0] ?? '').replaceAll(/["']/g, '')
+  const executable = normalizeShellWord(words[0] ?? '')
   const name = executable.split('/').at(-1)
   const globalOperand =
     name === 'kubectl'
@@ -56,7 +56,7 @@ const argumentRedactor = (command: string) => {
       : name === 'docker' || name === 'podman'
         ? CONTAINER_GLOBAL_OPERAND
         : undefined
-  command = command.replaceAll(/["']/g, '')
+  command = normalizeShellWord(command)
   let options = shortCredentialOptions(command)
   let wrapper = /(?:^|\/)sshpass(?:\s|$)/.test(command)
   let wrapperOperand = false
@@ -72,7 +72,7 @@ const argumentRedactor = (command: string) => {
       options = shortCredentialOptions(`${executable} ${token}`)
     }
   }
-  for (const word of words.slice(1)) inspect(word.replaceAll(/["']/g, ''))
+  for (const word of words.slice(1)) inspect(normalizeShellWord(word))
   return <T>(word: T): T | string => {
     if (redactNext) {
       redactNext = false
@@ -80,7 +80,7 @@ const argumentRedactor = (command: string) => {
       return '[REDACTED]'
     }
     if (typeof word !== 'string') return word
-    const token = word.replaceAll(/["']/g, '')
+    const token = normalizeShellWord(word)
     inspect(token)
     if (VALUELESS_SECRET_OPTION.test(token)) return word
     const separator = token.indexOf('=')
@@ -105,8 +105,8 @@ const argumentRedactor = (command: string) => {
       return word
     }
     if (wrapperOperand) wrapperOperand = false
-    else if (wrapper && ['-f', '-d', '-P'].includes(word)) wrapperOperand = true
-    else if (wrapper && !word.startsWith('-')) {
+    else if (wrapper && ['-f', '-d', '-P'].includes(token)) wrapperOperand = true
+    else if (wrapper && !token.startsWith('-')) {
       wrapper = false
       options = shortCredentialOptions(word)
     }
@@ -114,11 +114,19 @@ const argumentRedactor = (command: string) => {
   }
 }
 
-const redactShortOptions = (text: string) =>
-  text.replace(CREDENTIAL_COMMAND, (_match, command: string, quotes: string, args: string) => {
-    const redact = argumentRedactor(command)
-    return command + quotes + args.replace(SHELL_WORD, (word) => redact(word))
+const redactShortOptions = (text: string) => {
+  let redact = argumentRedactor('')
+  let previousEnd = 0
+  return text.replace(SHELL_WORD, (word: string, offset: number) => {
+    if (/[;|&\r\n]/.test(text.slice(previousEnd, offset))) redact = argumentRedactor('')
+    previousEnd = offset + word.length
+    const redacted = redact(word)
+    if (redacted !== word) return redacted
+    const name = normalizeShellWord(word).split('/').at(-1) ?? ''
+    if (CREDENTIAL_COMMAND.test(name)) redact = argumentRedactor(name)
+    return word
   })
+}
 
 const bodyOmission = (kind: unknown) => {
   switch (typeof kind === 'string' ? kind.toLowerCase() : '') {
