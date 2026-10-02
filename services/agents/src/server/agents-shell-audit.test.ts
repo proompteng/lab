@@ -1100,6 +1100,28 @@ api repos/owner/repo/issues \
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
   })
 
+  it('omits multiline shell input before credential option redaction', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'curl -u\\\n admin:syntheticContinuedCredential https://example.test',
+      'curl -u\\\r\n admin:syntheticContinuedCredential https://example.test',
+      'cu\\\nrl -u admin:syntheticContinuedCredential https://example.test',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'curl',
+      args: ['-u\\\n', 'admin:syntheticContinuedCredential', 'https://example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticContinuedCredential')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
   it('omits curl flags that construct query input without a literal URL query', () => {
     const records = captureAudit()
     const config = configFixture()
