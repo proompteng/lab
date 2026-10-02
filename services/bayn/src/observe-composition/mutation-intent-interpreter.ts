@@ -6,7 +6,13 @@ import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError } from '../cycle/runner'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import { legacyAuthorityStateSchemaVersion, legacyIntentPlanSchemaVersion } from '../execution/legacy-wire'
-import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
+import {
+  classifyExistingCommit,
+  IntentStore,
+  planExecutionIntent,
+  validateCommitIdentity,
+  type StoredIntent,
+} from '../execution/intents'
 import { Authority, IntentState, KillState, type AuthorityState, type Intent } from '../execution/contracts'
 import { MutationStore, type MutationEvent } from '../execution/mutations'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
@@ -484,21 +490,37 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         failure: 'store',
       })
     }
-    const preparedIntentsToCommit = drainOpenOrders ? [] : preparedIntents
-    yield* Effect.forEach(
-      preparedIntentsToCommit,
-      (prepared) =>
-        (input.mutationPhase === 'CLOSE' && intentStore.commitClosing !== undefined
-          ? intentStore.commitClosing(prepared.intent, prepared.riskBinding.evaluation.decision)
-          : intentStore.commit(prepared.intent, prepared.riskBinding.evaluation.decision)
+    for (const prepared of drainOpenOrders ? [] : preparedIntents) {
+      if (prepared.stored?.decision !== undefined) {
+        const commit = yield* Effect.fromResult(
+          validateCommitIdentity(prepared.intent, prepared.riskBinding.evaluation.decision),
         ).pipe(
           Effect.mapError((cause) =>
-            mutationRunnerError({ message: 'durable execution intent-set commit failed', cause, failure: 'store' }),
+            mutationRunnerError({ message: 'durable execution intent identity is invalid', cause, failure: 'store' }),
           ),
-          withObservedStage('bayn.execution.intent.commit'),
+        )
+        const existing = yield* Effect.fromResult(classifyExistingCommit([prepared.stored], commit)).pipe(
+          Effect.mapError((cause) =>
+            mutationRunnerError({
+              message: 'durable execution intent conflicts with its decision',
+              cause,
+              failure: 'store',
+            }),
+          ),
+        )
+        if (existing._tag === 'ExactReplay') continue
+      }
+      yield* (
+        input.mutationPhase === 'CLOSE' && intentStore.commitClosing !== undefined
+          ? intentStore.commitClosing(prepared.intent, prepared.riskBinding.evaluation.decision)
+          : intentStore.commit(prepared.intent, prepared.riskBinding.evaluation.decision)
+      ).pipe(
+        Effect.mapError((cause) =>
+          mutationRunnerError({ message: 'durable execution intent-set commit failed', cause, failure: 'store' }),
         ),
-      { concurrency: 1, discard: true },
-    )
+        withObservedStage('bayn.execution.intent.commit'),
+      )
+    }
 
     const facts = yield* dependencies
       .readFacts({ input, preparation, policy, cycle, document, reconcile })

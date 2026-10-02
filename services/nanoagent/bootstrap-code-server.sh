@@ -36,7 +36,7 @@ install_code_server() {
     trap cleanup EXIT HUP INT TERM
     local archive="$code_temporary/code-server.tgz"
     curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
-      --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 \
+      --retry 3 --retry-all-errors --connect-timeout 15 --max-time 600 \
       --output "$archive" \
       "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${install_name}.tar.gz"
     if command -v sha256sum >/dev/null 2>&1; then

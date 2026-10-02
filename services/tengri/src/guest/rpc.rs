@@ -52,7 +52,7 @@ impl RpcClient {
         request
     }
 
-    pub async fn verify_identity(&self, agent_id: &str) -> Result<(), GuestError> {
+    pub async fn verify_identity(&self, pod_uid: &str) -> Result<(), GuestError> {
         let info = self
             .client
             .clone()
@@ -64,10 +64,10 @@ impl RpcClient {
                 } else { rpc_error(error) }
             })?
             .into_inner();
-        if info.microvm_id != agent_id {
+        if info.microvm_id != pod_uid {
             return Err(GuestError::Api {
                 status: StatusCode::BAD_GATEWAY,
-                message: "Nanoagent identity does not match the requested MicroVM".into(),
+                message: "Nanoagent identity does not match the current guest Pod".into(),
             });
         }
         if info.protocol_version != 1 {
