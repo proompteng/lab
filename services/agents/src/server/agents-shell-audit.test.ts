@@ -1512,7 +1512,7 @@ api repos/owner/repo/issues \
     expect(events[0]).toMatchObject({
       requestId: 'request-fixture',
       tool: 'read_file',
-      payload: { arguments: { path: 'hello.txt' } },
+      payload: { arguments: '[OMITTED]' },
     })
     expect(events[1]).toMatchObject({
       toolCallId: events[0].toolCallId,
@@ -1691,6 +1691,43 @@ api repos/owner/repo/issues \
       tool: 'shell_kill',
       payload: { outcome: 'error' },
     })
+  })
+
+  it('omits Git patterns and commit messages across actual MCP and derived process events', async () => {
+    const records = captureAudit()
+    const { client, config } = await connect()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    const pattern = 'synthetic-private-git-pattern'
+    const message = 'synthetic-private-commit-message'
+    await client.callTool({ name: 'git_write', arguments: { args: ['init'] } })
+    writeFileSync(join(config.workspaceRoot, 'tracked.txt'), pattern)
+    await client.callTool({ name: 'git_write', arguments: { args: ['add', 'tracked.txt'] } })
+    const grep = await client.callTool({ name: 'git', arguments: { args: ['grep', pattern] } })
+    expect(grep.isError).not.toBe(true)
+    expect(JSON.stringify(grep.structuredContent)).toContain(pattern)
+    const commit = await client.callTool({
+      name: 'git_write',
+      arguments: {
+        args: [
+          '-c',
+          'user.name=audit-fixture',
+          '-c',
+          'user.email=audit@example.test',
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '-m',
+          message,
+        ],
+      },
+    })
+    expect(commit.isError).not.toBe(true)
+    expect(JSON.stringify(commit.structuredContent)).toContain(message)
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain(pattern)
+      expect(content).not.toContain(message)
+    }
+    expect(records().some(({ event }) => event === 'git_finished')).toBe(true)
   })
 
   it('omits aliased executable input across actual shell calls and later job reads', async () => {

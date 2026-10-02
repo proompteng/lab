@@ -8,10 +8,9 @@ Open [Grafana Explore](https://grafana.k8s.proompteng.ai/explore), select the **
 
 Each JSON event includes `ts`, `event`, `schemaVersion`, a pseudonymous `subjectHash`, and `payload`.
 Tool calls also include `requestId`, `toolCallId`, and `tool`. Expand a log line to inspect its operation and result metadata.
-Rejected authorization, invalid-input, and unknown-tool calls retain metadata only. Their arguments, response content,
-and supplied unknown tool names are excluded from audit records. Free-form shell, search, administrative kubectl, and delegated-agent calls
-retain metadata only because their operands can contain credentials, task bodies, or task-derived names. Shell command bodies are omitted,
-including commands returned by later job reads; executable aliases and wrappers make credential semantics unknowable.
+All tool arguments and derived command/argv fields are omitted from audit records. Arbitrary operands can contain
+credentials or task text; executable aliases and wrappers prevent reliable classification. Authorized MCP responses
+retain their original content.
 
 Filter by a tool or follow one call:
 
@@ -25,7 +24,7 @@ Filter by a tool or follow one call:
 
 | Event                                                               | Activity                                                                                                                                                                                                 |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tool_call_started`                                                 | Every call's known tool name and authorization result. Validated authorized calls include sanitized arguments, except free-form shell, search, administrative kubectl, and delegated-agent calls.        |
+| `tool_call_started`                                                 | Every call's known tool name and authorization result. Arguments omitted.                                                                                                                                |
 | `tool_call_finished`                                                | Outcome and duration for every call, plus sanitized result metadata for authorized calls. `error` means an MCP tool error. `failed` means process failure. `running` means a background job has started. |
 | `shell_job_started`                                                 | Job ID, working directory, and timeout; command body omitted.                                                                                                                                            |
 | `shell_job_finished`                                                | Job ID, duration, exit code, signal, timeout state, output byte counts, and truncation state.                                                                                                            |
@@ -47,43 +46,9 @@ Raw stdout and stderr are omitted from every audit event, including later backgr
 emit credentials or task text without identifiable field names; shell syntax can also hide a resource name from command
 matching. Output omission does not depend on parsing commands. Exit status, byte counts, duration, and command metadata
 remain available. Inspect retained output through the authorized MCP caller rather than Loki.
-Commands and argv using stdin/fd credential switches, stdin paths, stdin-backed Kubernetes manifests, or curl's stdin
-configuration (`--config -` or `-K -`), or HTTP request bodies are omitted
-in full and marked `[OMITTED_SHELL_INPUT]`. Pipelines and inline shell bodies in here-strings, here-documents, process
-substitutions, and command substitutions receive the same treatment, independent of the receiving program. Logical
-`||` control flow remains visible. The audit retains the tool, job ID, timing, outcome, and byte counts without parsing
-out that input. Dollar expressions are conservatively omitted as opaque input, including dollar characters in quoted
-text. Multiline input, redirections, and parenthesized shell groups are also omitted in full. Brace and glob expansion markers (`{`, `}`, `[`, `]`, and `*`) receive the same conservative treatment,
-including quoted literals. The audit does not resolve expansions that can hide executable names, options, or operations.
-Explicit inline code passed to shell/Python command modes, Node/Bun eval/print modes, or shell `eval`, `trap`, and
-`alias` builtins is omitted as an opaque body, as are embedded SSH `ProxyCommand`, `RemoteCommand`, `LocalCommand`, and `KnownHostsCommand` bodies. Script-file paths
-and ordinary proxy-jump targets remain visible. Quoted arguments embedding a known credential-owning command
-are also omitted, independent of the outer executable. This covers nested remote commands without interpreting their body.
-Codex CLI and `cx-codex-run` input is omitted to keep inline task text out of audit logs.
-The `search` tool retains operation metadata without search patterns or its derived command.
-HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
-`--body`, `--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. GitHub authentication and secret
-operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET
-targets without queries or fragments remain visible. Inputs containing query or fragment markers (`?` or `#`) are
-omitted in full because those values can contain credentials under arbitrary or encoded parameter names. The markers
-are conservatively opaque, including quoted literals and relative API endpoints, independently of the executable or URL scheme.
-Curl user information is redacted even in URLs without a scheme. Secret values in assignments and data fields are
-redacted without consuming bare Kubernetes resource nouns, resource names, or following flags.
-Curl's `--url-query` and `--request-target` inputs receive the same omission because they can construct query input
-without a literal query in the URL. The repository's `k` alias uses the same credential and stdin-manifest policy as
-`kubectl`, including executable paths and global options.
-GitHub API payload fields (`-f`, `-F`, `--raw-field`, `--field`) and `--input` bodies are omitted
-in full. Git credential-protocol commands and helpers also receive whole-input omission. OpenSSH key
-passphrases (`ssh-keygen -N` and `-P`) are redacted while key-file paths and ordinary SSH/SCP port operands remain visible.
-OpenSSL password-generation input is omitted in full; literal TLS PSK and SRP credential operands are redacted.
-Credential short options inside groups receive conservative redaction, including attached operands and operands in
-the following argument. Curl grouping stops at its first value-taking option, preserving ordinary output paths;
-grouped data/form options receive whole-input omission. Ordinary groups without credential options, such as curl's
-`-svf`, remain visible.
-Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation
-text and goal objectives.
-Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess
-output, which can contain task text in worker records or logs.
+Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are omitted, including inline implementation
+text and goal objectives. Delegated-agent tools retain operation metadata and outcomes while omitting their result
+bodies and subprocess output. Use the authorized MCP caller to inspect original tool input and retained output.
 
 Each retained string is limited to 4,000 encoded JSON bytes. The payload has a shared 12,000-byte budget, a maximum
 nesting depth of four, 20 entries per array, and 30 fields per object. `payloadTruncated=true` marks omitted preview
