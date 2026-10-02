@@ -26,6 +26,12 @@ pub(crate) struct TestService {
 
 #[tonic::async_trait]
 impl proto::nanoagent_service_server::NanoagentService for TestService {
+    async fn refresh_spire_bootstrap(
+        &self,
+        _: Request<proto::SpireBootstrap>,
+    ) -> Result<Response<proto::Empty>, Status> {
+        Err(Status::unimplemented("fixture has no SPIRE agent"))
+    }
     async fn get_info(
         &self,
         request: Request<proto::Empty>,
@@ -202,7 +208,7 @@ impl TestServer {
     pub async fn start(service: TestService) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let rpc = RpcClient::new(&base_url, "fixture-token").unwrap();
+        let rpc = RpcClient::fixture(&base_url, "fixture-token").unwrap();
         let server = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(proto::nanoagent_service_server::NanoagentServiceServer::new(service))
@@ -215,6 +221,8 @@ impl TestServer {
                 rpc,
                 base_url,
                 token: "fixture-token".into(),
+                http: reqwest::Client::new(),
+                preview_tls: None,
             },
             server,
         }
