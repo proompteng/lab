@@ -495,6 +495,34 @@ describe('agents-shell activity audit', () => {
     expect(JSON.stringify(records())).toContain('-kfile fixture.pwd')
   })
 
+  it('omits OpenSSL password-generation input and redacts TLS PSK and SRP credentials', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'openssl passwd syntheticOpenSSLInput',
+      '\'/usr/bin/open\'"ssl" -provider default passwd -6 syntheticOpenSSLInput',
+      'openssl s_client -connect example.test:443 -psk syntheticOpenSSLInput',
+      'openssl s_client -psk=syntheticOpenSSLInput',
+      'openssl s_client -srppass syntheticOpenSSLInput -srpuser syntheticOpenSSLInput',
+      'openssl s_server -psk_identity syntheticOpenSSLInput',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    for (const args of [
+      ['passwd', '-6', 'syntheticOpenSSLInput'],
+      ['s_client', '-connect', 'example.test:443', '-psk', 'syntheticOpenSSLInput'],
+      ['s_client', '-srppass', 'syntheticOpenSSLInput', '-srpuser', 'syntheticOpenSSLInput'],
+    ])
+      writeAuditLog(config, 'probe', null, { command: 'openssl', args })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticOpenSSLInput')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+      expect(content).toContain('example.test:443')
+    }
+    writeAuditLog(config, 'probe', null, { command: 'openssl version' })
+    expect(records().at(-1)?.payload.command).toBe('openssl version')
+  })
+
   it('redacts OpenSSL MAC and key derivation operands in raw commands and argv', () => {
     const records = captureAudit()
     const config = configFixture()

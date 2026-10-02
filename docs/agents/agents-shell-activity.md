@@ -68,6 +68,7 @@ without a literal query in the URL. The repository's `k` alias uses the same cre
 GitHub API payload fields (`-f`, `-F`, `--raw-field`, `--field`) and `--input` bodies are omitted
 in full. Git credential-protocol commands and helpers also receive whole-input omission. OpenSSH key
 passphrases (`ssh-keygen -N` and `-P`) are redacted while key-file paths and ordinary SSH/SCP port operands remain visible.
+OpenSSL password-generation input is omitted in full; literal TLS PSK and SRP credential operands are redacted.
 Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation
 text and goal objectives.
 Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess
