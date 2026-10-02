@@ -577,6 +577,48 @@ describe('agents-shell activity audit', () => {
     }
   })
 
+  it('omits curl request bodies independently of JSON shell escaping', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      String.raw`curl -d "{\"password\":\"synthetic-request-body\"}" https://example.test`,
+      "curl --data-raw='synthetic-request-body' https://example.test",
+      'cu\'\'rl --json \'{"message":"synthetic-request-body"}\' https://example.test',
+      'curl -dsynthetic-request-body https://example.test',
+      "curl -F 'message=synthetic-request-body' https://example.test",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'curl',
+      args: ['--data', '{"password":"synthetic-request-body"}', 'https://example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-request-body')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
+  it('preserves valueless user switches outside credential-owning commands', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    writeAuditLog(config, 'probe', null, { command: 'systemctl --user status demo.service' })
+    writeAuditLog(config, 'probe', null, { command: 'pip install --user fixture-package' })
+    writeAuditLog(config, 'probe', null, { command: 'systemctl', args: ['--user', 'status', 'demo.service'] })
+    writeAuditLog(config, 'probe', null, { command: 'curl --user admin:synthetic-user-password https://example.test' })
+    writeAuditLog(config, 'probe', null, { command: 'curl', args: ['--user=admin:synthetic-user-password'] })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).toContain('systemctl --user status demo.service')
+      expect(content).toContain('pip install --user fixture-package')
+      expect(content).toContain('"--user","status","demo.service"')
+      expect(content).not.toContain('synthetic-user-password')
+      expect(content).toContain('https://example.test')
+    }
+  })
+
   it('redacts container login passwords after global options without masking published ports', () => {
     const records = captureAudit()
     const config = configFixture()

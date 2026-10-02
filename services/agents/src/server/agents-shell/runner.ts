@@ -453,16 +453,21 @@ export class AgentsShellRunner {
           const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
             (resolvePromise, reject) => {
               let settled = false
+              let drainTimeout: ReturnType<typeof setTimeout> | undefined
               const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
                 if (settled) return
                 settled = true
+                clearTimeout(drainTimeout)
                 child.stdout.destroy()
                 child.stderr.destroy()
                 resolvePromise({ exitCode, signal })
               }
 
               child.once('error', reject)
-              child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
+              child.once('exit', (exitCode, signal) => {
+                clearTimeout(timeout)
+                drainTimeout = setTimeout(() => finish(exitCode, signal), 250)
+              })
               child.once('close', (exitCode, signal) => finish(exitCode, signal))
             },
           ).finally(() => clearTimeout(timeout))
