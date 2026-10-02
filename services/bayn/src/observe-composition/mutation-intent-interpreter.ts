@@ -556,6 +556,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
 
     const terminalEvidence: ExecutionCycleIntentTerminalEvidence[] = []
     let pendingIntentFound = false
+    let submissionNotAllowed = false
     let unsuccessfulIntentFound = entryHasTerminalUnsuccessfulIntent
     let deferredExpiration:
       | {
@@ -685,7 +686,10 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             continue
           }
           if (deferredExpiration !== undefined) continue
-          if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
+          if (!allowSubmit) {
+            submissionNotAllowed = true
+            continue
+          }
           yield* Effect.fromResult(
             input.mutationPhase === 'CLOSE'
               ? decidePreparedCloseIntentAdmission(
@@ -761,6 +765,10 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         reason: deferredExpiration.reason,
         observedAt: deferredExpiration.observedAt,
       }
+    }
+
+    if (submissionNotAllowed) {
+      return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
     }
 
     const completion = decideExecutionPhaseCompletion(mutationPhase, document.createdAt, terminalEvidence, {
