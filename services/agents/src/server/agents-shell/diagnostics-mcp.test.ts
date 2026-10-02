@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -48,6 +48,43 @@ afterEach(async () => {
 })
 
 describe('diagnostic MCP boundaries', () => {
+  it('rechecks ownership if the path changes after the initial authorization', async () => {
+    const worktree = join(root, 'worktrees', 'lab', 'other-owner')
+    mkdirSync(worktree, { recursive: true })
+    const foreign = join(worktree, 'sample.json')
+    writeFileSync(foreign, '{"marker":"other-owner-private"}')
+    runner.repoSessions.set({
+      id: 'other-session',
+      ownerSubject: 'other-user',
+      baseBranch: 'main',
+      baseSha: 'a'.repeat(40),
+      branch: 'codex/other-owner',
+      worktree,
+      createdAt: '2026-01-01T00:00:00Z',
+    })
+    const resolveCwd = runner.resolveCwd.bind(runner)
+    for (const name of ['read_file', 'file_read_range', 'evidence_inspect']) {
+      const path = join(root, `${name}.json`)
+      writeFileSync(path, '{}')
+      const check = vi.spyOn(runner, 'resolveCwd').mockImplementationOnce((...args) => {
+        const result = resolveCwd(...args)
+        unlinkSync(path)
+        symlinkSync(foreign, path)
+        return result
+      })
+      try {
+        const result = await client.callTool({
+          name,
+          arguments: name === 'evidence_inspect' ? { path, format: 'json' } : { path },
+        })
+        expect(result.isError).toBe(true)
+        expect(JSON.stringify(result)).not.toContain('other-owner-private')
+      } finally {
+        check.mockRestore()
+      }
+    }
+  })
+
   it('enforces session ownership for direct paths and internal symlink targets', async () => {
     const worktree = join(root, 'worktrees', 'lab', 'other-owner')
     mkdirSync(worktree, { recursive: true })

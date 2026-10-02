@@ -79,9 +79,8 @@ export const createFileTools = (): EffectTool[] => [
             config.maxOutputBytes,
             1,
           )
-          const page = readFileRange(root, {
-            path,
-            maxBytes,
+          const page = readFileRange(root, { path, maxBytes }, (openedPath) => {
+            runner.resolveCwd(dirname(openedPath), args.sessionId, auth)
           })
           return jsonTextResult({
             path: page.path,

@@ -22,6 +22,8 @@ The existing `read_file` prefix reader uses the same descriptor and bounded-read
 `path`, `content`, `bytes`, and `truncated` response shape. It now rejects the unsafe file forms above and does not
 read a whole file merely to return a small prefix. All file readers enforce repo-session ownership on the canonical
 target, including when the caller supplies a direct workspace path or an internal symlink instead of a session ID.
+Ownership is checked again against the opened descriptor before reading, so a path swapped after the initial check
+cannot redirect the read into another session.
 
 ## Evidence integrity
 

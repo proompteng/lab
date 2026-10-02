@@ -11,6 +11,7 @@ const LINE_LIMIT = 1024 * 1024
 const RECORD_LIMIT = 250_000
 
 type FileIdentity = { path: string; version: string; sizeBytes: number; modifiedAt: string }
+type FileAuthorizer = (openedPath: string) => void
 export type FileRangeInput = { path: string; offset?: number; maxBytes?: number; expectedVersion?: string }
 export type EvidenceInput = { path: string; format: 'json' | 'ndjson' | 'json-stream'; expectedSha256?: string }
 export type PostgresLogInput = { path: string; startAt: string; endAt: string; expectedSha256?: string }
@@ -27,7 +28,12 @@ const integerInRange = (value: number, name: string, minimum: number, maximum: n
   return value
 }
 
-const withWorkspaceFile = <T>(root: string, inputPath: string, read: (fd: number, identity: FileIdentity) => T): T => {
+const withWorkspaceFile = <T>(
+  root: string,
+  inputPath: string,
+  read: (fd: number, identity: FileIdentity) => T,
+  authorize?: FileAuthorizer,
+): T => {
   const canonicalRoot = realpathSync(root)
   const lexicalPath = resolve(canonicalRoot, inputPath)
   if (!isInsidePath(canonicalRoot, lexicalPath)) throw new Error('File must stay inside the workspace')
@@ -43,6 +49,7 @@ const withWorkspaceFile = <T>(root: string, inputPath: string, read: (fd: number
     if (openedPath !== path || !isInsidePath(canonicalRoot, openedPath)) {
       throw new Error('Opened file does not match the workspace path')
     }
+    authorize?.(openedPath)
     const sizeBytes = integerInRange(Number(stat.size), 'file size', 0, Number.MAX_SAFE_INTEGER)
     const version = versionOf(path, stat)
     const result = read(fd, {
@@ -77,26 +84,31 @@ const decodeUtf8 = (buffer: Buffer, streaming = false) => {
   }
 }
 
-export const readFileRange = (root: string, input: FileRangeInput) => {
+export const readFileRange = (root: string, input: FileRangeInput, authorize?: FileAuthorizer) => {
   const offset = integerInRange(input.offset ?? 0, 'offset', 0, Number.MAX_SAFE_INTEGER)
   const maxBytes = integerInRange(input.maxBytes ?? 20_000, 'maxBytes', 1, FILE_PAGE_LIMIT)
-  return withWorkspaceFile(root, input.path, (fd, identity) => {
-    if (input.expectedVersion !== undefined && input.expectedVersion !== identity.version) {
-      throw new Error('File changed since the previous read')
-    }
-    if (offset > identity.sizeBytes) throw new Error('offset is past the end of the file')
-    const buffer = readBytes(fd, offset, Math.min(maxBytes, identity.sizeBytes - offset))
-    const content = decodeUtf8(buffer, offset + buffer.length < identity.sizeBytes)
-    const readLength = Buffer.byteLength(content)
-    if (buffer.length > 0 && readLength === 0) throw new Error('maxBytes cannot contain the next UTF-8 character')
-    return {
-      ...identity,
-      offset,
-      nextOffset: offset + readLength,
-      endOfFile: offset + readLength === identity.sizeBytes,
-      content,
-    }
-  })
+  return withWorkspaceFile(
+    root,
+    input.path,
+    (fd, identity) => {
+      if (input.expectedVersion !== undefined && input.expectedVersion !== identity.version) {
+        throw new Error('File changed since the previous read')
+      }
+      if (offset > identity.sizeBytes) throw new Error('offset is past the end of the file')
+      const buffer = readBytes(fd, offset, Math.min(maxBytes, identity.sizeBytes - offset))
+      const content = decodeUtf8(buffer, offset + buffer.length < identity.sizeBytes)
+      const readLength = Buffer.byteLength(content)
+      if (buffer.length > 0 && readLength === 0) throw new Error('maxBytes cannot contain the next UTF-8 character')
+      return {
+        ...identity,
+        offset,
+        nextOffset: offset + readLength,
+        endOfFile: offset + readLength === identity.sizeBytes,
+        content,
+      }
+    },
+    authorize,
+  )
 }
 
 const readCompleteFile = <T>(
@@ -104,14 +116,21 @@ const readCompleteFile = <T>(
   input: { path: string; expectedSha256?: string },
   limit: number,
   inspect: (buffer: Buffer) => T,
+  authorize?: FileAuthorizer,
 ) =>
-  withWorkspaceFile(root, input.path, (fd, identity) => {
-    if (identity.sizeBytes > limit) throw new Error(`Input exceeds the ${limit}-byte diagnostic limit`)
-    const buffer = readBytes(fd, 0, identity.sizeBytes)
-    const sha256 = createHash('sha256').update(buffer).digest('hex')
-    if (input.expectedSha256 !== undefined && input.expectedSha256 !== sha256) throw new Error('Evidence hash mismatch')
-    return { ...identity, sha256, completeFile: true as const, ...inspect(buffer) }
-  })
+  withWorkspaceFile(
+    root,
+    input.path,
+    (fd, identity) => {
+      if (identity.sizeBytes > limit) throw new Error(`Input exceeds the ${limit}-byte diagnostic limit`)
+      const buffer = readBytes(fd, 0, identity.sizeBytes)
+      const sha256 = createHash('sha256').update(buffer).digest('hex')
+      if (input.expectedSha256 !== undefined && input.expectedSha256 !== sha256)
+        throw new Error('Evidence hash mismatch')
+      return { ...identity, sha256, completeFile: true as const, ...inspect(buffer) }
+    },
+    authorize,
+  )
 
 const forEachLine = (buffer: Buffer, consume: (line: string, lineNumber: number) => void) => {
   let offset = 0
@@ -161,51 +180,57 @@ const forEachJsonDocument = (text: string, consume: (document: string, lineNumbe
   }
 }
 
-export const inspectEvidence = (root: string, input: EvidenceInput) => {
+export const inspectEvidence = (root: string, input: EvidenceInput, authorize?: FileAuthorizer) => {
   if (!['json', 'ndjson', 'json-stream'].includes(input.format)) throw new Error('Unsupported evidence format')
-  return readCompleteFile(root, input, EVIDENCE_LIMIT, (buffer) => {
-    const counts = {
-      format: input.format,
-      documentCount: 0,
-      objectDocuments: 0,
-      arrayDocuments: 0,
-      scalarDocuments: 0,
-      topLevelArrayElements: 0,
-      blankLines: 0,
-    }
-    const consume = (text: string, lineNumber: number) => {
-      let value: unknown
-      try {
-        value = JSON.parse(text)
-      } catch {
-        throw new Error(`Invalid JSON at line ${lineNumber}`)
+  return readCompleteFile(
+    root,
+    input,
+    EVIDENCE_LIMIT,
+    (buffer) => {
+      const counts = {
+        format: input.format,
+        documentCount: 0,
+        objectDocuments: 0,
+        arrayDocuments: 0,
+        scalarDocuments: 0,
+        topLevelArrayElements: 0,
+        blankLines: 0,
       }
-      counts.documentCount += 1
-      if (counts.documentCount > RECORD_LIMIT) throw new Error('Evidence exceeds the diagnostic document limit')
-      if (Array.isArray(value)) {
-        if (value.length > RECORD_LIMIT) throw new Error('Array exceeds the diagnostic record limit')
-        counts.arrayDocuments += 1
-        counts.topLevelArrayElements += value.length
-      } else if (value !== null && typeof value === 'object') {
-        counts.objectDocuments += 1
+      const consume = (text: string, lineNumber: number) => {
+        let value: unknown
+        try {
+          value = JSON.parse(text)
+        } catch {
+          throw new Error(`Invalid JSON at line ${lineNumber}`)
+        }
+        counts.documentCount += 1
+        if (counts.documentCount > RECORD_LIMIT) throw new Error('Evidence exceeds the diagnostic document limit')
+        if (Array.isArray(value)) {
+          if (value.length > RECORD_LIMIT) throw new Error('Array exceeds the diagnostic record limit')
+          counts.arrayDocuments += 1
+          counts.topLevelArrayElements += value.length
+        } else if (value !== null && typeof value === 'object') {
+          counts.objectDocuments += 1
+        } else {
+          counts.scalarDocuments += 1
+        }
+      }
+      if (input.format === 'json') {
+        consume(decodeUtf8(buffer), 1)
+      } else if (input.format === 'json-stream') {
+        forEachJsonDocument(decodeUtf8(buffer), consume)
+        if (counts.documentCount === 0) throw new Error('JSON stream evidence is empty')
       } else {
-        counts.scalarDocuments += 1
+        forEachLine(buffer, (line, lineNumber) => {
+          if (line.trim() === '') counts.blankLines += 1
+          else consume(line, lineNumber)
+        })
+        if (counts.documentCount === 0) throw new Error('NDJSON evidence is empty')
       }
-    }
-    if (input.format === 'json') {
-      consume(decodeUtf8(buffer), 1)
-    } else if (input.format === 'json-stream') {
-      forEachJsonDocument(decodeUtf8(buffer), consume)
-      if (counts.documentCount === 0) throw new Error('JSON stream evidence is empty')
-    } else {
-      forEachLine(buffer, (line, lineNumber) => {
-        if (line.trim() === '') counts.blankLines += 1
-        else consume(line, lineNumber)
-      })
-      if (counts.documentCount === 0) throw new Error('NDJSON evidence is empty')
-    }
-    return counts
-  })
+      return counts
+    },
+    authorize,
+  )
 }
 
 const timestamp = (value: unknown) => {
@@ -232,122 +257,128 @@ const durationSummary = (values: number[]) => {
   }
 }
 
-export const summarizePostgresLog = (root: string, input: PostgresLogInput) => {
+export const summarizePostgresLog = (root: string, input: PostgresLogInput, authorize?: FileAuthorizer) => {
   const start = timestamp(input.startAt)
   const end = timestamp(input.endAt)
   if (start === null || end === null) throw new Error('A valid UTC timestamp is required for each interval bound')
   if (end <= start) throw new Error('The requested interval must have positive duration')
   if (end - start > 24 * 60 * 60 * 1000) throw new Error('The requested interval cannot exceed 24 hours')
 
-  return readCompleteFile(root, input, LOG_LIMIT, (buffer) => {
-    const counts = {
-      inRangeRecords: 0,
-      outOfRangeRecords: 0,
-      malformedLines: 0,
-      unrecognizedRecords: 0,
-      recordsWithoutTimestamp: 0,
-      invalidNumericRecords: 0,
-      blankLines: 0,
-      replicationTimeouts: 0,
-      slowCommitsOverOneSecond: 0,
-    }
-    const severities = { DEBUG: 0, INFO: 0, LOG: 0, NOTICE: 0, WARNING: 0, ERROR: 0, FATAL: 0, PANIC: 0, UNKNOWN: 0 }
-    const statements: number[] = []
-    const commits: number[] = []
-    const checkpoints: number[] = []
-    const restartpoints: number[] = []
-    let first: number | null = null
-    let last: number | null = null
-    let firstInRange: number | null = null
-    let lastInRange: number | null = null
-    const addDuration = (raw: string, scale: number, values: number[]) => {
-      const value = Number(raw) * scale
-      if (!Number.isFinite(value) || value > Number.MAX_SAFE_INTEGER / RECORD_LIMIT) {
-        counts.invalidNumericRecords += 1
-        return null
+  return readCompleteFile(
+    root,
+    input,
+    LOG_LIMIT,
+    (buffer) => {
+      const counts = {
+        inRangeRecords: 0,
+        outOfRangeRecords: 0,
+        malformedLines: 0,
+        unrecognizedRecords: 0,
+        recordsWithoutTimestamp: 0,
+        invalidNumericRecords: 0,
+        blankLines: 0,
+        replicationTimeouts: 0,
+        slowCommitsOverOneSecond: 0,
       }
-      values.push(value)
-      return value
-    }
-    const linesRead = forEachLine(buffer, (line) => {
-      if (line.trim() === '') {
-        counts.blankLines += 1
-        return
+      const severities = { DEBUG: 0, INFO: 0, LOG: 0, NOTICE: 0, WARNING: 0, ERROR: 0, FATAL: 0, PANIC: 0, UNKNOWN: 0 }
+      const statements: number[] = []
+      const commits: number[] = []
+      const checkpoints: number[] = []
+      const restartpoints: number[] = []
+      let first: number | null = null
+      let last: number | null = null
+      let firstInRange: number | null = null
+      let lastInRange: number | null = null
+      const addDuration = (raw: string, scale: number, values: number[]) => {
+        const value = Number(raw) * scale
+        if (!Number.isFinite(value) || value > Number.MAX_SAFE_INTEGER / RECORD_LIMIT) {
+          counts.invalidNumericRecords += 1
+          return null
+        }
+        values.push(value)
+        return value
       }
-      const prefix = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z) /)
-      let row: Record<string, unknown> | null
-      try {
-        row = object(JSON.parse(prefix ? line.slice(prefix[0].length) : line))
-      } catch {
-        counts.malformedLines += 1
-        return
-      }
-      const record = object(row?.record) ?? row
-      if (!record || typeof record.message !== 'string') {
-        counts.unrecognizedRecords += 1
-        return
-      }
-      const time =
-        record.log_time !== undefined ? timestamp(record.log_time) : (timestamp(row?.ts) ?? timestamp(prefix?.[1]))
-      if (time === null) {
-        counts.recordsWithoutTimestamp += 1
-        return
-      }
-      first = first === null ? time : Math.min(first, time)
-      last = last === null ? time : Math.max(last, time)
-      if (time < start || time >= end) {
-        counts.outOfRangeRecords += 1
-        return
-      }
-      firstInRange = firstInRange === null ? time : Math.min(firstInRange, time)
-      lastInRange = lastInRange === null ? time : Math.max(lastInRange, time)
-      counts.inRangeRecords += 1
-      const severityValue = record.error_severity ?? row?.level
-      const severity = typeof severityValue === 'string' ? severityValue.toUpperCase() : 'UNKNOWN'
-      if (Object.hasOwn(severities, severity)) severities[severity as keyof typeof severities] += 1
-      else severities.UNKNOWN += 1
-      const message = record.message
-      const duration = message.match(/^duration:\s+(\d+(?:\.\d+)?)\s+ms\b/)
-      if (duration) {
-        const value = addDuration(duration[1], 1, statements)
+      const linesRead = forEachLine(buffer, (line) => {
+        if (line.trim() === '') {
+          counts.blankLines += 1
+          return
+        }
+        const prefix = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z) /)
+        let row: Record<string, unknown> | null
+        try {
+          row = object(JSON.parse(prefix ? line.slice(prefix[0].length) : line))
+        } catch {
+          counts.malformedLines += 1
+          return
+        }
+        const record = object(row?.record) ?? row
+        if (!record || typeof record.message !== 'string') {
+          counts.unrecognizedRecords += 1
+          return
+        }
+        const time =
+          record.log_time !== undefined ? timestamp(record.log_time) : (timestamp(row?.ts) ?? timestamp(prefix?.[1]))
+        if (time === null) {
+          counts.recordsWithoutTimestamp += 1
+          return
+        }
+        first = first === null ? time : Math.min(first, time)
+        last = last === null ? time : Math.max(last, time)
+        if (time < start || time >= end) {
+          counts.outOfRangeRecords += 1
+          return
+        }
+        firstInRange = firstInRange === null ? time : Math.min(firstInRange, time)
+        lastInRange = lastInRange === null ? time : Math.max(lastInRange, time)
+        counts.inRangeRecords += 1
+        const severityValue = record.error_severity ?? row?.level
+        const severity = typeof severityValue === 'string' ? severityValue.toUpperCase() : 'UNKNOWN'
+        if (Object.hasOwn(severities, severity)) severities[severity as keyof typeof severities] += 1
+        else severities.UNKNOWN += 1
+        const message = record.message
+        const duration = message.match(/^duration:\s+(\d+(?:\.\d+)?)\s+ms\b/)
+        if (duration) {
+          const value = addDuration(duration[1], 1, statements)
+          if (
+            value !== null &&
+            /^duration:\s+\d+(?:\.\d+)?\s+ms\s+(?:statement|execute [^:]*):\s*COMMIT(?:\s+(?:WORK|TRANSACTION))?\s*;?\s*$/i.test(
+              message,
+            )
+          ) {
+            commits.push(value)
+            if (value > 1000) counts.slowCommitsOverOneSecond += 1
+          }
+        }
+        const sync = message.match(/\bsync=(\d+(?:\.\d+)?)\s*s\b/)
+        if (sync && message.startsWith('checkpoint complete:')) addDuration(sync[1], 1000, checkpoints)
+        if (sync && message.startsWith('restartpoint complete:')) addDuration(sync[1], 1000, restartpoints)
         if (
-          value !== null &&
-          /^duration:\s+\d+(?:\.\d+)?\s+ms\s+(?:statement|execute [^:]*):\s*COMMIT(?:\s+(?:WORK|TRANSACTION))?\s*;?\s*$/i.test(
+          /terminating walsender process due to replication timeout|could not receive data from WAL stream:.*timed out/.test(
             message,
           )
         ) {
-          commits.push(value)
-          if (value > 1000) counts.slowCommitsOverOneSecond += 1
+          counts.replicationTimeouts += 1
         }
+      })
+      const iso = (value: number | null) => (value === null ? null : new Date(value).toISOString())
+      return {
+        startAt: new Date(start).toISOString(),
+        endAt: new Date(end).toISOString(),
+        sessionCoverage: 'not_proven' as const,
+        firstObservedAt: iso(first),
+        lastObservedAt: iso(last),
+        firstInRangeAt: iso(firstInRange),
+        lastInRangeAt: iso(lastInRange),
+        linesRead,
+        ...counts,
+        severities,
+        quantileMethod: 'nearest_rank' as const,
+        statementDurationMs: durationSummary(statements),
+        commitDurationMs: durationSummary(commits),
+        checkpointSyncMs: durationSummary(checkpoints),
+        restartpointSyncMs: durationSummary(restartpoints),
       }
-      const sync = message.match(/\bsync=(\d+(?:\.\d+)?)\s*s\b/)
-      if (sync && message.startsWith('checkpoint complete:')) addDuration(sync[1], 1000, checkpoints)
-      if (sync && message.startsWith('restartpoint complete:')) addDuration(sync[1], 1000, restartpoints)
-      if (
-        /terminating walsender process due to replication timeout|could not receive data from WAL stream:.*timed out/.test(
-          message,
-        )
-      ) {
-        counts.replicationTimeouts += 1
-      }
-    })
-    const iso = (value: number | null) => (value === null ? null : new Date(value).toISOString())
-    return {
-      startAt: new Date(start).toISOString(),
-      endAt: new Date(end).toISOString(),
-      sessionCoverage: 'not_proven' as const,
-      firstObservedAt: iso(first),
-      lastObservedAt: iso(last),
-      firstInRangeAt: iso(firstInRange),
-      lastInRangeAt: iso(lastInRange),
-      linesRead,
-      ...counts,
-      severities,
-      quantileMethod: 'nearest_rank' as const,
-      statementDurationMs: durationSummary(statements),
-      commitDurationMs: durationSummary(commits),
-      checkpointSyncMs: durationSummary(checkpoints),
-      restartpointSyncMs: durationSummary(restartpoints),
-    }
-  })
+    },
+    authorize,
+  )
 }

@@ -24,14 +24,16 @@ const readDiagnostic = <I extends { path: string; sessionId?: string }, O extend
   name: string,
   input: I,
   { runner, auth }: EffectToolContext,
-  inspect: (root: string, input: I) => O,
+  inspect: (root: string, input: I, authorize: (openedPath: string) => void) => O,
 ) =>
   Effect.try({
     try: () => {
       const root = runner.resolveRoot(input.sessionId, auth)
       const path = realpathSync(resolveWorkspacePath(root, input.path))
       runner.resolveCwd(dirname(path), input.sessionId, auth)
-      const result = inspect(root, { ...input, path })
+      const result = inspect(root, { ...input, path }, (openedPath) => {
+        runner.resolveCwd(dirname(openedPath), input.sessionId, auth)
+      })
       runner.audit('diagnostic_read', auth, {
         tool: name,
         pathHash: createHash('sha256').update(path).digest('hex'),
@@ -55,11 +57,11 @@ export const createDiagnosticTools = (): EffectTool[] => [
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
     handler: (input: Schema.Schema.Type<typeof FileRangeInputSchema>, context) =>
-      readDiagnostic('file_read_range', input, context, (root, args) => {
+      readDiagnostic('file_read_range', input, context, (root, args, authorize) => {
         const limit = Math.min(context.config.maxOutputBytes, FILE_PAGE_LIMIT)
         const maxBytes = args.maxBytes ?? Math.min(context.config.defaultOutputBytes, limit)
         if (maxBytes > limit) throw new Error(`maxBytes exceeds the configured ${limit}-byte page limit`)
-        return readFileRange(root, { ...args, maxBytes })
+        return readFileRange(root, { ...args, maxBytes }, authorize)
       }),
   },
   {
