@@ -724,6 +724,38 @@ describe('agents-shell activity audit', () => {
     expect(records().at(-1)?.payload.command).toBe('git status || git diff')
   })
 
+  it('omits GitHub API payload fields while retaining plain GET targets', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "gh api repos/owner/repo/issues -f body='syntheticApiBody private text'",
+      "gh api repos/owner/repo/issues -Fbody='syntheticApiBody private text'",
+      "gh api --method POST repos/owner/repo/issues --raw-field=body='syntheticApiBody private text'",
+      "'/usr/bin/g'\"h\" --hostname example.test a''pi repos/owner/repo/issues '--fi'\"eld\" 'body=syntheticApiBody private text'",
+      'gh api repos/owner/repo/issues --input=syntheticApiBody.json',
+      String.raw`gh \
+api repos/owner/repo/issues \
+-f body='syntheticApiBody private text'`,
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'gh',
+      args: ['api', 'repos/owner/repo/issues', '-f', 'body=syntheticApiBody private text'],
+    })
+    writeAuditLog(config, 'probe', null, { command: 'gh', args: ['api', 'repos/owner/repo/issues', '--input', '-'] })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticApiBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'gh api repos/owner/repo/issues --method GET --paginate' })
+    expect(records().at(-1)?.payload.command).toBe('gh api repos/owner/repo/issues --method GET --paginate')
+    writeAuditLog(config, 'probe', null, { command: 'gh repo view --json name --jq .name' })
+    expect(records().at(-1)?.payload.command).toBe('gh repo view --json name --jq .name')
+  })
+
   it('redacts ssh-keygen passphrases without masking SSH and SCP port operands', () => {
     const records = captureAudit()
     const config = configFixture()
