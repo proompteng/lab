@@ -25,7 +25,7 @@ pub(crate) mod rpc;
 
 pub use codex_options::CodexOptions;
 
-const GUEST_API_PORT: u16 = 8443;
+pub(crate) const GUEST_API_PORT: u16 = 8443;
 pub const EDITOR_PORT: u16 = 13337;
 pub const EDITOR_BRIDGE_PORT: u16 = 13338;
 const BOOTSTRAP_TOKEN_KEY: &str = "token";

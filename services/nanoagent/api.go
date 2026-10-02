@@ -151,7 +151,7 @@ func writeAPIError(writer http.ResponseWriter, status int, message string) {
 }
 
 func validatePreviewPort(port int) error {
-	if port < 1024 || port > 65535 || port == 8080 || port == editorBridgePort {
+	if port < 1024 || port > 65535 || port == 8080 || port == 8443 || port == editorBridgePort {
 		return fmt.Errorf("preview port must be between 1024 and 65535 and cannot use a reserved guest port")
 	}
 	return nil

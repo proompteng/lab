@@ -1081,14 +1081,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssuePreviewSession").await?;
         let request = request.into_inner();
-        let port = u16::try_from(request.port)
-            .ok()
-            .filter(|port| *port >= 1024 && ![8080, EDITOR_PORT, EDITOR_BRIDGE_PORT].contains(port))
-            .ok_or_else(|| {
-                Status::invalid_argument(
-                    "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
-                )
-            })?;
+        let port = validate_preview_port(request.port)?;
         let path = validate_preview_path(&request.path)?;
         let fragment = validate_preview_fragment(&request.fragment)?;
         self.guest(&principal, &request.agent_id).await?;
@@ -2175,6 +2168,26 @@ fn validate_prompt(value: &str) -> Result<String, Status> {
     Ok(value.to_owned())
 }
 
+fn validate_preview_port(value: u32) -> Result<u16, Status> {
+    u16::try_from(value)
+        .ok()
+        .filter(|port| {
+            *port >= 1024
+                && ![
+                    8080,
+                    crate::guest::GUEST_API_PORT,
+                    EDITOR_PORT,
+                    EDITOR_BRIDGE_PORT,
+                ]
+                .contains(port)
+        })
+        .ok_or_else(|| {
+            Status::invalid_argument(
+                "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
+            )
+        })
+}
+
 fn validate_preview_path(value: &str) -> Result<String, Status> {
     let value = if value.is_empty() { "/" } else { value };
     if !value.starts_with('/') || value.len() > 4_096 || value.contains(['\0', '\r', '\n', '#']) {
@@ -3034,6 +3047,19 @@ mod tests {
         assert!(validate_preview_path("https://private.example").is_err());
         assert!(validate_preview_path("/app#stolen").is_err());
         assert!(validate_preview_path("/app\r\nX-Injected: 1").is_err());
+    }
+
+    #[test]
+    fn preview_ports_reject_guest_control_and_editor_listeners() {
+        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 65536] {
+            assert_eq!(
+                validate_preview_port(port).unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        for port in [1024, 3000, 65535] {
+            assert_eq!(validate_preview_port(port).unwrap(), port as u16);
+        }
     }
 
     #[test]
