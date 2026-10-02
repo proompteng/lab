@@ -60,6 +60,9 @@ HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; 
 operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET
 targets without URL queries or fragments remain visible. Inputs containing URLs with queries or fragments are
 omitted in full because those values can contain credentials under arbitrary or encoded parameter names.
+Curl's `--url-query` and `--request-target` inputs receive the same omission because they can construct query input
+without a literal query in the URL. The repository's `k` alias uses the same credential and stdin-manifest policy as
+`kubectl`, including executable paths and global options.
 GitHub API payload fields (`-f`, `-F`, `--raw-field`, `--field`) and `--input` bodies are omitted
 in full. Git credential-protocol commands and helpers also receive whole-input omission. OpenSSH key
 passphrases (`ssh-keygen -N` and `-P`) are redacted while key-file paths and ordinary SSH/SCP port operands remain visible.

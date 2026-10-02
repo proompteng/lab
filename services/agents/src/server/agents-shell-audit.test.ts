@@ -418,6 +418,36 @@ describe('agents-shell activity audit', () => {
     expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(encoded)
   })
 
+  it('uses the kubectl credential policy for the repository k alias', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    const encoded = Buffer.from('synthetic-private-alias-patch').toString('base64')
+    const patch = JSON.stringify({ data: { 'auth.json': encoded } })
+    for (const command of [
+      `k patch secret demo -p '${patch}'`,
+      `'/usr/local/bin/k' --context galactic-tailscale -n agents patch secret demo "-p" '${patch}'`,
+      `k --context=galactic-tailscale patch secret demo -p='${patch}'`,
+      `k patch secret demo '-p${patch}'`,
+      `remote-runner 'env k patch secret demo -p ${encoded}'`,
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    for (const args of [
+      ['patch', 'secret', 'demo', '-p', patch],
+      ['--context', 'galactic-tailscale', '-n', 'agents', 'patch', 'secret', 'demo', `-p=${patch}`],
+    ])
+      writeAuditLog(config, 'probe', null, { command: '/usr/local/bin/k', args })
+    writeAuditLog(config, 'probe', null, { command: 'k', args: ['apply', '-f', '-'] })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain(encoded)
+      expect(content).toContain('[REDACTED]')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'k -n agents get pods', args: ['get', 'pods'] })
+    expect(records().at(-1)?.payload).toEqual({ command: 'k -n agents get pods', args: ['get', 'pods'] })
+  })
+
   it('redacts OpenSSL passphrases in separate and attached command and argv operands', () => {
     const records = captureAudit()
     const config = configFixture()
@@ -856,6 +886,34 @@ api repos/owner/repo/issues \
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
     writeAuditLog(config, 'probe', null, { command: 'curl https://example.test/download' })
     expect(records().at(-1)?.payload.command).toBe('curl https://example.test/download')
+  })
+
+  it('omits curl flags that construct query input without a literal URL query', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const option of ['--url-query', '--request-target']) {
+      for (const command of [
+        `curl ${option} signature=syntheticConstructedQuery https://example.test`,
+        `curl ${option}=signature=syntheticConstructedQuery https://example.test`,
+        `curl '${option}' 'signature=syntheticConstructedQuery' https://example.test`,
+        `curl '${option.slice(0, 5)}'"${option.slice(5)}" signature=syntheticConstructedQuery https://example.test`,
+      ])
+        writeAuditLog(config, 'probe', null, { command })
+      for (const args of [
+        [option, 'signature=syntheticConstructedQuery', 'https://example.test'],
+        [`${option}=signature=syntheticConstructedQuery`, 'https://example.test'],
+      ])
+        writeAuditLog(config, 'probe', null, { command: 'curl', args })
+    }
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticConstructedQuery')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'curl --url https://example.test/download' })
+    expect(records().at(-1)?.payload.command).toBe('curl --url https://example.test/download')
   })
 
   it('omits explicit interpreter code bodies while retaining script-file paths', () => {

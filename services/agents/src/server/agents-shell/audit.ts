@@ -17,7 +17,7 @@ const SECRET_OPTION =
 const VALUELESS_SECRET_OPTION =
   /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies|no-cookies|keep-session-cookies)$/i
 const SHELL_INPUT =
-  /<<|(?<!\|)\|(?!\|)|[<>]\(|\$|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|(?<![\w-])--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post-(?:data|file)|body(?:-(?:data|file))?)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)|\bgh\b[^\r\n;|&]*?\b(?:auth|secrets?)\b|\bgh\b[^\r\n;|&]*?\bapi\b[^\r\n;|&]*?\s(?:--(?:raw-field|field|input)(?:=|\s|$)|-[fF])|\bgit(?:\s+[^\r\n;|&]*?\bcredential\b|-credential(?:-[\w-]+)?\b)|\b(?:sh|bash|dash|ksh|zsh|fish|python(?:\d(?:\.\d+)?)?)(?=\s)[^\r\n;|&]*?\s(?:--command(?:=|\s|$)|-[A-Za-z]*c)|\b(?:node|bun)(?=\s)[^\r\n;|&]*?\s(?:--(?:eval|print)(?:=|\s|$)|-[A-Za-z]*[ep])|\b(?:eval|trap|alias)(?:\s|$)|[a-z][a-z0-9+.-]*:\/\/[^\s?#]*[?#]|(?:\b|-o)(?:proxy|remote|local|knownhosts)command(?:=|\s)/i
+  /<<|(?<!\|)\|(?!\|)|[<>]\(|\$|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|(?<![\w-])--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\b(?:kubectl|k)\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post-(?:data|file)|body(?:-(?:data|file))?)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)|\bgh\b[^\r\n;|&]*?\b(?:auth|secrets?)\b|\bgh\b[^\r\n;|&]*?\bapi\b[^\r\n;|&]*?\s(?:--(?:raw-field|field|input)(?:=|\s|$)|-[fF])|\bgit(?:\s+[^\r\n;|&]*?\bcredential\b|-credential(?:-[\w-]+)?\b)|\b(?:sh|bash|dash|ksh|zsh|fish|python(?:\d(?:\.\d+)?)?)(?=\s)[^\r\n;|&]*?\s(?:--command(?:=|\s|$)|-[A-Za-z]*c)|\b(?:node|bun)(?=\s)[^\r\n;|&]*?\s(?:--(?:eval|print)(?:=|\s|$)|-[A-Za-z]*[ep])|\b(?:eval|trap|alias)(?:\s|$)|(?:^|\s)--(?:url-query|request-target)(?:=|\s|$)|[a-z][a-z0-9+.-]*:\/\/[^\s?#]*[?#]|(?:\b|-o)(?:proxy|remote|local|knownhosts)command(?:=|\s)/i
 const COMPACT_CREDENTIAL_OPTION = /^-[puUbEaNP]$/
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
@@ -31,18 +31,22 @@ const CREDENTIAL_COMMAND = /^(?:curl|mysql|mariadb|sshpass|ssh-keygen|redis-cli|
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
 const normalizeShellWord = (word: string) => word.replaceAll(/["'\\]/g, '')
+const commandName = (word: string) => {
+  const name = normalizeShellWord(word).split('/').at(-1) ?? ''
+  return name === 'k' ? 'kubectl' : name
+}
 const usesShellInput = (text: string) => {
   if (text.length > MAX_FIELD_BYTES || SHELL_INPUT.test(normalizeShellWord(text.replaceAll(/\\\r?\n/g, ''))))
     return true
   return (text.match(SHELL_WORD) ?? []).some((word) => {
     const words = normalizeShellWord(word).match(SHELL_WORD) ?? []
-    return words.length > 1 && words.some((value) => CREDENTIAL_COMMAND.test(value.split('/').at(-1) ?? ''))
+    return words.length > 1 && words.some((value) => CREDENTIAL_COMMAND.test(commandName(value)))
   })
 }
 
 const shortCredentialOptions = (command: string) => {
   const [executable = '', operation] = normalizeShellWord(command).trim().split(/\s+/)
-  const name = executable.split('/').at(-1)
+  const name = commandName(executable)
   if (name === 'curl') return ['-u', '-U', '-b', '-E', '--user', '--proxy-user']
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
   if (name === 'ssh-keygen') return ['-N', '-P']
@@ -58,7 +62,7 @@ const shortCredentialOptions = (command: string) => {
 const argumentRedactor = (command: string) => {
   const words = command.match(SHELL_WORD) ?? []
   const executable = normalizeShellWord(words[0] ?? '')
-  const name = executable.split('/').at(-1)
+  const name = commandName(executable)
   const globalOperand =
     name === 'kubectl'
       ? KUBECTL_GLOBAL_OPERAND
@@ -131,7 +135,7 @@ const redactShortOptions = (text: string) => {
     previousEnd = offset + word.length
     const redacted = redact(word)
     if (redacted !== word) return redacted
-    const name = normalizeShellWord(word).split('/').at(-1) ?? ''
+    const name = commandName(word)
     if (CREDENTIAL_COMMAND.test(name)) redact = argumentRedactor(name)
     return word
   })
