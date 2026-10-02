@@ -16,8 +16,12 @@ const SECRET_OPTION =
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|payload|_meta)$/i
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
+const KUBERNETES_SECRET_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?Secret(?:List)?["']?(?=[\s,}]|$)/i
+const KUBERNETES_SECRET_RESOURCE = /\b(?:secrets?|sec)(?=[\s/.,"';]|$)/i
+const OMITTED_SECRET = '[OMITTED_KUBERNETES_SECRET]'
 
 const redactText = (value: string, secrets: string[]) => {
+  if (KUBERNETES_SECRET_KIND.test(value)) return OMITTED_SECRET
   let text = value
   for (const secret of secrets) text = text.replaceAll(secret, '[REDACTED]')
   return text
@@ -88,6 +92,12 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
       return result
     }
     if (value !== null && typeof value === 'object') {
+      if ('kind' in value && (value.kind === 'Secret' || value.kind === 'SecretList')) return OMITTED_SECRET
+      const omitOutput =
+        'command' in value &&
+        typeof value.command === 'string' &&
+        /\bkubectl\b/.test(value.command) &&
+        KUBERNETES_SECRET_RESOURCE.test(value.command)
       const result: Record<string, unknown> = {}
       const entries = Object.entries(value)
       for (const [key, item] of entries.slice(0, 30)) {
@@ -98,7 +108,9 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
           ? '[REDACTED]'
           : OMITTED_BODY.test(key)
             ? '[OMITTED]'
-            : sanitize(item, depth + 1)
+            : omitOutput && (key === 'stdout' || key === 'stderr')
+              ? OMITTED_SECRET
+              : sanitize(item, depth + 1)
       }
       if (Object.keys(result).length < entries.length) truncated = true
       return result

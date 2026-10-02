@@ -290,6 +290,7 @@ export class AgentsShellRunner {
         auth,
         {
           jobId: job.id,
+          command: input.command,
           status: job.status,
           exitCode: code,
           signal,

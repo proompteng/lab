@@ -186,6 +186,42 @@ describe('agents-shell activity audit', () => {
     expect(records()[0].payloadTruncated).toBe(true)
   })
 
+  it('omits Kubernetes Secret documents with arbitrary keys and encoded values in both sinks', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    const encoded = Buffer.from('synthetic-unrecognized-credential').toString('base64')
+    writeAuditLog(config, 'probe', null, {
+      stdout: JSON.stringify({ kind: 'Secret', data: { 'auth.json': encoded } }),
+      stderr: `apiVersion: v1\nkind: Secret\ndata:\n  arbitrary: ${encoded}\n`,
+      object: { kind: 'SecretList', items: [{ data: { arbitrary: encoded } }] },
+    })
+    expect(JSON.stringify(records())).not.toContain(encoded)
+    expect(JSON.stringify(records())).toContain('[OMITTED_KUBERNETES_SECRET]')
+    expect(JSON.parse(readFileSync(config.auditLogPath, 'utf8'))).toEqual(records()[0])
+  })
+
+  it.each(['shell_run', 'shell_start'])('omits projected Secret output through %s and later reads', async (name) => {
+    const records = captureAudit()
+    const { client, config, runner } = await connect()
+    const encoded = Buffer.from('synthetic-unrecognized-credential').toString('base64')
+    const executable = join(config.workspaceRoot, 'kubectl')
+    writeFileSync(executable, `#!/bin/bash\nprintf '${encoded}'; printf '${encoded}' >&2\n`, { mode: 0o755 })
+    const response = await client.callTool({
+      name,
+      arguments: { command: `${executable} get secrets/fixture -o jsonpath='{.data.arbitrary}'` },
+    })
+    const { jobId } = parseJob(response.structuredContent)
+    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
+    const read = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+    expect(read.structuredContent).toMatchObject({ stdout: encoded, stderr: encoded })
+    await client.callTool({ name: 'shell_status', arguments: { jobId } })
+    expect(JSON.stringify(records())).not.toContain(encoded)
+    expect(records().find(({ event }) => event === 'shell_job_finished')).toMatchObject({
+      payload: { stdout: '[OMITTED_KUBERNETES_SECRET]', stderr: '[OMITTED_KUBERNETES_SECRET]', exitCode: 0 },
+    })
+  })
+
   it('keeps stdout auditing when the file sink fails', () => {
     const records = captureAudit()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -321,7 +357,7 @@ describe('agents-shell activity audit', () => {
       client.callTool({ name: 'shell_run', arguments: { command: "printf 'foreground output\\n'" } }),
     ])
     const { jobId } = parseJob(started.structuredContent)
-    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull())
+    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
     const events = records()
     const background = events.find(({ event, tool }) => event === 'tool_call_started' && tool === 'shell_start')
     const foreground = events.find(({ event, tool }) => event === 'tool_call_started' && tool === 'shell_run')
