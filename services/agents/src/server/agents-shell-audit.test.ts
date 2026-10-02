@@ -430,9 +430,11 @@ describe('agents-shell activity audit', () => {
     const { client, config } = await connect()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
     const query = 'syntheticPrivateSearchPattern'
-    writeFileSync(join(config.workspaceRoot, 'fixture.txt'), `${query}\n`)
+    const matches = `fixture.txt:1:${query}\n`
+    writeFileSync(join(config.workspaceRoot, 'rg'), `#!/bin/bash\nprintf '%s' '${matches}'\n`, { mode: 0o755 })
+    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
     const response = await client.callTool({ name: 'search', arguments: { query } })
-    expect(JSON.stringify(response.structuredContent)).toContain(query)
+    expect(response.structuredContent).toMatchObject({ ok: true, exitCode: 0, stdout: matches })
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')])
       expect(content).not.toContain(query)
     expect(records().find(({ event }) => event === 'tool_call_started')).toMatchObject({
