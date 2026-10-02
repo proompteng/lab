@@ -75,6 +75,7 @@ export type CycleCompletionWaitReason = typeof CycleCompletionWaitReasonSchema.T
 export const CycleWaitReasonSchema = Schema.Union([
   CycleCompletionWaitReasonSchema,
   Schema.Literals([
+    'BROKER_OBSERVATION_PENDING',
     'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
     'JEV_POSITION_AWAITING_RECONCILIATION',
     'JEV_POSITION_HELD',

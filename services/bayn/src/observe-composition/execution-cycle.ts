@@ -32,6 +32,7 @@ import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { strategyDefinition } from '../strategy'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import { evaluateJevPositionManagement } from '../jev/runtime'
+import { JevContractError } from '../jev/contract'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -806,7 +807,14 @@ const executeBoundExecutionCycle = (
             marketData: input.intradayMarketData,
           }).pipe(
             Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'Jev position management failed', cause, failure: 'operational' }),
+              mutationRunnerError({
+                message:
+                  cause instanceof JevContractError && cause.observationCheck !== undefined
+                    ? `Jev position management failed [${cause.observationCheck}${cause.observationField === undefined ? '' : `:${cause.observationField}`}]`
+                    : 'Jev position management failed',
+                cause,
+                failure: 'operational',
+              }),
             ),
           )
           if (management._tag === 'Wait')

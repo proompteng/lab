@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 import { IntradayMomentumProtocolSchema } from '../strategy/intraday-momentum/protocol'
@@ -111,7 +112,7 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
       for (const [field, at] of brokerTimes) {
         if (Date.parse(at) > observed)
           return yield* Result.fail(invalidObservation(JevObservationCheck.PortfolioPremature, undefined, field))
-        if (observed - Date.parse(at) > protocol.maximumQuoteAgeMs)
+        if (observed - Date.parse(at) >= maximumBrokerObservationAgeMs)
           return yield* Result.fail(invalidObservation(JevObservationCheck.PortfolioStale, undefined, field))
       }
       if (
