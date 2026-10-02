@@ -655,6 +655,28 @@ describe('agents-shell activity audit', () => {
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
   })
 
+  it('omits GitHub authentication input without parsing concatenated tokens', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "printf 'ghp_'syntheticAuthInputValue | gh auth login --with-token",
+      "printf 'ghp_'syntheticAuthInputValue | '/usr/bin/gh' --hostname example.test au''th login --with-token",
+      "printf 'ghp_'syntheticAuthInputValue | gh auth refresh --with-token",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'gh',
+      args: ['auth', 'login', '--with-token', 'syntheticAuthInputValue'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticAuthInputValue')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
   it('preserves valueless user switches outside credential-owning commands', () => {
     const records = captureAudit()
     const config = configFixture()
