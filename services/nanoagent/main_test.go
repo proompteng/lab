@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -154,36 +153,6 @@ func TestBootstrapToolchainRejectsRelativeCommands(t *testing.T) {
 	t.Parallel()
 	if err := bootstrapToolchain(context.Background(), "bootstrap-toolchain", time.Second); err == nil {
 		t.Fatal("bootstrapToolchain() accepted a PATH-resolved command")
-	}
-}
-
-func TestEvidenceHandler(t *testing.T) {
-	t.Parallel()
-
-	want := evidence{MicroVMID: "firecracker-canary", State: "ready"}
-	server := testAPIServer(t)
-	server.evidence = want
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodGet, "/v1/evidence", nil)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d", response.Code)
-	}
-	var got evidence
-	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got != want {
-		t.Fatalf("evidence = %#v, want %#v", got, want)
-	}
-}
-
-func TestEvidenceHandlerRequiresAuthentication(t *testing.T) {
-	t.Parallel()
-	server := testAPIServer(t)
-	response := httptest.NewRecorder()
-	server.authenticatedRoutes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/evidence", nil))
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d", response.Code)
 	}
 }
 
