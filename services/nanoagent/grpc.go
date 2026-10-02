@@ -69,7 +69,7 @@ func (server *apiServer) rpcHandler(httpHandler http.Handler) http.Handler {
 func guestHTTPProtocols() *http.Protocols {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
-	protocols.SetUnencryptedHTTP2(true)
+	protocols.SetHTTP2(true)
 	return protocols
 }
 
@@ -301,4 +301,14 @@ func (server *guestRPCServer) WatchCodexEvents(req *pb.CodexWatch, stream grpc.S
 			}
 		}
 	}
+}
+
+func (server *guestRPCServer) RefreshSpireBootstrap(_ context.Context, request *pb.SpireBootstrap) (*pb.Empty, error) {
+	if server.api.identity == nil {
+		return nil, status.Error(codes.Unavailable, "guest SPIRE agent is unavailable")
+	}
+	if err := server.api.identity.refreshBootstrap(request.PodUid, request.Token, request.TrustBundle); err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid SPIRE bootstrap material")
+	}
+	return &pb.Empty{}, nil
 }

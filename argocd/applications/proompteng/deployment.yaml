@@ -17,6 +17,7 @@ spec:
       labels:
         app: proompteng
     spec:
+      serviceAccountName: proompteng
       automountServiceAccountToken: false
       enableServiceLinks: false
       nodeSelector:
@@ -52,8 +53,12 @@ spec:
               # The release promotion enables this endpoint atomically with
               # the Tengri ApplicationSet entry and immutable image digests.
               value: tengri-grpc.tengri.svc.cluster.local:50051
-            - name: TENGRI_GRPC_TLS
-              value: "false"
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
+            - name: SPIFFE_ID
+              value: spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng
+            - name: TENGRI_SPIFFE_ID
+              value: spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri
             - name: TENGRI_PUBLIC_URL
               value: https://tengri.proompteng.ai
             - name: TENGRI_BFF_SECRET_DIR
@@ -83,6 +88,9 @@ spec:
             readOnlyRootFilesystem: true
             runAsNonRoot: true
           volumeMounts:
+            - name: workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: next-cache
@@ -91,6 +99,10 @@ spec:
               mountPath: /var/run/secrets/tengri-bff
               readOnly: true
       volumes:
+        - name: workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
         - name: tmp
           emptyDir:
             sizeLimit: 128Mi
