@@ -16,16 +16,18 @@ const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:user|proxy-user|oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)$/i
 const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)$/i
 const SHELL_INPUT =
-  /<<|[<>]\(|\$\(|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)/i
+  /<<|[<>]\(|\$\(|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)/i
 const COMPACT_CREDENTIAL_OPTION = /^-[puUbEa]$/
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
+const CONTAINER_GLOBAL_OPERAND =
+  /^(?:--(?:config|context|host|log-level|tlscacert|tlscert|tlskey|cdi-spec-dir|cgroup-manager|conmon|connection|events-backend|hooks-dir|identity|imagestore|module|network-config-dir|out|root|runroot|runtime|runtime-flag|storage-driver|storage-opt|tmpdir|url|volumepath)|-[cHil])$/
 const OMITTED_BODY = /^(?:patch|content|task|acceptanceCriteria|stdin|stdout|stderr|payload|_meta)$/i
 const MAX_PAYLOAD_BYTES = 12_000
 const MAX_FIELD_BYTES = 4_000
 const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secret|AgentRun)(?:List)?)["']?(?=[\s,}]|$)/i
 const CREDENTIAL_COMMAND =
-  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker["']*[ \t]+["']*login|podman["']*[ \t]+["']*login)\b(["']*)((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
+  /\b(curl|mysql|mariadb|sshpass|redis-cli|kubectl|openssl|docker|podman)\b(["']*)((?:[ \t]+(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+)*)/g
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
 const usesShellInput = (text: string) => SHELL_INPUT.test(text.replaceAll(/["'\\]/g, ''))
@@ -45,13 +47,32 @@ const shortCredentialOptions = (command: string) => {
 }
 
 const argumentRedactor = (command: string) => {
+  const words = command.match(SHELL_WORD) ?? []
+  const executable = (words[0] ?? '').replaceAll(/["']/g, '')
+  const name = executable.split('/').at(-1)
+  const globalOperand =
+    name === 'kubectl'
+      ? KUBECTL_GLOBAL_OPERAND
+      : name === 'docker' || name === 'podman'
+        ? CONTAINER_GLOBAL_OPERAND
+        : undefined
   command = command.replaceAll(/["']/g, '')
   let options = shortCredentialOptions(command)
   let wrapper = /(?:^|\/)sshpass(?:\s|$)/.test(command)
   let wrapperOperand = false
-  let inspectOperation = /(?:^|\/)kubectl$/.test(command.trim())
+  let inspectOperation = globalOperand !== undefined
   let operationOperand = false
   let redactNext = false
+  const inspect = (token: string) => {
+    if (!inspectOperation) return
+    if (operationOperand) operationOperand = false
+    else if (globalOperand?.test(token)) operationOperand = true
+    else if (!token.startsWith('-')) {
+      inspectOperation = false
+      options = shortCredentialOptions(`${executable} ${token}`)
+    }
+  }
+  for (const word of words.slice(1)) inspect(word.replaceAll(/["']/g, ''))
   return <T>(word: T): T | string => {
     if (redactNext) {
       redactNext = false
@@ -60,14 +81,7 @@ const argumentRedactor = (command: string) => {
     }
     if (typeof word !== 'string') return word
     const token = word.replaceAll(/["']/g, '')
-    if (inspectOperation) {
-      if (operationOperand) operationOperand = false
-      else if (KUBECTL_GLOBAL_OPERAND.test(token)) operationOperand = true
-      else if (!token.startsWith('-')) {
-        inspectOperation = false
-        options = shortCredentialOptions(`${command} ${token}`)
-      }
-    }
+    inspect(token)
     if (VALUELESS_SECRET_OPTION.test(token)) return word
     const separator = token.indexOf('=')
     if (separator > 0 && SECRET_OPTION.test(token.slice(0, separator))) {

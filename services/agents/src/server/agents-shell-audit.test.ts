@@ -554,6 +554,66 @@ describe('agents-shell activity audit', () => {
     }
   })
 
+  it('omits curl stdin configuration input while retaining configuration file paths', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "printf 'user = admin:synthetic-curl-config' | curl --config -",
+      "printf 'user = admin:synthetic-curl-config' | curl -K -",
+      "printf 'user = admin:synthetic-curl-config' | '/usr/bin/curl' '--config=-'",
+      "printf 'user = admin:synthetic-curl-config' | curl -K-",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'curl',
+      args: ['--config', '-', 'synthetic-curl-config'],
+    })
+    writeAuditLog(config, 'probe', null, { command: 'curl --config fixture.conf https://example.test' })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-curl-config')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+      expect(content).toContain('curl --config fixture.conf https://example.test')
+    }
+  })
+
+  it('redacts container login passwords after global options without masking published ports', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'docker --context remote login -p synthetic-container-password registry.test',
+      'docker --context=remote --debug login -psynthetic-container-password registry.test',
+      '"/usr/bin/docker" "--config" "/tmp/config with spaces" "login" "-p" "synthetic-container-password" registry.test',
+      'podman --root /tmp/root login -p synthetic-container-password registry.test',
+      'podman --root=/tmp/root --remote login -p=synthetic-container-password registry.test',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    for (const [command, option, value] of [
+      ['docker', '--context', 'remote'],
+      ['podman', '--root', '/tmp/root'],
+    ])
+      writeAuditLog(config, 'probe', null, {
+        command,
+        args: [option, value, 'login', '-p', 'synthetic-container-password', 'registry.test'],
+      })
+    writeAuditLog(config, 'probe', null, {
+      command: 'docker --context remote login',
+      args: ['-p', 'synthetic-container-password', 'registry.test'],
+    })
+    writeAuditLog(config, 'probe', null, { command: 'docker --context remote run -p 8080:80 fixture' })
+    writeAuditLog(config, 'probe', null, {
+      command: 'podman',
+      args: ['--root', '/tmp/root', 'run', '-p', '8080:80', 'fixture'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-container-password')
+      expect(content).toContain('registry.test')
+      expect(content).toContain('docker --context remote run -p 8080:80 fixture')
+      expect(content).toContain('8080:80')
+    }
+  })
+
   it('preserves curl targets after its valueless cookie switch', () => {
     const records = captureAudit()
     const config = configFixture()
