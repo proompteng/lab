@@ -51,8 +51,8 @@ substitutions, and command substitutions receive the same treatment, independent
 `||` control flow remains visible. The audit retains the tool, job ID, timing, outcome, and byte counts without parsing
 out that input. Dollar expressions are conservatively omitted as opaque input, including dollar characters in quoted
 text. The audit does not resolve shell variables that can hide executable names, options, or operations.
-Explicit inline code passed to shell/Python command modes or Node/Bun eval/print modes is omitted as an opaque body,
-as are embedded SSH `ProxyCommand`, `RemoteCommand`, `LocalCommand`, and `KnownHostsCommand` bodies. Script-file paths
+Explicit inline code passed to shell/Python command modes, Node/Bun eval/print modes, or shell `eval`, `trap`, and
+`alias` builtins is omitted as an opaque body, as are embedded SSH `ProxyCommand`, `RemoteCommand`, `LocalCommand`, and `KnownHostsCommand` bodies. Script-file paths
 and ordinary proxy-jump targets remain visible.
 HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
 `--body`, `--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. GitHub authentication and secret

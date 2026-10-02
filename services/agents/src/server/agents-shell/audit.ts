@@ -14,9 +14,10 @@ const SECRET_KEY =
   /(?:authorization|cookie|password|passwd|passphrase|secret|token|apikey|accesskey|privatekey|credential)s?$/i
 const SECRET_OPTION =
   /^(?:--?[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*|--(?:oauth2-bearer|from-literal|patch|overrides|cert|proxy-cert)|--?(?:[\w-]+-)?pass(?:in|out)?)$/i
-const VALUELESS_SECRET_OPTION = /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)$/i
+const VALUELESS_SECRET_OPTION =
+  /^--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies|no-cookies|keep-session-cookies)$/i
 const SHELL_INPUT =
-  /<<|(?<!\|)\|(?!\|)|[<>]\(|\$|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|(?<![\w-])--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post-(?:data|file)|body(?:-(?:data|file))?)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)|\bgh\b[^\r\n;|&]*?\b(?:auth|secrets?)\b|\bgh\b[^\r\n;|&]*?\bapi\b[^\r\n;|&]*?\s(?:--(?:raw-field|field|input)(?:=|\s|$)|-[fF])|\bgit(?:\s+[^\r\n;|&]*?\bcredential\b|-credential(?:-[\w-]+)?\b)|\b(?:sh|bash|dash|ksh|zsh|fish|python(?:\d(?:\.\d+)?)?)(?=\s)[^\r\n;|&]*?\s(?:--command(?:=|\s|$)|-[A-Za-z]*c)|\b(?:node|bun)(?=\s)[^\r\n;|&]*?\s(?:--(?:eval|print)(?:=|\s|$)|-[A-Za-z]*[ep])|(?:\b|-o)(?:proxy|remote|local|knownhosts)command(?:=|\s)/i
+  /<<|(?<!\|)\|(?!\|)|[<>]\(|\$|`|\/dev\/(?:stdin|fd\/\d+)\b|\/proc\/(?:self|\d+)\/fd\/\d+\b|--(?:password|passwd|passphrase)-(?:stdin|fd)\b|-hmac-stdin\b|(?<![\w-])--?(?:[\w-]+[-_])?pass(?:in|out)?(?:=|\s+)(?:[\w-]+:)?(?:stdin|fd:\d+)\b|\bkubectl\b[^\r\n;|&]*?(?:-f|--filename)(?:=|\s+)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?(?:--config(?:=|\s+)|-K(?:=|\s*)?)-(?=\s|$)|\bcurl\b[^\r\n;|&]*?\s(?:--(?:data(?:-[\w-]+)?|json|form(?:-string)?)(?:=|\s|$)|-[dF])|(?:^|\s)--(?:post-(?:data|file)|body(?:-(?:data|file))?)(?:=|\s|$)|\b(?:http|https|xh|xhs)\b[^\r\n;|&]*?\s--raw(?:=|\s|$)|\bgh\b[^\r\n;|&]*?\b(?:auth|secrets?)\b|\bgh\b[^\r\n;|&]*?\bapi\b[^\r\n;|&]*?\s(?:--(?:raw-field|field|input)(?:=|\s|$)|-[fF])|\bgit(?:\s+[^\r\n;|&]*?\bcredential\b|-credential(?:-[\w-]+)?\b)|\b(?:sh|bash|dash|ksh|zsh|fish|python(?:\d(?:\.\d+)?)?)(?=\s)[^\r\n;|&]*?\s(?:--command(?:=|\s|$)|-[A-Za-z]*c)|\b(?:node|bun)(?=\s)[^\r\n;|&]*?\s(?:--(?:eval|print)(?:=|\s|$)|-[A-Za-z]*[ep])|\b(?:eval|trap|alias)(?:\s|$)|(?:\b|-o)(?:proxy|remote|local|knownhosts)command(?:=|\s)/i
 const COMPACT_CREDENTIAL_OPTION = /^-[puUbEaNP]$/
 const KUBECTL_GLOBAL_OPERAND =
   /^(?:--(?:context|namespace|kubeconfig|cluster|server|user|token|as|as-group|as-uid|request-timeout|cache-dir|client-certificate|client-key|certificate-authority|v|vmodule)|-[nsv])$/
@@ -162,7 +163,7 @@ const redactText = (value: string, secrets: string[]) => {
       '[REDACTED]',
     )
     .replace(
-      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies)(?:["']?\s|$))[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:^|[\s"'({,;])(?!--(?:password-stdin|skip-password|no-password|ask-password|junk-session-cookies|no-cookies|keep-session-cookies)(?:["']?\s|$))[\w-]*(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|credential|authorization|cookie)[\w-]*["']?\s*(?:[:=]\s*|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
       '$1[REDACTED]',
     )
     .replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/@?#]+@/gi, '$1[REDACTED]@')

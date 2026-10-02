@@ -861,6 +861,54 @@ api repos/owner/repo/issues \
     }
   })
 
+  it('omits shell builtin command bodies in both sinks', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "eval 'curl -u admin:syntheticEvalBody https://example.test'",
+      "builtin ev''al -- 'curl -u admin:syntheticEvalBody https://example.test'",
+      String.raw`e\val 'curl -u admin:syntheticEvalBody https://example.test'`,
+      "trap 'curl -u admin:syntheticEvalBody https://example.test' EXIT",
+      "alias fixture='curl -u admin:syntheticEvalBody https://example.test'",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'eval',
+      args: ['curl -u admin:syntheticEvalBody https://example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticEvalBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+  })
+
+  it('preserves Wget targets after valueless cookie switches', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const option of ['--no-cookies', '--keep-session-cookies']) {
+      const command = `wget ${option} https://example.test/file`
+      writeAuditLog(config, 'probe', null, { command })
+      expect(records().at(-1)?.payload.command).toBe(command)
+      writeAuditLog(config, 'probe', null, { command: 'wget', args: [option, 'https://example.test/file'] })
+      expect(records().at(-1)?.payload.args).toEqual([option, 'https://example.test/file'])
+    }
+    writeAuditLog(config, 'probe', null, {
+      command: 'wget --load-cookies syntheticCookiePath https://example.test/file',
+    })
+    writeAuditLog(config, 'probe', null, {
+      command: 'wget',
+      args: ['--load-cookies', 'syntheticCookiePath', 'https://example.test/file'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticCookiePath')
+      expect(content).toContain('https://example.test/file')
+    }
+  })
+
   it('omits embedded SSH command bodies without changing ordinary proxy jumps', () => {
     const records = captureAudit()
     const config = configFixture()
