@@ -244,12 +244,22 @@ export const runMutationPassWithinTimeout = <A, E, R>(
     )
   })
 
+export type PricingReconciliationRead<R = never> = (
+  minimumRemainingMs: number,
+) => Effect.Effect<
+  { readonly reconciliation: ReconciliationPassResult; readonly freshUntil: number | undefined },
+  ReconciliationPassError,
+  R
+>
+
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
   readonly cycle: AutonomousCycle
   readonly executionModel: CycleExecutionModel
   readonly policy: Policy
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
+  /** Refresh before pricing when the pass cache lacks quote headroom, preserving broker-risk freshness. */
+  readonly reconcileForPricing?: PricingReconciliationRead<R>
   readonly strategy: ObserveStrategy
   readonly intradayMarketData?: import('../market-data').IntradayMarketDataService
   /** Worst-case delay required to run and durably bind one final decision before the submission cutoff. */
@@ -798,9 +808,10 @@ const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
   initialFacts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
+  requiredAuthority: DecisionAuthorityRequirement,
 ): Effect.Effect<
   { readonly compiled: CompiledObserveStrategyDecision; readonly facts: ObserveDecisionFacts },
-  OperationalError | ObserveDecisionAwaitingSignal,
+  OperationalError | ObserveDecisionAwaitingSignal | ObserveDecisionCompositionFailure,
   JevDecisionServices | R
 > =>
   Effect.gen(function* () {
@@ -851,7 +862,15 @@ const compileObserveStrategyDecision = <R>(
         message: 'Jev entry remains armed for a qualifying fresh signal',
         readiness: DecisionReadinessReason.NoEligibleCandidate,
       })
-    const reconciliation = yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError))
+    const pricingReconciliation =
+      decision.selectedSymbols.length === 0 || input.reconcileForPricing === undefined
+        ? undefined
+        : yield* input
+            .reconcileForPricing(protocol.maximumQuoteAgeMs)
+            .pipe(Effect.mapError(reconciliationOperationalError))
+    const reconciliation =
+      pricingReconciliation?.reconciliation ??
+      (yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)))
     yield* Effect.fromResult(decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }))
     if (reconciliation.riskContext.unknownMutationCount !== 0)
       return yield* operationalError({
@@ -859,7 +878,24 @@ const compileObserveStrategyDecision = <R>(
         operation: 'current-decision',
         message: 'Broker mutations changed during Jev inference',
       })
+    yield* Effect.fromResult(
+      requireDecisionAuthority(reconciliation, input.policy, input.authorityGenerationHash, requiredAuthority),
+    )
+    if (pricingReconciliation !== undefined && pricingReconciliation.freshUntil === undefined)
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev entry awaits reconciliation covering the execution quote lifetime',
+        readiness: DecisionReadinessReason.InferenceUnavailable,
+      })
     const pricingAt = yield* currentUtcInstant
+    if (
+      pricingAt >= evidence.batchPlan.expiresAt ||
+      (pricingReconciliation?.freshUntil !== undefined &&
+        Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
+    )
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        readiness: DecisionReadinessReason.InferenceUnavailable,
+      })
     const pricingQuery =
       decision.selectedSymbols.length === 0
         ? undefined
@@ -914,7 +950,9 @@ const compileObserveStrategyDecision = <R>(
                 ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
               },
             })
-          : cause instanceof OperationalError || cause instanceof ObserveDecisionAwaitingSignal
+          : cause instanceof OperationalError ||
+              cause instanceof ObserveDecisionAwaitingSignal ||
+              cause._tag === 'ObserveDecisionCompositionFailure'
             ? cause
             : operationalError({
                 component: 'strategy',
@@ -1174,7 +1212,12 @@ function buildCycleDecision<R>(
       ),
     )
     const initialSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, initialFacts))
-    const { compiled, facts } = yield* compileObserveStrategyDecision(input, initialFacts, initialSession)
+    const { compiled, facts } = yield* compileObserveStrategyDecision(
+      input,
+      initialFacts,
+      initialSession,
+      requirements.authorityRequirement,
+    )
     const executionAuthority = yield* Effect.fromResult(
       requireDecisionAuthority(
         facts.reconciliation,
