@@ -455,9 +455,14 @@ describe('agents-shell activity audit', () => {
       ['--context', 'galactic-tailscale', '-n', 'agents', 'patch', 'secret', 'demo', `-p=${patch}`],
     ])
       writeAuditLog(config, 'probe', null, { command: '/usr/local/bin/k', args })
+    writeAuditLog(config, 'probe', null, { command: 'k --token syntheticAliasToken -n agents get pods' })
+    expect(records().at(-1)?.payload.command).toBe('k --token [REDACTED] -n agents get pods')
+    writeAuditLog(config, 'probe', null, { command: 'k', args: ['--token', 'syntheticAliasToken', 'get', 'pods'] })
+    expect(records().at(-1)?.payload.args).toEqual(['--token', '[REDACTED]', 'get', 'pods'])
     writeAuditLog(config, 'probe', null, { command: 'k', args: ['apply', '-f', '-'] })
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
       expect(content).not.toContain(encoded)
+      expect(content).not.toContain('syntheticAliasToken')
       expect(content).toContain('[REDACTED]')
       expect(content).toContain('[OMITTED_SHELL_INPUT]')
     }
@@ -987,6 +992,31 @@ api repos/owner/repo/issues \
     expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
     writeAuditLog(config, 'probe', null, { command: 'gh api repos/owner/repo' })
     expect(records().at(-1)?.payload.command).toBe('gh api repos/owner/repo')
+  })
+
+  it('omits unresolved brace and glob inputs before matching credential commands', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      '{cu,}rl -u admin:syntheticExpandedCredential https://example.test',
+      '/usr/bin/c[u]rl -u admin:syntheticExpandedCredential https://example.test',
+      '/usr/bin/cu*l -u admin:syntheticExpandedCredential https://example.test',
+      "printf '%s' '{cu,}rl -u admin:syntheticExpandedCredential'",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: '{cu,}rl',
+      args: ['-u', 'admin:syntheticExpandedCredential', 'https://example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticExpandedCredential')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'curl https://example.test' })
+    expect(records().at(-1)?.payload.command).toBe('curl https://example.test')
   })
 
   it('omits curl flags that construct query input without a literal URL query', () => {
