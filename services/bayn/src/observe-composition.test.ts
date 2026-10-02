@@ -5017,17 +5017,22 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
         waitReason: 'BROKER_OBSERVATION_PENDING',
       })
       expect('result' in first).toBe(false)
-      yield* driver.advance
+      expect(first.nextDelayMs).toBe(1_000)
+      yield* TestClock.adjust(first.nextDelayMs ?? driver.nextDelayMs)
+      const second = yield* driver.advance
       expect(reads).toBe(2)
+      expect(second.nextDelayMs).toBe(1_000)
       kind = BrokerReadErrorKind.Timeout
       const expired = yield* driver.advance
       expect(expired.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
+      expect(expired.nextDelayMs).toBeUndefined()
       expect(reads).toBe(3)
       kind = BrokerReadErrorKind.RateLimited
       yield* TestClock.adjust(30_000)
       const rateLimited = yield* driver.advance
       expect(rateLimited.observation).toMatchObject({ result: 'FAILURE', operation: 'reconcile' })
-      expect(passes).toEqual([first.observation, first.observation, expired.observation, rateLimited.observation])
+      expect(rateLimited.nextDelayMs).toBeUndefined()
+      expect(passes).toEqual([first.observation, second.observation, expired.observation, rateLimited.observation])
     }).pipe(
       Effect.provideService(BrokerRead, {
         ...services.brokerRead,
