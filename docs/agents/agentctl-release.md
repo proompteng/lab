@@ -8,7 +8,7 @@ For install/usage guidance, see `docs/agents/agentctl.md`.
 
 ## Prereqs
 
-- Bun 1.4.0
+- Bun 1.4.2
 - npm (for publishing)
 - Access to `proompteng` npm org and the Homebrew tap repo
 
