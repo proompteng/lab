@@ -49,7 +49,8 @@ configuration (`--config -` or `-K -`), or HTTP request bodies are omitted
 in full and marked `[OMITTED_SHELL_INPUT]`. Pipelines and inline shell bodies in here-strings, here-documents, process
 substitutions, and command substitutions receive the same treatment, independent of the receiving program. Logical
 `||` control flow remains visible. The audit retains the tool, job ID, timing, outcome, and byte counts without parsing
-out that input.
+out that input. Dollar expressions are conservatively omitted as opaque input, including dollar characters in quoted
+text. The audit does not resolve shell variables that can hide executable names, options, or operations.
 Explicit inline code passed to shell/Python command modes or Node/Bun eval/print modes is omitted as an opaque body,
 as are embedded SSH `ProxyCommand` bodies. Script-file paths and ordinary proxy-jump targets remain visible.
 HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,

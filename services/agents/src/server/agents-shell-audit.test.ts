@@ -724,6 +724,33 @@ describe('agents-shell activity audit', () => {
     expect(records().at(-1)?.payload.command).toBe('git status || git diff')
   })
 
+  it('omits shell expansions that dynamically select executables, options and operations', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'client=curl; "$client" -u admin:syntheticDynamicCredential https://example.test',
+      'client=curl; "${client}" -uadmin:syntheticDynamicCredential https://example.test',
+      '"${client:-curl}" -u admin:syntheticDynamicCredential https://example.test',
+      'option=-u; curl "$option" admin:syntheticDynamicCredential https://example.test',
+      'operation=api; gh "$operation" repos/owner/repo/issues -f body=syntheticDynamicCredential',
+      '"$1" -u admin:syntheticDynamicCredential https://example.test',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: '$client',
+      args: ['-u', 'admin:syntheticDynamicCredential', 'https://example.test'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticDynamicCredential')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'curl https://example.test --head' })
+    expect(records().at(-1)?.payload.command).toBe('curl https://example.test --head')
+  })
+
   it('omits GitHub API payload fields while retaining plain GET targets', () => {
     const records = captureAudit()
     const config = configFixture()
