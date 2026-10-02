@@ -30,9 +30,15 @@ const PRIVATE_KUBERNETES_KIND = /(?:^|[{\s,])["']?kind["']?\s*:\s*["']?((?:Secre
 const CREDENTIAL_COMMAND = /^(?:curl|mysql|mariadb|sshpass|ssh-keygen|redis-cli|kubectl|openssl|docker|podman)$/
 const SHELL_WORD = /(?:\\.|[^\s;|&"'\\]|"(?:\\.|[^"\\])*"|'[^']*')+/g
 
-const usesShellInput = (text: string) =>
-  text.length > MAX_FIELD_BYTES || SHELL_INPUT.test(text.replaceAll(/\\\r?\n/g, '').replaceAll(/["'\\]/g, ''))
 const normalizeShellWord = (word: string) => word.replaceAll(/["'\\]/g, '')
+const usesShellInput = (text: string) => {
+  if (text.length > MAX_FIELD_BYTES || SHELL_INPUT.test(normalizeShellWord(text.replaceAll(/\\\r?\n/g, ''))))
+    return true
+  return (text.match(SHELL_WORD) ?? []).some((word) => {
+    const [executable = '', ...operands] = normalizeShellWord(word).trim().split(/\s+/)
+    return operands.length > 0 && CREDENTIAL_COMMAND.test(executable.split('/').at(-1) ?? '')
+  })
+}
 
 const shortCredentialOptions = (command: string) => {
   const [executable = '', operation] = normalizeShellWord(command).trim().split(/\s+/)

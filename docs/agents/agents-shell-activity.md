@@ -53,7 +53,8 @@ out that input. Dollar expressions are conservatively omitted as opaque input, i
 text. The audit does not resolve shell variables that can hide executable names, options, or operations.
 Explicit inline code passed to shell/Python command modes, Node/Bun eval/print modes, or shell `eval`, `trap`, and
 `alias` builtins is omitted as an opaque body, as are embedded SSH `ProxyCommand`, `RemoteCommand`, `LocalCommand`, and `KnownHostsCommand` bodies. Script-file paths
-and ordinary proxy-jump targets remain visible.
+and ordinary proxy-jump targets remain visible. Quoted arguments embedding a known credential-owning command
+are also omitted, independent of the outer executable. This covers nested remote commands without interpreting their body.
 HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
 `--body`, `--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. GitHub authentication and secret
 operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET

@@ -861,6 +861,28 @@ api repos/owner/repo/issues \
     }
   })
 
+  it('omits quoted nested credential commands without depending on the outer executable', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "ssh example.test 'curl -u admin:syntheticNestedBody https://example.test'",
+      'ssh example.test "redis-cli -a syntheticNestedBody ping"',
+      "remote-runner 'sshpass -p syntheticNestedBody ssh example.test'",
+      "remote-runner '/usr/bin/curl -u admin:syntheticNestedBody https://example.test'",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticNestedBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    for (const command of ["cat '/tmp/file with spaces'", "echo 'ordinary words'", 'ssh -p2222 example.test']) {
+      writeAuditLog(config, 'probe', null, { command })
+      expect(records().at(-1)?.payload.command).toBe(command)
+    }
+  })
+
   it('omits shell builtin command bodies in both sinks', () => {
     const records = captureAudit()
     const config = configFixture()
