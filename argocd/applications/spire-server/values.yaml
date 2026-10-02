@@ -1,0 +1,134 @@
+global:
+  spire:
+    clusterName: galactic
+    trustDomain: galactic.proompteng.ai
+    caSubject:
+      country: US
+      organization: proompteng
+      commonName: Galactic SPIRE CA
+    recommendations:
+      enabled: true
+      prometheus: false
+    namespaces:
+      create: false
+      server:
+        name: spire-server
+        create: false
+      system:
+        name: spire-system
+        create: false
+  installAndUpgradeHooks:
+    enabled: false
+  deleteHooks:
+    enabled: false
+spire-server:
+  replicaCount: 1
+  persistence:
+    type: pvc
+    storageClass: rook-ceph-block
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  nodeAttestor:
+    k8sPSAT:
+      serviceAccountAllowList:
+        - spire-system:spire-agent
+  unsupportedBuiltInPlugins:
+    nodeAttestor:
+      k8s_psat:
+        plugin_data:
+          clusters:
+            - galactic:
+                audience: [spire-server]
+                service_account_allow_list: [spire-system:spire-agent]
+                allowed_node_label_keys: []
+                allowed_pod_label_keys: []
+              galactic-guests:
+                audience: [spire-server]
+                service_account_allow_list: [tengri:nanoagent]
+                use_pod_uid_for_agent_id: true
+    bundlePublisher:
+      k8s_configmap:
+        plugin_data:
+          clusters:
+            - chart-internal:
+                format: spiffe
+                namespace: spire-system
+                configmap_name: spire-bundle
+                configmap_key: bundle.spiffe
+              galactic-guests:
+                format: pem
+                namespace: tengri
+                configmap_name: spire-guest-bundle
+                configmap_key: bundle.pem
+  controllerManager:
+    enabled: true
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+    identities:
+      clusterSPIFFEIDs:
+        default:
+          enabled: false
+        oidc-discovery-provider:
+          enabled: false
+        test-keys:
+          enabled: false
+        identity-canary:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: spire-test
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: spire-identity-canary
+          workloadSelectorTemplates:
+            - k8s:sa:identity-canary
+          ttl: 2m
+          fallback: false
+
+        proompteng:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: proompteng
+          workloadSelectorTemplates:
+            - k8s:sa:proompteng
+            - k8s:container-name:proompteng
+          ttl: 2m
+          fallback: false
+        tengri:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri
+              app.kubernetes.io/component: control-plane
+          workloadSelectorTemplates:
+            - k8s:sa:tengri
+            - k8s:container-name:tengri
+          ttl: 2m
+          fallback: false
+  externalControllerManagers:
+    enabled: false
+spire-agent:
+  enabled: false
+spiffe-csi-driver:
+  enabled: false
+spiffe-oidc-discovery-provider:
+  enabled: false

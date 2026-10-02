@@ -19,6 +19,8 @@ import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
@@ -274,6 +276,13 @@ const attemptMutationIdleReconciliation = (
     ),
   )
 
+const isPendingBrokerReconciliation = (error: CycleRunnerError): boolean =>
+  error.operation === 'reconcile' &&
+  error.cause instanceof OperationalError &&
+  error.cause.operation === 'reconciliation' &&
+  error.cause.cause instanceof BrokerReadError &&
+  error.cause.cause.kind === BrokerReadErrorKind.ObservationPending
+
 const reconcileMutationBeforeExternallyDrivenAdvance = (
   input: ObserveAutonomousCycleInput,
   cadence: Ref.Ref<ReconciliationCadenceState>,
@@ -283,7 +292,11 @@ const reconcileMutationBeforeExternallyDrivenAdvance = (
     const nowNanos = yield* Clock.currentTimeNanos
     const state = yield* Ref.get(cadence)
     const decision = decideIdleReconciliationCadence(state, nowNanos, input.reconciliationIntervalMs)
-    if (decision._tag === 'RECONCILE') return yield* attemptMutationIdleReconciliation(cadence, reconcile)
+    if (
+      decision._tag === 'RECONCILE' ||
+      (state.lastFailure !== undefined && isPendingBrokerReconciliation(state.lastFailure))
+    )
+      return yield* attemptMutationIdleReconciliation(cadence, reconcile)
     else if (state.lastFailure !== undefined) return yield* state.lastFailure
     return undefined
   })
@@ -334,6 +347,22 @@ const makeRecoveryFirstCycleDriverEffect = (
           : Effect.void,
       ),
     )
+    const observeReconciliationFailure = (error: CycleRunnerError) => {
+      if (isPendingBrokerReconciliation(error))
+        return currentUtcInstant.pipe(
+          Effect.flatMap((observedAt) =>
+            observeMutationPass(startup, { outcome: 'WAITING', observedAt, waitReason: 'BROKER_OBSERVATION_PENDING' }),
+          ),
+          Effect.map((observation) => ({
+            observation,
+            nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs),
+          })),
+        )
+      return currentUtcInstant.pipe(
+        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
+        Effect.map((observation) => ({ observation })),
+      )
+    }
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
         ? restrictMutationLoopFailure(error).pipe(
@@ -353,9 +382,7 @@ const makeRecoveryFirstCycleDriverEffect = (
             Effect.andThen(Effect.fail(restrictionError)),
           ),
         ),
-        Effect.andThen(currentUtcInstant),
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-        Effect.map((observation) => ({ observation })),
+        Effect.andThen(observeReconciliationFailure(error)),
       )
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
@@ -408,11 +435,7 @@ const makeRecoveryFirstCycleDriverEffect = (
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
     const runCycleAdvance = reconciliationPreflight.pipe(
       Effect.matchEffect({
-        onFailure: (error) =>
-          currentUtcInstant.pipe(
-            Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-            Effect.map((observation) => ({ observation })),
-          ),
+        onFailure: observeReconciliationFailure,
         onSuccess: (preflight) =>
           advanceCycle(preflight).pipe(
             Effect.flatMap((advanced) =>

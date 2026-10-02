@@ -1,6 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { maximumBrokerObservationAgeMs } from '../broker/alpaca/observed-snapshot'
 import { IntradaySnapshotPurpose } from '../market-data'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { intradayAgeNanos, millisecondsAsNanos } from '../market-data/intraday/time'
@@ -82,7 +83,7 @@ export const decideJevExit = (input: unknown) =>
         state.positionsObservedAt,
         state.ordersObservedAt,
         state.reconciliation.reconciledAt,
-      ].some((at) => Date.parse(at) > now || now - Date.parse(at) > protocol.maximumQuoteAgeMs)
+      ].some((at) => Date.parse(at) > now || now - Date.parse(at) >= maximumBrokerObservationAgeMs)
     )
       return yield* invalid('Exit requires current position evidence for its strategy session')
     let commitDeadlineAt = new Date(now + protocol.maximumQuoteAgeMs).toISOString()

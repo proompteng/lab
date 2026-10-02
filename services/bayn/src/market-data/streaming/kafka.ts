@@ -252,6 +252,7 @@ export const makeKafkaMarketProjection = (
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
     let lastFailure: KafkaMarketFailure | undefined
+    let closeFailure: KafkaMarketFailure | undefined
     let recovery:
       | { readonly failedEpoch: string; readonly startedAtMs: number; readonly reason: KafkaInvalidationReason }
       | undefined
@@ -263,6 +264,7 @@ export const makeKafkaMarketProjection = (
         bootstrap = undefined
         positions = []
         lastFailure = undefined
+        closeFailure = undefined
         const transport = yield* Effect.acquireRelease(
           Effect.try({
             try: () => factory(config, epoch),
@@ -272,7 +274,14 @@ export const makeKafkaMarketProjection = (
             Effect.tryPromise({
               try: () => resource.close(),
               catch: (cause) => failure('close', 'Kafka client close failed', cause),
-            }).pipe(Effect.orDie),
+            }).pipe(
+              Effect.tapError((cause) =>
+                Effect.sync(() => {
+                  closeFailure = cause
+                }),
+              ),
+              Effect.orDie,
+            ),
         )
         const operation = <A>(name: KafkaMarketFailure['operation'], run: () => Promise<A>) =>
           Effect.tryPromise({ try: run, catch: (cause) => failure(name, `Kafka ${name} failed`, cause) }).pipe(
@@ -481,7 +490,11 @@ export const makeKafkaMarketProjection = (
       ),
     )
     const supervision = cycle.pipe(
-      Effect.retry({ times: 2, schedule: Schedule.spaced(Duration.seconds(1)) }),
+      Effect.retry({
+        times: 2,
+        schedule: Schedule.spaced(Duration.seconds(1)),
+        while: () => closeFailure === undefined,
+      }),
       Effect.catchCause((cause) =>
         Effect.gen(function* () {
           if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause)
@@ -492,6 +505,7 @@ export const makeKafkaMarketProjection = (
             operation: lastFailure.operation,
             reason: invalidationReason(lastFailure.cause),
             failureCodes: safeKafkaFailureCodes(lastFailure.cause),
+            ...(closeFailure === undefined ? {} : { cleanupFailureCodes: safeKafkaFailureCodes(closeFailure.cause) }),
             cooldownMs: 30_000,
           })
           yield* Effect.sleep('30 seconds')

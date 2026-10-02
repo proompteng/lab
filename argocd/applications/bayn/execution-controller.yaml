@@ -172,7 +172,7 @@ spec:
               value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
-            - name: BAYN_EXECUTION_BOOTSTRAP_TOKEN
+            - name: BAYN_EXECUTION_ACTIVATION_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: bayn-execution-bootstrap

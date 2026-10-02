@@ -33,7 +33,7 @@ nvm install
 
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
-BUN_VERSION="1.4.0"
+BUN_VERSION="1.4.2"
 
 # BEGIN Bun runtime bootstrap
 CURRENT_BUN_VERSION=""

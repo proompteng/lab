@@ -45,6 +45,10 @@ spec:
               containerPort: 8081
               protocol: TCP
           env:
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
+            - name: SPIFFE_TRUST_DOMAIN
+              value: galactic.proompteng.ai
             - name: TENGRI_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -109,12 +113,19 @@ spec:
             privileged: false
             runAsNonRoot: true
           volumeMounts:
+            - name: workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
             - name: runtime-secret
               mountPath: /var/run/secrets/tengri-runtime
               readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
         - name: runtime-secret
           secret:
             secretName: tengri-runtime

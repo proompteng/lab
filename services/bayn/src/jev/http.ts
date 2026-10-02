@@ -1,4 +1,5 @@
-import { NodeHttpClient, Undici } from '@effect/platform-node'
+import { NodeHttpClient } from '@effect/platform-node'
+import * as Undici from '@effect/platform-node/Undici'
 import { Effect, Layer, Redacted } from 'effect'
 
 import { decodeBrokerProxyUrl } from '../broker/connection'

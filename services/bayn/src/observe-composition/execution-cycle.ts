@@ -1,7 +1,14 @@
 import type { ReconciliationRuntime } from './model'
 import { Effect, Option, Result } from 'effect'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
-import { CycleRunnerError, runAutonomousCyclePass, type CycleRunContext, type CycleRunResult } from '../cycle/runner'
+import {
+  runAutonomousCyclePass,
+  CycleRunnerError,
+  selectCyclePassContinuation,
+  type CyclePassProgress,
+  type CycleRunContext,
+  type CycleRunResult,
+} from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
 import { cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
 import {
@@ -32,6 +39,7 @@ import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
 import { strategyDefinition } from '../strategy'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import { evaluateJevPositionManagement } from '../jev/runtime'
+import { JevContractError } from '../jev/contract'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -403,16 +411,27 @@ type ExecutionCycleClosureResult =
     }
   | Extract<PreparedMutationCycleStep, { readonly _tag: 'Block' | 'Complete' | 'Wait' }>
 
-export const ensureExecutionCycleClosure = <R>(
-  input: ObserveAutonomousCycleInput,
-  preparation: ObserveStartupPreparation,
-  policy: Policy,
-  cycle: AutonomousCycle,
-  entryDocument: ExecutionDecisionDocument,
-  closeWindow: ExecutionCycleCloseWindow,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
-  exitTarget?: JevExitTarget,
-): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, R | IntentStore | MutationStore> =>
+export const ensureExecutionCycleClosure = <R>({
+  input,
+  preparation,
+  policy,
+  cycle,
+  entryDocument,
+  closeWindow,
+  reconcile,
+  existing,
+  exitTarget,
+}: {
+  readonly input: ObserveAutonomousCycleInput
+  readonly preparation: ObserveStartupPreparation
+  readonly policy: Policy
+  readonly cycle: AutonomousCycle
+  readonly entryDocument: ExecutionDecisionDocument
+  readonly closeWindow: ExecutionCycleCloseWindow
+  readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
+  readonly existing: ExecutionCycleClosure | undefined
+  readonly exitTarget?: JevExitTarget
+}): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, R | IntentStore | MutationStore> =>
   Effect.gen(function* () {
     const store = input.executionCycleClosureStore
     const observedAt = yield* currentUtcInstant
@@ -423,7 +442,6 @@ export const ensureExecutionCycleClosure = <R>(
         waitReason: 'CLOSE_STORE_UNAVAILABLE',
       } as const
     }
-    const existing = yield* readExecutionCycleClosure(cycle.identity.cycleId, store)
     if (
       observedAt < closeWindow.startAt &&
       exitTarget === undefined &&
@@ -707,11 +725,11 @@ const executeBoundExecutionCycle = (
     let phaseInput = entryPhaseInput
     let step: PreparedMutationCycleStep | undefined
 
-    if (step === undefined && entryRequiresCloseOnlyContainment && !closeDue) {
+    if (entryRequiresCloseOnlyContainment && !closeDue) {
       return { _tag: 'Wait', observedAt, waitReason: 'CLOSE_ONLY_UNTIL_CLOSE' }
     }
 
-    if (step === undefined && closeDue && !entryRequiresCloseOnlyContainment) {
+    if (closeDue && !entryRequiresCloseOnlyContainment) {
       const entryDrain = yield* prepareNextMutationIntent({
         input: entryPhaseInput,
         preparation,
@@ -733,15 +751,16 @@ const executeBoundExecutionCycle = (
       let closeDocument: ExecutionDecisionDocument | undefined
       let closeReconciliation: ReconciliationPassResult | undefined
       if (closeDue) {
-        const closure = yield* ensureExecutionCycleClosure(
+        const closure = yield* ensureExecutionCycleClosure({
           input,
           preparation,
           policy,
           cycle,
-          document,
+          entryDocument: document,
           closeWindow,
           reconcile,
-        )
+          existing: committedClosure,
+        })
         if (closure._tag !== 'Close') return closure
         closeDocument = closure.document
         closeReconciliation = closure.reconciliation
@@ -806,21 +825,29 @@ const executeBoundExecutionCycle = (
             marketData: input.intradayMarketData,
           }).pipe(
             Effect.mapError((cause) =>
-              mutationRunnerError({ message: 'Jev position management failed', cause, failure: 'operational' }),
+              mutationRunnerError({
+                message:
+                  cause instanceof JevContractError && cause.observationCheck !== undefined
+                    ? `Jev position management failed [${cause.observationCheck}${cause.observationField === undefined ? '' : `:${cause.observationField}`}]`
+                    : 'Jev position management failed',
+                cause,
+                failure: 'operational',
+              }),
             ),
           )
           if (management._tag === 'Wait')
             return { _tag: 'Wait', observedAt: yield* currentUtcInstant, ...management.details }
-          const closure = yield* ensureExecutionCycleClosure(
+          const closure = yield* ensureExecutionCycleClosure({
             input,
             preparation,
             policy,
             cycle,
-            document,
+            entryDocument: document,
             closeWindow,
             reconcile,
-            management.target,
-          )
+            existing: committedClosure,
+            exitTarget: management.target,
+          })
           if (closure._tag !== 'Close') return closure
           closeOnly = true
           phaseInput = {
@@ -1049,15 +1076,17 @@ const terminalizeBlockedExecutionCycleDataFirst = (
 
 export const terminalizeBlockedExecutionCycle = terminalizeBlockedExecutionCycleDataFirst
 
-const interpretBoundMutationCycleOutcome = (
+const interpretBoundExecutionCycleOutcome = (
   input: ObserveAutonomousCycleInput,
-  outcome: BoundMutationCycleOutcome,
+  outcome: BoundExecutionCycleOutcome,
   cycle: AutonomousCycle,
   context: CycleRunContext<ObserveDecisionRuntime>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore | ObserveDecisionRuntime> => {
+): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, CycleStore | ObserveDecisionRuntime> => {
   switch (outcome._tag) {
+    case 'PostMutationReconciliation':
+      return Effect.succeed(outcome)
     case 'RunCycle':
-      return runAutonomousCyclePass(context)
+      return runAutonomousCyclePass(context, cycle)
     case 'Wait':
       return Effect.succeed({
         outcome: 'RECOVERED',
@@ -1113,18 +1142,6 @@ const interpretBoundMutationCycleOutcome = (
   }
 }
 
-const interpretBoundExecutionCycleOutcome = (
-  input: ObserveAutonomousCycleInput,
-  outcome: BoundExecutionCycleOutcome,
-  cycle: AutonomousCycle,
-  context: CycleRunContext<ObserveDecisionRuntime>,
-): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, CycleStore | ObserveDecisionRuntime> => {
-  if (outcome._tag === 'PostMutationReconciliation') {
-    return Effect.succeed<RecoveryFirstCyclePassResult>(outcome)
-  }
-  return interpretBoundMutationCycleOutcome(input, outcome, cycle, context)
-}
-
 const recoverBoundMutationCycle = (
   input: ObserveAutonomousCycleInput,
   policy: Policy,
@@ -1166,34 +1183,34 @@ export const runRecoveryFirstCyclePass = (
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
   capability: ExecutionCapability,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
-  readUnfinishedMutationCycle(context).pipe(
-    Effect.flatMap((unfinished) => {
-      if (unfinished !== undefined && mutationBound(unfinished)) {
-        return recoverBoundMutationCycle(input, policy, unfinished, context, reconcile, capability)
+  Effect.gen(function* () {
+    let cycle = yield* readUnfinishedMutationCycle(context)
+    const completedProgress = new Set<CyclePassProgress>()
+    while (true) {
+      if (cycle !== undefined && mutationBound(cycle)) {
+        return yield* recoverBoundMutationCycle(input, policy, cycle, context, reconcile, capability)
       }
-      return currentUtcInstant.pipe(
-        Effect.flatMap((observedAt) => {
-          if (unfinished !== undefined) {
-            const terminalReason = decideUnboundExecutionCycleTerminalization({
-              capability: capability._tag,
-              observedAt,
-              cycle: unfinished,
-            })
-            if (terminalReason !== undefined) {
-              return terminalizeUnboundMutationCycle(unfinished, terminalReason, observedAt)
-            }
-          }
-          if (capability._tag !== 'Mutation') {
-            return Effect.succeed({ outcome: 'WINDOW_CLOSED' as const, observedAt })
-          }
-          return runAutonomousCyclePass(context).pipe(
-            Effect.flatMap((result) =>
-              result.outcome === 'RECOVERED' && result.action === 'BOUND_DECISION'
-                ? recoverBoundMutationCycle(input, policy, result.cycle, context, reconcile, capability)
-                : Effect.succeed(result),
-            ),
-          )
-        }),
-      )
-    }),
-  )
+      const observedAt = yield* currentUtcInstant
+      if (cycle !== undefined) {
+        const terminalReason = decideUnboundExecutionCycleTerminalization({
+          capability: capability._tag,
+          observedAt,
+          cycle,
+        })
+        if (terminalReason !== undefined)
+          return yield* terminalizeUnboundMutationCycle(cycle, terminalReason, observedAt)
+      }
+      if (capability._tag !== 'Mutation') return { outcome: 'WINDOW_CLOSED' as const, observedAt }
+      const result = yield* runAutonomousCyclePass(context, cycle)
+      const continuation = selectCyclePassContinuation(result)
+      if (continuation._tag === 'RETURN') return result
+      if (completedProgress.has(continuation.progress))
+        return yield* mutationRunnerError({
+          operation: 'recover-cycle',
+          message: `autonomous cycle pass repeated ${continuation.progress} without advancing to execution`,
+          failure: 'contract',
+        })
+      completedProgress.add(continuation.progress)
+      cycle = continuation.cycle
+    }
+  })

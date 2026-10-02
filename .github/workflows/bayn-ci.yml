@@ -110,7 +110,7 @@ jobs:
     if: needs.changes.outputs.bayn == 'true'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.4.0
+      bun-version: 1.4.2
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bayn --filter @proompteng/scripts
       lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
@@ -129,7 +129,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
@@ -147,7 +147,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
@@ -197,7 +197,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts

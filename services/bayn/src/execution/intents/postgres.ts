@@ -1,7 +1,7 @@
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgTypes } from '@effect/sql-pg'
 import { Effect, Layer, Option, Result, Schema } from 'effect'
-import { isSqlError } from 'effect/unstable/sql/SqlError'
-import type { Fragment } from 'effect/unstable/sql/Statement'
+import { isSqlError } from 'effect/sql/SqlError'
+import type { Fragment } from 'effect/sql/Statement'
 
 import { IntentState, RiskOutcome, TerminalOutcome, type Intent, type RiskDecision } from '../contracts'
 import { Sha256Schema as Sha256, strictParseOptions } from '../../schemas'
@@ -333,7 +333,9 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
   `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
 
 const insertRiskDecision = (sql: PgClient.PgClient, decision: RiskDecision) =>
-  sql`
+  Effect.fromResult(PgTypes.array(decision.reasonCodes, PgTypes.OID.text)).pipe(
+    Effect.flatMap(
+      (reasonCodes) => sql`
     INSERT INTO risk_decisions (
       decision_id,
       schema_version,
@@ -351,13 +353,16 @@ const insertRiskDecision = (sql: PgClient.PgClient, decision: RiskDecision) =>
       ${decision.intentId},
       ${decision.policyHash},
       ${decision.outcome},
-      ${decision.reasonCodes},
+      ${reasonCodes},
       ${decision.decidedAt},
       ${decision.expiresAt}
     )
     ON CONFLICT DO NOTHING
     RETURNING decision_id
-  `.pipe(Effect.mapError((cause) => classifyIntentCause('commit', cause)))
+  `,
+    ),
+    Effect.mapError((cause) => classifyIntentCause('commit', cause)),
+  )
 
 const transitionIntent = (sql: PgClient.PgClient, intent: Intent, decision: RiskDecision) => {
   const approved = decision.outcome === RiskOutcome.Approved

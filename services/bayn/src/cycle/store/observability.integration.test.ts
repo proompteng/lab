@@ -2,8 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result, Schema } from 'effect'
-import * as Reactivity from 'effect/unstable/reactivity/Reactivity'
+import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result } from 'effect'
+import * as Reactivity from 'effect/reactivity/Reactivity'
 
 import {
   isIntradayCycleDraft,
@@ -23,7 +23,6 @@ import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleObservability, CycleObservabilityLive, CycleStore, CycleStoreLive } from '.'
 
-const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const qualificationRunId = '1'.repeat(64)
@@ -201,7 +200,7 @@ const seedSafetyState = Effect.gen(function* () {
       content_hash, status, discrepancies, reconciled_at
     ) VALUES (
       ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
-      ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+      ${reconciliationHash}, 'EXACT', ${sql.json([])}, ${reconciledAt}
     )
   `
 })

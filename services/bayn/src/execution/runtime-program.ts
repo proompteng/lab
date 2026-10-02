@@ -28,7 +28,7 @@ import {
   validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorizationFailure,
 } from './mutation-authority'
-import { WriterFence, WriterFenceError, type WriterFenceService } from './writer-fence'
+import { WriterFenceError, type WriterFenceService } from './writer-fence'
 import { Pipeable } from '../pipeable'
 import type { BrokerStateCache, BrokerStateVersion } from './broker-state-cache'
 import { withObservedStage } from '../telemetry'
@@ -137,7 +137,7 @@ const finalBrokerAuthorization = (
       dependencies.riskPolicy.maxBrokerStateAgeMs,
     )
     yield* dependencies.verifyBrokerStateVersion(cached.version, intent.intentId)
-    const snapshot = yield* confirmExecutionBrokerState(cached, capital.limits, dependencies.brokerRead).pipe(
+    const snapshot = yield* confirmExecutionBrokerState(cached, intent.intentId, dependencies.brokerRead).pipe(
       withObservedStage('bayn.execution.broker-state-confirmation', { dependency: 'broker' }),
     )
     const riskContext = yield* dependencies.readFinalExecutionRiskContext(yield* dependencies.currentUtcInstant)
@@ -242,7 +242,6 @@ const provideCoordinatorDependencies = <A, E, R>(
     Effect.provideService(BrokerMutation, dependencies.brokerMutation),
     Effect.provideService(IntentStore, dependencies.intentStore),
     Effect.provideService(MutationStore, dependencies.mutationStore),
-    Effect.provideService(WriterFence, dependencies.writerFence),
   )
 
 const earlierDefinedInstant = (left: string | undefined, right: string | undefined): string | undefined => {

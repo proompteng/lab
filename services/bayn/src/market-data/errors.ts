@@ -1,4 +1,4 @@
-import { isSqlError } from 'effect/unstable/sql/SqlError'
+import { isSqlError } from 'effect/sql/SqlError'
 
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { isMarketDataVerificationError, renderMarketDataVerificationError } from '../market-data-verification'

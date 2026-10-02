@@ -4,11 +4,12 @@ import { Result } from 'effect'
 
 import {
   completeExecutionControllerTick,
+  decodeExecutionControllerState,
   decodeExecutionAdvanceStepResult,
-  decodeExecutionControllerBootstrap,
+  decodeExecutionDeploymentActivation,
   decodeExecutionControllerTick,
   decideExecutionControllerActivation,
-  decideExecutionControllerBootstrap,
+  decideExecutionDeploymentActivation,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
   executionControllerMaximumRecoveryWindow,
@@ -79,14 +80,14 @@ describe('execution controller decisions', () => {
   test('requires an exact previous binding before rotating durable controller state', () => {
     const state = { ...activated(), nextSequence: 9 }
     const request = {
-      schemaVersion: 'bayn.execution-controller-bootstrap.v3' as const,
+      schemaVersion: 'bayn.execution-deployment-activation.v1' as const,
       controllerKey,
       planHash: nextPlanHash,
       sourceRevision: nextSourceRevision,
       previousBinding: { planHash, sourceRevision },
     }
 
-    expect(Result.getOrThrow(decideExecutionControllerBootstrap(state, request))).toEqual({
+    expect(Result.getOrThrow(decideExecutionDeploymentActivation(state, request))).toEqual({
       _tag: 'Rotate',
       deactivation: {
         schemaVersion: 'bayn.execution-controller-deactivation.v1',
@@ -97,11 +98,11 @@ describe('execution controller decisions', () => {
       },
     })
     expect(
-      Result.getOrThrow(decideExecutionControllerBootstrap({ ...state, active: false, epoch: 2 }, request)),
+      Result.getOrThrow(decideExecutionDeploymentActivation({ ...state, active: false, epoch: 2 }, request)),
     ).toEqual({ _tag: 'Activate', state: { ...state, active: false, epoch: 2 } })
     expect(
       Result.getOrThrow(
-        decideExecutionControllerBootstrap(
+        decideExecutionDeploymentActivation(
           { ...state, planHash: nextPlanHash, sourceRevision: nextSourceRevision },
           request,
         ),
@@ -109,23 +110,23 @@ describe('execution controller decisions', () => {
     ).toMatchObject({ _tag: 'Activate' })
 
     for (const conflicting of [
-      decideExecutionControllerBootstrap(state, {
+      decideExecutionDeploymentActivation(state, {
         ...request,
         previousBinding: { ...request.previousBinding, planHash: 'f'.repeat(64) },
       }),
-      decideExecutionControllerBootstrap(state, {
-        schemaVersion: 'bayn.execution-controller-bootstrap.v2',
+      decideExecutionDeploymentActivation(state, {
+        schemaVersion: 'bayn.execution-deployment-activation.v1',
         controllerKey,
         planHash: nextPlanHash,
         sourceRevision: nextSourceRevision,
       }),
-      decideExecutionControllerBootstrap(null, request),
+      decideExecutionDeploymentActivation(null, request),
     ]) {
       expect(Result.isFailure(conflicting)).toBe(true)
     }
   })
 
-  test('requires both previous-binding fields and rejects ambiguous bootstrap documents', () => {
+  test('requires both previous-binding fields and rejects partial deployment bindings', () => {
     expect(Result.getOrThrow(resolveOptionalExecutionControllerBinding(undefined, undefined))).toBeUndefined()
     expect(Result.getOrThrow(resolveOptionalExecutionControllerBinding(planHash, sourceRevision))).toEqual({
       planHash,
@@ -135,11 +136,12 @@ describe('execution controller decisions', () => {
     expect(Result.isFailure(resolveOptionalExecutionControllerBinding(undefined, sourceRevision))).toBe(true)
     expect(
       Result.isFailure(
-        decodeExecutionControllerBootstrap({
-          schemaVersion: 'bayn.execution-controller-bootstrap.v3',
+        decodeExecutionDeploymentActivation({
+          schemaVersion: 'bayn.execution-deployment-activation.v1',
           controllerKey,
           planHash: nextPlanHash,
           sourceRevision: nextSourceRevision,
+          previousBinding: { planHash },
         }),
       ),
     ).toBe(true)
@@ -384,7 +386,7 @@ describe('execution controller decisions', () => {
     ).toBe(true)
   })
 
-  test('persists blocked results as successful business completion', () => {
+  test.each([1_000, 5_000])('persists a %sms continuation across a controller restart', (nextDelayMs) => {
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
         activated(),
@@ -394,7 +396,7 @@ describe('execution controller decisions', () => {
           outcome: {
             _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: '1'.repeat(64),
-            nextDelayMs: 5_000,
+            nextDelayMs,
           },
         },
         nextSourceRevision,
@@ -402,7 +404,25 @@ describe('execution controller decisions', () => {
     )
 
     expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Blocked)
-    expect(state.nextDueAt).toBe('2026-08-13T18:00:05.000Z')
+    const nextDueAt = new Date(Date.parse('2026-08-13T18:00:00.000Z') + nextDelayMs).toISOString()
+    expect(state.nextDueAt).toBe(nextDueAt)
+    const resumed = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+    expect(resumed).toEqual(state)
+    expect(
+      Result.getOrThrow(
+        decideExecutionControllerTick(
+          resumed,
+          {
+            schemaVersion: 'bayn.execution-controller-tick.v1',
+            epoch: 1,
+            sequence: resumed.nextSequence,
+          },
+          controllerKey,
+          nextDueAt,
+          nextSourceRevision,
+        ),
+      ),
+    ).toMatchObject({ _tag: 'Advance' })
   })
 
   test('rejects a computed next due time outside the canonical UTC range', () => {

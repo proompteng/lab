@@ -50,7 +50,7 @@ const operationalThreshold = (name: string, fallback: number) =>
   Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
 
 export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS')).pipe(
-  Config.mapOrFail(
+  Config.flatMap(
     (brokers): Config.Config<KafkaMarketConfig | undefined> =>
       Option.isNone(brokers)
         ? Config.succeed(undefined)
@@ -78,7 +78,7 @@ export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, '
 export const runtimeConfigSource = Config.all({
   kafka: kafkaMarketConfig,
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
-  port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
+  port: Config.Port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
   sourceRevision: Config.schema(SourceRevision, 'BAYN_CODE_REVISION'),
   imageRepository: Config.schema(ImageRepository, 'BAYN_IMAGE_REPOSITORY'),
   imageDigest: Config.schema(ImageDigest, 'BAYN_IMAGE_DIGEST'),
@@ -127,8 +127,8 @@ export const runtimeConfigSource = Config.all({
   lookbackStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_LOOKBACK_START'),
   evaluationStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_START'),
   evaluationEnd: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_END'),
-  postgresUrl: Config.redacted('BAYN_POSTGRES_URL'),
-  postgresTls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
+  postgresUrl: Config.Redacted('BAYN_POSTGRES_URL'),
+  postgresTls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
     Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
   ),
