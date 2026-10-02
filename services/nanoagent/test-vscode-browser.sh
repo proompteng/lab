@@ -63,7 +63,10 @@ fixture_pids="$fixture_pids $!"
   export BETTER_AUTH_SECRET=playwright-better-auth-secret-000000000000
   export BETTER_AUTH_URL="$TENGRI_PLAYWRIGHT_BASE_URL"
   export GITHUB_CLIENT_ID=playwright GITHUB_CLIENT_SECRET=playwright
-  export TENGRI_GRPC_ENDPOINT=127.0.0.1:65535
+  export TENGRI_GRPC_ENDPOINT=localhost:65535
+  export SPIFFE_ENDPOINT_SOCKET="unix://$fixture_root/workload-api.sock"
+  export SPIFFE_ID=spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng
+  export TENGRI_SPIFFE_ID=spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri
   export TENGRI_INTERNAL_HMAC_SECRET=playwright-tengri-hmac-secret-0000000000
   if [[ "${TENGRI_EDITOR_NEXT_MODE:-dev}" == start ]]; then
     mkdir -p "$fixture_root/desktop/apps/landing/.next" "$fixture_root/desktop/services/tengri"
