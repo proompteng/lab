@@ -32,7 +32,9 @@ Filter by a tool or follow one call:
 
 For `shell_start`, use `payload.jobId` from its result to identify the job. Its later `shell_job_finished` event retains
 the original call ID even after the initiating request has returned. `shell_read` and `shell_status` create their own
-tool-call events. HTTP metadata logs share `requestId` with their tool events.
+tool-call events. Successful reads, status checks, and cancellations have outcome `succeeded`, independently of the
+observed process status. Result metadata retains the process status and exit code; missing jobs and rejected calls
+have outcome `error`. HTTP metadata logs share `requestId` with their tool events.
 
 ## Interpret content and retention limits
 
@@ -58,8 +60,9 @@ are also omitted, independent of the outer executable. This covers nested remote
 HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
 `--body`, `--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. GitHub authentication and secret
 operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET
-targets without URL queries or fragments remain visible. Inputs containing URLs with queries or fragments are
-omitted in full because those values can contain credentials under arbitrary or encoded parameter names.
+targets without queries or fragments remain visible. Inputs containing query or fragment markers (`?` or `#`) are
+omitted in full because those values can contain credentials under arbitrary or encoded parameter names. The markers
+are conservatively opaque, including quoted literals and relative API endpoints, independently of the executable or URL scheme.
 Curl user information is redacted even in URLs without a scheme. Secret values in assignments and data fields are
 redacted without consuming bare Kubernetes resource nouns, resource names, or following flags.
 Curl's `--url-query` and `--request-target` inputs receive the same omission because they can construct query input

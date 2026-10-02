@@ -84,6 +84,13 @@ const decodeInput = async <I>(tool: EffectTool<I>, value: unknown): Promise<I> =
     ),
   )
 
+const toolOutcome = (name: string | undefined, result: CallToolResult) => {
+  if (result.isError) return 'error'
+  if (name === 'shell_start' && result.structuredContent?.status === 'running') return 'running'
+  if (name === 'shell_read' || name === 'shell_status' || name === 'shell_kill') return 'succeeded'
+  return result.structuredContent?.ok === false ? 'failed' : 'succeeded'
+}
+
 const validateOutput = async (tool: EffectTool<any, any>, result: CallToolResult): Promise<CallToolResult> => {
   if (!tool.outputSchema || result.isError) return result
   if (!result.structuredContent) {
@@ -186,15 +193,7 @@ export const installEffectToolHandlers = (
         const content = result.structuredContent
         runner.audit('tool_call_finished', auth, {
           durationMs: performance.now() - startedAt,
-          outcome: result.isError
-            ? 'error'
-            : content?.status === 'running'
-              ? tool?.name === 'shell_start'
-                ? 'running'
-                : 'succeeded'
-              : content?.ok === false
-                ? 'failed'
-                : 'succeeded',
+          outcome: toolOutcome(tool?.name, result),
           ...(authorized && !result.isError && !tool?.name.startsWith('agent_')
             ? { result: content ?? result.content }
             : {}),

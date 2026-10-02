@@ -966,6 +966,29 @@ api repos/owner/repo/issues \
     expect(records().at(-1)?.payload.command).toBe('curl https://example.test/download')
   })
 
+  it('omits relative API query and fragment input independent of URL schemes', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "gh api 'search/issues?q=syntheticRelativeQuery&access_token=opaque-value'",
+      "gh --hostname github.test api '/endpoint#syntheticRelativeQuery'",
+      "'/usr/bin/g'\"h\" api 'search/issues?q='syntheticRelativeQuery",
+      "curl 'example.test/endpoint?q=syntheticRelativeQuery'",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, { command: 'gh', args: ['api', 'search/issues?q=syntheticRelativeQuery'] })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticRelativeQuery')
+      expect(content).not.toContain('opaque-value')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'gh api repos/owner/repo' })
+    expect(records().at(-1)?.payload.command).toBe('gh api repos/owner/repo')
+  })
+
   it('omits curl flags that construct query input without a literal URL query', () => {
     const records = captureAudit()
     const config = configFixture()
@@ -1466,6 +1489,32 @@ api repos/owner/repo/issues \
       await client.callTool({ name: 'shell_kill', arguments: { jobId } })
       await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
     }
+  })
+
+  it('records successful shell cancellation and completed-job reads as succeeded', async () => {
+    const records = captureAudit()
+    const { client, runner } = await connect()
+    const started = await client.callTool({ name: 'shell_start', arguments: { command: 'sleep 10' } })
+    const { jobId } = parseJob(started.structuredContent)
+    const killed = await client.callTool({ name: 'shell_kill', arguments: { jobId } })
+    expect(killed.isError).not.toBe(true)
+    expect(killed.structuredContent).toMatchObject({ jobId, status: 'killed', ok: false })
+    expect(records().find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_kill')).toMatchObject({
+      payload: { outcome: 'succeeded', result: { jobId, status: 'killed', ok: false } },
+    })
+    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
+    const read = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+    expect(read.structuredContent).toMatchObject({ jobId, ok: false })
+    expect(records().find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_read')).toMatchObject({
+      payload: { outcome: 'succeeded', result: { jobId, ok: false } },
+    })
+    const missing = await client.callTool({ name: 'shell_kill', arguments: { jobId: 'missing-job' } })
+    expect(missing.isError).toBe(true)
+    expect(records().at(-1)).toMatchObject({
+      event: 'tool_call_finished',
+      tool: 'shell_kill',
+      payload: { outcome: 'error' },
+    })
   })
 
   it('records timeout completion after shell_start has returned', async () => {
