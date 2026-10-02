@@ -50,12 +50,16 @@ describeRestate('Real Restate broker observation journal', () => {
     let fail = false
     const makeObserved = () =>
       makeBaynBrokerObservations(config, {
+        nextPollNotBeforeMs: async () => 0,
+        preparePoll: async () => 'test-capture',
         activate: async () => {
           activations += 1
         },
         poll: async () => {
           polls += 1
-          return fail ? { _tag: 'Unavailable' } : { _tag: 'Published', snapshotHash: '3'.repeat(64) }
+          return fail
+            ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
+            : { _tag: 'Published', snapshotHash: '3'.repeat(64), nextPollNotBeforeMs: 0 }
         },
       })
     const bridge = restate.service({
