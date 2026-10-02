@@ -1,3 +1,8 @@
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
 import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -17,6 +22,7 @@ import {
   makeForwardPerformanceMarketVolumeEvidence,
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformance,
+  runForwardPerformanceReport,
   type ForwardPerformanceReaders,
 } from './program'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
@@ -472,7 +478,9 @@ describe('forward performance read program', () => {
       closePriceMicros: '103000000',
       quantityMicros: '123456789',
     })
-    expect(evidence[0]?.snapshotId).not.toBe(newerMarketSnapshot.snapshotId)
+    expect(
+      evidence[0]?.schemaVersion === 'bayn.forward-performance-market-volume-evidence.v1' && evidence[0].snapshotId,
+    ).not.toBe(newerMarketSnapshot.snapshotId)
     expect(
       queries.some(
         (query) =>
@@ -627,6 +635,13 @@ describe('forward performance read program', () => {
     const receipt = await Effect.runPromise(
       Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
+    const report = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(report.receipt).toEqual(receipt)
+    expect(report.positionEpisodes.status).toBe('UNDETERMINED')
+    expect(report.receipt).not.toHaveProperty('positionEpisodes')
 
     expect(observation.statements.length).toBeGreaterThan(8)
     expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
@@ -657,9 +672,6 @@ describe('forward performance read program', () => {
           statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
           statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
       ),
-    ).toBe(true)
-    expect(
-      observation.statements.some((statement) => statement.includes('JOIN snapshot_references AS reference')),
     ).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('FROM orders AS observed_order'))).toBe(true)
@@ -1025,3 +1037,48 @@ describe('forward performance read program', () => {
     })
   })
 })
+
+test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture])(
+  'routes native completed cycles to the bounded archive and preserves their evidence: %p',
+  async (makeFixture) => {
+    const { request, archive, bars } = makeFixture()
+    let volumeReads = 0
+    let watermarkReads = 0
+    const statement = (strings: TemplateStringsArray) => {
+      const text = strings.join('?')
+      if (text.trim() === '' || text.includes('SELECT 1 FROM')) return Effect.succeed([])
+      if (text.includes('GROUP BY source_topic, source_partition')) {
+        watermarkReads += 1
+        return Effect.succeed(
+          archive.archiveWatermarks.map((item) => ({
+            source_topic: item.sourceTopic,
+            source_partition: String(item.sourcePartition),
+            inclusive_last_offset: item.inclusiveLastOffset,
+          })),
+        )
+      }
+      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
+        volumeReads += 1
+        return Effect.succeed(bars)
+      }
+      return Effect.die(new Error('Unexpected market-data query'))
+    }
+    const client = Object.assign(statement, {
+      param: (_type: string, value: unknown) => ({ value }),
+    }) as unknown as ClickhouseClient.ClickhouseClient
+    const evidence = await Effect.runPromise(
+      readForwardPerformanceMarketVolumeWithClient(marketReaderConfig, [request]).pipe(
+        Effect.provideService(ClickhouseClient.ClickhouseClient, client),
+      ),
+    )
+    expect(watermarkReads).toBe(1)
+    expect(volumeReads).toBe(1)
+    expect(evidence).toHaveLength(1)
+    expect(evidence[0]).toMatchObject({
+      decisionSnapshotId: request.decisionSnapshotId,
+      sourceFeed: 'iex',
+      quantityMicros: '39000000000',
+      archiveRequest: archive,
+    })
+  },
+)

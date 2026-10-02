@@ -8,9 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,21 +25,6 @@ const (
 	codexApprovalWriteTimeout = 15 * time.Second
 	codexResponseWriteTimeout = 15 * time.Second
 )
-
-type codexCallRequest struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params"`
-}
-
-type codexCallResponse struct {
-	Result        json.RawMessage `json:"result,omitempty"`
-	Error         json.RawMessage `json:"error,omitempty"`
-	EventSequence uint64          `json:"eventSequence"`
-}
-
-type codexApprovalRequest struct {
-	Decision string `json:"decision"`
-}
 
 type codexEvent struct {
 	Sequence   uint64          `json:"sequence"`
@@ -62,6 +45,16 @@ type codexPendingResult struct {
 	result        json.RawMessage
 	err           json.RawMessage
 	eventSequence uint64
+}
+
+type codexRPCError struct {
+	code    int
+	message string
+	raw     json.RawMessage
+}
+
+func (rpcError *codexRPCError) Error() string {
+	return fmt.Sprintf("Codex app-server request failed: %s", compactJSON(rpcError.raw))
 }
 
 type codexCallResult struct {
@@ -194,6 +187,7 @@ func (supervisor *codexSupervisor) run() {
 func (supervisor *codexSupervisor) runProcess() error {
 	command := exec.Command(
 		supervisor.binary,
+		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
 		"app-server",
@@ -433,7 +427,7 @@ func (supervisor *codexSupervisor) request(
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
 		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{}, fmt.Errorf("Codex app-server request failed: %s", compactJSON(result.err))
+			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
 		}
 		return codexCallResult{
 			result:        result.result,
@@ -1103,99 +1097,57 @@ func compactJSON(value json.RawMessage) string {
 	return "request failed"
 }
 
+func codexRPCErrorFromRaw(raw json.RawMessage) error {
+	var encoded struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return fmt.Errorf("Codex app-server request failed: %s", compactJSON(raw))
+	}
+	return &codexRPCError{
+		code:    encoded.Code,
+		message: encoded.Message,
+		raw:     append(json.RawMessage(nil), raw...),
+	}
+}
+
+const (
+	codexConversationNotFoundMessage = "Codex conversation could not be found"
+	codexMissingRolloutMessagePrefix = "no rollout found for thread id "
+)
+
+func isMissingCodexConversation(method string, params json.RawMessage, err error) bool {
+	if method != "thread/resume" {
+		return false
+	}
+	var rpcError *codexRPCError
+	if !errors.As(err, &rpcError) || rpcError.code != -32600 {
+		return false
+	}
+	threadID, ok := codexResumeThreadID(params)
+	return ok && rpcError.message == codexMissingRolloutMessagePrefix+threadID
+}
+
+func codexResumeThreadID(params json.RawMessage) (string, bool) {
+	var input struct {
+		ThreadID string `json:"threadId"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(params))
+	if err := decoder.Decode(&input); err != nil {
+		return "", false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return "", false
+	}
+	return input.ThreadID, input.ThreadID != ""
+}
+
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "thread/start", "thread/resume", "turn/start", "turn/steer", "turn/interrupt":
+	case "account/read", "account/login/start", "model/list", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
 		return true
 	default:
 		return false
 	}
-}
-
-func (server *apiServer) handleCodexCall(writer http.ResponseWriter, request *http.Request) {
-	if server.codex == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "Codex app-server is disabled")
-		return
-	}
-	var input codexCallRequest
-	if !decodeJSON(writer, request, &input) {
-		return
-	}
-	result, err := server.codex.call(request.Context(), input.Method, input.Params)
-	if err != nil {
-		writeAPIError(writer, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(writer, http.StatusOK, codexCallResponse{Result: result.result, EventSequence: result.eventSequence})
-}
-
-func (server *apiServer) handleCodexLogin(writer http.ResponseWriter, _ *http.Request) {
-	if server.codex == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "Codex app-server is disabled")
-		return
-	}
-	writeJSON(writer, http.StatusOK, server.codex.loginSnapshot())
-}
-
-func (server *apiServer) handleCodexApproval(writer http.ResponseWriter, request *http.Request) {
-	if server.codex == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "Codex app-server is disabled")
-		return
-	}
-	var input codexApprovalRequest
-	if !decodeJSON(writer, request, &input) {
-		return
-	}
-	if err := server.codex.resolveApproval(request.Context(), request.PathValue("id"), input.Decision); err != nil {
-		writeAPIError(writer, http.StatusNotFound, err.Error())
-		return
-	}
-	writer.WriteHeader(http.StatusNoContent)
-}
-
-func (server *apiServer) handleCodexEvents(writer http.ResponseWriter, request *http.Request) {
-	if server.codex == nil {
-		writeAPIError(writer, http.StatusServiceUnavailable, "Codex app-server is disabled")
-		return
-	}
-	after := uint64(0)
-	if raw := request.URL.Query().Get("after"); raw != "" {
-		parsed, err := parseBoundedUint(raw)
-		if err != nil {
-			writeAPIError(writer, http.StatusBadRequest, "after must be an unsigned sequence")
-			return
-		}
-		after = parsed
-	}
-	flusher, ok := writer.(http.Flusher)
-	if !ok {
-		writeAPIError(writer, http.StatusInternalServerError, "streaming is unavailable")
-		return
-	}
-	id, events, err := server.codex.subscribe(after)
-	if err != nil {
-		writeAPIError(writer, http.StatusTooManyRequests, err.Error())
-		return
-	}
-	defer server.codex.unsubscribe(id)
-	writer.Header().Set("Content-Type", "application/x-ndjson")
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.WriteHeader(http.StatusOK)
-	flusher.Flush()
-	encoder := json.NewEncoder(writer)
-	for {
-		select {
-		case <-request.Context().Done():
-			return
-		case event, open := <-events:
-			if !open || encoder.Encode(event) != nil {
-				return
-			}
-			flusher.Flush()
-		}
-	}
-}
-
-func parseBoundedUint(value string) (uint64, error) {
-	return strconv.ParseUint(value, 10, 64)
 }

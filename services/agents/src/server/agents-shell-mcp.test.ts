@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -68,6 +69,23 @@ const makeAuth = (scopes = ['agents-shell.read', 'agents-shell.write']): AuthCon
 const linkedOauthScheme = [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }]
 
 const randomListenPort = () => 30_000 + Math.floor(Math.random() * 20_000)
+
+const initializeRepoFixture = (config: AgentsShellConfig) => {
+  const repo = join(config.workspaceRoot, 'lab')
+  const remote = join(config.workspaceRoot, 'origin.git')
+  mkdirSync(repo, { recursive: true })
+  execFileSync('git', ['init', '--bare', remote])
+  execFileSync('git', ['init', '-b', 'main', repo])
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 'Agents Shell Test'])
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 'agents-shell@example.test'])
+  writeFileSync(join(repo, 'README.md'), '# fixture\n')
+  writeFileSync(join(repo, '.gitignore'), '.env\n')
+  execFileSync('git', ['-C', repo, 'add', 'README.md', '.gitignore'])
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'fixture'])
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', remote])
+  execFileSync('git', ['-C', repo, 'push', '-u', 'origin', 'main'])
+  return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+}
 
 const connectServer = async (config: AgentsShellConfig, auth = makeAuth()) => {
   const runner = new AgentsShellRunner(config)
@@ -294,6 +312,9 @@ describe('agents-shell MCP tools', () => {
     const tools = await client.listTools()
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
       [
+        'repo_session_open',
+        'repo_session_status',
+        'repo_session_close',
         'search',
         'read_file',
         'apply_patch',
@@ -377,7 +398,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(18_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(21_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
@@ -540,6 +561,330 @@ printf '%s\\n' "$@"
     await serverTransport.close()
     await client.close()
     await server.close()
+  })
+
+  it('opens an isolated repo session and routes repo tools through its worktree', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'session-test' },
+      })
+
+      expect(opened.isError).not.toBe(true)
+      const session = opened.structuredContent as {
+        sessionId: string
+        branch: string
+        baseBranch: string
+        baseSha: string
+        headSha: string
+        worktree: string
+        dirty: boolean
+        ahead: number
+        behind: number
+      }
+      expect(session.sessionId).toMatch(/^repo-session-test-[0-9a-f]{8}$/)
+      expect(session.branch).toMatch(/^codex\/session-test-[0-9a-f]{8}$/)
+      expect(session.baseBranch).toBe('main')
+      expect(session.baseSha).toBe(baseSha)
+      expect(session.headSha).toBe(baseSha)
+      expect(session.dirty).toBe(false)
+      expect(session.ahead).toBe(0)
+      expect(session.behind).toBe(0)
+      expect(session.worktree).toContain(join('worktrees', 'lab', 'session-test-'))
+
+      const write = await client.callTool({
+        name: 'shell_run',
+        arguments: { sessionId: session.sessionId, command: "printf '%s\\n' session-data > session.txt" },
+      })
+      expect(write.isError).not.toBe(true)
+
+      const read = await client.callTool({
+        name: 'read_file',
+        arguments: { sessionId: session.sessionId, path: 'session.txt' },
+      })
+      expect((read.structuredContent as { content?: string }).content).toBe('session-data\n')
+
+      const gitStatus = await client.callTool({
+        name: 'git',
+        arguments: { sessionId: session.sessionId, args: ['status', '--short'] },
+      })
+      expect((gitStatus.structuredContent as { stdout?: string }).stdout).toContain('?? session.txt')
+
+      const status = await client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect((status.structuredContent as { dirty?: boolean }).dirty).toBe(true)
+
+      const blockedClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect(blockedClose.isError).toBe(true)
+      expect(JSON.stringify(blockedClose.content)).toContain('uncommitted changes')
+
+      await client.callTool({
+        name: 'shell_run',
+        arguments: { sessionId: session.sessionId, command: 'rm session.txt' },
+      })
+      const closed = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId: session.sessionId },
+      })
+      expect(closed.isError).not.toBe(true)
+      expect((closed.structuredContent as { closedAt?: string }).closedAt).toEqual(expect.any(String))
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('restores repo sessions after the agents-shell runner restarts', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const first = await connectServer(config)
+    let sessionId = ''
+
+    try {
+      const opened = await first.client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'restart-test' },
+      })
+      const session = opened.structuredContent as { sessionId?: string; baseSha?: string }
+      sessionId = session.sessionId ?? ''
+      expect(sessionId).not.toBe('')
+      expect(session.baseSha).toBe(baseSha)
+    } finally {
+      await first.clientTransport.close()
+      await first.serverTransport.close()
+      await first.client.close()
+      await first.server.close()
+    }
+
+    const second = await connectServer(config)
+    try {
+      const status = await second.client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId },
+      })
+      expect(status.isError).not.toBe(true)
+      expect(status.structuredContent as { sessionId?: string; baseSha?: string }).toMatchObject({
+        sessionId,
+        baseSha,
+      })
+
+      const closed = await second.client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId },
+      })
+      expect(closed.isError).not.toBe(true)
+    } finally {
+      await second.clientTransport.close()
+      await second.serverTransport.close()
+      await second.client.close()
+      await second.server.close()
+    }
+  })
+
+  it('treats ignored files as dirty so safe close cannot delete them', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'ignored-file-test' },
+      })
+      const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
+      await client.callTool({
+        name: 'shell_run',
+        arguments: { sessionId, command: "printf '%s\\n' secret > .env" },
+      })
+
+      const ordinaryGitStatus = await client.callTool({
+        name: 'git',
+        arguments: { sessionId, args: ['status', '--short'] },
+      })
+      expect((ordinaryGitStatus.structuredContent as { stdout?: string }).stdout).toBe('')
+
+      const status = await client.callTool({
+        name: 'repo_session_status',
+        arguments: { sessionId },
+      })
+      expect((status.structuredContent as { dirty?: boolean }).dirty).toBe(true)
+
+      const safeClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId },
+      })
+      expect(safeClose.isError).toBe(true)
+      expect(JSON.stringify(safeClose.content)).toContain('uncommitted changes')
+
+      const forcedClose = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId, force: true },
+      })
+      expect(forcedClose.isError).not.toBe(true)
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('marks a repo session as closing before asynchronous close checks', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'closing-lock-test' }, auth)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    expect(() => runner.parseCommandInput({ command: 'pwd', sessionId: opened.sessionId }, auth)).toThrow(
+      `repo session is closing: ${opened.sessionId}`,
+    )
+    await closing
+  })
+
+  it('waits for session-scoped process tools before checking and removing the worktree', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'process-close-test' }, auth)
+    const readyPath = join(config.workspaceRoot, 'process-close-ready')
+
+    const process = runner.runProcess({
+      command: '/bin/bash',
+      args: ['-lc', `printf ready > ${JSON.stringify(readyPath)}; sleep 0.2; printf late > late.txt`],
+      sessionId: opened.sessionId,
+      auth,
+      auditEvent: 'repo_session_process_close_test',
+    })
+    for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    }
+    expect(existsSync(readyPath)).toBe(true)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    const processResult = await process
+    expect(processResult.ok).toBe(true)
+    await expect(closing).rejects.toThrow('repo session has uncommitted changes')
+
+    await runner.closeRepoSession({ sessionId: opened.sessionId, force: true }, auth)
+  })
+
+  it('tracks legacy cwd process tools inside a managed repo session worktree', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+    const opened = await runner.openRepoSession({ name: 'legacy-cwd-process' }, auth)
+    const readyPath = join(config.workspaceRoot, 'legacy-cwd-process-ready')
+
+    const process = runner.runProcess({
+      command: '/bin/bash',
+      args: ['-lc', `printf ready > ${JSON.stringify(readyPath)}; sleep 0.2; printf legacy > legacy.txt`],
+      cwd: opened.worktree,
+      auth,
+      auditEvent: 'repo_session_legacy_cwd_process_test',
+    })
+    for (let attempt = 0; attempt < 100 && !existsSync(readyPath); attempt += 1) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+    }
+    expect(existsSync(readyPath)).toBe(true)
+
+    const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
+    expect((await process).ok).toBe(true)
+    await expect(closing).rejects.toThrow('repo session has uncommitted changes')
+    expect(readFileSync(join(opened.worktree, 'legacy.txt'), 'utf8')).toBe('legacy')
+
+    await runner.closeRepoSession({ sessionId: opened.sessionId, force: true }, auth)
+  })
+
+  it('uses per-session fetch refs so concurrent opens do not share mutable fetch state', async () => {
+    const config = makeConfig()
+    const baseSha = initializeRepoFixture(config)
+    const auth = makeAuth()
+    const runner = new AgentsShellRunner(config)
+
+    const [first, second] = await Promise.all([
+      runner.openRepoSession({ name: 'parallel-a' }, auth),
+      runner.openRepoSession({ name: 'parallel-b' }, auth),
+    ])
+    expect(first.baseSha).toBe(baseSha)
+    expect(second.baseSha).toBe(baseSha)
+
+    const refs = execFileSync('git', ['-C', join(config.workspaceRoot, 'lab'), 'for-each-ref', 'refs/agents-shell/'], {
+      encoding: 'utf8',
+    })
+    expect(refs).toBe('')
+
+    await Promise.all([
+      runner.closeRepoSession({ sessionId: first.sessionId }, auth),
+      runner.closeRepoSession({ sessionId: second.sessionId }, auth),
+    ])
+  })
+
+  it('waits for stubborn session jobs to terminate before forced close', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const opened = await client.callTool({
+        name: 'repo_session_open',
+        arguments: { name: 'forced-close-test' },
+      })
+      const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
+      const started = await client.callTool({
+        name: 'shell_start',
+        arguments: {
+          sessionId,
+          command: "trap '' TERM; printf '%s\\n' TRAP_READY; while :; do sleep 1; done",
+          timeoutSeconds: 30,
+        },
+      })
+      const jobId = (started.structuredContent as { jobId: string }).jobId
+
+      let trapReady = false
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const progress = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+        if ((progress.structuredContent as { stdout?: string }).stdout?.includes('TRAP_READY')) {
+          trapReady = true
+          break
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
+      }
+      expect(trapReady).toBe(true)
+
+      const closed = await client.callTool({
+        name: 'repo_session_close',
+        arguments: { sessionId, force: true },
+      })
+      expect(closed.isError).not.toBe(true)
+
+      const job = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+      expect(job.structuredContent).toMatchObject({
+        jobId,
+        status: 'killed',
+        finishedAt: expect.any(String),
+      })
+      expect((job.structuredContent as { signal?: string }).signal).toBe('SIGKILL')
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
   })
 
   it('applies Codex patch syntax through the apply_patch executable', async () => {
@@ -735,9 +1080,9 @@ fi
       expect(content.guide).toContain('current ChatGPT model')
       expect(content.guide).toContain('AGENTS.md')
       expect(content.guide).toContain('Respect dirty worktrees')
-      expect(content.guide).toContain('/workspace/worktrees/lab')
-      expect(content.guide).toContain('cwd: "worktrees/lab/<branch-slug>"')
-      expect(content.guide).toContain('Never share a worktree or branch')
+      expect(content.guide).toContain('repo_session_open')
+      expect(content.guide).toContain('sessionId')
+      expect(content.guide).toContain('repo_session_close')
       expect(content.guide).toContain('Do not use agent_start/status/read/cancel')
       expect(content.guide).toContain('apply_patch')
       expect(content.guide).toContain('Commit as Greg Konush')

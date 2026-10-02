@@ -2,7 +2,6 @@ import { Effect, Result } from 'effect'
 
 import {
   AccountStatus,
-  OrderCollection,
   OrderSide as BrokerOrderSide,
   OrderType as BrokerOrderType,
   type Account,
@@ -19,6 +18,7 @@ import {
 import { canonicalHashV1Result } from '../hash'
 import { OrderSide as IntentOrderSide, type Intent } from './contracts'
 import type { Policy } from '../risk'
+import type { CachedBrokerState } from './broker-state-cache'
 import {
   BrokerAccess,
   makeExecutionAuthority,
@@ -231,10 +231,8 @@ export interface ExecutionBrokerSubmitSnapshot extends ExecutionCapitalSnapshot 
   readonly accountObservedAt: string
   readonly positionsObservedAt: string
   readonly ordersObservedAt: string
-}
-
-export interface BrokerSubmitRefreshDependencies {
-  readonly brokerRead: BrokerReadShape
+  readonly positionsConfirmedAt: string
+  readonly ordersConfirmedAt: string
 }
 
 export interface ExecutionCapitalLimitContext {
@@ -279,22 +277,24 @@ export const constrainExecutionCapitalLimits = (
   maxOpenOrders: Math.min(policyLimits.maxOpenOrders, grantLimits.maxOpenOrders),
 })
 
-const positionExposureIdentity = (positions: readonly Position[]) =>
+const positionExposureIdentity = (
+  positions: readonly Pick<
+    Position,
+    'accountId' | 'symbol' | 'quantityMicros' | 'averageEntryPriceMicros' | 'costBasisMicros'
+  >[],
+) =>
   positions
     .map((position) => ({
       accountId: position.accountId,
-      assetId: position.assetId,
       symbol: position.symbol,
-      side: position.side,
       quantityMicros: position.quantityMicros,
       averageEntryPriceMicros: position.averageEntryPriceMicros,
+      ...(position.costBasisMicros === undefined ? {} : { costBasisMicros: position.costBasisMicros }),
     }))
-    .sort((left, right) =>
-      left.assetId < right.assetId ? -1 : left.assetId > right.assetId ? 1 : left.symbol.localeCompare(right.symbol),
-    )
+    .sort((left, right) => left.symbol.localeCompare(right.symbol))
 
 const validateStablePositionSnapshotDataFirst = (
-  before: readonly Position[],
+  before: Parameters<typeof positionExposureIdentity>[0],
   after: readonly Position[],
 ): Result.Result<readonly Position[], ExecutionCapitalLimitFailure> => {
   const beforeHash = canonicalHashV1Result(positionExposureIdentity(before))
@@ -681,6 +681,8 @@ const validateBrokerStateFreshness = (
     snapshot.accountObservedAt,
     snapshot.positionsObservedAt,
     snapshot.ordersObservedAt,
+    snapshot.positionsConfirmedAt,
+    snapshot.ordersConfirmedAt,
     ...snapshot.positions.map((position) => position.observedAt),
     ...snapshot.openOrders.map((order) => order.observedAt),
   ]
@@ -932,101 +934,42 @@ export const validateExecutionCapitalLimits = Pipeable.dual(8, validateExecution
 const mutationAuthorizationError = (message: string, cause: unknown) =>
   invalidRequest({ operation: MutationOperation.Submit, message, cause })
 
-const refreshExecutionBrokerSubmitSnapshotDataFirst = (
-  limits: ExecutionCapitalLimits,
-  _intent: Intent,
-  dependencies: BrokerSubmitRefreshDependencies,
+export const confirmExecutionBrokerState = (
+  cached: CachedBrokerState,
+  intentId: string,
+  brokerRead: BrokerReadShape,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
-    const positionsBefore = yield* dependencies.brokerRead.positions.pipe(
-      Effect.mapError((cause) =>
-        mutationAuthorizationError('broker positions could not be refreshed before submit', cause),
-      ),
-    )
-    const openOrdersBefore = yield* dependencies.brokerRead
-      .orders({
-        status: OrderCollection.Open,
-        limit: limits.maxOpenOrders,
+    if (brokerRead.projection === undefined)
+      return yield* mutationAuthorizationError('broker observation projection is required for submit', undefined)
+    const {
+      positions,
+      openOrders: orders,
+      account,
+    } = yield* brokerRead.projection
+      .submissionSnapshot(intentId)
+      .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker state confirmation failed', cause)))
+    const stablePositions = validateStablePositionSnapshot(cached.state.positions, positions.value)
+    if (Result.isFailure(stablePositions))
+      return yield* mutationAuthorizationError('broker positions changed since reconciliation', stablePositions.failure)
+    const stableOrders = validateStableOpenOrderSnapshot(cached.openOrders, orders.value)
+    if (Result.isFailure(stableOrders))
+      return yield* mutationAuthorizationError('broker orders changed since reconciliation', stableOrders.failure)
+    if (account.value.cashMicros !== cached.state.account.cashMicros)
+      return yield* mutationAuthorizationError('broker cash changed since reconciliation', {
+        _tag: 'BrokerAccountSnapshotChanged',
       })
-      .pipe(
-        Effect.mapError((cause) =>
-          mutationAuthorizationError('broker open orders could not be refreshed before submit', cause),
-        ),
-      )
-    const positionsAfter = yield* dependencies.brokerRead.positions.pipe(
-      Effect.mapError((cause) =>
-        mutationAuthorizationError('broker positions could not be confirmed after open-order refresh', cause),
-      ),
-    )
-    const stablePositions = validateStablePositionSnapshot(positionsBefore.value, positionsAfter.value)
-    if (Result.isFailure(stablePositions)) {
-      return yield* mutationAuthorizationError(
-        'broker position snapshot changed during exposure refresh',
-        stablePositions.failure,
-      )
-    }
-    const openOrdersAfter = yield* dependencies.brokerRead
-      .orders({
-        status: OrderCollection.Open,
-        limit: limits.maxOpenOrders,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          mutationAuthorizationError('broker open orders could not be confirmed after position refresh', cause),
-        ),
-      )
-    const stableOpenOrders = validateStableOpenOrderSnapshot(openOrdersBefore.value, openOrdersAfter.value)
-    if (Result.isFailure(stableOpenOrders)) {
-      return yield* mutationAuthorizationError(
-        'broker open-order snapshot changed during exposure refresh',
-        stableOpenOrders.failure,
-      )
-    }
-    const positionsConfirmed = yield* dependencies.brokerRead.positions.pipe(
-      Effect.mapError((cause) =>
-        mutationAuthorizationError('broker positions could not be confirmed after exposure refresh', cause),
-      ),
-    )
-    const confirmedPositions = validateStablePositionSnapshot(stablePositions.success, positionsConfirmed.value)
-    if (Result.isFailure(confirmedPositions)) {
-      return yield* mutationAuthorizationError(
-        'broker position snapshot changed during final exposure confirmation',
-        confirmedPositions.failure,
-      )
-    }
-    const openOrdersConfirmed = yield* dependencies.brokerRead
-      .orders({
-        status: OrderCollection.Open,
-        limit: limits.maxOpenOrders,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          mutationAuthorizationError('broker open orders could not be confirmed after exposure refresh', cause),
-        ),
-      )
-    const confirmedOpenOrders = validateStableOpenOrderSnapshot(stableOpenOrders.success, openOrdersConfirmed.value)
-    if (Result.isFailure(confirmedOpenOrders)) {
-      return yield* mutationAuthorizationError(
-        'broker open-order snapshot changed during final exposure confirmation',
-        confirmedOpenOrders.failure,
-      )
-    }
-    const accountConfirmed = yield* dependencies.brokerRead.account.pipe(
-      Effect.mapError((cause) =>
-        mutationAuthorizationError('broker account could not be refreshed after final exposure confirmation', cause),
-      ),
-    )
     return {
-      account: accountConfirmed.value,
-      positions: confirmedPositions.success,
-      openOrders: confirmedOpenOrders.success,
-      accountObservedAt: accountConfirmed.evidence.observedAt,
-      positionsObservedAt: positionsConfirmed.evidence.observedAt,
-      ordersObservedAt: openOrdersConfirmed.evidence.observedAt,
+      account: account.value,
+      positions: positions.value,
+      openOrders: orders.value,
+      accountObservedAt: account.evidence.observedAt,
+      positionsObservedAt: cached.state.positionsObservedAt,
+      ordersObservedAt: cached.state.ordersObservedAt,
+      positionsConfirmedAt: positions.evidence.observedAt,
+      ordersConfirmedAt: orders.evidence.observedAt,
     }
   })
-
-export const refreshExecutionBrokerSubmitSnapshot = Pipeable.dual(3, refreshExecutionBrokerSubmitSnapshotDataFirst)
 
 export type PersistedCapitalGrantRefreshFailure =
   | ExecutionAuthorityConstructionFailure

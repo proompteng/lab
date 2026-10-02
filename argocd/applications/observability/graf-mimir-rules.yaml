@@ -176,13 +176,7 @@ data:
       - name: hermes-production.rules
         rules:
           - record: hermes_rollout_enabled
-            expr: |
-              max(
-                kube_argocd_application_deployment_history_info{
-                  namespace="argocd",
-                  application="hermes"
-                }
-              )
+            expr: vector(0)
           - alert: HermesGatewayUnavailable
             expr: |
               (
@@ -696,21 +690,110 @@ data:
                   }[5m]
                 )
               )
-      - name: torghut-storage-alerts.rules
+      - name: ceph-performance.rules
         rules:
-          - alert: TorghutPostgresMetricsMissing
+          # These are counter-derived means, not application latency percentiles.
+          # Filter zero denominators rather than reporting idle/missing data as zero.
+          - record: ceph_storage:osd_read_latency_seconds:mean5m
             expr: |
-              min(up{cluster="torghut-db",job="cnpg-postgres"}) < 1 or
-              absent(up{cluster="torghut-db",job="cnpg-postgres"})
+              max by (node, ceph_daemon) (
+                rate(ceph_osd_op_r_latency_sum{job="ceph-exporter"}[5m]) /
+                (rate(ceph_osd_op_r_latency_count{job="ceph-exporter"}[5m]) > 0)
+              )
+          - record: ceph_storage:osd_write_latency_seconds:mean5m
+            expr: |
+              max by (node, ceph_daemon) (
+                rate(ceph_osd_op_w_latency_sum{job="ceph-exporter"}[5m]) /
+                (rate(ceph_osd_op_w_latency_count{job="ceph-exporter"}[5m]) > 0)
+              )
+          - record: ceph_storage:osd_queue_wait_seconds:estimated_mean5m
+            expr: |
+              max by (node, ceph_daemon) (
+                clamp_min(
+                  rate(ceph_osd_op_latency_sum{job="ceph-exporter"}[5m]) /
+                  (rate(ceph_osd_op_latency_count{job="ceph-exporter"}[5m]) > 0) -
+                  rate(ceph_osd_op_process_latency_sum{job="ceph-exporter"}[5m]) /
+                  (rate(ceph_osd_op_process_latency_count{job="ceph-exporter"}[5m]) > 0),
+                  0
+                )
+              )
+          - record: ceph_storage:bluefs_fsync_seconds:mean5m
+            expr: |
+              max by (node, ceph_daemon) (
+                rate(ceph_bluefs_fsync_lat_sum{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) /
+                (rate(ceph_bluefs_fsync_lat_count{job="ceph-exporter",ceph_daemon=~"osd[.].+"}[5m]) > 0)
+              )
+          - record: ceph_storage:bluestore_kv_sync_seconds:mean5m
+            expr: |
+              max by (node, ceph_daemon) (
+                rate(ceph_bluestore_kv_sync_lat_sum{job="ceph-exporter"}[5m]) /
+                (rate(ceph_bluestore_kv_sync_lat_count{job="ceph-exporter"}[5m]) > 0)
+              )
+          - record: ceph_storage:host_disk_busy_ratio:rate5m
+            expr: max by (node, device) (rate(node_disk_io_time_seconds_total{job="node-storage"}[5m]))
+          - record: ceph_storage:host_disk_queue_depth:mean5m
+            expr: max by (node, device) (rate(node_disk_io_time_weighted_seconds_total{job="node-storage"}[5m]))
+          - record: ceph_storage:host_disk_read_seconds:mean5m
+            expr: |
+              max by (node, device) (
+                rate(node_disk_read_time_seconds_total{job="node-storage"}[5m]) /
+                (rate(node_disk_reads_completed_total{job="node-storage"}[5m]) > 0)
+              )
+          - record: ceph_storage:host_disk_write_seconds:mean5m
+            expr: |
+              max by (node, device) (
+                rate(node_disk_write_time_seconds_total{job="node-storage"}[5m]) /
+                (rate(node_disk_writes_completed_total{job="node-storage"}[5m]) > 0)
+              )
+          - record: ceph_storage:host_network_receive_ratio:rate5m
+            expr: |
+              max by (node, device) (rate(node_network_receive_bytes_total{job="node-storage"}[5m])) /
+              (max by (node, device) (node_network_speed_bytes{job="node-storage"}) > 0)
+          - record: ceph_storage:host_network_transmit_ratio:rate5m
+            expr: |
+              max by (node, device) (rate(node_network_transmit_bytes_total{job="node-storage"}[5m])) /
+              (max by (node, device) (node_network_speed_bytes{job="node-storage"}) > 0)
+          - alert: CephOsdPerformanceMetricsMissing
+            expr: |
+              max by (ceph_daemon) (ceph_osd_up{job="ceph-storage"} == 1)
+              unless on (ceph_daemon)
+              max by (ceph_daemon) (ceph_osd_op_latency_count{job="ceph-exporter"})
             for: 10m
             labels:
               severity: warning
-              service: torghut-postgres
+              service: ceph-storage
               team: platform
             annotations:
-              summary: Torghut PostgreSQL storage metrics are missing
-              description: CloudNativePG metrics for torghut-db have been absent or failing for 10 minutes.
-              runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+              summary: An up OSD is missing its performance counters
+              description: Check per-pod Ceph exporter discovery and metric allowlists before interpreting latency graphs.
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
+          - alert: NodeStorageMetricsMissing
+            expr: |
+              max by (node) (kube_node_status_allocatable{resource="cpu"})
+              unless on (node)
+              max by (node) (up{job="node-storage"} == 1)
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: A cluster node is missing host storage telemetry
+              description: Check the host Alloy DaemonSet and its remote-write path to Mimir; missing data is not zero load.
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
+          - alert: NodeStorageCollectorFailed
+            expr: node_scrape_collector_success{job="node-storage"} == 0
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: A host storage metrics collector is failing
+              description: The scrape is reachable but a collector cannot read its host data. Inspect its logs and read-only mounts.
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
+      - name: torghut-storage-alerts.rules
+        rules:
           - alert: CephStorageMetricsMissing
             expr: |
               min(up{job="ceph-storage"}) < 1 or
@@ -932,106 +1015,6 @@ data:
               summary: Torghut PostgreSQL WAL buffers are saturating
               description: PostgreSQL has exhausted WAL buffers during every evaluation for 15 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
-      - name: torghut-clickhouse.guardrails.rules
-        rules:
-          - alert: TorghutClickHouseDiskFreeLowWarning
-            expr: |
-              min by (namespace, service) (
-                torghut_clickhouse_guardrails_disk_free_ratio{
-                  namespace="torghut",
-                  service="torghut-clickhouse-guardrails-exporter"
-                }
-              ) < 0.15
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut ClickHouse disk free < 15%
-              description: |
-                Torghut ClickHouse is below 15% free disk for 10 minutes.
-
-                First safe action: pause TA writes to stop the retry storm and prevent disk exhaustion.
-                Follow-up guidance: v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md.
-              runbook_url: docs/torghut/design-system/v1/operations-pause-ta-writes.md
-          - alert: TorghutClickHouseDiskFreeLowCritical
-            expr: |
-              min by (namespace, service) (
-                torghut_clickhouse_guardrails_disk_free_ratio{
-                  namespace="torghut",
-                  service="torghut-clickhouse-guardrails-exporter"
-                }
-              ) < 0.08
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: Torghut ClickHouse disk free < 8%
-              description: |
-                Torghut ClickHouse is below 8% free disk for 5 minutes (imminent out-of-space risk).
-
-                Stop the bleeding: immediately pause TA writes.
-              runbook_url: docs/torghut/design-system/v1/operations-pause-ta-writes.md
-          - alert: TorghutClickHouseReplicaReadOnly
-            expr: |
-              max by (namespace, service) (
-                torghut_clickhouse_guardrails_any_replica_readonly{
-                  namespace="torghut",
-                  service="torghut-clickhouse-guardrails-exporter"
-                }
-              ) >= 1
-            for: 2m
-            labels:
-              severity: critical
-            annotations:
-              summary: Torghut ClickHouse replica is read-only
-              description: |
-                At least one Torghut ClickHouse replicated table reports read-only, which will cause TA JDBC writes to fail.
-
-                Stop the bleeding: pause TA writes first (v1/operations-pause-ta-writes.md), then follow replica recovery
-                (v1/operations-clickhouse-replica-and-keeper.md).
-              runbook_url: docs/torghut/design-system/v1/operations-clickhouse-replica-and-keeper.md
-          - alert: TorghutClickHouseGuardrailsExporterDown
-            expr: |
-              up{
-                job="torghut",
-                namespace="torghut",
-                service="torghut-clickhouse-guardrails-exporter"
-              } == 0
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut ClickHouse guardrails exporter is down
-              description: Guardrails metrics are not being scraped, so disk/read-only alerts may not fire.
-          - alert: TorghutClickHouseGuardrailsScrapeFailing
-            expr: |
-              torghut_clickhouse_guardrails_last_scrape_success{
-                namespace="torghut",
-                service="torghut-clickhouse-guardrails-exporter"
-              } == 0
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut ClickHouse guardrails scrape failing
-              description: Guardrails exporter is up but cannot query ClickHouse successfully.
-          - alert: TorghutClickHouseFreshnessQueryFallbacks
-            expr: |
-              increase(
-                torghut_clickhouse_guardrails_freshness_fallback_total{
-                  namespace="torghut",
-                  service="torghut-clickhouse-guardrails-exporter"
-                }[15m]
-              ) > 0
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut ClickHouse freshness queries are using fallback mode
-              description: |
-                Guardrails freshness checks are falling back from precise to low-memory mode.
-                This usually indicates ClickHouse query pressure or tight memory headroom.
-              runbook_url: docs/torghut/design-system/v1/component-clickhouse-capacity-ttl-and-disk-guardrails.md
       - name: symphony-fleet.rules
         rules:
           - alert: SymphonyNoLeader
@@ -1279,23 +1262,6 @@ data:
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
       - name: torghut-trading.rules
         rules:
-          - alert: TorghutApiServiceMissing
-            expr: |
-              absent(
-                kube_service_info{
-                  namespace="torghut",
-                  service="torghut"
-                }
-              ) == 1
-            for: 10m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut API service is missing
-              description: |
-                The stable Knative API Service is absent from Kubernetes inventory.
-                The Torghut metrics scrape uses this Service to reach the current revision.
-              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
           - alert: TorghutActiveApiRevisionMetricsDown
             expr: |
               max(
@@ -1507,22 +1473,6 @@ data:
               summary: Torghut LLM token usage spiked
               description: LLM token rate is >3x the trailing 1h baseline for 10 minutes.
               runbook_url: docs/torghut/design-system/v1/cost-model-and-budgets.md
-          - alert: TorghutLLMTelemetryMissing
-            expr: |
-              absent(
-                torghut_llm_requests_total{
-                  job="torghut",
-                  namespace="torghut",
-                  service="torghut-llm-guardrails-exporter"
-                }
-              ) == 1
-            for: 15m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut LLM telemetry missing
-              description: torghut LLM review metrics are not being scraped for 15 minutes.
-              runbook_url: docs/torghut/design-system/v1/observability-metrics-logs-traces.md
       - name: torghut-mrm.rules
         rules:
           - alert: TorghutLLMGuardrailsExporterDown
@@ -1848,68 +1798,6 @@ data:
                 Average LLM tokens per request are above the configured budget.
                 Consider shortening prompts or lowering max tokens.
               runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
-      - name: torghut-freshness.rules
-        rules:
-          - alert: TorghutSignalsStaleDuringMarketHours
-            expr: |
-              (
-                (
-                  time()
-                  - max(
-                    torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
-                      namespace="torghut",
-                      service="torghut-clickhouse-guardrails-exporter"
-                    }
-                  )
-                ) > 600
-              )
-              and on()
-              (
-                (day_of_week(vector(time())) >= 1)
-                * (day_of_week(vector(time())) <= 5)
-                * (hour(vector(time())) >= 14)
-                * (hour(vector(time())) < 21)
-              )
-            for: 5m
-            labels:
-              severity: critical
-            annotations:
-              summary: Torghut signals are stale (market hours)
-              description: |
-                ClickHouse ta_signals max(event_ts) is older than 10 minutes during market hours (UTC schedule).
-
-                First checks:
-                - torghut-ws readiness and Kafka publishing
-                - torghut-ta checkpointing and ClickHouse JDBC sink health
-              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
-          - alert: TorghutMicrobarsStaleDuringMarketHours
-            expr: |
-              (
-                (
-                  time()
-                  - max(
-                    torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
-                      namespace="torghut",
-                      service="torghut-clickhouse-guardrails-exporter"
-                    }
-                  )
-                ) > 240
-              )
-              and on()
-              (
-                (day_of_week(vector(time())) >= 1)
-                * (day_of_week(vector(time())) <= 5)
-                * (hour(vector(time())) >= 14)
-                * (hour(vector(time())) < 21)
-              )
-            for: 5m
-            labels:
-              severity: warning
-            annotations:
-              summary: Torghut microbars are stale (market hours)
-              description: |
-                ClickHouse ta_microbars max(window_end) is older than 4 minutes during market hours (UTC schedule).
-              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
       - name: torghut-quant-control-plane.rules
         rules:
           - alert: TorghutQuantDecisionsStalledDuringMarketHours
@@ -3166,8 +3054,14 @@ data:
               and on(job, namespace, service)
               (
                 max by (job, namespace, service) (
-                  bayn_execution_session_preflight_ready{job="bayn",namespace="bayn",service="bayn"}
+                  bayn_execution_session_ready{job="bayn",namespace="bayn",service="bayn"}
                 ) == 0
+              )
+              unless on(job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="decision_lagging"}
+                ) == 1
               )
             for: 1m
             labels:
@@ -3176,8 +3070,8 @@ data:
               service: bayn
               notify: email
             annotations:
-              summary: Bayn execution session is not ready before submission opens
-              description: A realized unbound execution session is within ten minutes of submission open or already inside its submission window, but durable authority, reconciliation, broker binding, controller, or runtime preflight is not ready.
+              summary: Bayn execution session is not ready in its submission window
+              description: A realized unbound execution session is within ten minutes of submission open or inside its submission window, but its durable prerequisites, signal inputs or evaluation path are unavailable.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionDecisionLagging
             expr: |
@@ -3206,10 +3100,16 @@ data:
               )
               and on(job, namespace, service)
               (
+                max by (job, namespace, service) (
+                  bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="decision_lagging"}
+                ) == 1
+              )
+              and on(job, namespace, service)
+              (
                 time() >=
                 max by (job, namespace, service) (
-                  bayn_cycle_submission_open_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
-                ) + 120
+                  bayn_cycle_decision_deadline_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"}
+                )
               )
               and on(job, namespace, service)
               (
@@ -3225,8 +3125,8 @@ data:
               service: bayn
               notify: email
             annotations:
-              summary: Bayn execution decision is lagging after submission open
-              description: Bayn's durable execution preflight is healthy, but the current session is still missing an immutable decision binding more than two minutes after submission opened.
+              summary: Bayn execution decision is lagging after its observation deadline
+              description: Bayn's durable execution preflight is healthy, but the current attempt is still missing an immutable decision after the first complete rolling observation or attempt start plus the strategy evaluation allowance.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynCycleObservationUnavailable
             expr: |

@@ -2,12 +2,8 @@ import { Result, Schema } from 'effect'
 
 import { makeExecutionCalendarObservation } from '../../cycle/construction'
 import { canonicalHashV1Result, sha256 } from '../../hash'
-import type {
-  IntradayBar,
-  IntradayMarketSnapshot,
-  IntradayQuote,
-  IntradayTrade,
-} from '../../market-data/intraday/model'
+import type { IntradayCandidateExclusion, IntradayQuote, IntradayTrade } from '../../market-data/intraday/model'
+import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 import type { VerifiedStrategyContext } from '../core'
@@ -19,7 +15,6 @@ import {
 } from './model'
 import {
   decideIntradayMomentumCore,
-  type IntradayMomentumCoreBar,
   type IntradayMomentumCoreQuote,
   type IntradayMomentumCoreTrade,
 } from './decision-core'
@@ -31,7 +26,7 @@ import {
 
 const minuteMs = 60_000
 
-export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v9' as const
+export const intradayMomentumBehaviorVersion = 'bayn.intraday-momentum.behavior.v15' as const
 export const intradayMomentumBehaviorHash = sha256(intradayMomentumBehaviorVersion)
 
 const compareCanonicalText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -56,8 +51,52 @@ const fail = (
   Result.fail(new IntradayMomentumFailure({ reason, message, ...details }))
 
 type IntradayMomentumEnvelopeContext = {
-  readonly snapshot: IntradayMarketSnapshot
+  readonly snapshot: StrategyMarketSnapshot
   readonly session: IntradayMomentumMarketContext['session']
+}
+
+type CandidateEnvelope = {
+  readonly independent: boolean
+  readonly exclusions: ReadonlyMap<string, IntradayCandidateExclusion>
+}
+
+const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index])
+
+const validateCandidateEnvelope = (
+  manifest: StrategyMarketSnapshot['manifest'],
+  protocol: IntradayMomentumProtocol,
+): Result.Result<CandidateEnvelope, IntradayMomentumFailure> => {
+  const hasCandidates = manifest.candidateSymbols !== undefined
+  const hasExclusions = manifest.candidateExclusions !== undefined
+  if (hasCandidates !== hasExclusions) {
+    return fail('snapshot-identity', 'independent candidate metadata must be present together')
+  }
+  if (!hasCandidates || !hasExclusions) return Result.succeed({ independent: false, exclusions: new Map() })
+  if (!sameStrings(manifest.candidateSymbols, protocol.candidateSymbols)) {
+    return fail('snapshot-identity', 'independent candidate metadata does not bind the exact strategy candidates')
+  }
+  const candidates = new Set(protocol.candidateSymbols)
+  const exclusions = new Map<string, IntradayCandidateExclusion>()
+  for (const exclusion of manifest.candidateExclusions) {
+    if (
+      !candidates.has(exclusion.symbol) ||
+      exclusion.symbol === protocol.benchmarkSymbol ||
+      exclusion.message.trim().length === 0 ||
+      (exclusion.reason !== 'not-ready' && exclusion.reason !== 'freshness') ||
+      exclusions.has(exclusion.symbol)
+    ) {
+      return fail('snapshot-identity', 'independent candidate exclusions are not canonical or candidate-local', {
+        symbol: exclusion.symbol,
+      })
+    }
+    exclusions.set(exclusion.symbol, exclusion)
+  }
+  const exclusionSymbols = [...exclusions.keys()]
+  if (!sameStrings(exclusionSymbols, [...exclusionSymbols].toSorted())) {
+    return fail('snapshot-identity', 'independent candidate exclusions must be canonically ordered')
+  }
+  return Result.succeed({ independent: true, exclusions })
 }
 
 const validateSnapshot = (
@@ -66,7 +105,23 @@ const validateSnapshot = (
 ): Result.Result<void, IntradayMomentumFailure> => {
   const { session, snapshot } = context
   const { manifest } = snapshot
+  if ('streaming' in manifest) {
+    const contract = protocol.streamingInput
+    if (
+      ('bootstrap' in manifest.streaming &&
+        manifest.streaming.bootstrap.timestampPolicy !== contract.bootstrapTimestampPolicy) ||
+      manifest.streaming.features.some(
+        ({ value, topic }) =>
+          topic !== contract.featureTopic ||
+          value.material.definitionId !== contract.requiredDefinitionId ||
+          value.material.definitionHash !== contract.requiredDefinitionHash,
+      )
+    )
+      return fail('snapshot-identity', 'streaming evidence does not match the strategy input contract')
+  }
   const snapshotSymbols = intradayMomentumSnapshotSymbols(protocol)
+  const candidateEnvelope = validateCandidateEnvelope(manifest, protocol)
+  if (Result.isFailure(candidateEnvelope)) return Result.fail(candidateEnvelope.failure)
   const boundSession = manifest.calendar.sessions.find(({ date }) => date === manifest.sessionDate)
   const selectedCalendar =
     boundSession === undefined
@@ -88,7 +143,13 @@ const validateSnapshot = (
     manifest.universe === undefined ||
     manifest.universe.length !== protocol.universe.length ||
     manifest.universe.some((symbol, index) => symbol !== protocol.universe[index]) ||
-    snapshotSymbols.some((symbol) => !manifest.symbols.includes(symbol)) ||
+    (candidateEnvelope.success.independent
+      ? !manifest.symbols.includes(protocol.benchmarkSymbol) ||
+        !protocol.candidateSymbols
+          .filter((symbol) => !candidateEnvelope.success.exclusions.has(symbol))
+          .every((symbol) => manifest.symbols.includes(symbol)) ||
+        !sameStrings([...manifest.symbols].toSorted(), [...snapshotSymbols].toSorted())
+      : snapshotSymbols.some((symbol) => !manifest.symbols.includes(symbol))) ||
     manifest.symbols.some((symbol) => !protocol.universe.includes(symbol))
   ) {
     return fail('snapshot-identity', 'intraday snapshot does not match the intraday-momentum protocol')
@@ -99,7 +160,7 @@ const validateSnapshot = (
   const observed = Date.parse(manifest.observedAt)
   const sessionOpen = Date.parse(session.openAt)
   const sessionClose = Date.parse(session.closeAt)
-  const earliestRangeEnd = sessionOpen + protocol.warmupMinutesAfterOpen * minuteMs
+  const earliestRangeEnd = sessionOpen + Math.max(protocol.warmupMinutesAfterOpen, protocol.lookbackMinutes) * minuteMs
   const entryCutoff = sessionClose - protocol.entryCutoffMinutesBeforeClose * minuteMs
   const earliestDecision = rangeEnd + protocol.decisionDelaySeconds * 1_000
   const latestDecision = earliestDecision + protocol.maximumDecisionLagMs
@@ -154,10 +215,15 @@ const validateSnapshot = (
   const rangeEndNanos = intradayInstantNanos(manifest.rangeEndAt)
   const observedNanos = intradayInstantNanos(manifest.observedAt)
   for (const symbol of snapshotSymbols) {
+    const isBenchmark = symbol === protocol.benchmarkSymbol
+    const excluded = candidateEnvelope.success.exclusions.has(symbol)
     const bars = snapshot.bars
       .filter((bar) => bar.symbol === symbol)
       .toSorted((left, right) => compareIntradayInstants(left.eventAt, right.eventAt))
-    if (bars[0] === undefined || compareIntradayInstants(bars[0].eventAt, manifest.rangeStartAt) !== 0) {
+    if (excluded) continue
+    const missingBaseline =
+      bars[0] === undefined || compareIntradayInstants(bars[0].eventAt, manifest.rangeStartAt) !== 0
+    if (missingBaseline && (!candidateEnvelope.success.independent || isBenchmark)) {
       return fail('snapshot-coverage', 'intraday symbol lacks the complete rolling lookback baseline', { symbol })
     }
     for (const records of [
@@ -186,14 +252,6 @@ const validateSnapshot = (
   }
   return Result.succeed(undefined)
 }
-
-const toCoreBar = ({ symbol, eventAt, open, high, low }: IntradayBar): IntradayMomentumCoreBar => ({
-  symbol,
-  eventAt,
-  open,
-  high,
-  low,
-})
 
 const toCoreQuote = ({
   symbol,
@@ -224,23 +282,29 @@ const decideIntradayMomentumFromEnvelope = (
   Result.gen(function* () {
     const snapshot = context.snapshot
     yield* validateSnapshot({ ...context, snapshot }, protocol)
+    const candidateExclusions = snapshot.manifest.candidateExclusions
     const latestTrades = Object.fromEntries(
       protocol.candidateSymbols.flatMap((symbol) => {
         const trade = snapshot.trades.filter((candidate) => candidate.symbol === symbol).toSorted(compareLatest)[0]
         return trade === undefined ? [] : [[symbol, toCoreTrade(trade)] as const]
       }),
     )
+    if (!('streaming' in snapshot.manifest))
+      return yield* fail('snapshot-identity', 'Strategy requires the canonical feature input contract')
     const core = yield* decideIntradayMomentumCore({
-      bars: snapshot.bars.map(toCoreBar),
+      rollingPrices: Object.fromEntries(
+        snapshot.manifest.streaming.features.map(({ value }) => [value.material.symbol, value.material.values]),
+      ),
       latestQuotes: Object.fromEntries(
         Object.entries(snapshot.latestQuotes).map(([symbol, quote]) => [symbol, toCoreQuote(quote)]),
       ),
       latestTrades,
       observedAt: snapshot.manifest.observedAt,
+      ...(candidateExclusions === undefined ? {} : { candidateExclusions }),
       protocol,
     })
     return Object.freeze({
-      schemaVersion: 'bayn.intraday-momentum.target.v2',
+      schemaVersion: 'bayn.intraday-momentum.target.v3',
       strategy: 'intraday-momentum',
       sessionDate: snapshot.manifest.sessionDate,
       snapshotId: snapshot.manifest.snapshotId,
@@ -250,7 +314,7 @@ const decideIntradayMomentumFromEnvelope = (
     })
   })
 
-/** Execution decision boundary: only immutable-archive-selected snapshots can produce targets. */
+/** Execution decision boundary: only verified archive or streaming snapshots can produce targets. */
 export const decideIntradayMomentum = (
   context: IntradayMomentumMarketContext,
   protocol: IntradayMomentumProtocol,

@@ -9,10 +9,21 @@ import {
   makeIntradayCycleWindow,
   type CycleConstructionFailure,
 } from '../construction'
-import type { CycleDraft, CycleExecutionPolicy } from '../model'
+import {
+  CycleState,
+  CycleTerminalReason,
+  intradayCycleEntryAttemptOrdinal,
+  isIntradayAutonomousCycle,
+  type AutonomousCycle,
+  type CycleDraft,
+  type CycleExecutionPolicy,
+  type IntradayCycleEntryAttemptOrdinal,
+} from '../model'
+import { cycleDraftMatches, cycleDraftOf } from '../transitions'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
+export const intradayEntryRearmDelayMs = 60_000
 
 export type IsoDateShiftCause =
   | { readonly _tag: 'IsoDateInputInvalid'; readonly date: string; readonly epochMillis: number }
@@ -97,7 +108,7 @@ export const selectIntradayExecutionSession = (
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow =
       openAtMillis +
-        executionPolicy.warmupAfterOpenMs +
+        Math.max(executionPolicy.warmupAfterOpenMs, defaultIntradayMomentumProtocolDocument.lookbackMinutes * 60_000) +
         defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000 <
       cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
@@ -107,7 +118,7 @@ export const selectIntradayExecutionSession = (
 
 export interface IntradayCycleCandidate {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum'
+  readonly strategyName: 'intraday-momentum' | 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: Extract<
@@ -120,6 +131,7 @@ export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,
   observation: MarketCalendarObservation,
   executionSession: MarketCalendarSession,
+  entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinal = 1,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
   Result.gen(function* () {
     const executionCalendar = yield* makeExecutionCalendarObservation({
@@ -128,11 +140,12 @@ export const makeIntradayCycleDraft = (
       ...executionSession,
     })
     const identity = yield* makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
       strategyName: candidate.strategyName,
       qualificationRunId: candidate.cycleBindingId,
       strategyProtocolHash: candidate.strategyProtocolHash,
       accountId: candidate.accountId,
+      entryAttemptOrdinal,
       executionSessionDate: executionCalendar.executionSessionDate,
       executionCalendarSchemaVersion: executionCalendar.executionCalendarSchemaVersion,
       executionCalendarSource: executionCalendar.executionCalendarSource,
@@ -142,3 +155,73 @@ export const makeIntradayCycleDraft = (
     const window = yield* makeIntradayCycleWindow(executionCalendar, candidate.executionPolicy)
     return yield* makeCycleDraft(identity, window)
   })
+
+export const nextIntradayEntryAttemptOrdinal = (
+  cycle: AutonomousCycle,
+  observedAt: string,
+  recoveredBlockedCycle = false,
+): IntradayCycleEntryAttemptOrdinal | undefined => {
+  if (
+    (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
+    (cycle.state !== CycleState.Completed && !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
+    cycle.terminalAt === undefined ||
+    cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
+    observedAt >= cycle.window.submissionCutoffAt
+  )
+    return undefined
+  const currentAttempt =
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' ||
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
+      ? intradayCycleEntryAttemptOrdinal(cycle.identity)
+      : undefined
+  const rearmAt = Date.parse(cycle.terminalAt) + intradayEntryRearmDelayMs
+  return currentAttempt !== undefined &&
+    currentAttempt < 2_147_483_647 &&
+    Number.isFinite(rearmAt) &&
+    Date.parse(observedAt) >= rearmAt
+    ? currentAttempt + 1
+    : undefined
+}
+
+/**
+ * Authority rollover can terminalize an unused pre-submission cycle without a decision document. Reconstruct its
+ * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
+ * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
+ * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
+ */
+export const canRearmUnboundPreSubmissionCycle = (
+  cycle: AutonomousCycle,
+  candidate: IntradayCycleCandidate,
+  observation: MarketCalendarObservation,
+  executionSession: MarketCalendarSession,
+): boolean => {
+  if (
+    !isIntradayAutonomousCycle(cycle) ||
+    cycle.state !== CycleState.Blocked ||
+    cycle.terminalReason !== CycleTerminalReason.ProvenanceMismatch ||
+    cycle.bindings.snapshotId !== undefined ||
+    cycle.bindings.decisionHash !== undefined ||
+    cycle.terminalAt === undefined ||
+    cycle.terminalAt >= cycle.window.submissionOpenAt
+  )
+    return false
+  const originalDraft = makeIntradayCycleDraft(
+    candidate,
+    observation,
+    executionSession,
+    intradayCycleEntryAttemptOrdinal(cycle.identity),
+  )
+  if (Result.isFailure(originalDraft)) return false
+  if (cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4') {
+    return cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
+  }
+  const identity = originalDraft.success.identity
+  if (identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') return false
+  // V3 has an implicit first ordinal. Reconstruct that original version solely for comparison;
+  // acquisition still creates a new v4 attempt and never rewrites the retained v3 record.
+  const { cycleId: _cycleId, schemaVersion: _schemaVersion, entryAttemptOrdinal: _ordinal, ...material } = identity
+  const legacyDraft = makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' }).pipe(
+    Result.flatMap((legacyIdentity) => makeCycleDraft(legacyIdentity, originalDraft.success.window)),
+  )
+  return Result.isSuccess(legacyDraft) && cycleDraftMatches(cycleDraftOf(cycle), legacyDraft.success)
+}

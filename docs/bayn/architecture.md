@@ -6,8 +6,8 @@ Bayn is a single-writer intraday trading service. The execution path is account-
 the same strategy, intent, risk, mutation, recovery, accounting, and reconciliation code. Broker environment and a
 durable capital activation determine where an otherwise identical execution plan may run.
 
-The active runtime contains one strategy, `intraday-momentum`, using
-`bayn.intraday-momentum.protocol.v2`. Historical strategy and decision schemas remain readable only where persisted
+The active runtime contains one strategy, `jev`, using
+`bayn.jev.protocol.v1`. Historical strategy and decision schemas remain readable only where persisted
 records require them; they are not runtime fallbacks and cannot start new cycles.
 
 ## Ownership
@@ -20,8 +20,9 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 - PostgreSQL is the authoritative ledger for activations, cycles, decisions, intents, mutations, reconciliation, and
   the compact controller status projection.
 - TigerBeetle is the authoritative accounting ledger for cash, fees, cost basis, and realized P&L.
-- ClickHouse is the read-only retained intraday archive populated from Alpaca WebSocket events through Kafka and
-  Dorvud/Flink.
+- Dorvud/Flink consumes original Kafka bars and publishes versioned rolling features. Each execution worker consumes
+  the raw and feature topics with a scoped `@platformatic/kafka` client and maintains a complete universe projection.
+- ClickHouse is the read-only archive for raw events and complete feature revisions, including Kafka provenance.
 - The broker adapter performs account-environment-neutral reads and mutations through the restricted egress proxy.
 - The public Bayn deployment serves read-only liveness, readiness, status, metrics, and traces. It does not schedule
   execution or own broker mutation authority.
@@ -31,31 +32,52 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 1. Restate invokes one bounded `advanceExecutionOnce` pass for the canonical account-binding hash.
 2. The pass reconciles persisted intents and broker state before considering new exposure. Any unknown mutation,
    discrepancy, stale observation, or identity drift blocks new orders.
-3. During an eligible regular-market window, Bayn reads a finalized rolling intraday snapshot from ClickHouse. The
-   snapshot binds exact archive rows, Kafka topic watermarks, calendar, universe, feed, delay class, observation time,
-   and content hashes.
-4. The pure strategy returns a target portfolio or a typed no-trade result. Missing or late data is a lifecycle
-   blocker, not `NO_TRADE`.
+3. During an eligible regular-market window, Bayn cuts its raw-plus-feature projection at one local observation.
+   It requires exact feature-to-bar revision matches, the broker calendar, and fresh raw quotes and trades. A
+   replacement worker rebuilds state through captured Kafka partition barriers within the five-minute startup budget.
+4. Bayn constructs verified trading-signal state for the pinned Jev model, retains the complete inference batch, and
+   derives a target portfolio or typed readiness from that evidence. Missing candidate features remain explicit
+   exclusions; missing benchmark evidence blocks the observation. Unavailable inference stays distinct from a valid
+   no-trade result. Existing positions retain deterministic protective-stop, holding-time and session-close exits.
+   PostgreSQL retains exact raw rows, selected feature payloads, actual receipt times, consumer epoch and sequence,
+   transport positions, and snapshot hashes before execution. Archive and shadow modes retain their separate
+   archive-availability evidence contracts; changing the deployed data mode requires reviewed GitOps.
 5. The target planner derives whole-share deltas from the reconciled account and verified execution prices. The
-   strategy decision, exact decision rows, planner input, target plan, risk decisions, and deterministic intent IDs are
-   committed before broker I/O.
+   entry limit allows adverse price movement only within the bound risk policy's slippage allowance. The strategy
+   decision, exact decision rows, planner input, target plan, allowance, risk decisions, and deterministic intent IDs
+   are committed before broker I/O.
 6. The mutation interpreter submits only committed, unexpired intents. Ambiguous outcomes remain unresolved until
    deterministic client-order-ID lookup and reconciliation recover them.
-7. The controller schedules exactly one successor tick. Restate delivery does not replace database idempotency or the
+7. A filled or partially filled entry stays bound to its immutable cycle through position management and exit. A cycle
+   completes only with terminal intents, later exact reconciliation and a flat account. After completion, and only
+   before the entry cutoff, the standing mandate may create another distinct attempt from fresh signals. Re-entry
+   requires the previous authority generation to be settled and replaced. Current-generation blocks and operator
+   holds remain enforced. The v4 cycle identity and unique PostgreSQL authority slot bind increasing attempt ordinals.
+8. The controller schedules exactly one successor tick. Restate delivery does not replace database idempotency or the
    persisted broker-mutation state machine.
-8. Before the close, the same cycle enters close-only operation. Completion requires a flat account, no open orders or
+9. Before the close, the same filled cycle enters close-only operation. Completion requires a flat account, no open orders or
    unresolved mutations, exact PostgreSQL/TigerBeetle reconciliation, and a persisted net-of-cost performance receipt.
 
 ## Active strategy
 
-After a 60-minute warmup and until 60 minutes before the regular-session close, Bayn evaluates the latest fully
-elapsed 30-minute IEX window. It compares AAPL, AMZN, IWM, NVDA, QQQ, and SMH with SPY and requires positive candidate
-momentum, non-negative benchmark momentum, at least 10 basis points of excess momentum, top-quartile range location,
-a spread no wider than 5 basis points, displayed liquidity, and complete fresh bars, quotes, and trades.
+The submission window opens with the regular session. After its first complete 30-minute IEX window and two-second
+decision delay, Bayn evaluates rolling windows until five minutes before the close, without an extra clock warmup.
+It supplies verified prices, volume, computed technical indicators, quotes, benchmark relationships and position
+context to `jev-1.13.0`. Bayn owns arithmetic, timing, sizing, risk and accounting. The default development protocol
+requires a reported entry probability of at least 0.65 and a spread no wider than 5 basis points. Complete batch
+evidence must complete within its ten-second lifetime before authorization. Entry risk then binds a fresh execution
+quote for at most ten seconds from its event time. These parameters have not established a
+profitable trading advantage.
 
-The strategy selects at most one long position and caps it at 10% of mandate allocation. Entry uses whole-share IOC
-limit orders at the verified adverse quote boundary. Bayn begins flattening 30 minutes before the close and must be
-flat 15 minutes before the close. The protocol, universe, thresholds, feed contract, and execution model are
+The strategy selects at most one long position and caps it at 20% of account equity. Allocation bounds the actual
+weighted target by order, symbol, gross and net exposure limits and remaining daily buy-plus-sell turnover. It reserves
+slippage and current exposure's liquidation notional before sizing the target. The planner and allocation bounds use
+the same fixed-point weight precision. Entry uses whole-share IOC limit orders within the verified adverse quote and
+the risk policy's slippage allowance. Model exits require a reported probability of at least 0.65. Deterministic exits
+enforce a 15-minute maximum holding period and a 50-basis-point protective stop on fresh quotes.
+Entries stop and forced flattening starts five minutes before
+the actual session close. Close orders remain eligible until the bell; residual positions or unresolved reconciliation
+remain incomplete. The protocol, universe, thresholds, feed contract, and execution model are
 source-controlled and included in the image's verified behavior, parameter, and protocol hashes.
 
 ## Mutation and risk boundary
@@ -83,7 +105,7 @@ Effect is used at capability and failure boundaries, not as a wrapper around pur
 
 - strategy calculations, hashing, market-data validation, target planning, risk rules, and state transitions are pure
   immutable functions;
-- database, ClickHouse, TigerBeetle, broker, telemetry, and HTTP resources are scoped Effect services;
+- database, Kafka, ClickHouse, TigerBeetle, broker, telemetry, and HTTP resources are scoped Effect services;
 - the execution worker owns one process-scoped `ManagedRuntime`, while each Restate handler runs one bounded pass;
 - typed domain blockers return durable outcomes and continue the reconciliation cadence; transient infrastructure
   failures use bounded Restate retries; and
@@ -136,6 +158,16 @@ Rollback must deactivate the current controller epoch and prove the writer fence
 source/image identity. Direct deployment and manual broker orders are not valid rollout or trading proof.
 
 ## Completion evidence
+
+Historical archive replay defaults to requiring production-reader receipts for every used row by the simulated
+observation time. Missing or late candidate receipts become candidate-local, zero-weight exclusions before the shared
+core ranks the remaining symbols; the report binds those exclusions separately from the unchanged archive manifest.
+Missing benchmark/pricing receipts and an entirely unavailable candidate universe remain incomplete. Malformed,
+conflicting, or unrelated receipt evidence still fails the whole observation. Source receipt timestamps cannot stand
+in for Kafka/Flink/ClickHouse availability. Explicit `source-receipt-assumption` research remains possible but is labeled `UNPROVEN`.
+Receipts establish conservative observed row-availability bounds, not earliest visibility, a simultaneous historical
+snapshot, the original worker's uptime, or actual execution. They cannot repair missing delivery evidence from before
+recording was deployed. See the service README for report v3 and read-only receipt configuration.
 
 Operational rollout requires the exact reviewed source/image live, fresh controller ticks after worker replacement,
 fresh status projections, exact reconciliation, and zero unresolved mutations. Autonomous trading requires additional

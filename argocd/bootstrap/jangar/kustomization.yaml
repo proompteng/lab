@@ -1,0 +1,60 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Empty-namespace first phase only. Select this component in the promoted application.
+
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: snapshot.storage.k8s.io/v1
+      kind: VolumeSnapshot
+      metadata:
+        name: openwebui-redis-before-8-10-1
+  - patch: |-
+      $patch: delete
+      apiVersion: snapshot.storage.k8s.io/v1
+      kind: VolumeSnapshot
+      metadata:
+        name: open-webui-before-0-11-3
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: jangar-openwebui-redis-8-10-1-v2-save
+  - patch: |-
+      $patch: delete
+      apiVersion: snapshot.storage.k8s.io/v1
+      kind: VolumeSnapshot
+      metadata:
+        name: jangar-openwebui-redis-8-10-1-v2-snapshot
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: jangar-openwebui-redis-8-10-1-v2-rehearsal
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: jangar-openwebui-redis-8-10-1-v2-rehearsal
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: jangar-openwebui-redis-8-10-1-v2-rehearsal
+  - target:
+      group: redis.redis.opstreelabs.in
+      version: v1beta2
+      kind: Redis
+      name: jangar-openwebui-redis
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-7"
+      - op: replace
+        path: /spec/kubernetesConfig/image
+        value: quay.io/opstree/redis:v7.0.15@sha256:284c5a51803da9483d66d4f458b1fa9e8b8a67a6e55b9793a0b005cd39239356

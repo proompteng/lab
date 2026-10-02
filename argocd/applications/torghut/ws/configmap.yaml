@@ -20,8 +20,11 @@ data:
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars"
   ALPACA_MARKET_DATA_TRADES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
   ALPACA_MARKET_DATA_QUOTES_SYMBOLS: "AAPL,AMZN,IWM,NVDA,QQQ,SMH,SPY"
+  ALPACA_LATEST_SYMBOLS: "AMD,AVGO,COHR,CRDO,LITE,MRVL,MU,SNDK,WDC"
+  ALPACA_LATEST_POLL_INTERVAL_MS: "2000"
+  ALPACA_LATEST_MAX_AGE_MS: "10000"
   OPTIONS_MARKET_HOLIDAYS: "2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25"
-  # Full bar universe for Bayn and the existing Torghut scheduler. Quote/trade overrides are the Bayn decision set.
+  # Provider bars supply the full Bayn universe; WebSocket and latest observations supply quotes and trades.
   SYMBOLS: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
   SYMBOLS_ALLOWLIST: "AAPL,AMD,AMZN,AVGO,COHR,CRDO,IWM,LITE,MRVL,MU,NVDA,QQQ,SMH,SNDK,SPY,WDC"
   # Observation symbols and their versioned identity are supplied separately in deployment.yaml.

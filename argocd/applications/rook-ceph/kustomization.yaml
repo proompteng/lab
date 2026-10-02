@@ -2,17 +2,24 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: rook-ceph
 
+configMapGenerator:
+  - name: rook-ceph-host-metrics-alloy
+    files:
+      - config.river=host-metrics-alloy-config.river
+
 resources:
+  - host-metrics-alloy-daemonset.yaml
   - storageclasses.yaml
   - tailscale-service-dashboard.yaml
   - ingressroute-ceph-k8s-private.yaml
+  - rgw-tls-proxy.yaml
   - rook-ceph-objectstore-loki-user.yaml
   - rook-ceph-object-user-objectstore-loki-reflector-source.yaml
 
 helmCharts:
   - name: rook-ceph
     repo: https://charts.rook.io/release
-    version: v1.20.3
+    version: v1.20.7
     releaseName: rook-ceph
     namespace: rook-ceph
     includeCRDs: true
@@ -25,7 +32,7 @@ helmCharts:
     valuesFile: csi-driver-values.yaml
   - name: rook-ceph-cluster
     repo: https://charts.rook.io/release
-    version: v1.20.3
+    version: v1.20.7
     releaseName: rook-ceph-cluster
     namespace: rook-ceph
     includeCRDs: true

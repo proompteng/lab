@@ -1,3 +1,5 @@
+import { isTorghutLegacyRetired } from './torghut-retirement'
+
 type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_MARKET_CONTEXT_ENABLED_FLAG_KEY = 'jangar.market_context.enabled'
@@ -93,9 +95,10 @@ export const resolveMarketContextRuntimeConfig = (env: EnvSource = process.env):
       maxStalenessSeconds,
     ),
     batchRequireOpenSession: parseBoolean(env.JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION, true),
-    batchTradingStatusUrl:
-      normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL) ??
-      'http://torghut.torghut.svc.cluster.local/trading/status',
+    batchTradingStatusUrl: isTorghutLegacyRetired(env)
+      ? ''
+      : (normalizeNonEmpty(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL) ??
+        'http://torghut.torghut.svc.cluster.local/trading/status'),
     batchTradingStatusTimeoutMs: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_TIMEOUT_MS, 2_000),
     providerChain: parseStringList(env.JANGAR_MARKET_CONTEXT_PROVIDER_CHAIN, ['codex-spark', 'codex']),
     providerFailureThreshold: parsePositiveInt(env.JANGAR_MARKET_CONTEXT_PROVIDER_FAILURE_THRESHOLD, 3),
@@ -145,7 +148,7 @@ export const resolveMarketContextIngestAuthConfig = (env: EnvSource = process.en
 
 export const validateMarketContextConfig = (env: EnvSource = process.env) => {
   const runtime = resolveMarketContextRuntimeConfig(env)
-  new URL(runtime.batchTradingStatusUrl)
+  if (runtime.batchTradingStatusUrl) new URL(runtime.batchTradingStatusUrl)
   new URL(runtime.onDemandDispatchCallbackUrl)
   resolveMarketContextIngestAuthConfig(env)
 }

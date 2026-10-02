@@ -3,6 +3,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
+import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
 
@@ -39,6 +40,34 @@ let codexAccountRequestCancelled: (() => void) | null = null
 beforeAll(async () => {
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
+    issueEditorSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {
+        id: 'a'.repeat(24),
+        launchUrl: 'https://tengri.example/v1/preview/open#lease',
+        previewOrigin: `https://tengri-${'a'.repeat(24)}.example`,
+        expiresAt: '2026-09-09T00:00:00Z',
+      })
+    },
+    revokeEditorSessions(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {})
+    },
+    revokePreviewSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      callback(null, {})
+    },
     createAgent(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -92,6 +121,39 @@ beforeAll(async () => {
         attached: false,
       })
     },
+    listCodexModels(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      if (call.request.agentId === 'legacy-model-catalog') {
+        callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
+        return
+      }
+      callback(null, {
+        rawJson:
+          call.request.agentId === 'broken-catalog'
+            ? '{"data":[{}],"nextCursor":null}'
+            : JSON.stringify({ data: codexModelFixtures, nextCursor: null }),
+      })
+    },
+    createCodexThread(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, { id: 'thread-selected', rawJson: '{}', eventSequence: 0 })
+    },
+    sendCodexTurn(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, { id: 'turn-selected', threadId: call.request.threadId })
+    },
     getCodexAccount(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -129,6 +191,19 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.path === '/workspace/revision.txt' || call.request.path === '/workspace/wrong-revision.txt') {
+        const content = Buffer.from('versioned content\n')
+        callback(null, {
+          path: String(call.request.path),
+          content,
+          contentType: 'text/plain',
+          revision:
+            call.request.path === '/workspace/revision.txt'
+              ? createHash('sha256').update(content).digest('hex')
+              : '0'.repeat(64),
+        })
+        return
+      }
       if (call.request.path === '/workspace/bom.txt') {
         callback(null, {
           path: String(call.request.path),
@@ -141,6 +216,29 @@ beforeAll(async () => {
         path: String(call.request.path),
         content: Buffer.from([0xff, 0xfe, 0x00]),
         contentType: 'application/octet-stream',
+      })
+    },
+    writeFile(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedRequest = call.request
+      receivedMetadata = call.metadata
+      if (call.request.expectedRevision === '0'.repeat(64)) {
+        callback(serviceError(grpc.status.ALREADY_EXISTS, 'private guest conflict details'), null)
+        return
+      }
+      if (!Buffer.isBuffer(call.request.content)) {
+        callback(serviceError(grpc.status.INVALID_ARGUMENT, 'content bytes missing'), null)
+        return
+      }
+      callback(null, {
+        path: call.request.path,
+        size: call.request.content.byteLength,
+        revision:
+          call.request.path === '/workspace/unconfirmed.txt'
+            ? ''
+            : createHash('sha256').update(call.request.content).digest('hex'),
       })
     },
     searchFiles(
@@ -195,11 +293,32 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedRequest = call.request
+      if (call.request.threadId === 'missing-conversation') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'), null)
+        return
+      }
+      if (call.request.threadId === 'missing-resource') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"internal resource at 10.244.1.42 is missing"}'), null)
+        return
+      }
+      if (call.request.threadId === 'unavailable-conversation') {
+        callback(serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'), null)
+        return
+      }
       if (call.request.threadId === 'invalid-sequence') {
         callback(null, {
           id: String(call.request.threadId),
           rawJson: '{"thread":{"id":"invalid-sequence"}}',
           eventSequence: '-1',
+        })
+        return
+      }
+      if (call.request.threadId === 'paged-thread' || call.request.threadId === 'outdated-item-cursor') {
+        callback(null, {
+          id: String(call.request.threadId),
+          rawJson: '{"thread":{"id":"paged-thread"}}',
+          eventSequence: '42',
+          itemEventSequences: { 'message-1': call.request.threadId === 'paged-thread' ? '52' : '41' },
         })
         return
       }
@@ -231,6 +350,61 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('reads a validated guest catalog through the owner-signed transport', async () => {
+    const { listCodexModels } = await import('./grpc')
+    expect(await listCodexModels('github:42', 'agent-test', 'models-2')).toEqual({
+      models: codexModelFixtures,
+      nextCursor: null,
+    })
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', cursor: 'models-2' })
+    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
+    expect(await rejection(listCodexModels('github:42', 'broken-catalog'))).toMatchObject({
+      message: 'The guest returned an invalid Codex model catalog',
+    })
+  })
+
+  test('carries model and reasoning choices over protobuf for new and subsequent turns', async () => {
+    const { createCodexThread, sendCodexTurn } = await import('./grpc')
+    const options = {
+      model: 'gpt-6.1-sol',
+      reasoningEffort: 'high',
+    } satisfies import('./codex-models').TengriCodexOptions
+    await createCodexThread('github:42', 'agent-test', options)
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', ...options })
+    await sendCodexTurn('github:42', 'agent-test', 'thread-selected', 'Read the workspace', options)
+    expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
+  })
+
+  test('identifies unsupported model selection without disguising other catalog failures', async () => {
+    const { listCodexModels } = await import('./grpc')
+    expect(await rejection(listCodexModels('github:42', 'legacy-model-catalog'))).toMatchObject({
+      status: 412,
+      code: 'model_selection_unavailable',
+    })
+    expect(await rejection(listCodexModels('github:42', 'broken-catalog'))).toMatchObject({
+      status: 503,
+      code: undefined,
+    })
+  })
+
+  test('revokes editor sessions for the authenticated subject without a caller-selected owner', async () => {
+    const { revokeEditorSessions } = await import('./grpc')
+    await revokeEditorSessions('github:42')
+    expect(receivedRequest).toEqual({})
+    expect(metadataValue('x-tengri-subject')).toBe('github:42')
+    expect(metadataValue('x-tengri-signature')).not.toBe('')
+  })
+
+  test('binds real editor sessions to the window and revokes only their issued lease', async () => {
+    const { issueEditorSession, revokePreviewSession } = await import('./grpc')
+    const session = await issueEditorSession('github:42', 'agent-test', 'desktop-stable-code-window')
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-code-window' })
+    expect(session.id).toBe('a'.repeat(24))
+    expect(metadataValue('x-tengri-subject')).toBe('github:42')
+    await revokePreviewSession('github:42', 'agent-test', session.id, 'lease')
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', sessionId: session.id, revocationToken: 'lease' })
+  })
+
   test('projects the public request and signs the GitHub subject for the Rust service', async () => {
     const { createAgent } = await import('./grpc')
     const agent = await createAgent('github:42', 'Tengri')
@@ -272,6 +446,53 @@ describe('Tengri gRPC BFF transport', () => {
       message: 'This file is not valid UTF-8 text',
       status: 415,
     })
+  })
+
+  test('verifies file content revisions and rejects a mismatched read receipt', async () => {
+    const { readFile } = await import('./grpc')
+    const result = await readFile('github:42', 'agent-test', '/workspace/revision.txt')
+    expect(result).toMatchObject({
+      content: 'versioned content\n',
+      revision: createHash('sha256').update('versioned content\n').digest('hex'),
+    })
+    expect(await rejection(readFile('github:42', 'agent-test', '/workspace/wrong-revision.txt'))).toMatchObject({
+      status: 503,
+    })
+  })
+
+  test('signs the file precondition and refuses unconfirmed save receipts', async () => {
+    const { writeFile } = await import('./grpc')
+    const content = 'saved content\n'
+    const expectedRevision = 'a'.repeat(64)
+    const result = await writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, expectedRevision)
+    expect(receivedRequest).toMatchObject({
+      expectedRevision,
+      path: '/workspace/revision.txt',
+      content: Buffer.from(content),
+    })
+    expect(result).toEqual({
+      path: '/workspace/revision.txt',
+      size: Buffer.byteLength(content),
+      revision: createHash('sha256').update(content).digest('hex'),
+    })
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.WriteFile
+    const bodyHash = createHash('sha256').update(method.requestSerialize(receivedRequest)).digest('hex')
+    expect(metadataValue('x-tengri-signature')).toBe(
+      createHmac('sha256', secret)
+        .update(
+          `${metadataValue('x-tengri-subject')}\n${metadataValue('x-tengri-timestamp')}\n${metadataValue('x-tengri-nonce')}\n${method.path}\n${bodyHash}`,
+        )
+        .digest('hex'),
+    )
+    expect(
+      await rejection(writeFile('github:42', 'agent-test', '/workspace/unconfirmed.txt', content, expectedRevision)),
+    ).toMatchObject({ status: 503 })
+    expect(
+      await rejection(writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, '0'.repeat(64))),
+    ).toMatchObject({ status: 409, code: 'file_conflict' })
+    expect(await rejection(writeFile('github:42', 'agent-test', '/workspace/revision.txt', content, ''))).toMatchObject(
+      { status: 400 },
+    )
   })
 
   test('preserves bounded file-search metadata from the control plane', async () => {
@@ -427,13 +648,13 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('restores an active Codex device login without creating another attempt', async () => {
     const { getCodexLogin } = await import('./grpc')
-    await expect(getCodexLogin('github:42', 'agent-test')).resolves.toEqual({
+    expect(await getCodexLogin('github:42', 'agent-test')).toEqual({
       loginId: 'login-one',
       verificationUrl: 'https://auth.openai.com/device',
       userCode: 'TENG-RI01',
       expiresAt: '2026-08-31T09:15:00Z',
     })
-    await expect(getCodexLogin('github:42', 'no-active-login')).resolves.toBeNull()
+    expect(await getCodexLogin('github:42', 'no-active-login')).toBeNull()
   })
 
   test('preserves a leading UTF-8 BOM for lossless editor round trips', async () => {
@@ -490,11 +711,12 @@ describe('Tengri gRPC BFF transport', () => {
     const { resumeCodexThread } = await import('./grpc')
 
     const thread = await resumeCodexThread('github:42', 'agent-test', 'thread-test')
-    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test' })
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
     expect(thread).toEqual({
       id: 'thread-test',
       rawJson: '{"thread":{"id":"thread-test"}}',
       eventSequence: 42,
+      itemEventSequences: {},
     })
   })
 
@@ -504,6 +726,38 @@ describe('Tengri gRPC BFF transport', () => {
     expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'invalid-sequence'))).toMatchObject({
       message: 'Tengri control plane returned an invalid Codex event cursor',
       status: 503,
+    })
+  })
+
+  test('preserves item page cursors and rejects pages older than the recovery baseline', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+    expect(await resumeCodexThread('github:42', 'agent-test', 'paged-thread')).toMatchObject({
+      eventSequence: 42,
+      itemEventSequences: { 'message-1': 52 },
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'outdated-item-cursor'))).toMatchObject({
+      message: 'Tengri control plane returned an outdated Codex item cursor',
+      status: 503,
+    })
+  })
+
+  test('identifies only the guest missing-conversation response as recoverable with a new conversation', async () => {
+    const { resumeCodexThread } = await import('./grpc')
+
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'missing-conversation'))).toMatchObject({
+      message: 'Codex conversation could not be found',
+      status: 404,
+      code: 'conversation_not_found',
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'missing-resource'))).toMatchObject({
+      message: 'Tengri resource was not found',
+      status: 404,
+      code: undefined,
+    })
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'unavailable-conversation'))).toMatchObject({
+      message: 'Tengri control plane is unavailable',
+      status: 503,
+      code: undefined,
     })
   })
 

@@ -9,7 +9,6 @@ import { Cause, Duration, Effect, Exit, Fiber, Schedule } from 'effect'
 import {
   type ActivityHeartbeatRegistration,
   type ActivityLifecycle,
-  type ActivityRetryState,
   makeActivityLifecycle,
 } from '../activities/lifecycle'
 import { buildTransportOptions, normalizeTemporalAddress } from '../client'
@@ -40,12 +39,7 @@ import {
   CommandSchema,
   RecordMarkerCommandAttributesSchema,
 } from '../proto/temporal/api/command/v1/message_pb'
-import {
-  type Payloads,
-  PayloadsSchema,
-  type RetryPolicy,
-  WorkflowExecutionSchema,
-} from '../proto/temporal/api/common/v1/message_pb'
+import { type Payloads, PayloadsSchema, WorkflowExecutionSchema } from '../proto/temporal/api/common/v1/message_pb'
 import {
   type WorkerDeploymentOptions,
   WorkerDeploymentOptionsSchema,
@@ -97,6 +91,8 @@ import {
   prepareWorkflowBunEnvironmentBundle,
   type WorkflowBunEnvironmentBundle,
 } from '../workflow/bun-environment-lint'
+import { buildWorkflowActivations } from '../workflow/activation-history'
+import type { WorkflowActivationJob } from '../workflow/activation'
 import type { ActivityResolution, NexusOperationResolution, WorkflowInfo } from '../workflow/context'
 import type { WorkflowDefinition, WorkflowDefinitions } from '../workflow/definition'
 import type {
@@ -105,7 +101,6 @@ import type {
   WorkflowDeterminismQueryRecord,
   WorkflowDeterminismSignalRecord,
   WorkflowDeterminismState,
-  WorkflowRetryPolicyInput,
   WorkflowUpdateDeterminismEntry,
 } from '../workflow/determinism'
 import { intentsEqual, stableStringify } from '../workflow/determinism'
@@ -1202,15 +1197,29 @@ export class WorkerRuntime {
     return isAbortError(error) || (error instanceof ConnectError && error.code === Code.Canceled)
   }
 
-  async #runWorkerResponseRpc<T>(operation: () => Promise<T>): Promise<T> {
+  async #runWorkerResponseRpc<T>(
+    operation: (options: { signal: AbortSignal; timeoutMs: number }) => Promise<T>,
+    deadlineMs?: number,
+  ): Promise<T> {
+    const remaining = deadlineMs === undefined ? undefined : deadlineMs - Date.now()
+    const timeoutError = () => new ConnectError('Workflow task response budget exhausted', Code.DeadlineExceeded)
+    if (remaining !== undefined && remaining <= 0) throw timeoutError()
+    const response = withTemporalRetry(
+      Effect.tryPromise({
+        try: (signal) => {
+          const timeoutMs =
+            deadlineMs === undefined ? RESPOND_TIMEOUT_MS : Math.min(RESPOND_TIMEOUT_MS, deadlineMs - Date.now())
+          if (timeoutMs <= 0) throw timeoutError()
+          return operation({ signal, timeoutMs })
+        },
+        catch: (error) => error,
+      }),
+      this.#config.rpcRetryPolicy,
+    )
     const exit = await Effect.runPromiseExit(
-      withTemporalRetry(
-        Effect.tryPromise({
-          try: operation,
-          catch: (error) => error,
-        }),
-        this.#config.rpcRetryPolicy,
-      ),
+      remaining === undefined
+        ? response
+        : Effect.timeoutFail(response, { duration: Duration.millis(remaining), onTimeout: timeoutError }),
     )
     if (Exit.isSuccess(exit)) {
       return exit.value
@@ -1349,6 +1358,7 @@ export class WorkerRuntime {
     executionOverride?: { workflowId: string; runId: string },
   ): Promise<void> {
     const execution = executionOverride ?? this.#resolveWorkflowExecution(response)
+    const taskReceivedAt = Date.now()
     const workflowTaskAttempt = Number(response.attempt ?? 1)
     const isLegacyQueryTask = Boolean(response.query)
     const queryStartTime = isLegacyQueryTask ? Date.now() : null
@@ -1366,9 +1376,15 @@ export class WorkerRuntime {
     const isLegacyQueryOnly = isLegacyQueryTask && !hasHistoryEvents && !hasMoreHistory
     const hasQueryPayloads = Boolean(response.query) || queryCount > 0
     const historyEvents = await this.#collectWorkflowHistory(execution, response, {
-      forceFullHistory: (hasQueryPayloads && !isLegacyQueryOnly) || nondeterminismRetry > 0,
-      skipFetchOnMissingStart: isLegacyQueryOnly,
+      forceFullHistory: hasQueryPayloads || nondeterminismRetry > 0,
     })
+    const workflowStart = this.#findWorkflowStartedEvent(historyEvents)?.attributes
+    const taskTimeoutMs =
+      (workflowStart?.case === 'workflowExecutionStartedEventAttributes'
+        ? durationToMillis(workflowStart.value.workflowTaskTimeout)
+        : undefined) ?? 10_000
+    const taskStartedAt = timestampToDate(response.startedTime)?.getTime() ?? taskReceivedAt
+    const responseDeadlineMs = taskStartedAt + taskTimeoutMs - Math.min(100, taskTimeoutMs / 10)
     const workflowType = this.#resolveWorkflowType(response, historyEvents)
     const workflowInfo = this.#buildWorkflowInfo(workflowType, execution)
     const collectedUpdates = await collectWorkflowUpdates({
@@ -1491,16 +1507,21 @@ export class WorkerRuntime {
     const stickyNexusScheduleEventIds = resolveStickyNexusScheduleEventIds(stickyEntry, stickyCacheMatchesHistory)
 
     try {
+      const activationJobs = new Map<string, WorkflowActivationJob>()
+      for (const delivery of signalDeliveries) {
+        if (delivery.metadata?.eventId) activationJobs.set(delivery.metadata.eventId, { type: 'signal', delivery })
+      }
       const { results: activityResults, scheduledEventIds: activityScheduleEventIds } =
-        await this.#extractActivityResolutions(historyEvents)
+        await this.#extractActivityResolutions(historyEvents, activationJobs)
       const { results: nexusResults, scheduledEventIds: nexusScheduleEventIds } = await this.#extractNexusResolutions(
         historyEvents,
         {
           markerState: historyReplay?.hasDeterminismMarker ? historyReplay.determinismState : undefined,
           knownScheduleEventIds: stickyNexusScheduleEventIds,
         },
+        activationJobs,
       )
-      const timerResults = await this.#extractTimerResolutions(historyEvents)
+      const timerResults = await this.#extractTimerResolutions(historyEvents, activationJobs)
       const mergedActivityResults = new Map<string, ActivityResolution>(stickyEntry?.activityResults ?? [])
       for (const [activityId, resolution] of activityResults.entries()) {
         mergedActivityResults.set(activityId, resolution)
@@ -1525,7 +1546,12 @@ export class WorkerRuntime {
 
       const replayUpdates = historyReplay?.updates ?? []
       const mergedUpdates = mergeUpdateInvocations(replayUpdates, collectedUpdates.invocations)
+      const activations = buildWorkflowActivations(historyEvents, activationJobs, mergedUpdates)
+      const localActivityBudgetMs = Math.floor(taskStartedAt + taskTimeoutMs / 2 - Date.now())
+      const localActivityDeadline =
+        localActivityBudgetMs > 0 ? AbortSignal.timeout(localActivityBudgetMs) : AbortSignal.abort()
       const output = await this.#executor.execute({
+        activations,
         workflowType,
         workflowId: execution.workflowId,
         runId: execution.runId,
@@ -1543,6 +1569,7 @@ export class WorkerRuntime {
         queryRequests,
         updates: mergedUpdates,
         mode: isLegacyQueryTask ? 'query' : 'workflow',
+        localActivityDeadline,
       })
       this.#log('debug', 'workflow query evaluation summary', {
         ...baseLogFields,
@@ -1779,8 +1806,9 @@ export class WorkerRuntime {
           ...(updateProtocolMessages.length > 0 ? { messages: updateProtocolMessages } : {}),
         })
         try {
-          await this.#runWorkerResponseRpc(() =>
-            this.#workflowService.respondWorkflowTaskCompleted(completion, { timeoutMs: RESPOND_TIMEOUT_MS }),
+          await this.#runWorkerResponseRpc(
+            (options) => this.#workflowService.respondWorkflowTaskCompleted(completion, options),
+            responseDeadlineMs,
           )
           workflowTaskCommitted = true
         } catch (rpcError) {
@@ -1878,13 +1906,19 @@ export class WorkerRuntime {
           historyLastEventId: historyReplay?.lastEventId ?? null,
           workflowTaskAttempt,
         })
-        await this.#failWorkflowTask(response, execution, enriched, WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR)
+        await this.#failWorkflowTask(
+          response,
+          execution,
+          enriched,
+          WorkflowTaskFailedCause.NON_DETERMINISTIC_ERROR,
+          responseDeadlineMs,
+        )
         return
       }
       if (stickyEntryCleared && this.#stickySchedulingEnabled) {
         this.#log('debug', 'sticky cache entry cleared after workflow failure', baseLogFields)
       }
-      await this.#failWorkflowTask(response, execution, error)
+      await this.#failWorkflowTask(response, execution, error, WorkflowTaskFailedCause.UNSPECIFIED, responseDeadlineMs)
     }
   }
 
@@ -1954,7 +1988,7 @@ export class WorkerRuntime {
   async #collectWorkflowHistory(
     execution: { workflowId: string; runId: string },
     response: PollWorkflowTaskQueueResponse,
-    options?: { forceFullHistory?: boolean; skipFetchOnMissingStart?: boolean },
+    options?: { forceFullHistory?: boolean },
   ): Promise<HistoryEvent[]> {
     const events: HistoryEvent[] = []
     const initialEvents = response.history?.events ?? []
@@ -1972,8 +2006,7 @@ export class WorkerRuntime {
     }
 
     let sorted = this.#sortHistoryEvents(events)
-    const shouldFetchFullHistory =
-      options?.forceFullHistory || (!options?.skipFetchOnMissingStart && !this.#findWorkflowStartedEvent(sorted))
+    const shouldFetchFullHistory = options?.forceFullHistory || !this.#findWorkflowStartedEvent(sorted)
     if (shouldFetchFullHistory) {
       const fullHistory = await this.#fetchWorkflowHistoryFromStart(execution)
       if (fullHistory.length > 0) {
@@ -2053,13 +2086,20 @@ export class WorkerRuntime {
     return 0n
   }
 
-  async #extractActivityResolutions(events: HistoryEvent[]): Promise<{
+  async #extractActivityResolutions(
+    events: HistoryEvent[],
+    activationJobs?: Map<string, WorkflowActivationJob>,
+  ): Promise<{
     results: Map<string, ActivityResolution>
     scheduledEventIds: Map<string, string>
   }> {
     const resolutions = new Map<string, ActivityResolution>()
     const scheduledActivityIds = new Map<string, string>()
     const activityScheduleById = new Map<string, string>()
+    const record = (event: HistoryEvent, id: string, resolution: ActivityResolution) => {
+      resolutions.set(id, resolution)
+      activationJobs?.set(event.eventId.toString(), { type: 'activity', id, resolution })
+    }
 
     const normalizeEventId = (value: bigint | number | string | undefined | null): string | undefined => {
       if (value === undefined || value === null) {
@@ -2112,7 +2152,7 @@ export class WorkerRuntime {
           const decoded = await decodePayloadsToValues(this.#dataConverter, payloads)
           const value =
             decoded.length === 0 ? undefined : decoded.length === 1 ? decoded[0] : Object.freeze([...decoded])
-          resolutions.set(activityId, { status: 'completed', value })
+          record(event, activityId, { status: 'completed', value })
           break
         }
         case EventType.ACTIVITY_TASK_FAILED: {
@@ -2126,7 +2166,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
             new Error(`Activity ${activityId} failed`)
-          resolutions.set(activityId, { status: 'failed', error: failureError })
+          record(event, activityId, { status: 'failed', error: failureError })
           break
         }
         case EventType.ACTIVITY_TASK_TIMED_OUT: {
@@ -2145,7 +2185,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, event.attributes.value.failure)) ??
             new Error(`Activity ${activityId} timed out (${timeoutType})`)
-          resolutions.set(activityId, { status: 'failed', error: failureError })
+          record(event, activityId, { status: 'failed', error: failureError })
           break
         }
         case EventType.ACTIVITY_TASK_CANCELED: {
@@ -2162,7 +2202,7 @@ export class WorkerRuntime {
           )
           const error = new Error(`Activity ${activityId} was canceled`)
           ;(error as { details?: unknown[] }).details = details
-          resolutions.set(activityId, { status: 'failed', error })
+          record(event, activityId, { status: 'failed', error })
           break
         }
         default:
@@ -2178,11 +2218,16 @@ export class WorkerRuntime {
       markerState?: WorkflowDeterminismState
       knownScheduleEventIds?: ReadonlyMap<string, string>
     } = {},
+    activationJobs?: Map<string, WorkflowActivationJob>,
   ): Promise<{
     results: Map<string, NexusOperationResolution>
     scheduledEventIds: Map<string, string>
   }> {
     const resolutions = new Map<string, NexusOperationResolution>()
+    const record = (event: HistoryEvent, id: string, resolution: NexusOperationResolution) => {
+      resolutions.set(id, resolution)
+      activationJobs?.set(event.eventId.toString(), { type: 'nexus', id, resolution })
+    }
     const identities = resolveNexusOperationHistoryIdentities(events, identityOptions)
     const scheduledOperationIds = identities.operationIdsByScheduledEventId
     const operationScheduleById = identities.scheduledEventIdsByOperationId
@@ -2227,7 +2272,7 @@ export class WorkerRuntime {
           }
           const payload = attrs.result
           const value = payload ? await this.#dataConverter.fromPayload(payload) : undefined
-          resolutions.set(operationId, { status: 'completed', value })
+          record(event, operationId, { status: 'completed', value })
           break
         }
         case EventType.NEXUS_OPERATION_FAILED: {
@@ -2242,7 +2287,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, attrs.failure)) ??
             new Error(`Nexus operation ${operationId} failed`)
-          resolutions.set(operationId, { status: 'failed', error: failureError })
+          record(event, operationId, { status: 'failed', error: failureError })
           break
         }
         case EventType.NEXUS_OPERATION_CANCELED: {
@@ -2257,7 +2302,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, attrs.failure)) ??
             new Error(`Nexus operation ${operationId} canceled`)
-          resolutions.set(operationId, { status: 'failed', error: failureError })
+          record(event, operationId, { status: 'failed', error: failureError })
           break
         }
         case EventType.NEXUS_OPERATION_TIMED_OUT: {
@@ -2272,7 +2317,7 @@ export class WorkerRuntime {
           const failureError =
             (await failureToError(this.#dataConverter, attrs.failure)) ??
             new Error(`Nexus operation ${operationId} timed out`)
-          resolutions.set(operationId, { status: 'failed', error: failureError })
+          record(event, operationId, { status: 'failed', error: failureError })
           break
         }
         default:
@@ -2413,7 +2458,10 @@ export class WorkerRuntime {
     return deliveries
   }
 
-  async #extractTimerResolutions(events: HistoryEvent[]): Promise<Set<string>> {
+  async #extractTimerResolutions(
+    events: HistoryEvent[],
+    activationJobs?: Map<string, WorkflowActivationJob>,
+  ): Promise<Set<string>> {
     const fired = new Set<string>()
     for (const event of events) {
       if (event.eventType !== EventType.TIMER_FIRED) {
@@ -2425,6 +2473,7 @@ export class WorkerRuntime {
       const attrs = event.attributes.value as { timerId?: string }
       if (attrs.timerId) {
         fired.add(attrs.timerId)
+        activationJobs?.set(event.eventId.toString(), { type: 'timer', id: attrs.timerId })
       }
     }
     return fired
@@ -3130,7 +3179,17 @@ export class WorkerRuntime {
     execution: { workflowId: string; runId: string },
     error: unknown,
     cause: WorkflowTaskFailedCause = WorkflowTaskFailedCause.UNSPECIFIED,
+    deadlineMs?: number,
   ): Promise<void> {
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+      this.#log(
+        'warn',
+        'workflow task response budget exhausted; awaiting server redelivery',
+        this.#runtimeLogFields(execution),
+      )
+      this.#incrementCounter(this.#metrics.workflowFailures)
+      return
+    }
     const failure = await encodeErrorToFailure(this.#dataConverter, error)
     const encoded = await encodeFailurePayloads(this.#dataConverter, failure)
 
@@ -3144,8 +3203,9 @@ export class WorkerRuntime {
     })
 
     try {
-      await this.#runWorkerResponseRpc(() =>
-        this.#workflowService.respondWorkflowTaskFailed(failed, { timeoutMs: RESPOND_TIMEOUT_MS }),
+      await this.#runWorkerResponseRpc(
+        (options) => this.#workflowService.respondWorkflowTaskFailed(failed, options),
+        deadlineMs,
       )
       this.#incrementCounter(this.#metrics.workflowFailures)
     } catch (rpcError) {
@@ -3240,57 +3300,24 @@ export class WorkerRuntime {
       }
     }
 
-    const retryPolicy = this.#convertRetryPolicy(response.retryPolicy)
-    const retryDeadlineMs = this.#computeRetryDeadline(response)
-    let retryState: ActivityRetryState = {
-      attempt: context.info.attempt,
-      retryCount: 0,
-      nextDelayMs: 0,
-    }
-
     try {
-      while (true) {
-        let result: unknown
-        try {
-          result = await runWithActivityContext(context, async () => await handler(...args))
-        } catch (error) {
-          if (isAbortError(error)) {
-            await this.#cancelActivityTask(response, context)
-            return
-          }
-          if (!retryPolicy || this.#isNonRetryableActivityError(error, retryPolicy)) {
-            await this.#failActivityTask(response, error, context)
-            return
-          }
-          const nextRetry = await Effect.runPromise(this.#activityLifecycle.nextRetryDelay(retryPolicy, retryState))
-          if (!nextRetry) {
-            markErrorNonRetryable(error)
-            await this.#failActivityTask(response, error, context)
-            return
-          }
-          if (retryDeadlineMs !== undefined && Date.now() + nextRetry.nextDelayMs > retryDeadlineMs) {
-            markErrorNonRetryable(error)
-            await this.#failActivityTask(response, error, context)
-            return
-          }
-          await sleep(nextRetry.nextDelayMs)
-          context.throwIfCancelled()
-          context.info.attempt = nextRetry.attempt
-          retryState = nextRetry
-          continue
-        }
-
-        try {
-          const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
-          const completed = await this.#completeActivityTask(response, payloads)
-          if (!completed) {
-            return
-          }
-          break
-        } catch (error) {
+      let result: unknown
+      try {
+        result = await runWithActivityContext(context, async () => await handler(...args))
+      } catch (error) {
+        if (isAbortError(error)) {
+          await this.#cancelActivityTask(response, context)
+        } else {
           await this.#failActivityTask(response, error, context)
-          return
         }
+        return
+      }
+
+      try {
+        const payloads = await encodeValuesToPayloads(this.#dataConverter, result === undefined ? [] : [result])
+        await this.#completeActivityTask(response, payloads)
+      } catch (error) {
+        await this.#failActivityTask(response, error, context)
       }
     } finally {
       if (heartbeatRegistration) {
@@ -3469,59 +3496,6 @@ export class WorkerRuntime {
     return { context, abortController }
   }
 
-  #convertRetryPolicy(policy: RetryPolicy | undefined | null): WorkflowRetryPolicyInput | undefined {
-    if (!policy) {
-      return undefined
-    }
-    const initialIntervalMs = durationToMillis(policy.initialInterval)
-    const maximumIntervalMs = durationToMillis(policy.maximumInterval)
-    const backoffCoefficient = policy.backoffCoefficient !== 0 ? policy.backoffCoefficient : undefined
-    const maximumAttempts = policy.maximumAttempts > 0 ? policy.maximumAttempts : undefined
-    const nonRetryable = policy.nonRetryableErrorTypes.length > 0 ? [...policy.nonRetryableErrorTypes] : undefined
-
-    if (
-      initialIntervalMs === undefined &&
-      maximumIntervalMs === undefined &&
-      backoffCoefficient === undefined &&
-      maximumAttempts === undefined &&
-      (nonRetryable === undefined || nonRetryable.length === 0)
-    ) {
-      return undefined
-    }
-
-    return {
-      ...(initialIntervalMs !== undefined ? { initialIntervalMs } : {}),
-      ...(backoffCoefficient !== undefined ? { backoffCoefficient } : {}),
-      ...(maximumIntervalMs !== undefined ? { maximumIntervalMs } : {}),
-      ...(maximumAttempts !== undefined ? { maximumAttempts } : {}),
-      ...(nonRetryable !== undefined ? { nonRetryableErrorTypes: nonRetryable } : {}),
-    }
-  }
-
-  #isNonRetryableActivityError(error: unknown, retry: WorkflowRetryPolicyInput): boolean {
-    if (error && typeof error === 'object' && (error as { nonRetryable?: boolean }).nonRetryable === true) {
-      return true
-    }
-    const errorName = error instanceof Error ? error.name : undefined
-    if (!errorName) {
-      return false
-    }
-    return Boolean(retry.nonRetryableErrorTypes?.includes(errorName))
-  }
-
-  #computeRetryDeadline(response: PollActivityTaskQueueResponse): number | undefined {
-    const scheduleToClose = durationToMillis(response.scheduleToCloseTimeout)
-    const startToClose = durationToMillis(response.startToCloseTimeout)
-    const scheduledTime = timestampToDate(response.scheduledTime)
-    const startedTime = timestampToDate(response.startedTime) ?? scheduledTime
-    const scheduleDeadline = scheduleToClose && scheduledTime ? scheduledTime.getTime() + scheduleToClose : undefined
-    const startDeadline = startToClose && startedTime ? startedTime.getTime() + startToClose : undefined
-    if (scheduleDeadline && startDeadline) {
-      return Math.min(scheduleDeadline, startDeadline)
-    }
-    return scheduleDeadline ?? startDeadline ?? undefined
-  }
-
   async #flushMetrics(): Promise<void> {
     if (this.#metricsFlushInFlight) {
       return
@@ -3672,12 +3646,6 @@ const createActivityAbortError = (message: string): Error => {
   const error = new Error(message)
   error.name = 'AbortError'
   return error
-}
-
-const markErrorNonRetryable = (error: unknown): void => {
-  if (error && typeof error === 'object') {
-    ;(error as { nonRetryable?: boolean }).nonRetryable = true
-  }
 }
 
 const isActivityCancelRequested = (response: PollActivityTaskQueueResponse): boolean =>

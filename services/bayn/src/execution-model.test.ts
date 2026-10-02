@@ -70,8 +70,8 @@ describe('explicit execution model', () => {
         type: 'limit',
         timeInForce: 'ioc',
         planAfter: 'verified-intraday-window',
-        warmupAfterOpenMs: 3_600_000,
-        submissionCutoffBeforeCloseMs: 3_600_000,
+        warmupAfterOpenMs: 0,
+        submissionCutoffBeforeCloseMs: 300_000,
       },
       precision: { quantityIncrementMicros: '1000000' },
     })
@@ -89,6 +89,20 @@ describe('explicit execution model', () => {
         }),
       ),
     ).toBeTrue()
+  })
+
+  test('admits exact regular-session boundaries and rejects offsets outside the session', () => {
+    const decode = Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)
+    const model = {
+      ...intradayMomentumExecutionModel,
+      order: { ...intradayMomentumExecutionModel.order, warmupAfterOpenMs: 0, submissionCutoffBeforeCloseMs: 0 },
+    }
+    expect(Result.isSuccess(decode(model))).toBeTrue()
+    for (const field of ['warmupAfterOpenMs', 'submissionCutoffBeforeCloseMs']) {
+      for (const offset of [-1, 0.5, 86_400_001]) {
+        expect(Result.isFailure(decode({ ...model, order: { ...model.order, [field]: offset } }))).toBeTrue()
+      }
+    }
   })
 
   test('rounds price adversely and separates spread from slippage', () => {

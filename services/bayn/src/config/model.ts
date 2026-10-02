@@ -3,6 +3,7 @@ import { Schema, type Redacted } from 'effect'
 import type { BrokerConnection, BrokerConnectionDecodeFailure, BrokerProvider } from '../broker/connection'
 import type { BrokerEnvironment } from '../broker/identity'
 import type { EmbeddedBuildMetadata } from '../build'
+import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
 import type { EvaluationBounds } from '../contracts'
 import type { BrokerAccess } from '../execution/authority'
 import {
@@ -20,6 +21,7 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
 }
 
 export interface RuntimeConfig {
+  readonly jevKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -38,6 +40,7 @@ export interface RuntimeConfig {
         readonly reconciliationIntervalMs: number
       })
     | undefined
+  readonly kafka?: KafkaMarketConfig | undefined
   readonly clickhouse: {
     readonly url: string
     readonly username: string
@@ -77,6 +80,7 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase & {
 export const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
 
 export interface ParsedRuntimeConfig {
+  readonly jevKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -107,6 +111,7 @@ export interface ParsedRuntimeConfig {
     readonly retryAttempts: number
     readonly reconciliationIntervalMs: number
   }
+  readonly kafka?: KafkaMarketConfig | undefined
   readonly clickhouse: RuntimeConfig['clickhouse']
   readonly postgres: RuntimeConfig['postgres']
   readonly tigerBeetle: RuntimeConfig['tigerBeetle']

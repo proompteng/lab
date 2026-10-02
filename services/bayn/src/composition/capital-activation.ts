@@ -1,13 +1,13 @@
 import { Effect, Ref, Result } from 'effect'
 import type { ApplicationPlanFor } from '../app'
 import { executionObserveSuccessorGenerationHash } from '../blocked-generation-recovery'
-import { type BrokerSessionShape, type ReadPreflight } from '../broker/alpaca'
 import { BrokerEnvironment } from '../broker/identity'
 import { type AuthorityGenerationStoreShape, type CapitalGrantLifecycleStoreShape } from '../db/execution-store'
 import { BrokerAccess, noCapitalAuthority, reconciliationIncompleteRestrictionReason } from '../execution/authority'
 import {
   Authority,
   KillState,
+  OrderStatus,
   ReconciliationStatus,
   type AuthorityState,
   type ResearchCapitalGrantGeneration,
@@ -32,7 +32,8 @@ import { decideExecutionMandateAuthority, isExecutionCyclePreflightStoreRestrict
 import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
 import { loadStrategyExecutionRiskPolicy } from '../observe-composition'
-import { type ReconciliationPassError } from '../reconciler'
+import { type ReconciliationPassError, type ReconciliationPassResult } from '../reconciler'
+import type { ReconciledBrokerState } from '../reconciliation'
 import type { RuntimeState } from '../runtime-state'
 import { Pipeable } from '../pipeable'
 
@@ -139,6 +140,22 @@ export const researchCapitalRecoveryRequestIsCompatible = (
 ): Result.Result<void, string> => {
   const identity = capitalActivationRequestIdentityIsCurrent(request, plan)
   return Result.isFailure(identity) ? identity : researchCapitalBrokerBindingIsCurrent(request, plan)
+}
+
+export const configuredCapitalActivation = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+): Result.Result<ConfiguredCapitalActivation | null, string> => {
+  const serialized = plan.config.capitalActivationRequestJson
+  if (serialized === undefined) {
+    return plan.config.execution.brokerAccess === BrokerAccess.Mutation
+      ? Result.fail('configured granted capital requires an immutable execution mandate request')
+      : Result.succeed(null)
+  }
+  return decodeConfiguredCapitalActivation(serialized, plan.config.researchCapitalBuildLineageJson).pipe(
+    Result.flatMap((configured) =>
+      researchCapitalRecoveryRequestIsCompatible(configured.request, plan).pipe(Result.map(() => configured)),
+    ),
+  )
 }
 
 export const researchCapitalActivationRequestIsCurrent = (
@@ -265,12 +282,17 @@ export const readBoundCapitalActivationGeneration = (
 
 export const validateResearchCapitalPreflight = (
   request: ResearchCapitalActivationRequest,
-  preflight: ReadPreflight,
+  account: ReconciledBrokerState,
 ): Result.Result<void, string> =>
-  preflight.environment === BrokerEnvironment.Sandbox &&
-  preflight.accountId === request.broker.accountId &&
-  preflight.openOrderCount === request.limits.maxOpenOrders &&
-  preflight.positionCount === request.limits.maxPositions
+  request.broker.environment === BrokerEnvironment.Sandbox &&
+  account.account.accountId === request.broker.accountId &&
+  account.reconciliation.accountId === request.broker.accountId &&
+  account.reconciliation.status === ReconciliationStatus.Exact &&
+  account.unknownOrderCount === 0 &&
+  account.orders.filter((order) =>
+    [OrderStatus.New, OrderStatus.PartiallyFilled, OrderStatus.Pending].includes(order.status),
+  ).length === request.limits.maxOpenOrders &&
+  account.positions.length === request.limits.maxPositions
     ? Result.succeed(undefined)
     : Result.fail('research capital preflight requires the exact empty sandbox account')
 
@@ -327,7 +349,7 @@ export const prepareResearchCapitalActivation = (
   request: ResearchCapitalActivationRequest,
   buildLineage: ResearchCapitalBuildLineage | null,
   sourceGenerationHash: string,
-  session: BrokerSessionShape,
+  account: ReconciledBrokerState,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
@@ -335,7 +357,7 @@ export const prepareResearchCapitalActivation = (
     yield* Effect.fromResult(researchCapitalActivationRequestIsCurrent(request, plan, { buildLineage })).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
-    yield* Effect.fromResult(validateResearchCapitalPreflight(request, session.preflight)).pipe(
+    yield* Effect.fromResult(validateResearchCapitalPreflight(request, account)).pipe(
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
     yield* validateResearchCapitalRiskPolicy(plan, request)
@@ -368,10 +390,14 @@ interface CapitalActivationReconciliationObservation {
   }
 }
 
-export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
-  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
+export const refreshResearchCapitalActivationReconciliationDataFirst = <
+  A extends CapitalActivationReconciliationObservation,
+  E,
+  R,
+>(
+  reconcile: Effect.Effect<A, E, R>,
   operationTimeoutMs: number,
-): Effect.Effect<void, OperationalError, R> =>
+): Effect.Effect<A, OperationalError, R> =>
   reconcile.pipe(
     Effect.timeoutOrElse({
       duration: operationTimeoutMs,
@@ -383,7 +409,7 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
     ),
     Effect.flatMap((result) =>
       result.report.reconciliation.status === ReconciliationStatus.Exact
-        ? Effect.void
+        ? Effect.succeed(result)
         : Effect.fail(
             capitalActivationOperationalError('research capital pre-activation reconciliation was not exact'),
           ),
@@ -391,11 +417,11 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <E, R>(
   )
 
 export const refreshResearchCapitalActivationReconciliation = Pipeable.generic<
-  <E, R>(
+  (
     operationTimeoutMs: number,
-  ) => (
-    reconcile: Effect.Effect<CapitalActivationReconciliationObservation, E, R>,
-  ) => Effect.Effect<void, OperationalError, R>,
+  ) => <A extends CapitalActivationReconciliationObservation, E, R>(
+    reconcile: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, OperationalError, R>,
   typeof refreshResearchCapitalActivationReconciliationDataFirst
 >(2, refreshResearchCapitalActivationReconciliationDataFirst)
 
@@ -404,10 +430,9 @@ export const prepareOrRecoverResearchCapitalActivation = (
   request: ResearchCapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
   buildLineage: ResearchCapitalBuildLineage | null,
-  session: BrokerSessionShape,
   authorityStore: AuthorityGenerationStoreShape,
   lifecycle: CapitalGrantLifecycleStoreShape,
-  reconcile: Effect.Effect<CapitalActivationReconciliationObservation, ReconciliationPassError | OperationalError>,
+  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError | OperationalError>,
   operationTimeoutMs: number,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
@@ -515,11 +540,9 @@ export const prepareOrRecoverResearchCapitalActivation = (
             ),
           )
         : currentSourceGenerationHash
-    if (activationRequired) {
-      // PostgreSQL requires broker evidence observed after the previous authority update. It must exist before a
-      // completed capital generation is rearmed, and the same observation then binds the new activation.
-      yield* refreshResearchCapitalActivationReconciliation(reconcile, operationTimeoutMs)
-    }
+    const activationReconciliation = activationRequired
+      ? yield* refreshResearchCapitalActivationReconciliation(reconcile, operationTimeoutMs)
+      : undefined
     if (decision._tag === 'Rearm') {
       const rearmResolution = yield* authorityStore
         .ensureAuthorityGeneration({
@@ -583,13 +606,13 @@ export const prepareOrRecoverResearchCapitalActivation = (
         )
       }
     }
-    if (activationRequired) {
+    if (activationReconciliation !== undefined) {
       return yield* prepareResearchCapitalActivation(
         plan,
         request,
         buildLineage,
         activationSourceGenerationHash,
-        session,
+        activationReconciliation.brokerState,
         authorityStore,
         lifecycle,
       )

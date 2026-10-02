@@ -21,6 +21,8 @@ import type {
   LedgerTransferRecord,
 } from './ledger-plan/model'
 import { Pipeable } from './pipeable'
+import { withObservedStage } from './telemetry'
+import { operationTimeoutOrElse } from './operation-timeout'
 
 type ResolveHostname = (hostname: string) => Effect.Effect<readonly string[], OperationalError>
 
@@ -371,7 +373,7 @@ const connectTigerBeetleClient = (
         catch: (cause) => new TigerBeetleTransportError('connect', 'failed to create TigerBeetle client', cause),
       }),
     ),
-    Effect.timeoutOrElse({
+    operationTimeoutOrElse({
       duration: config.operationTimeoutMs,
       orElse: () =>
         Effect.fail(
@@ -469,6 +471,8 @@ const tigerBeetleRequest = <A>(
         Effect.tapError(() => invalidateClient(active, `failed:${operation}`)),
       ),
     ),
+    withObservedStage('bayn.tigerbeetle.request', { dependency: 'tigerbeetle' }),
+    Effect.annotateLogs({ operation }),
   )
 
 const makeTigerBeetleRequestClientDataFirst = (
@@ -484,7 +488,18 @@ const makeTigerBeetleRequestClientDataFirst = (
       invalidateTigerBeetleClient(clients, clientState, active, trigger)
     const client: TigerBeetleRequestClient = {
       request: <A>(operation: string, execute: (active: TigerBeetleClient) => Promise<A>) =>
-        tigerBeetleRequest(getClient, invalidateClient, operation, execute),
+        tigerBeetleRequest(getClient, invalidateClient, operation, execute).pipe(
+          operationTimeoutOrElse({
+            duration: config.operationTimeoutMs,
+            orElse: () =>
+              Effect.fail(
+                new TigerBeetleTransportError(
+                  operation,
+                  `TigerBeetle ${operation} timed out after ${config.operationTimeoutMs}ms`,
+                ),
+              ),
+          }),
+        ),
     }
     return client
   })

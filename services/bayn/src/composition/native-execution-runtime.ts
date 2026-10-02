@@ -161,8 +161,16 @@ const projectionFailure = (cause: unknown): TransientExecutionFailure =>
     cause,
   })
 
-const controllerOutcome = (outcome: 'Blocked' | 'Completed'): ExecutionControllerOutcome =>
-  outcome === 'Completed' ? ExecutionControllerOutcome.Completed : ExecutionControllerOutcome.Blocked
+const controllerOutcome = (outcome: 'Blocked' | 'Completed' | 'Waiting'): ExecutionControllerOutcome => {
+  switch (outcome) {
+    case 'Completed':
+      return ExecutionControllerOutcome.Completed
+    case 'Blocked':
+      return ExecutionControllerOutcome.Blocked
+    case 'Waiting':
+      return ExecutionControllerOutcome.Waiting
+  }
+}
 
 const legacyUnboundControllerPlanHash = '0'.repeat(64)
 
@@ -544,12 +552,6 @@ export const initializeNativeExecutionRuntime = <R, E>(
     ),
   )
 
-export const initializeNativeExecutionRuntimeForBinding = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
-  previousBinding: ExecutionControllerBinding | undefined,
-): Effect.Effect<void, NativeExecutionRuntimeError> =>
-  previousBinding === undefined ? initializeNativeExecutionRuntime(executionRunner) : Effect.void
-
 export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, ProjectionR, ProjectionE>(
   executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
   executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
@@ -605,13 +607,10 @@ export const acquireNativeExecutionRuntime = (
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
-    // Restate must register a replacement endpoint before its operator drains the previous version. For an exact
-    // predecessor-bound rotation, keep execution-driver preparation lazy until the first durable tick so the new
-    // endpoint becomes ready without performing trading-state startup before activation transfers controller ownership.
-    // Fresh startup has no predecessor to drain, so it still acquires the execution driver eagerly and fails closed
-    // before exposing an unusable endpoint. PostgreSQL write exclusion itself is transaction-scoped.
+    // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
+    // Endpoint registration itself neither acquires trading state nor grants execution authority.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
-    yield* initializeNativeExecutionRuntimeForBinding(ScopedRef.getUnsafe(managed), previousBinding)
+
     const projectionManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
     )

@@ -45,7 +45,7 @@ const identityFields = {
   schema_version: SchemaVersionSchema,
 } as const
 
-const IntradayBarRowSchema = Schema.Struct({
+export const IntradayBarRowSchema = Schema.Struct({
   ...identityFields,
   channel: Schema.Literals(['bars', 'updatedBars']),
   is_final: BooleanIntegerSchema,

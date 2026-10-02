@@ -26,13 +26,14 @@ const (
 )
 
 type evidence struct {
-	Architecture  string    `json:"architecture"`
-	BootID        string    `json:"bootId"`
-	Hostname      string    `json:"hostname"`
-	KernelRelease string    `json:"kernelRelease"`
-	MicroVMID     string    `json:"microvmId"`
-	StartedAt     time.Time `json:"startedAt"`
-	State         string    `json:"state"`
+	Architecture         string    `json:"architecture"`
+	BootID               string    `json:"bootId"`
+	Hostname             string    `json:"hostname"`
+	KernelRelease        string    `json:"kernelRelease"`
+	MicroVMID            string    `json:"microvmId"`
+	GuestProtocolVersion uint32    `json:"guestProtocolVersion"`
+	StartedAt            time.Time `json:"startedAt"`
+	State                string    `json:"state"`
 }
 
 type fileReader func(string) ([]byte, error)
@@ -79,6 +80,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	current.GuestProtocolVersion = guestProtocolVersion
 
 	encoded, err := json.Marshal(current)
 	if err != nil {
@@ -96,13 +98,15 @@ func run(logger *slog.Logger) error {
 	}
 
 	api, err := newAPIServer(apiConfig{
-		bootstrapToken: bootstrapToken,
-		codexBinary:    codexBinary,
-		evidence:       current,
-		homeRoot:       homeRoot,
-		shell:          "/bin/bash",
-		startCodex:     true,
-		workspaceRoot:  workspaceRoot,
+		bootstrapToken:      bootstrapToken,
+		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
+		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
+		codexBinary:         codexBinary,
+		evidence:            current,
+		homeRoot:            homeRoot,
+		shell:               "/bin/bash",
+		startCodex:          true,
+		workspaceRoot:       workspaceRoot,
 	})
 	if err != nil {
 		return fmt.Errorf("configure Nanoagent API: %w", err)
@@ -112,6 +116,7 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr:              listenAddress,
 		Handler:           newHandler(api),
+		Protocols:         guestHTTPProtocols(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -156,6 +161,7 @@ func bootstrapPersistentInstall(
 	timeout time.Duration,
 	environmentKey string,
 	component string,
+	extraEnvironment ...string,
 ) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -171,7 +177,10 @@ func bootstrapPersistentInstall(
 	bootstrapCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	process := exec.CommandContext(bootstrapCtx, command, "--install-only")
-	process.Env = childEnvironment()
+	process.Env = childEnvironment(extraEnvironment...)
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	process.Cancel = func() error { killProcessGroup(process); return nil }
+	process.WaitDelay = 5 * time.Second
 	output, err := process.CombinedOutput()
 	if err == nil {
 		return nil
@@ -247,6 +256,8 @@ func bootstrapUserHome(home string) error {
 	}{
 		{path: "workspace", mode: 0o750},
 		{path: ".cache", mode: 0o750},
+		{path: ".cache/apt/lists", mode: 0o750},
+		{path: ".cache/apt/archives", mode: 0o750},
 		{path: ".local/bin", mode: 0o750},
 		{path: ".bun", mode: 0o750},
 		{path: ".cargo", mode: 0o750},
@@ -345,6 +356,6 @@ func newHandler(api *apiServer) http.Handler {
 	mux.HandleFunc("GET /livez", live)
 	mux.HandleFunc("GET /readyz", ready)
 	mux.HandleFunc("GET /healthz", live)
-	mux.Handle("/v1/", api.authenticatedRoutes())
-	return mux
+	mux.Handle("/v1/", api.previewRoutes())
+	return api.rpcHandler(mux)
 }

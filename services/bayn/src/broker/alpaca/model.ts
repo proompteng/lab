@@ -1,4 +1,4 @@
-import type { Undici } from '@effect/platform-node'
+import type * as Undici from '@effect/platform-node/Undici'
 import { Context, DateTime, Effect, Option, Schema, type Result } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
@@ -13,7 +13,6 @@ import { Pipeable } from '../../pipeable'
 
 export const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
-export const marketCalendarPreflightRangeDays = 14
 const millisecondsPerDay = 86_400_000
 export const accountConfigurationObservationSchemaVersion = 'bayn.alpaca-account-configuration-observation.v1' as const
 export const accountConfigurationObservationSource = 'alpaca-v2-account-configurations' as const
@@ -41,7 +40,9 @@ export const I128_MAX = 170_141_183_460_469_231_731_687_303_715_884_105_727n
 const Uuid = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
 )
-const Decimal = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$/))
+const Decimal = Schema.String.check(
+  Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/),
+)
 const isUtcTimestamp = (value: string): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
   if (match === null) return false
@@ -250,6 +251,8 @@ export interface Position {
   readonly side: PositionSide
   readonly quantityMicros: string
   readonly averageEntryPriceMicros: string
+  /** Present on current broker responses; omitted only by legacy observations. */
+  readonly costBasisMicros?: string
   readonly marketPriceMicros: string
   readonly marketValueMicros: string
   readonly unrealizedPnlMicros: string
@@ -289,6 +292,18 @@ export interface Order {
   readonly trailPriceMicros?: string
   readonly highWaterMarkMicros?: string
   readonly observedAt: string
+}
+
+export interface FeeActivity {
+  readonly accountId: string
+  readonly activityId: string
+  readonly date: string
+  readonly netAmountMicros: string
+}
+
+export interface FeeActivityPage {
+  readonly items: readonly FeeActivity[]
+  readonly nextPageToken?: string
 }
 
 export interface FillActivity {
@@ -370,7 +385,46 @@ export interface FillActivitiesQuery {
   readonly pageToken?: string
 }
 
+export interface Observed<A> {
+  readonly value: A
+  readonly evidence: ReadEvidence
+}
+
+export interface OrderRead {
+  readonly rows: readonly Observed<Order>[]
+  readonly observedAt: string
+}
+
+export interface BrokerHistory {
+  readonly orders: OrderRead
+  readonly fills: readonly Observed<FillActivity>[]
+  readonly fees: readonly Observed<FeeActivity>[]
+}
+
+export interface StableBrokerSnapshot {
+  readonly account: ReadResult<Account>
+  readonly positions: ReadResult<readonly Position[]>
+  readonly history: BrokerHistory
+}
+
+export const mutationConsistencyDelayMs = 1_000
+
+export interface BrokerSubmissionSnapshot {
+  readonly account: ReadResult<Account>
+  readonly positions: ReadResult<readonly Position[]>
+  readonly openOrders: ReadResult<readonly Order[]>
+}
+
+export interface BrokerReadProjection {
+  readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
+  readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
+  readonly fresh: BrokerReadShape
+  readonly invalidate: Effect.Effect<void>
+  readonly withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+}
+
 export interface BrokerReadShape {
+  readonly projection?: BrokerReadProjection
   readonly account: Effect.Effect<ReadResult<Account>, BrokerReadError>
   readonly accountConfiguration: Effect.Effect<ReadResult<AccountConfigurationObservation>, BrokerReadError>
   readonly assetBySymbol: (symbol: string) => Effect.Effect<ReadResult<AssetObservation>, BrokerReadError>
@@ -378,6 +432,7 @@ export interface BrokerReadShape {
   readonly orders: (query?: OrdersQuery) => Effect.Effect<ReadResult<readonly Order[]>, BrokerReadError>
   readonly orderById: (orderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
+  readonly feeActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FeeActivityPage>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
   readonly marketCalendar: (
     query: MarketCalendarQuery,
@@ -407,8 +462,6 @@ export interface ReadPreflight {
   readonly ordersHash: string
   readonly fillCount: number
   readonly fillsHash: string
-  readonly marketCalendarSessionCount: number
-  readonly marketCalendarHash: string
   readonly orderById: 'MATCHED' | 'NOT_FOUND'
   readonly orderByClientId: 'MATCHED' | 'NOT_FOUND'
 }
@@ -437,6 +490,7 @@ export const PositionResponseSchema = Schema.Struct({
   exchange: Schema.Enum(AssetExchange),
   asset_class: Schema.Enum(AssetClass),
   avg_entry_price: Decimal,
+  cost_basis: Decimal,
   qty: Decimal,
   side: Schema.Enum(PositionSide),
   market_value: Decimal,
@@ -503,6 +557,18 @@ export const OrderResponseSchema = Schema.Struct({
   trail_price: Schema.NullOr(Decimal),
   hwm: Schema.NullOr(Decimal),
 })
+
+export const FeeActivityResponseSchema = Schema.Struct({
+  activity_type: Schema.Literal('FEE'),
+  id: ActivityId,
+  account_id: Schema.optionalKey(Uuid),
+  date: IsoDate,
+  net_amount: Decimal,
+})
+export const decodeFeeActivities = Schema.decodeUnknownResult(
+  Schema.Array(FeeActivityResponseSchema),
+  responseParseOptions,
+)
 
 export const FillActivityResponseSchema = Schema.Struct({
   activity_type: Schema.Literal('FILL'),

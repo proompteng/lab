@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: flamingo
     app.kubernetes.io/component: model-server
 spec:
-  replicas: 1
+  replicas: 0
   progressDeadlineSeconds: 14400
   strategy:
     type: Recreate
@@ -36,7 +36,7 @@ spec:
       terminationGracePeriodSeconds: 120
       containers:
         - name: vllm
-          image: vllm/vllm-openai:v0.26.0-x86_64-cu129@sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541
+          image: vllm/vllm-openai:v0.29.0-cu129@sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2
           imagePullPolicy: IfNotPresent
           args:
             - --host

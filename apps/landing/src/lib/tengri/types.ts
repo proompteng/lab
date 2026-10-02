@@ -1,5 +1,12 @@
+import type { TengriCodexOptions } from './codex-models'
+
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
+export type TengriErrorCode =
+  | 'conversation_not_found'
+  | 'file_conflict'
+  | 'capacity_full'
+  | 'model_selection_unavailable'
 
 export type TengriCondition = {
   type: string
@@ -24,6 +31,7 @@ export type TengriAgent = {
   lastActivityAt: string
   idleDeadline: string
   expiresAt: string
+  pendingImage?: string
   conditions: TengriCondition[]
 }
 
@@ -98,6 +106,7 @@ export type TengriCodexThread = {
   id: string
   rawJson: string
   eventSequence: number
+  itemEventSequences?: Record<string, number>
 }
 
 export type TengriCodexTurn = {
@@ -146,7 +155,7 @@ export type TengriAction =
   | { action: 'resume-agent'; agentId: string }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
-  | { action: 'write-file'; agentId: string; path: string; content: string }
+  | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }
   | { action: 'create-directory'; agentId: string; path: string }
   | { action: 'move-file'; agentId: string; sourcePath: string; destinationPath: string }
   | { action: 'delete-file'; agentId: string; path: string; recursive: boolean }
@@ -158,9 +167,10 @@ export type TengriAction =
   | { action: 'codex-account'; agentId: string }
   | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
-  | { action: 'create-thread'; agentId: string }
-  | { action: 'resume-thread'; agentId: string; threadId: string }
-  | { action: 'send-turn'; agentId: string; threadId: string; text: string }
+  | { action: 'codex-models'; agentId: string; cursor?: string }
+  | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
+  | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
+  | ({ action: 'send-turn'; agentId: string; threadId: string; text: string } & TengriCodexOptions)
   | { action: 'steer-turn'; agentId: string; threadId: string; turnId: string; text: string }
   | { action: 'interrupt-turn'; agentId: string; threadId: string; turnId: string }
   | {
@@ -175,4 +185,6 @@ export type TengriAction =
         | 'deny'
     }
   | { action: 'preview-session'; agentId: string; port: number; path: string; fragment: string }
-  | { action: 'revoke-preview-session'; agentId: string; sessionId: string }
+  | { action: 'editor-session'; agentId: string; windowId: string }
+  | { action: 'revoke-editor-sessions' }
+  | { action: 'revoke-preview-session'; agentId: string; sessionId: string; revocationToken?: string }

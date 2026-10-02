@@ -8,6 +8,9 @@ metadata:
 spec:
   promotionPolicies:
     - stageSelector:
+        name: devbox
+      autoPromotionEnabled: true
+    - stageSelector:
         name: proompteng
       autoPromotionEnabled: true
     - stageSelector:
@@ -39,7 +42,7 @@ spec:
       autoPromotionEnabled: true
     - stageSelector:
         name: hermes-toolchain
-      autoPromotionEnabled: true
+      autoPromotionEnabled: false
     - stageSelector:
         name: jangar
       autoPromotionEnabled: true
@@ -63,4 +66,16 @@ spec:
       autoPromotionEnabled: true
     - stageSelector:
         name: buzz
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: forgejo
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: bayn
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: restate
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: rune
       autoPromotionEnabled: true

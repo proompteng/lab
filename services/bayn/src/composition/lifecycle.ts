@@ -3,15 +3,9 @@ import { Result, Schema } from 'effect'
 import type { ApplicationPlanFor } from '../app'
 import type { BrokerReadShape } from '../broker/alpaca'
 import { BrokerMutationError } from '../broker/alpaca-mutations'
-import { CapitalAuthorityKind } from '../execution/authority'
 import { Authority, type AuthorityState } from '../execution/contracts'
-import { makeExecutionProgram, type ExecutionProgram } from '../execution/runtime-program'
 import { operationalError } from '../errors'
-import {
-  makeMutationAutonomousCycleStartup,
-  makeObserveAutonomousCycleStartup,
-  type MutationCycleExecutionMode,
-} from '../observe-composition'
+import { makeObserveAutonomousCycleStartup } from '../observe-composition'
 import type { IntradayMarketDataService } from '../market-data'
 
 export const runtimeBroker = (
@@ -46,37 +40,7 @@ export const observeCycle = (
   })
 }
 
-export const mutationCycle = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  executionProgram: ExecutionProgram,
-  executionCycleClosureStore: import('../db/execution-cycle-closure').ExecutionCycleClosureStoreShape,
-  blockedCycleIntentStore: import('../execution/intents').BlockedCycleIntentStoreShape,
-  intradayMarketData: IntradayMarketDataService,
-  executionMode: MutationCycleExecutionMode = 'Mutation',
-) => {
-  return makeMutationAutonomousCycleStartup(
-    {
-      accountId: plan.config.alpaca.expectedAccountId,
-      authorityGenerationHash:
-        plan.config.execution.capitalAuthority._tag === CapitalAuthorityKind.Granted
-          ? plan.config.execution.capitalAuthority.authorityGenerationHash
-          : plan.config.alpaca.authorityGenerationHash,
-      pollIntervalMs: plan.config.cyclePollIntervalMs,
-      reconciliationIntervalMs: plan.config.alpaca.reconciliationIntervalMs,
-      reconciliationPassTimeoutMs: plan.config.operationTimeoutMs,
-      strategy: plan.strategy,
-      intradayMarketData,
-      executionProgram,
-      executionCycleClosureStore,
-      blockedCycleIntentStore,
-    },
-    executionMode,
-  )
-}
-
-export const executionProgramError = (
-  cause: BrokerMutationError | Schema.SchemaError | Result.Result.Failure<ReturnType<typeof makeExecutionProgram>>,
-) =>
+export const executionProgramError = (cause: BrokerMutationError | Schema.SchemaError) =>
   cause instanceof BrokerMutationError
     ? operationalError({ component: 'config', operation: 'broker-mutation', message: cause.message, cause })
     : operationalError({

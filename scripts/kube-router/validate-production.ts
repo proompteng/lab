@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 const kubeRouterImage =
-  'docker.io/cloudnativelabs/kube-router@sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22'
+  'docker.io/cloudnativelabs/kube-router@sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a'
 const kubectlImage = 'docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7'
 const trafficNeutralSafetyNamespaces = [
   'agents',
@@ -27,6 +27,17 @@ export const productionPaths = {
   rbac: 'argocd/applications/kube-router/rbac.yaml',
   safetyPolicies: 'argocd/applications/kube-router/safety-policies.yaml',
   preflightHook: 'argocd/applications/kube-router/preflight-hook.yaml',
+  buzzPolicies: 'argocd/applications/buzz/networkpolicy.yaml',
+  grafanaRehearsalPolicies: 'argocd/applications/observability/grafana-upgrade-backup.yaml',
+  proomptengPolicies: 'argocd/applications/proompteng/network-policy.yaml',
+  restatePolicies: 'argocd/applications/restate/networkpolicy.yaml',
+  restateExamplePolicies: 'argocd/applications/restate-example/networkpolicy.yaml',
+  cassandra311Policies: 'argocd/applications/temporal/upgrade/cassandra-31119-backup.yaml',
+  cassandra411Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-backup.yaml',
+  cassandra411v2Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-v2-backup.yaml',
+  cassandra411v3Policies: 'argocd/applications/temporal/upgrade/cassandra-4112-v3-backup.yaml',
+  cassandra509Policies: 'argocd/applications/temporal/upgrade/cassandra-509-backup.yaml',
+  elasticRehearsalPolicies: 'argocd/applications/temporal/upgrade/elasticsearch-preparation.yaml',
   hermesPolicies: 'argocd/applications/hermes/network-policy.yaml',
   tengriPolicies: 'argocd/applications/tengri/network-policies.yaml',
   service: 'argocd/applications/kube-router/service.yaml',
@@ -44,6 +55,22 @@ export const productionPaths = {
   runbook: 'docs/runbooks/kube-router-network-policy-rollout.md',
   impactMap: '.github/ci/impact-map.yml',
   pullRequestWorkflow: '.github/workflows/pull-request.yml',
+} as const
+
+export const reviewedPolicySources = {
+  buzz: ['buzzPolicies'],
+  observability: ['grafanaRehearsalPolicies'],
+  proompteng: ['proomptengPolicies'],
+  restate: ['restatePolicies'],
+  'restate-example': ['restateExamplePolicies'],
+  temporal: [
+    'cassandra311Policies',
+    'cassandra411Policies',
+    'cassandra411v2Policies',
+    'cassandra411v3Policies',
+    'cassandra509Policies',
+    'elasticRehearsalPolicies',
+  ],
 } as const
 
 export type ProductionPath = keyof typeof productionPaths
@@ -98,7 +125,14 @@ function canonicalJson(value: unknown): unknown {
 
 function networkPolicyHash(content: string): string {
   const contract = yamlDocuments(content)
-    .map((policy) => ({ name: policy.metadata?.name, spec: policy.spec }))
+    .filter((policy) => policy?.kind === 'NetworkPolicy')
+    .map((policy) => {
+      const spec = { ...policy.spec }
+      for (const direction of ['ingress', 'egress']) {
+        if (Array.isArray(spec[direction]) && spec[direction].length === 0) delete spec[direction]
+      }
+      return { name: policy.metadata?.name, spec }
+    })
     .sort((left, right) => String(left.name).localeCompare(String(right.name)))
   return createHash('sha256')
     .update(`${JSON.stringify(canonicalJson(contract))}\n`)
@@ -158,7 +192,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     failures.push(`${productionPaths.daemonSet}: DaemonSet must run in kube-system`)
   }
   if (container?.image !== kubeRouterImage) {
-    failures.push(`${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.10.0 index`)
+    failures.push(`${productionPaths.daemonSet}: kube-router must use the immutable multi-architecture v2.11.1 index`)
   }
   if (JSON.stringify(args) !== JSON.stringify(requiredArgs)) {
     failures.push(`${productionPaths.daemonSet}: controller flags must select firewall-only Flannel coexistence`)
@@ -265,7 +299,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n kube-system get namespace tengri',
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
-    'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
+    'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$expected_namespaces" ]]',
     'kubectl -n "$namespace" get networkpolicy kube-router-rollout-allow-all -o json',
     'case "$namespace" in',
@@ -280,6 +314,29 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '.spec.ingress == [{}]',
     '.spec.egress == [{}]',
   ])
+
+  const reviewedNamespaces = Object.keys(reviewedPolicySources).sort()
+  requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
+    `printf '%s\\n' ${reviewedNamespaces.join(' ')}`,
+    `${reviewedNamespaces.join('|')})`,
+    'if [[ "$actual_reviewed_policy_hash" != "$expected_reviewed_policy_hash" ]]',
+  ])
+  requireTerms(failures, productionPaths.coverageProbe, files.coverageProbe, [
+    `printf '%s\\n' hermes ${reviewedNamespaces.join(' ')}`,
+  ])
+  const rootScriptPaths = yamlDocuments(files.impactMap)[0]?.targets?.['root-scripts']?.paths ?? []
+  for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
+    const policyContent = sources.map((key) => files[key]).join('\n---\n')
+    const hash = networkPolicyHash(policyContent)
+    requireTerms(failures, productionPaths.preflightHook, files.preflightHook, [
+      `${namespace}) expected_reviewed_policy_hash=${hash} ;;`,
+    ])
+    for (const key of sources) {
+      if (!rootScriptPaths.includes(productionPaths[key])) {
+        failures.push(`${productionPaths.impactMap}: root-scripts must cover ${productionPaths[key]}`)
+      }
+    }
+  }
 
   const roles = yamlDocuments(files.rbac).filter((document) => document.kind === 'ClusterRole')
   for (const role of roles) {
@@ -346,8 +403,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   forbidTerms(failures, productionPaths.cleanupDaemonSet, files.cleanupDaemonSet, ['--cleanup-config'])
   requireTerms(failures, productionPaths.readme, files.readme, [
     'manual Argo CD application',
-    'amd64: `sha256:81619a698b981a5c4fd6c89ae015d0faadce5d7a5270df7562c1743e58e3283f`',
-    'arm64: `sha256:b8df3247641d5f4e84e14d30b673b6362a0e3d56901218a1e1ee38a40f37afd8`',
+    'amd64: `sha256:05d1c7c903721ac202ce261fff33f61526e55188dc2135cdc39b4bcd173960a2`',
+    'arm64: `sha256:fec5ac13d36a812636d545263fda75e5b729ac9dac624f1f19f1170d3372324b`',
     'Prune=false',
   ])
 
@@ -389,7 +446,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n kube-system get namespace tengri',
     "jq -e '.items | length > 0'",
     "printf '%s\\n' tengri",
-    'kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json',
+    'kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json',
     'if [[ "$actual_namespaces" != "$desired_namespaces" ]]',
   ])
   requireTerms(failures, productionPaths.allNodeProbe, files.allNodeProbe, [
@@ -428,7 +485,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.runbook, files.runbook, [
     'kubectl -n kube-system rollout status daemonset/kube-router',
-    'kube_router_index_digest=sha256:0991f2cc7aaabe107b51c0c554d6b843f0483fd319b94f437fab638470c47c22',
+    'kube_router_index_digest=sha256:64da9a538d29e13780e256ce3897a52932a68657793bef009063bbeb2762146a',
     'pod_rows=$(',
     'if [ "$pod_count" -ne "$desired" ]; then',
     "while IFS=$'\\t' read -r pod node pod_ready restart_count image_id",

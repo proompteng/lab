@@ -13,7 +13,12 @@ export function useModalFocus<Element extends HTMLElement>(enabled = true) {
     const first = modalFocusableElements(container)[0]
     ;(first || container)?.focus()
     return () => {
-      if (previous?.isConnected) previous.focus()
+      if (
+        previous?.isConnected &&
+        (container?.contains(document.activeElement) || document.activeElement === document.body)
+      ) {
+        previous.focus({ preventScroll: true })
+      }
     }
   }, [enabled])
 

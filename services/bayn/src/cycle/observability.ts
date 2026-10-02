@@ -4,6 +4,7 @@ import { Authority, KillState, ReconciliationStatus } from '../execution/contrac
 import { Pipeable } from '../pipeable'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from '../time'
 import { CycleState, CycleTerminalReason } from './model'
+import { EntryAllocationReason } from './entry-allocation-observation'
 
 export interface CycleOperationsThresholds {
   readonly cycleStallThresholdMs: number
@@ -20,6 +21,7 @@ export interface CycleOperationsSnapshot {
   readonly snapshotId: string | null
   readonly decisionHash: string | null
   readonly terminalReason: CycleTerminalReason | null
+  readonly publicationDeadlineAt: string | null
   readonly submissionOpenAt: string
   readonly submissionCutoffAt: string
   readonly executionOpenAt: string
@@ -27,6 +29,8 @@ export interface CycleOperationsSnapshot {
   readonly createdAt: string
   readonly updatedAt: string
   readonly terminalAt: string | null
+  /** A read-only explanation; the immutable target-plan reason and trading policy are unchanged. */
+  readonly entryAllocationReason?: EntryAllocationReason | null
 }
 
 export interface DurableAuthorityObservation {
@@ -104,7 +108,12 @@ export interface CycleExecutionFunnelObservation {
   readonly latestIntentAt: string | null
   readonly latestOrderAt: string | null
   readonly latestFillAt: string | null
+  readonly maximumIntentToSubmitLatencyMs: number | null
   readonly maximumOrderAcknowledgementLatencyMs: number | null
+  readonly maximumOrderObservationLatencyMs: number | null
+  readonly maximumIntentToBrokerFillLatencyMs: number | null
+  readonly maximumFillIngestionLatencyMs: number | null
+  readonly latencyClockRegressionCount: number
   readonly maximumFillLatencyMs: number | null
   /** Null means no complete broker position snapshot has been observed. */
   readonly positionSnapshotObservedAt: string | null
@@ -179,6 +188,7 @@ export enum CycleOperationsReason {
   Active = 'ACTIVE',
   LastCycleCompleted = 'LAST_CYCLE_COMPLETED',
   LastCycleNoTrade = 'LAST_CYCLE_NO_TRADE',
+  TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   LastCycleBlocked = 'LAST_CYCLE_BLOCKED',
   MissedPublicationDeadline = 'MISSED_PUBLICATION_DEADLINE',
   MissedSubmissionCutoff = 'MISSED_SUBMISSION_CUTOFF',
@@ -286,7 +296,9 @@ const lifecycleCondition = (
   if (current === null) {
     if (projection.last?.phase === CycleState.Blocked) {
       return [
-        projection.last.terminalReason === CycleTerminalReason.Authority || maximumAuthority !== Authority.Execution
+        maximumAuthority !== Authority.Execution ||
+        (projection.last.terminalReason === CycleTerminalReason.Authority &&
+          nowMs >= Date.parse(projection.last.executionCloseAt))
           ? CycleOperationsCondition.Waiting
           : CycleOperationsCondition.Failed,
         CycleOperationsReason.LastCycleBlocked,
@@ -296,7 +308,12 @@ const lifecycleCondition = (
       return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleCompleted]
     }
     if (projection.last?.phase === CycleState.NoTrade) {
-      return [CycleOperationsCondition.Waiting, CycleOperationsReason.LastCycleNoTrade]
+      return [
+        CycleOperationsCondition.Waiting,
+        projection.last.entryAllocationReason === EntryAllocationReason.TurnoverBudgetExhausted
+          ? CycleOperationsReason.TurnoverBudgetExhausted
+          : CycleOperationsReason.LastCycleNoTrade,
+      ]
     }
     return [CycleOperationsCondition.Waiting, CycleOperationsReason.NoCycleRecorded]
   }
@@ -306,8 +323,13 @@ const lifecycleCondition = (
       return [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedSubmissionCutoff]
     }
     if (current.snapshotId === null) {
-      return nowMs >= Date.parse(current.submissionOpenAt)
-        ? [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedPublicationDeadline]
+      if (current.publicationDeadlineAt !== null)
+        return nowMs >= Date.parse(current.publicationDeadlineAt)
+          ? [CycleOperationsCondition.Stalled, CycleOperationsReason.MissedPublicationDeadline]
+          : [CycleOperationsCondition.Waiting, CycleOperationsReason.AwaitingSignalPublication]
+      const startedAt = Math.max(Date.parse(current.createdAt), Date.parse(current.submissionOpenAt))
+      return nowMs - startedAt >= cycleStallThresholdMs
+        ? [CycleOperationsCondition.Stalled, CycleOperationsReason.AttemptStale]
         : [CycleOperationsCondition.Waiting, CycleOperationsReason.AwaitingSignalPublication]
     }
     if (nowMs < Date.parse(current.submissionOpenAt)) {

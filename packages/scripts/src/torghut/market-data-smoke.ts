@@ -34,6 +34,7 @@ type MarketDataSmokeInput = {
   latestKafkaByRole: Partial<Record<KafkaRole, KafkaTopicRecord>>
   wsReadyz: unknown
   tradingStatus: unknown
+  schedulerExpected?: boolean
   taRuntimeConfig?: TaRuntimeConfig
   taFlinkJob?: unknown
   taStatusHeartbeat?: TaStatusHeartbeatRecord
@@ -151,6 +152,12 @@ const parseMode = (raw: string | undefined): SmokeMode => {
   const mode = (raw ?? 'auto').trim().toLowerCase()
   if (mode === 'auto' || mode === 'enforce' || mode === 'observe') return mode
   return fatal('MARKET_DATA_FRESHNESS_MODE must be auto, enforce, or observe')
+}
+
+export const parseSchedulerExpected = (raw: string | undefined): boolean => {
+  if (raw === undefined || raw === 'true') return true
+  if (raw === 'false') return false
+  throw new Error('TORGHUT_SCHEDULER_EXPECTED must be true or false')
 }
 
 const parseHttpProbeMode = (raw: string | undefined): HttpProbeMode => {
@@ -565,65 +572,69 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     }
   }
 
-  const freshness = getAcceptedFreshness(input.tradingStatus)
-  const acceptedState = asString(freshness?.accepted_source_state) ?? 'missing'
-  const blockingReason = asString(freshness?.blocking_reason) ?? 'missing'
-  const latestAccepted = asString(freshness?.latest_accepted_event_at)
-  const acceptedLag = asNumber(freshness?.accepted_lag_seconds) ?? lagSeconds(input.now, latestAccepted)
-  const acceptedMaxLag = asNumber(freshness?.accepted_max_lag_seconds) ?? input.acceptedMaxLagSeconds
-  const acceptedSources = Array.isArray(freshness?.accepted_sources)
-    ? freshness.accepted_sources.map((source) => asString(source) ?? '').filter(Boolean)
-    : []
-  summaryLines.push(
-    `- Accepted TA: state=\`${acceptedState}\`, latest=\`${latestAccepted ?? 'missing'}\`, ` +
-      `lag_seconds=\`${acceptedLag ?? 'missing'}\`, max_lag_seconds=\`${acceptedMaxLag}\`, ` +
-      `blocking_reason=\`${blockingReason}\`, sources=\`${acceptedSources.join(',') || 'missing'}\``,
-  )
+  if (input.schedulerExpected === false) {
+    summaryLines.push('- Trading scheduler: `removed`; scheduler acceptance freshness is not evaluated')
+  } else {
+    const freshness = getAcceptedFreshness(input.tradingStatus)
+    const acceptedState = asString(freshness?.accepted_source_state) ?? 'missing'
+    const blockingReason = asString(freshness?.blocking_reason) ?? 'missing'
+    const latestAccepted = asString(freshness?.latest_accepted_event_at)
+    const acceptedLag = asNumber(freshness?.accepted_lag_seconds) ?? lagSeconds(input.now, latestAccepted)
+    const acceptedMaxLag = asNumber(freshness?.accepted_max_lag_seconds) ?? input.acceptedMaxLagSeconds
+    const acceptedSources = Array.isArray(freshness?.accepted_sources)
+      ? freshness.accepted_sources.map((source) => asString(source) ?? '').filter(Boolean)
+      : []
+    summaryLines.push(
+      `- Accepted TA: state=\`${acceptedState}\`, latest=\`${latestAccepted ?? 'missing'}\`, ` +
+        `lag_seconds=\`${acceptedLag ?? 'missing'}\`, max_lag_seconds=\`${acceptedMaxLag}\`, ` +
+        `blocking_reason=\`${blockingReason}\`, sources=\`${acceptedSources.join(',') || 'missing'}\``,
+    )
 
-  if (!acceptedSources.includes('ta')) {
-    pushFinding(
-      enforceFreshness,
-      failures,
-      warnings,
-      'accepted_ta_source_missing',
-      'accepted_sources does not include ta',
-    )
-  }
-  const unexpectedAcceptedSources = acceptedSources.filter((source) => source !== 'ta')
-  if (unexpectedAcceptedSources.length > 0) {
-    pushFinding(
-      enforceFreshness,
-      failures,
-      warnings,
-      'accepted_source_contains_backfill',
-      `accepted_sources includes non-live source(s): ${unexpectedAcceptedSources.join(',')}`,
-    )
-  }
-  if (!latestAccepted || acceptedLag === undefined) {
-    pushFinding(
-      enforceFreshness,
-      failures,
-      warnings,
-      'accepted_ta_timestamp_missing',
-      'accepted TA freshness has no parseable latest_accepted_event_at',
-    )
-  } else if (acceptedLag > acceptedMaxLag) {
-    pushFinding(
-      enforceFreshness,
-      failures,
-      warnings,
-      'accepted_ta_stale',
-      `accepted TA lag ${acceptedLag}s exceeds ${acceptedMaxLag}s`,
-    )
-  }
-  if (acceptedState === 'stale' || blockingReason === ACCEPTED_SOURCE_STALE_REASON) {
-    pushFinding(
-      enforceFreshness,
-      failures,
-      warnings,
-      ACCEPTED_SOURCE_STALE_REASON,
-      `accepted_source_state=${acceptedState} blocking_reason=${blockingReason}`,
-    )
+    if (!acceptedSources.includes('ta')) {
+      pushFinding(
+        enforceFreshness,
+        failures,
+        warnings,
+        'accepted_ta_source_missing',
+        'accepted_sources does not include ta',
+      )
+    }
+    const unexpectedAcceptedSources = acceptedSources.filter((source) => source !== 'ta')
+    if (unexpectedAcceptedSources.length > 0) {
+      pushFinding(
+        enforceFreshness,
+        failures,
+        warnings,
+        'accepted_source_contains_backfill',
+        `accepted_sources includes non-live source(s): ${unexpectedAcceptedSources.join(',')}`,
+      )
+    }
+    if (!latestAccepted || acceptedLag === undefined) {
+      pushFinding(
+        enforceFreshness,
+        failures,
+        warnings,
+        'accepted_ta_timestamp_missing',
+        'accepted TA freshness has no parseable latest_accepted_event_at',
+      )
+    } else if (acceptedLag > acceptedMaxLag) {
+      pushFinding(
+        enforceFreshness,
+        failures,
+        warnings,
+        'accepted_ta_stale',
+        `accepted TA lag ${acceptedLag}s exceeds ${acceptedMaxLag}s`,
+      )
+    }
+    if (acceptedState === 'stale' || blockingReason === ACCEPTED_SOURCE_STALE_REASON) {
+      pushFinding(
+        enforceFreshness,
+        failures,
+        warnings,
+        ACCEPTED_SOURCE_STALE_REASON,
+        `accepted_source_state=${acceptedState} blocking_reason=${blockingReason}`,
+      )
+    }
   }
 
   return {
@@ -843,6 +854,7 @@ type RuntimeSettings = {
   httpExecTarget: string
   wsReadyzUrl: string
   tradingStatusUrl: string
+  schedulerExpected: boolean
   taConfigMapName: string
   taFlinkExecTarget: string
   taFlinkJobsUrl: string
@@ -866,6 +878,7 @@ const runtimeSettings = (): RuntimeSettings => ({
   kafkaPartitionCache: new Map(),
   timeoutMs: process.env.TIMEOUT_MS ?? '8000',
   mode: parseMode(process.env.MARKET_DATA_FRESHNESS_MODE),
+  schedulerExpected: parseSchedulerExpected(process.env.TORGHUT_SCHEDULER_EXPECTED),
   maxKafkaLagSeconds: parsePositiveNumber(process.env.MARKET_DATA_MAX_LAG_SECONDS, 300, 'MARKET_DATA_MAX_LAG_SECONDS'),
   acceptedMaxLagSeconds: parsePositiveNumber(
     process.env.MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS,
@@ -1009,7 +1022,9 @@ const main = async () => {
   const taStatusHeartbeat = await captureLatestTaStatusHeartbeat(settings.taStatusTopic, settings)
 
   const wsReadyz = await fetchRuntimeJson(settings.wsReadyzUrl, settings)
-  const tradingStatus = await fetchRuntimeJson(settings.tradingStatusUrl, settings)
+  const tradingStatus = settings.schedulerExpected
+    ? await fetchRuntimeJson(settings.tradingStatusUrl, settings)
+    : undefined
   const taRuntimeConfig = await fetchConfigMapData(settings.torghutNamespace, settings.taConfigMapName)
   const taFlinkJob = await fetchTaFlinkJob(settings)
   const result = evaluateMarketDataSmoke({
@@ -1021,6 +1036,7 @@ const main = async () => {
     latestKafkaByRole,
     wsReadyz,
     tradingStatus,
+    schedulerExpected: settings.schedulerExpected,
     taRuntimeConfig,
     taFlinkJob,
     taStatusHeartbeat,

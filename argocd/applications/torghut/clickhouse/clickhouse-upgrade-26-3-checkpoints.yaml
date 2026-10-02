@@ -1,0 +1,31 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: clickhouse-production-26-3-20260910-0
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-wave: '-20'
+    clickhouse.proompteng.ai/backup-id: 62b8c833-0ac8-44d4-bfe8-b15537ae7304
+    clickhouse.proompteng.ai/backup-manifest-sha256: cf59be66d3370aa88db3baccb48914597e0f7780d69edd938df0f4e395b5691d
+    clickhouse.proompteng.ai/source-pvc-uid: 005f750c-4a4c-4dd8-894d-1e80df5dc0e7
+spec:
+  source:
+    persistentVolumeClaimName: chi-data-chi-torghut-clickhouse-default-0-0-0
+  volumeSnapshotClassName: rook-ceph-block
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: clickhouse-production-26-3-20260910-1
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-wave: '-20'
+    clickhouse.proompteng.ai/backup-id: 3bfa1a1d-a1a2-46dc-ab72-d5d117bd3868
+    clickhouse.proompteng.ai/backup-manifest-sha256: 1ced154fce9389f0a0cf24d49036479270b6b24896e571fac4f034eceb22c0b0
+    clickhouse.proompteng.ai/source-pvc-uid: 915d4491-6020-4d3c-a7ff-d2be320acef0
+spec:
+  source:
+    persistentVolumeClaimName: chi-data-chi-torghut-clickhouse-default-0-1-0
+  volumeSnapshotClassName: rook-ceph-block

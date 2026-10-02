@@ -23,7 +23,7 @@ const backendBlock = (name: string): string => {
 
 describe('private registry write-pressure boundary', () => {
   it('rate-limits every mutation while keeping tiny manifest commits out of the blob queue', () => {
-    expect(haproxyConfig).toContain('filter bwlim-in registry_upload default-limit 1m default-period 1s')
+    expect(haproxyConfig).toContain('filter bwlim-in registry_upload default-limit 5m default-period 1s')
     expect(haproxyConfig).toContain('acl write_request method POST PUT PATCH DELETE')
     expect(haproxyConfig).toContain('acl manifest_write method PUT')
     expect(haproxyConfig).toContain('acl manifest_path path_reg ^/v2/.+/manifests/[^/]+$')
@@ -61,7 +61,7 @@ describe('private registry write-pressure boundary', () => {
     expect(service).toContain('targetPort: registry-http')
     expect(deployment).toContain('type: Recreate')
     expect(deployment).toContain(
-      'haproxy:3.2.21-alpine@sha256:66e25cc9a8332635f4e897f7f4b1e5622c25f09f0ee23cddc6ce9bdb3a24772a',
+      'haproxy:3.4.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564',
     )
     expect(deployment).toContain('runAsNonRoot: true')
     expect(deployment).toContain('readOnlyRootFilesystem: true')

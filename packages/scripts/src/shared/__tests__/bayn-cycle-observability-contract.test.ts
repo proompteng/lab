@@ -63,16 +63,19 @@ describe('Bayn cycle operations alert contract', () => {
       'bayn_execution_controller_next_due_timestamp_seconds{',
     )
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_cycle_stall_threshold_seconds{')
-    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_preflight_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_ready{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_decision_bound{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_open_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('- 600')
+    expect(expressions.BaynExecutionWindowUnready).toMatch(
+      /unless on\(job, namespace, service\)[\s\S]+condition="decision_lagging"/,
+    )
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_execution_session_preflight_ready{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_bound{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_open_timestamp_seconds{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_deadline_timestamp_seconds{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('+ 120')
+    expect(expressions.BaynExecutionDecisionLagging).not.toContain('+ 120')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')
@@ -112,14 +115,18 @@ describe('Bayn cycle operations alert contract', () => {
     expect(kubeStateMetricsSource).toContain('kind: RestateDeployment')
     expect(kubeStateMetricsSource).toContain('name: deployment_spec_replicas')
     expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
-    expect(alloy).toContain('label = "app.kubernetes.io/part-of=bayn"')
+    const baynLogDiscovery = /discovery\.kubernetes "bayn_log_pods" \{(.*?)\n\}/s.exec(alloy)?.[1]
+    expect(baynLogDiscovery).toContain('names = ["bayn"]')
+    expect(baynLogDiscovery).not.toContain('app.kubernetes.io/part-of')
     const baynContainerKeepRule =
       /source_labels = \["__meta_kubernetes_pod_container_name"\]\s+regex\s+=\s+"([^"]+)"/s.exec(alloy)?.[1]
     if (baynContainerKeepRule === undefined) throw new Error('Bayn container log keep rule is missing')
     const retainedBaynContainer = new RegExp(`^(?:${baynContainerKeepRule})$`)
     expect(
-      ['bayn', 'execution-controller', 'activate'].filter((container) => retainedBaynContainer.test(container)),
-    ).toEqual(['bayn', 'execution-controller', 'activate'])
+      ['bayn', 'execution-controller', 'activate', 'postgres'].filter((container) =>
+        retainedBaynContainer.test(container),
+      ),
+    ).toEqual(['bayn', 'execution-controller', 'activate', 'postgres'])
     expect(
       ['lifecycle', 'register', 'egress-proxy'].filter((container) => retainedBaynContainer.test(container)),
     ).toEqual([])

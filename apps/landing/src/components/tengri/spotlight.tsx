@@ -1,7 +1,7 @@
 'use client'
 
 import { FileSearch, Folder, Monitor, Play, Search } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
+import { motion, useIsPresent } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { TengriFileEntry, TengriFileSearchResult } from '@/lib/tengri/types'
@@ -10,6 +10,7 @@ import { runTengriAction } from './client'
 import { DOCK_APPS } from './desktop-apps'
 import { FINDER_WORKSPACE_PATH } from './finder-model'
 import { useModalFocus } from './modal-focus'
+import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
 
 type SpotlightResult =
   | { id: string; kind: 'app'; label: string; detail: string; app: TengriApp }
@@ -37,8 +38,9 @@ export function Spotlight({
   onOpenDirectory: (path: string) => void
   onOpenFile: (path: string) => void
 }) {
-  const modalFocus = useModalFocus<HTMLElement>()
-  const reducedMotion = useReducedMotion()
+  const present = useIsPresent()
+  const modalFocus = useModalFocus<HTMLElement>(present)
+  const reducedMotion = useDesktopReducedMotion()
   const [query, setQuery] = useState('')
   const [fileSearch, setFileSearch] = useState<FileSearchState>({ entries: [], query: '', truncated: false })
   const [recentIds, setRecentIds] = useState<string[]>([])
@@ -166,9 +168,12 @@ export function Spotlight({
   return (
     <motion.div
       animate={{ opacity: 1 }}
+      aria-hidden={!present}
+      inert={!present}
       className="fixed inset-0 z-[4000] bg-black/10 pt-[14vh]"
       exit={{ opacity: 0 }}
       initial={reducedMotion ? false : { opacity: 0 }}
+      style={{ pointerEvents: present ? 'auto' : 'none' }}
       onPointerDown={(event) => event.target === event.currentTarget && onClose()}
       role="presentation"
     >
@@ -176,8 +181,8 @@ export function Spotlight({
         ref={modalFocus.ref}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         aria-label="Spotlight"
-        aria-modal="true"
-        data-tengri-modal="true"
+        aria-modal={present || undefined}
+        data-tengri-modal={present || undefined}
         className="font-system mx-auto w-[min(680px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-white/20 bg-zinc-800/90 shadow-[0_35px_120px_rgba(0,0,0,0.55)] backdrop-blur-3xl"
         exit={reducedMotion ? undefined : { opacity: 0, scale: 0.97, y: -12 }}
         initial={reducedMotion ? false : { opacity: 0, scale: 0.96, y: -18 }}

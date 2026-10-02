@@ -79,6 +79,8 @@ const setMode = (mode: WorkflowGuardsMode) => {
 }
 
 const currentMode = (): WorkflowGuardsMode => {
+  const contextMode = currentWorkflowLogContext()?.guardMode ?? currentWorkflowModuleLoadContext()?.mode
+  if (contextMode) return contextMode
   const stored = (globalThis as unknown as Record<symbol, unknown>)[MODE_SYMBOL]
   if (stored === 'strict' || stored === 'warn' || stored === 'off') {
     return stored
@@ -101,6 +103,7 @@ const warnViolation = (details: ViolationDetails) => {
   if (!ctx) {
     return
   }
+  const guardMode = currentMode()
 
   runOutsideWorkflowLogContext(() => {
     void Effect.runPromise(
@@ -114,7 +117,7 @@ const warnViolation = (details: ViolationDetails) => {
         guardApi: details.api,
         guardMessage: details.message,
         guardRemediation: details.remediation,
-        guardMode: currentMode(),
+        guardMode,
         guardQueryMode: ctx.guard.isQueryMode(),
       }),
     )

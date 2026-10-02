@@ -1303,3 +1303,27 @@ describe('bounded execution risk', () => {
     expect(gates[0]?.name).toBe(Gate.IntentState)
   })
 })
+
+test('caps entry approval at the pricing quote event deadline rather than snapshot observation time', () => {
+  const state = makeState({
+    marketDataObservedAt: '2026-07-21T20:59:59.000Z',
+    entryQuote: { eventAt: '2026-07-21T20:59:55.500123456Z', maximumAgeMs: 10_000 },
+  })
+  const result = evaluateSuccess(makeIntent(), state, makePolicy())
+  expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+  expect(result.decision.expiresAt).toBe('2026-07-21T21:00:05.500Z')
+  expect(result.input.freshUntil).toBe(result.decision.expiresAt)
+  const expired = evaluateSuccess(
+    makeIntent(),
+    makeState({ ...state, evaluatedAt: result.decision.expiresAt }),
+    makePolicy(),
+  )
+  expect(expired.decision.outcome).toBe(RiskOutcome.Blocked)
+  expect(expired.decision.reasonCodes).toContain(Reason.MarketDataStale)
+})
+
+test('rejects entry quotes from after the bound pricing observation and invalid age limits', () => {
+  const state = makeState()
+  expect(() => makeState({ entryQuote: { eventAt: '2026-07-21T20:59:30.000000001Z', maximumAgeMs: 10_000 } })).toThrow()
+  expect(() => makeState({ entryQuote: { eventAt: state.marketDataObservedAt, maximumAgeMs: 0 } })).toThrow()
+})

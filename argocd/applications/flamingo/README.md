@@ -1,5 +1,7 @@
 # Flamingo
 
+Flamingo is disabled. GitOps enforces zero Deployment replicas and retains the model-cache PVC. Argo automatic reconciliation keeps the workload stopped. The Blackwell allocation is released for Rune. The configuration below is retained for reference; re-enabling this service requires a reviewed GPU allocation change.
+
 `flamingo` is the Turin Blackwell GPU model-serving application for coding
 agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 
@@ -8,8 +10,8 @@ agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 - Node: `turin`
 - GPU: one physical `NVIDIA RTX PRO 6000 Blackwell Max-Q`; the device plugin may expose time-sliced `nvidia.com/gpu` replicas.
 - RuntimeClass: `nvidia`
-- Server: `vllm/vllm-openai:v0.26.0-x86_64-cu129`
-- Image digest: `sha256:3c5c53248febaa72823a4b7e51aafa1cd2b65d860392e3930414da4d3864f541`
+- Server: `vllm/vllm-openai:v0.29.0-cu129`
+- Image digest: `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2`
 - Model: `unsloth/Qwen3.6-35B-A3B-NVFP4`
 - Served model name: `qwen36-flamingo`
 - Internal URL: `http://flamingo.flamingo.svc.cluster.local/v1`

@@ -1,9 +1,6 @@
 import type { RuntimeProvenance } from './contracts'
-import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
-import {
-  decodeDefaultIntradayMomentumProtocol,
-  type IntradayMomentumProtocol,
-} from './strategy/intraday-momentum/protocol'
+import { makeJevDefinition } from './jev/decision'
+import { decodeJevProtocol, defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import type { StrategyDefinition } from './strategy/core'
 
 export type {
@@ -40,15 +37,12 @@ export {
 } from './strategy/intraday-momentum/protocol'
 
 /** The application root composes exactly one reviewed strategy implementation. */
-export const activeStrategyName = 'intraday-momentum' as const
-export const activeStrategyBehaviorHash = intradayMomentumBehaviorHash
-export const loadActiveStrategyProtocol = decodeDefaultIntradayMomentumProtocol
+export const activeStrategyName = 'jev' as const
+export const activeStrategyBehaviorHash = jevBehaviorHash
+export const loadActiveStrategyProtocol = () => decodeJevProtocol(defaultJevProtocolDocument)
 
-export const makeActiveStrategyRuntime = (
-  protocol: IntradayMomentumProtocol,
-  provenance: RuntimeProvenance,
-): StrategyRuntime => ({
-  definition: makeIntradayMomentumDefinition(protocol),
+export const makeActiveStrategyRuntime = (protocol: JevProtocol, provenance: RuntimeProvenance): StrategyRuntime => ({
+  definition: makeJevDefinition(protocol),
   provenance,
 })
 

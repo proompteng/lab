@@ -17,7 +17,6 @@ static METRICS: OnceLock<Metrics> = OnceLock::new();
 pub struct Metrics {
     boot_latency_millis: AtomicU64,
     boot_latency_observations: AtomicU64,
-    expiry_deletions: AtomicU64,
     guest_failures: AtomicU64,
     preview_sessions_issued: AtomicU64,
     pty_sessions_active: Mutex<HashMap<String, HashSet<String>>>,
@@ -44,10 +43,6 @@ impl Metrics {
             .fetch_add(millis, Ordering::Relaxed);
         self.resume_latency_observations
             .fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn record_expiry_deletion(&self) {
-        self.expiry_deletions.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_guest_failure(&self) {
@@ -131,9 +126,6 @@ impl Metrics {
                 "# TYPE tengri_agent_resume_latency_seconds summary\n",
                 "tengri_agent_resume_latency_seconds_sum {resume_sum}\n",
                 "tengri_agent_resume_latency_seconds_count {resume_count}\n",
-                "# HELP tengri_expiry_deletions_total MicroVMs deleted at hard expiry.\n",
-                "# TYPE tengri_expiry_deletions_total counter\n",
-                "tengri_expiry_deletions_total {expiry}\n",
                 "# HELP tengri_guest_failures_total Guest API or readiness failures.\n",
                 "# TYPE tengri_guest_failures_total counter\n",
                 "tengri_guest_failures_total {guest_failures}\n",
@@ -161,7 +153,6 @@ impl Metrics {
             boot_count = self.boot_latency_observations.load(Ordering::Relaxed),
             resume_sum = self.resume_latency_millis.load(Ordering::Relaxed) as f64 / 1_000.0,
             resume_count = self.resume_latency_observations.load(Ordering::Relaxed),
-            expiry = self.expiry_deletions.load(Ordering::Relaxed),
             guest_failures = self.guest_failures.load(Ordering::Relaxed),
             quota = self.quota_rejections.load(Ordering::Relaxed),
             pty_active = self

@@ -5,7 +5,7 @@ It is intentionally independent of the Kubernetes clusters it manages, so an Omn
 
 ## Architecture
 
-- Omni `v1.10.4` runs with host networking, embedded etcd, SQLite secondary storage, and direct TUN access.
+- Omni `v1.11.0` runs with host networking, embedded etcd, SQLite secondary storage, and direct TUN access.
 - The existing NUC Tailscale node is the only Omni network edge:
   - Tailscale Serve terminates private HTTPS for the UI/API and Kubernetes proxy and forwards the machine API as raw
     TCP.
@@ -19,14 +19,14 @@ Tailscale HTTP proxy but advertises UDP `50180` without forwarding it. Omni's cu
 WireGuard advertised endpoint to be an IP address. The NUC-hosted design gives both Talos nodes and Omni a real
 Tailscale interface and a direct UDP path.
 
-| Endpoint | Exposure | Purpose |
-| --- | --- | --- |
-| `https://nuc.ide-newton.ts.net/` | Tailnet only | Omni UI and API |
-| `grpc://100.78.240.108:8090` | Tailnet only | Raw TCP Machine/SideroLink API |
-| `https://nuc.ide-newton.ts.net:8100/` | Tailnet only | Kubernetes API proxy |
-| `100.78.240.108:50180/udp` | Tailnet only | SideroLink WireGuard |
-| `127.0.0.1:8180` | NUC loopback | Cleartext Omni origin behind Serve |
-| `127.0.0.1:2122` | NUC loopback | Metrics |
+| Endpoint                              | Exposure     | Purpose                            |
+| ------------------------------------- | ------------ | ---------------------------------- |
+| `https://nuc.ide-newton.ts.net/`      | Tailnet only | Omni UI and API                    |
+| `grpc://100.78.240.108:8090`          | Tailnet only | Raw TCP Machine/SideroLink API     |
+| `https://nuc.ide-newton.ts.net:8100/` | Tailnet only | Kubernetes API proxy               |
+| `100.78.240.108:50180/udp`            | Tailnet only | SideroLink WireGuard               |
+| `127.0.0.1:8180`                      | NUC loopback | Cleartext Omni origin behind Serve |
+| `127.0.0.1:2122`                      | NUC loopback | Metrics                            |
 
 The Tailscale node address is installation state. `scripts/validate.sh` fails if it differs from `.env`, preventing
 Omni from silently advertising a stale SideroLink endpoint.

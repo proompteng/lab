@@ -9,7 +9,12 @@ patches:
 helmCharts:
   - name: jupyterhub
     repo: https://hub.jupyter.org/helm-chart/
-    version: 4.4.0
+    version: 4.4.2
     releaseName: torghut-notebooks
     namespace: torghut
     valuesFile: values.yaml
+images:
+  - name: quay.io/jupyterhub/k8s-hub
+    digest: sha256:108fbb01c3fe23e4a81efc8899aa73b4c15413615c73dfcdc44248eb63096e41
+  - name: quay.io/jupyterhub/configurable-http-proxy
+    digest: sha256:69a7170eeedadb139dda5aef038d0a45378295c0d24cb0dc9da58641ef698ebe

@@ -1,6 +1,7 @@
 import { Data, Schema } from 'effect'
+import type { VerifiedStrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../../market-data/intraday/model'
+import type { IntradayCandidateExclusion } from '../../market-data/intraday/model'
 import { intradayAgeNanos, millisecondsAsNanos } from '../../market-data/intraday/time'
 import {
   IsoDateSchema,
@@ -8,6 +9,7 @@ import {
   PositiveMicrosSchema,
   Sha256Schema,
   SymbolSchema,
+  StrictNonEmptyStringSchema,
   UnitIntervalSchema,
   UtcInstantSchema,
   UtcOrderTimestampSchema,
@@ -15,7 +17,7 @@ import {
 } from '../../schemas'
 import type { IsoDate } from '../../types'
 import type { StrategyDefinition, TargetPortfolio } from '../core'
-import type { IntradayMomentumProtocol } from './protocol'
+import { intradayMomentumCandidateSymbols, type IntradayMomentumProtocol } from './protocol'
 
 export type IntradayMomentumRejectionReason =
   | 'lookback-return'
@@ -26,6 +28,14 @@ export type IntradayMomentumRejectionReason =
   | 'spread'
   | 'displayed-liquidity'
   | 'market-data-freshness'
+
+export type IntradayMomentumCandidateExclusion = IntradayCandidateExclusion
+
+export const IntradayMomentumCandidateExclusionSchema = Schema.Struct({
+  symbol: SymbolSchema,
+  reason: Schema.Literals(['not-ready', 'freshness']),
+  message: StrictNonEmptyStringSchema,
+})
 
 const IntradayMomentumRejectionReasonSchema = Schema.Literals([
   'lookback-return',
@@ -174,7 +184,7 @@ export const selectCanonicalIntradayMomentumSignals = (
   )
 
 export interface IntradayMomentumTargetPortfolio extends TargetPortfolio {
-  readonly schemaVersion: 'bayn.intraday-momentum.target.v2'
+  readonly schemaVersion: 'bayn.intraday-momentum.target.v3'
   readonly strategy: 'intraday-momentum'
   readonly sessionDate: IsoDate
   readonly snapshotId: string
@@ -183,18 +193,26 @@ export interface IntradayMomentumTargetPortfolio extends TargetPortfolio {
   readonly benchmark: IntradayMomentumBenchmark
   readonly selectedSymbols: readonly string[]
   readonly signals: readonly IntradayMomentumSignal[]
+  readonly excludedCandidates: readonly IntradayMomentumCandidateExclusion[]
 }
 
 export const intradayMomentumPlanningTargetWeights = (
   target: IntradayMomentumTargetPortfolio,
   heldSymbols: readonly string[],
 ): Readonly<Record<string, number>> => {
-  const planningSymbols = [...new Set([...Object.keys(target.targetWeights), ...heldSymbols])].sort()
+  const planningSymbols = [
+    ...new Set([
+      ...Object.entries(target.targetWeights)
+        .filter(([, weight]) => weight > 0)
+        .map(([symbol]) => symbol),
+      ...heldSymbols,
+    ]),
+  ].sort()
   return Object.freeze(Object.fromEntries(planningSymbols.map((symbol) => [symbol, target.targetWeights[symbol] ?? 0])))
 }
 
-const IntradayMomentumTargetPortfolioBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-momentum.target.v2'),
+const IntradayMomentumTargetPortfolioV3Base = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.intraday-momentum.target.v3'),
   strategy: Schema.Literal('intraday-momentum'),
   sessionDate: IsoDateSchema,
   snapshotId: Sha256Schema,
@@ -203,23 +221,48 @@ const IntradayMomentumTargetPortfolioBase = Schema.Struct({
   benchmark: IntradayMomentumBenchmarkSchema,
   selectedSymbols: Schema.Array(SymbolSchema).check(Schema.isUnique()),
   targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
-  signals: Schema.Array(IntradayMomentumSignalSchema).check(Schema.isMinLength(1)),
+  signals: Schema.Array(IntradayMomentumSignalSchema),
+  excludedCandidates: Schema.Array(IntradayMomentumCandidateExclusionSchema),
 })
 
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index])
 
-const targetIssues = (target: typeof IntradayMomentumTargetPortfolioBase.Type): readonly Schema.FilterIssue[] => {
+type TargetValidationInput = {
+  readonly benchmark: IntradayMomentumBenchmark
+  readonly selectedSymbols: readonly string[]
+  readonly targetWeights: Readonly<Record<string, number>>
+  readonly signals: readonly IntradayMomentumSignal[]
+  readonly excludedCandidates: readonly IntradayMomentumCandidateExclusion[]
+}
+
+const targetIssues = (target: TargetValidationInput): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   const signalSymbols = target.signals.map(({ symbol }) => symbol)
+  const excludedCandidates = target.excludedCandidates
+  const excludedSymbols = excludedCandidates.map(({ symbol }) => symbol)
+  const declaredSymbols = [...signalSymbols, ...excludedSymbols]
   if (new Set(signalSymbols).size !== signalSymbols.length) {
     issues.push({ path: ['signals'], issue: 'symbols must be unique' })
   }
-  if (signalSymbols.includes(target.benchmark.symbol) || target.benchmark.symbol in target.targetWeights) {
+  if (new Set(excludedSymbols).size !== excludedSymbols.length) {
+    issues.push({ path: ['excludedCandidates'], issue: 'symbols must be unique' })
+  }
+  if (signalSymbols.some((symbol) => excludedSymbols.includes(symbol))) {
+    issues.push({ path: ['excludedCandidates'], issue: 'symbols must be distinct from measured signals' })
+  }
+  if (
+    signalSymbols.includes(target.benchmark.symbol) ||
+    excludedSymbols.includes(target.benchmark.symbol) ||
+    target.benchmark.symbol in target.targetWeights
+  ) {
     issues.push({ path: ['benchmark', 'symbol'], issue: 'must be distinct from candidate signals and target weights' })
   }
-  if (!sameStrings(Object.keys(target.targetWeights).sort(), [...signalSymbols].sort())) {
-    issues.push({ path: ['targetWeights'], issue: 'keys must exactly match signal symbols' })
+  if (!sameStrings(Object.keys(target.targetWeights).sort(), declaredSymbols.toSorted())) {
+    issues.push({ path: ['targetWeights'], issue: 'keys must exactly match measured and excluded candidate symbols' })
+  }
+  if (!sameStrings(declaredSymbols.toSorted(), [...intradayMomentumCandidateSymbols].toSorted())) {
+    issues.push({ path: ['excludedCandidates'], issue: 'must account for the exact independent candidate universe' })
   }
 
   const ranked = target.signals
@@ -270,10 +313,15 @@ const targetIssues = (target: typeof IntradayMomentumTargetPortfolioBase.Type): 
       }
     }
   }
+  for (const symbol of excludedSymbols) {
+    if (target.targetWeights[symbol] !== 0) {
+      issues.push({ path: ['targetWeights', symbol], issue: 'excluded candidates must have zero weight' })
+    }
+  }
   return issues
 }
 
-export const IntradayMomentumTargetPortfolioSchema = IntradayMomentumTargetPortfolioBase.check(
+export const IntradayMomentumTargetPortfolioSchema = IntradayMomentumTargetPortfolioV3Base.check(
   Schema.makeFilter(targetIssues),
 )
 
@@ -285,7 +333,7 @@ export interface IntradayMomentumSessionBinding {
 }
 
 export interface IntradayMomentumMarketContext {
-  readonly snapshot: ArchiveVerifiedIntradayMarketSnapshot
+  readonly snapshot: VerifiedStrategyMarketSnapshot
   readonly session: IntradayMomentumSessionBinding
 }
 

@@ -21,7 +21,7 @@ services:
         max-size: 10m
 
   omni:
-    image: ghcr.io/siderolabs/omni:v1.10.4@sha256:d9a98ba84aeb7b0fff892592fa11f558df9ebc58be315982690df91f4692582b
+    image: ghcr.io/siderolabs/omni:v1.11.0@sha256:ffc3af4c482003c65ea777f2dca672ae006a9fa29e635ef693dd820486f360db
     platform: linux/amd64
     restart: unless-stopped
     stop_grace_period: 60s

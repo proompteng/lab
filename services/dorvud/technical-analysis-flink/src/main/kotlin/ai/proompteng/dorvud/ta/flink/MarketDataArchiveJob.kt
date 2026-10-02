@@ -74,6 +74,8 @@ data class MarketDataArchiveConfig(
   val clickhouseBatchSize: Int,
   val clickhouseFlushMs: Long,
   val clickhouseMaxRetries: Int,
+  val featuresTopic: String? = null,
+  val technicalFeaturesTopic: String? = null,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -186,6 +188,8 @@ data class MarketDataArchiveConfig(
         clickhouseBatchSize = batchSize,
         clickhouseFlushMs = flushMs,
         clickhouseMaxRetries = maxRetries,
+        featuresTopic = optional("ARCHIVE_FEATURES_TOPIC"),
+        technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC"),
       )
     }
   }
@@ -303,6 +307,11 @@ internal fun configureMarketDataArchiveJob(
     .sinkTo(archiveTradeClickhouseSink(config))
     .name("signal-intraday-trades-archive")
     .uid("signal-intraday-trades-archive-v1")
+
+  // Keep generated IDs of the existing raw topology stable for savepoint restoration.
+  require(config.technicalFeaturesTopic == null || config.technicalFeaturesTopic != config.featuresTopic) { "feature topics must differ" }
+  config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
+  config.technicalFeaturesTopic?.let { configureMarketFeatureArchive(environment, config, it, technical = true) }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {
@@ -620,7 +629,7 @@ internal fun decodeArchiveTrade(
   )
 }
 
-private fun canonicalSymbolHash(symbols: Collection<String>): String =
+internal fun canonicalSymbolHash(symbols: Collection<String>): String =
   MessageDigest
     .getInstance("SHA-256")
     .digest(symbols.joinToString(",").toByteArray(StandardCharsets.UTF_8))
@@ -655,7 +664,7 @@ private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<Arc
   return builder.build()
 }
 
-private fun applyArchiveKafkaSecurity(
+internal fun applyArchiveKafkaSecurity(
   builder: KafkaSourceBuilder<ArchiveKafkaRecord>,
   config: MarketDataArchiveConfig,
 ) {

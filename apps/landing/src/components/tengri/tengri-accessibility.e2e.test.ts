@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
+import { codexModelFixtures } from './codex-models.fixture'
 
 const readyAgent = {
   id: 'microvm-ada',
@@ -69,9 +70,11 @@ async function mockReadyDesktop(page: Page) {
     const result =
       action.action === 'codex-account'
         ? { authenticated: true, email: 'ada@example.test', plan: 'pro' }
-        : action.action === 'list-files'
-          ? { path: action.path ?? '/', entries: [] }
-          : null
+        : action.action === 'codex-models'
+          ? { models: codexModelFixtures, nextCursor: null }
+          : action.action === 'list-files'
+            ? { path: action.path ?? '/', entries: [] }
+            : null
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ result }) })
   })
 }
@@ -82,7 +85,7 @@ test('exposes usable browser tabs, connection state, and contrast', async ({ pag
 
   await expect(page.getByRole('region', { name: 'Chrome window' })).toBeVisible()
   await expect(page.getByText('Connected', { exact: true })).toBeAttached()
-  await expect(page.getByText('pro', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Agent status')).toHaveText('Ready')
 
   const tablist = page.getByRole('tablist', { name: 'Browser tabs' })
   const firstTab = tablist.getByRole('tab', { name: /Tengri Agent/ })
@@ -109,8 +112,13 @@ test('exposes usable browser tabs, connection state, and contrast', async ({ pag
   await expect(tablist.getByRole('tab')).toBeFocused()
 
   await page.keyboard.press('Delete')
+  await expect(page.getByRole('region', { name: 'Chrome window' })).toHaveCount(0)
+
+  const chromeLauncher = page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Chrome' })
+  await chromeLauncher.click()
   await expect(tablist.getByRole('tab')).toHaveCount(1)
-  await expect(tablist.getByRole('tab')).toBeFocused()
+  await chromeLauncher.hover()
+  await expect(chromeLauncher.getByRole('tooltip', { includeHidden: true })).toHaveCSS('opacity', '1')
 
   const seriousViolations = (await new AxeBuilder({ page }).analyze()).violations.filter(
     (violation) => violation.impact === 'critical' || violation.impact === 'serious',

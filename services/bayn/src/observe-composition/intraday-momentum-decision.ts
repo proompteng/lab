@@ -1,16 +1,12 @@
+import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import type { EntryQuoteFreshness } from '../risk'
 import { Data, Result } from 'effect'
 
 import type { MarketCalendarObservation } from '../broker/alpaca'
 import type { AutonomousCycle } from '../cycle'
 import { utcInstantFromEpochMillis } from '../time'
-import {
-  IntradaySnapshotPurpose,
-  persistIntradaySnapshotRows,
-  type IntradayMarketSnapshot,
-  type IntradaySnapshotQuery,
-  type PersistedIntradaySnapshotRows,
-} from '../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type PersistedIntradaySnapshotRows } from '../market-data'
 import type { ExecutionMarketDataBinding } from '../shadow-decision-contract'
 import { MICROS } from '../execution-model'
 import {
@@ -42,6 +38,7 @@ export class IntradayMomentumRuntimeDecisionFailure extends Data.TaggedError('In
 export class IntradayMomentumEntryAwaitingSnapshot extends Data.TaggedError('IntradayMomentumEntryAwaitingSnapshot')<{
   readonly message: string
   readonly availableAt?: string
+  readonly symbol?: string
 }> {}
 
 export class IntradayMomentumCloseAwaitingSnapshot extends Data.TaggedError('IntradayMomentumCloseAwaitingSnapshot')<{
@@ -95,30 +92,35 @@ export const intradayMomentumEntryQuery = (
   const rangeStartEpoch = rangeEndEpoch - protocol.lookbackMinutes * minuteMs
   const rangeStartAt = utcInstantFromEpochMillis(rangeStartEpoch)
   const rangeEndAt = utcInstantFromEpochMillis(rangeEndEpoch)
-  const firstEligibleRangeEndEpoch = Math.ceil(Date.parse(cycle.window.submissionOpenAt) / minuteMs) * minuteMs
+  const firstEligibleRangeEndEpoch =
+    Math.ceil(
+      Math.max(
+        Date.parse(cycle.window.submissionOpenAt),
+        Date.parse(cycle.window.executionOpenAt) + protocol.lookbackMinutes * minuteMs,
+      ) / minuteMs,
+    ) * minuteMs
   const availableAt = utcInstantFromEpochMillis(firstEligibleRangeEndEpoch + decisionDelayMs)
   if (
-    cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' ||
+    (cycle.schemaVersion !== 'bayn.autonomous-cycle.v3' && cycle.schemaVersion !== 'bayn.autonomous-cycle.v4') ||
     cycle.identity.strategyName !== 'intraday-momentum' ||
     cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3' ||
     observedAt < cycle.window.submissionOpenAt ||
     observedAt >= cycle.window.submissionCutoffAt ||
-    rangeStartAt < cycle.window.executionOpenAt ||
     rangeEndAt > cycle.window.submissionCutoffAt ||
     observedEpoch < rangeEndEpoch + decisionDelayMs
   ) {
     return Result.fail(failure('entry-query', 'cycle does not admit a complete rolling intraday snapshot at this time'))
   }
-  if (rangeEndAt < cycle.window.submissionOpenAt) {
+  if (rangeEndEpoch < firstEligibleRangeEndEpoch) {
     return Result.fail(
       new IntradayMomentumEntryAwaitingSnapshot({
-        message: 'full-session intraday entry is waiting for its first decision-delay-complete snapshot',
+        message: 'intraday entry is waiting for a complete rolling lookback and its decision delay',
         availableAt,
       }),
     )
   }
-  return Result.succeed(
-    snapshotQuery(
+  return Result.succeed({
+    ...snapshotQuery(
       cycle,
       protocol,
       calendar,
@@ -128,7 +130,8 @@ export const intradayMomentumEntryQuery = (
       decisionDelayMs,
       intradayMomentumSnapshotSymbols(protocol),
     ),
-  )
+    candidateSymbols: protocol.candidateSymbols,
+  })
 }
 
 export const intradayMomentumPricingQuery = (
@@ -200,13 +203,18 @@ export const intradayMomentumEntryDisposition = (
   finalizationHeadroomMs: number,
 ): IntradayMomentumEntryDisposition => {
   if (decision.selectedSymbols.length > 0 || positionsRequireContainment) return 'EXECUTE'
+  if (decision.signals.length === 0 && decision.excludedCandidates.length > 0) {
+    return 'AWAIT_SIGNAL'
+  }
   const remainingMs = Date.parse(submissionCutoffAt) - Date.parse(decision.observedAt)
   return remainingMs > finalizationHeadroomMs ? 'AWAIT_SIGNAL' : 'NO_TRADE'
 }
 
 export interface CompiledIntradayMomentumDecision {
+  readonly entryQuotes: Readonly<Record<string, EntryQuoteFreshness>>
   readonly decision: IntradayMomentumTargetPortfolio
   readonly decisionMarketDataRows: PersistedIntradaySnapshotRows
+  readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
   readonly priceMicros: Readonly<Record<string, string>>
   readonly bidPriceMicros: Readonly<Record<string, string>>
   readonly askPriceMicros: Readonly<Record<string, string>>
@@ -252,12 +260,12 @@ export const maximumSellQuantities = (
 export const evaluateIntradayMomentumDecision = (
   definition: IntradayMomentumStrategyDefinition,
   cycle: AutonomousCycle,
-  decisionSnapshot: ArchiveVerifiedIntradayMarketSnapshot,
+  decisionSnapshot: VerifiedStrategyMarketSnapshot,
 ): Result.Result<
   IntradayMomentumTargetPortfolio,
   IntradayMomentumEntryAwaitingSnapshot | IntradayMomentumRuntimeDecisionFailure
-> =>
-  Result.mapError(
+> => {
+  return Result.mapError(
     definition.decide({
       market: {
         snapshot: decisionSnapshot,
@@ -274,7 +282,10 @@ export const evaluateIntradayMomentumDecision = (
         cause.reason === 'snapshot-coverage' &&
         cause.message === 'intraday symbol lacks the complete rolling lookback baseline'
       ) {
-        return new IntradayMomentumEntryAwaitingSnapshot({ message: cause.message })
+        return new IntradayMomentumEntryAwaitingSnapshot({
+          message: cause.message,
+          ...(cause.symbol === undefined ? {} : { symbol: cause.symbol }),
+        })
       }
       const details = [
         `${cause.reason}: ${cause.message}`,
@@ -284,26 +295,41 @@ export const evaluateIntradayMomentumDecision = (
       return failure('entry-decision', details.join('; '), cause)
     },
   )
+}
 
 export const compileIntradayMomentumDecision = (
   decision: IntradayMomentumTargetPortfolio,
-  decisionSnapshot: IntradayMarketSnapshot,
-  pricingSnapshot: IntradayMarketSnapshot,
+  decisionSnapshot: StrategyMarketSnapshot,
+  pricingSnapshot: StrategyMarketSnapshot,
   heldPositions: readonly { readonly symbol: string; readonly quantityMicros: string }[] = [],
 ): Result.Result<CompiledIntradayMomentumDecision, IntradayMomentumRuntimeDecisionFailure> =>
   Result.mapError(
     Result.gen(function* () {
       const heldSymbols = heldPositions.map((position) => position.symbol)
       const planningTargetWeights = intradayMomentumPlanningTargetWeights(decision, heldSymbols)
-      const planningSymbols = Object.keys(planningTargetWeights)
+      const pricingSymbols = [
+        ...new Set([
+          ...Object.entries(planningTargetWeights)
+            .filter(([, targetWeight]) => targetWeight > 0)
+            .map(([symbol]) => symbol),
+          ...heldSymbols,
+        ]),
+      ].sort()
       const maximumSellQuantityMicros = yield* maximumSellQuantities(
         pricingSnapshot,
         heldPositions,
         planningTargetWeights,
       )
       const maximumBuyQuantityMicros = yield* maximumBuyQuantities(pricingSnapshot, planningTargetWeights)
-      const quotePrices = yield* adverseQuotePrices(pricingSnapshot, planningSymbols)
-      const decisionMarketDataRows = yield* persistIntradaySnapshotRows(decisionSnapshot)
+      const quotePrices = yield* adverseQuotePrices(pricingSnapshot, pricingSymbols)
+      const entryQuotes: Record<string, EntryQuoteFreshness> = {}
+      for (const symbol of pricingSymbols) {
+        const quote = pricingSnapshot.latestQuotes[symbol]
+        if (quote === undefined)
+          return yield* Result.fail(failure('entry-decision', `entry pricing quote is missing for ${symbol}`))
+        entryQuotes[symbol] = { eventAt: quote.eventAt, maximumAgeMs: pricingSnapshot.manifest.maximumQuoteAgeMs }
+      }
+      const decisionMarketDataRows = yield* persistIntradayRecordRows(decisionSnapshot)
       const decisionBinding = yield* executionMarketDataBinding(decisionSnapshot)
       const usesDedicatedPricing = pricingSnapshot.manifest.purpose === IntradaySnapshotPurpose.EntryPricing
       const executionBinding = usesDedicatedPricing
@@ -312,6 +338,10 @@ export const compileIntradayMomentumDecision = (
       return {
         decision,
         decisionMarketDataRows,
+        ...(usesDedicatedPricing && 'streaming' in executionBinding
+          ? { executionMarketDataRows: yield* persistIntradayRecordRows(pricingSnapshot) }
+          : {}),
+        entryQuotes,
         priceMicros: quotePrices.askPriceMicros,
         ...quotePrices,
         maximumBuyQuantityMicros,

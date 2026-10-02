@@ -53,8 +53,28 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     },
   })
   expect(cluster.spec.imageName).toBe(
-    'ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie@sha256:9287ce030c6f3ce822e383b019ae4aaf1e8370bff3b39f9c51dc10d69dc97219',
+    'ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a677d3fa2bc3fdc61874e0de8324b5a987eb676ddca133e71365a8467d6c1',
   )
+  expect(cluster.spec.postgresql.parameters).toMatchObject({
+    log_lock_waits: 'on',
+    deadlock_timeout: '1s',
+    log_min_duration_statement: '1000ms',
+    log_parameter_max_length: '0',
+    log_parameter_max_length_on_error: '0',
+    track_io_timing: 'on',
+    track_wal_io_timing: 'on',
+  })
+  expect(cluster.spec.monitoring.customQueriesConfigMap).toEqual([
+    { name: 'cnpg-default-monitoring', key: 'queries' },
+    { name: 'bayn-postgres-monitoring', key: 'queries' },
+  ])
+  const monitor = readManifest('argocd/applications/bayn/postgres-monitoring.yaml')
+  expect(monitor.metadata.labels['cnpg.io/reload']).toBe('true')
+  expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain('postgres-monitoring.yaml')
+  const queries = YAML.parse(monitor.data.queries)
+  expect(Object.keys(queries).sort()).toEqual(['bayn_io', 'bayn_io_timing', 'bayn_replication', 'bayn_waits'])
+  expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
+  expect(queries.bayn_replication.primary).toBe(true)
 })
 
 test('Bayn compares CNPG resources after admission defaulting', () => {
@@ -167,16 +187,16 @@ test('the CNPG platform installs the pinned Barman Cloud plugin', () => {
   const encodedSidecarImage = sidecarSecretPatch.patch.match(/path: \/data\/SIDECAR_IMAGE\n\s+value: (\S+)/)?.[1]
 
   expect(platform.resources).toContain(
-    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml',
+    'https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.15.0/manifest.yaml',
   )
   expect(patches).toContain(
-    'ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.14.0@sha256:823a8893690980ba5830bbbb11196a35f695b0488db7d846abc33baebf32417c',
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud:v0.15.0@sha256:563c680fe7fda3466ca2b1f55a1397ed2ddc9e760360107dd7724f1959c1a536',
   )
   expect(encodedSidecarImage).toBeDefined()
   expect(Buffer.from(encodedSidecarImage ?? '', 'base64').toString('utf8')).toBe(
-    'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.14.0@sha256:9880817c285c7afa4d195da2145064d21907405489ed6ec39abe59b1feb558a4',
+    'ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.15.0@sha256:06c78deca670525daa35fb1e5323159092785d11cf87b86217bdd5c679a41a84',
   )
-  expect(sidecarSecretPatch.target.name).toBe('plugin-barman-cloud-f998mh5292')
+  expect(sidecarSecretPatch.target.name).toBe('plugin-barman-cloud-2b4mtt7m69')
   expect(sidecarSecretPatch.patch).toContain('path: /metadata/name')
   expect(sidecarSecretPatch.patch).toContain('value: plugin-barman-cloud-m5m67kfh8f')
 })
@@ -321,19 +341,20 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
   const activationSecret = readManifest('argocd/applications/bayn/alpaca-sealedsecret.yaml')
+  const mandateIdentity = JSON.parse(activationSecret.metadata.annotations['proompteng.ai/bayn.mandate-identity'])
   const activationDocuments = YAML.parseAllDocuments(
     readRepoFile('argocd/applications/bayn/execution-activation.yaml'),
   ).map((document) => document.toJSON())
   const activation = activationDocuments.find((manifest) => manifest.kind === 'Job')
-  const activationPolicy = activationDocuments.find((manifest) => manifest.kind === 'NetworkPolicy')
+  const activationPolicy = readManifest('argocd/applications/bayn/execution-activation-networkpolicy.yaml')
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
   const environment = (manifest: Record<string, any>): Map<string, Record<string, any>> =>
     new Map(manifest.spec.template.spec.containers[0].env.map((entry: Record<string, any>) => [entry.name, entry]))
   const deploymentEnvironment = environment(deployment)
   const controllerEnvironment = environment(controller)
   const activationEnvironment = environment(activation)
-  const sourceRevision = '88a00e82f7fc727bcf8f2423ea9319a22c1b3bc5'
-  const imageDigest = 'sha256:65349a368762d42937dabb9d420e46d9199715f8a61f88d80bc5b7101df3735c'
+  const sourceRevision = 'ee60493eb5a9b5f8572e868b6ff31c17675501a3'
+  const imageDigest = 'sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7'
   const imageTag = `sha-${sourceRevision}`
   const immutableImage = `registry.ide-newton.ts.net/lab/bayn:${imageTag}@${imageDigest}`
   const sharedPlanEnvironment = [
@@ -406,18 +427,11 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
   expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
     schemaVersion: 'bayn.research-capital-build-lineage.v1',
-    requestHash: 'a544148ebed42b639dc1efa9cf8bf7c1272031dee71dbcc1fa76ea78a01d2092',
-    authoredActivation: {
-      sourceRevision,
-      imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
-      imageDigest,
-    },
-    activation: {
-      sourceRevision,
-      imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
-      imageDigest,
-    },
+    requestHash: mandateIdentity.requestHash,
+    authoredActivation: mandateIdentity.authoredActivation,
+    activation: mandateIdentity.authoredActivation,
   })
+  expect(controllerEnvironment.get('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS')?.value).toBe('300000')
   expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
   expect(deploymentEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
@@ -438,13 +452,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
     'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
   )
-  expect(activationSecret.metadata.annotations).toMatchObject({
-    'bayn.proompteng.ai/capital-activation-schema': 'bayn.research-execution-mandate.v1',
-    'bayn.proompteng.ai/capital-activation-source-revision': sourceRevision,
-    'bayn.proompteng.ai/capital-activation-image-digest': imageDigest,
-    'bayn.proompteng.ai/capital-activation-content-hash':
-      'a544148ebed42b639dc1efa9cf8bf7c1272031dee71dbcc1fa76ea78a01d2092',
-  })
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
   const previousBinding = {
@@ -467,9 +474,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate.drainDelaySeconds).toBe(0)
-  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(
-    'f0537927a707fa4fe0380fa0bb1de94fa589269ea1e330c9b5a3970bbcd0c200',
-  )
+  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(mandateIdentity.requestHash)
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([

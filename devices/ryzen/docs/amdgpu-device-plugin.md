@@ -16,18 +16,24 @@ We vendor the upstream manifests under:
 
 - `devices/ryzen/manifests/k8s/amdgpu-device-plugin.yaml`
 - `devices/ryzen/manifests/k8s/amdgpu-device-labeller.yaml`
+- `devices/ryzen/manifests/k8s/kustomization.yaml`
 
-Images are pinned by digest for reproducibility (pulled from Docker Hub):
+Images follow the upstream `v1.31.0.10` tag scheme and are pinned by digest for
+reproducibility (pulled from Docker Hub):
 
-- `rocm/k8s-device-plugin@sha256:e42d51ddaf66af07a2d983eb10bbaf2a6068dbc4ddcf90ddbb1e91a396b0c447`
-- `rocm/k8s-device-plugin@sha256:302ef02bff5190fbac61922fc6fe7e15a8b5936fa78b080472fb7931597ec7bb`
+- Device plugin: `docker.io/rocm/k8s-device-plugin:1.31.0.10@sha256:0555caf9ccc1cf407b353d1aade87d4598059f87a784085aafe3ece19405b612`
+- Node labeller: `docker.io/rocm/k8s-device-plugin:labeller-1.31.0.10@sha256:60deb236b5fc00cdca36a911d436eb397502cfd78fa45256491fc095cc8e773d`
 
 ## Install (Ryzen cluster)
 
 ```bash
-kubectl --context ryzen apply -f devices/ryzen/manifests/k8s/amdgpu-device-plugin.yaml
-kubectl --context ryzen apply -f devices/ryzen/manifests/k8s/amdgpu-device-labeller.yaml
+kubectl --context ryzen apply -k devices/ryzen/manifests/k8s
 ```
+
+The normal galactic delivery path should reference this Kustomization from the
+platform ApplicationSet and target the existing `kube-system` namespace. The
+Kustomization contains no `Namespace` object and does not claim namespace
+metadata; the manual command is retained for bootstrap or recovery only.
 
 These DaemonSets are gated behind an explicit node label so they don't
 CrashLoop on nodes without the `amdgpu` kernel driver loaded:
@@ -159,5 +165,8 @@ Procedure (Talos v1.12.4, non-deprecated boot-assets workflow):
 
 ## Notes
 
-These manifests were applied manually per request. If you want GitOps
-management, create an Argo CD app that references these files.
+The current galactic resources were applied manually and are not yet tracked by
+Argo CD. The Kustomization is the canonical source for the existing manual
+resources and for the proposed Argo CD application. It intentionally contains
+no `Namespace` object and leaves `kube-system` namespace metadata under cluster
+ownership.

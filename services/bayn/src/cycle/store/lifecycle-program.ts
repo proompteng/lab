@@ -92,7 +92,7 @@ const makeCycleLifecycleProgramsDataFirst = (
         AND state = ${CycleState.Pending}
         AND state_version = ${decision.cycle.stateVersion}
         AND (
-          schema_version = 'bayn.autonomous-cycle.v3'
+          schema_version IN ('bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
           OR snapshot_id IS NOT NULL
         )
       RETURNING cycle_id

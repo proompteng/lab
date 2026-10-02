@@ -1,0 +1,194 @@
+# Production Tempo 3 deployment. Preserve the shared object store and vParquet4
+# block format so historical Tempo 2 RF3 blocks remain queryable.
+global:
+  clusterDomain: cluster.local
+
+defaults:
+  extraArgs:
+    - -config.expand-env=true
+  extraEnv:
+    - name: OBS_S3_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: AccessKey
+    - name: OBS_S3_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: rook-ceph-rgw-loki
+          key: SecretKey
+
+tempo:
+  # New StatefulSets can use the chart's corrected governing services directly.
+  useHeadlessGoverningService: true
+  podSecurityContext:
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  image:
+    repository: grafana/tempo
+    tag: 3.0.3
+
+distributor:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+backendScheduler:
+  enabled: true
+  # The scheduler's local work cache is disposable; Kafka and the shared
+  # Tempo bucket are the durable migration stores. Keep this explicit so the
+  # chart does not imply a PVC that it does not render for this target.
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+backendWorker:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+ingest:
+  kafka:
+    # plain2 is the existing internal listener without SASL. Port 9092 is SCRAM.
+    address: kafka-kafka-bootstrap.kafka.svc.cluster.local:9093
+    topic: observability.tempo.traces.v1
+    # The KafkaTopic is owned by the Kafka application. This keeps first boot
+    # deterministic while retaining the chart's safe retry behavior if the
+    # topic is not ready at the first reconciliation.
+    auto_create_topic_enabled: false
+    auto_create_topic_default_partitions: 3
+
+blockBuilder:
+  enabled: true
+  replicas: 3
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: observability-tempo-v3
+              app.kubernetes.io/component: block-builder
+          topologyKey: kubernetes.io/hostname
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+liveStore:
+  enabled: true
+  replicas: 3
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: observability-tempo-v3
+              app.kubernetes.io/component: live-store
+          topologyKey: kubernetes.io/hostname
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+querier:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+queryFrontend:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+traces:
+  otlp:
+    http:
+      enabled: true
+    grpc:
+      enabled: true
+
+storage:
+  trace:
+    backend: s3
+    block:
+      # Tempo 3 requires vParquet4 or newer and reads existing vParquet4 RF3
+      # blocks from the same bucket without a rewrite.
+      version: vParquet4
+    s3:
+      endpoint: rook-ceph-rgw-tls.rook-ceph.svc:443
+      bucket: tempo-traces
+      access_key: ${OBS_S3_ACCESS_KEY}
+      secret_key: ${OBS_S3_SECRET_KEY}
+      insecure: false
+      tls_server_name: ceph.k8s.proompteng.ai
+      forcepathstyle: true
+
+# Tempo 2 compaction is retired; this scheduler is the sole compaction owner.
+overrides:
+  defaults:
+    compaction:
+      compaction_disabled: false
+
+gateway:
+  enabled: true
+  replicas: 1
+  image:
+    registry: mirror.gcr.io
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.31-alpine
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+memcached:
+  enabled: true
+  replicas: 1
+  image:
+    registry: mirror.gcr.io
+    repository: library/memcached
+    tag: 1.6.45-alpine
+  allocatedMemory: 128
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi

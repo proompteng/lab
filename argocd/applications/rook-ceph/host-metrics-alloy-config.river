@@ -1,0 +1,70 @@
+logging {
+	level  = "info"
+	format = "logfmt"
+}
+
+// This per-node collector has no Kubernetes credentials or remote discovery.
+// Host networking is required for genuine host (not pod) network counters.
+// The HTTP listener stays on loopback; exporter scraping uses in-memory traffic.
+prometheus.exporter.unix "storage" {
+	procfs_path    = "/host/proc"
+	sysfs_path     = "/host/sys"
+	set_collectors = ["cpu", "diskstats", "meminfo", "netclass", "netdev", "pressure"]
+
+	disk {
+		device_include = "^(sd[a-z]+|nvme[0-9]+n[0-9]+)$"
+	}
+
+	netdev {
+		device_include = "^(en.*|eth.*|bond[0-9]+|tailscale[0-9]+|flannel[.][0-9]+|siderolink)$"
+	}
+
+	netclass {
+		ignored_devices = "^(lo|veth.*|cni.*|docker.*|virbr.*)$"
+	}
+}
+
+discovery.relabel "storage" {
+	targets = prometheus.exporter.unix.storage.targets
+
+	// Embedded Unix targets already carry job="integrations/unix". A scrape
+	// job_name is only a default; override the target label for our rule contract.
+	rule {
+		replacement  = "node-storage"
+		target_label = "job"
+	}
+
+	rule {
+		replacement  = sys.env("NODE_NAME")
+		target_label = "node"
+	}
+
+	rule {
+		replacement  = sys.env("NODE_NAME")
+		target_label = "instance"
+	}
+}
+
+prometheus.relabel "storage" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|node_scrape_collector_(success|duration_seconds)|node_cpu_seconds_total|node_memory_(MemAvailable|MemTotal)_bytes|node_pressure_.*|node_disk_.*|node_network_((receive|transmit)_(bytes|drop|errs|packets)_total|speed_bytes|mtu_bytes|up|carrier|carrier_changes_total)"
+	}
+}
+
+prometheus.scrape "storage" {
+	job_name        = "node-storage"
+	targets         = discovery.relabel.storage.output
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.storage.receiver]
+}
+
+prometheus.remote_write "mimir" {
+	endpoint {
+		url = "http://observability-mimir-gateway.observability.svc.cluster.local/api/v1/push"
+	}
+}

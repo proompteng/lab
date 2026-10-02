@@ -1,11 +1,12 @@
 import { Data, Schema } from 'effect'
-import { HttpClientError } from 'effect/unstable/http'
+import { HttpClientError } from 'effect/http'
 import { Pipeable } from '../../pipeable'
 
 export enum BrokerReadErrorKind {
   Configuration = 'CONFIGURATION',
   Transport = 'TRANSPORT',
   Timeout = 'TIMEOUT',
+  ObservationPending = 'OBSERVATION_PENDING',
   Authentication = 'AUTHENTICATION',
   Forbidden = 'FORBIDDEN',
   NotFound = 'NOT_FOUND',
@@ -28,6 +29,7 @@ export type BrokerReadOperation =
   | 'order-by-id'
   | 'order-by-client-id'
   | 'fill-activities'
+  | 'fee-activities'
   | 'asset-by-symbol'
   | 'market-calendar'
 

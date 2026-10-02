@@ -10,6 +10,8 @@
   depsHash,
   installFilters,
   sourcePaths,
+  # Optional manifest/lock-only source for fixed-output dependency closures. The runtime source remains repoRoot.
+  dependencySource ? null,
   runtimeSourceFilter ? (_path: _type: true),
   buildCommands ? [ ],
   runtimeInstallPhase ? null,
@@ -53,11 +55,17 @@ let
 
   isUnder = prefix: rel: rel == prefix || lib.hasPrefix "${prefix}/" rel;
 
-  depsSource = lib.cleanSourceWith {
-    src = repoRoot;
-    filter = path: type:
-      type == "directory" || isPackageManifest (relativePath path) || isUnder "patches" (relativePath path);
-  };
+  depsSource =
+    if dependencySource != null then
+      dependencySource
+    else if dependencyClosure == "nodeModules" then
+      import ./bun-workspace-deps-source.nix { inherit lib repoRoot; }
+    else
+      lib.cleanSourceWith {
+        src = repoRoot;
+        filter = path: type:
+          type == "directory" || isPackageManifest (relativePath path) || isUnder "patches" (relativePath path);
+      };
 
   runtimeSource = lib.cleanSourceWith {
     src = repoRoot;
@@ -161,6 +169,9 @@ let
         rm -rf "$out"
         mkdir -p "$out"
         cp -R "$BUN_INSTALL_CACHE_DIR/." "$out/"
+        bash ${./relativize-bun-cache.sh} "$out" "$BUN_INSTALL_CACHE_DIR"
+      else
+        bash ${./prune-bun-dependency-metadata.sh} "$out"
       fi
 
       runHook postInstall
@@ -201,6 +212,8 @@ let
         else
           ''
             cp -R ${deps}/. "$TMPDIR/work/"
+            chmod -R u+w "$TMPDIR/work"
+            cp -R ${depsSource}/. "$TMPDIR/work/"
             chmod -R u+w "$TMPDIR/work"
             cp -R . "$TMPDIR/work/"
           ''

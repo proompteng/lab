@@ -5,7 +5,6 @@ import { Deferred, Effect, Exit, Fiber } from 'effect'
 import { WriterFence, type WriterFenceService, withWriterFence } from './writer-fence'
 
 const service = (transaction: WriterFenceService['transaction']): WriterFenceService => ({
-  backendPid: 42,
   check: Effect.void,
   transaction,
 })

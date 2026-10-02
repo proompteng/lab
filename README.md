@@ -19,6 +19,8 @@ The repository centers on:
 - `apps/app`: TanStack Start control-plane UI
 - `apps/cms`: Payload CMS for landing content
 - `apps/docs`: Fumadocs-based documentation app
+- `apps/orbit-salvage`: Godot space-salvage game with a native desktop and browser build
+- `apps/ricochet-rush`: Godot 3D survival shooter with native desktop and browser builds
 - `apps/froussard`: Bun webhook bridge service in `apps/`
 - `apps/reestr`, `apps/reviseur`, `apps/kabina`, `apps/nata`, `apps/kitty-krew`, `apps/alchimie`, `apps/discourse`:
   additional product and experiment surfaces
@@ -64,7 +66,7 @@ TigerBeetle operator code lives in the standalone `proompteng/tigresse` reposito
 - Nix with flakes enabled. The repo-level toolchain is provided by `nix develop`.
 - Without Nix, install the equivalent tools manually:
   - Node `24.11.1`
-  - Bun `1.4.0`
+  - Bun `1.4.2`
   - Go `1.25.5` for repo parity; Go services support `1.24+`
   - Ruby `3.4.7` + Bundler `2.7+` for `services/dernier`
   - Python:

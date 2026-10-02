@@ -3,7 +3,7 @@ fullnameOverride: torghut-notebooks
 hub:
   image:
     name: quay.io/jupyterhub/k8s-hub
-    tag: '4.4.0'
+    tag: '4.4.2'
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -92,7 +92,7 @@ proxy:
   chp:
     image:
       name: quay.io/jupyterhub/configurable-http-proxy
-      tag: '5.2.0'
+      tag: '5.3.0'
       pullPolicy: IfNotPresent
     resources:
       requests:
@@ -133,20 +133,6 @@ singleuser:
     blockWithIptables: false
   extraEnv:
     TORGHUT_NOTEBOOK_DATA_MODE: live
-    PGHOST: torghut-db-r.torghut.svc.cluster.local
-    PGPORT: '5432'
-    PGDATABASE: torghut
-    PGUSER:
-      valueFrom:
-        secretKeyRef:
-          name: torghut-notebook-postgres
-          key: username
-    PGPASSWORD:
-      valueFrom:
-        secretKeyRef:
-          name: torghut-notebook-postgres
-          key: password
-    PGOPTIONS: '-c default_transaction_read_only=on -c statement_timeout=30000'
     CLICKHOUSE_URL: http://torghut-clickhouse.torghut.svc.cluster.local:8123
     CLICKHOUSE_DATABASE: torghut
     CLICKHOUSE_USER: torghut_notebook
@@ -155,7 +141,6 @@ singleuser:
         secretKeyRef:
           name: torghut-notebook-clickhouse
           key: password
-    TORGHUT_STATUS_URL: http://torghut-scheduler.torghut.svc.cluster.local:8183/trading/status
   extraPodConfig:
     automountServiceAccountToken: false
     enableServiceLinks: false
@@ -172,25 +157,10 @@ singleuser:
       - to:
           - podSelector:
               matchLabels:
-                cnpg.io/cluster: torghut-db
-        ports:
-          - protocol: TCP
-            port: 5432
-      - to:
-          - podSelector:
-              matchLabels:
                 clickhouse.altinity.com/chi: torghut-clickhouse
         ports:
           - protocol: TCP
             port: 8123
-      - to:
-          - podSelector:
-              matchLabels:
-                app.kubernetes.io/name: torghut
-                app.kubernetes.io/component: trading-scheduler
-        ports:
-          - protocol: TCP
-            port: 8183
 
 scheduling:
   userScheduler:

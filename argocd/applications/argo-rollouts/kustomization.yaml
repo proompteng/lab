@@ -3,7 +3,7 @@ kind: Kustomization
 helmCharts:
   - name: argo-rollouts
     repo: https://argoproj.github.io/argo-helm
-    version: 2.41.1
+    version: 2.43.0
     releaseName: argo-rollouts
     namespace: argo-rollouts
     valuesInline:
@@ -18,3 +18,12 @@ helmCharts:
         extraEnv:
           - name: ARGO_ROLLOUTS_ANALYSIS_JOB_NAMESPACE
             value: torghut
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+          timeoutSeconds: 4

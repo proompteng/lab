@@ -11,23 +11,43 @@ unauthenticated.
 
 ## Current API
 
+Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves authenticated gRPC
+over HTTP/2 without TLS on its existing port 8080. Each unary and streaming RPC checks the same per-MicroVM bootstrap
+credential in `authorization` metadata. This migration retains the existing transport trust and requires no SPIRE,
+service mesh, additional listener, or Talos configuration.
+
+The service covers editor startup, bounded file discovery and atomic mutations, PTY lifecycle, Codex calls and
+approvals, file/Codex server streams, and a bidirectional terminal stream. File content travels as protobuf bytes.
+Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
+this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
+
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and protocol version. Guest control is
+gRPC-only: the former REST, NDJSON event streams, and terminal WebSocket endpoints have been removed. There is no
+HTTP discovery, negotiation, or fallback. Guests without this protocol must sleep/resume with the current image.
+Controller and guest releases must use a compatible protobuf contract; an older HTTP-only controller cannot operate
+this guest.
+
+HTTP remains for process probes and application content:
+
 - `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes;
-- `GET /v1/evidence`: guest boot ID, kernel release, architecture, and microVM identity;
-- `GET /v1/files`, `GET /v1/files/content`, and `GET /v1/files/search`: bounded file discovery and reads;
-- `PUT /v1/files/content`, `POST /v1/files/directory`, `POST /v1/files/move`, and `DELETE /v1/files`: atomic mutations;
-- `GET /v1/files/watch`: bounded, replayable filesystem events;
-- `POST /v1/terminals`, `GET /v1/terminals`, and `DELETE /v1/terminals/{id}`: PTY lifecycle;
-- `GET /v1/terminals/{id}/ws`: interactive terminal attachment, resize, signals, replay, and reconnect;
-- `POST /v1/codex/call`: authenticated Codex account, login, thread, turn, steering, and interruption calls;
-- `GET /v1/codex/login`: the current device-login attempt, so a reconnecting desktop can resume it without
-  invalidating the displayed code;
-- `GET /v1/codex/events`: bounded, replayable Codex app-server events;
-- `POST /v1/codex/approvals/{id}`: resolve a pending Codex approval request;
-- `/v1/preview/{port}/{path...}`: HTTP and WebSocket proxying to an allowed loopback development port.
+- `/v1/preview/{port}/{path...}`: authenticated HTTP and WebSocket proxying to an allowed loopback application or VS Code.
 
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
 stops searches and event streams.
+
+`ReadFile` returns bytes and their strong SHA-256 revision. `WriteFile` requires `expected_revision`, either the exact
+lowercase 64-hex revision from the read or `missing` for create-only writes. Successful writes return the new revision;
+stale writes return `ABORTED` with the current revision in `OperationFailure` details. A workspace lock serializes
+revision comparison and mutation for Nanoagent API writers. Tengri preserves the public conflict response and revision.
+Direct filesystem writers, including shell commands and Codex, do not participate in that lock; their changes are
+reported through file events and require editor reconciliation. The API does not claim atomic conditional writes
+against arbitrary external processes.
+
+Mutation acknowledgement includes syncing affected directory metadata. A storage failure after a rename or deletion
+can leave the mutation visible despite an error response. Re-read the affected path before retrying; an error does
+not imply rollback. Retaining the PVC across sleep and releases does not replace an independent backup policy.
 
 Preview requests can reach only `127.0.0.1`, reject privileged and reserved ports, strip credentials and hop-by-hop or
 forwarding headers, and support WebSocket upgrades for development-server HMR. Nanoagent never proxies arbitrary
@@ -52,8 +72,13 @@ a shared `OPENAI_API_KEY`.
 ## Firecracker rootfs and persistent tools
 
 Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
-a 480 MiB uncompressed-rootfs ceiling. The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
-compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.0, uv 0.11.14, Go 1.25.5, Rust/Cargo
+a real 512 MiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
+executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
+The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
+messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
+The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
+compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.2, uv 0.11.14, Go 1.25.5, Rust/Cargo
 1.90.0, and native GCC 13.3.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox
 prerequisite instead of showing a bundled-helper fallback warning after device login.
 
@@ -65,9 +90,25 @@ home-volume install. Nanoagent configures both npm and Bun to use `~/.local` as 
 globally installed package executables are immediately available from the existing `~/.local/bin` PATH. Rust
 compilation and doctests use the bundled architecture-specific `rust-lld` and minimal startup objects through
 atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
-C, and CGO projects therefore build without `apt`, `sudo`, or any mutation of the read-only guest rootfs.
+C, and CGO projects therefore build from the persistent home toolchain without installing system packages.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.153.4 package from the npm registry,
+The guest's operating-system root filesystem is writable. The `nanoagent` user has passwordless `sudo` for guest
+administration, including `sudo apt-get install`, system-file edits, mounts, and guest network configuration. The
+controller allows privilege escalation, grants the guest Linux capabilities, and leaves guest syscalls unconfined
+inside the `kata-fc` VM. The Pod has no host namespace or host filesystem mounts, and no Kubernetes service-account
+token. Codex threads and turns use `danger-full-access` inside this same guest.
+
+Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
+omitted options preserve an existing thread's settings.
+
+The operating-system root remains the 512 MiB Firecracker image filesystem. Its changes are ephemeral;
+container recreation, sleep/resume, or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
+home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
+installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
+`/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
+Linux container with the guest capability and seccomp settings to also exercise mounts and network administration.
+
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available, and the `MicroVM` startup probe allows fifteen minutes for the sequential toolchain and
@@ -86,8 +127,13 @@ The owner-scoped browser-to-guest flow, replay behavior, and live acceptance pro
 
 ```bash
 cd services/nanoagent
+# Requires Buf and the module's Go toolchain; generator versions are pinned in the script.
+bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
+bash -n validate-rootfs.sh validate-rootfs.test.sh
+# On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
+bash validate-rootfs.test.sh
 bash bootstrap-codex.sh --validate-manifest
 gofmt -w *.go
 go vet ./...
@@ -110,3 +156,27 @@ The Nanoagent workflow runs the focused Go validation. Tengri's image workflow t
 `registry.ide-newton.ts.net/lab/nanoagent` by immutable digest. CI publishes matching `kargo-sha-<source>` tags for the
 controller and guest; the automatic Tengri Warehouse and Stage promote only the matched pair and pin both digests on
 `kargo/tengri` for Argo reconciliation.
+
+## VS Code workbench
+
+Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
+platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
+on the persistent home volume, outside Firecracker's 512 MiB rootfs. Each image build verifies the native Linux archive;
+first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
+
+`CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
+process group per guest with sanitized credentials, a private Unix socket, persistent user settings and extensions under
+`$HOME/.tengri/vscode`, and logs at `server.log`. Port 13337 is a virtual preview route to that socket. Port 13338 binds
+only loopback for the bundled desktop extension. Both preview routes and native VS Code port forwarding reject reserved
+guest ports (8080, 13337, 13338); other application ports retain native forwarding. Shutdown kills the editor process
+group and closes bridge connections. The desktop uses the existing authenticated preview gateway; code-server's own
+password login is disabled behind that boundary.
+
+Initial settings use Dark Modern, explicit saves, native hot-exit backups, and guest execution for TypeScript language
+features. The upstream `remote.extensionKind` override includes `-web` to exclude the browser host, whose TypeScript
+bundle is absent from the standalone release. Existing user settings are preserved. Workspace trust remains enabled.
+The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
+workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
+
+See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Existing running guests built
+before this API must be slept and resumed onto the current image; the editor reports that requirement explicitly.

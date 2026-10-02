@@ -1,3 +1,5 @@
+import { isTorghutLegacyRetired } from './torghut-retirement'
+
 type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
@@ -56,7 +58,7 @@ export type WhitepaperStorageConfig = {
 }
 
 export const resolveWhitepaperControlConfig = (env: EnvSource = process.env): WhitepaperControlConfig => ({
-  enabled: parseBoolean(env.JANGAR_WHITEPAPER_FINALIZE_ENABLED, true),
+  enabled: !isTorghutLegacyRetired(env) && parseBoolean(env.JANGAR_WHITEPAPER_FINALIZE_ENABLED, true),
   baseUrl:
     normalizeNonEmpty(env.JANGAR_WHITEPAPER_CONTROL_BASE_URL) ??
     normalizeNonEmpty(env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL) ??

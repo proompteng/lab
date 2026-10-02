@@ -1,3 +1,4 @@
+import { validIntradayPerformanceVolumeEvidence } from './intraday-volume'
 import { DateTime, Option, Result } from 'effect'
 
 import { alpacaBuyNotionalMicros } from '../broker/alpaca-mutations'
@@ -109,6 +110,9 @@ const sourceEvidenceHash = (
     ledgerExact: input.ledgerExact,
     missingLedgerAccountCount: input.missingLedgerAccountCount,
     ledgerTotals: input.ledgerTotals ?? null,
+    ...((input.brokerFees?.length ?? 0) === 0
+      ? {}
+      : { brokerFees: [...(input.brokerFees ?? [])].sort((a, b) => compareStrings(a.activityId, b.activityId)) }),
     executions: executionEvidence.map((evidence) => ({
       ...evidence,
       fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
@@ -224,6 +228,9 @@ const transactionMatchesFill = (
 const validMarketVolumeEvidence = (
   volume: NonNullable<ForwardPerformanceEvidenceInput['marketVolumeEvidence']>[number],
 ): Result.Result<boolean, CanonicalHashFailure> => {
+  if (volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1') {
+    return Result.succeed(validIntradayPerformanceVolumeEvidence(volume))
+  }
   const marketVolume = parseUnsigned(volume.quantityMicros, true)
   const closePrice = parseUnsigned(volume.closePriceMicros, true)
   const { contentHash, ...material } = volume
@@ -316,6 +323,17 @@ const measureExecutionQuality = (
   const executions = [...(input.executionEvidence ?? [])].sort((left, right) =>
     compareStrings(executionSortKey(left), executionSortKey(right)),
   )
+  if ((input.unverifiedDecisionHashes?.length ?? 0) > 0) {
+    const unverifiedDecisionHashes = [...new Set(input.unverifiedDecisionHashes)].sort()
+    return Result.map(canonicalHashV1Result({ unverifiedDecisionHashes }), (evidenceHash) => ({
+      executionQuality: {
+        ...emptyExecutionQuality('UNDETERMINED', ['PLANNED_DECISION_EVIDENCE_GAP']),
+        evidenceHash,
+        unverifiedDecisionHashes,
+      },
+      contributions: [],
+    }))
+  }
   if (executions.length === 0) {
     return Result.succeed({
       executionQuality:
@@ -601,6 +619,24 @@ const measureExecutionQuality = (
     }
   }
 
+  const seenFees = new Set<string>()
+  for (const fee of input.brokerFees ?? []) {
+    if (
+      !/^(?:0|-?[1-9][0-9]*)$/.test(fee.netAmountMicros) ||
+      fee.accountId !== input.account.accountId ||
+      seenFees.has(fee.activityId) ||
+      !validIsoDate(fee.date)
+    ) {
+      reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+      continue
+    }
+    seenFees.add(fee.activityId)
+    const net = BigInt(fee.netAmountMicros)
+    const next = inSignedRange(net) ? checkedAdd(observedFillFees, -net) : undefined
+    if (next === undefined) reasons.add('INVALID_EXECUTION_MICROS')
+    else observedFillFees = next
+  }
+
   if (seenFillEvents.size !== transactions.length) reasons.add('ACCOUNTING_FILL_BINDING_GAP')
   if (brokerFees === undefined || observedFillFees !== brokerFees) reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
 
@@ -738,6 +774,13 @@ const measureObservedCapacity = (
       continue
     }
 
+    if (
+      volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1' &&
+      volume.missingMinutes.length > 0
+    ) {
+      reasons.add('MARKET_VOLUME_EVIDENCE_GAP')
+    }
+
     let filled = 0n
     let referenceNotional = 0n
     let actualNotional = 0n
@@ -787,6 +830,11 @@ const measureObservedCapacity = (
       windowClosedAt: volume.windowClosedAt,
       filledQuantityMicros: filled.toString(),
       marketVolumeQuantityMicros: marketVolume.toString(),
+      ...(volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1'
+        ? {
+            intradaySource: { feed: 'iex' as const, volumeScope: volume.volumeScope, evidenceHash: volume.contentHash },
+          }
+        : {}),
       participationRate: {
         numeratorQuantityMicros: filled.toString(),
         denominatorQuantityMicros: marketVolume.toString(),
@@ -803,6 +851,7 @@ const measureObservedCapacity = (
     return Result.succeed({
       ...emptyObservedCapacity('UNDETERMINED', reasonCodes),
       evidenceHash: evidenceHash.success,
+      observations: observations.filter((observation) => observation.intradaySource !== undefined),
     })
   }
 
@@ -825,8 +874,17 @@ export const makeForwardPerformanceExecutionMeasurements = (
   input: ForwardPerformanceEvidenceInput,
 ): Result.Result<ForwardPerformanceExecutionMeasurements, CanonicalHashFailure> =>
   Result.flatMap(measureExecutionQuality(input), ({ executionQuality, contributions }) =>
-    Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => ({
-      executionQuality,
-      observedCapacity,
-    })),
+    Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => {
+      const intradaySources = (input.marketVolumeEvidence ?? [])
+        .filter((volume) => volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1')
+        .filter(validIntradayPerformanceVolumeEvidence)
+        .toSorted((left, right) => compareStrings(volumeSortKey(left), volumeSortKey(right)))
+      return {
+        executionQuality,
+        observedCapacity: {
+          ...observedCapacity,
+          ...(intradaySources.length === 0 ? {} : { intradaySources }),
+        },
+      }
+    }),
   )

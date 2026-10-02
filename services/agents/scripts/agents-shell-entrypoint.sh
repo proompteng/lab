@@ -19,4 +19,6 @@ if [[ -n "${GH_TOKEN:-}" ]]; then
   gh auth setup-git --hostname github.com
 fi
 
+./scripts/install-agents-shell-pstack.sh
+
 exec bun run start:agents-shell

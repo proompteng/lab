@@ -12,6 +12,32 @@ let
   yq = exact.yq or pkgs.yq;
   pythonPackages = pkgs.python312Packages;
   openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
+  pstackVersion = "0.9.30";
+  pstackCommit = "0986f344496c9c8468003465261711f6bb2c5ec1";
+
+  pstackArchive = pkgs.fetchurl {
+    url = "https://github.com/michael-denyer/pstack-claude/archive/${pstackCommit}.tar.gz";
+    hash = "sha256-vWfHdGfU8FavngNyP0OYFsdOHFlCpGqrJF46kgO8En0=";
+  };
+
+  pstackBundle = pkgs.stdenvNoCC.mkDerivation {
+    pname = "agents-shell-pstack";
+    version = pstackVersion;
+    src = pstackArchive;
+    sourceRoot = "pstack-claude-${pstackCommit}";
+    dontConfigure = true;
+    dontBuild = true;
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out/opt/agents-shell"
+      cp -R plugins/pstack "$out/opt/agents-shell/pstack"
+      test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/SKILL.md"
+      test -f "$out/opt/agents-shell/pstack/skills/poteto-mode/references/codex-tools.md"
+      test "$(find "$out/opt/agents-shell/pstack/skills" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/SKILL.md' ';' -print | wc -l)" = 54
+      test "$(find "$out/opt/agents-shell/pstack/.codex-plugin/prompts" -maxdepth 1 -type f -name '*.md' | wc -l)" = 31
+      runHook postInstall
+    '';
+  };
 
   mkPyWheel =
     {
@@ -253,8 +279,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-rk1b7miFB29BjPgaaH05JOh0GTzhO0ExeMrK4Vt8QNE=";
-    aarch64-linux = "sha256-44mLcU9/jic/sZu65msdK+yvfMLAGLmxoXQE5UP5cdA=";
+    x86_64-linux = "sha256-UWRGuYz1BvRO9oOfal83Cmuc2cFNmYXqdia2zdo4BWc=";
+    aarch64-linux = "sha256-09vbtE1Q3IkbOErjZGDlQ4PGqUa166xZGfjyNfiUMDg=";
   };
 
   installFilters = [
@@ -371,7 +397,9 @@ let
     cp -R "$TMPDIR/work/services/agents/.output" "$out/app/services/agents/.output"
     copyWorkspaceNodeModules "$TMPDIR/work/services/agents/node_modules" "$out/app/services/agents/node_modules"
 
-    chmod +x "$out/app/services/agents/scripts/agents-shell-entrypoint.sh"
+    chmod +x \
+      "$out/app/services/agents/scripts/agents-shell-entrypoint.sh" \
+      "$out/app/services/agents/scripts/install-agents-shell-pstack.sh"
     mkdir -p "$out/app/packages/agent-contracts/node_modules"
     linkBunIsolatedPackage "effect" "$out/app/packages/agent-contracts/node_modules/effect"
   '';
@@ -409,6 +437,7 @@ let
 
   agentsShellContents = commonContents ++ [
     applyPatch
+    pstackBundle
     pkgs.gh
     pkgs.openssh
     pkgs.procps

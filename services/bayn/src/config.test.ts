@@ -429,6 +429,34 @@ const provideEnvironment = <A, E>(effect: Effect.Effect<A, E>, environment: Map<
   )
 
 describe('runtime configuration loading', () => {
+  test('a configured Kafka adapter requires identity and clock policy', async () => {
+    const environment = new Map(runtimeEnvironment)
+    const archive = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+    expect(archive.kafka).toBeUndefined()
+    environment.set('BAYN_KAFKA_BROKERS', 'one:9092,two:9092')
+    const missing = await Effect.runPromise(Effect.result(provideEnvironment(loadConfig(buildMetadata), environment)))
+    expect(Result.isFailure(missing)).toBe(true)
+    environment.set('BAYN_KAFKA_BROKERS', 'one:9092,two:9092')
+    environment.set('BAYN_KAFKA_USERNAME', 'bayn-market-data')
+    environment.set('BAYN_KAFKA_PASSWORD', 'never-print-kafka-secret')
+    environment.set('BAYN_KAFKA_TIMESTAMP_POLICY', 'dorvud.producer-clock.v1')
+    const streaming = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+    expect(streaming.kafka?.brokers).toEqual(['one:9092', 'two:9092'])
+    expect(streaming.kafka?.bootstrapTimeoutMs).toBe(300000)
+    expect(streaming.kafka?.technicalFeaturesTopic).toBeUndefined()
+    environment.set('BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC', 'torghut.technical-features.v1')
+    const technical = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), environment))
+    expect(technical.kafka?.technicalFeaturesTopic).toBe('torghut.technical-features.v1')
+    expect(JSON.stringify(streaming.kafka)).not.toContain('never-print-kafka-secret')
+    for (const unsupportedDeadline of ['1', '120000', '300001']) {
+      environment.set('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS', unsupportedDeadline)
+      expect(
+        Result.isFailure(
+          await Effect.runPromise(Effect.result(provideEnvironment(loadConfig(buildMetadata), environment))),
+        ),
+      ).toBe(true)
+    }
+  })
   test('decodes the canonical autonomous account binding into the read-only runtime contract', async () => {
     const config = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
 

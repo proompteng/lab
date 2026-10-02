@@ -8,6 +8,34 @@ import kotlin.test.assertTrue
 
 class MarketDataChannelFreshnessTrackerTest {
   @Test
+  fun `core IEX reconnects when control frames continue without provider market data`() {
+    val subscribedAt = Instant.parse("2026-09-22T17:35:25Z")
+    val lastMarketDataAt = Instant.parse("2026-09-22T17:39:10Z")
+    val timeoutMs = 180_000L
+
+    fun idleAt(
+      at: String,
+      lastProviderAt: Instant? = lastMarketDataAt,
+      feed: EquityFeed = EquityFeed.Iex,
+    ) = coreIexProviderIdleRequiresReconnect(
+      subscribedAt = subscribedAt,
+      lastProviderMarketDataAt = lastProviderAt,
+      now = Instant.parse(at),
+      marketType = AlpacaMarketType.EQUITY,
+      marketHolidays = emptySet(),
+      equityFeed = feed,
+      idleTimeoutMs = timeoutMs,
+    )
+
+    assertFalse(idleAt("2026-09-22T17:42:09Z"))
+    assertTrue(idleAt("2026-09-22T17:42:10Z"))
+    assertFalse(idleAt("2026-09-22T17:42:10Z", Instant.parse("2026-09-22T17:42:00Z")))
+    assertTrue(idleAt("2026-09-22T17:38:25Z", null))
+    assertFalse(idleAt("2026-09-22T17:42:10Z", feed = EquityFeed.DelayedSip))
+    assertFalse(idleAt("2026-09-23T08:00:00Z"))
+  }
+
+  @Test
   fun `read idle reconnects only while the feed session is active`() {
     val regularSession = Instant.parse("2026-07-07T14:00:00Z")
     val overnightSession = Instant.parse("2026-07-08T01:00:00Z")

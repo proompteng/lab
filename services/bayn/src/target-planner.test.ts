@@ -267,6 +267,23 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
 }
 
 describe('causal target planner', () => {
+  test('permits an empty quote-bound no-trade plan only for a flat account without unresolved orders', () => {
+    const options = { quoteBound: true, positions: [], targetWeights: {}, priceMicros: {} } as const
+    const planned = planSuccess(fixture(options))
+    expect(planned).toMatchObject({ status: TargetPlanStatus.NoTrade, targets: [], intentTargets: [] })
+    expect(Result.isSuccess(decodeTargetPlanResult(planned))).toBeTrue()
+    expect(planSuccess(fixture({ ...options, orders: [order(OrderStatus.Filled)] })).status).toBe(
+      TargetPlanStatus.NoTrade,
+    )
+    for (const input of [
+      fixture({ ...options, positions: [position('AMD', '1000000')] }),
+      fixture({ ...options, orders: [order(OrderStatus.New)] }),
+      fixture({ ...options, quoteBound: false }),
+    ]) {
+      expect(planSuccess(input).status).toBe(TargetPlanStatus.Blocked)
+    }
+  })
+
   test('binds absent whole-share ask capacity as a durable close-only block when holdings exist', () => {
     const blocked = planSuccess(
       fixture({

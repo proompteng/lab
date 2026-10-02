@@ -136,6 +136,7 @@ export type LedgerValidationReason =
   | 'empty-plan'
   | 'invalid-account-metadata'
   | 'invalid-balance'
+  | 'invalid-query-page'
   | 'invalid-transaction'
   | 'invalid-transfer-metadata'
   | 'ledger-plan-failure'

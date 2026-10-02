@@ -3,12 +3,56 @@ import { describe, expect, mock, test } from 'bun:test'
 void mock.module('server-only', () => ({}))
 const {
   MAX_CONCURRENT_TENGRI_ACTION_BODIES,
+  MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT,
   MAX_TENGRI_ACTION_BODY_BYTES,
   isTengriRateLimited,
   readTengriJsonBody,
   requireSameOrigin,
   tengriRouteError,
 } = await import('./http')
+
+const bodyRequest = (body: ReadableStream<Uint8Array>, signal?: AbortSignal) =>
+  new Request('https://proompteng.ai/api/tengri', {
+    method: 'POST',
+    body,
+    headers: { 'content-type': 'application/json' },
+    signal,
+  })
+
+const bodySlotState = () =>
+  globalThis as typeof globalThis & {
+    tengriActiveActionBodies?: number
+    tengriActiveActionBodiesBySubject?: Map<string, number>
+  }
+
+const pendingBody = (controllers: ReadableStreamDefaultController<Uint8Array>[]) =>
+  new ReadableStream<Uint8Array>({
+    start(controller) {
+      controllers.push(controller)
+    },
+  })
+
+const jsonBody = () =>
+  new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{}'))
+      controller.close()
+    },
+  })
+
+test('preserves the public conversation error code and prevents caching recovery failures', async () => {
+  const { TengriUnavailableError } = await import('./grpc')
+  const response = tengriRouteError(
+    new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found'),
+  )
+
+  expect(response.status).toBe(404)
+  expect(response.headers.get('cache-control')).toBe('no-store, max-age=0')
+  expect(await response.json()).toEqual({
+    error: 'Codex conversation could not be found',
+    code: 'conversation_not_found',
+  })
+})
 
 describe('Tengri BFF request bodies', () => {
   test('parses a bounded UTF-8 JSON body', async () => {
@@ -110,6 +154,131 @@ describe('Tengri BFF request bodies', () => {
       Array.from({ length: MAX_CONCURRENT_TENGRI_ACTION_BODIES }, () => ({})),
     )
     expect(await readTengriJsonBody(blockedRequest.clone())).toEqual({})
+  })
+
+  test('enforces an inactivity deadline and releases a subject slot without awaiting hostile cancellation', async () => {
+    let cancellations = 0
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancellations += 1
+        return new Promise<void>(() => {})
+      },
+    })
+    const pending = readTengriJsonBody(bodyRequest(body), {
+      subject: 'github:body-timeout-test',
+      totalTimeoutMs: 100,
+      inactivityTimeoutMs: 10,
+    })
+    const timeoutSentinel = Symbol('timeout')
+    const result = await Promise.race([
+      pending.catch((cause: unknown) => cause),
+      new Promise<typeof timeoutSentinel>((resolve) => setTimeout(() => resolve(timeoutSentinel), 500)),
+    ])
+
+    expect(result).not.toBe(timeoutSentinel)
+    expect(result).toMatchObject({ message: 'Tengri action body timed out', status: 408 })
+    expect(cancellations).toBe(1)
+    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
+    expect(await readTengriJsonBody(bodyRequest(jsonBody()), { subject: 'github:body-timeout-test' })).toEqual({})
+  })
+
+  test('enforces the total deadline even when the body makes progress', async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"action":'))
+        timer = setTimeout(() => controller.enqueue(new TextEncoder().encode('"slow"}')), 40)
+      },
+      cancel() {
+        if (timer !== undefined) clearTimeout(timer)
+      },
+    })
+    const error = await readTengriJsonBody(bodyRequest(body), {
+      totalTimeoutMs: 10,
+      inactivityTimeoutMs: 100,
+    }).catch((cause: unknown) => cause)
+
+    expect(error).toMatchObject({ message: 'Tengri action body timed out', status: 408 })
+    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
+  })
+
+  test('cancels an in-flight reader when the connected request signal aborts', async () => {
+    const controller = new AbortController()
+    let cancellations = 0
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancellations += 1
+        return new Promise<void>(() => {})
+      },
+    })
+    const pending = readTengriJsonBody(bodyRequest(body, controller.signal), {
+      subject: 'github:body-abort-test',
+      totalTimeoutMs: 100,
+      inactivityTimeoutMs: 100,
+    })
+    controller.abort()
+    const error = await Promise.race([
+      pending.catch((cause: unknown) => cause),
+      new Promise<symbol>((resolve) => setTimeout(() => resolve(Symbol('timeout')), 500)),
+    ])
+
+    expect(error).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+    expect(tengriRouteError(error).status).toBe(499)
+    expect(cancellations).toBe(1)
+    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
+  })
+
+  test('returns capacity when getReader fails after slot acquisition', async () => {
+    const body = {
+      getReader() {
+        throw new Error('reader setup failed')
+      },
+    } as unknown as ReadableStream<Uint8Array>
+    const request = {
+      body,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      signal: new AbortController().signal,
+    } as unknown as Request
+    const error = await readTengriJsonBody(request, { subject: 'github:reader-failure-test' }).catch(
+      (cause: unknown) => cause,
+    )
+
+    expect(error).toEqual(new Error('reader setup failed'))
+    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
+  })
+
+  test('limits one authenticated subject while retaining the global body bound', async () => {
+    const controllers: ReadableStreamDefaultController<Uint8Array>[] = []
+    const subject = 'github:body-fairness-test'
+    const activeForSubject = Array.from({ length: MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT }, () =>
+      readTengriJsonBody(bodyRequest(pendingBody(controllers)), { subject }),
+    )
+    const sameSubjectError = await readTengriJsonBody(bodyRequest(new ReadableStream()), { subject }).catch(
+      (cause: unknown) => cause,
+    )
+    expect(tengriRouteError(sameSubjectError).status).toBe(429)
+
+    const otherSubject = 'github:body-other-subject-test'
+    const activeForOtherSubject = Array.from(
+      { length: MAX_CONCURRENT_TENGRI_ACTION_BODIES - MAX_CONCURRENT_TENGRI_ACTION_BODIES_PER_SUBJECT },
+      () => readTengriJsonBody(bodyRequest(pendingBody(controllers)), { subject: otherSubject }),
+    )
+    const globalError = await readTengriJsonBody(bodyRequest(new ReadableStream()), {
+      subject: 'github:body-third-test',
+    }).catch((cause: unknown) => cause)
+    expect(tengriRouteError(globalError).status).toBe(429)
+
+    const encodedBody = new TextEncoder().encode('{}')
+    for (const streamController of controllers) {
+      streamController.enqueue(encodedBody)
+      streamController.close()
+    }
+    await Promise.all([...activeForSubject, ...activeForOtherSubject])
+    expect(bodySlotState().tengriActiveActionBodies).toBeUndefined()
+    expect(bodySlotState().tengriActiveActionBodiesBySubject).toBeUndefined()
   })
 
   test('requires JSON and rejects cross-origin state-changing requests', async () => {

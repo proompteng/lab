@@ -24,9 +24,9 @@ export const decideContainment = (cause: Cause.Cause<ReconciliationPassError>): 
 const restrictAuthority = (
   store: ReconciliationPersistence,
   fence: WriterFenceService,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
   decision: Extract<ContainmentDecision, { readonly _tag: 'RestrictAuthority' }>,
-): Effect.Effect<void, ExecutionStoreError | WriterFenceError> =>
+): Effect.Effect<void, ExecutionStoreError | WriterFenceError | ReconciliationError> =>
   now.pipe(
     Effect.flatMap((failedAt) =>
       fence.transaction(store.authorityRestriction.restrictAuthority(decision.reason, failedAt)),
@@ -38,7 +38,7 @@ const hasDefectOrInterruption = <E>(cause: Cause.Cause<E>): boolean =>
 
 const authorityRestrictionFailure = (
   reconciliationCause: Cause.Cause<ReconciliationPassError>,
-  restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError>,
+  restrictionCause: Cause.Cause<ExecutionStoreError | WriterFenceError | ReconciliationError>,
 ): ReconciliationError =>
   new ReconciliationError({
     operation: 'containment',
@@ -48,7 +48,7 @@ const authorityRestrictionFailure = (
 
 const preserveFailureAfterContainment = (
   cause: Cause.Cause<ReconciliationPassError>,
-  containmentExit: Exit.Exit<void, ExecutionStoreError | WriterFenceError>,
+  containmentExit: Exit.Exit<void, ExecutionStoreError | WriterFenceError | ReconciliationError>,
 ): Effect.Effect<never, ReconciliationPassError> => {
   if (Exit.isSuccess(containmentExit)) return Effect.failCause(cause)
   if (hasDefectOrInterruption(containmentExit.cause)) {
@@ -64,7 +64,7 @@ const containRuntimeFailureDataFirst = <A, R>(
   effect: Effect.Effect<A, ReconciliationPassError, R>,
   store: ReconciliationPersistence,
   fence: WriterFenceService,
-  now: Effect.Effect<string>,
+  now: Effect.Effect<string, ReconciliationError>,
 ): Effect.Effect<A, ReconciliationPassError, R> =>
   Effect.matchCauseEffect(effect, {
     onFailure: (cause) => {
@@ -81,7 +81,7 @@ export const containRuntimeFailure = Pipeable.generic<
   <A, R>(
     store: ReconciliationPersistence,
     fence: WriterFenceService,
-    now: Effect.Effect<string>,
+    now: Effect.Effect<string, ReconciliationError>,
   ) => (effect: Effect.Effect<A, ReconciliationPassError, R>) => Effect.Effect<A, ReconciliationPassError, R>,
   typeof containRuntimeFailureDataFirst
 >(4, containRuntimeFailureDataFirst)

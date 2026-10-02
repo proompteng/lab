@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result } from 'effect'
-import type { SqlError } from 'effect/unstable/sql/SqlError'
+import type { SqlError } from 'effect/sql/SqlError'
 
 import { MutationOperation } from '../../../broker/alpaca-mutations'
 import { decideMutationAppend, storeError } from '../decisions'
@@ -101,8 +101,8 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
             AND decision.intent_id = intent.intent_id
           WHERE intent.intent_id = ${event.intentId}
             AND decision.outcome = 'APPROVED'
-            AND decision.decided_at <= clock_timestamp()
-            AND decision.expires_at > clock_timestamp()
+            AND decision.decided_at <= execution_account_now(intent.account_id)
+            AND decision.expires_at > execution_account_now(intent.account_id)
         )
       RETURNING event_id
     `.pipe(

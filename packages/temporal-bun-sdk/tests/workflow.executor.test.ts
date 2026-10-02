@@ -44,6 +44,60 @@ const execute = async (
     mode: overrides.mode,
   })
 
+
+test('activity failures enter the recoverable Effect error channel', async () => {
+  const { registry, executor } = makeExecutor()
+  registry.register(
+    defineWorkflow('recoverActivity', ({ activities }) =>
+      activities.schedule('chargeCard').pipe(Effect.catchAll(() => Effect.succeed('compensated'))),
+    ),
+  )
+  const first = await execute(executor, { workflowType: 'recoverActivity', arguments: [] })
+  expect(first.completion).toBe('pending')
+  const second = await execute(executor, {
+    workflowType: 'recoverActivity',
+    arguments: [],
+    determinismState: first.determinismState,
+    activityResults: new Map([['activity-0', { status: 'failed', error: new Error('card declined') }]]),
+  })
+  expect(second.completion).toBe('completed')
+  expect(second.result).toBe('compensated')
+})
+
+test('a blocked workflow waits for outstanding local activity markers to settle', async () => {
+  const { registry, executor, dataConverter } = makeExecutor()
+  const pending = Promise.withResolvers<number>()
+  const started = Promise.withResolvers<void>()
+  registry.register(
+    defineWorkflow('pendingLocalActivity', ({ determinism, activities }) =>
+      Effect.gen(function* () {
+        determinism.localActivity('lookup', [], {
+          handler: () => {
+            started.resolve()
+            return pending.promise
+          },
+        })
+        return yield* activities.schedule('echo')
+      }),
+    ),
+  )
+  let settled = false
+  const executing = execute(executor, { workflowType: 'pendingLocalActivity', arguments: [] }).then((output) => {
+    settled = true
+    return output
+  })
+  await started.promise
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(settled).toBeFalse()
+  pending.resolve(42)
+  const output = await executing
+  expect(output.completion).toBe('pending')
+  const marker = output.commands[0]?.attributes
+  expect(marker?.case).toBe('recordMarkerCommandAttributes')
+  if (marker?.case !== 'recordMarkerCommandAttributes') throw new Error('Local activity marker missing')
+  expect(await decodePayloadsToValues(dataConverter, marker.value.details.result?.payloads ?? [])).toEqual([42])
+})
+
 test('schedules an activity command and completes after result', async () => {
   const { registry, executor, dataConverter } = makeExecutor()
   registry.register(
