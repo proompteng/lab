@@ -32,7 +32,10 @@ const shortCredentialOptions = (command: string) => {
   if (name === 'mysql' || name === 'mariadb' || name === 'sshpass') return ['-p']
   if (name === 'redis-cli') return ['-a']
   if (name === 'kubectl' && operation === 'patch') return ['-p']
-  if (name === 'openssl' && operation === 'enc') return ['-k', '-K']
+  if (name === 'openssl') {
+    const options = ['-hmac', '-macopt', '-kdfopt', '-pkeyopt', '-pkeyopt_passin', '-sigopt']
+    return operation === 'enc' ? [...options, '-k', '-K'] : options
+  }
   if ((name === 'docker' || name === 'podman') && operation === 'login') return ['-p']
   return []
 }
@@ -68,7 +71,9 @@ const argumentRedactor = (command: string) => {
     if (separator > 0 && SECRET_OPTION.test(token.slice(0, separator))) {
       return `${token.slice(0, separator)}=[REDACTED]`
     }
-    const option = options.find((value) => token.startsWith(value))
+    const option = options.find(
+      (value) => token === value || token.startsWith(`${value}=`) || (value.length === 2 && token.startsWith(value)),
+    )
     if (option) {
       if (token === option) {
         redactNext = true

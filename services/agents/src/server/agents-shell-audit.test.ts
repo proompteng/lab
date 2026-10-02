@@ -446,6 +446,41 @@ describe('agents-shell activity audit', () => {
     expect(JSON.stringify(records())).toContain('-kfile fixture.pwd')
   })
 
+  it('redacts OpenSSL MAC and key derivation operands in raw commands and argv', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      'openssl dgst -sha256 -hmac synthetic-private-hmac fixture.txt',
+      '"/usr/bin/openssl" dgst "-hmac" "synthetic-private-hmac" fixture.txt',
+      'openssl mac -macopt key:synthetic-private-hmac HMAC',
+      'openssl kdf -kdfopt hexkey:synthetic-private-hmac HKDF',
+      'openssl pkeyutl -pkeyopt hexkey:synthetic-private-hmac -pkeyopt_passin secret:synthetic-private-hmac',
+      'openssl dgst -sigopt key:synthetic-private-hmac fixture.txt',
+      'openssl dgst -hmac-stdin fixture.txt',
+      'openssl dgst -hmac-env KEY_ENV_VAR fixture.txt',
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'openssl',
+      args: [
+        'dgst',
+        '-sha256',
+        '-hmac',
+        'synthetic-private-hmac',
+        '-macopt',
+        'hexkey:synthetic-private-hmac',
+        'fixture.txt',
+      ],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('synthetic-private-hmac')
+      expect(content).toContain('fixture.txt')
+      expect(content).toContain('-hmac-stdin fixture.txt')
+      expect(content).toContain('-hmac-env KEY_ENV_VAR fixture.txt')
+    }
+  })
+
   it('redacts prefixed passphrase options in raw commands and argv', () => {
     const records = captureAudit()
     const config = configFixture()
