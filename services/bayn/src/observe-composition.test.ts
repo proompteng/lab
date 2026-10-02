@@ -2713,6 +2713,294 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions).toBe(0)
   })
 
+  test.each([
+    { label: 'risk expiry minus 1ms', boundary: 'risk', offsetMs: -1, reason: undefined },
+    { label: 'risk expiry equality', boundary: 'risk', offsetMs: 0, reason: CycleTerminalReason.Risk },
+    { label: 'risk expiry plus 1ms', boundary: 'risk', offsetMs: 1, reason: CycleTerminalReason.Risk },
+    { label: 'cutoff minus 1ms', boundary: 'cutoff', offsetMs: -1, reason: CycleTerminalReason.Risk },
+    { label: 'cutoff equality', boundary: 'cutoff', offsetMs: 0, reason: CycleTerminalReason.MissedSubmission },
+    { label: 'cutoff plus 1ms', boundary: 'cutoff', offsetMs: 1, reason: CycleTerminalReason.MissedSubmission },
+  ] as const)(
+    'selects expiry recovery for a restricted approved intent at $label',
+    async ({ boundary, offsetMs, reason }) => {
+      const fixture = await executionLifecycleFixture()
+      const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
+      expect(Date.parse(riskExpiresAt) + 1).toBeLessThan(Date.parse(fixture.document.submissionCutoffAt))
+      const observedAt = utcInstantFromEpochMillis(
+        Date.parse(boundary === 'risk' ? riskExpiresAt : fixture.document.submissionCutoffAt) + offsetMs,
+      )
+      const record = storedIntent(fixture.intent, IntentState.Approved, fixture.document.createdAt)
+      const restrictions: string[] = []
+      const step = await prepareStoredExecutionStep(
+        fixture,
+        record,
+        undefined,
+        observedAt,
+        0,
+        (restriction) => restrictions.push(restriction),
+        fixture.input,
+        undefined,
+        false,
+        fixture.policy,
+        fixture.preparation,
+        undefined,
+        undefined,
+        [],
+        fixture.document,
+        [],
+        Authority.Observe,
+      )
+
+      expect(step).toEqual(
+        reason === undefined
+          ? { _tag: 'Wait', observedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
+          : { _tag: 'Block', reason, observedAt },
+      )
+      expect(restrictions).toEqual([])
+    },
+  )
+
+  test.each([
+    { eventType: MutationEventType.SubmitStarted, operation: MutationOperation.Submit, state: IntentState.IoStarted },
+    { eventType: MutationEventType.SubmitUnknown, operation: MutationOperation.Submit, state: IntentState.Unknown },
+    {
+      eventType: MutationEventType.SubmitAccepted,
+      operation: MutationOperation.Submit,
+      state: IntentState.Acknowledged,
+    },
+    { eventType: MutationEventType.RecoveryFound, operation: MutationOperation.Submit, state: IntentState.Recovered },
+    {
+      eventType: MutationEventType.CancelStarted,
+      operation: MutationOperation.Cancel,
+      state: IntentState.Acknowledged,
+    },
+    {
+      eventType: MutationEventType.CancelAccepted,
+      operation: MutationOperation.Cancel,
+      state: IntentState.Acknowledged,
+    },
+    { eventType: MutationEventType.CancelUnknown, operation: MutationOperation.Cancel, state: IntentState.Unknown },
+  ])('preserves $eventType recovery ahead of restricted intent expiry', async ({ eventType, operation, state }) => {
+    const fixture = await executionLifecycleFixture()
+    const observedAt = fixture.risk.evaluation.decision.expiresAt
+    const occurredAt = utcInstantFromEpochMillis(Date.parse(observedAt) - 1_000)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'restricted-expiry-recovery-order',
+      occurredAt,
+    }
+    const event: MutationEvent = {
+      ...accepted,
+      eventId: '3'.repeat(64),
+      mutationId: '4'.repeat(64),
+      operation,
+      eventType,
+    }
+    const latestSubmit = operation === MutationOperation.Submit ? event : accepted
+    const latestCancel = operation === MutationOperation.Cancel ? event : undefined
+    const record = storedIntent(fixture.intent, state, occurredAt)
+    const restrictions: string[] = []
+    const step = await prepareStoredExecutionStep(
+      fixture,
+      record,
+      latestSubmit,
+      observedAt,
+      1,
+      (restriction) => restrictions.push(restriction),
+      fixture.input,
+      latestCancel,
+      false,
+      fixture.policy,
+      fixture.preparation,
+      undefined,
+      undefined,
+      [],
+      fixture.document,
+      [],
+      Authority.Observe,
+    )
+
+    expect(step).toEqual({
+      _tag: 'Execute',
+      action: operation === MutationOperation.Submit ? 'RECOVER_SUBMIT' : 'RECOVER_CANCEL',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(restrictions).toEqual([])
+  })
+
+  test.each(['fresh', 'stable-open', 'unknown', 'cancel', 'backoff'] as const)(
+    'defers restricted expiry selection to a later %s sibling when required',
+    async (sibling) => {
+      const fixture = await executionLifecycleFixture()
+      const observedAt = fixture.risk.evaluation.decision.expiresAt
+      const targetPlan = fixture.document.targetPlan
+      if (targetPlan.status !== TargetPlanStatus.Planned) throw new Error('expected planned entry fixture')
+      const firstTarget = targetPlan.intentTargets[0]
+      const firstPosition = targetPlan.targets.find(({ symbol }) => symbol === fixture.intent.symbol)
+      if (firstTarget === undefined || firstPosition === undefined) throw new Error('missing entry fixture target')
+      const secondTarget = { ...firstTarget, symbol: fixture.intent.symbol === 'AMD' ? 'NVDA' : 'AMD' }
+      const second = await Effect.runPromise(
+        planExecutionIntent(
+          {
+            schemaVersion: 'bayn.paper-intent-plan.v1',
+            ...secondTarget,
+            notionalLimitMicros: fixture.risk.notionalLimitMicros,
+            createdAt: fixture.document.createdAt,
+          },
+          {
+            authority: {
+              schemaVersion: 'bayn.paper-authority.v1',
+              generationHash,
+              maximum: Authority.Execution,
+              effective: Authority.Execution,
+              kill: KillState.Clear,
+              version: 1,
+              updatedAt: fixture.document.createdAt,
+            },
+          },
+        ),
+      )
+      // Isolate ordering over already-decoded intent/risk facts; migrated binding and finalization are covered separately.
+      const document = {
+        ...fixture.document,
+        orderedIntentIds: [fixture.intent.intentId, second.intentId],
+        targetPlan: {
+          ...targetPlan,
+          intentTargets: [firstTarget, secondTarget],
+          targets: [firstPosition, { ...firstPosition, symbol: second.symbol }],
+        },
+        deltaRisk: [
+          fixture.risk,
+          {
+            ...fixture.risk,
+            evaluation: {
+              ...fixture.risk.evaluation,
+              decision: {
+                ...fixture.risk.evaluation.decision,
+                intentId: second.intentId,
+                expiresAt: utcInstantFromEpochMillis(Date.parse(observedAt) + 1_000),
+              },
+            },
+          },
+        ],
+      }
+      const event: MutationEvent = {
+        schemaVersion: 'bayn.paper-mutation-event.v1',
+        eventId: '1'.repeat(64),
+        mutationId: '2'.repeat(64),
+        intentId: second.intentId,
+        sequence: 2,
+        operation: MutationOperation.Submit,
+        eventType:
+          sibling === 'unknown' || sibling === 'backoff'
+            ? MutationEventType.SubmitUnknown
+            : MutationEventType.SubmitAccepted,
+        requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(second))),
+        consistencyDelayMs: 1_000,
+        brokerOrderId: 'restricted-expiry-sibling',
+        occurredAt: utcInstantFromEpochMillis(Date.parse(observedAt) - (sibling === 'backoff' ? 999 : 1_000)),
+      }
+      const firstRecord = storedIntent(fixture.intent, IntentState.Approved, fixture.document.createdAt)
+      const secondRecord = storedIntent(
+        second,
+        sibling === 'fresh'
+          ? IntentState.Approved
+          : sibling === 'stable-open' || sibling === 'cancel'
+            ? IntentState.Acknowledged
+            : IntentState.Unknown,
+        fixture.document.createdAt,
+      )
+      const records = new Map([
+        [fixture.intent.intentId, firstRecord],
+        [second.intentId, secondRecord],
+      ])
+      const pending = Result.getOrThrow(decidePreparedMutationIntent(secondRecord.intent, event))
+      const reconciliation = reconciliationResultAt(
+        observedAt,
+        sibling === 'unknown' || sibling === 'backoff' || sibling === 'cancel' ? 1 : 0,
+        0,
+        [],
+        sibling === 'stable-open' && pending._tag === 'Pending' ? [pending.order] : [],
+        Authority.Observe,
+      )
+      const authority = reconciliation.riskContext.authority
+      if (authority === null) throw new Error('missing restricted authority fixture')
+      const step = await Effect.runPromise(
+        prepareMutationIntent(
+          fixture.input,
+          fixture.preparation,
+          fixture.policy,
+          fixture.boundCycle,
+          document,
+          Effect.succeed(reconciliation),
+          false,
+          false,
+          {
+            now: Effect.succeed(observedAt),
+            readFacts: () =>
+              Effect.succeed({
+                snapshot: {
+                  contentHash: document.bindings.snapshotContentHash,
+                  finalizedAt: document.bindings.snapshotFinalizedAt,
+                },
+                reconciliation,
+                authority,
+                evaluatedAt: observedAt,
+              }),
+            restrictAuthority: () => Effect.die('selection must not mutate authority'),
+          },
+        ).pipe(
+          Effect.provideService(IntentStore, {
+            read: (intentId) => Effect.succeed(Option.fromUndefinedOr(records.get(intentId))),
+            commit: (intent) => {
+              const record = records.get(intent.intentId)
+              return record === undefined
+                ? Effect.die('selection must not create an intent')
+                : Effect.succeed({ record, deduplicated: true })
+            },
+          }),
+          Effect.provideService(MutationStore, {
+            latest: (intentId: string, operation: MutationOperation) =>
+              Effect.succeed(
+                intentId !== second.intentId || sibling === 'fresh'
+                  ? undefined
+                  : operation === MutationOperation.Submit
+                    ? event
+                    : sibling === 'cancel'
+                      ? { ...event, operation, eventType: MutationEventType.CancelUnknown }
+                      : undefined,
+              ),
+          } as unknown as MutationStoreShape),
+        ),
+      )
+      expect(step).toEqual(
+        sibling === 'fresh'
+          ? { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt }
+          : sibling === 'stable-open' || sibling === 'backoff'
+            ? {
+                _tag: 'Wait',
+                observedAt,
+                waitReason: sibling === 'stable-open' ? 'intent-nonterminal' : 'MUTATION_RECOVERY_BACKOFF',
+              }
+            : {
+                _tag: 'Execute',
+                action: sibling === 'cancel' ? 'RECOVER_CANCEL' : 'RECOVER_SUBMIT',
+                intentId: second.intentId,
+                observedAt,
+              },
+      )
+    },
+  )
+
   test('terminalizes an untouched PAPER remainder when its durable approval expires', async () => {
     const fixture = await executionLifecycleFixture()
     const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt

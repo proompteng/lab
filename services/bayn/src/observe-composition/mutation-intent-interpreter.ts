@@ -671,7 +671,6 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         case 'Submit': {
           if (drainOpenOrders) continue
           if (entryHasTerminalUnsuccessfulIntent) continue
-          if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
           const submitExpiresAt = executionSubmitExpiresAt(
             submissionCutoffAt,
             prepared.riskBinding.evaluation.decision.expiresAt,
@@ -686,6 +685,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             continue
           }
           if (deferredExpiration !== undefined) continue
+          if (!allowSubmit) return { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
           yield* Effect.fromResult(
             input.mutationPhase === 'CLOSE'
               ? decidePreparedCloseIntentAdmission(
