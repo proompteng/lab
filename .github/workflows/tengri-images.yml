@@ -58,6 +58,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
 
+      - name: Set up Go for guest interoperability
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
       - name: Validate controller and generated CRD
         working-directory: services/tengri
         run: |
@@ -65,6 +71,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked --all-targets
+          bash test-rpc-interop.sh
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
           diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml

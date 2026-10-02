@@ -70,3 +70,19 @@ test('rejects newly tagged waiting observations without exactly one reason', () 
     }),
   ).toBe(false)
 })
+
+test('retains a broker-cache wait without inventing a recovered cycle', () => {
+  const waiting: CyclePassObservation = {
+    outcome: 'WAITING',
+    observedAt: '2026-09-04T14:30:02.000Z',
+    waitReason: 'BROKER_OBSERVATION_PENDING',
+  }
+  const retained = retainAutonomousCyclePassObservation(waiting)
+  expect(Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)(retained)).toEqual(retained)
+  expect(retained).toEqual({ result: 'SUCCESS', ...waiting })
+  expect(cyclePassLogFacts(waiting).level).toBe('INFO')
+  expect(Schema.is(RetainedAutonomousCyclePassObservationSchema)({ ...retained, waitReason: undefined })).toBe(false)
+  expect(Schema.is(RetainedAutonomousCyclePassObservationSchema)({ ...retained, recoveryAction: 'WAITING' })).toBe(
+    false,
+  )
+})

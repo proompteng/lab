@@ -3,11 +3,13 @@ import { Result, Schema } from 'effect'
 
 import { IntradaySnapshotPurpose } from '../market-data'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { reconciledStateHash } from '../reconciliation'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { decideJevManagement } from './decision'
 import { decideJevExit, jevProtectiveQuoteIsFresh, JevExitReason, JevExitTargetSchema } from './exit'
 import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { makeJevObservation } from './observation'
 import { JevPurpose } from './portfolio'
 import { jevPricingQuery } from './runtime'
 
@@ -20,7 +22,81 @@ const evidence = {
   observedAt: fixture.observation.payload.observedAt,
 }
 
+const portfolioWithBrokerAge = (ageMs: number) => {
+  const original = fixture.portfolio.brokerState
+  const at = new Date(Date.parse(evidence.observedAt) - ageMs).toISOString()
+  const state = {
+    ...original,
+    account: { ...original.account, observedAt: at },
+    positions: original.positions.map((position) => ({ ...position, observedAt: at })),
+    positionsObservedAt: at,
+    orders: original.orders.map((order) => ({ ...order, observedAt: at })),
+    ordersObservedAt: at,
+  }
+  const hash = Result.getOrThrow(reconciledStateHash(state))
+  return {
+    ...fixture.portfolio,
+    brokerState: {
+      ...state,
+      reconciliation: { ...original.reconciliation, reconciledAt: at, expectedHash: hash, observedHash: hash },
+    },
+  }
+}
+
 describe('native Jev exit targets', () => {
+  test.each([
+    [23_039, true],
+    [59_999, true],
+    [60_000, false],
+    [-1, false],
+  ])('holding deadline uses the broker lifetime for a %ims-old reconciled cut', (ageMs, accepted) => {
+    const portfolio = portfolioWithBrokerAge(ageMs)
+    if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected held position')
+    const firstAt = Date.parse(evidence.observedAt) - fixture.protocol.maximumHoldingMinutes * 60_000
+    const result = decideJevExit({
+      ...evidence,
+      portfolio: {
+        ...portfolio,
+        entryFills: portfolio.entryFills.map((fill, index) => ({
+          ...fill,
+          occurredAt: new Date(firstAt + index * 1000).toISOString(),
+        })),
+      },
+      trigger: { reason: JevExitReason.MaximumHold },
+    })
+    expect(Result.isSuccess(result)).toBe(accepted)
+    if (Result.isSuccess(result))
+      expect(result.success.commitDeadlineAt).toBe(
+        new Date(Date.parse(evidence.observedAt) + fixture.protocol.maximumQuoteAgeMs).toISOString(),
+      )
+  })
+
+  test('a model exit retains its inference deadline with a valid cached broker cut', () => {
+    const portfolio = portfolioWithBrokerAge(23_039)
+    const observation = Result.getOrThrow(
+      makeJevObservation({
+        cycleId: fixture.draft.identity.cycleId,
+        authorityGenerationHash: fixture.observation.payload.authorityGenerationHash,
+        protocol: fixture.protocol,
+        portfolio,
+        snapshot: fixture.snapshot,
+      }),
+    )
+    const decision = Result.getOrThrow(
+      decideJevManagement(nativeJevDecisionEvidence({ ...fixture, portfolio, observation }, 'exit')),
+    )
+    const target = Result.getOrThrow(
+      decideJevExit({
+        ...evidence,
+        portfolio,
+        observedAt: decision.evidence.decidedAt,
+        trigger: { reason: JevExitReason.Model, decision },
+      }),
+    )
+    expect(target.commitDeadlineAt).toBe(decision.evidence.batchPlan.expiresAt)
+    expect(target.targetWeights).toEqual({ AAPL: 0 })
+  })
+
   test('protective quote freshness preserves nanosecond boundaries and rejects future bids', () => {
     const at = '2026-09-04T14:30:32.000Z'
     expect(jevProtectiveQuoteIsFresh({ eventAt: '2026-09-04T14:30:22.000000000Z' }, at, 10_000)).toBe(true)
@@ -143,7 +219,7 @@ describe('native Jev exit targets', () => {
     ).toBe(true)
     expect(
       Result.isFailure(
-        decideJevExit({ ...material, observedAt: new Date(Date.parse(evidence.observedAt) + 10_001).toISOString() }),
+        decideJevExit({ ...material, observedAt: new Date(Date.parse(evidence.observedAt) + 60_000).toISOString() }),
       ),
     ).toBe(true)
   })

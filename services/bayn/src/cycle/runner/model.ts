@@ -93,6 +93,11 @@ export class CycleRunnerError extends Data.TaggedError('CycleRunnerError')<{
 
 export type CyclePassObservation =
   | {
+      readonly outcome: 'WAITING'
+      readonly observedAt: string
+      readonly waitReason: 'BROKER_OBSERVATION_PENDING'
+    }
+  | {
       readonly outcome: 'SUCCEEDED'
       readonly observedAt: string
       readonly result: CycleRunResult
