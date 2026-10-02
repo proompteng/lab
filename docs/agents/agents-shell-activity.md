@@ -58,7 +58,9 @@ are also omitted, independent of the outer executable. This covers nested remote
 HTTP body inputs include curl's `--data*`, `--json`, `--form*`, `-d`, and `-F`; named `--post-data`, `--post-file`,
 `--body`, `--body-data`, and `--body-file` flags across commands; and HTTPie/xh `--raw`. GitHub authentication and secret
 operations, including stdin-token modes and API secret-resource paths, receive whole-input omission. Ordinary GET
-targets remain visible. GitHub API payload fields (`-f`, `-F`, `--raw-field`, `--field`) and `--input` bodies are omitted
+targets without URL queries or fragments remain visible. Inputs containing URLs with queries or fragments are
+omitted in full because those values can contain credentials under arbitrary or encoded parameter names.
+GitHub API payload fields (`-f`, `-F`, `--raw-field`, `--field`) and `--input` bodies are omitted
 in full. Git credential-protocol commands and helpers also receive whole-input omission. OpenSSH key
 passphrases (`ssh-keygen -N` and `-P`) are redacted while key-file paths and ordinary SSH/SCP port operands remain visible.
 Kubernetes Secret/SecretList and AgentRun/AgentRunList structured bodies are also omitted, including inline implementation

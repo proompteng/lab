@@ -832,6 +832,32 @@ api repos/owner/repo/issues \
     }
   })
 
+  it('omits URLs with query or fragment input independent of credential parameter names', () => {
+    const records = captureAudit()
+    const config = configFixture()
+    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
+    for (const command of [
+      "curl 'https://example.test/download?access_token=syntheticQueryBody'",
+      "curl --url 'https://example.test/download?X-Amz-Signature=syntheticQueryBody&X-Amz-Credential=other-value'",
+      "curl 'https://example.test/download?custom='syntheticQueryBody",
+      "curl 'https://example.test/download#access_token=syntheticQueryBody'",
+      "client 'custom+tls://example.test/path?opaque_key=syntheticQueryBody'",
+    ])
+      writeAuditLog(config, 'probe', null, { command })
+    writeAuditLog(config, 'probe', null, {
+      command: 'curl',
+      args: ['--url', 'https://example.test/download?api%5Fkey=syntheticQueryBody'],
+    })
+    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
+      expect(content).not.toContain('syntheticQueryBody')
+      expect(content).toContain('[OMITTED_SHELL_INPUT]')
+    }
+    expect(records().every((record) => record.payload.command === '[OMITTED_SHELL_INPUT]')).toBe(true)
+    expect(records().at(-1)?.payload.args).toBe('[OMITTED_SHELL_INPUT]')
+    writeAuditLog(config, 'probe', null, { command: 'curl https://example.test/download' })
+    expect(records().at(-1)?.payload.command).toBe('curl https://example.test/download')
+  })
+
   it('omits explicit interpreter code bodies while retaining script-file paths', () => {
     const records = captureAudit()
     const config = configFixture()
@@ -870,6 +896,10 @@ api repos/owner/repo/issues \
       'ssh example.test "redis-cli -a syntheticNestedBody ping"',
       "remote-runner 'sshpass -p syntheticNestedBody ssh example.test'",
       "remote-runner '/usr/bin/curl -u admin:syntheticNestedBody https://example.test'",
+      "ssh example.test 'env curl -u admin:syntheticNestedBody https://example.test'",
+      "ssh example.test 'timeout 5 env -i nice -n10 curl -u admin:syntheticNestedBody https://example.test'",
+      "remote-runner 'true;env /usr/bin/curl -u admin:syntheticNestedBody https://example.test'",
+      "remote-runner 'if true; then curl -u admin:syntheticNestedBody https://example.test; fi'",
     ])
       writeAuditLog(config, 'probe', null, { command })
     for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
