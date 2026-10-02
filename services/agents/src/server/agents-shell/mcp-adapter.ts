@@ -195,7 +195,7 @@ export const installEffectToolHandlers = (
               : content?.ok === false
                 ? 'failed'
                 : 'succeeded',
-          ...(authorized ? { result: content ?? result.content } : {}),
+          ...(authorized && !tool?.name.startsWith('agent_') ? { result: content ?? result.content } : {}),
         })
         return result
       },

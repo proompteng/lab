@@ -201,6 +201,50 @@ describe('agents-shell activity audit', () => {
     expect(JSON.parse(readFileSync(config.auditLogPath, 'utf8'))).toEqual(records()[0])
   })
 
+  it('omits AgentRun documents from JSON, YAML and typed payloads', () => {
+    const records = captureAudit()
+    const body = { kind: 'AgentRun', spec: { implementation: { inline: { text: 'private-agent-task' } } } }
+    writeAuditLog(configFixture(), 'probe', null, {
+      stdout: JSON.stringify(body),
+      stderr: 'apiVersion: agents.proompteng.ai/v1alpha1\nkind: AgentRun\ntext: private-agent-task\n',
+      agentRun: body,
+    })
+    expect(JSON.stringify(records())).not.toContain('private-agent-task')
+    expect(JSON.stringify(records())).toContain('[OMITTED_AGENT_RUN]')
+  })
+
+  it('keeps delegated task text out of agent_status process and tool audit while retaining the response', async () => {
+    const records = captureAudit()
+    const { client, config } = await connect()
+    const agentRun = {
+      kind: 'AgentRun',
+      spec: {
+        implementation: { inline: { summary: 'private-agent-summary', text: 'private-agent-task' } },
+        goal: { objective: 'private-agent-objective' },
+      },
+    }
+    const executable = join(config.workspaceRoot, 'kubectl')
+    writeFileSync(
+      executable,
+      `#!/bin/bash\nif [ "$2" = agentrun ]; then printf '%s' '${JSON.stringify(agentRun)}'; else printf '%s' '{"kind":"JobList","items":[{"task":"private-agent-job-task"}]}'; fi\n`,
+      { mode: 0o755 },
+    )
+    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
+    const response = await client.callTool({ name: 'agent_status', arguments: { agentRunName: 'fixture' } })
+    expect(response.structuredContent).toMatchObject({ agentRun })
+    for (const value of [
+      'private-agent-summary',
+      'private-agent-task',
+      'private-agent-objective',
+      'private-agent-job-task',
+    ])
+      expect(JSON.stringify(records())).not.toContain(value)
+    expect(records().find(({ event }) => event === 'agent_status_get_agentrun_finished')).toMatchObject({
+      payload: { exitCode: 0 },
+    })
+    expect(records().find(({ event }) => event === 'tool_call_finished')?.payload).not.toHaveProperty('result')
+  })
+
   it.each(['shell_run', 'shell_start'])('omits projected Secret output through %s and later reads', async (name) => {
     const records = captureAudit()
     const { client, config, runner } = await connect()

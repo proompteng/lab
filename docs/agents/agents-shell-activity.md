@@ -39,9 +39,11 @@ Audit sanitization removes known credential environment values, credential field
 formats, authorization strings, database connection URLs, URL passwords, and email addresses. Typed patch bodies,
 `read_file` contents, delegated task text, stdin, and MCP metadata are omitted. OAuth subjects are hashed, and usernames and email
 claims are excluded. Sanitization changes audit records only. Authorized MCP results retain their original content.
-Kubernetes Secret/SecretList bodies are omitted. Output from commands selecting Secret resources is also omitted,
-including JSONPath projections and later background-job reads. Exit status, byte counts, duration, and command metadata
-remain available.
+Kubernetes Secret/SecretList and AgentRun/AgentRunList bodies are omitted, including inline implementation text and goal
+objectives. Output from commands selecting these resources is also omitted, including JSONPath projections and later
+background-job reads. Exit status, byte counts, duration, and command metadata remain available.
+Delegated-agent tools (`agent_*`) retain operation metadata and outcomes while omitting result bodies and subprocess
+output, which can contain task text in worker records or logs.
 
 Each string preview is limited to 4,000 encoded JSON bytes. The payload has a shared 12,000-byte budget, a maximum
 nesting depth of four, 20 entries per array, and 30 fields per object. `payloadTruncated=true` marks omitted preview
