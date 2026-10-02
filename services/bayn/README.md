@@ -125,6 +125,14 @@ the fresh execution quote's event time and ten-second maximum age; the earlier b
 quote deadline for version-three decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
 
+Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
+headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
+limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
+deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
+still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
+final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
+freshness limits are unchanged; the preparation ordering does not guarantee submission.
+
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
 50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
