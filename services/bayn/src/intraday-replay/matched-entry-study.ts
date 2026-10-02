@@ -1,4 +1,5 @@
-import { Effect, Schema } from 'effect'
+import { Effect, Result, Schema } from 'effect'
+import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca/model'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevPurpose } from '../jev/portfolio'
@@ -101,6 +102,76 @@ export const MatchedStudyInputSchema = Schema.Struct({
   ),
 })
 export type MatchedRegistration = typeof MatchedRegistrationSchema.Type
+
+export const matchedCalendarSessions = (
+  registration: MatchedRegistration,
+  calendars: readonly MarketCalendarObservation[],
+) =>
+  Result.gen(function* () {
+    const dates = registration.sessionDates
+    const first = dates[0]
+    const last = dates.at(-1)
+    if (
+      dates.length !== 5 ||
+      first === undefined ||
+      last === undefined ||
+      new Set(dates).size !== 5 ||
+      dates.join(',') !== [...dates].sort().join(',')
+    )
+      return yield* Result.fail(
+        new SignalStudyFailure({ message: 'Registered sessions must be five unique ordered dates' }),
+      )
+    const sessions = new Map<string, MarketCalendarSession>()
+    for (const calendar of calendars) {
+      for (const session of calendar.sessions) {
+        if (session.date < first || session.date > last) continue
+        const existing = sessions.get(session.date)
+        if (existing !== undefined && (existing.openAt !== session.openAt || existing.closeAt !== session.closeAt))
+          return yield* Result.fail(new SignalStudyFailure({ message: 'Retained calendars disagree on session hours' }))
+        sessions.set(session.date, session)
+      }
+    }
+    const scheduled = [...sessions.values()].sort((a, b) => a.date.localeCompare(b.date))
+    for (const calendar of calendars) {
+      const present = new Set(calendar.sessions.map((session) => session.date))
+      if (
+        scheduled.some(
+          (session) =>
+            session.date >= calendar.requestedRange.start &&
+            session.date <= calendar.requestedRange.end &&
+            !present.has(session.date),
+        )
+      )
+        return yield* Result.fail(
+          new SignalStudyFailure({ message: 'Retained calendars disagree on session presence' }),
+        )
+    }
+    // Continuous query coverage proves that intervening dates are closed, rather than unobserved.
+    let coveredUntilMs = Date.parse(first)
+    for (const range of calendars
+      .map((calendar) => calendar.requestedRange)
+      .sort((a, b) => a.start.localeCompare(b.start))) {
+      if (Date.parse(range.start) > coveredUntilMs) break
+      coveredUntilMs = Math.max(coveredUntilMs, Date.parse(range.end) + 86_400_000)
+    }
+    if (coveredUntilMs <= Date.parse(last))
+      return yield* Result.fail(
+        new SignalStudyFailure({ message: 'Retained calendars do not cover the registered date range' }),
+      )
+    if (scheduled.map((s) => s.date).join(',') !== dates.join(','))
+      return yield* Result.fail(
+        new SignalStudyFailure({ message: 'Registration is not five consecutive retained calendar sessions' }),
+      )
+    if (
+      registration.dataRole === MatchedDataRole.Prospective &&
+      Date.parse(registration.registeredAt) >= Date.parse(scheduled[0]?.openAt ?? '')
+    )
+      return yield* Result.fail(
+        new SignalStudyFailure({ message: 'Prospective registration must precede the first session open' }),
+      )
+    return scheduled
+  })
+
 type Outcome = ReturnType<typeof finishMatchedLifecycle>
 export interface MatchedPair {
   readonly batchId: string
@@ -245,8 +316,6 @@ export const runMatchedEntryStudy = (
     if (registration.definitionHash !== definitionHash || registration.latencyMs !== input.study.assumptions.latencyMs)
       return yield* new SignalStudyFailure({ message: 'Frozen definition or routing assumptions differ' })
     const dates = registration.sessionDates
-    if (new Set(dates).size !== 5 || dates.join(',') !== [...dates].sort().join(','))
-      return yield* new SignalStudyFailure({ message: 'Registered sessions must be five unique ordered dates' })
     const sourceHash = yield* Effect.fromResult(canonicalHashV1Result(input.study.source))
     const batches = yield* Effect.forEach(input.study.batches, (b) => Effect.fromResult(prepareSignalStudyBatch(b)))
     const problems: string[] = []
@@ -274,17 +343,12 @@ export const runMatchedEntryStudy = (
       )
         return yield* new SignalStudyFailure({ message: 'Observation belongs to another source or run' })
     }
-    const calendar = batches[0]?.snapshot.manifest.calendar.sessions ?? []
-    const scheduled = calendar.filter((s) => s.date >= (dates[0] ?? '')).slice(0, 5)
-    if (scheduled.map((s) => s.date).join(',') !== dates.join(','))
-      return yield* new SignalStudyFailure({
-        message: 'Registration is not five consecutive retained calendar sessions',
-      })
-    if (
-      registration.dataRole === MatchedDataRole.Prospective &&
-      Date.parse(registration.registeredAt) >= Date.parse(scheduled[0]?.openAt ?? '')
+    const scheduled = yield* Effect.fromResult(
+      matchedCalendarSessions(
+        registration,
+        batches.map((batch) => batch.snapshot.manifest.calendar),
+      ),
     )
-      return yield* new SignalStudyFailure({ message: 'Prospective registration must precede the first session open' })
     const inventories = new Set<string>()
     const entries = batches.filter((b) => b.observation.portfolio.purpose === JevPurpose.Entry)
     for (const inventory of input.inventory) {

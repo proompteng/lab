@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test'
+import { Result } from 'effect'
+import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { canonicalHashV1 } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import {
   matchedEntryDefinition,
+  matchedCalendarSessions,
   matchedObservationMaterial,
   MatchedDataRole,
   MatchedRecommendation,
@@ -53,6 +56,75 @@ const pairs = (override: Partial<MatchedPair> = {}): MatchedPair[] =>
     sharedOperatingCostMicros: '100000',
     ...override,
   }))
+
+type SessionDate = MatchedRegistration['sessionDates'][number]
+const calendar = (dates: readonly SessionDate[], start: SessionDate, end: SessionDate, close = '16:00') =>
+  Result.getOrThrow(
+    normalizeMarketCalendarResult(
+      dates.map((date) => ({ date, open: '09:30', close })),
+      { start, end },
+    ),
+  )
+const fullCalendar = calendar(registration.sessionDates, '2026-09-04', '2026-09-11')
+const laterCalendar = calendar(registration.sessionDates.slice(1), '2026-09-08', '2026-09-11')
+
+test('retained calendars accept unordered batches and deduplicate agreeing session dates', () => {
+  const chronological = Result.getOrThrow(matchedCalendarSessions(registration, [fullCalendar, laterCalendar]))
+  expect(
+    Result.getOrThrow(matchedCalendarSessions(registration, [laterCalendar, fullCalendar, laterCalendar])),
+  ).toEqual(chronological)
+  expect(chronological.map((session) => session.date)).toEqual([...registration.sessionDates])
+})
+
+test('conflicting calendar sessions and duplicate registered dates cannot form a schedule', () => {
+  const changedClose = calendar(registration.sessionDates.slice(1), '2026-09-08', '2026-09-11', '13:00')
+  expect(Result.isFailure(matchedCalendarSessions(registration, [fullCalendar, changedClose]))).toBeTrue()
+  const omitted = calendar(['2026-09-08', '2026-09-10', '2026-09-11'], '2026-09-08', '2026-09-11')
+  expect(Result.isFailure(matchedCalendarSessions(registration, [fullCalendar, omitted]))).toBeTrue()
+  expect(
+    Result.isFailure(
+      matchedCalendarSessions(
+        { ...registration, sessionDates: ['2026-09-04', '2026-09-04', '2026-09-09', '2026-09-10', '2026-09-11'] },
+        [fullCalendar],
+      ),
+    ),
+  ).toBeTrue()
+})
+
+test('earliest registered session and every calendar date between sessions need retained coverage', () => {
+  expect(Result.isFailure(matchedCalendarSessions(registration, [laterCalendar]))).toBeTrue()
+  const firstOnly = calendar(['2026-09-04'], '2026-09-04', '2026-09-04')
+  expect(Result.isFailure(matchedCalendarSessions(registration, [firstOnly, laterCalendar]))).toBeTrue()
+  const firstWithHoliday = calendar(['2026-09-04'], '2026-09-04', '2026-09-07')
+  expect(Result.getOrThrow(matchedCalendarSessions(registration, [laterCalendar, firstWithHoliday]))).toEqual([
+    ...fullCalendar.sessions,
+  ])
+  const extraSession = calendar(
+    ['2026-09-04', '2026-09-07', ...registration.sessionDates.slice(1)],
+    '2026-09-04',
+    '2026-09-11',
+  )
+  expect(Result.isFailure(matchedCalendarSessions(registration, [extraSession]))).toBeTrue()
+})
+
+test('prospective registration always uses the earliest registered open regardless of batch ordering', () => {
+  expect(
+    Result.isFailure(
+      matchedCalendarSessions({ ...registration, registeredAt: '2026-09-04T13:30:00.000Z' }, [
+        laterCalendar,
+        fullCalendar,
+      ]),
+    ),
+  ).toBeTrue()
+  expect(
+    Result.isSuccess(
+      matchedCalendarSessions({ ...registration, registeredAt: '2026-09-04T13:29:59.999Z' }, [
+        laterCalendar,
+        fullCalendar,
+      ]),
+    ),
+  ).toBeTrue()
+})
 
 test('abstentions retain denominator and inference costs; identical picks share execution increment', () => {
   const report = summarizeMatchedPairs(registration, [...pairs(), ...pairs({ jevSymbol: null, jev: null })], [])

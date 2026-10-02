@@ -34,6 +34,10 @@ substitute another checkout. The command also checks definition/protocol/assumpt
 consecutive retained calendar sessions and the pre-open timestamp; it cannot prove that an asserted timestamp
 was recorded prospectively. The independent review receipt must establish that fact.
 
+Retained batches may arrive in any order. Their calendars must agree on overlapping session dates and hours, and
+their query ranges must cover the complete registered date interval, including closed dates. Missing earlier-session
+coverage cannot be inferred from a later batch; prospective timing always uses the earliest registered open.
+
 Measure routing/persistence latency from completed-batch-to-order evidence, including tails and exit retries.
 Original inference work is already included in the batch completion time; both rules wait for it, isolating selection.
 Nominal API duration is insufficient. Supplied latency without a calibration witness remains incomplete.
