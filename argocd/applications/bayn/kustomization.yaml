@@ -7,6 +7,7 @@ resources:
 - alpaca-sealedsecret.yaml
 - objectbucketclaim.yaml
 - research-storage.yaml
+- research-objectbucket.yaml
 - postgres-objectstore.yaml
 - postgres-cluster.yaml
 - postgres-monitoring.yaml
@@ -32,4 +33,4 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:f929218aeeba79c79026b718c9779fd14102e898d5c680ab8e27688965274b47
+  digest: sha256:fe883713f5193572691eacf3d91d6f86a6710c6506e37b0115aa3ffedbada67a
