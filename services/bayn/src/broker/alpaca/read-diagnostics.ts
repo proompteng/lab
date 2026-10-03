@@ -6,6 +6,7 @@ import { BrokerEnvironment, type BrokerIdentity } from '../identity'
 import type { ReadEvidence } from './model'
 
 export const diagnosticLimits = { identities: 128, records: 32, bytes: 16_384, intervalMs: 60_000 } as const
+export const diagnosticLogPrefix = 'Broker response diagnostic evidence '
 type JsonType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'undefined' | 'accessor'
 type Field =
   | { readonly state: 'absent' | 'null' }
@@ -193,7 +194,7 @@ const diagnosticOnly = (effect: Effect.Effect<void>): Effect.Effect<void> =>
 export const makeReadDiagnostics = (
   identity: BrokerIdentity,
   emit: (event: DiagnosticEvent) => Effect.Effect<void> = (event) =>
-    Effect.logInfo('Broker response diagnostic evidence').pipe(Effect.annotateLogs({ brokerReadDiagnostic: event })),
+    Effect.logInfo(`${diagnosticLogPrefix}${JSON.stringify(event)}`),
 ) =>
   Effect.gen(function* () {
     if (identity.environment !== BrokerEnvironment.Sandbox)
