@@ -60,7 +60,7 @@ export const createAgentsShellRequestHandler = (config: AgentsShellConfig, runne
       }
     }
 
-    const server = createAgentsShellServer(config, runner, auth)
+    const server = createAgentsShellServer(config, runner, auth, requestId)
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

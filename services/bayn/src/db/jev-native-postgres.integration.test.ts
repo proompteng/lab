@@ -1211,15 +1211,16 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           submitCutoffAt: cycle.window.executionCloseAt,
           expiresAt: cycle.window.executionCloseAt,
         }
-        const recovered = yield* ensureExecutionCycleClosure(
-          { ...closeRequest.input, executionCycleClosureStore: store },
-          closeRequest.preparation,
-          closeRequest.policy,
+        const recovered = yield* ensureExecutionCycleClosure({
+          input: { ...closeRequest.input, executionCycleClosureStore: store },
+          preparation: closeRequest.preparation,
+          policy: closeRequest.policy,
           cycle,
-          document,
+          entryDocument: document,
           closeWindow,
-          Effect.die('Existing unsubmitted close unexpectedly reconciled'),
-        )
+          reconcile: Effect.die('Existing unsubmitted close unexpectedly reconciled'),
+          existing: Option.getOrUndefined(yield* store.read(nativeInput.cycleId)),
+        })
         expect(recovered).toEqual({ _tag: 'Close', document: close.document })
         const remainingAt = new Date(yield* Clock.currentTimeMillis).toISOString()
         const remainingMaterial = {
@@ -1278,15 +1279,16 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(yield* store.bindReplan(replan)).toEqual(replan)
         expect(yield* store.bindReplan(replan)).toEqual(replan)
         expect(Option.getOrThrow(yield* store.readLatestReplan(nativeInput.cycleId))).toEqual(replan)
-        const recoveredReplan = yield* ensureExecutionCycleClosure(
-          { ...closeRequest.input, executionCycleClosureStore: store },
-          closeRequest.preparation,
-          closeRequest.policy,
+        const recoveredReplan = yield* ensureExecutionCycleClosure({
+          input: { ...closeRequest.input, executionCycleClosureStore: store },
+          preparation: closeRequest.preparation,
+          policy: closeRequest.policy,
           cycle,
-          document,
+          entryDocument: document,
           closeWindow,
-          Effect.die('Existing unsubmitted residual close unexpectedly reconciled'),
-        )
+          reconcile: Effect.die('Existing unsubmitted residual close unexpectedly reconciled'),
+          existing: Option.getOrUndefined(yield* store.read(nativeInput.cycleId)),
+        })
         expect(recoveredReplan).toEqual({ _tag: 'Close', document: residual.document })
         expect(calls).toBe(16)
       }).pipe(
