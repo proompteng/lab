@@ -75,6 +75,7 @@ const RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX: &str =
 #[derive(Clone)]
 pub struct ControlPlane {
     client: Client,
+    identity: crate::identity::WorkloadIdentity,
     namespace: Arc<str>,
     default_image: Arc<str>,
     architecture: MicroVMArchitecture,
@@ -88,6 +89,7 @@ pub struct ControlPlane {
 }
 
 pub struct ControlPlaneConfig {
+    pub identity: crate::identity::WorkloadIdentity,
     pub namespace: String,
     pub default_image: String,
     pub architecture: MicroVMArchitecture,
@@ -110,10 +112,14 @@ impl ControlPlane {
             config.internal_hmac_secret,
         )?;
         let namespace: Arc<str> = config.namespace.into();
-        let provisional_terminal_leases =
-            ProvisionalTerminalLeaseManager::new(client.clone(), namespace.clone());
+        let provisional_terminal_leases = ProvisionalTerminalLeaseManager::new(
+            client.clone(),
+            namespace.clone(),
+            config.identity.clone(),
+        );
         Ok(Self {
             client,
+            identity: config.identity,
             namespace,
             default_image: config.default_image.into(),
             architecture: config.architecture,
@@ -222,7 +228,7 @@ impl ControlPlane {
 
     async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
         self.wake_agent(principal, id).await?;
-        GuestClient::for_agent(self.client.clone(), &self.namespace, id)
+        GuestClient::for_agent(self.client.clone(), &self.namespace, id, &self.identity)
             .await
             .map_err(map_guest_error)
     }
@@ -1047,6 +1053,7 @@ impl MicroVmControlPlane for ControlPlane {
             &self.namespace,
             &request.agent_id,
             Some(&incarnation),
+            &self.identity,
         )
         .await
         .map_err(map_guest_error)?
@@ -1074,14 +1081,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssuePreviewSession").await?;
         let request = request.into_inner();
-        let port = u16::try_from(request.port)
-            .ok()
-            .filter(|port| *port >= 1024 && ![8080, EDITOR_PORT, EDITOR_BRIDGE_PORT].contains(port))
-            .ok_or_else(|| {
-                Status::invalid_argument(
-                    "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
-                )
-            })?;
+        let port = validate_preview_port(request.port)?;
         let path = validate_preview_path(&request.path)?;
         let fragment = validate_preview_fragment(&request.fragment)?;
         self.guest(&principal, &request.agent_id).await?;
@@ -1732,14 +1732,20 @@ fn validate_terminal_creation_id(value: &str) -> Result<(), Status> {
 #[derive(Clone)]
 struct ProvisionalTerminalLeaseManager {
     client: Client,
+    identity: crate::identity::WorkloadIdentity,
     namespace: Arc<str>,
     registry: ProvisionalTerminalLeaseRegistry,
 }
 
 impl ProvisionalTerminalLeaseManager {
-    fn new(client: Client, namespace: Arc<str>) -> Self {
+    fn new(
+        client: Client,
+        namespace: Arc<str>,
+        identity: crate::identity::WorkloadIdentity,
+    ) -> Self {
         Self {
             client,
+            identity,
             namespace,
             registry: ProvisionalTerminalLeaseRegistry::default(),
         }
@@ -1796,20 +1802,26 @@ impl ProvisionalTerminalLeaseManager {
     }
 
     async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
-        let guest =
-            match GuestClient::for_agent(self.client.clone(), &self.namespace, agent_id).await {
-                Ok(guest) => Some(guest),
-                Err(error) if agent_is_absent(&error) => None,
-                Err(error) => {
-                    tracing::warn!(
-                        agent_id,
-                        terminal_id,
-                        %error,
-                        "failed to connect to the guest while cleaning up an unconfirmed terminal"
-                    );
-                    return false;
-                }
-            };
+        let guest = match GuestClient::for_agent(
+            self.client.clone(),
+            &self.namespace,
+            agent_id,
+            &self.identity,
+        )
+        .await
+        {
+            Ok(guest) => Some(guest),
+            Err(error) if agent_is_absent(&error) => None,
+            Err(error) => {
+                tracing::warn!(
+                    agent_id,
+                    terminal_id,
+                    %error,
+                    "failed to connect to the guest while cleaning up an unconfirmed terminal"
+                );
+                return false;
+            }
+        };
 
         if let Some(guest) = guest {
             match guest.terminate_terminal(terminal_id).await {
@@ -2154,6 +2166,26 @@ fn validate_prompt(value: &str) -> Result<String, Status> {
         ));
     }
     Ok(value.to_owned())
+}
+
+fn validate_preview_port(value: u32) -> Result<u16, Status> {
+    u16::try_from(value)
+        .ok()
+        .filter(|port| {
+            *port >= 1024
+                && ![
+                    8080,
+                    crate::guest::GUEST_API_PORT,
+                    EDITOR_PORT,
+                    EDITOR_BRIDGE_PORT,
+                ]
+                .contains(port)
+        })
+        .ok_or_else(|| {
+            Status::invalid_argument(
+                "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
+            )
+        })
 }
 
 fn validate_preview_path(value: &str) -> Result<String, Status> {
@@ -3018,6 +3050,19 @@ mod tests {
     }
 
     #[test]
+    fn preview_ports_reject_guest_control_and_editor_listeners() {
+        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 65536] {
+            assert_eq!(
+                validate_preview_port(port).unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        for port in [1024, 3000, 65535] {
+            assert_eq!(validate_preview_port(port).unwrap(), port as u16);
+        }
+    }
+
+    #[test]
     fn preview_fragment_is_bounded_and_kept_separate_from_the_proxy_path() {
         assert_eq!(
             validate_preview_fragment("#editor").expect("preview fragment"),
@@ -3207,6 +3252,7 @@ mod tests {
         let manager = ProvisionalTerminalLeaseManager::new(
             Client::new(service, "tengri"),
             Arc::<str>::from("tengri"),
+            crate::identity::WorkloadIdentity::Fixture,
         );
         let tracking_manager = manager.clone();
         let tracked_after = Utc::now();
@@ -3269,6 +3315,7 @@ mod tests {
         let manager = ProvisionalTerminalLeaseManager::new(
             Client::new(service, "tengri"),
             Arc::<str>::from("tengri"),
+            crate::identity::WorkloadIdentity::Fixture,
         );
 
         manager
