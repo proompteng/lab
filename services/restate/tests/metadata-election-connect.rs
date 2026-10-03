@@ -16,7 +16,9 @@ mod cold_election_connection_proof {
         // The test macro creates the task center, but Member also needs its global metadata
         // and address book. Use the upstream in-memory environment; no live service is used.
         let core = restate_core::TestCoreEnv::create_with_single_node(1, 1).await;
-        assert!(TaskCenter::try_set_address_book(Default::default()));
+        assert!(TaskCenter::try_set_address_book(
+            restate_types::net::listener::AddressBook::new(std::path::PathBuf::new()),
+        ));
         RocksDbManager::init();
         let storage = RocksDbStorage::create().await.unwrap();
         let (_, request_rx) = mpsc::channel(1);
