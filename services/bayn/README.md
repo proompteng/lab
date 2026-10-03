@@ -902,6 +902,38 @@ additional full execution windows are needed, preserving the earlier dataset ver
 
 ## Validation
 
+### Property tests and structured fuzzing
+
+`bun run --cwd services/bayn test:property` runs the fixed seed `20261003` with 100 generated cases per property
+(20 for full streaming snapshots). These tests also run in the normal `test` command and existing Bayn CI gate.
+The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
+mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
+row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
+and authority/freshness failures. All data is synthetic; no broker, database, or live account is contacted.
+
+Run a longer, reproducible 1,000-case-per-property campaign with a new seed:
+
+```sh
+BAYN_PROPERTY_SEED=123456789 bun run --cwd services/bayn test:fuzz
+# Or choose an explicit size (1–100000 cases per property):
+BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_RUNS=5000 bun run --cwd services/bayn test:property
+```
+
+Each property has a 120-second campaign budget; interruption fails rather than silently reducing coverage.
+The command allows 150 seconds per test. `fast-check` shrinks failures and reports their seed, path and minimal
+counterexample. The same information is retained under `services/bayn/.fuzz-failures/` (git-ignored).
+Replay one failure using the reported seed/path and the exact test name, for example:
+
+```sh
+cd services/bayn
+BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_PATH='0:1:2' bun test src/intraday-replay/ledger.property.test.ts \
+  --test-name-pattern 'property: a one-micro oversell' --timeout 150000
+```
+
+Never apply a shrink path to the whole suite. After fixing a discovered product defect, keep the minimized
+synthetic case as an ordinary named regression test so changing the campaign seed cannot lose coverage.
+`fast-check` is an exact, direct development dependency for shrinking and replay; it is not in the runtime image.
+
 ```sh
 bun run --filter @proompteng/bayn test
 bun run --filter @proompteng/bayn test:postgres

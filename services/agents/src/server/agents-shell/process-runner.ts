@@ -17,7 +17,9 @@ export type ProcessResult = {
 }
 
 export const formatCommand = (command: string, args: string[]) =>
-  [command, ...args.map((arg) => (arg.includes(' ') ? JSON.stringify(arg) : arg))].join(' ')
+  [command, ...args]
+    .map((word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`))
+    .join(' ')
 
 export const toProcessResult = (
   command: string,

@@ -73,7 +73,7 @@ export const createShellTools = (): EffectTool[] => [
     annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ShellReadInput, { config, runner }) =>
+    handler: (args: ShellReadInput, { config, runner, auth }) =>
       Effect.try({
         try: () => {
           const maxOutputBytes = asPositiveInteger(
@@ -84,7 +84,8 @@ export const createShellTools = (): EffectTool[] => [
             1024,
           )
           return jsonTextResult(
-            summarizeJob(runner.requireJob(args.jobId), maxOutputBytes, {
+            summarizeJob(runner.requireJob(args.jobId, auth), maxOutputBytes, {
+              outputEncoding: args.outputEncoding,
               stdoutOffset: args.stdoutOffset ?? null,
               stderrOffset: args.stderrOffset ?? null,
             }),
@@ -120,12 +121,18 @@ export const createShellTools = (): EffectTool[] => [
     annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: ShellStatusInput, { config, runner }) =>
+    handler: (args: ShellStatusInput, { config, runner, auth }) =>
       Effect.try({
         try: () => {
           const jobs = args.jobId
-            ? [runner.requireJob(args.jobId)]
+            ? [runner.requireJob(args.jobId, auth)]
             : Array.from(runner.jobs.values())
+                .filter(
+                  (job) =>
+                    job.ownerSubject === auth.subject &&
+                    (!args.sessionId || job.sessionId === args.sessionId) &&
+                    (!args.agentId || job.agentId === args.agentId),
+                )
                 .slice(-asPositiveInteger(args.limit, 'limit', 20, 100, 1))
                 .reverse()
           return jsonTextResult({ jobs: jobs.map((job) => summarizeJob(job, config.defaultOutputBytes)) })
