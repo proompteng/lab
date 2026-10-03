@@ -77,6 +77,11 @@ fresh durable cycle read. Already committed intents retain exact immutable inten
 repeating their writer-fenced commit transaction. Missing or incomplete intents still use that transaction. Mutable
 intent state is read again after reconciliation, and close planning reuses only the closure read by its owning pass.
 
+Untouched expired entry approvals can retire under restricted submission authority only in canonical intent order.
+A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
+with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
+Close documents retain their existing residual-replanning and hard-deadline failure behavior.
+
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
 intent's own start event; other mutations or newer durable broker evidence invalidate it. Submit/cancel invalidate
