@@ -1284,7 +1284,7 @@ func TestPreviewApplicationCannotSpoofNanoagentAuthenticationFailure(t *testing.
 func TestPreviewRejectsReservedAndPrivilegedPorts(t *testing.T) {
 	t.Parallel()
 	server := testAPIServer(t)
-	for _, port := range []string{"0", "22", "8080", "65536", "not-a-port"} {
+	for _, port := range []string{"0", "22", "8080", "8443", "65536", "not-a-port"} {
 		response := performAuthorizedRequest(server.previewRoutes(), http.MethodGet, "/v1/preview/"+port+"/", nil)
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("preview port %q status = %d body = %q", port, response.Code, response.Body.String())

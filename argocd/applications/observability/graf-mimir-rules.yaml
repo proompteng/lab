@@ -3054,14 +3054,30 @@ data:
               and on(job, namespace, service)
               (
                 max by (job, namespace, service) (
-                  bayn_execution_session_ready{job="bayn",namespace="bayn",service="bayn"}
+                  (bayn_execution_session_ready{job="bayn",namespace="bayn",service="bayn"} == 0)
+                  unless on(job, namespace, service, instance)
+                  (
+                    bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="decision_lagging"} == 1
+                  )
+                  unless on(job, namespace, service, instance)
+                  (
+                    (bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="input_unavailable"} == 1)
+                    and on(job, namespace, service, instance)
+                    (bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn",phase="active"} == 1)
+                    and on(job, namespace, service, instance)
+                    (bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"} == 0)
+                    and on(job, namespace, service, instance)
+                    (time() >= bayn_cycle_first_observation_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+                    and on(job, namespace, service, instance)
+                    (time() < bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+                    and on(job, namespace, service, instance)
+                    (bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn"} == 1)
+                    and on(job, namespace, service, instance)
+                    (bayn_cycle_observation_available{job="bayn",namespace="bayn",service="bayn"} == 1)
+                    and on(job, namespace, service, instance)
+                    (up{job="bayn",namespace="bayn",service="bayn"} == 1)
+                  )
                 ) == 0
-              )
-              unless on(job, namespace, service)
-              (
-                max by (job, namespace, service) (
-                  bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="decision_lagging"}
-                ) == 1
               )
             for: 1m
             labels:
@@ -3071,7 +3087,36 @@ data:
               notify: email
             annotations:
               summary: Bayn execution session is not ready in its submission window
-              description: A realized unbound execution session is within ten minutes of submission open or inside its submission window, but its durable prerequisites, signal inputs or evaluation path are unavailable.
+              description: A realized unbound execution session is within ten minutes of submission open or inside its submission window, but its durable prerequisites or evaluation path are unavailable. Input-window failures and decision lag use their dedicated alerts.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynInputWindowUnavailable
+            expr: |
+              max by (job, namespace, service) (
+                (bayn_execution_session_condition{job="bayn",namespace="bayn",service="bayn",condition="input_unavailable"} == 1)
+                and on(job, namespace, service, instance)
+                (bayn_cycle_phase{job="bayn",namespace="bayn",service="bayn",phase="active"} == 1)
+                and on(job, namespace, service, instance)
+                (bayn_cycle_decision_bound{job="bayn",namespace="bayn",service="bayn"} == 0)
+                and on(job, namespace, service, instance)
+                (time() >= bayn_cycle_first_observation_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+                and on(job, namespace, service, instance)
+                (time() < bayn_cycle_submission_cutoff_timestamp_seconds{job="bayn",namespace="bayn",service="bayn"})
+                and on(job, namespace, service, instance)
+                (bayn_runtime_ready{job="bayn",namespace="bayn",service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (bayn_cycle_observation_available{job="bayn",namespace="bayn",service="bayn"} == 1)
+                and on(job, namespace, service, instance)
+                (up{job="bayn",namespace="bayn",service="bayn"} == 1)
+              )
+            for: 1m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn
+              notify: email
+            annotations:
+              summary: Bayn consumer input window is unavailable
+              description: An active unbound cycle reports unavailable inputs after its first complete observation time and before submission cutoff for one minute, on a scraped replica with current runtime and cycle projections. Producer acknowledgements do not prove a complete consumer window.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionDecisionLagging
             expr: |
