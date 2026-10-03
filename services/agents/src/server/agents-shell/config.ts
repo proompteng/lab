@@ -95,7 +95,7 @@ export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process
     defaultOutputBytes: Number(env.AGENTS_SHELL_DEFAULT_OUTPUT_BYTES ?? String(DEFAULT_OUTPUT_BYTES)),
     maxOutputBytes: Number(env.AGENTS_SHELL_MAX_OUTPUT_BYTES ?? String(MAX_OUTPUT_BYTES)),
     maxConcurrentJobs: Number(env.AGENTS_SHELL_MAX_CONCURRENT_JOBS ?? '4'),
-    auditLogPath: env.AGENTS_SHELL_AUDIT_LOG_PATH ?? '/workspace/.agents-shell/audit.jsonl',
+    auditLogPath: env.AGENTS_SHELL_AUDIT_LOG_PATH || null,
     allowedK8sNamespaces: parseList(env.AGENTS_SHELL_ALLOWED_K8S_NAMESPACES ?? 'agents'),
     k8sApplyEnabled: env.AGENTS_SHELL_ENABLE_K8S_APPLY === 'true',
     agentNamespace: env.AGENTS_SHELL_AGENT_NAMESPACE ?? DEFAULT_AGENT_NAMESPACE,

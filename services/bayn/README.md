@@ -74,8 +74,14 @@ One serialized execution pass reads its unfinished cycle once and advances acqui
 binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
 repeating an admission transition fails closed. Each transition checks the current clock, and restart begins with a
 fresh durable cycle read. Already committed intents retain exact immutable intent/decision validation without
-repeating their writer-fenced commit transaction. Missing or incomplete intents still use that transaction. Mutable
-intent state is read again after reconciliation, and close planning reuses only the closure read by its owning pass.
+repeating their writer-fenced commit transaction. Missing intents still use that atomic transaction; a persisted
+`PLANNED` row is rejected as incomplete atomic persistence. Mutable intent state is read again after reconciliation,
+and close planning reuses only the closure read by its owning pass.
+
+Untouched expired entry approvals can retire under restricted submission authority only in canonical intent order.
+A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
+with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
+Close documents retain their existing residual-replanning and hard-deadline failure behavior.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -160,6 +166,16 @@ leaves less time for archive reads. The overall pass and close deadlines still a
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
+
+Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
+that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
+use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
+waits continue on the next configured controller pass. Failed close attempts retain the original data reason in logs.
+A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
+continuation, bounded by the configured cadence and session deadline. Source/bootstrap failures and archive timeouts
+retain the normal cadence. Only one serialized controller pass runs at a time; a continuation rechecks all broker,
+authority, quantity, and quote-freshness gates. This reduces avoidable idle time but cannot guarantee a fill or a
+maximum-hold exit when fresh executable evidence is unavailable.
 
 Entry observations evaluate candidate availability independently. The active Jev protocol binds
 `bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
