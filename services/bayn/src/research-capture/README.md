@@ -44,3 +44,10 @@ alone do not satisfy these gates.
 Run the capture unit tests with `bun test services/bayn/src/research-capture`. The PostgreSQL suite runs through
 `test:postgres` against its guarded disposable native database. Existing Kafka and controller regression suites also
 exercise the injected observer and verify unchanged execution when it is absent or faulty.
+
+`bash services/bayn/scripts/test-native-receipts.sh` runs the native Kafka and Restate acceptance fixture. It requires
+Docker, uses pinned official images, creates random fixture-only SCRAM credentials, publishes ports only on localhost,
+and removes only its own containers. CI runs it in the required `native-receipts` job. Its Kafka test passes exact raw
+bytes through the real consumer and incorporation owner. Its Restate test verifies schedule, runtime-start, and terminal
+receipts against actual journal execution. The PostgreSQL tests also report the allocated size of bounded synthetic
+chunks in the real text schema; that fixture measurement is not a production capacity qualification.

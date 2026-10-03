@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Redacted, Result } from 'effect'
+import { Effect, Exit, Redacted, Result, Schema } from 'effect'
 
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -66,6 +66,58 @@ const run = <A, E>(program: Effect.Effect<A, E, Effect.Services<typeof fixture>>
     ),
   )
 }
+
+postgresTest('measures the actual text-chunk schema using bounded synthetic receipt batches', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk: identity } = yield* fixture
+      const size = sql`SELECT pg_total_relation_size('research_capture_chunks')::double precision AS bytes`.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ bytes: Schema.Number })]))),
+        Effect.map(([row]) => row.bytes),
+      )
+      const before = yield* size
+      let previousContentHash: string | null = null
+      let encodedBytes = 0
+      const chunkCount = 8
+      const receiptsPerChunk = 256
+      for (let ordinal = 0; ordinal < chunkCount; ordinal++) {
+        const receipts = Array.from({ length: receiptsPerChunk }, (_, index) => {
+          const sequence = ordinal * receiptsPerChunk + index + 1
+          return {
+            sequence,
+            observedAtMs: 100 + sequence,
+            event:
+              sequence === 1
+                ? captureEvent('STARTED')
+                : sequence === chunkCount * receiptsPerChunk
+                  ? captureEvent('STOPPED')
+                  : {
+                      ...marketEvent,
+                      consumerSequence: sequence - 1,
+                      projectionSequence: sequence - 1,
+                      offset: String(sequence - 2),
+                      rawValueSha256: sha256(randomUUID()),
+                    },
+          }
+        })
+        const bytes = encodeResearchCapture({ ...identity, chunkOrdinal: ordinal, previousContentHash, receipts })
+        yield* store.append(bytes)
+        previousContentHash = bytes.contentHash
+        encodedBytes += Buffer.byteLength(bytes.payload, 'utf8')
+      }
+      const after = yield* size
+      expect(after).toBeGreaterThan(before)
+      yield* Effect.logInfo('Synthetic original-receipt storage measurement', {
+        chunkCount,
+        receiptsPerChunk,
+        encodedBytes,
+        allocatedBytes: after - before,
+        allocatedBytesPerReceipt: (after - before) / (chunkCount * receiptsPerChunk),
+        includes: 'heap, indexes, TOAST allocation delta; synthetic fixture only',
+      })
+    }),
+  ),
+)
 
 postgresTest('exact-byte retries and concurrent lost-ack recovery are idempotent; divergent bytes conflict', () =>
   run(

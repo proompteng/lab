@@ -99,11 +99,12 @@ export type KafkaProjectionTransportFactory = (
   captureRawIdentity?: boolean,
 ) => KafkaProjectionTransport
 
-export const decodeKafkaTransportValue = (value: Buffer | undefined, captureRawIdentity = false) => {
+export const decodeKafkaTransportValue = (value: Buffer | string | undefined, captureRawIdentity = false) => {
   if (value === undefined) {
     if (!captureRawIdentity) throw new Error('Kafka market message has no payload')
     return { value: '', rawValueSha256: null, rawByteLength: null, tombstone: true }
   }
+  if (typeof value === 'string') return { value }
   const rawIdentity = captureRawIdentity ? { rawValueSha256: sha256(value), rawByteLength: value.byteLength } : {}
   return { ...rawIdentity, value: value.toString('utf-8') }
 }
@@ -130,11 +131,13 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
   epoch,
   captureRawIdentity = false,
 ) => {
-  const consumer = new Consumer({
+  const consumer = new Consumer<string, string | Buffer, string, string>({
     clientId: `bayn-market-${epoch}`,
     groupId: `${config.groupPrefix}-${epoch}`,
     bootstrapBrokers: [...config.brokers],
-    deserializers: { ...stringDeserializers, value: (data?: Buffer) => data },
+    deserializers: captureRawIdentity
+      ? { ...stringDeserializers, value: (data?: Buffer) => data }
+      : stringDeserializers,
     sasl: { mechanism: 'SCRAM-SHA-512', username: config.username, password: Redacted.value(config.password) },
     autocreateTopics: false,
     timeout: config.operationTimeoutMs,
@@ -144,7 +147,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
     retryDelay: 250,
   })
   let closePromise: Promise<void> | undefined
-  let active: MessagesStream<string, Buffer, string, string> | undefined
+  let active: MessagesStream<string, string | Buffer, string, string> | undefined
   const close = (): Promise<void> => {
     if (closePromise === undefined) {
       active?.destroy()
@@ -172,7 +175,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
       consumer.on('consumer:heartbeat:stalled', () =>
         invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.HeartbeatStalled })),
       )
-      const source = await new Promise<MessagesStream<string, Buffer, string, string>>((resolve, reject) => {
+      const source = await new Promise<MessagesStream<string, string | Buffer, string, string>>((resolve, reject) => {
         if (closePromise !== undefined) {
           reject(new Error('Kafka consumer is closed'))
           return

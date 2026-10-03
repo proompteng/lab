@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Deferred, Effect, Fiber, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
@@ -178,6 +178,8 @@ test('scope interruption leaves an explicitly incomplete terminal receipt', () =
       ).pipe(Effect.forkChild)
       yield* Deferred.await(entered)
       yield* Fiber.interrupt(fiber)
+      const exit = yield* Fiber.await(fiber)
+      expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
       expect(saved.seals).toHaveLength(1)
       expect(Result.getOrThrow(verifyResearchCapture(saved.chunks, saved.seals[0])).complete).toBe(false)
     }),
