@@ -79,7 +79,7 @@ A nonzero retention start/truncation flag identifies an expired in-memory prefix
 history is limited to one hour, 64 jobs and a 64 MiB aggregate budget; live jobs stay available. Unknown/expired IDs are
 reported explicitly. Process/pod restart clears this memory.
 
-The stdout sink honors backpressure. Ten seconds of blocked export stops the affected command with a capture error.
+Every audit event family uses one bounded 16 MiB stdout queue and stops submitting frames when the Writable reports backpressure. Complete events that exceed remaining admission capacity are rejected with explicit counters. MCP `_meta["agents-shell/audit"]` reports pending/rejected frames, write failures and whether that call's frame watermark flushed; later concurrent calls do not hold an earlier call open. Flush waiting is bounded to 10 seconds, and a stalled sink rejects new admissions until it drains. The stdout sink honors backpressure. Ten seconds of blocked export stops the affected command with a capture error.
 Timeout termination escalates past ignored SIGTERM. Post-exit drain accounts for progress/backpressure and reports when
 remaining descendant pipes must close. These failures are not classified as user cancellation.
 

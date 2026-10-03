@@ -3,6 +3,23 @@ import { CredentialMasker, maskCredentialValues } from './credential-masker'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
+  ['Authorization: synthetic-test-secret \nordinary-next-line', `Authorization: ${marker}\nordinary-next-line`],
+  [
+    'Authorization: Token synthetic-test-secret\\\nordinary-next-line',
+    `Authorization: Token ${marker}\nordinary-next-line`,
+  ],
+  ['Authorization: Token synthetic-test-secret\nnext', `Authorization: Token ${marker}\nnext`],
+  ['Authorization: Negotiate synthetic-test-secret\nnext', `Authorization: Negotiate ${marker}\nnext`],
+  [
+    'Authorization: Digest username="alice", nonce="synthetic-test-secret", response="synthetic-response"\nnext',
+    `Authorization: Digest ${marker}\nnext`,
+  ],
+  [
+    "curl -H 'Authorization: Token synthetic-test-secret' https://example.test",
+    `curl -H 'Authorization: Token ${marker}' https://example.test`,
+  ],
+  ['{"Authorization":"Token synthetic-test-secret","count":3}', `{"Authorization":"Token ${marker}","count":3}`],
+  ['Authorization: synthetic-test-secret\nnext', `Authorization: ${marker}\nnext`],
   ['curl --user "alice:first synthetic-test-secret" next', `curl --user "alice:${marker}" next`],
   ["https://example.test?token='synthetic-test-secret'&limit=3", `https://example.test?token='${marker}'&limit=3`],
   ['token=synthetic-test-secret next', `token=${marker} next`],
@@ -60,6 +77,7 @@ describe('minimal streaming credential masking', () => {
 
   it.each([
     'A'.repeat(100) + 'notpassword=ordinary' + ' '.repeat(239),
+    'Authorization: \nordinary-next-line',
     'git show abc123 -- src/token-count.ts',
     'tokenCount=400 token_budget=20000 sessionId=repo-agent-a requestId=abcd',
     'https://example.test:8080/path?limit=4',

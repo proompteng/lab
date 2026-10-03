@@ -171,7 +171,7 @@ export const installEffectToolHandlers = (
         } catch (error) {
           requestError = mapToolError(context.config, error)
         }
-        runner.audit('tool_call_started', auth, {
+        const startedAuditErrors = runner.audit('tool_call_started', auth, {
           authorized,
           ...(authorized && !requestError ? { arguments: input } : {}),
         })
@@ -191,12 +191,20 @@ export const installEffectToolHandlers = (
           result = mapToolError(context.config, error)
         }
         const content = result.structuredContent
-        runner.audit('tool_call_finished', auth, {
+        const finishedAuditErrors = runner.audit('tool_call_finished', auth, {
           durationMs: performance.now() - startedAt,
           outcome: toolOutcome(tool?.name, result),
           ...(authorized && !tool?.name.startsWith('agent_') ? { result: content ?? result.content } : {}),
         })
-        return { ...result, _meta: { ...result._meta, 'agents-shell/trace': toolAuditContext.getStore() } }
+        const auditSink = await runner.flushAudit()
+        return {
+          ...result,
+          _meta: {
+            ...result._meta,
+            'agents-shell/trace': toolAuditContext.getStore(),
+            'agents-shell/audit': { rejectedCallFrames: startedAuditErrors + finishedAuditErrors, ...auditSink },
+          },
+        }
       },
     )
   })

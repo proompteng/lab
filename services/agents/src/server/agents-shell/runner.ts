@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 
 import { Effect } from 'effect'
 
-import { toolAuditContext, writeAuditLog } from './audit'
+import { flushAuditLog, toolAuditContext, writeAuditLog } from './audit'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
 import { OUTPUT_RETENTION_BYTES } from './constants'
@@ -244,6 +244,10 @@ export class AgentsShellRunner {
     context = toolAuditContext.getStore() ?? null,
   ) {
     return writeAuditLog(this.config, event, auth, payload, context)
+  }
+
+  flushAudit() {
+    return flushAuditLog()
   }
 
   runningJobs() {

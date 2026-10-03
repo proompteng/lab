@@ -51,7 +51,7 @@ export class CredentialMasker {
             this.state.escaped = false
             continue
           }
-          if (char === '\\' && this.state.terminator) {
+          if (char === '\\' && (this.state.terminator === '"' || this.state.terminator === "'")) {
             this.state.escaped = true
             continue
           }
@@ -59,7 +59,9 @@ export class CredentialMasker {
             this.state.terminator
               ? this.state.terminator === '&'
                 ? /[&#\s"'`)]/.test(char)
-                : char === this.state.terminator
+                : this.state.terminator === 'header'
+                  ? /[\r\n]/.test(char)
+                  : char === this.state.terminator
               : /[\s"'`,;)&}\]]/.test(char)
           ) {
             end = i
@@ -85,7 +87,7 @@ export class CredentialMasker {
           /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*$/i,
           /(?:--token\b|["']token["'])\s*(?:[:=]\s*)?$/i,
           /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key)["']?\s*(?:[:=]\s*)?$/i,
-          /\b(?:Authorization|Proxy-Authorization)["']?\s*[:=]\s*["']?(?:(?:Bearer|Basic)\s*)?$/i,
+          /\b(?:Authorization|Proxy-Authorization)["']?[\t ]*[:=][\t ]*["']?(?:[A-Za-z][A-Za-z0-9_-]*[\t ]*)?$/i,
         ].flatMap((pattern) => {
           const match = pattern.exec(this.pending)
           return match ? [match.index] : []
@@ -98,7 +100,11 @@ export class CredentialMasker {
       if (!safeEnd) break
       const patterns = [
         { regex: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/g, kind: 'pem' },
-        { regex: /\b(?:Authorization|Proxy-Authorization)["']?\s*[:=]\s*["']?(?:Bearer|Basic)\s+/gi, kind: 'value' },
+        {
+          regex:
+            /(["']?)\b(?:Authorization|Proxy-Authorization)["']?[\t ]*[:=][\t ]*(["']?)(?:[A-Za-z][A-Za-z0-9_-]*[\t ]+(?=\S))?/gi,
+          kind: 'header',
+        },
         { regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:(?=[^\s/@]*@)/gi, kind: 'url' },
         { regex: /[?&](?:token|access_token|refresh_token|api_key|apikey|password|secret)=(["']?)/gi, kind: 'query' },
         {
@@ -125,7 +131,8 @@ export class CredentialMasker {
         let match = regex.exec(text)
         while (match && match.index < this.previousChar.length) match = regex.exec(text)
         const index = match ? match.index - this.previousChar.length : -1
-        if (match && (!found || index < found.index)) found = { index, text: match[0], kind, quote: match[1] }
+        if (match && (!found || index < found.index))
+          found = { index, text: match[0], kind, quote: kind === 'header' ? match[2] || match[1] : match[1] }
       }
       if (this.known) {
         this.known.lastIndex = 0
@@ -141,6 +148,7 @@ export class CredentialMasker {
       output += this.pending.slice(0, found.index)
       if (found.kind !== 'known' && found.kind !== 'format' && found.kind !== 'pem') output += found.text
       this.consume(found.index + found.text.length)
+      if (found.kind === 'header' && /^(?:\r?\n|$)/.test(this.pending)) continue
       const afterMarker = this.pending[marker.length]
       const markerDelimited =
         afterMarker === undefined
@@ -159,7 +167,9 @@ export class CredentialMasker {
       this.maskedValues += 1
       if (found.kind !== 'known') {
         this.state = {
-          terminator: found.quote || (found.kind === 'url' ? '@' : found.kind === 'query' ? '&' : null),
+          terminator:
+            found.quote ||
+            (found.kind === 'url' ? '@' : found.kind === 'query' ? '&' : found.kind === 'header' ? 'header' : null),
           escaped: false,
           privateKey: found.kind === 'pem',
         }

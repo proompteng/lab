@@ -3,6 +3,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { BoundedAuditWriter } from './audit-writer'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
 import { credentialValuesFromEnv, maskCredentialValues } from './credential-masker'
@@ -10,18 +11,11 @@ import { credentialValuesFromEnv, maskCredentialValues } from './credential-mask
 export type ToolAuditContext = { requestId: string; toolCallId: string; tool: string }
 export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
-// An explicit Writable sink gives the output mirror real backpressure in both Node and Bun.
-let stdoutFailure: Error | null = null
-process.stdout.on('error', (error: Error) => {
-  stdoutFailure = error
-  console.warn('[agents-shell] audit stdout failed; subsequent frames report sink errors')
-})
-export const auditStdout = {
-  write(line: string) {
-    if (stdoutFailure) throw stdoutFailure
-    return process.stdout.write(line)
-  },
-}
+// An explicit Writable sink gives every event family real, bounded backpressure in Node and Bun.
+export const auditStdout = { write: (line: string) => process.stdout.write(line) }
+const stdoutWriter = new BoundedAuditWriter(process.stdout, (line) => auditStdout.write(line))
+export const flushAuditLog = () => stdoutWriter.flush()
+let sinkWarningEmitted = false
 
 // A process-private signature distinguishes our emitted frames from ordinary JSON printed by a command.
 const frameKey = randomBytes(32)
@@ -147,24 +141,27 @@ export const writeAuditLog = (
           fragmentCount: fragments.length,
           payloadBytes: Buffer.byteLength(encoded),
         }))
-  let sinkErrors = 0
-  for (const frame of frames) {
-    const line = JSON.stringify({ ...frame, frameSignature: signFrame(frame) })
-    try {
-      auditStdout.write(`${line}\n`)
-    } catch {
-      sinkErrors += 1
-    }
+  const lines = frames.map((frame) => `${JSON.stringify({ ...frame, frameSignature: signFrame(frame) })}\n`)
+  let sinkErrors = stdoutWriter.enqueue(lines)
+  for (const line of lines) {
     if (config.auditLogPath) {
       try {
         mkdirSync(dirname(config.auditLogPath), { recursive: true })
-        appendFileSync(config.auditLogPath, `${line}\n`, { mode: 0o600 })
+        appendFileSync(config.auditLogPath, line, { mode: 0o600 })
       } catch {
         sinkErrors += 1
       }
     }
   }
-  if (sinkErrors)
-    console.warn(JSON.stringify({ msg: 'agents-shell audit sink failure', eventId: envelope.eventId, sinkErrors }))
+  if (sinkErrors && !sinkWarningEmitted) {
+    sinkWarningEmitted = true
+    console.warn(
+      JSON.stringify({
+        msg: 'agents-shell audit sink failure; further failures are counted in MCP audit metadata',
+        eventId: envelope.eventId,
+        sinkErrors,
+      }),
+    )
+  }
   return sinkErrors
 }

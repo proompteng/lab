@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { auditStdout, sanitizeAuditPayload, writeAuditLog } from './agents-shell/audit'
+import { auditStdout, flushAuditLog, sanitizeAuditPayload, writeAuditLog } from './agents-shell/audit'
 import {
   AgentsShellRunner,
   createAgentsShellServer,
@@ -110,6 +110,28 @@ describe('complete operational activity export', () => {
     expect(records()[0].payload).toEqual(payload)
     expect(frames().length).toBeGreaterThan(1)
     for (const frame of frames()) expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThan(16_000)
+  })
+
+  it('honors drain for a large generic tool result after process completion', async () => {
+    const writes: string[] = []
+    let first = true
+    vi.spyOn(auditStdout, 'write').mockImplementation((line) => {
+      writes.push(line)
+      if (first) {
+        first = false
+        return false
+      }
+      return true
+    })
+    const payload = { outcome: 'succeeded', result: { content: 'ordinary output '.repeat(30_000) } }
+    writeAuditLog(configFixture(), 'tool_call_finished', authFixture(), payload)
+    expect(writes).toHaveLength(1)
+    const flushed = flushAuditLog()
+    process.stdout.emit('drain')
+    expect(await flushed).toMatchObject({ pendingBytes: 0, pendingFrames: 0, rejectedFrames: 0, failedWrites: 0 })
+    const frames = writes.map((line) => JSON.parse(line))
+    expect(frames).toHaveLength(frames[0].fragmentCount)
+    expect(JSON.parse(frames.map((frame) => frame.payloadFragment).join(''))).toEqual(payload)
   })
 
   it('masks credential values only, including argv pairs and errors, without changing original responses', () => {
