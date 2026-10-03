@@ -9,7 +9,7 @@ import * as protoLoader from '@grpc/proto-loader'
 
 void mock.module('server-only', () => ({}))
 const { parseSpiffeId, parseSpiffeMaterial, SpiffeSource, verifySpiffePeer } = await import('./spiffe')
-const id = 'spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng'
+const id = 'spiffe://proompteng.ai/ns/proompteng/sa/proompteng'
 const directory = mkdtempSync(path.join(tmpdir(), 'tengri-spiffe-'))
 const protoPath = path.resolve(import.meta.dir, '../../../../../services/tengri/proto/spiffe/workloadapi.proto')
 const definition = protoLoader.loadSync(protoPath, { defaults: true, keepCase: false })
@@ -97,7 +97,7 @@ beforeAll(async () => {
   )
   initial = makeSvid('initial', id)
   rotated = makeSvid('rotated', id)
-  wrongIdentity = makeSvid('wrong', 'spiffe://galactic.proompteng.ai/ns/other/sa/other')
+  wrongIdentity = makeSvid('wrong', 'spiffe://proompteng.ai/ns/other/sa/other')
   server = new grpc.Server()
   const Constructor = descriptor.SpiffeWorkloadAPI
   if (typeof Constructor !== 'function' || !('service' in Constructor))
