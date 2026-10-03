@@ -102,7 +102,12 @@ import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import { defaultExecutionModel } from '../strategy/execution-model/model'
 import type { DecisionPlan, IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
-import { adverseClosingQuotePrices, executionMarketDataBinding, loadIntradaySnapshot } from './intraday-market-data'
+import {
+  adverseClosingQuotePrices,
+  executionMarketDataBinding,
+  loadIntradaySnapshot,
+  IntradayMarketDataFailure,
+} from './intraday-market-data'
 import { Pipeable } from '../pipeable'
 import type { ObserveAutonomousCycleInput, ObserveStartupPreparation } from './model'
 
@@ -276,7 +281,35 @@ export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDeci
 export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('ExecutionCloseAwaitingMarketData')<{
   readonly message: string
   readonly observedAt: string
+  readonly readiness?: DecisionReadiness
+  readonly cause?: unknown
+  /** A verified snapshot exists, but its executable quote must be refreshed. */
+  readonly quotePending?: boolean
 }> {}
+
+export const executionCloseMarketDataDiagnostics = (failure: ExecutionCloseAwaitingMarketData) => {
+  const cause = failure.cause
+  const snapshotFailure =
+    cause instanceof OperationalError && cause.cause instanceof IntradaySnapshotFailure ? cause.cause : undefined
+  return {
+    reason: failure.message,
+    observedAt: failure.observedAt,
+    ...(cause instanceof OperationalError
+      ? { component: cause.component, operation: cause.operation }
+      : cause instanceof IntradayMarketDataFailure
+        ? { component: 'market-data', operation: cause.operation }
+        : {}),
+    ...(snapshotFailure === undefined
+      ? {}
+      : {
+          snapshotFailure: snapshotFailure.reason,
+          ...(snapshotFailure.ingestionDelayDirection === undefined
+            ? {}
+            : { ingestionDelayDirection: snapshotFailure.ingestionDelayDirection }),
+        }),
+    ...(failure.readiness === undefined ? {} : { readiness: JSON.stringify(failure.readiness) }),
+  }
+}
 
 type MarketCalendarRead = Effect.Success<ReturnType<BrokerReadShape['marketCalendar']>>
 type CycleCalendarQueryFailure = Result.Result.Failure<ReturnType<typeof marketCalendarQueryFromSession>>
@@ -1459,6 +1492,26 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         failure: 'contract',
       })
     }
+    const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+    )
+    const requireFallbackWindow = (observedAt: string) => {
+      const closeAt = Date.parse(cycle.window.executionCloseAt)
+      const observed = Date.parse(observedAt)
+      return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
+        observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000 &&
+        observedAt < closeExpiresAt
+        ? Effect.void
+        : Effect.fail(
+            new ExecutionCloseAwaitingMarketData({
+              message: 'reconciled-position fallback is outside the authorized close window',
+              observedAt,
+            }),
+          )
+    }
+    // Sample after the archive attempt: it may have crossed into the close window. Outside that
+    // window a second reconciliation cannot authorize this fallback and only delays the next pass.
+    if (source === 'reconciled-position') yield* requireFallbackWindow(yield* currentUtcInstant)
     const reconciliation = yield* (
       source === 'archive' && request.initialReconciliation !== undefined
         ? Effect.succeed(request.initialReconciliation)
@@ -1482,23 +1535,8 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         failure: 'contract',
       })
     }
-    const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-    )
-    if (source === 'reconciled-position') {
-      const closeAt = Date.parse(cycle.window.executionCloseAt)
-      const observed = Date.parse(evaluatedAt)
-      if (
-        observed < closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 ||
-        observed >= closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000 ||
-        evaluatedAt >= closeExpiresAt
-      ) {
-        return yield* new ExecutionCloseAwaitingMarketData({
-          message: 'reconciled-position fallback is outside the authorized close window',
-          observedAt: evaluatedAt,
-        })
-      }
-    }
+    // Reconciliation can cross the deadline; the early guard never replaces this final check.
+    if (source === 'reconciled-position') yield* requireFallbackWindow(evaluatedAt)
     const entryMarketData = entryDocument.bindings.executionMarketData
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
       ? entryMarketData.universe
@@ -1583,7 +1621,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       ).pipe(
         Effect.mapError((cause) =>
           cause instanceof JevAwaitingEvidence
-            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt, cause })
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
@@ -1619,14 +1657,30 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
                 (cause.component === 'market-data' &&
                   cause.retryable &&
                   !(cause.cause instanceof IntradaySnapshotFailure))
-              ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+              ? new ExecutionCloseAwaitingMarketData({
+                  message: cause.message,
+                  observedAt: evaluatedAt,
+                  cause,
+                  ...(isIntradaySnapshotPending(cause.cause) ? { readiness: snapshotReadiness(cause.cause) } : {}),
+                })
               : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
         ),
       )
       const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
         Effect.mapError((cause) =>
           cause.operation === 'close-quote-not-ready'
-            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+            ? new ExecutionCloseAwaitingMarketData({
+                message: cause.message,
+                observedAt: evaluatedAt,
+                cause,
+                quotePending: true,
+                readiness: {
+                  reason: DecisionReadinessReason.SnapshotStale,
+                  message: cause.message,
+                  ...(cause.symbol === undefined ? {} : { symbol: cause.symbol }),
+                  ...(cause.eventAt === undefined ? {} : { eventAt: cause.eventAt }),
+                },
+              })
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
@@ -1768,6 +1822,8 @@ export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExe
   buildClosingExecutionCycleDecisionWithSource(request, 'archive').pipe(
     Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
       buildClosingExecutionCycleDecisionWithSource(request, 'reconciled-position').pipe(
+        // An unavailable fallback must not erase the archive/quote failure that caused this wait.
+        Effect.catchTag('ExecutionCloseAwaitingMarketData', () => Effect.fail(failure)),
         Effect.tap(() =>
           Effect.logWarning('Execution close used reconciled positions after archive evidence was unavailable').pipe(
             Effect.annotateLogs({ cycleId: request.cycle.identity.cycleId, reason: failure.message }),
