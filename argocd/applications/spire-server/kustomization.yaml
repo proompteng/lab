@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+resources:
+  - guest-bundle.yaml
 helmCharts:
   - name: spire-crds
     repo: https://spiffe.github.io/helm-charts-hardened
@@ -14,6 +16,17 @@ helmCharts:
     namespace: spire-server
     valuesFile: values.yaml
 patches:
+  - target:
+      kind: Service
+      name: spire-server
+    patch: |-
+      - op: add
+        path: /spec/ports/-
+        value:
+          name: grpc-guests
+          port: 8081
+          targetPort: grpc
+          protocol: TCP
   - target:
       kind: Pod
       name: spire-server-test-connection
