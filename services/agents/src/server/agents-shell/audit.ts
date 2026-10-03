@@ -7,6 +7,7 @@ import { auditPayloadBudget } from './audit-budget'
 import { BoundedAuditWriter } from './audit-writer'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
+import { isSecretRead, maskKubernetesSecretText, secretCaptureMode } from './kubernetes-secret-masker'
 import {
   credentialEnv,
   credentialOptionNames,
@@ -49,7 +50,7 @@ const credentialField =
 export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOutput = false) => {
   const secrets = credentialValuesFromEnv()
   let maskedValues = 0
-  const visit = (value: unknown, key?: string): unknown => {
+  const visit = (value: unknown, key?: string, secretSource: string | null = null, secretItem = false): unknown => {
     if (
       key &&
       (credentialField.test(key) || credentialEnv.test(key)) &&
@@ -60,7 +61,13 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
     }
     if (typeof value === 'string') {
       if (maskedOutput && key === 'text') return value
-      const masked = maskCredentialValues(value, secrets)
+      const structural = maskKubernetesSecretText(
+        value,
+        secretSource !== null ? secretCaptureMode(secretSource) : null,
+        key === 'stderr',
+      )
+      maskedValues += structural.maskedValues
+      const masked = maskCredentialValues(structural.text, secrets)
       maskedValues += masked.maskedValues
       return masked.text
     }
@@ -83,25 +90,54 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
           return '[REDACTED_CREDENTIAL]'
         }
         if (typeof item === 'string' && new RegExp(`^--(?:${credentialOptionNames})$`, 'i').test(item)) maskNext = true
-        return visit(item, key)
+        return visit(item, key, secretSource, secretItem)
       })
     }
     if (value !== null && typeof value === 'object') {
+      const record = value as Record<string, unknown>
+      const kind = Object.getOwnPropertyDescriptor(record, 'kind')?.value
+      const secret = kind === 'Secret' || secretItem
+      const command = Object.getOwnPropertyDescriptor(record, 'command')?.value
+      const envName = Object.getOwnPropertyDescriptor(record, 'name')?.value
+      const maskContainer = (entry: unknown): unknown => {
+        if (entry === null || entry === undefined) return entry
+        if (typeof entry === 'object') {
+          if (Array.isArray(entry))
+            return Array.from({ length: entry.length }, (_, index) =>
+              maskContainer(Object.getOwnPropertyDescriptor(entry, String(index))?.value),
+            )
+          return Object.fromEntries(
+            Object.keys(entry).map((key) => [key, maskContainer(Object.getOwnPropertyDescriptor(entry, key)?.value)]),
+          )
+        }
+        maskedValues += 1
+        return '[REDACTED_CREDENTIAL]'
+      }
       return Object.fromEntries(
-        Object.entries(value)
-          .filter(([name]) => name !== '_meta')
-          .map(([name, item]) => [
-            name,
-            visit(
-              item,
+        Object.keys(record)
+          .filter((name) => name !== '_meta')
+          .map((name) => {
+            const item = Object.getOwnPropertyDescriptor(record, name)?.value
+            const credentialName =
               name === 'value' &&
-                typeof (value as Record<string, unknown>).name === 'string' &&
-                (credentialField.test((value as Record<string, unknown>).name as string) ||
-                  credentialEnv.test((value as Record<string, unknown>).name as string))
-                ? ((value as Record<string, unknown>).name as string)
-                : name,
-            ),
-          ]),
+              typeof envName === 'string' &&
+              (credentialField.test(envName) || credentialEnv.test(envName))
+                ? envName
+                : name
+            return [
+              name,
+              secret && (name === 'data' || name === 'stringData')
+                ? maskContainer(item)
+                : visit(
+                    item,
+                    credentialName,
+                    (name === 'stdout' || name === 'stderr') && typeof command === 'string' && isSecretRead(command)
+                      ? command
+                      : null,
+                    kind === 'SecretList' && name === 'items',
+                  ),
+            ]
+          }),
       )
     }
     return value
@@ -139,7 +175,7 @@ export const writeAuditLog = (
       sanitized = sanitizeAuditPayload(payload, event === 'process_output')
       budget = auditPayloadBudget(sanitized.payload)
     } catch {
-      budget = { ...sourceBudget, accepted: false, reason: 'credential_scanner_capacity_exceeded' }
+      budget = { ...sourceBudget, accepted: false, reason: 'credential_capture_unavailable' }
     }
   }
   const captureIncomplete = !budget.accepted

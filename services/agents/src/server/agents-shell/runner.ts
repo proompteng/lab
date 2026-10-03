@@ -10,6 +10,7 @@ import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
 import { OUTPUT_RETENTION_BYTES } from './constants'
 import { OutputAudit } from './output-audit'
+import { secretCaptureMode } from './kubernetes-secret-masker'
 import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
 import { asPositiveInteger } from './limits'
 import { formatCommand, toProcessResult, type ProcessResult } from './process-runner'
@@ -291,18 +292,21 @@ export class AgentsShellRunner {
     }
 
     const outputAudit = (stream: 'stdout' | 'stderr') =>
-      new OutputAudit(stream, (event, payload) =>
-        this.audit(
-          event,
-          auth,
-          {
-            jobId: job.id,
-            sessionId: job.sessionId,
-            agentId: job.agentId,
-            ...payload,
-          },
-          auditContext,
-        ),
+      new OutputAudit(
+        stream,
+        (event, payload) =>
+          this.audit(
+            event,
+            auth,
+            {
+              jobId: job.id,
+              sessionId: job.sessionId,
+              agentId: job.agentId,
+              ...payload,
+            },
+            auditContext,
+          ),
+        secretCaptureMode(input.command),
       )
     let lastOutputAt = performance.now()
     const stdoutAudit = outputAudit('stdout')
@@ -351,6 +355,7 @@ export class AgentsShellRunner {
       clearTimeout(killTimeout)
       stdoutAudit.finish(job.outputCaptureError)
       stderrAudit.finish(job.outputCaptureError)
+      job.outputCaptureError ??= stdoutAudit.captureError ?? stderrAudit.captureError
       job.auditErrors = stdoutAudit.sinkErrors + stderrAudit.sinkErrors
       if (job.timeout) {
         clearTimeout(job.timeout)
@@ -510,10 +515,18 @@ export class AgentsShellRunner {
           const jobId = randomUUID()
           const auditContext = toolAuditContext.getStore() ?? null
           const outputAudit = (stream: 'stdout' | 'stderr') =>
-            new OutputAudit(stream, (event, payload) =>
-              auditContext?.tool.startsWith('agent_')
-                ? 0
-                : this.audit(event, options.auth, { jobId, sessionId: session?.id ?? null, ...payload }, auditContext),
+            new OutputAudit(
+              stream,
+              (event, payload) =>
+                auditContext?.tool.startsWith('agent_')
+                  ? 0
+                  : this.audit(
+                      event,
+                      options.auth,
+                      { jobId, sessionId: session?.id ?? null, ...payload },
+                      auditContext,
+                    ),
+              secretCaptureMode(commandLine),
             )
           const stdoutAudit = outputAudit('stdout')
           const stderrAudit = outputAudit('stderr')
@@ -609,6 +622,7 @@ export class AgentsShellRunner {
             stderrAudit.finish(outputCaptureError)
           })
 
+          outputCaptureError ??= stdoutAudit.captureError ?? stderrAudit.captureError
           const processResult = toProcessResult(
             commandLine,
             cwd,

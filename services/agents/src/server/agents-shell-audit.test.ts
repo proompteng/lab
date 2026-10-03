@@ -440,6 +440,41 @@ describe('complete operational activity export', () => {
     ).toBe('Cookie: [REDACTED_CREDENTIAL]\nSet-Cookie: [REDACTED_CREDENTIAL]\nordinary HTTP diagnostic\n')
   })
 
+  it('masks Secret stdout, redirected stderr and partial shell_read duplicates while preserving original tool output', async () => {
+    const { records } = captureAudit()
+    const { client, config } = await connect()
+    const secret = '{"data":{"arbitrary":"c3ludGhldGljLWNyZWRlbnRpYWw="},"metadata":{"name":"fixture"},"kind":"Secret"}'
+    const binary = join(config.workspaceRoot, 'kubectl')
+    writeFileSync(binary, `#!/bin/sh\nprintf '%s' '${secret}'\n`, { mode: 0o755 })
+    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
+    const cli = await client.callTool({
+      name: 'kubectl',
+      arguments: { args: ['get', 'secret', 'fixture', '-o', 'json'] },
+    })
+    expect(data(cli).stdout).toBe(secret)
+    const shell = await client.callTool({
+      name: 'shell_run',
+      arguments: { command: `${binary} get secret fixture -o json >&2` },
+    })
+    expect(data(shell).stderr).toBe(secret)
+    await client.callTool({
+      name: 'shell_read',
+      arguments: { jobId: data(shell).jobId, stderrOffset: 20, maxOutputBytes: 1024 },
+    })
+    expect(JSON.stringify(records())).not.toContain('c3ludGhldGljLWNyZWRlbnRpYWw=')
+    for (const stream of ['stdout', 'stderr']) {
+      expect(
+        records().some(
+          (record) =>
+            record.event === 'process_output' &&
+            record.payload.stream === stream &&
+            record.payload.text.includes('[REDACTED_CREDENTIAL]'),
+        ),
+      ).toBe(true)
+    }
+    expect(records().some((record) => record.captureIncomplete === true)).toBe(true)
+  })
+
   it('can inspect its growing local log without recursively amplifying it', async () => {
     const { records } = captureAudit()
     const { client, config } = await connect()

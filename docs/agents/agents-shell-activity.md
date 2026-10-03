@@ -117,3 +117,18 @@ and quoted JSON/YAML credential keys. Structured Kubernetes `name`/`value` pairs
 explicit credential name; `valueFrom` references remain visible. A raw text stream is not a general JSON/YAML parser:
 reordered or nested name/value containers and arbitrary transformations are not guaranteed to be recognized. Avoid
 printing credential containers; the scanner's declared contexts do not imply universal secret detection.
+
+Known Kubernetes Secret reads have a separate bounded structural path. Explicit `kubectl get secret(s)` stdout and
+stderr are held up to 4 MiB until capture closes. JSON/YAML Secret data/stringData values (including SecretList items)
+are masked by syntax ranges; metadata, key names and ConfigMaps retain their original text. A flat lexer limits tokens
+and nesting before syntax-tree allocation; aliases are not expanded or exported. Malformed or oversized credential
+output produces `captureIncomplete`/capture error rather than exporting a partially inspected prefix. The original
+MCP output and authorized retention are unchanged; partial shell_read/result duplicates retain the original command
+context and use the same rule. Default metadata/name/wide views remain visible. Custom templates, JSONPath and custom
+columns can disguise credential values, so those explicit Secret projections are omitted from centralized output with
+an incomplete-capture receipt. Ordinary non-Secret streams continue streaming immediately.
+
+Structurally masked streams use terminal source-byte checkpoints (`sourceByteCheckpointOnly`), not a byte-for-byte
+reconstruction claim; source hashes are omitted when values are masked. Escaped command newlines are normalized, but
+this is not a full shell parser and cannot identify arbitrary indirect scripts or transformed credential sources.
+User-authored delegated task/acceptance instructions remain operational inputs; they are not hidden model reasoning.
