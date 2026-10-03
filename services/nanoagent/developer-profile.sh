@@ -1,4 +1,4 @@
-# Keep package installations on the persistent guest home.
+#!/bin/sh
 if [ -x "$HOME/.linuxbrew/bin/brew" ]; then
   eval "$("$HOME/.linuxbrew/bin/brew" shellenv sh)"
 fi

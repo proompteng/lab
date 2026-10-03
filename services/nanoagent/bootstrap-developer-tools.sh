@@ -48,14 +48,16 @@ install_tools() {
   fi
   local cpp_compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#cpp_compilers[@]}" == 1 && -x "${cpp_compilers[0]}" ]] || fail 'Homebrew C++ compiler is unavailable or ambiguous'
-  local c_root="$(dirname "$(readlink -f "$HOME/.local/go")")/c"
+  local c_root
+  c_root="$(dirname "$(readlink -f "$HOME/.local/go")")/c"
   local triplet
   case "$(uname -m)" in
     x86_64) triplet=x86_64-linux-gnu ;;
     aarch64|arm64) triplet=aarch64-linux-gnu ;;
   esac
   [[ -f "$c_root/sysroot/usr/include/features.h" ]] || fail 'persistent C development headers are unavailable'
-  local cpp_wrapper="$(mktemp "$HOME/.local/bin/.cpp-wrapper.XXXXXX")"
+  local cpp_wrapper
+  cpp_wrapper="$(mktemp "$HOME/.local/bin/.cpp-wrapper.XXXXXX")"
   {
     printf '#!/usr/bin/env bash\n'
     printf 'exec %q --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
