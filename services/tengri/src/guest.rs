@@ -466,7 +466,7 @@ mod tests {
                     let value = if request.uri().path().ends_with("/microvms/agent-fixture") {
                         serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"microvm-uid","generation":1},"spec":{
                         "displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
-                        "resources":{"cpuMillis":2000,"memoryMib":4096,"workspaceGib":16},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
+                        "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":16},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
                     },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":pod_uid}})
                     } else {
                         assert!(
@@ -514,7 +514,7 @@ mod tests {
             );
             let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
                 "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
-                "resources":{"cpuMillis":2000,"memoryMib":4096,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
+                "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
             }});
             Ok::<_, std::io::Error>(
                 http::Response::builder()
