@@ -19,7 +19,9 @@ or previews. No Talos machine configuration or service mesh change is required.
 
 Nanoagent supervises SPIRE 1.15.3 inside the Firecracker guest. Its `galactic-guests` PSAT agent is attested with a
 Pod-bound token for audience `spire-server`; its workload selector is Unix UID 1000. The issued identity includes the
-current Pod UID. The TLS listener accepts only `spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri`; the controller pins
+current Pod UID. It connects to `spire-server.spire-server.svc.cluster.local:443`; the Kubernetes Service forwards that
+connection to the SPIRE Pod's listener on port 8081. The TLS listener accepts only
+`spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri`; the controller pins
 the guest's exact `spiffe://galactic.proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>` identity. The Go SPIFFE source watches
 certificate and bundle updates, so new connections use renewed credentials without restarting Nanoagent.
 

@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { decodeIntradayBarRows, decodeIntradayQuoteRows, decodeIntradayTradeRows } from './rows'
+import {
+  decodeIntradayArchiveWatermarkRows,
+  decodeIntradayBarRows,
+  decodeIntradayQuoteRows,
+  decodeIntradayTradeRows,
+} from './rows'
 
 const identity = {
   provider: 'alpaca',
@@ -20,6 +25,22 @@ const identity = {
 } as const
 
 describe('intraday archive row decoding', () => {
+  test('reused decoders preserve strict failures without contaminating later reads', () => {
+    const quote = { ...identity, bid_price: '100.01', bid_size: '12', ask_price: '100.02', ask_size: '13' }
+    const watermark = { source_topic: identity.source_topic, source_partition: '0', inclusive_last_offset: '42' }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const invalidQuote = decodeIntradayQuoteRows([quote, { ...quote, ask_price: 'NaN' }])
+      if (Result.isSuccess(invalidQuote)) throw new Error('non-finite quote was accepted')
+      expect(invalidQuote.failure.reason).toBe('rows')
+      expect(invalidQuote.failure.message).toBe('intraday quotes rows do not match the archive contract')
+      expect(invalidQuote.failure.cause).toBeDefined()
+      expect(Result.isFailure(decodeIntradayArchiveWatermarkRows([{ ...watermark, extra: true }]))).toBe(true)
+      expect(Result.getOrThrow(decodeIntradayQuoteRows([quote]))).toEqual([quote])
+      expect(Result.getOrThrow(decodeIntradayArchiveWatermarkRows([watermark]))).toEqual([watermark])
+      expect(Result.getOrThrow(decodeIntradayQuoteRows([]))).toEqual([])
+    }
+  })
+
   test('enforces the archived bar market invariants', () => {
     const bar = {
       ...identity,

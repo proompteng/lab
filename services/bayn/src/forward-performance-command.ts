@@ -1,7 +1,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Data, Effect, Layer, Result, Schema, Stdio, Stream } from 'effect'
 
-import { loadConfig } from './config'
+import { loadForwardPerformanceConfig } from './forward-performance/config'
 import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
@@ -43,7 +43,7 @@ const printUsage = Effect.gen(function* () {
 const runProof = (options: { readonly authorityGenerationHash?: string }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const config = yield* loadConfig()
+      const config = yield* loadForwardPerformanceConfig()
       const report = yield* runForwardPerformanceReport(config, undefined, options).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
         Effect.provide(PostgresClientLive(config)),
