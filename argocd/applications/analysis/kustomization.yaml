@@ -4,4 +4,4 @@ resources:
 - generated
 images:
 - name: registry.ide-newton.ts.net/lab/analysis
-  digest: sha256:8948b9c5a6b1a14a387a77dd7be4652dfc75552662f1ed2fcb36e3ec9c8d38cd
+  digest: sha256:a70ed0945b15ac026001cce2a1b4a2f949c7c5690c04bfb917db0e1f64aeeb93
