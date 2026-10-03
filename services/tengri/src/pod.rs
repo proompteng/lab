@@ -314,6 +314,7 @@ pub fn build_pod(
         microvm.spec.architecture.kubernetes_label().to_owned(),
     );
     let mut annotations = BTreeMap::from([
+        ("sidecar.istio.io/inject".to_owned(), "false".to_owned()),
         (
             "runtime.proompteng.ai/isolation".to_owned(),
             "firecracker".to_owned(),
@@ -975,6 +976,12 @@ mod tests {
         )
         .expect("pod projection");
         let annotations = pod.metadata.annotations.as_ref().expect("annotations");
+        assert_eq!(
+            annotations
+                .get("sidecar.istio.io/inject")
+                .map(String::as_str),
+            Some("false"),
+        );
         assert_eq!(
             annotations
                 .get(STORAGE_LAYOUT_ANNOTATION)

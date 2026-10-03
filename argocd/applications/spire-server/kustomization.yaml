@@ -33,7 +33,10 @@ patches:
                 command: [sh, -ec, 'umask 077; mkdir -p /run/spire/data/proompteng.ai']
                 securityContext:
                   allowPrivilegeEscalation: false
+                  runAsNonRoot: true
                   readOnlyRootFilesystem: true
+                  seccompProfile:
+                    type: RuntimeDefault
                   capabilities:
                     drop: [ALL]
                 volumeMounts:
