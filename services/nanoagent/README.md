@@ -123,6 +123,11 @@ and Neovim configuration and undo files survive sleep/resume; none of these pack
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
 bootstrap before the rootfs check.
 
+Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
+`/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
+headers and startup objects. Native validation compiles and executes a C++ program; the existing C and CGO checks
+continue to use the pinned GCC 13.3.0 toolchain.
+
 The guest's operating-system root filesystem is writable. The `nanoagent` user has passwordless `sudo` for guest
 administration, including `sudo apt-get install`, system-file edits, mounts, and guest network configuration. The
 controller allows privilege escalation, grants the guest Linux capabilities, and leaves guest syscalls unconfined

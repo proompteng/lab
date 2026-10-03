@@ -48,8 +48,23 @@ install_tools() {
   fi
   local cpp_compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#cpp_compilers[@]}" == 1 && -x "${cpp_compilers[0]}" ]] || fail 'Homebrew C++ compiler is unavailable or ambiguous'
-  ln -sfn "${cpp_compilers[0]}" "$HOME/.local/bin/g++"
-  ln -sfn "${cpp_compilers[0]}" "$HOME/.local/bin/c++"
+  local c_root="$(dirname "$(readlink -f "$HOME/.local/go")")/c"
+  local triplet
+  case "$(uname -m)" in
+    x86_64) triplet=x86_64-linux-gnu ;;
+    aarch64|arm64) triplet=aarch64-linux-gnu ;;
+  esac
+  [[ -f "$c_root/sysroot/usr/include/features.h" ]] || fail 'persistent C development headers are unavailable'
+  local cpp_wrapper="$(mktemp "$HOME/.local/bin/.cpp-wrapper.XXXXXX")"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'exec %q --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
+      "${cpp_compilers[0]}" "$c_root/sysroot" "$c_root/sysroot/usr/include" \
+      "$c_root/sysroot/usr/include/$triplet" "$c_root/sysroot/usr/lib/$triplet/"
+  } > "$cpp_wrapper"
+  chmod 0700 "$cpp_wrapper"
+  mv -Tf "$cpp_wrapper" "$HOME/.local/bin/g++"
+  ln -sfn "$HOME/.local/bin/g++" "$HOME/.local/bin/c++"
   for command in nvim gh fd fzf tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
   done
