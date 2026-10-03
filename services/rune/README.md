@@ -108,6 +108,8 @@ The `Rune images` workflow first exports the compiled native targets to the buil
 runs all native and runtime tests on amd64 and arm64. A test failure retains the compilation cache
 but still blocks the tested image and every release step. Proof and release artifacts include the workflow
 run and attempt, so failed-job retries retain earlier evidence without colliding with immutable artifacts.
+New commits cancel superseded pull-request builds. Main publications run serially, so another
+merge cannot interrupt an active build, cache export, or release publication.
 Image tags and Kargo discovery remain bound to the source revision and workflow run. On `main`, the workflow publishes and signs the
 immutable index, uploads validation receipts, then exposes the run-qualified Kargo discovery tag.
 Platform uploads use the runner's existing `regctl`, with one request at a time and 4 MiB chunks.
