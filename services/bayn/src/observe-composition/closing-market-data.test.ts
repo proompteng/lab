@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Option, Result } from 'effect'
+import { Clock, Effect, Exit, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
+import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type BrokerReadShape } from '../broker/alpaca'
 import { CycleState, decodeAutonomousCycle } from '../cycle'
 import { Authority, IntentState, KillState, OrderType, TerminalOutcome } from '../execution/contracts'
-import { IntentStore, type StoredIntent } from '../execution/intents'
+import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import { MutationStore, type MutationStoreShape } from '../execution/mutations'
 import type { ExecutionCycleClosure, ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
 import { ensureExecutionCycleClosure } from './execution-cycle'
@@ -233,6 +233,133 @@ const fixture = async () => {
 }
 
 describe('closing market-data fallback boundaries', () => {
+  test.each(['filled', 'denied', 'unknown', 'failed-refresh', 'older-cut'] as const)(
+    'terminal close uses fresh settlement evidence before another action (%s)',
+    async (scenario) => {
+      const request = await fixture()
+      const closeWindow = Result.getOrThrow(
+        resolveExecutionCycleCloseWindow({
+          executionCloseAt: request.closeExpiresAt,
+          sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
+          sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
+        }),
+      )
+      const records = new Map<string, StoredIntent>()
+      let closure: ExecutionCycleClosure | undefined
+      let residualBinds = 0
+      let freshReads = 0
+      const store: ExecutionCycleClosureStoreShape = {
+        read: () => Effect.sync(() => Option.fromUndefinedOr(closure)),
+        readLatestReplan: () => Effect.succeed(Option.none()),
+        bind: (value) =>
+          Effect.sync(() => {
+            closure = value
+            return value
+          }),
+        bindReplan: (value) =>
+          Effect.sync(() => {
+            residualBinds += 1
+            return value
+          }),
+        containsIntent: () => Effect.succeed(true),
+      }
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
+          const before = yield* currentUtcInstant
+          const initial = yield* ensureExecutionCycleClosure({
+            ...request,
+            input: { ...request.input, executionCycleClosureStore: store },
+            closeWindow,
+            reconcile: Effect.succeed(factsAt(before, true)),
+            refreshReconciliation: Effect.die('an uncommitted close has no terminal evidence to refresh'),
+            existing: undefined,
+          })
+          if (initial._tag !== 'Close' || closure === undefined) throw new Error('missing committed close fixture')
+          yield* TestClock.adjust(1_000)
+          const terminalAt = yield* currentUtcInstant
+          for (const [document, terminalOutcome] of [
+            [request.entryDocument, TerminalOutcome.Filled],
+            [initial.document, scenario === 'denied' ? TerminalOutcome.Rejected : TerminalOutcome.Filled],
+          ] as const) {
+            const authority = factsAt(document.createdAt).riskContext.authority
+            if (authority === null) throw new Error('missing fixture authority')
+            for (const [index, target] of document.targetPlan.intentTargets.entries()) {
+              const risk = document.deltaRisk[index]
+              if (risk === undefined) throw new Error('missing fixture risk binding')
+              const intent = yield* planExecutionIntent(
+                {
+                  schemaVersion: 'bayn.paper-intent-plan.v1',
+                  ...target,
+                  notionalLimitMicros: risk.notionalLimitMicros,
+                  createdAt: document.createdAt,
+                },
+                { authority },
+              )
+              records.set(intent.intentId, {
+                intent: {
+                  ...intent,
+                  state: IntentState.Terminal,
+                  terminalOutcome,
+                  riskDecisionId: risk.evaluation.decision.decisionId,
+                },
+                decision: risk.evaluation.decision,
+                stateVersion: 5,
+                updatedAt: terminalAt,
+              })
+            }
+          }
+          expect(records.size).toBe(2)
+          const fresh = factsAt(scenario === 'older-cut' ? before : terminalAt)
+          const refreshReconciliation = Effect.suspend(() => {
+            freshReads += 1
+            if (scenario === 'failed-refresh')
+              return Effect.fail(
+                new BrokerReadError({
+                  operation: 'preflight',
+                  kind: BrokerReadErrorKind.Transport,
+                  message: 'synthetic terminal-close refresh unavailable',
+                  retryable: true,
+                }),
+              )
+            return Effect.succeed(
+              scenario === 'unknown'
+                ? { ...fresh, riskContext: { ...fresh.riskContext, unknownMutationCount: 1 } }
+                : fresh,
+            )
+          })
+          const recoverClose = ensureExecutionCycleClosure({
+            ...request,
+            input: { ...request.input, executionCycleClosureStore: store },
+            closeWindow,
+            reconcile: Effect.succeed(factsAt(before, true)),
+            refreshReconciliation,
+            existing: closure,
+          })
+          for (let pass = 0; pass < 2; pass++) {
+            const result = yield* Effect.exit(recoverClose)
+            if (scenario === 'failed-refresh') expect(Exit.isFailure(result)).toBe(true)
+            else {
+              if (Exit.isFailure(result)) throw new Error('terminal close fixture unexpectedly failed')
+              expect(result.value._tag).toBe(scenario === 'filled' || scenario === 'denied' ? 'Complete' : 'Wait')
+            }
+            expect(freshReads).toBe(pass + 1)
+            expect(residualBinds).toBe(0)
+            expect(records.size).toBe(2)
+          }
+        }).pipe(
+          Effect.provideService(IntentStore, {
+            read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
+            commit: () => Effect.die('terminal close must not commit another intent'),
+            commitClosing: () => Effect.die('terminal close must not commit another close'),
+          }),
+          Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+    },
+  )
+
   test('current Jev residual close selects a fresh intent after terminal broker expiry', async () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
