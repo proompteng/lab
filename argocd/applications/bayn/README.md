@@ -1,5 +1,57 @@
 # Bayn GitOps rollout notes
 
+## Research storage foundation
+
+The private `bayn-research` bucket retains research captures under `captures/v1/`. Rook creates a dedicated RGW account
+and one `bayn-research-capture` application user. Its account-root credential stays in `rook-ceph` and is mounted only
+by the storage bootstrap hook. The root has no cluster-administration capabilities or authority over existing accounts.
+Bayn receives only the generated application credential through the reflected Secret of the same name. Barman's
+`cnpg-bayn-db` credentials and Kafka identities are unchanged.
+
+The application identity policy permits `GetObject` and single-request `PutObject` only on the capture prefix.
+Every upload must explicitly send `ACL=private` and omit all `x-amz-grant-*` headers. The policy denies every other
+action globally, including `ListBuckets`, bucket listing, deletion, and policy administration. It also denies
+reads and writes outside the prefix, missing or non-private ACLs, explicit ACL grants, and multipart initiation.
+Ceph 20.2.4 does not expose ACL condition keys for multipart initiation, so that operation fails closed.
+An exporter must honor this single-request private-upload contract.
+
+The `rook-ceph` Sync hook creates the bucket under the dedicated account, sets its ACL to private, enables all four
+S3 public-access-block flags, applies the application identity policy, and verifies both configurations by readback.
+It uses retained synthetic fixtures at `captures/v1/_permission-probe/storage-v1.txt` and
+`_permission-probe/outside-prefix.txt`. The owner first proves that the outside-prefix fixture exists and is readable.
+The application credential then proves an exact SHA-256 upload/readback round trip and requires `AccessDenied` for
+global and bucket listing, deletion, policy inspection, outside-prefix reads and writes, public ACL uploads, explicit
+grants, uploads without a private ACL, multipart initiation, and anonymous reads. An unexpected success or a network
+error fails the hook. A final read proves the in-prefix fixture survived. Retries replace only these synthetic fixtures.
+The hook has no code path to delete capture data. Rook's global OBC bucket-policy feature remains disabled.
+
+The `bayn-research-storage` ConfigMap records the bucket, prefix, and service endpoint. The new capture egress allowance
+selects execution-controller pods and permits `objectstore` RGW pods in `rook-ceph` on TCP 8080, the target of service port 80.
+The bootstrap hook has its own RGW and DNS egress and no Kubernetes service-account token. Required Secret key
+projections hold the hook until both operator-generated credential pairs exist. No application Secret mount or
+collection flag is enabled by this storage change.
+
+The existing two-instance `bayn-db` cluster requests 100Gi per replica through `rook-ceph-block` online expansion.
+The two existing PVCs and their data are retained. **The volumes cannot shrink back to 10Gi in place.**
+Before rollout, confirm the shared Ceph pools have capacity and all PGs are active and clean. Apply the reviewed
+`bootstrap` ApplicationSet change before the `rook-ceph` sync so Argo preserves the Rook-managed Secret fields.
+Bayn uses its normal Kargo promotion. After convergence, verify the hook log, both PVC capacities, both mounted
+filesystem sizes, and synchronous replication:
+
+```sh
+kubectl logs -n rook-ceph job/bayn-research-storage-bootstrap
+kubectl get pvc -n bayn bayn-db-1 bayn-db-2
+kubectl exec -n bayn bayn-db-1 -c postgres -- df -B1 /var/lib/postgresql/data
+kubectl exec -n bayn bayn-db-2 -c postgres -- df -B1 /var/lib/postgresql/data
+kubectl get cluster -n bayn bayn-db -o jsonpath='{.status.currentPrimary}{" "}{.status.readyInstances}{"\n"}'
+```
+
+Query `pg_stat_replication` on the reported primary and require the second instance to be `streaming`, with
+`sync_state` of `sync` or `quorum`, and included in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`.
+Keep collection disabled until export integrity and sustained capacity qualification pass. A storage or permission
+failure blocks collection; it does not change strategy, broker, or capital authority. Recover through reviewed GitOps
+without pruning the account, bucket, credentials, database cluster, or PVCs. Retain the expanded size during a code rollback.
+
 ## Jev protocol activation
 
 The active implementation uses `bayn.jev.protocol.v1` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol

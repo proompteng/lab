@@ -1083,6 +1083,9 @@ mod tests {
         assert_eq!(container.working_dir.as_deref(), Some("/home/nanoagent"));
         let resources = container.resources.as_ref().expect("resources");
         assert_eq!(resources.requests, resources.limits);
+        let requests = resources.requests.as_ref().expect("resource requests");
+        assert_eq!(requests["cpu"], Quantity("4000m".to_owned()));
+        assert_eq!(requests["memory"], Quantity("8192Mi".to_owned()));
         let security = container.security_context.as_ref().expect("security");
         assert_eq!(security.allow_privilege_escalation, Some(true));
         assert_eq!(security.privileged, Some(false));

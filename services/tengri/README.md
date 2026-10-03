@@ -4,6 +4,12 @@ Tengri is the standalone Rust owner of `runtime.proompteng.ai/v1alpha1 MicroVM` 
 authenticated internal gRPC calls, derives one deterministic MicroVM name per GitHub subject, and projects each CR into
 a `kata-fc` Pod with guest administrator access and a 16 GiB persistent home PVC.
 
+New guests receive 4 vCPU and 8 GiB memory. Retained 2 vCPU/4 GiB guests keep their running processes until sleep or
+another boundary with no running owned guest. The controller then upgrades the resource profile before creating the
+next Pod, preserving the MicroVM and home PVC. Admission permits only this complete one-way profile upgrade; CPU-only,
+memory-only, workspace changes, and downgrades remain rejected. The namespace quota accommodates six guests plus
+Kata overhead and the controller.
+
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
 

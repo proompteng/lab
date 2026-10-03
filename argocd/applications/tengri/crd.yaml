@@ -68,12 +68,14 @@ spec:
                 properties:
                   cpuMillis:
                     enum:
+                    - 4000
                     - 2000
                     format: uint32
                     minimum: 0.0
                     type: integer
                   memoryMib:
                     enum:
+                    - 8192
                     - 4096
                     format: uint32
                     minimum: 0.0
@@ -89,6 +91,11 @@ spec:
                 - memoryMib
                 - workspaceGib
                 type: object
+                x-kubernetes-validations:
+                - message: CPU and memory must use the complete 4 CPU/8 GiB or legacy 2 CPU/4 GiB profile
+                  rule: >-
+                    (self.cpuMillis == 4000 && self.memoryMib == 8192) || (self.cpuMillis == 2000
+                    && self.memoryMib == 4096)
             required:
             - architecture
             - createdAt
@@ -190,8 +197,14 @@ spec:
           rule: self.spec.ownerHash == oldSelf.spec.ownerHash
         - message: the server-selected architecture is immutable
           rule: self.spec.architecture == oldSelf.spec.architecture
-        - message: the v1 resource profile is immutable
-          rule: self.spec.resources == oldSelf.spec.resources
+        - message: >-
+            resources may only upgrade from 2 CPU/4 GiB to 4 CPU/8 GiB with the same
+            workspace
+          rule: >-
+            self.spec.resources == oldSelf.spec.resources ||
+            (oldSelf.spec.resources.cpuMillis == 2000 && oldSelf.spec.resources.memoryMib == 4096 &&
+            self.spec.resources.cpuMillis == 4000 && self.spec.resources.memoryMib == 8192 &&
+            self.spec.resources.workspaceGib == oldSelf.spec.resources.workspaceGib)
         - message: creation and legacy expiry fields are immutable
           rule: >-
             self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt ==

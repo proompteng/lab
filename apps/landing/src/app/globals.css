@@ -70,7 +70,7 @@
         -webkit-background-clip: text;
         background-clip: text;
         color: transparent;
-        animation: tengri-thinking-shimmer 2s linear infinite;
+        animation: tengri-thinking-shimmer 1s linear infinite;
       }
     }
   }

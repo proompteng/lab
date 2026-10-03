@@ -2,8 +2,10 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const CPU_MILLIS: u32 = 2_000;
-pub const MEMORY_MIB: u32 = 4_096;
+pub const CPU_MILLIS: u32 = 4_000;
+pub const MEMORY_MIB: u32 = 8_192;
+pub const LEGACY_CPU_MILLIS: u32 = 2_000;
+pub const LEGACY_MEMORY_MIB: u32 = 4_096;
 pub const WORKSPACE_GIB: u32 = 16;
 pub const IDLE_MINUTES: i64 = 60;
 // Retained for source compatibility with callers that still construct legacy
@@ -68,6 +70,14 @@ pub struct MicroVMResources {
     pub cpu_millis: u32,
     pub memory_mib: u32,
     pub workspace_gib: u32,
+}
+
+impl MicroVMResources {
+    pub fn is_legacy_profile(&self) -> bool {
+        self.cpu_millis == LEGACY_CPU_MILLIS
+            && self.memory_mib == LEGACY_MEMORY_MIB
+            && self.workspace_gib == WORKSPACE_GIB
+    }
 }
 
 impl Default for MicroVMResources {
@@ -143,8 +153,8 @@ mod tests {
 
     #[test]
     fn v1_resource_profile_is_fixed() {
-        assert_eq!(MicroVMResources::default().cpu_millis, 2_000);
-        assert_eq!(MicroVMResources::default().memory_mib, 4_096);
+        assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
+        assert_eq!(MicroVMResources::default().memory_mib, 8_192);
         assert_eq!(MicroVMResources::default().workspace_gib, 16);
     }
 
