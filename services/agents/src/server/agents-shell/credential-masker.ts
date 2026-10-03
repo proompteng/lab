@@ -102,7 +102,7 @@ export class CredentialMasker {
         { regex: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/g, kind: 'pem' },
         {
           regex:
-            /(["']?)\b(?:Authorization|Proxy-Authorization)["']?[\t ]*[:=][\t ]*(["']?)(?:[A-Za-z][A-Za-z0-9_-]*[\t ]+(?=\S))?/gi,
+            /(["']?)\b(?:Authorization|Proxy-Authorization)["']?[\t ]*[:=][\t ]*(["']?)(?:(?:Bearer|Basic|Token|Negotiate|Digest|Signature|OAuth|HOBA|Mutual|AWS4-HMAC-SHA256|SCRAM-SHA-256|SCRAM-SHA-1)[\t ]+(?=[^\s"'`,;)}\]]))?/gi,
           kind: 'header',
         },
         { regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:(?=[^\s/@]*@)/gi, kind: 'url' },

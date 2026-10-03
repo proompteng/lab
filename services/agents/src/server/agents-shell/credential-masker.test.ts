@@ -3,6 +3,11 @@ import { CredentialMasker, maskCredentialValues } from './credential-masker'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
+  [
+    '{"Authorization":"synthetic-test-secret ","ordinary":"next-line"}',
+    `{"Authorization":"${marker}","ordinary":"next-line"}`,
+  ],
+  ['Authorization: CustomScheme synthetic-test-secret\nnext', `Authorization: ${marker}\nnext`],
   ['Authorization: synthetic-test-secret \nordinary-next-line', `Authorization: ${marker}\nordinary-next-line`],
   [
     'Authorization: Token synthetic-test-secret\\\nordinary-next-line',
