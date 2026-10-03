@@ -6,6 +6,7 @@ resources:
   - clickhouse-secret.yaml
   - alpaca-sealedsecret.yaml
   - objectbucketclaim.yaml
+  - research-storage.yaml
   - postgres-objectstore.yaml
   - postgres-cluster.yaml
   - postgres-monitoring.yaml
