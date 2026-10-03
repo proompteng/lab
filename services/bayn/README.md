@@ -409,7 +409,8 @@ recovery behavior, and evidence boundaries.
 The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
 does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
 required for archive health and evidence reads; this separation does not alter broker, authority, risk or provenance
-configuration.
+configuration. The three live manifests omit all eight historical settings below; a running service container does
+not supply a historical report context implicitly.
 
 The read-only forward-performance command has an explicit historical snapshot configuration in addition to its
 account-bound runtime configuration. Supply all eight settings from the intended immutable daily publication, even
@@ -433,9 +434,11 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-For upgrades from a binary that still requires daily snapshot settings at live startup, publish and select the new
-binary before removing those settings from service, controller and activation manifests. Before rolling back to such
-an older binary, restore all eight manifest settings first. No database migration or evidence rewrite is involved.
+The live manifests require a binary with this configuration separation. For upgrades from a binary that still
+requires daily snapshot settings at live startup, publish and select the new binary before removing those settings.
+Before rolling back to such an older binary, restore all eight settings in each of the service, execution-controller
+and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
+the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
 
 ### Private inference operating-cost report
 
