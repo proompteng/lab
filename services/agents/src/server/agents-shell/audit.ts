@@ -1,122 +1,71 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { createHash } from 'node:crypto'
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { auditPayloadBudget } from './audit-budget'
+import { BoundedAuditWriter } from './audit-writer'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
-
 export type ToolAuditContext = { requestId: string; toolCallId: string; tool: string }
-
 export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
-const MAX_PAYLOAD_BYTES = 12_000
-const OMITTED_FIELDS = new Set([
-  'arguments',
-  'args',
-  'command',
-  'stdout',
-  'stderr',
-  'content',
-  'path',
-  'cwd',
-  'changedFiles',
-  'branch',
-  'baseBranch',
-  'headBranch',
-  'worktree',
-  'agentRunName',
-  'task',
-  'acceptanceCriteria',
-  'patch',
-  'stdin',
-  '_meta',
-])
-const NUMBER_FIELDS = new Set([
-  'durationMs',
-  'exitCode',
-  'timeoutSeconds',
-  'stdoutBytes',
-  'stderrBytes',
-  'bytes',
-  'ahead',
-  'behind',
-  'stdoutRetentionStartByte',
-  'stderrRetentionStartByte',
-  'stdoutNextOffset',
-  'stderrNextOffset',
-])
-const BOOLEAN_FIELDS = new Set([
-  'authorized',
-  'ok',
-  'timedOut',
-  'stdoutTruncated',
-  'stderrTruncated',
-  'truncated',
-  'dirty',
-])
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const OUTCOMES = new Set(['succeeded', 'failed', 'running', 'error'])
-const STATUSES = new Set(['running', 'exited', 'killed', 'timed_out'])
+// An explicit Writable sink gives every event family real, bounded backpressure in Node and Bun.
+export const auditStdout = { write: (line: string) => process.stdout.write(line) }
+const stdoutWriter = new BoundedAuditWriter(process.stdout, (line) => auditStdout.write(line))
+export const flushAuditLog = () => stdoutWriter.flush()
+let sinkWarningEmitted = false
 
-export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
-  let remaining = MAX_PAYLOAD_BYTES
-  let truncated = false
-  const charge = (value: unknown) => {
-    remaining -= Buffer.byteLength(JSON.stringify(value))
+// A process-private signature distinguishes our emitted frames from ordinary JSON printed by a command.
+const frameKey = randomBytes(32)
+const signFrame = (frame: unknown) => createHmac('sha256', frameKey).update(JSON.stringify(frame)).digest('hex')
+export const isOwnAuditFrame = (line: string) => {
+  try {
+    const start = line.indexOf('{')
+    if (start < 0) return false
+    const { frameSignature, ...frame } = JSON.parse(line.slice(start))
+    return (
+      frame.msg === 'agents-shell audit' &&
+      frame.schemaVersion === 2 &&
+      typeof frameSignature === 'string' &&
+      frameSignature === signFrame(frame)
+    )
+  } catch {
+    return false
+  }
+}
+
+// Admission bounds traversal before copying. Operational values are exported verbatim.
+export const prepareAuditPayload = (payload: Record<string, unknown>) => {
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value))
+      return Array.from({ length: value.length }, (_, index) =>
+        visit(Object.getOwnPropertyDescriptor(value, String(index))?.value),
+      )
+    if (value !== null && typeof value === 'object')
+      return Object.fromEntries(
+        Object.keys(value)
+          .filter((name) => name !== '_meta')
+          .map((name) => [name, visit(Object.getOwnPropertyDescriptor(value, name)?.value)]),
+      )
     return value
   }
-  const metadata = (value: Record<string, unknown>, depth: number): Record<string, unknown> => {
-    if (depth > 4 || remaining <= 0) {
-      truncated = true
-      return {}
+  return { payload: visit(payload) as Record<string, unknown>, payloadTruncated: false, maskedValues: 0 }
+}
+
+// Split by code points before serialization. Even all-control-character input remains below 16 KiB per frame.
+export const auditFragments = (text: string) => {
+  const fragments: string[] = []
+  let fragment = ''
+  for (const char of text) {
+    if (fragment.length + char.length > 1800) {
+      fragments.push(fragment)
+      fragment = ''
     }
-    const result: Record<string, unknown> = {}
-    const entries = Object.entries(value)
-    for (const [key, item] of entries.slice(0, 30)) {
-      if (remaining <= 0) {
-        truncated = true
-        break
-      }
-      let retained: unknown
-      if (OMITTED_FIELDS.has(key)) retained = '[OMITTED]'
-      else if (NUMBER_FIELDS.has(key) && (item === null || (typeof item === 'number' && Number.isFinite(item))))
-        retained = item
-      else if (BOOLEAN_FIELDS.has(key) && typeof item === 'boolean') retained = item
-      else if (key === 'result' && item !== null && typeof item === 'object' && !Array.isArray(item))
-        retained = metadata(item as Record<string, unknown>, depth + 1)
-      else if (key === 'jobs' && Array.isArray(item)) {
-        retained = item
-          .slice(0, 20)
-          .flatMap((job) =>
-            job !== null && typeof job === 'object' && !Array.isArray(job)
-              ? [metadata(job as Record<string, unknown>, depth + 1)]
-              : [],
-          )
-        if (item.length > 20) truncated = true
-      } else if (typeof item === 'string') {
-        if ((key === 'jobId' || key === 'sessionId') && UUID.test(item)) retained = item
-        else if ((key === 'baseSha' || key === 'headSha') && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(item))
-          retained = item
-        else if (key === 'outcome' && OUTCOMES.has(item)) retained = item
-        else if (key === 'status' && STATUSES.has(item)) retained = item
-        else if (key === 'signal' && /^SIG[A-Z0-9]{1,8}$/.test(item)) retained = item
-        else if (
-          /^(?:startedAt|finishedAt|createdAt|closedAt)$/.test(key) &&
-          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(item) &&
-          Number.isFinite(Date.parse(item))
-        )
-          retained = item
-      } else if (item === null && (key === 'signal' || key === 'finishedAt')) retained = null
-      if (retained !== undefined) {
-        charge(key)
-        result[key] = key === 'result' || key === 'jobs' ? retained : charge(retained)
-      }
-    }
-    if (entries.length > 30) truncated = true
-    return result
+    fragment += char
   }
-  return { payload: metadata(payload, 0), payloadTruncated: truncated }
+  if (fragment || !fragments.length) fragments.push(fragment)
+  return fragments
 }
 
 export const writeAuditLog = (
@@ -126,26 +75,79 @@ export const writeAuditLog = (
   payload: Record<string, unknown>,
   context = toolAuditContext.getStore() ?? null,
 ) => {
-  const sanitized = sanitizeAuditPayload(payload)
-  const line = JSON.stringify({
+  const sourceBudget = auditPayloadBudget(payload)
+  let prepared = { payload: {} as Record<string, unknown>, payloadTruncated: true, maskedValues: 0 }
+  let budget = sourceBudget
+  if (sourceBudget.accepted) {
+    try {
+      prepared = prepareAuditPayload(payload)
+      budget = auditPayloadBudget(prepared.payload)
+    } catch {
+      budget = { ...sourceBudget, accepted: false, reason: 'payload_preparation_failed' }
+    }
+  }
+  const captureIncomplete = !budget.accepted
+  if (captureIncomplete)
+    prepared.payload = {
+      captureIncomplete: true,
+      rejection: budget,
+      originalResultUnchanged: true,
+      retrieval: 'Original MCP result and existing authorized retention are unchanged',
+    }
+
+  const envelope = {
     msg: 'agents-shell audit',
-    schemaVersion: 1,
+    schemaVersion: 2,
+    eventId: randomUUID(),
     ts: new Date().toISOString(),
     event,
     ...context,
     subjectHash: auth?.subject ? createHash('sha256').update(auth.subject).digest('hex') : null,
-    ...sanitized,
-  })
-  try {
-    console.log(line)
-  } catch {
-    console.warn('[agents-shell] stdout audit write failed')
+    ...Object.fromEntries(
+      ['jobId', 'sessionId', 'agentId', 'stream', 'sequence', 'byteStart', 'byteEnd']
+        .filter((key) => {
+          const value = prepared.payload[key]
+          return typeof value === 'string' ? value.length <= 256 : typeof value === 'number' && Number.isFinite(value)
+        })
+        .map((key) => [key, prepared.payload[key]]),
+    ),
+    payloadTruncated: captureIncomplete,
+    captureIncomplete,
+    maskedValues: prepared.maskedValues,
   }
-  if (!config.auditLogPath) return
-  try {
-    mkdirSync(dirname(config.auditLogPath), { recursive: true })
-    appendFileSync(config.auditLogPath, `${line}\n`)
-  } catch {
-    console.warn('[agents-shell] file audit write failed')
+  const encoded = JSON.stringify(prepared.payload)
+  const payloadBytes = Buffer.byteLength(encoded)
+  const frames =
+    payloadBytes <= 12_000
+      ? [{ ...envelope, payload: prepared.payload }]
+      : auditFragments(encoded).map((payloadFragment, fragmentIndex, fragments) => ({
+          ...envelope,
+          payloadFragment,
+          fragmentIndex,
+          fragmentCount: fragments.length,
+          payloadBytes,
+        }))
+  const lines = frames.map((frame) => `${JSON.stringify({ ...frame, frameSignature: signFrame(frame) })}\n`)
+  let sinkErrors = stdoutWriter.enqueue(lines) + Number(captureIncomplete)
+  for (const line of lines) {
+    if (config.auditLogPath) {
+      try {
+        mkdirSync(dirname(config.auditLogPath), { recursive: true })
+        appendFileSync(config.auditLogPath, line, { mode: 0o600 })
+      } catch {
+        sinkErrors += 1
+      }
+    }
   }
+  if (sinkErrors && !sinkWarningEmitted) {
+    sinkWarningEmitted = true
+    console.warn(
+      JSON.stringify({
+        msg: 'agents-shell audit sink failure; further failures are counted in MCP audit metadata',
+        eventId: envelope.eventId,
+        sinkErrors,
+      }),
+    )
+  }
+  return sinkErrors
 }
