@@ -30,6 +30,13 @@ const dockerfileTarget = (target: string) => {
 }
 
 describe('Agents control-plane image layout', () => {
+  it('disables the unrotated optional audit file in both chart and production defaults', () => {
+    for (const path of ['charts/agents/values.yaml', 'argocd/applications/agents/values.yaml']) {
+      const content = readFileSync(new URL(`../../../../../${path}`, import.meta.url), 'utf8')
+      expect(content).toMatch(/AGENTS_SHELL_AUDIT_LOG_PATH:\s*(?:''|"")/)
+    }
+  })
+
   it('builds the Agents service for the control-plane target', () => {
     const content = dockerfileTarget('control-plane')
 

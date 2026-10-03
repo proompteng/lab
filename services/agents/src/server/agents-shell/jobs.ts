@@ -9,7 +9,9 @@ export type ShellJobStatus = 'running' | 'exited' | 'killed' | 'timed_out'
 export type OutputTail = {
   totalBytes: number
   truncated: boolean
-  buffer: Buffer
+  storage: Buffer
+  start: number
+  length: number
 }
 
 export type ShellJob = {
@@ -93,7 +95,7 @@ export class ShellJobStore {
   prune() {
     // Running jobs are never evicted. Completed histories have an explicit bounded lifetime.
     let bytes = Array.from(this.jobs.values()).reduce(
-      (total, job) => total + job.stdout.buffer.length + job.stderr.buffer.length,
+      (total, job) => total + job.stdout.storage.length + job.stderr.storage.length,
       0,
     )
     for (const [id, job] of this.jobs) {
@@ -104,23 +106,65 @@ export class ShellJobStore {
         Date.now() - Date.parse(job.finishedAt) < 60 * 60 * 1000
       )
         continue
-      bytes -= job.stdout.buffer.length + job.stderr.buffer.length
+      bytes -= job.stdout.storage.length + job.stderr.storage.length
       this.jobs.delete(id)
     }
   }
 }
 
-export const tail = (): OutputTail => ({ totalBytes: 0, truncated: false, buffer: Buffer.alloc(0) })
+export const tail = (): OutputTail => ({
+  totalBytes: 0,
+  truncated: false,
+  storage: Buffer.alloc(0),
+  start: 0,
+  length: 0,
+})
+
+const copyRetained = (output: OutputTail, start: number, end: number, target: Buffer) => {
+  if (end <= start) return
+  const index = (output.start + start) % output.storage.length
+  const first = Math.min(end - start, output.storage.length - index)
+  if (first > 0) output.storage.copy(target, 0, index, index + first)
+  if (first < end - start) output.storage.copy(target, first, 0, end - start - first)
+}
+const byteAt = (output: OutputTail, index: number) => output.storage[(output.start + index) % output.storage.length]
 
 export const appendTail = (output: OutputTail, chunk: Buffer, maxBytes: number) => {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+    throw new RangeError('retention budget must be a nonnegative safe integer')
   output.totalBytes += chunk.length
-  const merged = Buffer.concat([output.buffer, chunk])
-  if (merged.length > maxBytes) {
-    output.buffer = merged.subarray(merged.length - maxBytes)
-    output.truncated = true
+  if (maxBytes <= 0) {
+    output.storage = Buffer.alloc(0)
+    output.start = 0
+    output.length = 0
+    output.truncated = output.totalBytes > 0
     return
   }
-  output.buffer = merged
+  // Grow geometrically only when necessary; sustained output copies only the incoming retained bytes.
+  const required = Math.min(maxBytes, output.length + chunk.length)
+  if (output.storage.length < required || output.storage.length > maxBytes) {
+    const storage = Buffer.allocUnsafe(Math.min(maxBytes, Math.max(required, output.storage.length * 2, 65_536)))
+    const retained = Math.min(output.length, storage.length)
+    copyRetained(output, output.length - retained, output.length, storage)
+    output.storage = storage
+    output.start = 0
+    output.length = retained
+  }
+  if (chunk.length >= maxBytes) {
+    chunk.copy(output.storage, 0, chunk.length - maxBytes)
+    output.start = 0
+    output.length = maxBytes
+  } else if (chunk.length > 0) {
+    const evicted = Math.max(0, output.length + chunk.length - maxBytes)
+    output.start = (output.start + evicted) % output.storage.length
+    output.length -= evicted
+    const index = (output.start + output.length) % output.storage.length
+    const first = Math.min(chunk.length, output.storage.length - index)
+    chunk.copy(output.storage, index, 0, first)
+    if (first < chunk.length) chunk.copy(output.storage, 0, first)
+    output.length += chunk.length
+  }
+  output.truncated ||= output.totalBytes > output.length
 }
 
 export const outputFromOffset = (
@@ -130,31 +174,33 @@ export const outputFromOffset = (
   encoding: 'utf8' | 'base64' = 'utf8',
   final = true,
 ) => {
-  const retentionStart = Math.max(0, output.totalBytes - output.buffer.length)
+  const retentionStart = Math.max(0, output.totalBytes - output.length)
   const requestedOffset = offset ?? Math.max(retentionStart, output.totalBytes - maxBytes)
-  let start = Math.min(output.buffer.length, Math.max(0, requestedOffset - retentionStart))
-  let end = Math.min(output.buffer.length, start + maxBytes)
+  let start = Math.min(output.length, Math.max(0, requestedOffset - retentionStart))
+  let end = Math.min(output.length, start + maxBytes)
   // Never introduce a replacement character by splitting a valid UTF-8 code point.
   // Base64 is available when exact arbitrary bytes, including invalid UTF-8, matter.
   if (encoding === 'utf8') {
-    while (start < end && (output.buffer[start] & 0xc0) === 0x80) start += 1
-    if (end < output.buffer.length) {
-      while (end > start && (output.buffer[end] & 0xc0) === 0x80) end -= 1
+    while (start < end && (byteAt(output, start) & 0xc0) === 0x80) start += 1
+    if (end < output.length) {
+      while (end > start && (byteAt(output, end) & 0xc0) === 0x80) end -= 1
     } else if (!final && end > start) {
       let lead = end - 1
-      while (lead > start && (output.buffer[lead] & 0xc0) === 0x80) lead -= 1
-      const byte = output.buffer[lead]
+      while (lead > start && (byteAt(output, lead) & 0xc0) === 0x80) lead -= 1
+      const byte = byteAt(output, lead)
       const width =
         byte >= 0xf0 && byte <= 0xf4 ? 4 : byte >= 0xe0 && byte <= 0xef ? 3 : byte >= 0xc2 && byte <= 0xdf ? 2 : 1
       if (end - lead < width) end = lead
     }
   }
+  const page = Buffer.allocUnsafe(end - start)
+  copyRetained(output, start, end, page)
   return {
-    text: output.buffer.subarray(start, end).toString(encoding),
+    text: page.toString(encoding),
     retentionStartByte: retentionStart,
     startOffset: retentionStart + start,
     nextOffset: retentionStart + end,
-    hasMore: end < output.buffer.length && end > start,
+    hasMore: end < output.length && end > start,
     truncatedBeforeOffset: requestedOffset < retentionStart || (offset === null && start > 0),
   }
 }
