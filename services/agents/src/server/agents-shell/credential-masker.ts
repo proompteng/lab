@@ -1,8 +1,10 @@
 // Only credential values are masked. Ordinary arguments, source, paths and output remain visible.
-const credentialEnv =
-  /(?:^|_)(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|CREDENTIALS?)$|^AWS_SECRET_ACCESS_KEY$/i
+export const credentialEnv =
+  /(?:^|_)(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY|AUTHORIZATION|CREDENTIALS?)$/i
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const marker = '[REDACTED_CREDENTIAL]'
+export const credentialOptionNames =
+  'password|passwd|token|api-key|client-secret|oauth2-bearer|access-token|refresh-token|id-token|private-key|secret-access-key|secret-key|session-token|auth-token|reconnect-token|github-token|db-password|admin-password|nats-password|discord-bot-token|bot-token|github-webhook-secret|linear-webhook-secret|webhook-secret'
 
 type ValueState = { terminator: string | null; escaped: boolean; privateKey: boolean }
 
@@ -86,13 +88,14 @@ export class CredentialMasker {
         // Keep incomplete value introducers, not an arbitrary prefix of a credential context.
         // This also distinguishes URL userinfo from an ordinary host:port URL.
         const incomplete = [
-          /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY)\s*(?:=\s*)?$/i,
+          new RegExp(`--(?:${credentialOptionNames})\\b[\\t ]*(?:=[\\t ]*)?$`, 'i'),
+          /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY)\s*(?:=\s*)?$/i,
           /\b(?:Set-Cookie|Cookie)["']?[\t ]*[:=][\t ]*["']?$/i,
           /(?:--user(?:=|\s+)|-u\s*)[^\s:]*$/i,
           /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*$/i,
           /(?:--token\b|["']token["'])\s*(?:[:=]\s*)?$/i,
-          /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key)["']?\s*(?:[:=]\s*)?$/i,
-          /\b(?:Authorization|Proxy-Authorization)["']?[\t ]*[:=][\t ]*["']?(?:[A-Za-z][A-Za-z0-9_-]*[\t ]*)?$/i,
+          /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret)["']?\s*(?:[:=]\s*)?$/i,
+          /\b(?:Authorization|Proxy-Authorization|HTTP_AUTHORIZATION|PROXY_AUTHORIZATION)["']?[\t ]*(?:[:=][\t ]*["']?(?:[A-Za-z][A-Za-z0-9_-]*[\t ]*)?)?$/i,
         ].flatMap((pattern) => {
           const match = pattern.exec(this.pending)
           return match ? [match.index] : []
@@ -108,27 +111,27 @@ export class CredentialMasker {
         { regex: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/g, kind: 'pem' },
         {
           regex:
-            /(["']?)\b(?:Authorization|Proxy-Authorization)["']?[\t ]*[:=][\t ]*(["']?)(?:(?:Bearer|Basic|Token|Negotiate|Digest|Signature|OAuth|HOBA|Mutual|AWS4-HMAC-SHA256|SCRAM-SHA-256|SCRAM-SHA-1)[\t ]+(?=[^\s"'`,;)}\]]))?/gi,
+            /(["']?)\b(?:Authorization|Proxy-Authorization|HTTP_AUTHORIZATION|PROXY_AUTHORIZATION)["']?[\t ]*[:=][\t ]*(["']?)(?:(?:Bearer|Basic|Token|Negotiate|Digest|Signature|OAuth|HOBA|Mutual|AWS4-HMAC-SHA256|SCRAM-SHA-256|SCRAM-SHA-1)[\t ]+(?=[^\s"'`,;)}\]]))?/gi,
           kind: 'header',
         },
         { regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:(?=[^\s/@]*@)/gi, kind: 'url' },
         { regex: /[?&](?:token|access_token|refresh_token|api_key|apikey|password|secret)=(["']?)/gi, kind: 'query' },
         {
           regex:
-            /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key)\b["']?\s*[:=]\s*(["']?)/gi,
+            /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret)\b["']?\s*[:=]\s*(["']?)/gi,
           kind: 'assignment',
         },
         {
-          regex: /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY)\s*=\s*(["']?)/gi,
+          regex:
+            /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY)\s*=\s*(["']?)/gi,
           kind: 'assignment',
         },
         { regex: /\b(?:gh[pousr]_[A-Za-z0-9]|github_pat_[A-Za-z0-9]|xox[baps]-[A-Za-z0-9])/g, kind: 'format' },
       ]
       patterns.push({ regex: /["'](?:token|secret)["']\s*:\s*(["'])/gi, kind: 'assignment' })
-      patterns.push({ regex: /\bAWS_SECRET_ACCESS_KEY\s*=\s*(["']?)/g, kind: 'assignment' })
       patterns.push({ regex: /(?:--user(?:=|\s+)|-u\s*)(["']?)[^\s:"']+:/g, kind: 'value' })
       patterns.push({
-        regex: /--(?:password|passwd|token|api-key|client-secret|oauth2-bearer)\b(?:[\t ]*=[\t ]*|[\t ]+)(["']?)/gi,
+        regex: new RegExp(`--(?:${credentialOptionNames})\\b(?:[\\t ]*=[\\t ]*|[\\t ]+)(["']?)`, 'gi'),
         kind: 'assignment',
       })
       let found: { index: number; text: string; kind: string; quote?: string } | null = null
@@ -211,5 +214,13 @@ export const credentialValuesFromEnv = (env: NodeJS.ProcessEnv = process.env) =>
 
 export const maskCredentialValues = (value: string, secrets?: string[]) => {
   const masker = new CredentialMasker(secrets)
-  return { text: masker.write(value, true), maskedValues: masker.maskedValues }
+  const chunks: string[] = []
+  for (let offset = 0; offset < value.length; ) {
+    let end = Math.min(value.length, offset + 4096)
+    if (end < value.length && /[\uD800-\uDBFF]/.test(value[end - 1])) end -= 1
+    chunks.push(masker.write(value.slice(offset, end)))
+    offset = end
+  }
+  chunks.push(masker.write('', true))
+  return { text: chunks.join(''), maskedValues: masker.maskedValues }
 }

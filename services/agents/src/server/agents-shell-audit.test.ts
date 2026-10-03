@@ -159,6 +159,119 @@ describe('complete operational activity export', () => {
     })
   })
 
+  it('masks the explicit structured credential table while preserving references', () => {
+    const names = [
+      'accessToken',
+      'refresh_token',
+      'idToken',
+      'api-key',
+      'clientSecret',
+      'privateKey',
+      'HTTP_AUTHORIZATION',
+      'PROXY_AUTHORIZATION',
+      'secretAccessKey',
+      'secret_access_key',
+      'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
+      'MINIO_SECRET_KEY',
+      'secretKey',
+      'sessionToken',
+      'authToken',
+      'reconnectToken',
+      'githubToken',
+      'dbPassword',
+      'adminPassword',
+    ]
+    const original = Object.fromEntries(names.map((key) => [key, 'synthetic-table-credential']))
+    const refs = {
+      tokenCount: 3,
+      token_budget: 20,
+      pageToken: 'ordinary-page',
+      cancellationToken: 'ordinary-cancel',
+      tokenType: 'ordinary-type',
+      privateKeyPath: '/ordinary/key',
+      secretKeyRef: { name: 'secret', key: 'auth.json' },
+      secretName: 'config',
+      secretRef: { name: 'config', key: 'ordinary' },
+      accessKeyId: 'ordinary-id',
+      TOKEN_PATH: '/ordinary/token',
+      SECRET_KEY_NAME: 'auth.json',
+    }
+    expect(sanitizeAuditPayload({ ...original, ...refs }).payload).toEqual({
+      ...Object.fromEntries(names.map((key) => [key, '[REDACTED_CREDENTIAL]'])),
+      ...refs,
+    })
+    expect(original.secretAccessKey).toBe('synthetic-table-credential')
+  })
+
+  it('masks explicit credential argv pairs while leaving noncredential options visible', () => {
+    for (const option of [
+      'auth-token',
+      'session-token',
+      'secret-access-key',
+      'secret-key',
+      'reconnect-token',
+      'access-token',
+      'refresh-token',
+      'id-token',
+      'private-key',
+      'github-token',
+      'db-password',
+      'admin-password',
+    ]) {
+      expect(
+        sanitizeAuditPayload({ args: [`--${option}`, 'synthetic-table-credential', '--token-count', '300'] }).payload,
+      ).toEqual({ args: [`--${option}`, '[REDACTED_CREDENTIAL]', '--token-count', '300'] })
+    }
+  })
+
+  it('does not dispatch array map overrides during sanitized export', () => {
+    const { records } = captureAudit()
+    const items = ['ordinary']
+    Object.defineProperty(items, 'map', {
+      value() {
+        throw new Error('map override invoked')
+      },
+    })
+    writeAuditLog(configFixture(), 'probe', authFixture(), { items })
+    expect(records()[0].payload).toEqual({ items: ['ordinary'] })
+  })
+
+  it('rejects oversized events before masking or serialization with a bounded explicit receipt', () => {
+    const { frames, records } = captureAudit()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const patch = 'ordinary'.repeat(1_100_000)
+    let touched = false
+    const payload = {
+      patch,
+      get later() {
+        touched = true
+        throw new Error('must not invoke')
+      },
+    }
+    expect(writeAuditLog(configFixture(), 'tool_call_started', authFixture(), payload)).toBe(1)
+    expect(touched).toBe(false)
+    expect(payload.patch).toBe(patch)
+    expect(frames()).toHaveLength(1)
+    expect(Buffer.byteLength(JSON.stringify(frames()[0]))).toBeLessThan(2000)
+    expect(records()[0]).toMatchObject({
+      event: 'tool_call_started',
+      payloadTruncated: true,
+      captureIncomplete: true,
+      payload: {
+        captureIncomplete: true,
+        originalResultUnchanged: true,
+        rejection: { accepted: false, reason: 'event_byte_budget_exceeded', byteBudget: 8 * 1024 * 1024 },
+      },
+    })
+  })
+
+  it('preserves complete ordinary 3.2 MiB generic results under the event budget', () => {
+    const { records } = captureAudit()
+    const payload = { result: { content: 'ordinary'.repeat(400_000) } }
+    expect(writeAuditLog(configFixture(), 'tool_call_finished', authFixture(), payload)).toBe(0)
+    expect(records()[0]).toMatchObject({ captureIncomplete: false, payload })
+  })
+
   it('exports complete concurrent stdout/stderr past response caps and keeps owned agents discoverable', async () => {
     const { records } = captureAudit()
     const { client, runner } = await connect()

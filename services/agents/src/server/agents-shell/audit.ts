@@ -3,10 +3,16 @@ import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+import { auditPayloadBudget } from './audit-budget'
 import { BoundedAuditWriter } from './audit-writer'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
-import { credentialValuesFromEnv, maskCredentialValues } from './credential-masker'
+import {
+  credentialEnv,
+  credentialOptionNames,
+  credentialValuesFromEnv,
+  maskCredentialValues,
+} from './credential-masker'
 
 export type ToolAuditContext = { requestId: string; toolCallId: string; tool: string }
 export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
@@ -38,13 +44,17 @@ export const isOwnAuditFrame = (line: string) => {
 
 // These are credential containers, not ordinary identifiers such as tokenCount or key paths.
 const credentialField =
-  /^(?:password|passwd|token|secret|access_token|accessToken|refresh_token|refreshToken|id_token|api_key|apiKey|client_secret|clientSecret|private_key|privateKey|authorization|proxy-authorization|cookie|set-cookie)$/i
+  /^(?:password|passwd|token|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|authorization|proxy[-_]authorization|http_authorization|cookie|set-cookie|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret)$/i
 
 export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOutput = false) => {
   const secrets = credentialValuesFromEnv()
   let maskedValues = 0
   const visit = (value: unknown, key?: string): unknown => {
-    if (key && credentialField.test(key) && value !== null && value !== undefined) {
+    if (
+      key &&
+      (credentialField.test(key) || credentialEnv.test(key)) &&
+      (typeof value === 'string' || typeof value === 'number')
+    ) {
       maskedValues += 1
       return '[REDACTED_CREDENTIAL]'
     }
@@ -57,7 +67,8 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
     if (Array.isArray(value)) {
       let maskNext = false
       let userNext = false
-      return value.map((item) => {
+      return Array.from({ length: value.length }, (_, index) => {
+        const item = Object.getOwnPropertyDescriptor(value, String(index))?.value
         if (userNext) {
           userNext = false
           if (typeof item === 'string' && item.includes(':')) {
@@ -71,11 +82,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
           maskedValues += 1
           return '[REDACTED_CREDENTIAL]'
         }
-        if (
-          typeof item === 'string' &&
-          /^(?:--(?:password|passwd|token|api-key|client-secret|oauth2-bearer))$/i.test(item)
-        )
-          maskNext = true
+        if (typeof item === 'string' && new RegExp(`^--(?:${credentialOptionNames})$`, 'i').test(item)) maskNext = true
         return visit(item)
       })
     }
@@ -113,7 +120,26 @@ export const writeAuditLog = (
   payload: Record<string, unknown>,
   context = toolAuditContext.getStore() ?? null,
 ) => {
-  const sanitized = sanitizeAuditPayload(payload, event === 'process_output')
+  const sourceBudget = auditPayloadBudget(payload)
+  let sanitized = { payload: {} as Record<string, unknown>, payloadTruncated: true, maskedValues: 0 }
+  let budget = sourceBudget
+  if (sourceBudget.accepted) {
+    try {
+      sanitized = sanitizeAuditPayload(payload, event === 'process_output')
+      budget = auditPayloadBudget(sanitized.payload)
+    } catch {
+      budget = { ...sourceBudget, accepted: false, reason: 'credential_scanner_capacity_exceeded' }
+    }
+  }
+  const captureIncomplete = !budget.accepted
+  if (captureIncomplete)
+    sanitized.payload = {
+      captureIncomplete: true,
+      rejection: budget,
+      originalResultUnchanged: true,
+      retrieval: 'Original MCP result and existing authorized retention are unchanged',
+    }
+
   const envelope = {
     msg: 'agents-shell audit',
     schemaVersion: 2,
@@ -124,25 +150,30 @@ export const writeAuditLog = (
     subjectHash: auth?.subject ? createHash('sha256').update(auth.subject).digest('hex') : null,
     ...Object.fromEntries(
       ['jobId', 'sessionId', 'agentId', 'stream', 'sequence', 'byteStart', 'byteEnd']
-        .filter((key) => key in sanitized.payload)
+        .filter((key) => {
+          const value = sanitized.payload[key]
+          return typeof value === 'string' ? value.length <= 256 : typeof value === 'number' && Number.isFinite(value)
+        })
         .map((key) => [key, sanitized.payload[key]]),
     ),
-    payloadTruncated: false,
+    payloadTruncated: captureIncomplete,
+    captureIncomplete,
     maskedValues: sanitized.maskedValues,
   }
   const encoded = JSON.stringify(sanitized.payload)
+  const payloadBytes = Buffer.byteLength(encoded)
   const frames =
-    Buffer.byteLength(encoded) <= 12_000
+    payloadBytes <= 12_000
       ? [{ ...envelope, payload: sanitized.payload }]
       : auditFragments(encoded).map((payloadFragment, fragmentIndex, fragments) => ({
           ...envelope,
           payloadFragment,
           fragmentIndex,
           fragmentCount: fragments.length,
-          payloadBytes: Buffer.byteLength(encoded),
+          payloadBytes,
         }))
   const lines = frames.map((frame) => `${JSON.stringify({ ...frame, frameSignature: signFrame(frame) })}\n`)
-  let sinkErrors = stdoutWriter.enqueue(lines)
+  let sinkErrors = stdoutWriter.enqueue(lines) + Number(captureIncomplete)
   for (const line of lines) {
     if (config.auditLogPath) {
       try {

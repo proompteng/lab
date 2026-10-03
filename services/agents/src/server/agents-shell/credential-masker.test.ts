@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { CredentialMasker, maskCredentialValues } from './credential-masker'
+import {
+  CredentialMasker,
+  credentialOptionNames,
+  credentialValuesFromEnv,
+  maskCredentialValues,
+} from './credential-masker'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
@@ -140,4 +145,119 @@ describe('minimal streaming credential masking', () => {
       expect(maskCredentialValues(once, []).text).toBe(once)
     }
   })
+})
+
+describe('repository credential context table', () => {
+  const scalarNames = [
+    'password',
+    'passwd',
+    'token',
+    'secret',
+    'accessToken',
+    'access_token',
+    'access-token',
+    'refreshToken',
+    'idToken',
+    'apiKey',
+    'clientSecret',
+    'privateKey',
+    'secretAccessKey',
+    'secret_access_key',
+    'secret-access-key',
+    'secretKey',
+    'sessionToken',
+    'authToken',
+    'reconnectToken',
+    'githubToken',
+    'dbPassword',
+    'adminPassword',
+    'natsPassword',
+    'discordBotToken',
+    'bot-token',
+    'githubWebhookSecret',
+    'linearWebhookSecret',
+    'webhook-secret',
+    'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
+    'MINIO_SECRET_KEY',
+    'database_password',
+  ]
+  for (const name of scalarNames)
+    it(`masks explicit ${name} in assignments at every split`, () => {
+      const input = `${name}="synthetic-table-credential" ordinary`
+      for (let split = 0; split <= input.length; split += 1) {
+        const masker = new CredentialMasker([])
+        expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(
+          `${name}="${marker}" ordinary`,
+        )
+      }
+    })
+  for (const name of ['HTTP_AUTHORIZATION', 'PROXY_AUTHORIZATION'])
+    it(`masks ${name} across chunks`, () => {
+      for (const input of [
+        `${name}=Bearer synthetic-table-credential\nordinary`,
+        `{"${name}":"Digest nonce=synthetic-table-credential","ordinary":1}`,
+        `${name}` + ' '.repeat(300) + '=Basic synthetic-table-credential\nordinary',
+      ]) {
+        for (let split = 0; split <= input.length; split += 1) {
+          const masker = new CredentialMasker([])
+          const output = masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)
+          expect(output).not.toContain('synthetic-table-credential')
+          expect(output).toContain('ordinary')
+        }
+      }
+    })
+  it('recognizes actual runtime credential env families without masking reference names', () => {
+    const names = [
+      'HTTP_AUTHORIZATION',
+      'PROXY_AUTHORIZATION',
+      'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
+      'MINIO_SECRET_KEY',
+    ]
+    for (const name of names)
+      expect(credentialValuesFromEnv({ [name]: 'synthetic-runtime-credential' })).toContain(
+        'synthetic-runtime-credential',
+      )
+    for (const name of ['TOKEN_PATH', 'AUTHORIZATION_FILE', 'SECRET_KEY_NAME', 'SECRET_KEY_PATH', 'TOKEN_TYPE'])
+      expect(credentialValuesFromEnv({ [name]: 'ordinary-reference' })).toEqual([])
+  })
+  it('preserves ordinary similarly named values and reference objects', () => {
+    for (const name of [
+      'tokenCount',
+      'token_budget',
+      'pageToken',
+      'cancellationToken',
+      'tokenType',
+      'privateKeyPath',
+      'secretKeyRef',
+      'secretName',
+      'AGENTS_TOKEN_PATH',
+      'MINIO_SECRET_KEY_NAME',
+      'accessKeyId',
+    ]) {
+      const input = `${name}=ordinary-reference`
+      expect(maskCredentialValues(input, []).text).toBe(input)
+    }
+  })
+  it('processes a multi-megabyte repeated credential input in bounded chunks', () => {
+    const count = 30_000
+    expect(maskCredentialValues('password=synthetic-table-credential ordinary\n'.repeat(count), []).text).toBe(
+      `password=${marker} ordinary\n`.repeat(count),
+    )
+  }, 10_000)
+})
+
+describe('explicit credential options', () => {
+  for (const option of credentialOptionNames.split('|')) {
+    it(`masks --${option} spaced/equal values at every split`, () => {
+      for (const separator of [' ', '=', ' '.repeat(300)]) {
+        const input = `--${option}${separator}synthetic-table-credential --verbose`
+        for (let split = 0; split <= input.length; split += 1) {
+          const masker = new CredentialMasker([])
+          expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(
+            `--${option}${separator}${marker} --verbose`,
+          )
+        }
+      }
+    })
+  }
 })

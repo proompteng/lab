@@ -92,3 +92,21 @@ Before rollout, finish sessions and preserve unpushed work. Production uses one 
 workspace; replacement removes local files and stops jobs. Already-ingested Loki events survive shell replacement under
 Loki retention. Follow [release automation](../release-automation.md), then verify concurrent credential-free output larger
 than reply caps by reassembling its Loki events and comparing final hashes.
+
+### Per-event admission and explicit credential contexts
+
+Before copying, masking or serializing a generic event, a bounded traversal admits at most 8 MiB of JSON payload,
+65,536 values and 64 nesting levels. Escapes and repeated subtrees count toward the budget; cycles/accessors are rejected.
+The sanitized result is checked again before framing. A rejected event emits a small signed receipt with its original
+event ID/type, `captureIncomplete: true`, `payloadTruncated: true`, rejection reason, observed byte lower bound and budgets.
+It also increments the call's audit error count. The original MCP result and existing authorized retrieval/retention are
+unchanged. This receipt is explicitly incomplete capture, not a replacement claiming to contain the original payload.
+Normal multi-megabyte events below the bound remain complete. Continuous process output uses small chunks and is not
+limited to 8 MiB per execution. Frame metadata is bounded independently so identifiers cannot amplify every fragment.
+
+Credential contexts include Authorization/Proxy-Authorization and HTTP*AUTHORIZATION/PROXY_AUTHORIZATION, Cookie/Set-Cookie,
+password/token/API/private-key fields, OAuth access/refresh/id tokens and client secrets, S3 secretAccessKey/secret_access_key,
+explicit session/auth/reconnect/GitHub tokens and database/admin passwords, plus runtime *\_SECRET*ACCESS_KEY/*\_SECRET_KEY
+families. Scalar `secretKey` is treated as credential-bearing even though some configurations use that ambiguous name for
+an object key; reference objects (`secretKeyRef`, `secretRef`), names, paths, accessKeyId, pageToken, cancellationToken and
+token counts remain visible. This is an explicit context table, not a blanket match for every field ending in Token.
