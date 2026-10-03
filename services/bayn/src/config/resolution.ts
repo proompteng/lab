@@ -14,24 +14,11 @@ import {
   type RuntimeConfigResolutionFailure,
   type RuntimeConfigResolutionInput,
 } from './model'
-import { evaluationBoundsDecoder } from './source'
 
 const decodeEmbeddedBuildMetadata = Schema.decodeUnknownResult(EmbeddedBuildMetadataSchema, StrictParseOptions)
 
 const fail = <A>(failure: RuntimeConfigResolutionFailure): Result.Result<A, RuntimeConfigResolutionFailure> =>
   Result.fail(failure)
-
-const decodeBounds = (
-  parsed: ParsedRuntimeConfig,
-): Result.Result<ParsedRuntimeConfig, RuntimeConfigResolutionFailure> => {
-  const decoded = evaluationBoundsDecoder(parsed.clickhouse.bounds)
-  return Result.isFailure(decoded)
-    ? fail({ _tag: 'InvalidEvaluationBounds', cause: decoded.failure })
-    : Result.succeed({
-        ...parsed,
-        clickhouse: { ...parsed.clickhouse, bounds: decoded.success },
-      })
-}
 
 const validateCycleTiming = (
   parsed: ParsedRuntimeConfig,
@@ -241,9 +228,7 @@ const loadedConfig = (
 export const resolveRuntimeConfig = (
   input: RuntimeConfigResolutionInput,
 ): Result.Result<LoadedRuntimeConfig, RuntimeConfigResolutionFailure> => {
-  const bounds = decodeBounds(input.parsed)
-  if (Result.isFailure(bounds)) return Result.fail(bounds.failure)
-  const parsed = bounds.success
+  const parsed = input.parsed
   const timing = validateCycleTiming(parsed)
   if (Result.isFailure(timing)) return Result.fail(timing.failure)
   const alpaca = decodeAlpaca(parsed)

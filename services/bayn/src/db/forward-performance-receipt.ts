@@ -1,6 +1,6 @@
 import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
 import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
-import { Context, Data, Effect, Option, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -263,27 +263,6 @@ export const makeForwardPerformanceReceiptEnvelope = (
   Result.map(canonicalHashV1Result(material), (contentHash) => ({ ...material, contentHash })).pipe(
     Result.mapError(() => 'ForwardPerformanceReceiptCanonicalizationFailed' as const),
   )
-
-export class ForwardPerformanceReceiptStoreError extends Data.TaggedError('ForwardPerformanceReceiptStoreError')<{
-  readonly operation: 'bind' | 'read'
-  readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
-  readonly message: string
-  readonly cause?: unknown
-}> {}
-
-export interface ForwardPerformanceReceiptStoreShape {
-  readonly read: (
-    authorityGenerationHash: string,
-  ) => Effect.Effect<Option.Option<ForwardPerformanceReceiptEnvelope>, ForwardPerformanceReceiptStoreError>
-  readonly bind: (
-    envelope: ForwardPerformanceReceiptEnvelope,
-  ) => Effect.Effect<ForwardPerformanceReceiptEnvelope, ForwardPerformanceReceiptStoreError>
-}
-
-export class ForwardPerformanceReceiptStore extends Context.Service<
-  ForwardPerformanceReceiptStore,
-  ForwardPerformanceReceiptStoreShape
->()('@proompteng/bayn/db/forward-performance-receipt/ForwardPerformanceReceiptStore') {}
 
 const decodeEnvelopeResult = Schema.decodeUnknownResult(ForwardPerformanceReceiptEnvelopeSchema, strictParseOptions)
 

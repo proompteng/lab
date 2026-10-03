@@ -25,7 +25,9 @@ COPY internal ./internal
 COPY vscode-extension ./vscode-extension
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-      go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
+      go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+      go test -c -o /out/nanoagent-tests
 
 FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
 
@@ -62,6 +64,8 @@ FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
     CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
+    SPIRE_AGENT_BINARY=/home/nanoagent/.local/bin/spire-agent \
+    SPIRE_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-spire-agent \
     CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
     CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
@@ -133,6 +137,7 @@ RUN set -eux; \
 COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
+COPY --chmod=0555 bootstrap-spire-agent.sh /usr/local/bin/bootstrap-spire-agent
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
 FROM runtime AS guest-admin-smoke
@@ -376,9 +381,18 @@ USER 1000:1000
 RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
     "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
 
+FROM runtime-with-toolchain AS spire-agent-smoke
+ENV HOME=/home/nanoagent/.spire-smoke
+COPY --from=build /out/nanoagent-tests /tmp/nanoagent-tests
+RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
+    "$HOME/.local/bin/spire-agent" --version > /tmp/spire-agent-version && \
+    SPIRE_AGENT_VALIDATE_BINARY="$HOME/.local/bin/spire-agent" \
+      /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v
+
 FROM runtime-with-toolchain AS guest-rootfs
 
 COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
+COPY --from=spire-agent-smoke /tmp/spire-agent-version /usr/share/nanoagent/spire-agent-version
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version

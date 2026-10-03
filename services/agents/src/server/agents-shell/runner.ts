@@ -5,9 +5,11 @@ import { spawn } from 'node:child_process'
 
 import { Effect } from 'effect'
 
-import { writeAuditLog } from './audit'
+import { flushAuditLog, toolAuditContext, writeAuditLog } from './audit'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
+import { OUTPUT_RETENTION_BYTES } from './constants'
+import { OutputAudit } from './output-audit'
 import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
 import { asPositiveInteger } from './limits'
 import { formatCommand, toProcessResult, type ProcessResult } from './process-runner'
@@ -30,6 +32,7 @@ export class AgentsShellRunner {
       command: string
       cwd?: string
       sessionId?: string
+      agentId?: string
       timeoutSeconds?: number
       maxOutputBytes?: number
     },
@@ -37,6 +40,8 @@ export class AgentsShellRunner {
   ): CommandInput {
     return {
       command: args.command,
+      sessionId: args.sessionId,
+      agentId: args.agentId,
       cwd: this.resolveCwd(args.cwd, args.sessionId, auth),
       timeoutSeconds: asPositiveInteger(
         args.timeoutSeconds,
@@ -232,8 +237,17 @@ export class AgentsShellRunner {
     }
   }
 
-  audit(event: string, auth: AuthContext | null, payload: Record<string, unknown>) {
-    writeAuditLog(this.config, event, auth, payload)
+  audit(
+    event: string,
+    auth: AuthContext | null,
+    payload: Record<string, unknown>,
+    context = toolAuditContext.getStore() ?? null,
+  ) {
+    return writeAuditLog(this.config, event, auth, payload, context)
+  }
+
+  flushAudit() {
+    return flushAuditLog()
   }
 
   runningJobs() {
@@ -245,6 +259,8 @@ export class AgentsShellRunner {
       throw new Error(`max concurrent jobs reached: ${this.config.maxConcurrentJobs}`)
     }
 
+    const auditContext = toolAuditContext.getStore() ?? null
+    const startedAt = performance.now()
     const child = spawn('/bin/bash', ['-lc', input.command], {
       cwd: input.cwd,
       env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
@@ -253,6 +269,11 @@ export class AgentsShellRunner {
     })
     const job: ShellJob = {
       id: randomUUID(),
+      ownerSubject: auth.subject,
+      sessionId: input.sessionId ?? this.repoSessions.requireForPath(input.cwd, auth)?.id ?? null,
+      agentId: input.agentId ?? null,
+      requestId: auditContext?.requestId ?? null,
+      toolCallId: auditContext?.toolCallId ?? null,
       command: input.command,
       cwd: input.cwd,
       process: child,
@@ -265,11 +286,73 @@ export class AgentsShellRunner {
       timeout: null,
       stdout: tail(),
       stderr: tail(),
+      outputCaptureError: null,
+      auditErrors: 0,
     }
 
-    child.stdout.on('data', (chunk: Buffer) => appendTail(job.stdout, Buffer.from(chunk), input.maxOutputBytes))
-    child.stderr.on('data', (chunk: Buffer) => appendTail(job.stderr, Buffer.from(chunk), input.maxOutputBytes))
+    const outputAudit = (stream: 'stdout' | 'stderr') =>
+      new OutputAudit(stream, (event, payload) =>
+        this.audit(
+          event,
+          auth,
+          {
+            jobId: job.id,
+            sessionId: job.sessionId,
+            agentId: job.agentId,
+            ...payload,
+          },
+          auditContext,
+        ),
+      )
+    let lastOutputAt = performance.now()
+    const stdoutAudit = outputAudit('stdout')
+    const stderrAudit = outputAudit('stderr')
+    const onAuditFailure = () => {
+      job.outputCaptureError =
+        stdoutAudit.captureError ?? stderrAudit.captureError ?? 'audit output capture failed; command stopped'
+      job.status = 'killed'
+      this.killProcessGroup(job, 'SIGKILL')
+    }
+    child.stdout.on('data', (chunk: Buffer) => {
+      lastOutputAt = performance.now()
+      appendTail(job.stdout, Buffer.from(chunk), OUTPUT_RETENTION_BYTES)
+      stdoutAudit.write(Buffer.from(chunk), child.stdout, onAuditFailure)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      lastOutputAt = performance.now()
+      appendTail(job.stderr, Buffer.from(chunk), OUTPUT_RETENTION_BYTES)
+      stderrAudit.write(Buffer.from(chunk), child.stderr, onAuditFailure)
+    })
+    let drainTimeout: ReturnType<typeof setTimeout> | undefined
+    let killTimeout: ReturnType<typeof setTimeout> | undefined
+    child.once('exit', () => {
+      const exitAt = performance.now()
+      if (job.timeout) {
+        clearTimeout(job.timeout)
+        job.timeout = null
+      }
+      const finishDrain = () => {
+        if (
+          performance.now() - exitAt < 10_000 &&
+          (child.stdout.isPaused() || child.stderr.isPaused() || performance.now() - lastOutputAt < 250)
+        ) {
+          drainTimeout = setTimeout(finishDrain, 250)
+          return
+        }
+        job.outputCaptureError = 'descendant pipes remained open 250ms after parent exit; capture closed'
+        this.killProcessGroup(job, 'SIGKILL')
+        child.stdout.destroy()
+        child.stderr.destroy()
+      }
+      drainTimeout = setTimeout(finishDrain, 250)
+    })
     child.on('close', (code, signal) => {
+      clearTimeout(drainTimeout)
+      clearTimeout(killTimeout)
+      stdoutAudit.finish(job.outputCaptureError)
+      stderrAudit.finish(job.outputCaptureError)
+      job.outputCaptureError ??= stdoutAudit.captureError ?? stderrAudit.captureError
+      job.auditErrors = stdoutAudit.sinkErrors + stderrAudit.sinkErrors
       if (job.timeout) {
         clearTimeout(job.timeout)
         job.timeout = null
@@ -278,25 +361,43 @@ export class AgentsShellRunner {
       job.exitCode = code
       job.signal = signal
       job.finishedAt = new Date().toISOString()
-      this.audit('shell_job_finished', auth, {
-        jobId: job.id,
-        status: job.status,
-        exitCode: code,
-        signal,
-        timedOut: job.timedOut,
-      })
+      this.audit(
+        'shell_job_finished',
+        auth,
+        {
+          jobId: job.id,
+          sessionId: job.sessionId,
+          agentId: job.agentId,
+          outputCaptureError: job.outputCaptureError,
+          auditErrors: job.auditErrors,
+          command: input.command,
+          status: job.status,
+          exitCode: code,
+          signal,
+          timedOut: job.timedOut,
+          durationMs: performance.now() - startedAt,
+          stdoutBytes: job.stdout.totalBytes,
+          stderrBytes: job.stderr.totalBytes,
+          stdoutTruncated: job.stdout.truncated,
+          stderrTruncated: job.stderr.truncated,
+        },
+        auditContext,
+      )
     })
-    child.on('error', (error) => appendTail(job.stderr, Buffer.from(String(error)), input.maxOutputBytes))
+    child.on('error', (error) => appendTail(job.stderr, Buffer.from(String(error)), OUTPUT_RETENTION_BYTES))
     job.timeout = setTimeout(() => {
       if (job.status !== 'running') return
       job.timedOut = true
       job.status = 'timed_out'
       this.killProcessGroup(job, 'SIGTERM')
+      killTimeout = setTimeout(() => this.killProcessGroup(job, 'SIGKILL'), 1_000)
     }, input.timeoutSeconds * 1000)
 
     this.jobs.set(job.id, job)
     this.audit('shell_job_started', auth, {
       jobId: job.id,
+      sessionId: job.sessionId,
+      agentId: job.agentId,
       command: input.command,
       cwd: input.cwd,
       timeoutSeconds: input.timeoutSeconds,
@@ -322,7 +423,7 @@ export class AgentsShellRunner {
   }
 
   kill(jobId: string, auth: AuthContext, signal = 'SIGTERM') {
-    const job = this.requireJob(jobId)
+    const job = this.requireJob(jobId, auth)
     if (job.finishedAt !== null) return job
     const killed = this.killProcessGroup(job, signal)
     if (killed) {
@@ -362,9 +463,9 @@ export class AgentsShellRunner {
     }
   }
 
-  requireJob(jobId: string) {
+  requireJob(jobId: string, auth: AuthContext) {
     const job = this.jobs.get(jobId)
-    if (!job) throw new Error(`unknown jobId: ${jobId}`)
+    if (!job || job.ownerSubject !== auth.subject) throw new Error(`unknown or expired jobId: ${jobId}`)
     return job
   }
 
@@ -407,11 +508,31 @@ export class AgentsShellRunner {
             1024,
           )
           const commandLine = formatCommand(options.command, options.args)
+          const jobId = randomUUID()
+          const auditContext = toolAuditContext.getStore() ?? null
+          const outputAudit = (stream: 'stdout' | 'stderr') =>
+            new OutputAudit(stream, (event, payload) =>
+              auditContext?.tool.startsWith('agent_')
+                ? 0
+                : this.audit(event, options.auth, { jobId, sessionId: session?.id ?? null, ...payload }, auditContext),
+            )
+          const stdoutAudit = outputAudit('stdout')
+          const stderrAudit = outputAudit('stderr')
+          let outputCaptureError: string | null = null
+          let lastOutputAt = performance.now()
+          let killTimeout: ReturnType<typeof setTimeout> | undefined
           const stdout = tail()
           const stderr = tail()
           let timedOut = false
 
-          this.audit(options.auditEvent, options.auth, { command: commandLine, cwd, timeoutSeconds })
+          this.audit(options.auditEvent, options.auth, {
+            jobId,
+            command: commandLine,
+            args: options.args,
+            cwd,
+            sessionId: session?.id ?? null,
+            timeoutSeconds,
+          })
 
           const child = spawn(options.command, options.args, {
             cwd,
@@ -419,8 +540,21 @@ export class AgentsShellRunner {
             stdio: ['pipe', 'pipe', 'pipe'],
           })
 
-          child.stdout.on('data', (chunk: Buffer) => appendTail(stdout, Buffer.from(chunk), maxOutputBytes))
-          child.stderr.on('data', (chunk: Buffer) => appendTail(stderr, Buffer.from(chunk), maxOutputBytes))
+          const onAuditFailure = () => {
+            outputCaptureError =
+              stdoutAudit.captureError ?? stderrAudit.captureError ?? 'audit output capture failed; command stopped'
+            child.kill('SIGKILL')
+          }
+          child.stdout.on('data', (chunk: Buffer) => {
+            lastOutputAt = performance.now()
+            appendTail(stdout, Buffer.from(chunk), maxOutputBytes)
+            stdoutAudit.write(Buffer.from(chunk), child.stdout, onAuditFailure)
+          })
+          child.stderr.on('data', (chunk: Buffer) => {
+            lastOutputAt = performance.now()
+            appendTail(stderr, Buffer.from(chunk), maxOutputBytes)
+            stderrAudit.write(Buffer.from(chunk), child.stderr, onAuditFailure)
+          })
 
           if (options.stdin != null) {
             child.stdin.write(options.stdin)
@@ -430,25 +564,53 @@ export class AgentsShellRunner {
           const timeout = setTimeout(() => {
             timedOut = true
             child.kill('SIGTERM')
+            killTimeout = setTimeout(() => child.kill('SIGKILL'), 1_000)
           }, timeoutSeconds * 1000)
 
           const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
             (resolvePromise, reject) => {
               let settled = false
+              let drainTimeout: ReturnType<typeof setTimeout> | undefined
               const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
                 if (settled) return
                 settled = true
+                clearTimeout(drainTimeout)
+                clearTimeout(killTimeout)
+                if (!child.stdout.readableEnded || !child.stderr.readableEnded)
+                  outputCaptureError ??= 'descendant pipes remained open 250ms after parent exit; capture closed'
                 child.stdout.destroy()
                 child.stderr.destroy()
+                stdoutAudit.finish(outputCaptureError)
+                stderrAudit.finish(outputCaptureError)
                 resolvePromise({ exitCode, signal })
               }
 
               child.once('error', reject)
-              child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
+              child.once('exit', (exitCode, signal) => {
+                clearTimeout(timeout)
+                const exitAt = performance.now()
+                const finishDrain = () => {
+                  if (
+                    performance.now() - exitAt < 10_000 &&
+                    (child.stdout.isPaused() || child.stderr.isPaused() || performance.now() - lastOutputAt < 250)
+                  ) {
+                    drainTimeout = setTimeout(finishDrain, 250)
+                    return
+                  }
+                  finish(exitCode, signal)
+                }
+                drainTimeout = setTimeout(finishDrain, 250)
+              })
               child.once('close', (exitCode, signal) => finish(exitCode, signal))
             },
-          ).finally(() => clearTimeout(timeout))
+          ).finally(() => {
+            clearTimeout(timeout)
+            clearTimeout(killTimeout)
+            stdoutAudit.finish(outputCaptureError)
+            stderrAudit.finish(outputCaptureError)
+          })
 
+          outputCaptureError ??= stdoutAudit.captureError ?? stderrAudit.captureError
           const processResult = toProcessResult(
             commandLine,
             cwd,
@@ -461,6 +623,9 @@ export class AgentsShellRunner {
             new Set(options.okExitCodes ?? [0]),
           )
           this.audit(`${options.auditEvent}_finished`, options.auth, {
+            jobId,
+            outputCaptureError,
+            auditErrors: stdoutAudit.sinkErrors + stderrAudit.sinkErrors,
             command: commandLine,
             cwd,
             exitCode: result.exitCode,

@@ -1,7 +1,9 @@
-import { execFileSync } from 'node:child_process'
+import childProcess, { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { syncBuiltinESMExports } from 'node:module'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -398,7 +400,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(21_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(22_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
@@ -421,7 +423,7 @@ describe('agents-shell MCP tools', () => {
       'Timeout in seconds. Default: 60. Server cap: 1800.',
     )
     expect(rawShellRunInputProperties.maxOutputBytes.description).toBe(
-      'Per-stream output tail cap in bytes. Default: 20000. Server cap: 200000.',
+      'Per-stream reply page cap in bytes. Default: 20000. Server cap: 1048576. Retention is independent.',
     )
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
@@ -478,6 +480,49 @@ describe('agents-shell MCP tools', () => {
     await serverTransport.close()
     await client.close()
     await server.close()
+  })
+
+  it('drains process output delivered after the child exit event', async () => {
+    const runner = new AgentsShellRunner(makeConfig())
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child = Object.assign(new childProcess.ChildProcess(), {
+      stdin: new PassThrough(),
+      stdout,
+      stderr,
+    })
+    const outputClosed = new Promise<void>((resolve) => {
+      vi.spyOn(childProcess, 'spawn').mockImplementationOnce(() => {
+        setImmediate(() => {
+          child.emit('exit', 0, null)
+          setTimeout(() => {
+            stdout.end('0123456789abcdef0123456789abcdef01234567\n')
+            stderr.end('diagnostic after exit\n')
+            child.emit('close', 0, null)
+            resolve()
+          }, 25)
+        })
+        return child
+      })
+      syncBuiltinESMExports()
+    })
+
+    try {
+      const result = await runner.runProcess({
+        command: 'git',
+        args: ['rev-parse', '--verify', 'HEAD'],
+        auth: makeAuth(),
+        auditEvent: 'output_drain_probe',
+      })
+      await outputClosed
+      expect(result.exitCode).toBe(0)
+      expect(result.timedOut).toBe(false)
+      expect(result.stdout).toBe('0123456789abcdef0123456789abcdef01234567\n')
+      expect(result.stderr).toBe('diagnostic after exit\n')
+    } finally {
+      vi.restoreAllMocks()
+      syncBuiltinESMExports()
+    }
   })
 
   it('finishes process tools when a git descendant keeps stdio open after child exit', async () => {
@@ -1050,9 +1095,9 @@ fi
         stdout?: string
       }
       expect(content.command).toContain('rg --line-number --no-heading --color=never --hidden')
-      expect(content.command).toContain('-g !.git/**')
-      expect(content.command).toContain('-g !node_modules/**')
-      expect(content.command).toContain('-g !schemas/custom/**')
+      expect(content.command).toContain("-g '!.git/**'")
+      expect(content.command).toContain("-g '!node_modules/**'")
+      expect(content.command).toContain("-g '!schemas/custom/**'")
       expect(content.command).toContain('--fixed-strings createAgentsShellServer .')
       expect(content.exitCode).toBe(0)
       expect(content.stdout).toContain('src/agents-shell.ts:1:export const createAgentsShellServer = true')

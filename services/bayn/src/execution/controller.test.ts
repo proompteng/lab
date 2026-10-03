@@ -4,6 +4,7 @@ import { Result } from 'effect'
 
 import {
   completeExecutionControllerTick,
+  decodeExecutionControllerState,
   decodeExecutionAdvanceStepResult,
   decodeExecutionDeploymentActivation,
   decodeExecutionControllerTick,
@@ -385,7 +386,7 @@ describe('execution controller decisions', () => {
     ).toBe(true)
   })
 
-  test('persists blocked results as successful business completion', () => {
+  test.each([1_000, 5_000])('persists a %sms continuation across a controller restart', (nextDelayMs) => {
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
         activated(),
@@ -395,7 +396,7 @@ describe('execution controller decisions', () => {
           outcome: {
             _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: '1'.repeat(64),
-            nextDelayMs: 5_000,
+            nextDelayMs,
           },
         },
         nextSourceRevision,
@@ -403,7 +404,25 @@ describe('execution controller decisions', () => {
     )
 
     expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Blocked)
-    expect(state.nextDueAt).toBe('2026-08-13T18:00:05.000Z')
+    const nextDueAt = new Date(Date.parse('2026-08-13T18:00:00.000Z') + nextDelayMs).toISOString()
+    expect(state.nextDueAt).toBe(nextDueAt)
+    const resumed = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+    expect(resumed).toEqual(state)
+    expect(
+      Result.getOrThrow(
+        decideExecutionControllerTick(
+          resumed,
+          {
+            schemaVersion: 'bayn.execution-controller-tick.v1',
+            epoch: 1,
+            sequence: resumed.nextSequence,
+          },
+          controllerKey,
+          nextDueAt,
+          nextSourceRevision,
+        ),
+      ),
+    ).toMatchObject({ _tag: 'Advance' })
   })
 
   test('rejects a computed next due time outside the canonical UTC range', () => {
