@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Deferred, Effect, Exit, Fiber, Logger, Redacted, References, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
@@ -7,7 +7,13 @@ import { canonicalHashV1 } from '../../hash'
 import { alpacaLiveBaseUrl, alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { make } from './http'
-import { diagnosticLimits, makeReadDiagnostics, projectReadDiagnostic, type DiagnosticEvent } from './read-diagnostics'
+import {
+  diagnosticLimits,
+  diagnosticLogPrefix,
+  makeReadDiagnostics,
+  projectReadDiagnostic,
+  type DiagnosticEvent,
+} from './read-diagnostics'
 import { AccountStatus, type ReadEvidence } from './model'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -58,6 +64,12 @@ const record = (events: DiagnosticEvent[]) => (event: DiagnosticEvent) =>
   Effect.sync(() => {
     events.push(event)
   })
+const diagnosticMessage = (messages: unknown): unknown => {
+  const message = Array.isArray(messages) ? messages[0] : messages
+  return typeof message === 'string' && message.startsWith(diagnosticLogPrefix)
+    ? JSON.parse(message.slice(diagnosticLogPrefix.length))
+    : undefined
+}
 
 describe('bounded observational broker diagnostics', () => {
   test('retains reported metadata and distinct absent/null/type states without treating absence as settlement', () => {
@@ -427,8 +439,8 @@ describe('bounded observational broker diagnostics', () => {
     const events: unknown[] = []
     let calls = 0
     const logger = Logger.make<unknown, void>((entry) => {
-      const annotations = entry.fiber.getRef(References.CurrentLogAnnotations)
-      if (annotations['brokerReadDiagnostic'] !== undefined) events.push(annotations['brokerReadDiagnostic'])
+      const diagnostic = diagnosticMessage(entry.message)
+      if (diagnostic !== undefined) events.push(diagnostic)
     })
     const client = HttpClient.make((request, url) => {
       calls += 1
@@ -476,8 +488,8 @@ describe('bounded observational broker diagnostics', () => {
     let calls = 0
     const events: unknown[] = []
     const logger = Logger.make<unknown, void>((entry) => {
-      const annotations = entry.fiber.getRef(References.CurrentLogAnnotations)
-      if (annotations['brokerReadDiagnostic'] !== undefined) events.push(annotations['brokerReadDiagnostic'])
+      const diagnostic = diagnosticMessage(entry.message)
+      if (diagnostic !== undefined) events.push(diagnostic)
     })
     const client = HttpClient.make((request, url) => {
       calls += 1
@@ -550,7 +562,7 @@ describe('bounded observational broker diagnostics', () => {
     ]) {
       const logs: unknown[] = []
       const logger = Logger.make<unknown, void>((entry) => {
-        logs.push(entry.fiber.getRef(References.CurrentLogAnnotations))
+        logs.push(entry.message)
       })
       const client = HttpClient.make((request) =>
         Effect.succeed(
@@ -576,7 +588,7 @@ describe('bounded observational broker diagnostics', () => {
           Effect.provide(Logger.layer([logger])),
         ),
       )
-      expect(JSON.stringify(logs)).not.toContain('brokerReadDiagnostic')
+      expect(JSON.stringify(logs)).not.toContain(diagnosticLogPrefix)
     }
   })
 })

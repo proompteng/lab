@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { ObjectContext, ObjectSharedContext } from '@restatedev/restate-sdk'
-import { Clock, Effect, Logger, Redacted, References, Result } from 'effect'
+import { Clock, Effect, Logger, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
@@ -15,6 +15,7 @@ import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { make } from './http'
 import { captureBrokerObservation } from './snapshot-cache'
+import { diagnosticLogPrefix } from './read-diagnostics'
 
 test('normal broker polling emits diagnostics while native deployment activation remains blocked, without order mutations', async () => {
   const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -39,8 +40,9 @@ test('normal broker polling emits diagnostics while native deployment activation
   const diagnostics: unknown[] = []
   let advances = 0
   const logger = Logger.make<unknown, void>((entry) => {
-    const value = entry.fiber.getRef(References.CurrentLogAnnotations)['brokerReadDiagnostic']
-    if (value !== undefined) diagnostics.push(value)
+    const message: unknown = Array.isArray(entry.message) ? entry.message[0] : entry.message
+    if (typeof message === 'string' && message.startsWith(diagnosticLogPrefix))
+      diagnostics.push(JSON.parse(message.slice(diagnosticLogPrefix.length)))
   })
   const client = HttpClient.make((request, url) => {
     requests.push({ method: request.method, path: url.pathname })
