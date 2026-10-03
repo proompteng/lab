@@ -74,8 +74,14 @@ One serialized execution pass reads its unfinished cycle once and advances acqui
 binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
 repeating an admission transition fails closed. Each transition checks the current clock, and restart begins with a
 fresh durable cycle read. Already committed intents retain exact immutable intent/decision validation without
-repeating their writer-fenced commit transaction. Missing or incomplete intents still use that transaction. Mutable
-intent state is read again after reconciliation, and close planning reuses only the closure read by its owning pass.
+repeating their writer-fenced commit transaction. Missing intents still use that atomic transaction; a persisted
+`PLANNED` row is rejected as incomplete atomic persistence. Mutable intent state is read again after reconciliation,
+and close planning reuses only the closure read by its owning pass.
+
+Untouched expired entry approvals can retire under restricted submission authority only in canonical intent order.
+A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
+with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
+Close documents retain their existing residual-replanning and hard-deadline failure behavior.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
