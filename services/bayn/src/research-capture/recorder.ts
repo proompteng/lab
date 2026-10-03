@@ -3,9 +3,12 @@ import { Clock, Effect, Exit, Queue, Result, Schema, Semaphore } from 'effect'
 
 import {
   CaptureInvalidation,
+  CaptureQualification,
   ResearchCaptureFailure,
+  ResearchCaptureIdSchema,
   ResearchCaptureReceiptSchema,
   encodeResearchCapture,
+  maximumResearchCaptureChunkBytes,
   type ResearchCaptureBytes,
   type ResearchCaptureChunk,
   type ResearchCaptureEvent,
@@ -13,12 +16,7 @@ import {
   type ResearchCaptureReceipt,
   type ResearchCaptureSeal,
 } from './capture'
-import {
-  GitSourceRevisionSchema,
-  PositiveIntegerSchema,
-  StrictNonEmptyStringSchema,
-  strictParseOptions,
-} from '../schemas'
+import { GitSourceRevisionSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
 
 export interface ResearchCaptureStore {
   readonly append: (chunk: ResearchCaptureBytes) => Effect.Effect<void, ResearchCaptureFailure>
@@ -26,10 +24,10 @@ export interface ResearchCaptureStore {
 }
 
 const RecorderOptionsSchema = Schema.Struct({
-  captureId: Schema.optionalKey(StrictNonEmptyStringSchema),
+  captureId: Schema.optionalKey(ResearchCaptureIdSchema),
   sourceRevision: GitSourceRevisionSchema,
   maximumQueuedReceipts: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1024)),
-  maximumQueuedBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(4 * 1024 * 1024)),
+  maximumQueuedBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(maximumResearchCaptureChunkBytes)),
   maximumReceiptBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(64 * 1024)),
   flushIntervalMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1000)),
   writeTimeoutMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1000)),
@@ -89,7 +87,6 @@ export const makeResearchCaptureRecorder = (store: ResearchCaptureStore, input: 
           return
         }
         const payload = JSON.stringify(candidate)
-        const bytes = Buffer.byteLength(payload, 'utf8')
         const retained = Schema.decodeUnknownResult(
           Schema.fromJsonString(ResearchCaptureReceiptSchema),
           strictParseOptions,
@@ -98,6 +95,7 @@ export const makeResearchCaptureRecorder = (store: ResearchCaptureStore, input: 
           invalidate(CaptureInvalidation.InvalidEvent)
           return
         }
+        const bytes = Buffer.byteLength(JSON.stringify(retained.success), 'utf8')
         if (
           bytes > options.maximumReceiptBytes ||
           queuedBytes + bytes > options.maximumQueuedBytes ||
@@ -124,25 +122,45 @@ export const makeResearchCaptureRecorder = (store: ResearchCaptureStore, input: 
         ),
       )
     const drain = Effect.gen(function* () {
-      const entries = yield* Queue.takeAll(queue)
+      const entries = yield* Queue.clear(queue)
       if (entries.length === 0) return
       queuedBytes -= entries.reduce((sum, entry) => sum + entry.bytes, 0)
-      const chunk: ResearchCaptureChunk = {
-        schemaVersion: 'bayn.research-capture-chunk.v1',
-        captureId,
-        sourceRevision: options.sourceRevision,
-        chunkOrdinal: persistedChunks,
-        previousContentHash,
-        receipts: entries.map((entry) => entry.receipt),
-      }
-      const bytes = encodeResearchCapture(chunk)
-      const priorFailure = invalidations.has(CaptureInvalidation.Persistence)
-      if (priorFailure) return
-      yield* boundedWrite(() => store.append(bytes))
       if (invalidations.has(CaptureInvalidation.Persistence)) return
-      persistedChunks++
-      previousContentHash = bytes.contentHash
-      persistedReceipts = entries[entries.length - 1]?.receipt.sequence ?? persistedReceipts
+      let start = 0
+      while (start < entries.length) {
+        const chunk: ResearchCaptureChunk = {
+          schemaVersion: 'bayn.research-capture-chunk.v1',
+          captureId,
+          sourceRevision: options.sourceRevision,
+          chunkOrdinal: persistedChunks,
+          previousContentHash,
+          receipts: [],
+        }
+        let size = Buffer.byteLength(JSON.stringify(chunk), 'utf8')
+        let end = start
+        while (end < entries.length) {
+          const entry = entries[end]
+          if (entry === undefined) break
+          const addedBytes = entry.bytes + (end === start ? 0 : 1)
+          if (size + addedBytes > maximumResearchCaptureChunkBytes) break
+          size += addedBytes
+          end++
+        }
+        if (end === start) {
+          invalidate(CaptureInvalidation.Overflow)
+          return
+        }
+        const bytes = encodeResearchCapture({
+          ...chunk,
+          receipts: entries.slice(start, end).map((entry) => entry.receipt),
+        })
+        yield* boundedWrite(() => store.append(bytes))
+        if (invalidations.has(CaptureInvalidation.Persistence)) return
+        persistedChunks++
+        previousContentHash = bytes.contentHash
+        persistedReceipts = entries[end - 1]?.receipt.sequence ?? persistedReceipts
+        start = end
+      }
     })
     const worker = Effect.gen(function* () {
       while (accepting) {
@@ -167,6 +185,7 @@ export const makeResearchCaptureRecorder = (store: ResearchCaptureStore, input: 
           yield* drain
           const seal: ResearchCaptureSeal = {
             schemaVersion: 'bayn.research-capture-seal.v1',
+            qualification: CaptureQualification.Unqualified,
             captureId,
             sourceRevision: options.sourceRevision,
             closedAtMs: clock.currentTimeMillisUnsafe(),

@@ -1,12 +1,17 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
+import { sha256 } from '../hash'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 
 import { captureEvent, marketEvent } from './capture.test-support'
 import {
   CaptureInvalidation,
+  CaptureQualification,
+  decodeResearchCaptureChunk,
+  decodeResearchCaptureSeal,
   encodeResearchCapture,
+  maximumResearchCaptureChunkBytes,
   recordResearchCapture,
   verifyResearchCapture,
   type ResearchCaptureChunk,
@@ -30,6 +35,7 @@ const captureFixture = () => {
   const bytes = encodeResearchCapture(chunk)
   const seal: ResearchCaptureSeal = {
     schemaVersion: 'bayn.research-capture-seal.v1',
+    qualification: CaptureQualification.Unqualified,
     captureId: chunk.captureId,
     sourceRevision: chunk.sourceRevision,
     closedAtMs: 100,
@@ -44,7 +50,9 @@ const captureFixture = () => {
 
 test('sealed receipts bind exact bytes, consumer order, and the complete observed tail', () => {
   const { chunk, bytes, seal } = captureFixture()
-  expect(Result.getOrThrow(verifyResearchCapture([bytes], encodeResearchCapture(seal))).complete).toBe(true)
+  const verified = Result.getOrThrow(verifyResearchCapture([bytes], encodeResearchCapture(seal)))
+  expect(verified.structurallyClosed).toBe(true)
+  expect(verified.complete).toBe(false)
   expect(Result.isFailure(verifyResearchCapture([bytes], undefined))).toBe(true)
   expect(
     Result.isFailure(verifyResearchCapture([{ ...bytes, payload: `${bytes.payload} ` }], encodeResearchCapture(seal))),
@@ -61,6 +69,20 @@ test('sealed receipts bind exact bytes, consumer order, and the complete observe
       verifyResearchCapture([reordered], encodeResearchCapture({ ...seal, lastContentHash: reordered.contentHash })),
     ),
   ).toBe(true)
+})
+
+test('metadata seals cannot advertise qualified completeness or accept oversized payloads', () => {
+  const { bytes, seal } = captureFixture()
+  for (const qualification of [undefined, 'ACKNOWLEDGED', 'QUALIFIED']) {
+    const payload = JSON.stringify({ ...seal, qualification })
+    expect(Result.isFailure(decodeResearchCaptureSeal({ payload, contentHash: sha256(payload) }))).toBe(true)
+  }
+  const payload = bytes.payload + ' '.repeat(maximumResearchCaptureChunkBytes - Buffer.byteLength(bytes.payload))
+  expect(Result.isSuccess(decodeResearchCaptureChunk({ payload, contentHash: sha256(payload) }))).toBe(true)
+  const oversized = `${payload} `
+  expect(Result.isFailure(decodeResearchCaptureChunk({ payload: oversized, contentHash: sha256(oversized) }))).toBe(
+    true,
+  )
 })
 
 test('one capture cannot merge worker epochs or accept missing raw-byte identity', () => {

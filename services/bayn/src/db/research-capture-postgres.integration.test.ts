@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Redacted, Result, Schema } from 'effect'
+import { Effect, Exit, Redacted, Result, Schema, type Scope } from 'effect'
 
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -10,12 +10,17 @@ import { makeResearchCapturePostgresStore } from './research-capture-postgres'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { sha256 } from '../hash'
 import {
+  CaptureInvalidation,
+  CaptureQualification,
+  ResearchCaptureFailure,
   encodeResearchCapture,
+  maximumResearchCaptureChunkBytes,
   verifyResearchCapture,
   type ResearchCaptureChunk,
   type ResearchCaptureSeal,
 } from '../research-capture/capture'
-import { captureEvent, marketEvent } from '../research-capture/capture.test-support'
+import { captureEvent, fullCaptureBufferEvents, marketEvent } from '../research-capture/capture.test-support'
+import { makeResearchCaptureRecorder } from '../research-capture/recorder'
 
 const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
 const fixture = Effect.gen(function* () {
@@ -37,6 +42,7 @@ const fixture = Effect.gen(function* () {
   const bytes = encodeResearchCapture(chunk)
   const seal: ResearchCaptureSeal = {
     schemaVersion: 'bayn.research-capture-seal.v1',
+    qualification: CaptureQualification.Unqualified,
     captureId: chunk.captureId,
     sourceRevision: chunk.sourceRevision,
     closedAtMs: 100,
@@ -48,7 +54,7 @@ const fixture = Effect.gen(function* () {
   }
   return { sql, store, chunk, bytes, seal }
 })
-const run = <A, E>(program: Effect.Effect<A, E, Effect.Services<typeof fixture>>) => {
+const run = <A, E>(program: Effect.Effect<A, E, Effect.Services<typeof fixture> | Scope.Scope>) => {
   if (baynTestPostgresUrl === undefined) throw new Error('Missing isolated capture test database')
   const url = new URL(baynTestPostgresUrl)
   if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
@@ -136,7 +142,122 @@ postgresTest('exact-byte retries and concurrent lost-ack recovery are idempotent
       expect(Exit.isFailure(yield* Effect.exit(store.seal(encodeResearchCapture({ ...seal, closedAtMs: 101 }))))).toBe(
         true,
       )
-      expect(Result.getOrThrow(verifyResearchCapture([bytes], encodeResearchCapture(seal))).complete).toBe(true)
+      const verified = Result.getOrThrow(verifyResearchCapture([bytes], encodeResearchCapture(seal)))
+      expect(verified.structurallyClosed).toBe(true)
+      expect(verified.complete).toBe(false)
+    }),
+  ),
+)
+
+postgresTest('committed metadata seal remains unqualified after its acknowledgement is lost', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk } = yield* fixture
+      const recorder = yield* makeResearchCaptureRecorder(
+        {
+          ...store,
+          seal: (bytes) =>
+            store
+              .seal(bytes)
+              .pipe(
+                Effect.andThen(
+                  Effect.fail(new ResearchCaptureFailure({ message: 'seal committed; acknowledgement lost' })),
+                ),
+              ),
+        },
+        {
+          captureId: chunk.captureId,
+          sourceRevision: chunk.sourceRevision,
+          maximumQueuedReceipts: 16,
+          maximumQueuedBytes: 16_384,
+          maximumReceiptBytes: 4096,
+          flushIntervalMs: 1000,
+          writeTimeoutMs: 1000,
+        },
+      )
+      recorder.record(captureEvent('STARTED'), 100)
+      recorder.record(captureEvent('STOPPED'), 100)
+      const closed = yield* recorder.finish
+      expect(closed?.invalidations).toContain(CaptureInvalidation.Persistence)
+      const decode = Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ content_hash: Schema.String, payload: Schema.String })),
+      )
+      const chunks =
+        yield* sql`SELECT content_hash, payload FROM research_capture_chunks WHERE capture_id = ${chunk.captureId} ORDER BY chunk_ordinal`.pipe(
+          Effect.flatMap(decode),
+        )
+      const seals =
+        yield* sql`SELECT content_hash, payload FROM research_capture_seals WHERE capture_id = ${chunk.captureId}`.pipe(
+          Effect.flatMap(decode),
+        )
+      const bytes = (row: (typeof chunks)[number]) => ({ contentHash: row.content_hash, payload: row.payload })
+      const stored = seals[0]
+      expect(stored).toBeDefined()
+      const verified = Result.getOrThrow(
+        verifyResearchCapture(chunks.map(bytes), stored === undefined ? undefined : bytes(stored)),
+      )
+      expect(verified.seal.invalidations).toEqual([])
+      expect(verified.seal.qualification).toBe(CaptureQualification.Unqualified)
+      expect(verified.structurallyClosed).toBe(true)
+      expect(verified.complete).toBe(false)
+    }),
+  ),
+)
+
+postgresTest('full UTF8 queue splits into database-sized chunks without oversized SQL attempts', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk } = yield* fixture
+      const attemptedSizes: number[] = []
+      const recorder = yield* makeResearchCaptureRecorder(
+        {
+          ...store,
+          append: (bytes) =>
+            Effect.gen(function* () {
+              const size = Buffer.byteLength(bytes.payload, 'utf8')
+              attemptedSizes.push(size)
+              if (size > maximumResearchCaptureChunkBytes)
+                return yield* new ResearchCaptureFailure({ message: 'oversized SQL attempt' })
+              yield* store.append(bytes)
+            }),
+        },
+        {
+          captureId: chunk.captureId,
+          sourceRevision: chunk.sourceRevision,
+          maximumQueuedReceipts: 64,
+          maximumQueuedBytes: maximumResearchCaptureChunkBytes,
+          maximumReceiptBytes: 64 * 1024,
+          flushIntervalMs: 1000,
+          writeTimeoutMs: 1000,
+        },
+      )
+      for (const event of fullCaptureBufferEvents()) recorder.record(event, 100)
+      const closed = yield* recorder.finish
+      expect(closed?.invalidations).toEqual([])
+      expect(closed?.persistedReceipts).toBe(64)
+      expect(attemptedSizes).toHaveLength(2)
+      expect(attemptedSizes.every((size) => size <= maximumResearchCaptureChunkBytes)).toBe(true)
+      expect(
+        yield* sql`SELECT count(*)::integer AS count FROM research_capture_chunks WHERE capture_id = ${chunk.captureId}`,
+      ).toEqual([{ count: 2 }])
+    }),
+  ),
+)
+
+postgresTest('seal rows reject missing or fabricated qualification claims', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, seal } = yield* fixture
+      for (const qualification of [undefined, 'QUALIFIED']) {
+        const captureId = randomUUID()
+        const payload = JSON.stringify({ ...seal, captureId, qualification })
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(sql`INSERT INTO research_capture_seals (capture_id, content_hash, payload)
+        VALUES (${captureId}, ${sha256(payload)}, ${payload})`),
+          ),
+        ).toBe(true)
+      }
     }),
   ),
 )

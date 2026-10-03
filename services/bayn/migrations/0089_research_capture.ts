@@ -27,6 +27,7 @@ export default Effect.gen(function* () {
         octet_length(payload) BETWEEN 1 AND 65536
         AND encode(sha256(convert_to(payload, 'UTF8')), 'hex') = content_hash
         AND payload::jsonb->>'schemaVersion' IS NOT DISTINCT FROM 'bayn.research-capture-seal.v1'
+        AND payload::jsonb->>'qualification' IS NOT DISTINCT FROM 'UNQUALIFIED'
         AND payload::jsonb->>'captureId' IS NOT DISTINCT FROM capture_id
       )
     )

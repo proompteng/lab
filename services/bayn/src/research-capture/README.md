@@ -29,6 +29,18 @@ outside execution. Chunks bind the preceding exact-byte hash. The append-only da
 duplicate retries compare both SHA-256 and exact payload text. Different formatting is different evidence. Seals bind
 the committed frontier. PostgreSQL triggers reject updates, deletes, truncation, and appends after a seal.
 
+Every metadata seal durably declares `qualification: UNQUALIFIED` before its write begins. A successful acknowledgement
+does not upgrade it. If the database commits a seal and its acknowledgement is lost, the stored bytes still cannot claim
+qualified completeness. `verifyResearchCapture` reports `structurallyClosed` for a contiguous, closed metadata prefix
+without recorded invalidations, but always returns `complete: false`. Structural closure says nothing about whether this
+seal's acknowledgement arrived, raw export/readback, or full source and controller coverage. Qualification requires the
+separate reviewed export protocol; this metadata-only API has no qualified seal variant.
+
+The buffer limit counts retained serialized receipt bytes. Draining splits that bounded buffer using the exact UTF8
+chunk envelope, receipt bytes, and comma separators, so no chunk exceeds the database's 4 MiB payload limit. Each receipt
+is serialized for its admission size and once in its final chunk; splitting never repeatedly serializes growing prefixes.
+Capture identities are limited to 512 characters, and the persistence decoder rejects oversized chunks before SQL.
+
 Overflow, persistence timeout, lost acknowledgement, interruption, missing raw identity, assignment changes, journal replay, or clock
 reversal make completeness unavailable. A missing seal has an unknown crash tail. A seal cannot omit an observed or
 committed tail and claim completeness. Persistence uses the native cancellable Effect SQL operation and has no retry.

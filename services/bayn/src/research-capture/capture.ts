@@ -20,6 +20,14 @@ export enum CaptureDisposition {
   Ignored = 'IGNORED',
 }
 
+export enum CaptureQualification {
+  Unqualified = 'UNQUALIFIED',
+}
+
+export const maximumResearchCaptureChunkBytes = 4 * 1024 * 1024
+export const maximumResearchCaptureSealBytes = 64 * 1024
+export const ResearchCaptureIdSchema = StrictNonEmptyStringSchema.check(Schema.isMaxLength(512))
+
 export enum CaptureInvalidation {
   Overflow = 'BUFFER_OVERFLOW',
   Persistence = 'PERSISTENCE_FAILED_OR_UNKNOWN',
@@ -106,7 +114,7 @@ export type ResearchCaptureReceipt = typeof ResearchCaptureReceiptSchema.Type
 
 export const ResearchCaptureChunkSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-capture-chunk.v1'),
-  captureId: StrictNonEmptyStringSchema,
+  captureId: ResearchCaptureIdSchema,
   sourceRevision: GitSourceRevisionSchema,
   chunkOrdinal: NonNegativeIntegerSchema,
   previousContentHash: Schema.NullOr(Sha256Schema),
@@ -116,7 +124,8 @@ export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
 export const ResearchCaptureSealSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-capture-seal.v1'),
-  captureId: StrictNonEmptyStringSchema,
+  qualification: Schema.Enum(CaptureQualification),
+  captureId: ResearchCaptureIdSchema,
   sourceRevision: GitSourceRevisionSchema,
   closedAtMs: NonNegativeIntegerSchema,
   observedReceipts: NonNegativeIntegerSchema,
@@ -146,6 +155,8 @@ const fail = (message: string) => new ResearchCaptureFailure({ message })
 
 export const decodeResearchCaptureChunk = (input: ResearchCaptureBytes) =>
   Result.gen(function* () {
+    if (Buffer.byteLength(input.payload, 'utf8') > maximumResearchCaptureChunkBytes)
+      return yield* Result.fail(fail('Capture chunk exceeds the exact UTF8 payload limit'))
     if (sha256(input.payload) !== input.contentHash) return yield* Result.fail(fail('Capture chunk hash mismatch'))
     return yield* Schema.decodeUnknownResult(
       Schema.fromJsonString(ResearchCaptureChunkSchema),
@@ -155,6 +166,8 @@ export const decodeResearchCaptureChunk = (input: ResearchCaptureBytes) =>
 
 export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
   Result.gen(function* () {
+    if (Buffer.byteLength(input.payload, 'utf8') > maximumResearchCaptureSealBytes)
+      return yield* Result.fail(fail('Capture seal exceeds the exact UTF8 payload limit'))
     if (sha256(input.payload) !== input.contentHash) return yield* Result.fail(fail('Capture seal hash mismatch'))
     return yield* Schema.decodeUnknownResult(
       Schema.fromJsonString(ResearchCaptureSealSchema),
@@ -226,14 +239,16 @@ export const verifyResearchCapture = (
       seal.closedAtMs < lastAtMs
     )
       return yield* Result.fail(fail('Capture seal omits or changes its retained tail'))
-    const complete =
+    const structurallyClosed =
       seal.invalidations.length === 0 &&
       completeSequence &&
       sequence === seal.observedReceipts &&
       activeEpoch === undefined
-    if (seal.invalidations.length === 0 && !complete)
-      return yield* Result.fail(fail('Capture seal cannot claim completeness with an omitted tail or open epoch'))
-    return { seal, complete }
+    if (seal.invalidations.length === 0 && !structurallyClosed)
+      return yield* Result.fail(
+        fail('Capture seal omits an observed tail or leaves an open epoch without invalidation'),
+      )
+    return { seal, structurallyClosed, complete: false }
   })
 
 export interface ResearchCaptureObserver {
