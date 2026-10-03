@@ -5,6 +5,8 @@ mod crd;
 mod gateway;
 mod grpc;
 mod guest;
+mod guest_identity;
+mod identity;
 mod metrics;
 mod pod;
 mod runtime_secret;
@@ -88,12 +90,18 @@ async fn main() -> anyhow::Result<()> {
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
+    let workload_identity = identity::WorkloadIdentity::from_environment(&namespace).await?;
+    let grpc_tls = workload_identity.server_tls()?;
+    let grpc_listener = TcpListener::bind(listen_address)
+        .await
+        .context("bind SPIFFE gRPC control plane")?;
     let runtime_secret_client = client.clone();
     let runtime_secret_namespace = namespace.clone();
     let activity = ActivityTracker::new(client.clone(), namespace.clone());
     let service = ControlPlane::new(
         client.clone(),
         ControlPlaneConfig {
+            identity: workload_identity.clone(),
             namespace: namespace.clone(),
             default_image,
             architecture,
@@ -119,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
         tickets.clone(),
         activity,
         preview_origin,
+        workload_identity.clone(),
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
         .await
@@ -136,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
             namespace: controller_namespace,
             tickets,
             guest_image: controller_guest_image.into(),
+            identity: workload_identity,
         })
         .await;
         Ok::<(), anyhow::Error>(())
@@ -149,7 +159,10 @@ async fn main() -> anyhow::Result<()> {
                     .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)
                     .max_encoding_message_size(MAX_GRPC_MESSAGE_BYTES),
             )
-            .serve_with_shutdown(listen_address, wait_for_shutdown(grpc_shutdown))
+            .serve_with_incoming_shutdown(
+                identity::tls_incoming(grpc_listener, grpc_tls),
+                wait_for_shutdown(grpc_shutdown),
+            )
             .await
             .context("serve gRPC control plane")
     });

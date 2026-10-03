@@ -9,12 +9,17 @@ import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
 import { AuthenticationError } from '@platformatic/kafka'
-import { decodeRollingMarketFeature } from '../features/contract'
+import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
 import { decodeTechnicalMarketFeature } from '../features/technical-contract'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../../effect-test-support'
+import { historicalRawArrivals } from '../../testing/historical-streaming-fixture'
+import { streamingFixture } from '../../testing/streaming-market-fixture'
+import { persistIntradayRecordRows } from '../intraday/verification'
+import { reproduceStreamingSnapshot } from './replay'
+import { constructStreamingSnapshot } from './snapshot'
 import {
   makeKafkaMarketProjection,
   type KafkaConsumedRecord,
@@ -98,6 +103,84 @@ const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
 describe('Kafka bootstrap and scoped consumption', () => {
+  test('rebuilds retained RTH history without a new lookback wait or backdated availability', async () => {
+    const fixture = streamingFixture()
+    const bootAtMs = Date.parse(fixture.query.observedAt) + 1000
+    const retainedUniverse: StreamingUniverse = {
+      universeId: fixture.protocol.universeId,
+      universeSymbolHash: fixture.protocol.universeSymbolHash,
+      symbols: fixture.protocol.universe,
+      topics: { ...fixture.protocol.sourceTopics, features: fixture.protocol.streamingInput.featureTopic },
+    }
+    const records: KafkaConsumedRecord[] = [
+      ...historicalRawArrivals(fixture.snapshot, bootAtMs).map(({ record }) => ({
+        ...record,
+        timestampMs: Date.parse(JSON.parse(record.value).ingestTs),
+        leaderEpoch: 1,
+      })),
+      ...[...fixture.cut.projection.features.values()].flat().map((feature) => ({
+        topic: feature.topic,
+        partition: feature.partition,
+        offset: feature.offset,
+        timestampMs: feature.value.computedAtMs,
+        value: JSON.stringify(feature.value),
+        leaderEpoch: 1,
+      })),
+    ].sort(
+      (a, b) =>
+        a.topic.localeCompare(b.topic) || a.partition - b.partition || Number(BigInt(a.offset) - BigInt(b.offset)),
+    )
+    const delayedTrades = records.filter((record) => record.topic === retainedUniverse.topics.trades)
+    if (delayedTrades.length === 0) throw new Error('retained trade fixture is empty')
+    const transport = new FakeTransport()
+    transport.drained = undefined
+    transport.queue = records.filter((record) => record.topic !== retainedUniverse.topics.trades)
+    transport.offsets = async (_topics, timestamp) => {
+      transport.lookups.push(timestamp)
+      return fixture.cut.positions.map((position) => ({
+        ...position,
+        offset: timestamp === -1n ? position.offset : '0',
+      }))
+    }
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(bootAtMs)
+        const projection = yield* makeKafkaMarketProjection(config, retainedUniverse, () => transport)
+        yield* TestClock.adjust('1 second')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        for (const record of delayedTrades) transport.send(record)
+        yield* TestClock.adjust('1 second')
+        const cut = yield* projection.read
+        const observedAtMs = yield* Clock.currentTimeMillis
+        expect(observedAtMs - bootAtMs).toBe(2000)
+        expect(kafkaBootstrapComplete(cut.bootstrap, cut.positions)).toBe(true)
+        expect(transport.lookups).toContain(BigInt(Date.parse(fixture.query.rangeStartAt) - 5000))
+        const snapshot = Result.getOrThrow(
+          constructStreamingSnapshot(cut, { ...fixture.query, observedAt: new Date(observedAtMs).toISOString() }),
+        )
+        expect(snapshot.bars.map((bar) => Result.getOrThrow(featureBarContentHash(bar)))).toEqual(
+          fixture.snapshot.bars.map((bar) => Result.getOrThrow(featureBarContentHash(bar))),
+        )
+        expect(snapshot.manifest.streaming.records.every((receipt) => receipt.availableAtMs >= bootAtMs)).toBe(true)
+        expect(snapshot.manifest.streaming.features.every((receipt) => receipt.availableAtMs >= bootAtMs)).toBe(true)
+        expect(snapshot.manifest.streaming.features.map(({ value }) => value)).toEqual(
+          fixture.snapshot.manifest.streaming.features.map(({ value }) => value),
+        )
+        expect(
+          Result.isFailure(
+            constructStreamingSnapshot(cut, {
+              ...fixture.query,
+              observedAt: new Date(bootAtMs + 500).toISOString(),
+            }),
+          ),
+        ).toBe(true)
+        const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+        expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
+      }),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
   test.each(['rejected', 'stalled'] as const)(
     'ephemeral projection needs no offset commits even when commits would be %s',
     async (commitFailure) => {

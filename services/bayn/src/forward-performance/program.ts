@@ -2,7 +2,7 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
 import { Data, DateTime, Effect, Option, Redacted, Result, Scope } from 'effect'
 
-import type { LoadedRuntimeConfig } from '../config'
+import type { ForwardPerformanceConfig } from './config'
 import { verifyAccountingReceipts, type ReconciliationAlgebraFailure } from '../reconciliation/algebra'
 import type { CanonicalJsonFailure } from '../hash'
 import { canonicalHashV1Result } from '../hash'
@@ -69,8 +69,8 @@ export class ForwardPerformanceMarketVolumeError extends Data.TaggedError('Forwa
   readonly cause: unknown
 }> {}
 
-type BoundForwardPerformanceConfig = LoadedRuntimeConfig & {
-  readonly execution: LoadedRuntimeConfig['execution'] & { readonly brokerIdentity: BrokerIdentity }
+type BoundForwardPerformanceConfig = ForwardPerformanceConfig & {
+  readonly execution: ForwardPerformanceConfig['execution'] & { readonly brokerIdentity: BrokerIdentity }
 }
 
 export interface ForwardPerformanceReaders {
@@ -80,14 +80,14 @@ export interface ForwardPerformanceReaders {
     authorityGenerationHash?: string,
   ) => Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError>
   readonly ledger: (
-    config: Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
+    config: Pick<ForwardPerformanceConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
     accountId: string,
     accountPlans: readonly LedgerPlan[],
     cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
     generationPlans?: readonly LedgerPlan[],
   ) => Effect.Effect<ForwardPerformanceLedgerEvidence, ForwardPerformanceLedgerError, Scope.Scope>
   readonly marketVolume: (
-    config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
+    config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
     requests: readonly ForwardPerformanceMarketVolumeRequest[],
   ) => Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError>
 }
@@ -310,7 +310,7 @@ const readIntradayPerformanceVolume = (request: ForwardPerformanceIntradayMarket
   })
 
 const readForwardPerformanceMarketVolumeWithClientDataFirst = (
-  config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
+  config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
 ): Effect.Effect<
   readonly ForwardPerformanceMarketVolumeEvidence[],
@@ -331,7 +331,7 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
             universeSymbolHash: request.universeSymbolHash,
             universe: request.symbols,
             historyStart: request.requestedStart,
-            evaluationStart: config.clickhouse.bounds.evaluationStart,
+            evaluationStart: config.historicalSignal.bounds.evaluationStart,
           })
           const candidateRows = yield* sql<Record<string, unknown>>`
             SELECT
@@ -407,12 +407,16 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
           const verified = verifyForwardPerformanceMarketSnapshot(
             request,
             { bars: rows.bars, sessions: rows.sessions, manifests },
-            config.clickhouse.bounds.evaluationStart,
+            config.historicalSignal.bounds.evaluationStart,
           )
           if (verified === undefined) return []
           const projected = yield* Effect.forEach(group, (item) =>
             Effect.fromResult(
-              projectForwardPerformanceMarketVolumeEvidence(item, verified, config.clickhouse.bounds.evaluationStart),
+              projectForwardPerformanceMarketVolumeEvidence(
+                item,
+                verified,
+                config.historicalSignal.bounds.evaluationStart,
+              ),
             ),
           )
           return projected.filter((item): item is ForwardPerformanceDailyMarketVolumeEvidence => item !== undefined)
@@ -450,7 +454,7 @@ export const readForwardPerformanceMarketVolumeWithClient = Pipeable.dual(
 )
 
 const readForwardPerformanceMarketVolumeDataFirst = (
-  config: Pick<LoadedRuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
+  config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
 ): Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError> => {
   if (requests.length === 0) return Effect.succeed([])
@@ -549,7 +553,7 @@ const programError = (
   new ForwardPerformanceProgramError({ operation, message, ...(cause === undefined ? {} : { cause }) })
 
 const requireBrokerIdentity = (
-  config: LoadedRuntimeConfig,
+  config: ForwardPerformanceConfig,
 ): Effect.Effect<BoundForwardPerformanceConfig, ForwardPerformanceProgramError> => {
   const brokerIdentity = config.execution.brokerIdentity
   return brokerIdentity === undefined
@@ -560,7 +564,7 @@ const requireBrokerIdentity = (
 }
 
 const readForwardPerformanceInput = (
-  loadedConfig: LoadedRuntimeConfig,
+  loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string } = {},
 ): Effect.Effect<ForwardPerformanceEvidenceInput, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
@@ -667,7 +671,7 @@ const readForwardPerformanceInput = (
   })
 
 const runForwardPerformanceDataFirst = (
-  loadedConfig: LoadedRuntimeConfig,
+  loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string } = {},
 ): Effect.Effect<ForwardPerformanceReceipt, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
@@ -682,7 +686,7 @@ const runForwardPerformanceDataFirst = (
   )
 
 export const runForwardPerformanceReport = (
-  loadedConfig: LoadedRuntimeConfig,
+  loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
   options: { readonly authorityGenerationHash?: string } = {},
 ): Effect.Effect<ForwardPerformanceReport, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
@@ -700,7 +704,7 @@ export const runForwardPerformance = Pipeable.by<
   (
     readers?: ForwardPerformanceReaders,
     options?: { readonly authorityGenerationHash?: string },
-  ) => (loadedConfig: LoadedRuntimeConfig) => ReturnType<typeof runForwardPerformanceDataFirst>,
+  ) => (loadedConfig: ForwardPerformanceConfig) => ReturnType<typeof runForwardPerformanceDataFirst>,
   typeof runForwardPerformanceDataFirst
 >(
   (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'runtimeMode' in arguments_[0],

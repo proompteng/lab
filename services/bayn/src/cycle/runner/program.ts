@@ -15,15 +15,13 @@ import {
   marketCalendarQueryFromSession,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
-  selectCyclePassContinuation,
-  type CyclePassProgress,
 } from './decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
 
 const currentIsoTime = currentUtcInstant
 
-const discoverIntradayCyclePass = <R>(
+export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
   const candidate =
@@ -164,10 +162,6 @@ const discoverIntradayCyclePass = <R>(
     } as const
   })
 }
-
-export const discoverAutonomousCyclePass = <R>(
-  context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => discoverIntradayCyclePass(context)
 
 const chooseRecovery = (state: CycleRecoveryState): Effect.Effect<CycleRecoverySelection, CycleRunnerError> =>
   Effect.fromResult(selectCycleRecovery(state)).pipe(
@@ -355,78 +349,17 @@ const recoverCycle = <R>(
 
 export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
+  cycle: AutonomousCycle | undefined,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  pipe(
-    CycleStore,
-    Effect.flatMap((store) =>
-      store.readOldestUnfinished({
-        qualificationRunId: context.cycleBindingId,
+  currentIsoTime.pipe(
+    Effect.flatMap((observedAt) =>
+      chooseRecovery({
+        cycleBindingId: context.cycleBindingId,
         accountId: context.accountId,
+        strategyProtocolHash: context.strategyProtocolHash,
+        observedAt,
+        cycle,
       }),
     ),
-    Effect.mapError((cause) =>
-      runnerError({
-        operation: 'read-oldest-unfinished',
-        failure: 'store',
-        message: 'oldest unfinished autonomous cycle read failed',
-        cause,
-      }),
-    ),
-    Effect.flatMap((unfinished) =>
-      pipe(
-        currentIsoTime,
-        Effect.flatMap((observedAt) =>
-          pipe(
-            chooseRecovery({
-              cycleBindingId: context.cycleBindingId,
-              accountId: context.accountId,
-              strategyProtocolHash: context.strategyProtocolHash,
-              observedAt,
-              cycle: Option.getOrUndefined(unfinished),
-            }),
-            Effect.flatMap((selection) => recoverCycle(selection, context)),
-          ),
-        ),
-      ),
-    ),
+    Effect.flatMap((selection) => recoverCycle(selection, context)),
   )
-
-const cycleProgressKey = (cycle: AutonomousCycle): string =>
-  `${cycle.identity.cycleId}:${cycle.state}:${cycle.stateVersion}`
-
-const continueAutonomousCyclePass = <R>(
-  context: CycleRunContext<R>,
-  completedProgress: ReadonlySet<CyclePassProgress>,
-  previousProgressKey?: string,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  runAutonomousCyclePass(context).pipe(
-    Effect.flatMap((result) => {
-      const continuation = selectCyclePassContinuation(result)
-      if (continuation._tag === 'RETURN') return Effect.succeed(result)
-      const progressKey = cycleProgressKey(continuation.cycle)
-      if (progressKey === previousProgressKey) {
-        return Effect.fail(
-          runnerError({
-            operation: 'recover-cycle',
-            failure: 'contract',
-            message: `autonomous cycle pass repeated ${continuation.progress} without durable progress`,
-          }),
-        )
-      }
-      if (completedProgress.has(continuation.progress)) {
-        return Effect.fail(
-          runnerError({
-            operation: 'recover-cycle',
-            failure: 'contract',
-            message: `autonomous cycle pass repeated ${continuation.progress} after durable progress`,
-          }),
-        )
-      }
-      return continueAutonomousCyclePass(context, new Set([...completedProgress, continuation.progress]), progressKey)
-    }),
-  )
-
-export const runAutonomousCycleUntilSettled = <R>(
-  context: CycleRunContext<R>,
-): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  continueAutonomousCyclePass(context, new Set())

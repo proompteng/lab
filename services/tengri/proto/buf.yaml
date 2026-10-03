@@ -7,5 +7,10 @@ lint:
     - RPC_REQUEST_STANDARD_NAME
     - RPC_RESPONSE_STANDARD_NAME
     - RPC_REQUEST_RESPONSE_UNIQUE
+  ignore_only:
+    PACKAGE_DEFINED:
+      - spiffe/workloadapi.proto
+    SERVICE_SUFFIX:
+      - spiffe/workloadapi.proto
 breaking:
   use: [FILE]
