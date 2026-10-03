@@ -114,10 +114,25 @@ Client latency may increase while scrub work uses its larger share. Keep
 interval and overdue health alerts remain enabled.
 
 Rook applies the profile through `cephClusterSpec.cephConfig`. The OSD annotation
-`ops.proompteng.ai/osd-config-revision: scrub-catchup-v1` requests a daemon-by-daemon
-rollout so every OSD starts with the complete configuration. Verify the nine
+`ops.proompteng.ai/osd-config-revision: scrub-catchup-v1` requests an OSD rollout.
+During an annotation change Rook may restart multiple OSDs on one host together;
+do not assume the image-upgrade gates serialize these restarts. Wait for all six
+OSDs to return up/in before accepting the rollout. Verify the nine
 `osd_mclock_scheduler_*` values on every running OSD; the monitor config store
 alone does not prove the scheduler is using them.
+
+During the built-in-to-custom transition, an OSD still using the old profile may
+remove a newly written custom scheduler key from the monitor config store.
+After every OSD uses `custom`, check for missing keys. Normal reconciliation uses
+reviewed GitOps. A direct `ceph config set` repair requires explicit authorization
+for that runtime repair or a documented, authorized emergency procedure; the
+value being present in Git does not grant that authority. With that authorization,
+use the Galactic toolbox and reapply only the exact merged values. Otherwise,
+record the mismatched daemon, key, and intended value and obtain authorization
+before mutating runtime configuration. For example, the October rollout dropped
+`osd_mclock_scheduler_client_res`; restoring its committed `0.4` value completes
+the profile without changing the intended tuning. Confirm all nine effective
+values again after the last OSD restart.
 
 Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 
