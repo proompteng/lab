@@ -17,6 +17,57 @@ const secret = '{"data":{"registry":"c3ludGhldGljLWNyZWRlbnRpYWw="},"metadata":{
 
 describe('Kubernetes Secret creation literals', () => {
   it.each([
+    'kubectl create secret docker-registry regcred --docker-password=opaque-runtime-secret --docker-username=user',
+    "kubectl create secret docker-registry regcred --docker-password 'opaque-runtime-secret' --docker-server=registry.example",
+    'env KUBECONFIG=/dev/null kubectl -n agents create secret docker-registry regcred --docker-password=opaque-runtime-secret',
+  ])('masks explicit Docker registry password source in %s', (command) => {
+    const masked = maskKubernetesSecretCreationCommand(command)
+    expect(masked.text).toBe(command.replace('opaque-runtime-secret', marker))
+    expect(masked.values).toEqual(['opaque-runtime-secret'])
+  })
+
+  it('collects attached/separate Docker passwords with bounded decoded argv/source values', () => {
+    const args = [
+      'create',
+      'secret',
+      'docker-registry',
+      'regcred',
+      '--docker-password',
+      'left;right=tail',
+      '--docker-username=user',
+    ]
+    expect(maskKubernetesSecretCreationArgs(args)).toEqual({
+      args: ['create', 'secret', 'docker-registry', 'regcred', '--docker-password', marker, '--docker-username=user'],
+      values: ['left;right=tail'],
+      maskedValues: 1,
+    })
+    expect(
+      maskKubernetesSecretCreationArgs([
+        'create',
+        'secret',
+        'docker-registry',
+        'regcred',
+        '--docker-password=left=right',
+      ]).args.at(-1),
+    ).toBe(`--docker-password=${marker}`)
+    const command = 'kubectl create secret docker-registry regcred --docker-password=\'left\'" right"'
+    expect(maskKubernetesSecretCreationCommand(command).values).toEqual(['left right'])
+    expect(maskKubernetesSecretCreationCommand(command).text).not.toContain('left')
+    expect(() =>
+      maskKubernetesSecretCreationCommand('kubectl create secret docker-registry regcred --docker-password=$PASSWORD'),
+    ).toThrow()
+    expect(() =>
+      maskKubernetesSecretCreationArgs([
+        'create',
+        'secret',
+        'docker-registry',
+        'regcred',
+        `--docker-password=${'x'.repeat(4097)}`,
+      ]),
+    ).toThrow()
+  })
+
+  it.each([
     'kubectl create secret generic demo --from-literal=registry=opaque-runtime-secret',
     "kubectl create secret generic demo --from-literal 'registry=opaque-runtime-secret'",
     'KUBECONFIG=/tmp/config kubectl create secret generic demo --from-literal=registry=opaque-runtime-secret',
@@ -122,6 +173,83 @@ describe('Kubernetes Secret creation literals', () => {
       ),
     ).toThrow('span capture')
   })
+})
+
+describe('qualified Secret resources and structured creation output', () => {
+  it.each(['secrets.v1./demo', 'secret.v1.', 'secrets./demo', 'secret.v1./demo,pods'])(
+    'recognizes qualified resource %s',
+    (resource) => {
+      expect(secretCaptureMode(`kubectl get ${resource}`)).toBe('metadata')
+      expect(secretCaptureMode(`kubectl get ${resource} -ojson`)).toBe('document')
+      expect(secretCaptureMode(`KUBECONFIG=/dev/null kubectl get ${resource} -oyaml`)).toBe('document')
+      expect(secretCaptureMode(`kubectl get ${resource} -o jsonpath='{.data.registry}'`)).toBe('projection')
+    },
+  )
+
+  it.each(['generic', 'docker-registry', 'tls'])('captures known Secret create %s documents structurally', (kind) => {
+    const command = `kubectl create secret ${kind} demo --dry-run=client`
+    expect(secretCaptureMode(command)).toBe('metadata')
+    expect(secretCaptureMode(`${command} -ojson`)).toBe('document')
+    expect(secretCaptureMode(`${command} --output=yaml`)).toBe('document')
+    expect(secretCaptureMode(`${command} -o jsonpath='{.data.*}'`)).toBe('projection')
+  })
+
+  it('keeps ConfigMap resource names and creation literals ordinary', () => {
+    expect(secretCaptureMode('kubectl get configmaps.v1./secrets -ojson')).toBeNull()
+    expect(secretCaptureMode('kubectl create configmap secret --from-literal=registry=ordinary -ojson')).toBeNull()
+    expect(
+      maskKubernetesSecretCreationArgs(['create', 'configmap', 'secret', '--from-literal=registry=ordinary']).values,
+    ).toEqual([])
+  })
+
+  it.each(['json', 'yaml'])(
+    'masks complete Docker configuration blobs in both %s streams and result duplicates',
+    (format) => {
+      const encoded = Buffer.from(
+        JSON.stringify({
+          auths: {
+            registry: {
+              username: 'user',
+              password: 'opaque-runtime-secret',
+              auth: Buffer.from('user:opaque-runtime-secret').toString('base64'),
+            },
+          },
+        }),
+      ).toString('base64')
+      const document =
+        format === 'json'
+          ? JSON.stringify({
+              apiVersion: 'v1',
+              kind: 'Secret',
+              metadata: { name: 'regcred' },
+              data: { '.dockerconfigjson': encoded },
+            })
+          : `apiVersion: v1\nkind: Secret\nmetadata:\n  name: regcred\ndata:\n  .dockerconfigjson: ${encoded}\n`
+      const command = `kubectl create secret docker-registry regcred --docker-password opaque-runtime-secret -o${format}`
+      for (const stream of ['stdout', 'stderr']) {
+        const events: Record<string, unknown>[] = []
+        const mirror = new OutputAudit(
+          stream === 'stdout' ? 'stdout' : 'stderr',
+          (_event, payload) => {
+            events.push(payload)
+            return 0
+          },
+          secretCaptureMode(command),
+        )
+        const source = new PassThrough()
+        const failed = vi.fn()
+        for (let offset = 0; offset < document.length; offset += 3)
+          mirror.write(Buffer.from(document.slice(offset, offset + 3)), source, failed)
+        mirror.finish()
+        expect(JSON.stringify(events)).not.toContain(encoded)
+        expect(JSON.stringify(events)).toContain(marker)
+        expect(failed).not.toHaveBeenCalled()
+        expect(sanitizeAuditPayload({ result: { command, [stream]: document } }).payload).toMatchObject({
+          result: { [stream]: document.replace(encoded, format === 'json' ? marker : `"${marker}"`) },
+        })
+      }
+    },
+  )
 })
 
 describe('known Kubernetes Secret containers', () => {

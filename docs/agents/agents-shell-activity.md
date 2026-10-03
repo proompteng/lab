@@ -72,6 +72,8 @@ Only credential values are masked as `[REDACTED_CREDENTIAL]`, with counts; surro
 The scanner handles known runtime credentials/common encoded forms, explicit credential fields/options, Authorization,
 URL userinfo/query values and private-key blocks across chunks. It cannot guarantee detection of arbitrary unknown or
 transformed secrets. Do not intentionally print secrets. OAuth headers/claims and MCP metadata are not exported.
+Credential option operands include adjacent shell-quoted and escaped segments through the word boundary, including
+apostrophes in displayed argv. Quoted JSON/YAML scalars, headers and URLs retain their own delimiters.
 Delegated model-log bodies are not mirrored by this operational exporter. Signed self-audit frames encountered during
 log inspection are counted instead of recursively copied; original authorized tool output stays available. Ordinary
 unsigned JSON is not suppressed.
@@ -126,8 +128,9 @@ explicit credential name; `valueFrom` references remain visible. A raw text stre
 reordered or nested name/value containers and arbitrary transformations are not guaranteed to be recognized. Avoid
 printing credential containers; the scanner's declared contexts do not imply universal secret detection.
 
-Known Kubernetes Secret reads have a separate bounded structural path. Explicit `kubectl get secret(s)` stdout and
-stderr are held up to 4 MiB until capture closes. JSON/YAML Secret data/stringData values (including SecretList items)
+Known Kubernetes Secret reads and creation documents have a separate bounded structural path. Explicit
+`kubectl get secret(s)` (including resource.version.group forms) and `kubectl create secret generic|docker-registry|tls`
+stdout and stderr are held up to 4 MiB until capture closes. JSON/YAML Secret data/stringData values (including SecretList items)
 are masked by syntax ranges; metadata, key names and ConfigMaps retain their original text. A flat lexer limits tokens
 and nesting before syntax-tree allocation; aliases are not expanded or exported. Malformed or oversized credential
 output produces `captureIncomplete`/capture error rather than exporting a partially inspected prefix. The original
@@ -141,13 +144,14 @@ Secret API paths. Prefixes use finite state; retained executable/argument words 
 characters per word. Ambiguous syntax after a recognized Secret read produces incomplete capture. Indirect wrappers,
 `env -S` and arbitrary scripts remain outside this recognition path.
 
-Explicit `kubectl create secret generic --from-literal` arguments have a separate credential context. Attached and
-separate `key=value` operands retain the option, resource and key names while masking the value in argument and command
-audits. Decoded literal values and their base64/URI forms also mask echoes on both child streams. ConfigMap literals
+Explicit `kubectl create secret generic --from-literal` arguments and Docker registry `--docker-password` operands have
+a separate credential context. Attached and separate operands retain the option, resource and literal key names while
+masking the value in argument and command audits. Decoded values and their base64/URI forms also mask echoes on both child streams. ConfigMap literals
 remain ordinary content. Displayed command arguments preserve shell word boundaries; execution uses the original argv.
 Literal capture admits at most 256 values and 65,536 characters within the word bounds above. Short values, ambiguous
 syntax and exceeded bounds produce explicit incomplete capture; the authorized command and original result continue.
-This covers recognized generic Secret literals, not every indirect credential source or Secret creation form.
+Docker JSON/YAML creation output uses the structural path above, including its whole encoded `.dockerconfigjson` value.
+These rules cover recognized literal operands and known Secret documents; they cannot discover every indirect credential source.
 
 Structurally masked streams use terminal source-byte checkpoints (`sourceByteCheckpointOnly`), not a byte-for-byte
 reconstruction claim; source hashes are omitted when values are masked. Escaped command newlines are normalized, but

@@ -141,6 +141,7 @@ function* commandWords(command: string) {
 const executableIs = (word: CommandWord | undefined, name: string) =>
   word?.literal && word.value.split('/').at(-1) === name
 const secretApiPath = /^\/api\/v1\/(?:namespaces\/[^/?#]+\/)?secrets(?:\/[^/?#]+)?\/?(?:[?#].*)?$/
+const secretResource = (resource: string) => /^secrets?$/i.test(resource.split('/')[0].split('.')[0])
 
 const secretCommandMode = (words: CommandWord[], ambiguous: boolean): SecretCaptureMode | null => {
   if (!executableIs(words[0], 'kubectl')) return null
@@ -154,14 +155,10 @@ const secretCommandMode = (words: CommandWord[], ambiguous: boolean): SecretCapt
     }
     return word.value.startsWith('--raw=') && secretApiPath.test(word.value.slice('--raw='.length))
   })
-  if (
-    get < 0 ||
-    (!rawSecret &&
-      !args
-        .slice(get + 1)
-        .some((word) => word.literal && word.value.split(',').some((part) => /^secrets?(?:\/|$)/i.test(part))))
-  )
-    return null
+  const readsSecret =
+    get >= 0 &&
+    (rawSecret || args.slice(get + 1).some((word) => word.literal && word.value.split(',').some(secretResource)))
+  if (!readsSecret && secretCreationKind(words) === null) return null
   if (ambiguous) return 'projection'
   let mode: SecretCaptureMode = 'metadata'
   for (let position = 0; position < args.length; position += 1) {
@@ -191,42 +188,54 @@ export const isSecretRead = (command: string) => secretCaptureMode(command) !== 
 
 const kubectlGlobalOperand =
   /^(?:--namespace|--context|--kubeconfig|--server|--user|--cluster|--as|--as-group|--cache-dir|--request-timeout|--certificate-authority|--client-certificate|--client-key|--token|--tls-server-name|--v|--vmodule|--log-flush-frequency|--profile|--profile-output|-n|-s|-v)$/
-const createsGenericSecret = (words: CommandWord[]) => {
-  if (!executableIs(words[0], 'kubectl')) return false
+const secretCreationKind = (words: CommandWord[]): 'generic' | 'docker-registry' | 'tls' | null => {
+  if (!executableIs(words[0], 'kubectl')) return null
   let path = 0
   for (let index = 1; index < words.length; index += 1) {
     const word = words[index]
-    if (!word.literal) return false
+    if (!word.literal) return null
     if (kubectlGlobalOperand.test(word.value)) {
       index += 1
       continue
     }
     if (word.value.startsWith('-')) continue
-    if (word.value !== ['create', 'secret', 'generic'][path]) return false
-    if (++path === 3) return true
+    if (path === 2)
+      return word.value === 'generic' || word.value === 'docker-registry' || word.value === 'tls' ? word.value : null
+    if (word.value !== ['create', 'secret'][path]) return null
+    path += 1
   }
-  return false
+  return null
 }
 
 const secretLiterals = (words: CommandWord[], ambiguous: boolean) => {
   const literals: { word: CommandWord; valueOffset: number; value: string }[] = []
-  if (!createsGenericSecret(words)) return literals
+  const kind = secretCreationKind(words)
+  if (kind === null) return literals
   if (ambiguous) throw new Error('Secret creation command exceeded bounded literal capture')
   for (let index = 1; index < words.length; index += 1) {
     const option = words[index]
     if (option.value === '--') break
     let word = option
     let offset = 0
-    if (option.value === '--from-literal') {
+    let keyDelimiter = true
+    if (kind === 'docker-registry' && option.value === '--docker-password') {
+      const operand = words[++index]
+      if (!operand) throw new Error('Secret creation password has no bounded operand')
+      word = operand
+      keyDelimiter = false
+    } else if (kind === 'docker-registry' && option.value.startsWith('--docker-password=')) {
+      offset = '--docker-password='.length
+      keyDelimiter = false
+    } else if (kind === 'generic' && option.value === '--from-literal') {
       const operand = words[++index]
       if (!operand) throw new Error('Secret creation literal has no bounded operand')
       word = operand
-    } else if (option.value.startsWith('--from-literal=')) offset = '--from-literal='.length
+    } else if (kind === 'generic' && option.value.startsWith('--from-literal=')) offset = '--from-literal='.length
     else continue
     const delimiter = word.value.indexOf('=', offset)
-    if (!option.literal || !word.literal || delimiter <= offset)
+    if (!option.literal || !word.literal || (keyDelimiter && delimiter <= offset))
       throw new Error('Secret creation literal cannot be safely decoded')
-    const valueOffset = delimiter + 1
+    const valueOffset = keyDelimiter ? delimiter + 1 : offset
     const value = word.value.slice(valueOffset)
     if (value) literals.push({ word, valueOffset, value })
   }
@@ -265,7 +274,7 @@ export const maskKubernetesSecretCreationCommand = (command: string) => {
     for (const candidate of commandWords(command)) {
       if (candidate.ambiguous) throw new Error('Secret literal command echo exceeded bounded source capture')
       // Keep the creation's executable, resource and key names intact, even when a literal has the same value.
-      if (createsGenericSecret(candidate.words)) continue
+      if (secretCreationKind(candidate.words) !== null) continue
       for (const word of candidate.words.slice(1)) {
         for (const match of word.value.matchAll(known)) {
           const start = word.sourcePositions[match.index]

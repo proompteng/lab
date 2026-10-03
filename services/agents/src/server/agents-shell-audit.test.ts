@@ -616,6 +616,86 @@ describe('complete operational activity export', () => {
     expect(records().some((record) => record.captureIncomplete === true)).toBe(true)
   })
 
+  it.each([
+    { format: 'metadata', attached: false },
+    { format: 'metadata', attached: true },
+    { format: 'json', attached: false },
+    { format: 'yaml', attached: true },
+  ])(
+    'masks Docker registry credentials and structured blobs for $format attached=$attached',
+    async ({ format, attached }) => {
+      const { records } = captureAudit()
+      const { client, config } = await connect()
+      const password = 'opaque-runtime-secret'
+      const encoded = Buffer.from(
+        JSON.stringify({
+          auths: { registry: { username: 'user', password, auth: Buffer.from(`user:${password}`).toString('base64') } },
+        }),
+      ).toString('base64')
+      const document =
+        format === 'yaml'
+          ? `apiVersion: v1\nkind: Secret\nmetadata:\n  name: regcred\ndata:\n  .dockerconfigjson: ${encoded}\n`
+          : JSON.stringify({
+              apiVersion: 'v1',
+              kind: 'Secret',
+              metadata: { name: 'regcred' },
+              data: { '.dockerconfigjson': encoded },
+            })
+      const stdout = format === 'metadata' ? 'secret/regcred created\n' : document
+      const stderr = format === 'metadata' ? `${password}\n` : document
+      const executable = join(config.workspaceRoot, 'kubectl')
+      writeFileSync(
+        executable,
+        `#!/bin/sh\n${formatCommand('printf', ['%s', stdout])}\n${formatCommand('printf', ['%s', stderr])} >&2\n`,
+        { mode: 0o755 },
+      )
+      vi.stubEnv('PATH', config.workspaceRoot)
+      vi.stubEnv('KUBECONFIG', '/dev/null')
+      const args = [
+        '--kubeconfig',
+        '/dev/null',
+        'create',
+        'secret',
+        'docker-registry',
+        'regcred',
+        '--docker-username=user',
+        ...(attached ? [`--docker-password=${password}`] : ['--docker-password', password]),
+        ...(format === 'metadata' ? [] : [`-o${format}`]),
+      ]
+      const response = await client.callTool({ name: 'kubectl_admin', arguments: { args } })
+      expect(response.isError).not.toBe(true)
+      expect(response.structuredContent).toMatchObject({ exitCode: 0, stdout, stderr })
+      expect(JSON.stringify(records())).not.toContain(password)
+      expect(JSON.stringify(records())).not.toContain(encoded)
+      for (const stream of ['stdout', 'stderr']) {
+        const output = records()
+          .filter((record) => record.event === 'process_output' && record.payload.stream === stream)
+          .map((record) => record.payload.text)
+          .join('')
+        if (stream === 'stdout' && format === 'metadata') expect(output).toBe(stdout)
+        else expect(output).toContain('[REDACTED_CREDENTIAL]')
+      }
+      expect(args).toContain(attached ? `--docker-password=${password}` : password)
+    },
+  )
+
+  it('omits qualified Secret projections and preserves their original authorized output', async () => {
+    const { records } = captureAudit()
+    const { client, config } = await connect()
+    const executable = join(config.workspaceRoot, 'kubectl')
+    writeFileSync(executable, '#!/bin/sh\nprintf "%s" "opaque-projected-secret"\n', { mode: 0o755 })
+    const command = `KUBECONFIG=/dev/null ${formatCommand(executable, ['get', 'secrets.v1./demo', '-o', 'jsonpath={.data.registry}'])}`
+    const response = await client.callTool({ name: 'shell_run', arguments: { command } })
+    expect(response.structuredContent).toMatchObject({ exitCode: 0, stdout: 'opaque-projected-secret' })
+    expect(JSON.stringify(records())).not.toContain('opaque-projected-secret')
+    expect(records().filter((record) => record.event === 'process_output')).toHaveLength(0)
+    expect(
+      records().some(
+        (record) => record.event === 'process_output_finished' && record.payload.captureIncomplete === true,
+      ),
+    ).toBe(true)
+  })
+
   it('can inspect its growing local log without recursively amplifying it', async () => {
     const { records } = captureAudit()
     const { client, config } = await connect()

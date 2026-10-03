@@ -5,6 +5,7 @@ import {
   credentialValuesFromEnv,
   maskCredentialValues,
 } from './credential-masker'
+import { formatCommand } from './process-runner'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
@@ -262,6 +263,102 @@ describe('explicit credential options', () => {
       }
     })
   }
+})
+
+describe('shell credential word boundaries', () => {
+  const prefix = 'ordinary-before '.repeat(20)
+  const value = 'synthetic-head'.repeat(30)
+  const cases = [
+    [String.raw`--password '${value}'\''synthetic-tail' ordinary`, `--password '${marker}' ordinary`],
+    [`--password '${value}'"synthetic tail"suffix ordinary`, `--password '${marker}' ordinary`],
+    [`--password "${value}"'synthetic-tail' ordinary`, `--password "${marker}" ordinary`],
+    [`--password ${value}'synthetic tail' ordinary`, `--password ${marker} ordinary`],
+    [String.raw`--password '${value}\synthetic-tail' ordinary`, `--password '${marker}' ordinary`],
+    [String.raw`--password "${value}\"synthetic-tail" ordinary`, `--password "${marker}" ordinary`],
+    [String.raw`--password '${value}'\ synthetic-tail ordinary`, `--password '${marker}' ordinary`],
+    [String.raw`--password '${value}'\;synthetic-tail ordinary`, `--password '${marker}' ordinary`],
+    [`--password '${value}',synthetic-tail ordinary`, `--password '${marker}' ordinary`],
+    [`--password '${value}'{synthetic-tail}] ordinary`, `--password '${marker}' ordinary`],
+    [`--password '${value}';ordinary-next`, `--password '${marker}';ordinary-next`],
+    [`--password '${value}'|ordinary-next`, `--password '${marker}'|ordinary-next`],
+    [String.raw`password='${value}'\''synthetic-tail' ordinary`, `password='${marker}' ordinary`],
+    [String.raw`--user 'alice:${value}'\''synthetic-tail' ordinary`, `--user 'alice:${marker}' ordinary`],
+    [String.raw`--docker-password='${value}'\''synthetic-tail' ordinary`, `--docker-password='${marker}' ordinary`],
+    [String.raw`--docker-password '${value}'\''synthetic-tail' ordinary`, `--docker-password '${marker}' ordinary`],
+    [String.raw`--password '${value}'\''synthetic-tail'`, `--password '${marker}'`],
+    [String.raw`--password '${value}'\''synthetic-tail`, `--password '${marker}`],
+    [String.raw`--password '${marker}'\''synthetic-tail' ordinary`, `--password '${marker}' ordinary`],
+  ]
+
+  it.each(cases)('keeps concatenated shell segments masked at every split: %s', (sample, expected) => {
+    const input = prefix + sample
+    const output = prefix + expected
+    for (let split = 0; split <= input.length; split += 1) {
+      const masker = new CredentialMasker([])
+      expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(output)
+      expect(masker.consumedBytes).toBe(Buffer.byteLength(input))
+    }
+    const masker = new CredentialMasker([])
+    expect([...input].map((char) => masker.write(char)).join('') + masker.write('', true)).toBe(output)
+    expect(masker.consumedBytes).toBe(Buffer.byteLength(input))
+    expect(masker.maskedValues).toBe(1)
+    expect(maskCredentialValues(output, []).text).toBe(output)
+  })
+
+  it.each(["abc'def", 'abc\\def', 'abc"def', "abc''def", "abc\\'def", "abc '\\ def\nnext"])(
+    'masks formatter source/result command credentials and retains the next argument: %s',
+    (secret) => {
+      const args = ['--password', secret, "ordinary'neighbor"]
+      const command = formatCommand('fixture', args)
+      const expected = formatCommand('fixture', ['--password', marker, "ordinary'neighbor"])
+      for (const known of [[], [secret]]) {
+        for (let split = 0; split <= command.length; split += 1) {
+          const masker = new CredentialMasker(known)
+          expect(masker.write(command.slice(0, split)) + masker.write(command.slice(split), true)).toBe(expected)
+        }
+        const masker = new CredentialMasker(known)
+        expect([...command].map((char) => masker.write(char)).join('') + masker.write('', true)).toBe(expected)
+      }
+    },
+  )
+
+  it('recognizes the formatter representation of a known credential without an option context', () => {
+    const secret = "synthetic'credential\\tail"
+    const input = formatCommand('fixture', ['ordinary-before', secret, 'ordinary-after'])
+    const expected = formatCommand('fixture', ['ordinary-before', marker, 'ordinary-after'])
+    for (let split = 0; split <= input.length; split += 1) {
+      const masker = new CredentialMasker([secret])
+      expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(expected)
+    }
+    const masker = new CredentialMasker([secret])
+    expect([...input].map((char) => masker.write(char)).join('') + masker.write('', true)).toBe(expected)
+  })
+
+  it('retains normal quoted scalar, header, URL and neighboring text delimiters', () => {
+    for (const [input, expected] of [
+      ['{"password":"synthetic\\\"credential","ordinary":"next"}', `{"password":"${marker}","ordinary":"next"}`],
+      ["password: 'synthetic credential'\nordinary: next", `password: '${marker}'\nordinary: next`],
+      ['Authorization: Bearer synthetic\\credential\nordinary', `Authorization: Bearer ${marker}\nordinary`],
+      ['https://user:synthetic\\credential@host/ordinary', `https://user:${marker}@host/ordinary`],
+    ]) {
+      for (let split = 0; split <= input.length; split += 1) {
+        const masker = new CredentialMasker([])
+        expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(expected)
+      }
+    }
+  })
+
+  it('does not retain credential payload while scanning a large concatenated word', () => {
+    const masker = new CredentialMasker([])
+    let output = masker.write("--password '")
+    for (let i = 0; i < 256; i += 1) {
+      output += masker.write('synthetic'.repeat(512) + String.raw`'\''`)
+      expect(masker.consumedBytes).toBeGreaterThanOrEqual((i + 1) * 4096)
+    }
+    output += masker.write("tail' ordinary", true)
+    expect(output).toBe(`--password '${marker}' ordinary`)
+    expect(masker.maskedValues).toBe(1)
+  })
 })
 
 describe('standard and repository runtime credential containers', () => {

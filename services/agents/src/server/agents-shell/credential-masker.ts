@@ -4,9 +4,15 @@ export const credentialEnv =
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const marker = '[REDACTED_CREDENTIAL]'
 export const credentialOptionNames =
-  'password|passwd|token|api-key|client-secret|oauth2-bearer|access-token|refresh-token|id-token|private-key|secret-access-key|secret-key|session-token|auth-token|reconnect-token|github-token|db-password|admin-password|nats-password|discord-bot-token|bot-token|github-webhook-secret|linear-webhook-secret|webhook-secret|openai-api-key|bedrock-api-key|cloud-api-key|principal-api-key|personal-access-token|ssh-private-key|root-password|loki-secret-key|tempo-secret-key|mimir-secret-key|auth-key|tailscale-auth-key|signing-passphrase|passphrase'
+  'password|docker-password|passwd|token|api-key|client-secret|oauth2-bearer|access-token|refresh-token|id-token|private-key|secret-access-key|secret-key|session-token|auth-token|reconnect-token|github-token|db-password|admin-password|nats-password|discord-bot-token|bot-token|github-webhook-secret|linear-webhook-secret|webhook-secret|openai-api-key|bedrock-api-key|cloud-api-key|principal-api-key|personal-access-token|ssh-private-key|root-password|loki-secret-key|tempo-secret-key|mimir-secret-key|auth-key|tailscale-auth-key|signing-passphrase|passphrase'
 
-type ValueState = { terminator: string | null; escaped: boolean; privateKey: boolean }
+type Quote = '"' | "'"
+type ValueState =
+  | { kind: 'private-key' }
+  | { kind: 'scalar'; terminator: string | null; escaped: boolean }
+  | { kind: 'shell-word'; quote: Quote | null; openingQuote: Quote | null; escaped: boolean; counted: boolean }
+
+const quoteFrom = (value: string | undefined): Quote | null => (value === '"' || value === "'" ? value : null)
 
 export class CredentialMasker {
   private pending = ''
@@ -25,7 +31,9 @@ export class CredentialMasker {
   maskedValues = 0
 
   constructor(values: string[] = credentialValuesFromEnv()) {
-    const secrets = Array.from(new Set(values.filter((value) => value.length >= 4))).sort((a, b) => b.length - a.length)
+    const secrets = Array.from(
+      new Set(values.filter((value) => value.length >= 4).flatMap((value) => [value, value.replace(/'/g, `'\\''`)])),
+    ).sort((a, b) => b.length - a.length)
     this.known = secrets.length ? new RegExp(secrets.map(escapeRegex).join('|'), 'g') : null
     this.carry = Math.max(256, ...secrets.map((value) => value.length))
   }
@@ -36,13 +44,48 @@ export class CredentialMasker {
     let output = ''
     while (this.pending.length > 0) {
       if (this.state) {
-        if (this.state.privateKey) {
+        if (this.state.kind === 'private-key') {
           const end = /-----END (?:[A-Z]+ )?PRIVATE KEY-----/.exec(this.pending)
           if (!end) {
             this.consume(final ? this.pending.length : Math.max(0, this.pending.length - 64))
             break
           }
           this.consume(end.index + end[0].length)
+          this.state = null
+          continue
+        }
+        if (this.state.kind === 'shell-word') {
+          let end = -1
+          for (let i = 0; i < this.pending.length; i += 1) {
+            const char = this.pending[i]
+            if (this.state.escaped) {
+              this.state.escaped = false
+            } else if (char === '\\' && this.state.quote !== "'") {
+              this.state.escaped = true
+              continue
+            } else if (this.state.quote) {
+              if (char === this.state.quote) {
+                this.state.quote = null
+                continue
+              }
+            } else if (char === '"' || char === "'") {
+              this.state.quote = char
+              continue
+            } else if (/[\s;|&()<>]/.test(char)) {
+              end = i
+              break
+            }
+            if (!this.state.counted) {
+              this.maskedValues += 1
+              this.state.counted = true
+            }
+          }
+          if (end < 0) {
+            this.consume(this.pending.length)
+            break
+          }
+          output += (this.state.openingQuote || '') + this.pending[end]
+          this.consume(end + 1)
           this.state = null
           continue
         }
@@ -135,10 +178,10 @@ export class CredentialMasker {
         { regex: /\b(?:gh[pousr]_[A-Za-z0-9]|github_pat_[A-Za-z0-9]|xox[baps]-[A-Za-z0-9])/g, kind: 'format' },
       ]
       patterns.push({ regex: /["'](?:token|secret)["']\s*:\s*(["'])/gi, kind: 'assignment' })
-      patterns.push({ regex: /(?:--user(?:=|\s+)|-u\s*)(["']?)[^\s:"']+:/g, kind: 'value' })
+      patterns.push({ regex: /(?:--user(?:=|\s+)|-u\s*)(["']?)[^\s:"']+:/g, kind: 'shell' })
       patterns.push({
         regex: new RegExp(`--(?:${credentialOptionNames})\\b(?:[\\t ]*=[\\t ]*|[\\t ]+)(["']?)`, 'gi'),
-        kind: 'assignment',
+        kind: 'shell',
       })
       let found: { index: number; text: string; kind: string; quote?: string } | null = null
       for (const { regex, kind } of patterns) {
@@ -169,6 +212,7 @@ export class CredentialMasker {
       if (found.kind !== 'known' && found.kind !== 'format' && found.kind !== 'pem') output += found.text
       this.consume(found.index + found.text.length)
       if ((found.kind === 'header' || found.kind === 'cookie') && /^(?:\r?\n|$)/.test(this.pending)) continue
+      const shellWord = found.kind === 'shell' || (found.kind === 'assignment' && found.text.includes('='))
       const afterMarker = this.pending[marker.length]
       const markerDelimited =
         afterMarker === undefined
@@ -185,6 +229,10 @@ export class CredentialMasker {
       if (this.pending.startsWith(marker) && markerDelimited && !['known', 'format', 'pem'].includes(found.kind)) {
         output += marker
         this.consume(marker.length)
+        if (shellWord) {
+          const quote = quoteFrom(found.quote)
+          this.state = { kind: 'shell-word', quote, openingQuote: quote, escaped: false, counted: false }
+        }
         continue
       }
       if (this.pending.startsWith(marker) && !['known', 'format', 'pem'].includes(found.kind))
@@ -192,20 +240,30 @@ export class CredentialMasker {
       output += marker
       this.maskedValues += 1
       if (found.kind !== 'known') {
-        this.state = {
-          terminator:
-            found.quote ||
-            (found.kind === 'url'
-              ? '@'
-              : found.kind === 'query'
-                ? '&'
-                : found.kind === 'header' || found.kind === 'cookie'
-                  ? 'header'
-                  : null),
-          escaped: false,
-          privateKey: found.kind === 'pem',
-        }
+        const quote = quoteFrom(found.quote)
+        this.state =
+          found.kind === 'pem'
+            ? { kind: 'private-key' }
+            : shellWord
+              ? { kind: 'shell-word', quote, openingQuote: quote, escaped: false, counted: true }
+              : {
+                  kind: 'scalar',
+                  terminator:
+                    found.quote ||
+                    (found.kind === 'url'
+                      ? '@'
+                      : found.kind === 'query'
+                        ? '&'
+                        : found.kind === 'header' || found.kind === 'cookie'
+                          ? 'header'
+                          : null),
+                  escaped: false,
+                }
       }
+    }
+    if (final && this.state?.kind === 'shell-word') {
+      if (this.state.quote === null) output += this.state.openingQuote || ''
+      this.state = null
     }
     return output
   }
