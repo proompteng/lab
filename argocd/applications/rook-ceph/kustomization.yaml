@@ -3,16 +3,13 @@ kind: Kustomization
 namespace: rook-ceph
 
 configMapGenerator:
-  - name: bayn-research-storage-bootstrap
-    files:
-      - bootstrap.sh=bayn-research-storage-bootstrap.sh
-      - policy.json=bayn-research-storage-policy.json
   - name: rook-ceph-host-metrics-alloy
     files:
       - config.river=host-metrics-alloy-config.river
 
 resources:
   - bayn-research-storage.yaml
+  - bayn-research-objectbucket.yaml
   - host-metrics-alloy-daemonset.yaml
   - storageclasses.yaml
   - tailscale-service-dashboard.yaml
