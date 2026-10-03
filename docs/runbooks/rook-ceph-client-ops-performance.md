@@ -482,18 +482,18 @@ for mclock_value in \
   kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
     ceph config set osd "osd_mclock_scheduler_${key}" "${value}"
 done
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 275
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 275
 for osd_value in 0:210 1:250 2:260 3:200 4:220 5:240; do
   osd_id="${osd_value%%:*}"
   capacity="${osd_value##*:}"
-  kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
     ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd "${capacity}"
 done
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set mgr target_max_misplaced_ratio 0.03
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_mclock_override_recovery_settings
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_max_backfills
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_recovery_max_active_hdd
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_recovery_sleep_hdd
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config set mgr target_max_misplaced_ratio 0.03
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_mclock_override_recovery_settings
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_max_backfills
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_recovery_max_active_hdd
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_recovery_sleep_hdd
 ```
 
 After `ceph -s` reports zero misplaced objects and zero remapped/backfilling/backfill-wait PGs, restore the

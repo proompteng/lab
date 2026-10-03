@@ -39,6 +39,18 @@ it('overrides and restores daemon-scoped mClock capacity during recovery surge',
   expect(runbook).toContain('ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd "${capacity}"')
 })
 
+it('targets Galactic consistently throughout the recovery rollback', () => {
+  const runbook = readFileSync(join(repoRoot, 'docs/runbooks/rook-ceph-client-ops-performance.md'), 'utf8')
+  const rollback = runbook.split('Rollback the surge immediately')[1]?.split('```bash\n')[1]?.split('\n```')[0]
+  const commands = rollback?.split('\n').filter((line) => line.trimStart().startsWith('kubectl ')) ?? []
+
+  expect(commands.length).toBeGreaterThan(0)
+  for (const command of commands) {
+    expect(command).toContain('--context galactic-tailscale -n rook-ceph')
+    expect(command).toContain('-c rook-ceph-tools --')
+  }
+})
+
 it('rolls OSDs when scrub configuration changes', () => {
   const values = readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/cluster-values.yaml'), 'utf8')
   const kustomization = readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/kustomization.yaml'), 'utf8')
