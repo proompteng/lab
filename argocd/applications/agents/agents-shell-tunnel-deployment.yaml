@@ -44,22 +44,19 @@ spec:
             - name: HARPOON_ALLOW_PLAINTEXT_HTTP
               value: "true"
             - name: HEALTH_LISTEN_ADDR
-              value: ":8080"
+              value: "127.0.0.1:8080"
             - name: LOG_FORMAT
               value: json
-          ports:
-            - name: health
-              containerPort: 8080
           readinessProbe:
-            httpGet:
-              path: /readyz
-              port: health
+            exec:
+              command: [/usr/bin/wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8080/readyz"]
+            timeoutSeconds: 3
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
+            exec:
+              command: [/usr/bin/wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+            timeoutSeconds: 3
             initialDelaySeconds: 10
             periodSeconds: 20
           resources:

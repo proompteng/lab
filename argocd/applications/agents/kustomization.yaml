@@ -8,6 +8,7 @@ resources:
   - hf-router-token-sealedsecret.yaml
   - agents-shell-tunnel-runtime-sealedsecret.yaml
   - agents-shell-tunnel-deployment.yaml
+  - agents-shell-tunnel-networkpolicy.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
   - graf-codex-agentprovider.yaml
