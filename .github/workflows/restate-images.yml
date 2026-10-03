@@ -68,7 +68,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         with:
           driver-opts: network=host
-      - name: Reproduce and fix blocking metadata writes
+      - name: Prove metadata writes and cold-peer elections
         uses: docker/build-push-action@v6
         with:
           context: services/restate
@@ -87,6 +87,8 @@ jobs:
           trap 'docker rm -v "$proof" >/dev/null' EXIT
           docker cp "$proof:/proof/baseline.log" .artifacts/restate/
           docker cp "$proof:/proof/patched.log" .artifacts/restate/
+          docker cp "$proof:/proof/election-baseline.log" .artifacts/restate/
+          docker cp "$proof:/proof/election-patched.log" .artifacts/restate/
       - name: Build runtime
         uses: docker/build-push-action@v6
         with:

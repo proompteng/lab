@@ -7,6 +7,7 @@ import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
 import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
+import { BrokerEnvironment } from '../identity'
 import {
   BrokerReadContractFailure,
   BrokerReadError,
@@ -74,6 +75,7 @@ import {
   responseEvidenceResult,
 } from './requests'
 import { Pipeable } from '../../pipeable'
+import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -196,12 +198,13 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
     const sensitiveValues = [key, secret]
     const baseClient = yield* HttpClient.HttpClient
     const client = baseClient.pipe(HttpClient.retryTransient({ times: connection.retryAttempts }))
+    const observeDiagnostic = yield* makeReadDiagnostics(connection.identity)
 
     const readJson = <A>(
       operation: BrokerReadOperation,
       url: URL,
       decoder: Decoder<A>,
-    ): Effect.Effect<ReadResult<A>, BrokerReadError> =>
+    ): Effect.Effect<ReadResult<A> & { readonly diagnostic?: ReadDiagnostic }, BrokerReadError> =>
       Effect.gen(function* () {
         const request = HttpClientRequest.get(url, {
           acceptJson: true,
@@ -298,7 +301,11 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           'broker.status': evidence.status,
           'broker.content_hash': evidence.contentHash,
         })
-        return { value, evidence }
+        const diagnostic =
+          connection.identity.environment === BrokerEnvironment.Sandbox
+            ? projectReadDiagnostic(operation, raw)
+            : undefined
+        return { value, evidence, ...(diagnostic === undefined ? {} : { diagnostic }) }
       }).pipe(
         Effect.timeout(`${connection.operationTimeoutMs} millis`),
         Effect.mapError((cause) =>
@@ -336,7 +343,9 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
             }),
           )
         }
-        return normalizeRead('account', result.evidence, normalized)
+        return normalizeRead('account', result.evidence, normalized).pipe(
+          Effect.tap(() => observeDiagnostic(result.diagnostic, result.evidence)),
+        )
       }),
     )
 
@@ -479,6 +488,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         }),
         Effect.flatMap(({ pageSize, result }) =>
           Effect.fromResult(normalizeFeeActivitiesResult(result.value, connection.expectedAccountId)).pipe(
+            Effect.tap(() => observeDiagnostic(result.diagnostic, result.evidence)),
             Effect.map((items) => {
               const lastItem = items.at(-1)
               return {
