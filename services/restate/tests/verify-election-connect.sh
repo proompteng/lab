@@ -24,7 +24,8 @@ for name in "${tests[@]}"; do
     echo "Regression unexpectedly passed without the cold-election fix: $name" >&2
     exit 1
   fi
-  cat "$log" | tee -a /proof/election-baseline.log
+  tee -a /proof/election-baseline.log < "$log"
+  grep -q '^running 1 test$' "$log"
   grep -q 'COLD_PEER_BRANCH_CONFIRMED:' "$log"
   grep -q 'COLD_PEER_CAMPAIGN_DROPPED:' "$log"
 done
@@ -33,7 +34,9 @@ patch --batch --fuzz=0 -p1 < /tmp/metadata-election-connect.patch
 cat /proof/metadata-election-connect-safety.rs >> "$member"
 : > /proof/election-patched.log
 for name in "${tests[@]}"; do
-  run_proof "$name" 2>&1 | tee -a /proof/election-patched.log
+  log="/proof/election-patched-$name.log"
+  run_proof "$name" 2>&1 | tee "$log" | tee -a /proof/election-patched.log
+  grep -q 'test result: ok. 1 passed;' "$log"
 done
 # The process-global RocksDB manager is intentionally isolated for each test, as upstream does.
 for name in \
@@ -46,7 +49,9 @@ for name in \
   ordinary_messages_are_not_queued_and_ready_only_send_never_connects \
   address_changes_discard_deferred_request \
   cold_snapshot_keeps_existing_failure_reporting; do
+  log="/proof/election-patched-$name.log"
   cargo test --locked -p restate-metadata-server \
     "raft::server::member::cold_election_safety_proof::$name" -- --exact --nocapture --test-threads=1 \
-    2>&1 | tee -a /proof/election-patched.log
+    2>&1 | tee "$log" | tee -a /proof/election-patched.log
+  grep -q 'test result: ok. 1 passed;' "$log"
 done

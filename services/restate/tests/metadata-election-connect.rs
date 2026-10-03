@@ -7,7 +7,16 @@ mod cold_election_connection_proof {
     use tokio::net::TcpListener;
     use tokio::sync::watch;
 
-    pub(super) async fn fixture() -> (Member, TcpListener, Arc<ConnectionManager<Message>>) {
+    pub(super) async fn fixture() -> (
+        Member,
+        TcpListener,
+        Arc<ConnectionManager<Message>>,
+        restate_core::TestCoreEnv<restate_core::network::FailingConnector>,
+    ) {
+        // The test macro creates the task center, but Member also needs its global metadata
+        // and address book. Use the upstream in-memory environment; no live service is used.
+        let core = restate_core::TestCoreEnv::create_with_single_node(1, 1).await;
+        assert!(TaskCenter::try_set_address_book(Default::default()));
         RocksDbManager::init();
         let storage = RocksDbStorage::create().await.unwrap();
         let (_, request_rx) = mpsc::channel(1);
@@ -44,7 +53,7 @@ mod cold_election_connection_proof {
             member.networking.register_address(PlainNodeId::from(id), address.parse().unwrap());
         }
         let manager = Arc::clone(member.connection_manager.load().as_ref().unwrap());
-        (member, listener, manager)
+        (member, listener, manager, core)
     }
 
     pub(super) async fn emit_campaign(member: &mut Member, vote: bool) -> Message {
@@ -92,7 +101,7 @@ mod cold_election_connection_proof {
     }
 
     async fn cold_request_is_delivered(vote: bool) {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         let expected = emit_campaign(&mut member, vote).await;
         let mut outgoing = manager.proof_install_connection(PlainNodeId::from(2_u32), 8);
         tick_once(&mut member).await;

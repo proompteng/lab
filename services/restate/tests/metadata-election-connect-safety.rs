@@ -8,7 +8,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn same_term_pre_campaign_replaces_all_old_requests() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         emit_campaign(&mut member, false).await;
         let old_campaign = member.election_campaign;
         let old_term = member.raw_node.raft.term;
@@ -32,7 +32,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn successful_new_campaign_also_discards_old_pending_requests() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         emit_campaign(&mut member, false).await;
         let old_campaign = member.election_campaign;
         let mut outgoing = manager.proof_install_connection(PlainNodeId::from(2_u32), 8);
@@ -50,7 +50,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn stale_role_term_and_membership_are_discarded() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         emit_campaign(&mut member, false).await;
         let mut outgoing = manager.proof_install_connection(PlainNodeId::from(2_u32), 8);
         // An accepted leader message changes role even without changing the term.
@@ -81,7 +81,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn removed_voters_cannot_send_or_receive_deferred_requests() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         emit_campaign(&mut member, false).await;
         let mut outgoing = manager.proof_install_connection(PlainNodeId::from(2_u32), 8);
         // Even before the metadata configuration version changes, current Raft membership wins.
@@ -108,7 +108,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn expiry_is_bounded_and_failed_peer_does_not_block_healthy_peer() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         let emitted_at = time::Instant::now();
         let expected = emit_campaign(&mut member, false).await;
         assert_eq!(member.pending_election_messages.len(), 2);
@@ -142,7 +142,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn full_and_closed_channels_are_not_requeued() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         let request = emit_campaign(&mut member, false).await;
         let mut outgoing = manager.proof_install_connection(PlainNodeId::from(2_u32), 1);
         member.networking.try_send_ready(request.clone()).unwrap();
@@ -163,7 +163,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn ordinary_messages_are_not_queued_and_ready_only_send_never_connects() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         let mut message = Message::default();
         message.from = 1;
         message.to = 2;
@@ -190,7 +190,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn address_changes_discard_deferred_request() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         emit_campaign(&mut member, false).await;
         let mut outgoing = manager.proof_install_connection(PlainNodeId::from(2_u32), 8);
         let mut nodes = NodesConfiguration::new_for_testing();
@@ -218,7 +218,7 @@ mod cold_election_safety_proof {
 
     #[restate_core::test(flavor = "current_thread")]
     async fn cold_snapshot_keeps_existing_failure_reporting() {
-        let (mut member, _listener, manager) = fixture().await;
+        let (mut member, _listener, manager, _core) = fixture().await;
         emit_campaign(&mut member, true).await;
         let mut response = Message::default();
         response.set_msg_type(MessageType::MsgRequestVoteResponse);
