@@ -43,7 +43,13 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         json!([
             {"rule": "self.spec.ownerHash == oldSelf.spec.ownerHash", "message": "ownerHash is immutable"},
             {"rule": "self.spec.architecture == oldSelf.spec.architecture", "message": "the server-selected architecture is immutable"},
-            {"rule": "self.spec.resources == oldSelf.spec.resources", "message": "the v1 resource profile is immutable"},
+            {
+                "rule": format!(
+                    "self.spec.resources == oldSelf.spec.resources || (oldSelf.spec.resources.cpuMillis == {} && oldSelf.spec.resources.memoryMib == {} && self.spec.resources.cpuMillis == {} && self.spec.resources.memoryMib == {} && self.spec.resources.workspaceGib == oldSelf.spec.resources.workspaceGib)",
+                    crd::LEGACY_CPU_MILLIS, crd::LEGACY_MEMORY_MIB, crd::CPU_MILLIS, crd::MEMORY_MIB
+                ),
+                "message": "resources may only upgrade from 2 CPU/4 GiB to 4 CPU/8 GiB with the same workspace"
+            },
             {
                 "rule": "self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt == oldSelf.spec.expiresAt",
                 "message": "creation and legacy expiry fields are immutable"
@@ -87,18 +93,36 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
     )?;
 
     let resources = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources";
-    for (field, fixed) in [
-        ("cpuMillis", crd::CPU_MILLIS),
-        ("memoryMib", crd::MEMORY_MIB),
-        ("workspaceGib", crd::WORKSPACE_GIB),
+    for (field, allowed) in [
+        (
+            "cpuMillis",
+            json!([crd::CPU_MILLIS, crd::LEGACY_CPU_MILLIS]),
+        ),
+        (
+            "memoryMib",
+            json!([crd::MEMORY_MIB, crd::LEGACY_MEMORY_MIB]),
+        ),
+        ("workspaceGib", json!([crd::WORKSPACE_GIB])),
     ] {
         insert(
             &mut crd,
             &format!("{resources}/properties/{field}"),
             "enum",
-            json!([fixed]),
+            allowed,
         )?;
     }
+    insert(
+        &mut crd,
+        resources,
+        "x-kubernetes-validations",
+        json!([{
+            "rule": format!(
+                "(self.cpuMillis == {} && self.memoryMib == {}) || (self.cpuMillis == {} && self.memoryMib == {})",
+                crd::CPU_MILLIS, crd::MEMORY_MIB, crd::LEGACY_CPU_MILLIS, crd::LEGACY_MEMORY_MIB
+            ),
+            "message": "CPU and memory must use the complete 4 CPU/8 GiB or legacy 2 CPU/4 GiB profile"
+        }]),
+    )?;
 
     serde_json::from_value(crd).context("deserialize production CRD")
 }
@@ -122,9 +146,9 @@ mod tests {
             .expect("serialize production CRD");
         assert_eq!(
             crd.pointer(
-                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/cpuMillis/enum/0"
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/cpuMillis/enum"
             ),
-            Some(&json!(2_000))
+            Some(&json!([4_000, 2_000]))
         );
         assert_eq!(
             crd.pointer(
