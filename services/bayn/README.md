@@ -161,6 +161,16 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
+Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
+that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
+use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
+waits continue on the next configured controller pass. Failed close attempts retain the original data reason in logs.
+A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
+continuation, bounded by the configured cadence and session deadline. Source/bootstrap failures and archive timeouts
+retain the normal cadence. Only one serialized controller pass runs at a time; a continuation rechecks all broker,
+authority, quantity, and quote-freshness gates. This reduces avoidable idle time but cannot guarantee a fill or a
+maximum-hold exit when fresh executable evidence is unavailable.
+
 Entry observations evaluate candidate availability independently. The active Jev protocol binds
 `bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
 at or after the lookback start and available by observation, and 30 consecutive minute bars with their matching rolling feature.
