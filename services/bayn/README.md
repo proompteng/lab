@@ -692,6 +692,13 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ### Bounded mechanical control and turnover comparison
 
+The explicitly opted-in `bayn.control-study-input.v4` adds the research-only
+`SPY_RELATIVE_SHOCK_REBOUND_60S_V1` falsification candidate described in
+[control portfolios](../../docs/bayn/control-portfolios.md#frozen-residual-shock-falsification-candidate).
+It uses the same offline portfolio and execution accounting, with a frozen exact-rational signal and a
+poll-delayed 60-second exit target. It is not a profitability claim, qualification, production strategy registration,
+or trading activation. Legacy v2/v3 inputs retain their original three policies and definition hashes.
+
 `bun tools/control-study.ts` supports the strictly offline `MECHANICAL` management mode, which creates no provider
 client, broker account, database or capital authority. Its three fixed control policies share the native control
 portfolio's point-in-time quotes, finite displayed-liquidity consumption, IOC partial fills, fee accounting, loss and

@@ -37,6 +37,7 @@ import {
   type ControlQuote,
 } from './control-portfolio'
 import { openBacktestSource, type BacktestSourceReceipt } from './source'
+import { residualShockDefinition, selectResidualShock } from './residual-shock'
 
 export enum ControlManagementMode {
   Mechanical = 'MECHANICAL',
@@ -66,6 +67,14 @@ export const ControlStudyInputSchema = Schema.Union([
     ...ControlStudyInputV2Schema.fields,
     schemaVersion: Schema.Literal('bayn.control-study-input.v3'),
     turnoverPolicy: Schema.Enum(EntryTurnoverPolicy),
+  }),
+  Schema.Struct({
+    ...ControlStudyInputV2Schema.fields,
+    schemaVersion: Schema.Literal('bayn.control-study-input.v4'),
+    management: Schema.Literal(ControlManagementMode.Mechanical),
+    repeatedTargetWeightPpm: Schema.Literal(residualShockDefinition.targetWeightPpm),
+    turnoverPolicy: Schema.Enum(EntryTurnoverPolicy),
+    falsificationCandidate: Schema.Literal(residualShockDefinition.id),
   }),
 ])
 
@@ -101,6 +110,18 @@ export const controlStudyDefinition = {
     'Quote size units and impact remain uncalibrated. Source completeness and a flat simulated close do not establish executable live capacity.',
     'Missing decision or valuation evidence remains explicit and makes a session incomplete. Candidate-local exclusions remain in the decision trace.',
   ],
+} as const
+
+// Preserve the exact legacy policy set and definition (including its run hash).
+const legacyControlPolicies = [
+  ControlPolicy.RetainedBreakout,
+  ControlPolicy.RepeatedBreakout,
+  ControlPolicy.RelativeMomentum,
+] as const
+export const residualShockControlStudyDefinition = {
+  ...controlStudyDefinition,
+  schemaVersion: 'bayn.control-study-definition.v6',
+  falsificationCandidate: residualShockDefinition,
 } as const
 
 export interface ControlMarket {
@@ -409,7 +430,20 @@ export const runControlSession = (input: {
             })
           } else {
             lastWindow = rangeEndMs
-            const selected = selectControlSymbol(observed.snapshot, input.policy, protocol)
+            const selected: Result.Result<
+              { symbol: string | null; evidence: Result.Result.Success<ReturnType<typeof selectResidualShock>> | null },
+              ControlStudyFailure
+            > =
+              input.policy === ControlPolicy.ResidualShock
+                ? selectResidualShock(observed.snapshot, protocol).pipe(
+                    Result.map((evidence) => ({ symbol: evidence.selectedSymbol, evidence })),
+                    Result.mapError(
+                      (cause) => new ControlStudyFailure({ message: 'Cannot select residual shock', cause }),
+                    ),
+                  )
+                : selectControlSymbol(observed.snapshot, input.policy, protocol).pipe(
+                    Result.map((symbol) => ({ symbol, evidence: null })),
+                  )
             if (Result.isFailure(selected)) {
               missingDecisions += 1
               decisions.push({
@@ -418,7 +452,7 @@ export const runControlSession = (input: {
                 cause: yield* Effect.fromResult(failureDetails(selected.failure)),
               })
             } else {
-              symbol = selected.success
+              symbol = selected.success.symbol
               lastEntryDecisionHash = yield* Effect.fromResult(
                 canonicalHashV1Result({
                   policy: input.policy,
@@ -433,6 +467,7 @@ export const runControlSession = (input: {
                 ...(symbol === null ? {} : { symbol }),
                 snapshotHash: observed.snapshot.manifest.contentHash,
                 exclusions: observed.snapshot.manifest.candidateExclusions ?? [],
+                ...(selected.success.evidence === null ? {} : { signal: selected.success.evidence }),
               })
               atMs = Math.min(atMs + input.decisionLatencyMs, closeMs)
               yield* advanceTo(atMs)
@@ -581,6 +616,19 @@ export const runControlStudy = (
     if (input.management !== management.mode)
       return yield* new ControlStudyFailure({ message: 'Control management binding differs from its frozen input' })
     const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
+    const falsification = input.schemaVersion === 'bayn.control-study-input.v4'
+    if (
+      falsification &&
+      (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
+        prepared.protocol.maximumSpreadBps !== residualShockDefinition.maximumSpreadBps ||
+        prepared.protocol.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
+        prepared.protocol.maximumHoldingMinutes !== 15 ||
+        prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)
+    )
+      return yield* new ControlStudyFailure({
+        message: 'Frozen residual shock cadence or native protective rules differ',
+      })
+    const definition = falsification ? residualShockControlStudyDefinition : controlStudyDefinition
     if (prepared.input.cadence.pollIntervalMs > 60_000 || prepared.input.assumptions.latencyMs > 60_000)
       return yield* new ControlStudyFailure({
         message: 'Control polling and routing latency must each be at most one minute',
@@ -597,7 +645,7 @@ export const runControlStudy = (
       }),
     )
     const runId = yield* Effect.fromResult(
-      canonicalHashV1Result({ input, receiptHash: receipt.contentHash, definition: controlStudyDefinition, risk }),
+      canonicalHashV1Result({ input, receiptHash: receipt.contentHash, definition, risk }),
     )
     if (management.mode === ControlManagementMode.Jev) {
       const fs = yield* FileSystem.FileSystem
@@ -606,7 +654,7 @@ export const runControlStudy = (
         const file = yield* fs.open(`${management.evidenceDirectory}/registration.json`, { flag: 'wx' })
         yield* file.writeAll(
           new TextEncoder().encode(
-            `${JSON.stringify({ runId, input, sourceReceiptHash: receipt.contentHash, definition: controlStudyDefinition, risk })}\n`,
+            `${JSON.stringify({ runId, input, sourceReceiptHash: receipt.contentHash, definition, risk })}\n`,
           ),
         )
         yield* file.sync
@@ -615,7 +663,9 @@ export const runControlStudy = (
       }).pipe(Effect.scoped)
     }
     const sessions = []
-    for (const policy of Object.values(ControlPolicy)) {
+    for (const policy of falsification
+      ? [...legacyControlPolicies, ControlPolicy.ResidualShock]
+      : legacyControlPolicies) {
       const results = yield* Effect.gen(function* () {
         yield* TestClock.setTime(prepared.openMs)
         const controlRunId = yield* Effect.fromResult(canonicalHashV1Result({ runId, policy }))
@@ -669,7 +719,7 @@ export const runControlStudy = (
             targetWeight: policy === ControlPolicy.RetainedBreakout ? 0.1 : input.repeatedTargetWeightPpm / 1_000_000,
             decisionLatencyMs: input.decisionLatencyMs,
             turnoverPolicy:
-              input.schemaVersion === 'bayn.control-study-input.v3'
+              input.schemaVersion !== 'bayn.control-study-input.v2'
                 ? input.turnoverPolicy
                 : EntryTurnoverPolicy.ImmediateAdjustment,
             pollIntervalMs: prepared.input.cadence.pollIntervalMs,
@@ -698,7 +748,7 @@ export const runControlStudy = (
       schemaVersion: 'bayn.control-study-report.v3',
       classification: 'DEVELOPMENT_CONTROL_PORTFOLIOS',
       runId,
-      definition: controlStudyDefinition,
+      definition,
       input,
       sourceReceiptHash: receipt.contentHash,
       risk,
