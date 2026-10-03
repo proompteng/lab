@@ -83,6 +83,7 @@ export class CredentialMasker {
         // Keep incomplete value introducers, not an arbitrary prefix of a credential context.
         // This also distinguishes URL userinfo from an ordinary host:port URL.
         const incomplete = [
+          /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY)\s*(?:=\s*)?$/i,
           /\b(?:Set-Cookie|Cookie)["']?[\t ]*[:=][\t ]*["']?$/i,
           /(?:--user(?:=|\s+)|-u\s*)[^\s:]*$/i,
           /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*$/i,
@@ -115,7 +116,7 @@ export class CredentialMasker {
           kind: 'assignment',
         },
         {
-          regex: /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY)\s*=\s*(["']?)/g,
+          regex: /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY)\s*=\s*(["']?)/gi,
           kind: 'assignment',
         },
         { regex: /\b(?:gh[pousr]_[A-Za-z0-9]|github_pat_[A-Za-z0-9]|xox[baps]-[A-Za-z0-9])/g, kind: 'format' },
