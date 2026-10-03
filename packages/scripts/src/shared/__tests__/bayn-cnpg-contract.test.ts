@@ -36,7 +36,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     },
     storage: {
       storageClass: 'rook-ceph-block',
-      size: '10Gi',
+      size: '100Gi',
       resizeInUseVolumes: true,
     },
     resources: {

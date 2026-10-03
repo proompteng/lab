@@ -80,7 +80,7 @@ impl WorkloadIdentity {
         let domain = match self {
             Self::Spiffe { domain, .. } => domain.to_string(),
             #[cfg(test)]
-            Self::Fixture => "galactic.proompteng.ai".to_owned(),
+            Self::Fixture => "proompteng.ai".to_owned(),
         };
         if pod_uid.is_empty()
             || !pod_uid

@@ -1,5 +1,51 @@
 # Bayn GitOps rollout notes
 
+## Research storage foundation
+
+Research storage uses the standard Rook `ObjectBucketClaim` named `bayn-research-captures` in `rook-ceph`.
+Its generated bucket name begins with `bayn-research-captures`; use `BUCKET_NAME` from the generated ConfigMap
+rather than assuming the final name. The existing `rook-ceph-bucket` StorageClass targets `objectstore` and uses
+`Retain`. The claim and source connection resources also disable Argo pruning and deletion.
+
+Rook generates one ordinary bucket-owner credential. The bucket starts with a private ACL. This credential can
+read, write, list, delete, and change sharing inside its bucket; it does not grant access to unrelated private buckets.
+It is not a prefix-restricted writer. Application object keys use `captures/v1/` by convention. No actual data deletion
+or public sharing is part of this rollout.
+
+The `bayn-research-captures` Secret and ConfigMap in `bayn` reflect Rook's generated resources of the same name.
+During first provisioning, the bucket provisioner replaces source metadata. Argo self-heal then restores the declared
+reflection annotations while preserving the operator-owned data and owner references. Verify those annotations and
+the reflected resources after this reconciliation; a Bound claim alone does not prove reflection is ready. Require both
+applications to be Synced and the reflected Secret and ConfigMap data to match their sources without logging credentials.
+The Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; the ConfigMap supplies `BUCKET_NAME`,
+`BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_REGION`. Keep credential values in Secret references. No separate
+RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required for this path.
+The existing controller-scoped RGW egress permits TCP 8080, the target of service port 80.
+
+Bayn-specific acceptance does not run as a hook of the shared Rook application. The former
+`bayn-research-storage-bootstrap` Job, code-only ConfigMap generator, and obsolete scripts are absent from desired state.
+Its earlier positive checks did not complete
+storage acceptance because its ListBuckets negative check failed. A successful shared Rook sync therefore says
+nothing about Bayn capture readiness. Verify the native claim is Bound, its bucket ACL is private, its owner is unique,
+the reflected connection resources are current, and a synthetic upload has identical SHA-256 readback before use.
+Keep collection disabled until export integrity and sustained capacity qualification also pass.
+
+The previous `bayn-research` account, bucket, users, Secrets, Bayn connection configuration, and retained synthetic fixtures
+remain untouched and unused. Do not point the new claim at that existing bucket: provisioning can relink a bucket
+that belongs to another owner. Cleanup or ownership transfer needs a separately reviewed migration.
+[Rook's account documentation](https://rook.io/docs/rook/v1.20/Storage-Configuration/Object-Storage-RGW/ceph-object-accounts/)
+marks the account CRD experimental and supported only with the Ceph main-branch image; the new native OBC path avoids it.
+
+The existing two-instance `bayn-db` cluster retains 100Gi per replica through `rook-ceph-block` online expansion.
+**The volumes cannot shrink back to 10Gi in place.** Verify both existing PVCs, their mounted filesystems, and the
+primary's `pg_stat_replication`. The standby must be `streaming`, with `sync_state` of `sync` or `quorum`, and included
+in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`. Keep `synchronous_commit=on`.
+
+Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
+fields. Let Rook provision its native claim and Bayn follow normal Kargo promotion. Require the common Rook sync
+operation to succeed. Report any pre-existing Ceph deep-scrub health warning separately. Preserve all retained storage
+and credentials during recovery, and keep the expanded database size during a code rollback.
+
 ## Jev protocol activation
 
 The active implementation uses `bayn.jev.protocol.v1` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol

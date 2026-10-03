@@ -2259,6 +2259,8 @@ mod tests {
         )
         .expect("image patch JSON");
         assert_eq!(body["spec"]["image"], configured_image);
+        assert_eq!(body["metadata"]["resourceVersion"], "41");
+        assert_eq!(body["spec"].get("resources"), None);
         assert_eq!(
             body["metadata"]["annotations"][GUEST_IMAGE_UPDATE_STARTED_AT_ANNOTATION],
             serde_json::Value::Null
@@ -2311,7 +2313,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_guest_adopts_latest_image_without_waiting_for_a_pod() {
+    async fn missing_guest_adopts_image_without_waiting_for_a_pod() {
         let now = Utc::now();
         let old_image = format!("registry.example/nanoagent@sha256:{}", "a".repeat(64));
         let configured_image = format!("registry.example/nanoagent@sha256:{}", "d".repeat(64));
@@ -2319,7 +2321,7 @@ mod tests {
         microvm.metadata.namespace = Some("tengri".to_owned());
         microvm.metadata.resource_version = Some("41".to_owned());
         microvm.metadata.finalizers = Some(vec![FINALIZER_NAME.to_owned()]);
-        microvm.spec.image = old_image;
+        microvm.spec.image = old_image.clone();
         microvm.spec.idle_deadline = (now + chrono::Duration::minutes(30)).to_rfc3339();
         microvm.spec.expires_at = (now - chrono::Duration::hours(1)).to_rfc3339();
 
@@ -2360,6 +2362,8 @@ mod tests {
         )
         .expect("image patch JSON");
         assert_eq!(body["spec"]["image"], configured_image);
+        assert_eq!(body["metadata"]["resourceVersion"], "41");
+        assert_eq!(body["spec"].get("resources"), None);
         response.send_response(mock_response(
             StatusCode::OK,
             serde_json::to_vec(&microvm).unwrap(),
