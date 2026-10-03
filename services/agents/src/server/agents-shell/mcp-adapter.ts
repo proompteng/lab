@@ -194,11 +194,9 @@ export const installEffectToolHandlers = (
         runner.audit('tool_call_finished', auth, {
           durationMs: performance.now() - startedAt,
           outcome: toolOutcome(tool?.name, result),
-          ...(authorized && !result.isError && !tool?.name.startsWith('agent_')
-            ? { result: content ?? result.content }
-            : {}),
+          ...(authorized && !tool?.name.startsWith('agent_') ? { result: content ?? result.content } : {}),
         })
-        return result
+        return { ...result, _meta: { ...result._meta, 'agents-shell/trace': toolAuditContext.getStore() } }
       },
     )
   })

@@ -400,7 +400,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(21_000)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(22_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
@@ -423,7 +423,7 @@ describe('agents-shell MCP tools', () => {
       'Timeout in seconds. Default: 60. Server cap: 1800.',
     )
     expect(rawShellRunInputProperties.maxOutputBytes.description).toBe(
-      'Per-stream output tail cap in bytes. Default: 20000. Server cap: 200000.',
+      'Per-stream reply page cap in bytes. Default: 20000. Server cap: 1048576. Retention is independent.',
     )
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')

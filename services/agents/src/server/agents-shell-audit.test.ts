@@ -1,42 +1,33 @@
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import * as Schema from 'effect/Schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { writeAuditLog } from './agents-shell/audit'
+import { auditStdout, sanitizeAuditPayload, writeAuditLog } from './agents-shell/audit'
 import {
   AgentsShellRunner,
-  createAgentsShellRequestHandler,
   createAgentsShellServer,
   defaultAgentsShellConfigFromEnv,
   type AuthContext,
 } from './agents-shell-mcp'
 
-const AuditSchema = Schema.Struct({
-  msg: Schema.Literal('agents-shell audit'),
-  schemaVersion: Schema.Literal(1),
-  ts: Schema.String,
-  event: Schema.String,
-  requestId: Schema.optional(Schema.String),
-  toolCallId: Schema.optional(Schema.String),
-  tool: Schema.optional(Schema.String),
-  subjectHash: Schema.NullOr(Schema.String),
-  payload: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  payloadTruncated: Schema.Boolean,
-})
-const parseAudit = Schema.decodeUnknownSync(AuditSchema)
-const parseJob = Schema.decodeUnknownSync(Schema.Struct({ jobId: Schema.String }))
 const roots: string[] = []
 const connections: Array<{
   client: Client
   server: ReturnType<typeof createAgentsShellServer>
   runner: AgentsShellRunner
 }> = []
-
+const authFixture = (subject = 'owner-a'): AuthContext => ({
+  subject,
+  email: null,
+  username: null,
+  scopes: new Set(['agents-shell.read']),
+  payload: {},
+})
 const configFixture = () => {
   const root = mkdtempSync(join(tmpdir(), 'agents-shell-audit-'))
   roots.push(root)
@@ -44,40 +35,41 @@ const configFixture = () => {
     AGENTS_SHELL_WORKSPACE_ROOT: root,
     AGENTS_SHELL_AUDIT_LOG_PATH: '',
     AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS: '5',
-    AGENTS_SHELL_MAX_TIMEOUT_SECONDS: '10',
   })
 }
-
-const authFixture = (scopes = ['agents-shell.read', 'agents-shell.write']): AuthContext => ({
-  subject: 'test-actor',
-  email: 'actor@example.test',
-  username: 'test-username',
-  scopes: new Set(scopes),
-  payload: {},
-})
-
-const captureAudit = () => {
-  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-  return () =>
-    log.mock.calls.flatMap(([line]) => {
-      const value: unknown = JSON.parse(String(line))
-      return typeof value === 'object' && value !== null && 'msg' in value && value.msg === 'agents-shell audit'
-        ? [parseAudit(value)]
-        : []
-    })
-}
-
-const connect = async (auth = authFixture()) => {
-  const config = configFixture()
-  const runner = new AgentsShellRunner(config)
-  const server = createAgentsShellServer(config, runner, auth, 'request-fixture')
+const connect = async (runner = new AgentsShellRunner(configFixture()), auth = authFixture()) => {
+  const server = createAgentsShellServer(runner.config, runner, auth, 'request-fixture')
   const client = new Client({ name: 'audit-test', version: '1' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
   connections.push({ client, server, runner })
-  return { config, client, runner }
+  return { client, runner, config: runner.config }
 }
-
+const data = (result: Record<string, unknown>) => result.structuredContent as Record<string, unknown>
+const captureAudit = () => {
+  const log = vi.spyOn(auditStdout, 'write').mockImplementation(() => true)
+  const frames = () =>
+    log.mock.calls.flatMap(([line]) => {
+      const value = JSON.parse(String(line))
+      return value.msg === 'agents-shell audit' ? [value] : []
+    })
+  const records = () => {
+    const events = new Map<string, any[]>()
+    for (const frame of frames()) events.set(frame.eventId, [...(events.get(frame.eventId) ?? []), frame])
+    return [...events.values()].map((parts) => {
+      if (parts[0].payload) return parts[0]
+      expect(parts).toHaveLength(parts[0].fragmentCount)
+      const unique = new Map(parts.map((part) => [part.fragmentIndex, part]))
+      const json = [...unique.values()]
+        .sort((a, b) => a.fragmentIndex - b.fragmentIndex)
+        .map((part) => part.payloadFragment)
+        .join('')
+      expect(Buffer.byteLength(json)).toBe(parts[0].payloadBytes)
+      return { ...parts[0], payload: JSON.parse(json) }
+    })
+  }
+  return { frames, records }
+}
 afterEach(async () => {
   for (const { client, server, runner } of connections.splice(0)) {
     runner.shutdown()
@@ -89,526 +81,221 @@ afterEach(async () => {
   vi.unstubAllEnvs()
 })
 
-describe('agents-shell activity audit', () => {
-  it('exports only safe typed metadata and omits free-form input, echoed operands and unknown fields in both sinks', () => {
-    const records = captureAudit()
+describe('complete operational activity export', () => {
+  it('retains ordinary command, arguments, paths, code, errors and output in both sinks', () => {
+    const { records } = captureAudit()
     const config = configFixture()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-    const privateText = 'customer-private-text-123-45-6789'
-    writeAuditLog(config, 'probe', authFixture(), {
-      command: privateText,
-      args: [privateText],
-      arguments: { path: privateText },
-      password: privateText,
-      [privateText]: privateText,
-      result: {
-        path: privateText,
-        changedFiles: [privateText],
-        branch: privateText,
-        worktree: privateText,
-        content: privateText,
-        stdout: privateText,
-        stderr: privateText,
-        arbitrary: privateText,
-        nested: { status: privateText },
-        status: privateText,
-        jobId: privateText,
-        ok: true,
-        exitCode: 0,
-        stdoutBytes: 27,
-        stderrBytes: 0,
-      },
-    })
-    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
-      expect(content).not.toContain(privateText)
-      expect(content).not.toContain('test-actor')
-      expect(content).not.toContain('actor@example.test')
-    }
-    expect(records()[0]).toMatchObject({
-      payload: {
-        command: '[OMITTED]',
-        arguments: '[OMITTED]',
-        result: { path: '[OMITTED]', changedFiles: '[OMITTED]', ok: true, exitCode: 0, stdoutBytes: 27 },
-      },
-      payloadTruncated: false,
-    })
-    expect(records()[0].subjectHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(JSON.parse(readFileSync(config.auditLogPath, 'utf8'))).toEqual(records()[0])
-  })
-
-  it('preserves generated identifiers, outcomes, timestamps and bounded process metadata', () => {
-    const records = captureAudit()
     const payload = {
-      jobId: '7f29c6aa-e612-4287-a8df-46d2e6a36719',
-      sessionId: 'f8117bea-8bd5-4ed6-9ab7-fc04bcd30c87',
-      status: 'killed',
-      outcome: 'succeeded',
-      signal: 'SIGTERM',
-      exitCode: null,
-      timedOut: false,
-      startedAt: '2026-10-02T17:00:00.000Z',
-      finishedAt: null,
-      baseSha: 'a'.repeat(40),
-    }
-    writeAuditLog(configFixture(), 'probe', null, payload)
-    expect(records()[0].payload).toEqual(payload)
-  })
-
-  it('bounds large job collections and processes opaque text without inspecting it', () => {
-    const records = captureAudit()
-    const start = performance.now()
-    writeAuditLog(configFixture(), 'probe', null, {
-      command: 'curl '.repeat(10_000),
-      jobs: Array.from({ length: 100 }, () => ({ command: '\u0000雪'.repeat(10_000), stdoutBytes: 1 })),
-    })
-    expect(performance.now() - start).toBeLessThan(1_000)
-    expect(records()[0].payloadTruncated).toBe(true)
-    expect(Buffer.byteLength(JSON.stringify(records()[0]))).toBeLessThan(14_000)
-    expect(records()[0].payload.jobs).toHaveLength(20)
-  })
-
-  it('keeps delegated task text out of agent_status process and tool audit while retaining the response', async () => {
-    const records = captureAudit()
-    const { client, config } = await connect()
-    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-    const agentRunName = 'private-agent-task-derived-name'
-    const agentRun = {
-      kind: 'AgentRun',
-      spec: {
-        implementation: { inline: { summary: 'private-agent-summary', text: 'private-agent-task' } },
-        goal: { objective: 'private-agent-objective' },
+      command: 'git show abc123 -- src/token-count.ts',
+      arguments: { args: ['show', 'abc123'], cwd: '/workspace/repo-a' },
+      result: {
+        content: 'const tokenCount = 400;\n',
+        stdout: '雪😀 complete output',
+        stderr: 'precise ordinary failure',
+        status: 'exited',
+        exitCode: 1,
       },
     }
+    writeAuditLog(config, 'probe', authFixture(), payload)
+    expect(records()[0]).toMatchObject({ schemaVersion: 2, payload, payloadTruncated: false, maskedValues: 0 })
+    expect(JSON.parse(readFileSync(config.auditLogPath, 'utf8'))).toEqual(records()[0])
+    expect(records()[0].subjectHash).toBe(createHash('sha256').update('owner-a').digest('hex'))
+  })
+
+  it('frames large Unicode/control-character payloads without dropping content', () => {
+    const { frames, records } = captureAudit()
+    const payload = { command: 'ordinary command', content: '\u0000雪😀'.repeat(20_000) }
+    writeAuditLog(configFixture(), 'probe', authFixture(), payload)
+    expect(records()[0].payload).toEqual(payload)
+    expect(frames().length).toBeGreaterThan(1)
+    for (const frame of frames()) expect(Buffer.byteLength(JSON.stringify(frame))).toBeLessThan(16_000)
+  })
+
+  it('masks credential values only, including argv pairs and errors, without changing original responses', () => {
+    vi.stubEnv('SYNTHETIC_API_TOKEN', 'synthetic-runtime-credential')
+    const result = sanitizeAuditPayload({
+      arguments: {
+        args: ['--password', 'synthetic-password', '--token', '=', 'synthetic-token', '--token-count', '300'],
+      },
+      result: {
+        token: 'synthetic-token',
+        error: 'Authorization: Bearer synthetic-header\nordinary error',
+        stdout: 'before synthetic-runtime-credential after',
+        tokenCount: 300,
+      },
+    })
+    expect(JSON.stringify(result)).not.toContain('synthetic-password')
+    expect(JSON.stringify(result)).not.toContain('synthetic-token')
+    expect(JSON.stringify(result)).not.toContain('synthetic-header')
+    expect(JSON.stringify(result)).not.toContain('synthetic-runtime-credential')
+    expect(result.payload).toMatchObject({
+      arguments: {
+        args: ['--password', '[REDACTED_CREDENTIAL]', '--token', '=', '[REDACTED_CREDENTIAL]', '--token-count', '300'],
+      },
+      result: { tokenCount: 300, stdout: 'before [REDACTED_CREDENTIAL] after' },
+    })
+  })
+
+  it('exports complete concurrent stdout/stderr past response caps and keeps owned agents discoverable', async () => {
+    const { records } = captureAudit()
+    const { client, runner } = await connect()
+    const expected = new Map<string, { stdout: string; stderr: string }>()
+    const jobs = await Promise.all(
+      ['agent-a', 'agent-b'].map(async (agentId) => {
+        const stdout = `${agentId}:雪😀\n`.repeat(30_000)
+        const stderr = `${agentId}:diagnostic\n`.repeat(20_000)
+        const command = `node -e ${JSON.stringify(`process.stdout.write(${JSON.stringify(`${agentId}:雪😀\n`)}.repeat(30000)); process.stderr.write(${JSON.stringify(`${agentId}:diagnostic\n`)}.repeat(20000))`)}`
+        const result = await client.callTool({
+          name: 'shell_start',
+          arguments: { command, agentId, maxOutputBytes: 1024 },
+        })
+        const jobId = String(data(result).jobId)
+        expected.set(jobId, { stdout, stderr })
+        return jobId
+      }),
+    )
+    await vi.waitFor(
+      () => {
+        for (const id of jobs) expect(runner.requireJob(id, authFixture()).finishedAt).not.toBeNull()
+      },
+      { timeout: 8000 },
+    )
+    const listed = await client.callTool({ name: 'shell_status', arguments: {} })
+    expect((data(listed).jobs as any[]).map((job) => job.agentId).sort()).toEqual(['agent-a', 'agent-b'])
+    for (const jobId of jobs) {
+      for (const stream of ['stdout', 'stderr'] as const) {
+        const chunks = records()
+          .filter(
+            (event) =>
+              event.event === 'process_output' && event.payload.jobId === jobId && event.payload.stream === stream,
+          )
+          .sort((a, b) => a.payload.sequence - b.payload.sequence)
+        let offset = 0
+        for (let i = 0; i < chunks.length; i += 1) {
+          expect(chunks[i].payload.sequence).toBe(i)
+          expect(chunks[i].payload.byteStart).toBe(offset)
+          offset = chunks[i].payload.byteEnd
+        }
+        const original = expected.get(jobId)![stream]
+        expect(chunks.map((event) => event.payload.text).join('')).toBe(original)
+        expect(offset).toBe(Buffer.byteLength(original))
+        expect(
+          records().find(
+            (event) =>
+              event.event === 'process_output_finished' &&
+              event.payload.jobId === jobId &&
+              event.payload.stream === stream,
+          )?.payload,
+        ).toMatchObject({
+          totalBytes: Buffer.byteLength(original),
+          capturedBytes: Buffer.byteLength(original),
+          sinkErrors: 0,
+          captureError: null,
+          sha256: createHash('sha256').update(original).digest('hex'),
+        })
+      }
+      let offset = 0
+      let text = ''
+      do {
+        const read = await client.callTool({
+          name: 'shell_read',
+          arguments: {
+            jobId,
+            stdoutOffset: offset,
+            stderrOffset: expected.get(jobId)!.stderr.length,
+            maxOutputBytes: 20_000,
+          },
+        })
+        text += data(read).stdout
+        offset = Number(data(read).stdoutNextOffset)
+      } while (offset < Buffer.byteLength(expected.get(jobId)!.stdout))
+      expect(text).toBe(expected.get(jobId)!.stdout)
+    }
+  })
+
+  it('prevents another owner from reading, listing or stopping jobs', async () => {
+    captureAudit()
+    const { client, runner } = await connect()
+    const second = await connect(runner, authFixture('owner-b'))
+    const start = await client.callTool({ name: 'shell_start', arguments: { command: 'sleep 3', agentId: 'owner-b' } })
+    const jobId = data(start).jobId
+    expect(data(await second.client.callTool({ name: 'shell_status', arguments: {} })).jobs).toEqual([])
+    for (const name of ['shell_read', 'shell_kill', 'shell_status'])
+      expect((await second.client.callTool({ name, arguments: { jobId } })).isError).toBe(true)
+    expect(runner.requireJob(String(jobId), authFixture()).status).toBe('running')
+    await client.callTool({ name: 'shell_kill', arguments: { jobId } })
+    await vi.waitFor(() => expect(runner.requireJob(String(jobId), authFixture()).finishedAt).not.toBeNull())
+    expect(runner.requireJob(String(jobId), authFixture()).status).toBe('killed')
+  })
+
+  it('mirrors CLI tools and retains credential-safe argv with exact failure details', async () => {
+    const { records } = captureAudit()
+    const { client, config } = await connect()
     const executable = join(config.workspaceRoot, 'kubectl')
     writeFileSync(
       executable,
-      `#!/bin/bash\nif [ "$2" = agentrun ]; then printf '%s' '${JSON.stringify(agentRun)}'; else printf '%s' '{"kind":"JobList","items":[{"task":"private-agent-job-task"}]}'; fi\n`,
+      '#!/bin/sh\nprintf "ordinary command output\\n"; printf "exact command failure\\n" >&2; exit 7\n',
       { mode: 0o755 },
     )
     vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
-    const response = await client.callTool({ name: 'agent_status', arguments: { agentRunName } })
-    expect(response.structuredContent).toMatchObject({ agentRunName, agentRun })
-    for (const value of [
-      'private-agent-summary',
-      'private-agent-task',
-      'private-agent-objective',
-      'private-agent-job-task',
-    ]) {
-      expect(JSON.stringify(records())).not.toContain(value)
-      expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(value)
-    }
-    expect(records().find(({ event }) => event === 'tool_call_started')).toMatchObject({
-      payload: { arguments: '[OMITTED]' },
-    })
-    expect(records().find(({ event }) => event === 'agent_status_get_agentrun_finished')).toMatchObject({
-      payload: { exitCode: 0 },
-    })
-    expect(records().find(({ event }) => event === 'tool_call_finished')?.payload).not.toHaveProperty('result')
-  })
-
-  it.each(['shell_run', 'shell_start'])('omits projected Secret output through %s and later reads', async (name) => {
-    const records = captureAudit()
-    const { client, config, runner } = await connect()
-    const encoded = Buffer.from('synthetic-unrecognized-credential').toString('base64')
-    const executable = join(config.workspaceRoot, 'kubectl')
-    writeFileSync(executable, `#!/bin/bash\nprintf '${encoded}'; printf '${encoded}' >&2\n`, { mode: 0o755 })
     const response = await client.callTool({
-      name,
-      arguments: { command: `${executable} get secrets/fixture -o jsonpath='{.data.arbitrary}'` },
+      name: 'kubectl_admin',
+      arguments: { args: ['exec', 'pod/fixture', '--', 'client', '--password', 'synthetic-cli-password'] },
     })
-    const { jobId } = parseJob(response.structuredContent)
-    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
-    const read = await client.callTool({ name: 'shell_read', arguments: { jobId } })
-    expect(read.structuredContent).toMatchObject({ stdout: encoded, stderr: encoded })
-    await client.callTool({ name: 'shell_status', arguments: { jobId } })
-    expect(JSON.stringify(records())).not.toContain(encoded)
-    expect(records().find(({ event }) => event === 'shell_job_finished')).toMatchObject({
-      payload: { stdoutBytes: encoded.length, stderrBytes: encoded.length, exitCode: 0 },
+    expect(response.structuredContent).toMatchObject({
+      exitCode: 7,
+      stdout: 'ordinary command output\n',
+      stderr: 'exact command failure\n',
     })
+    expect(JSON.stringify(response.structuredContent)).toContain('synthetic-cli-password')
+    expect(JSON.stringify(records())).not.toContain('synthetic-cli-password')
+    expect(
+      records()
+        .filter((event) => event.event === 'process_output')
+        .map((event) => event.payload.text)
+        .join(''),
+    ).toContain('exact command failure')
   })
 
-  it.each(['shell_run', 'shell_start'])(
-    'omits dynamically selected resource output through %s and later reads',
-    async (name) => {
-      const records = captureAudit()
-      const { client, config, runner } = await connect()
-      config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-      const encoded = Buffer.from('synthetic-dynamic-credential').toString('base64')
-      const executable = join(config.workspaceRoot, 'kubectl')
-      writeFileSync(executable, `#!/bin/bash\nprintf '%s' '${encoded}'; printf '%s' '${encoded}' >&2\n`, {
-        mode: 0o755,
-      })
-      const response = await client.callTool({
-        name,
-        arguments: { command: `${executable} get se""cret/fixture -o jsonpath='{.data.arbitrary}'` },
-      })
-      const { jobId } = parseJob(response.structuredContent)
-      await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
-      const read = await client.callTool({ name: 'shell_read', arguments: { jobId } })
-      expect(read.structuredContent).toMatchObject({ stdout: encoded, stderr: encoded })
-      await client.callTool({ name: 'shell_status', arguments: { jobId } })
-      expect(JSON.stringify(records())).not.toContain(encoded)
-      expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(encoded)
-      expect(records().find(({ event }) => event === 'shell_job_finished')).toMatchObject({
-        payload: { stdoutBytes: encoded.length, stderrBytes: encoded.length, exitCode: 0 },
-      })
-    },
-  )
-
-  it('keeps kubectl metadata independent of a namespace named secrets', async () => {
-    const records = captureAudit()
-    const { client, config } = await connect()
-    const output = JSON.stringify({ kind: 'PodList', items: [] })
-    writeFileSync(join(config.workspaceRoot, 'kubectl'), `#!/bin/bash\nprintf '%s' '${output}'\n`, { mode: 0o755 })
-    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
-    const response = await client.callTool({ name: 'kubectl', arguments: { args: ['get', 'pods', '-n', 'secrets'] } })
-    expect(response.structuredContent).toMatchObject({ stdout: output, exitCode: 0 })
-    expect(records().find(({ event }) => event === 'tool_call_finished')).toMatchObject({
-      payload: { result: { stdout: '[OMITTED]', exitCode: 0 } },
-    })
-    expect(JSON.stringify(records())).not.toContain('[OMITTED_KUBERNETES_SECRET]')
-  })
-
-  it('keeps administrative kubectl operands out of both sinks while preserving MCP results', async () => {
-    const records = captureAudit()
+  it('can inspect its growing local log without recursively amplifying it', async () => {
+    const { records } = captureAudit()
     const { client, config } = await connect()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-    writeFileSync(join(config.workspaceRoot, 'kubectl'), "#!/bin/bash\nprintf '%s' created\n", { mode: 0o755 })
-    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
-    for (const args of [
-      ['create', 'secret', 'generic', 'demo', '--from-literal=auth=private-literal-value'],
-      ['patch', 'secret', 'demo', '-p', '{"data":{"auth.json":"private-patch-value"}}'],
-    ]) {
-      const response = await client.callTool({ name: 'kubectl_admin', arguments: { args } })
-      expect(response.structuredContent).toMatchObject({ stdout: 'created', exitCode: 0 })
-    }
-    for (const value of ['private-literal-value', 'private-patch-value']) {
-      expect(JSON.stringify(records())).not.toContain(value)
-      expect(readFileSync(config.auditLogPath, 'utf8')).not.toContain(value)
-    }
-    expect(records().find(({ event }) => event === 'tool_call_started')).toMatchObject({
-      tool: 'kubectl_admin',
-      payload: { arguments: '[OMITTED]' },
-    })
-    expect(records().find(({ event }) => event === 'kubectl_admin')).toMatchObject({
-      payload: { command: '[OMITTED]' },
-    })
-  })
-
-  it('omits search patterns and derived commands while retaining authorized matches', async () => {
-    const records = captureAudit()
-    const { client, config } = await connect()
-    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-    const query = 'syntheticPrivateSearchPattern'
-    const matches = `fixture.txt:1:${query}\n`
-    writeFileSync(join(config.workspaceRoot, 'rg'), `#!/bin/bash\nprintf '%s' '${matches}'\n`, { mode: 0o755 })
-    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
-    const response = await client.callTool({ name: 'search', arguments: { query } })
-    expect(response.structuredContent).toMatchObject({ ok: true, exitCode: 0, stdout: matches })
-    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')])
-      expect(content).not.toContain(query)
-    expect(records().find(({ event }) => event === 'tool_call_started')).toMatchObject({
-      tool: 'search',
-      payload: { arguments: '[OMITTED]' },
-    })
-    expect(records().find(({ event }) => event === 'search')).toMatchObject({
-      payload: { command: '[OMITTED]' },
-    })
-  })
-
-  it('keeps stdout auditing when the file sink fails', () => {
-    const records = captureAudit()
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const config = configFixture()
-    config.auditLogPath = config.workspaceRoot
-    expect(() => writeAuditLog(config, 'probe', null, {})).not.toThrow()
-    expect(records()).toHaveLength(1)
-    expect(warn).toHaveBeenCalledWith('[agents-shell] file audit write failed')
-  })
-
-  it('keeps the optional file audit when stdout fails without exposing the sink error', () => {
-    vi.spyOn(console, 'log').mockImplementation(() => {
-      throw new Error('sensitive-sink-error')
-    })
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const config = configFixture()
-    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-    expect(() => writeAuditLog(config, 'probe', null, { command: '[OMITTED]' })).not.toThrow()
-    expect(parseAudit(JSON.parse(readFileSync(config.auditLogPath, 'utf8'))).payload).toEqual({ command: '[OMITTED]' })
-    expect(warn).toHaveBeenCalledWith('[agents-shell] stdout audit write failed')
-    expect(JSON.stringify(warn.mock.calls)).not.toContain('sensitive-sink-error')
-  })
-
-  it('logs file access without exporting the file body or changing the MCP response', async () => {
-    const records = captureAudit()
-    const { client, config } = await connect()
-    writeFileSync(join(config.workspaceRoot, 'private-file-name.txt'), 'private-file-content')
-    const response = await client.callTool({ name: 'read_file', arguments: { path: 'private-file-name.txt' } })
-    expect(response.structuredContent).toMatchObject({ content: 'private-file-content', bytes: 20 })
-    const events = records()
-    expect(events.map(({ event }) => event)).toEqual(['tool_call_started', 'tool_call_finished'])
-    expect(events[0]).toMatchObject({
-      requestId: 'request-fixture',
-      tool: 'read_file',
-      payload: { arguments: '[OMITTED]' },
-    })
-    expect(events[1]).toMatchObject({
-      toolCallId: events[0].toolCallId,
-      payload: { outcome: 'succeeded', result: { content: '[OMITTED]' } },
-    })
-    expect(JSON.stringify(events)).not.toContain('private-file-content')
-    expect(JSON.stringify(events)).not.toContain('private-file-name.txt')
-  })
-
-  it('uses the same request ID for HTTP metadata and the rejected MCP tool call', async () => {
-    const records = captureAudit()
-    const handler = createAgentsShellRequestHandler(configFixture())
-    const response = await handler(
-      new Request('https://agents-shell.example.test/mcp', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: { name: 'shell_run', arguments: { command: 'echo denied' } },
-        }),
-      }),
-    )
-    expect(response.status).toBe(200)
-    const [httpLine] =
-      vi.mocked(console.log).mock.calls.find(([line]) => String(line).includes('"msg":"agents-shell http request"')) ??
-      []
-    const http = Schema.decodeUnknownSync(Schema.Struct({ requestId: Schema.String }))(JSON.parse(String(httpLine)))
-    expect(records()).toHaveLength(2)
-    expect(records().map(({ requestId }) => requestId)).toEqual([http.requestId, http.requestId])
-    expect(records()[1]).toMatchObject({ payload: { outcome: 'error' } })
-  })
-
-  it('records process failures without exporting stderr bodies', async () => {
-    const records = captureAudit()
-    const { client } = await connect()
     const response = await client.callTool({
       name: 'shell_run',
-      arguments: { command: "printf 'failure detail\\n' >&2; exit 7" },
+      arguments: { command: `timeout 1 tail -n +1 -f ${config.auditLogPath}`, maxOutputBytes: 20_000 },
     })
-    expect(response.structuredContent).toMatchObject({ exitCode: 7, stderr: 'failure detail\n' })
-    expect(records().find(({ event }) => event === 'tool_call_finished')).toMatchObject({
-      payload: { outcome: 'failed', result: { exitCode: 7, stderr: '[OMITTED]' } },
-    })
-  })
-
-  it('records authorization, input-validation and unknown-tool failures before execution', async () => {
-    const records = captureAudit()
-    const { client, runner } = await connect(authFixture([]))
-    const { client: allowed } = await connect()
-    const denied = await client.callTool({ name: 'shell_run', arguments: { command: 'echo denied' } })
-    const invalid = await allowed.callTool({ name: 'read_file', arguments: { path: 7 } })
-    const unknown = await allowed.callTool({ name: 'not_a_tool', arguments: { token: 'unknown-token-value' } })
-    expect(denied.isError).toBe(true)
-    expect(invalid.isError).toBe(true)
-    expect(unknown.isError).toBe(true)
-    expect(runner.jobs.size).toBe(0)
-    const events = records()
-    expect(events.filter(({ event }) => event === 'tool_call_started')).toHaveLength(3)
-    expect(events.filter(({ event }) => event === 'tool_call_finished').map(({ payload }) => payload.outcome)).toEqual([
-      'error',
-      'error',
-      'error',
-    ])
-    expect(JSON.stringify(events)).not.toContain('unknown-token-value')
-  })
-
-  it('does not export invalid authorized arguments or validation-error bodies', async () => {
-    const records = captureAudit()
-    const { client } = await connect()
-    const response = await client.callTool({ name: 'read_file', arguments: { path: ['private-invalid-value'] } })
-    expect(response.isError).toBe(true)
-    expect(JSON.stringify(response)).toContain('private-invalid-value')
-    expect(JSON.stringify(records())).not.toContain('private-invalid-value')
-    expect(records()[0]).toMatchObject({ payload: { authorized: true } })
-    expect(records()[0].payload).not.toHaveProperty('arguments')
-    expect(records()[1].payload).not.toHaveProperty('result')
-  })
-
-  it('keeps rejected-call audit metadata independent of arguments and unknown-tool names', async () => {
-    const records = captureAudit()
-    const { client, runner } = await connect(authFixture([]))
-    const denied = await client.callTool({ name: 'shell_run', arguments: { command: 'attacker-data'.repeat(10_000) } })
-    const unknown = await client.callTool({
-      name: 'unknown-attacker-name'.repeat(1_000),
-      arguments: { data: 'attacker-data'.repeat(10_000) },
-    })
-    expect(denied.isError).toBe(true)
-    expect(unknown.isError).toBe(true)
-    expect(runner.jobs.size).toBe(0)
-    const events = records()
-    expect(events).toHaveLength(4)
-    expect(Buffer.byteLength(JSON.stringify(events))).toBeLessThan(1_600)
-    expect(JSON.stringify(events)).not.toContain('attacker-data')
-    expect(JSON.stringify(events)).not.toContain('unknown-attacker-name')
+    expect(data(response).stdout).toContain('agents-shell audit')
+    expect(records().filter((event) => event.event === 'process_output')).toHaveLength(0)
     expect(
-      events.filter(({ event }) => event === 'tool_call_started').map(({ payload }) => payload.authorized),
-    ).toEqual([false, false])
-    expect(events.filter(({ event }) => event === 'tool_call_finished').map(({ payload }) => payload.outcome)).toEqual([
-      'error',
-      'error',
-    ])
+      records().find((event) => event.event === 'process_output_finished' && event.payload.stream === 'stdout')?.payload
+        .selfAuditFramesSuppressed,
+    ).toBeGreaterThan(0)
+    expect(records().length).toBeLessThan(12)
   })
 
-  it('keeps concurrent tool calls and background completion attached to their originating calls', async () => {
-    const records = captureAudit()
-    const { client, runner } = await connect()
-    const [started] = await Promise.all([
-      client.callTool({ name: 'shell_start', arguments: { command: "sleep 0.1; printf 'background output\\n'" } }),
-      client.callTool({ name: 'shell_run', arguments: { command: "printf 'foreground output\\n'" } }),
-    ])
-    const { jobId } = parseJob(started.structuredContent)
-    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
-    const events = records()
-    const background = events.find(({ event, tool }) => event === 'tool_call_started' && tool === 'shell_start')
-    const foreground = events.find(({ event, tool }) => event === 'tool_call_started' && tool === 'shell_run')
-    expect(background?.toolCallId).not.toBe(foreground?.toolCallId)
-    expect(events.find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_start')).toMatchObject({
-      toolCallId: background?.toolCallId,
-      payload: { outcome: 'running' },
-    })
-    expect(
-      events.find(({ event, payload }) => event === 'shell_job_finished' && payload.jobId === jobId),
-    ).toMatchObject({
-      toolCallId: background?.toolCallId,
-      requestId: 'request-fixture',
-      tool: 'shell_start',
-      payload: { stdoutBytes: 18, exitCode: 0 },
-    })
-    expect(events.find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_run')).toMatchObject({
-      toolCallId: foreground?.toolCallId,
-      payload: { result: { stdout: '[OMITTED]', stdoutBytes: 18 } },
-    })
-  })
-
-  it('records a completed poll as succeeded while its background job is still running', async () => {
-    const records = captureAudit()
-    const { client, runner } = await connect()
-    const started = await client.callTool({ name: 'shell_start', arguments: { command: 'sleep 10' } })
-    const { jobId } = parseJob(started.structuredContent)
-    try {
-      const response = await client.callTool({ name: 'shell_read', arguments: { jobId } })
-      expect(response.structuredContent).toMatchObject({ status: 'running', jobId })
-      expect(
-        records().find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_read'),
-      ).toMatchObject({
-        payload: { outcome: 'succeeded', result: { status: 'running' } },
-      })
-    } finally {
-      await client.callTool({ name: 'shell_kill', arguments: { jobId } })
-      await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
-    }
-  })
-
-  it('records successful shell cancellation and completed-job reads as succeeded', async () => {
-    const records = captureAudit()
-    const { client, runner } = await connect()
-    const started = await client.callTool({ name: 'shell_start', arguments: { command: 'sleep 10' } })
-    const { jobId } = parseJob(started.structuredContent)
-    const killed = await client.callTool({ name: 'shell_kill', arguments: { jobId } })
-    expect(killed.isError).not.toBe(true)
-    expect(killed.structuredContent).toMatchObject({ jobId, status: 'killed', ok: false })
-    expect(records().find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_kill')).toMatchObject({
-      payload: { outcome: 'succeeded', result: { jobId, status: 'killed', ok: false } },
-    })
-    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 4_000 })
-    const read = await client.callTool({ name: 'shell_read', arguments: { jobId } })
-    expect(read.structuredContent).toMatchObject({ jobId, ok: false })
-    expect(records().find(({ event, tool }) => event === 'tool_call_finished' && tool === 'shell_read')).toMatchObject({
-      payload: { outcome: 'succeeded', result: { jobId, ok: false } },
-    })
-    const missing = await client.callTool({ name: 'shell_kill', arguments: { jobId: 'missing-job' } })
-    expect(missing.isError).toBe(true)
-    expect(records().at(-1)).toMatchObject({
-      event: 'tool_call_finished',
-      tool: 'shell_kill',
-      payload: { outcome: 'error' },
-    })
-  })
-
-  it('omits Git patterns and commit messages across actual MCP and derived process events', async () => {
-    const records = captureAudit()
+  it('does not export delegated model log bodies through lower-level process mirroring', async () => {
+    const { records } = captureAudit()
     const { client, config } = await connect()
-    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-    const pattern = 'synthetic-private-git-pattern'
-    const message = 'synthetic-private-commit-message'
-    await client.callTool({ name: 'git_write', arguments: { args: ['init'] } })
-    writeFileSync(join(config.workspaceRoot, 'tracked.txt'), pattern)
-    await client.callTool({ name: 'git_write', arguments: { args: ['add', 'tracked.txt'] } })
-    const grep = await client.callTool({ name: 'git', arguments: { args: ['grep', pattern] } })
-    expect(grep.isError).not.toBe(true)
-    expect(JSON.stringify(grep.structuredContent)).toContain(pattern)
-    const commit = await client.callTool({
-      name: 'git_write',
-      arguments: {
-        args: [
-          '-c',
-          'user.name=audit-fixture',
-          '-c',
-          'user.email=audit@example.test',
-          '-c',
-          'commit.gpgsign=false',
-          'commit',
-          '-m',
-          message,
-        ],
-      },
+    writeFileSync(join(config.workspaceRoot, 'kubectl'), '#!/bin/sh\nprintf "synthetic-protected-model-log"\n', {
+      mode: 0o755,
     })
-    expect(commit.isError).not.toBe(true)
-    expect(JSON.stringify(commit.structuredContent)).toContain(message)
-    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
-      expect(content).not.toContain(pattern)
-      expect(content).not.toContain(message)
-    }
-    expect(records().some(({ event }) => event === 'git_finished')).toBe(true)
+    vi.stubEnv('PATH', `${config.workspaceRoot}:${process.env.PATH}`)
+    await client.callTool({ name: 'agent_read', arguments: { agentRunName: 'fixture' } })
+    expect(JSON.stringify(records())).not.toContain('synthetic-protected-model-log')
   })
 
-  it('omits aliased executable input across actual shell calls and later job reads', async () => {
-    const records = captureAudit()
-    const { client, config, runner } = await connect()
-    config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
-    const executable = join(config.workspaceRoot, 'credential-client')
-    const alias = join(config.workspaceRoot, 'client')
-    writeFileSync(executable, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 })
-    symlinkSync(executable, alias)
-    const credential = 'synthetic-alias-credential'
-    const command = `${alias} -u name:${credential} https://example.test`
-    const foreground = await client.callTool({ name: 'shell_run', arguments: { command } })
-    expect(foreground.isError).not.toBe(true)
-    expect(foreground.structuredContent).toMatchObject({ ok: true, exitCode: 0 })
-    expect(JSON.stringify(foreground.structuredContent)).toContain(credential)
-    const background = await client.callTool({ name: 'shell_start', arguments: { command } })
-    const { jobId } = parseJob(background.structuredContent)
-    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 3_000 })
-    const read = await client.callTool({ name: 'shell_read', arguments: { jobId } })
-    expect(JSON.stringify(read.structuredContent)).toContain(credential)
-    const status = await client.callTool({ name: 'shell_status', arguments: { jobId } })
-    expect(JSON.stringify(status.structuredContent)).toContain(credential)
-    for (const content of [JSON.stringify(records()), readFileSync(config.auditLogPath, 'utf8')]) {
-      expect(content).not.toContain(credential)
-      expect(content).not.toContain(alias)
-    }
-    expect(records().filter(({ event }) => event === 'shell_job_finished')).toHaveLength(2)
-  })
-
-  it('records timeout completion after shell_start has returned', async () => {
-    const records = captureAudit()
-    const { client, runner } = await connect()
-    const started = await client.callTool({
-      name: 'shell_start',
-      arguments: { command: 'sleep 5', timeoutSeconds: 1 },
-    })
-    const { jobId } = parseJob(started.structuredContent)
-    await vi.waitFor(() => expect(runner.requireJob(jobId).finishedAt).not.toBeNull(), { timeout: 3_000 })
-    expect(records().find(({ event }) => event === 'shell_job_finished')).toMatchObject({
-      tool: 'shell_start',
-      payload: { status: 'timed_out', timedOut: true },
-    })
+  it('records useful tool errors while withholding unauthenticated arguments', async () => {
+    const { records } = captureAudit()
+    const { client } = await connect()
+    const response = await client.callTool({ name: 'shell_read', arguments: { jobId: 'missing-job' } })
+    expect(response.isError).toBe(true)
+    expect(JSON.stringify(records())).toContain('unknown or expired jobId: missing-job')
+    const auth = authFixture('unauthenticated')
+    auth.scopes.clear()
+    const denied = await connect(undefined, auth)
+    await denied.client.callTool({ name: 'shell_run', arguments: { command: 'sensitive-denied-input' } })
+    expect(JSON.stringify(records())).not.toContain('sensitive-denied-input')
   })
 })
