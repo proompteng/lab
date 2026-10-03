@@ -6,7 +6,11 @@ It does not issue diagnostic requests, change financial normalization or hashes,
 It uses the existing provider endpoint, account binding, HTTP budget and structured log sink. No alternate route or
 additional credentials are introduced.
 
-`brokerReadDiagnostic` logs use `bayn.broker-read-diagnostic.v1`. They contain provider/environment provenance and the
+Diagnostic messages start with `Broker response diagnostic evidence ` followed by one complete JSON payload using
+`bayn.broker-read-diagnostic.v1`. Parse that suffix from the log message. The event is serialized before logging so
+nested fields survive the default console logger in an isolated `ManagedRuntime`, as well as the JSON logger.
+It is not stored as a nested log annotation, which pretty console output can collapse to `[Object]`.
+The payload contains provider/environment provenance and the
 existing broker identity hash. Account IDs, activity IDs and request IDs are not logged in plaintext. Activity and
 request hashes use the domain-separated canonical hash domains `bayn.fee-diagnostic-activity.v1` and
 `bayn.fee-diagnostic-request.v1`. Each item includes its original response hash and observation time. Response hashes
