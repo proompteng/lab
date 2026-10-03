@@ -123,8 +123,13 @@ alone does not prove the scheduler is using them.
 
 During the built-in-to-custom transition, an OSD still using the old profile may
 remove a newly written custom scheduler key from the monitor config store.
-After every OSD uses `custom`, check for missing keys and reapply only the exact
-values already merged in GitOps. For example, the October rollout dropped
+After every OSD uses `custom`, check for missing keys. Normal reconciliation uses
+reviewed GitOps. A direct `ceph config set` repair requires explicit authorization
+for that runtime repair or a documented, authorized emergency procedure; the
+value being present in Git does not grant that authority. With that authorization,
+use the Galactic toolbox and reapply only the exact merged values. Otherwise,
+record the mismatched daemon, key, and intended value and obtain authorization
+before mutating runtime configuration. For example, the October rollout dropped
 `osd_mclock_scheduler_client_res`; restoring its committed `0.4` value completes
 the profile without changing the intended tuning. Confirm all nine effective
 values again after the last OSD restart.
