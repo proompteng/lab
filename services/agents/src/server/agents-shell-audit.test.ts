@@ -167,6 +167,7 @@ describe('complete operational activity export', () => {
       'api-key',
       'clientSecret',
       'privateKey',
+      'PGPASSWORD',
       'HTTP_AUTHORIZATION',
       'PROXY_AUTHORIZATION',
       'secretAccessKey',
@@ -234,6 +235,31 @@ describe('complete operational activity export', () => {
     })
     writeAuditLog(configFixture(), 'probe', authFixture(), { items })
     expect(records()[0].payload).toEqual({ items: ['ordinary'] })
+  })
+
+  it('masks explicit credential-name/value and plural scalar containers while keeping references', () => {
+    const payload = {
+      env: [
+        { name: 'PGPASSWORD', value: 'synthetic-env-credential' },
+        { name: 'GITHUB_TOKEN', valueFrom: { secretKeyRef: { name: 'config', key: 'token' } } },
+        { name: 'CODEX_AUTH', value: '/ordinary/auth.json' },
+        { name: 'TOKEN_PATH', value: '/ordinary/token' },
+      ],
+      OPENAI_API_KEYS: ['synthetic-first', 'synthetic-second'],
+      _auth: 'synthetic-npm',
+      'client-key-data': 'synthetic-private-key',
+    }
+    expect(sanitizeAuditPayload(payload).payload).toEqual({
+      env: [
+        { name: 'PGPASSWORD', value: '[REDACTED_CREDENTIAL]' },
+        { name: 'GITHUB_TOKEN', valueFrom: { secretKeyRef: { name: 'config', key: 'token' } } },
+        { name: 'CODEX_AUTH', value: '/ordinary/auth.json' },
+        { name: 'TOKEN_PATH', value: '/ordinary/token' },
+      ],
+      OPENAI_API_KEYS: ['[REDACTED_CREDENTIAL]', '[REDACTED_CREDENTIAL]'],
+      _auth: '[REDACTED_CREDENTIAL]',
+      'client-key-data': '[REDACTED_CREDENTIAL]',
+    })
   })
 
   it('rejects oversized events before masking or serialization with a bounded explicit receipt', () => {

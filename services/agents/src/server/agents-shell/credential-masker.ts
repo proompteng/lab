@@ -1,10 +1,10 @@
 // Only credential values are masked. Ordinary arguments, source, paths and output remain visible.
 export const credentialEnv =
-  /(?:^|_)(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY|AUTHORIZATION|CREDENTIALS?)$/i
+  /(?:^|_)(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEYS?|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY|AUTHORIZATION|CREDENTIALS?|AUTHKEY|PASSPHRASE)$|^(?:PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|CODEX_NOTIFY_LOKI_AUTH_HEADER|NPM_CONFIG_(?:_AUTH|_AUTHTOKEN|_PASSWORD))$/i
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const marker = '[REDACTED_CREDENTIAL]'
 export const credentialOptionNames =
-  'password|passwd|token|api-key|client-secret|oauth2-bearer|access-token|refresh-token|id-token|private-key|secret-access-key|secret-key|session-token|auth-token|reconnect-token|github-token|db-password|admin-password|nats-password|discord-bot-token|bot-token|github-webhook-secret|linear-webhook-secret|webhook-secret'
+  'password|passwd|token|api-key|client-secret|oauth2-bearer|access-token|refresh-token|id-token|private-key|secret-access-key|secret-key|session-token|auth-token|reconnect-token|github-token|db-password|admin-password|nats-password|discord-bot-token|bot-token|github-webhook-secret|linear-webhook-secret|webhook-secret|openai-api-key|bedrock-api-key|cloud-api-key|principal-api-key|personal-access-token|ssh-private-key|root-password|loki-secret-key|tempo-secret-key|mimir-secret-key|auth-key|tailscale-auth-key|signing-passphrase|passphrase'
 
 type ValueState = { terminator: string | null; escaped: boolean; privateKey: boolean }
 
@@ -88,14 +88,15 @@ export class CredentialMasker {
         // Keep incomplete value introducers, not an arbitrary prefix of a credential context.
         // This also distinguishes URL userinfo from an ordinary host:port URL.
         const incomplete = [
+          /(?<![A-Za-z0-9_])(?:_authToken|_auth|_password|NPM_CONFIG__(?:AUTH|AUTHTOKEN))["']?[\t ]*(?:[:=][\t ]*)?$/i,
           new RegExp(`--(?:${credentialOptionNames})\\b[\\t ]*(?:=[\\t ]*)?$`, 'i'),
-          /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY)\s*(?:=\s*)?$/i,
+          /\b(?:[A-Z][A-Z0-9]*_+)*(?:TOKEN|PASSWORD|PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|PASSWD|SECRET|API_KEYS?|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY|AUTHKEY|PASSPHRASE)["']?[\t ]*(?:[:=][\t ]*)?$/i,
           /\b(?:Set-Cookie|Cookie)["']?[\t ]*[:=][\t ]*["']?$/i,
           /(?:--user(?:=|\s+)|-u\s*)[^\s:]*$/i,
           /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*$/i,
           /(?:--token\b|["']token["'])\s*(?:[:=]\s*)?$/i,
-          /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret)["']?\s*(?:[:=]\s*)?$/i,
-          /\b(?:Authorization|Proxy-Authorization|HTTP_AUTHORIZATION|PROXY_AUTHORIZATION)["']?[\t ]*(?:[:=][\t ]*["']?(?:[A-Za-z][A-Za-z0-9_-]*[\t ]*)?)?$/i,
+          /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret|openai[_-]?api[_-]?key|bedrock[_-]?api[_-]?key|cloud[_-]?api[_-]?key|principal[_-]?api[_-]?key|personal[_-]?access[_-]?token|ssh[_-]?private[_-]?key|root[_-]?password|loki[_-]?secret[_-]?key|tempo[_-]?secret[_-]?key|mimir[_-]?secret[_-]?key|auth[_-]?key|tailscale[_-]?auth[_-]?key|signing[_-]?passphrase|passphrase|client-key-data)["']?\s*(?:[:=]\s*)?$/i,
+          /\b(?:Authorization|Proxy-Authorization|HTTP_AUTHORIZATION|PROXY_AUTHORIZATION|CODEX_NOTIFY_LOKI_AUTH_HEADER|OPENAI_API_KEYS)["']?[\t ]*(?:[:=][\t ]*["']?(?:[A-Za-z][A-Za-z0-9_-]*[\t ]*)?)?$/i,
         ].flatMap((pattern) => {
           const match = pattern.exec(this.pending)
           return match ? [match.index] : []
@@ -107,23 +108,28 @@ export class CredentialMasker {
       }
       if (!safeEnd) break
       const patterns = [
+        {
+          regex:
+            /(?<![A-Za-z0-9_])(?:_authToken|_auth|_password|NPM_CONFIG__(?:AUTH|AUTHTOKEN))["']?[\t ]*[:=][\t ]*(["']?)/gi,
+          kind: 'assignment',
+        },
         { regex: /(["']?)\b(?:Set-Cookie|Cookie)["']?[\t ]*[:=][\t ]*(["']?)/gi, kind: 'cookie' },
         { regex: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/g, kind: 'pem' },
         {
           regex:
-            /(["']?)\b(?:Authorization|Proxy-Authorization|HTTP_AUTHORIZATION|PROXY_AUTHORIZATION)["']?[\t ]*[:=][\t ]*(["']?)(?:(?:Bearer|Basic|Token|Negotiate|Digest|Signature|OAuth|HOBA|Mutual|AWS4-HMAC-SHA256|SCRAM-SHA-256|SCRAM-SHA-1)[\t ]+(?=[^\s"'`,;)}\]]))?/gi,
+            /(["']?)\b(?:Authorization|Proxy-Authorization|HTTP_AUTHORIZATION|PROXY_AUTHORIZATION|CODEX_NOTIFY_LOKI_AUTH_HEADER|OPENAI_API_KEYS)["']?[\t ]*[:=][\t ]*(["']?)(?:(?:Bearer|Basic|Token|Negotiate|Digest|Signature|OAuth|HOBA|Mutual|AWS4-HMAC-SHA256|SCRAM-SHA-256|SCRAM-SHA-1)[\t ]+(?=[^\s"'`,;)}\]]))?/gi,
           kind: 'header',
         },
         { regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:(?=[^\s/@]*@)/gi, kind: 'url' },
         { regex: /[?&](?:token|access_token|refresh_token|api_key|apikey|password|secret)=(["']?)/gi, kind: 'query' },
         {
           regex:
-            /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret)\b["']?\s*[:=]\s*(["']?)/gi,
+            /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret|openai[_-]?api[_-]?key|bedrock[_-]?api[_-]?key|cloud[_-]?api[_-]?key|principal[_-]?api[_-]?key|personal[_-]?access[_-]?token|ssh[_-]?private[_-]?key|root[_-]?password|loki[_-]?secret[_-]?key|tempo[_-]?secret[_-]?key|mimir[_-]?secret[_-]?key|auth[_-]?key|tailscale[_-]?auth[_-]?key|signing[_-]?passphrase|passphrase|client-key-data)\b["']?\s*[:=]\s*(["']?)/gi,
           kind: 'assignment',
         },
         {
           regex:
-            /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|PASSWORD|PASSWD|SECRET|API_KEY|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY)\s*=\s*(["']?)/gi,
+            /\b(?:[A-Z][A-Z0-9]*_+)*(?:TOKEN|PASSWORD|PGPASSWORD|MYSQL_PWD|REDISCLI_AUTH|PASSWD|SECRET|API_KEYS?|PRIVATE_KEY|SECRET_ACCESS_KEY|SECRET_KEY|AUTHKEY|PASSPHRASE)["']?[\t ]*[:=][\t ]*(["']?)/gi,
           kind: 'assignment',
         },
         { regex: /\b(?:gh[pousr]_[A-Za-z0-9]|github_pat_[A-Za-z0-9]|xox[baps]-[A-Za-z0-9])/g, kind: 'format' },

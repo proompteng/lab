@@ -44,7 +44,7 @@ export const isOwnAuditFrame = (line: string) => {
 
 // These are credential containers, not ordinary identifiers such as tokenCount or key paths.
 const credentialField =
-  /^(?:password|passwd|token|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|authorization|proxy[-_]authorization|http_authorization|cookie|set-cookie|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret)$/i
+  /^(?:password|passwd|token|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|authorization|proxy[-_]authorization|http_authorization|cookie|set-cookie|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret|openai[_-]?api[_-]?key|bedrock[_-]?api[_-]?key|cloud[_-]?api[_-]?key|principal[_-]?api[_-]?key|personal[_-]?access[_-]?token|ssh[_-]?private[_-]?key|root[_-]?password|loki[_-]?secret[_-]?key|tempo[_-]?secret[_-]?key|mimir[_-]?secret[_-]?key|auth[_-]?key|tailscale[_-]?auth[_-]?key|signing[_-]?passphrase|passphrase|client-key-data|_authToken|_auth|_password)$/i
 
 export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOutput = false) => {
   const secrets = credentialValuesFromEnv()
@@ -83,14 +83,25 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
           return '[REDACTED_CREDENTIAL]'
         }
         if (typeof item === 'string' && new RegExp(`^--(?:${credentialOptionNames})$`, 'i').test(item)) maskNext = true
-        return visit(item)
+        return visit(item, key)
       })
     }
     if (value !== null && typeof value === 'object') {
       return Object.fromEntries(
         Object.entries(value)
           .filter(([name]) => name !== '_meta')
-          .map(([name, item]) => [name, visit(item, name)]),
+          .map(([name, item]) => [
+            name,
+            visit(
+              item,
+              name === 'value' &&
+                typeof (value as Record<string, unknown>).name === 'string' &&
+                (credentialField.test((value as Record<string, unknown>).name as string) ||
+                  credentialEnv.test((value as Record<string, unknown>).name as string))
+                ? ((value as Record<string, unknown>).name as string)
+                : name,
+            ),
+          ]),
       )
     }
     return value

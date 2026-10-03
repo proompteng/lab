@@ -150,6 +150,7 @@ describe('minimal streaming credential masking', () => {
 describe('repository credential context table', () => {
   const scalarNames = [
     'password',
+    'PGPASSWORD',
     'passwd',
     'token',
     'secret',
@@ -208,6 +209,7 @@ describe('repository credential context table', () => {
     })
   it('recognizes actual runtime credential env families without masking reference names', () => {
     const names = [
+      'PGPASSWORD',
       'HTTP_AUTHORIZATION',
       'PROXY_AUTHORIZATION',
       'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
@@ -259,5 +261,87 @@ describe('explicit credential options', () => {
         }
       }
     })
+  }
+})
+
+describe('standard and repository runtime credential containers', () => {
+  const names = [
+    'NPM_CONFIG__AUTH',
+    'NPM_CONFIG__AUTHTOKEN',
+    '_authToken',
+    '_auth',
+    '_password',
+    'client-key-data',
+    'FORGEJO__DATABASE__PASSWD',
+    'PGPASSWORD',
+    'MYSQL_PWD',
+    'REDISCLI_AUTH',
+    'GITHUB_TOKEN',
+    'AGENTS_ARTIFACTS_SECRET_ACCESS_KEY',
+    'TAILSCALE_AUTHKEY',
+    'openaiApiKey',
+    'bedrockApiKey',
+    'cloudApiKey',
+    'principalApiKey',
+    'personalAccessToken',
+    'sshPrivateKey',
+    'rootPassword',
+    'lokiSecretKey',
+    'tempoSecretKey',
+    'mimirSecretKey',
+    'authKey',
+    'tailscaleAuthKey',
+    'signingPassphrase',
+    'passphrase',
+  ]
+  for (const name of names)
+    it(`masks ${name} in quoted JSON, YAML and assignments at every split`, () => {
+      for (const input of [
+        `${name}=synthetic-final-credential ordinary`,
+        `${name}: synthetic-final-credential\nordinary`,
+        `{"${name}":"synthetic-final-credential","ordinary":1}`,
+      ]) {
+        for (let split = 0; split <= input.length; split += 1) {
+          const masker = new CredentialMasker([])
+          const output = masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)
+          expect(output).not.toContain('synthetic-final-credential')
+          expect(output).toContain('ordinary')
+        }
+      }
+    })
+  it('captures exact runtime values and preserves path-only auth configuration', () => {
+    for (const key of [
+      'PGPASSWORD',
+      'MYSQL_PWD',
+      'REDISCLI_AUTH',
+      'TAILSCALE_AUTHKEY',
+      'CODEX_NOTIFY_LOKI_AUTH_HEADER',
+    ])
+      expect(credentialValuesFromEnv({ [key]: 'synthetic-final-credential' })).toContain('synthetic-final-credential')
+    expect(
+      credentialValuesFromEnv({ CODEX_AUTH: '/ordinary/auth.json', TAILSCALE_AUTHKEY_OP_PATH: '/ordinary/path' }),
+    ).toEqual([])
+    expect(
+      maskCredentialValues('CODEX_AUTH=/ordinary/auth.json TAILSCALE_AUTHKEY_OP_PATH=/ordinary/path', []).text,
+    ).toBe('CODEX_AUTH=/ordinary/auth.json TAILSCALE_AUTHKEY_OP_PATH=/ordinary/path')
+  })
+  it('masks the repository-specific Loki authorization header without losing the following line', () => {
+    const input = 'CODEX_NOTIFY_LOKI_AUTH_HEADER=Bearer synthetic-final-credential\nordinary'
+    for (let split = 0; split <= input.length; split += 1) {
+      const masker = new CredentialMasker([])
+      expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(
+        `CODEX_NOTIFY_LOKI_AUTH_HEADER=Bearer ${marker}\nordinary`,
+      )
+    }
+  })
+})
+
+it('masks an explicit plural OpenAI key container and preserves next lines', () => {
+  const input = 'OPENAI_API_KEYS=synthetic-first;synthetic-second\nordinary'
+  for (let split = 0; split <= input.length; split += 1) {
+    const masker = new CredentialMasker([])
+    expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(
+      `OPENAI_API_KEYS=${marker}\nordinary`,
+    )
   }
 })

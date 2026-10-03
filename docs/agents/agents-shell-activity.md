@@ -110,3 +110,10 @@ explicit session/auth/reconnect/GitHub tokens and database/admin passwords, plus
 families. Scalar `secretKey` is treated as credential-bearing even though some configurations use that ambiguous name for
 an object key; reference objects (`secretKeyRef`, `secretRef`), names, paths, accessKeyId, pageToken, cancellationToken and
 token counts remain visible. This is an explicit context table, not a blanket match for every field ending in Token.
+
+The finite context table also covers standard PostgreSQL/MySQL/Redis credential variables, Tailscale auth keys,
+passphrases, npm `_authToken`/`_auth`/`_password`, kubeconfig `client-key-data`, repository-specific SDK credential names,
+and quoted JSON/YAML credential keys. Structured Kubernetes `name`/`value` pairs are masked only when `name` is an
+explicit credential name; `valueFrom` references remain visible. A raw text stream is not a general JSON/YAML parser:
+reordered or nested name/value containers and arbitrary transformations are not guaranteed to be recognized. Avoid
+printing credential containers; the scanner's declared contexts do not imply universal secret detection.
