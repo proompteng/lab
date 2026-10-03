@@ -1673,9 +1673,12 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
                 message: cause.message,
                 observedAt: evaluatedAt,
                 cause,
-                quotePending: true,
+                quotePending: cause.eventAt !== undefined,
                 readiness: {
-                  reason: DecisionReadinessReason.SnapshotStale,
+                  reason:
+                    cause.eventAt === undefined
+                      ? DecisionReadinessReason.SnapshotUnavailable
+                      : DecisionReadinessReason.SnapshotStale,
                   message: cause.message,
                   ...(cause.symbol === undefined ? {} : { symbol: cause.symbol }),
                   ...(cause.eventAt === undefined ? {} : { eventAt: cause.eventAt }),

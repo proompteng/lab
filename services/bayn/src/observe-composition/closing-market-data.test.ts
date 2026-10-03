@@ -538,6 +538,37 @@ describe('closing market-data fallback boundaries', () => {
     })
   })
 
+  test('an absent executable quote never receives the stale-quote continuation', async () => {
+    const request = await fixture()
+    const failure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(at) + 60_000)
+        return yield* Effect.flip(
+          prepareClosingExecutionCycleDecision({
+            ...request,
+            input: {
+              ...request.input,
+              intradayMarketData: {
+                ...freshMarket,
+                // Fault injection at the capability boundary: even if a reader omits the held-symbol
+                // quote, absence is unavailable data, not a present quote awaiting refresh.
+                loadSnapshot: (query) =>
+                  freshMarket.loadSnapshot(query).pipe(Effect.map((snapshot) => ({ ...snapshot, latestQuotes: {} }))),
+              },
+            },
+            reconcile: currentUtcInstant.pipe(Effect.map((now) => factsAt(now, true))),
+          }),
+        )
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(failure).toBeInstanceOf(ExecutionCloseAwaitingMarketData)
+    expect(failure).toMatchObject({
+      quotePending: false,
+      readiness: { reason: 'SNAPSHOT_UNAVAILABLE', symbol: 'AAPL' },
+      cause: { operation: 'close-quote-not-ready', symbol: 'AAPL' },
+    })
+  })
+
   test.each([0, -1])('fallback is allowed when the archive finishes at the window boundary (%ims)', async (offset) => {
     const request = await fixture()
     let reads = 0
