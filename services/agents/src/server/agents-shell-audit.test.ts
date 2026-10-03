@@ -280,6 +280,27 @@ describe('complete operational activity export', () => {
     ).toContain('exact command failure')
   })
 
+  it('masks HTTP cookie credentials in process events while retaining the authorized output', async () => {
+    const { records } = captureAudit()
+    const { client } = await connect()
+    const result = await client.callTool({
+      name: 'shell_run',
+      arguments: {
+        command:
+          "printf '%s\\n' 'Cookie: sid=synthetic-cookie-value' 'Set-Cookie: session=synthetic-session-value; HttpOnly' 'ordinary HTTP diagnostic'",
+      },
+    })
+    expect(data(result).stdout).toContain('sid=synthetic-cookie-value')
+    expect(JSON.stringify(records())).not.toContain('synthetic-cookie-value')
+    expect(JSON.stringify(records())).not.toContain('synthetic-session-value')
+    expect(
+      records()
+        .filter((record) => record.event === 'process_output')
+        .map((record) => record.payload.text)
+        .join(''),
+    ).toBe('Cookie: [REDACTED_CREDENTIAL]\nSet-Cookie: [REDACTED_CREDENTIAL]\nordinary HTTP diagnostic\n')
+  })
+
   it('can inspect its growing local log without recursively amplifying it', async () => {
     const { records } = captureAudit()
     const { client, config } = await connect()

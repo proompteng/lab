@@ -3,6 +3,14 @@ import { CredentialMasker, maskCredentialValues } from './credential-masker'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
+  ['Cookie: sid=synthetic-test-secret; session=other-value\nordinary', `Cookie: ${marker}\nordinary`],
+  ['Set-Cookie: sid=synthetic-test-secret; Path=/; HttpOnly\nordinary', `Set-Cookie: ${marker}\nordinary`],
+  [
+    "curl -H 'Cookie: sid=synthetic-test-secret' https://example.test",
+    `curl -H 'Cookie: ${marker}' https://example.test`,
+  ],
+  ['{"Cookie":"sid=synthetic-test-secret","ordinary":"next"}', `{"Cookie":"${marker}","ordinary":"next"}`],
+  ['Cookie: sid=synthetic-test-secret\\\nordinary', `Cookie: ${marker}\nordinary`],
   [
     '{"Authorization":"synthetic-test-secret ","ordinary":"next-line"}',
     `{"Authorization":"${marker}","ordinary":"next-line"}`,
@@ -82,6 +90,8 @@ describe('minimal streaming credential masking', () => {
 
   it.each([
     'A'.repeat(100) + 'notpassword=ordinary' + ' '.repeat(239),
+    'Cookie: \nordinary-next-line',
+    'const cookieCount = 4; const cookiePath = "/cookie-values.ts";',
     'Authorization: \nordinary-next-line',
     'git show abc123 -- src/token-count.ts',
     'tokenCount=400 token_budget=20000 sessionId=repo-agent-a requestId=abcd',

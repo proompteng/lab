@@ -83,6 +83,7 @@ export class CredentialMasker {
         // Keep incomplete value introducers, not an arbitrary prefix of a credential context.
         // This also distinguishes URL userinfo from an ordinary host:port URL.
         const incomplete = [
+          /\b(?:Set-Cookie|Cookie)["']?[\t ]*[:=][\t ]*["']?$/i,
           /(?:--user(?:=|\s+)|-u\s*)[^\s:]*$/i,
           /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*$/i,
           /(?:--token\b|["']token["'])\s*(?:[:=]\s*)?$/i,
@@ -99,6 +100,7 @@ export class CredentialMasker {
       }
       if (!safeEnd) break
       const patterns = [
+        { regex: /(["']?)\b(?:Set-Cookie|Cookie)["']?[\t ]*[:=][\t ]*(["']?)/gi, kind: 'cookie' },
         { regex: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/g, kind: 'pem' },
         {
           regex:
@@ -132,7 +134,12 @@ export class CredentialMasker {
         while (match && match.index < this.previousChar.length) match = regex.exec(text)
         const index = match ? match.index - this.previousChar.length : -1
         if (match && (!found || index < found.index))
-          found = { index, text: match[0], kind, quote: kind === 'header' ? match[2] || match[1] : match[1] }
+          found = {
+            index,
+            text: match[0],
+            kind,
+            quote: kind === 'header' || kind === 'cookie' ? match[2] || match[1] : match[1],
+          }
       }
       if (this.known) {
         this.known.lastIndex = 0
@@ -148,7 +155,7 @@ export class CredentialMasker {
       output += this.pending.slice(0, found.index)
       if (found.kind !== 'known' && found.kind !== 'format' && found.kind !== 'pem') output += found.text
       this.consume(found.index + found.text.length)
-      if (found.kind === 'header' && /^(?:\r?\n|$)/.test(this.pending)) continue
+      if ((found.kind === 'header' || found.kind === 'cookie') && /^(?:\r?\n|$)/.test(this.pending)) continue
       const afterMarker = this.pending[marker.length]
       const markerDelimited =
         afterMarker === undefined
@@ -169,7 +176,13 @@ export class CredentialMasker {
         this.state = {
           terminator:
             found.quote ||
-            (found.kind === 'url' ? '@' : found.kind === 'query' ? '&' : found.kind === 'header' ? 'header' : null),
+            (found.kind === 'url'
+              ? '@'
+              : found.kind === 'query'
+                ? '&'
+                : found.kind === 'header' || found.kind === 'cookie'
+                  ? 'header'
+                  : null),
           escaped: false,
           privateKey: found.kind === 'pem',
         }
