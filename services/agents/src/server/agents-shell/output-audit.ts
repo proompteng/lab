@@ -3,30 +3,22 @@ import { StringDecoder } from 'node:string_decoder'
 import type { Readable } from 'node:stream'
 
 import { isOwnAuditFrame } from './audit'
-import { CredentialMasker, credentialValuesFromEnv } from './credential-masker'
-import {
-  maskKubernetesSecretText,
-  SECRET_DOCUMENT_BYTE_BUDGET,
-  type SecretCaptureMode,
-} from './kubernetes-secret-masker'
 
 // One instance per execution/stream. Signed self-log frames are counted rather than recursively re-exported.
 export class OutputAudit {
   private readonly decoder = new StringDecoder('utf8')
   private readonly validator = new TextDecoder('utf-8', { fatal: true })
   private encodingLoss = false
-  private readonly masker: CredentialMasker
   private lineBuffer = ''
   private selfAuditFrames = 0
   private selfAuditBytes = 0
   private sequence = 0
   private byteOffset = 0
+  private publishedBytes = 0
   private receivedBytes = 0
   private finished = false
   private failed = false
   private readonly hash = createHash('sha256')
-  private secretChunks: string[] = []
-  private structuralMaskedValues = 0
   private pauseTimer: ReturnType<typeof setTimeout> | null = null
   private resume: (() => void) | null = null
   sinkErrors = 0
@@ -35,11 +27,7 @@ export class OutputAudit {
   constructor(
     private readonly stream: 'stdout' | 'stderr',
     private readonly emit: (event: string, payload: Record<string, unknown>) => number,
-    private readonly secretSource: SecretCaptureMode | null = null,
-    credentialValues: string[] = [],
-  ) {
-    this.masker = new CredentialMasker([...credentialValuesFromEnv(), ...credentialValues])
-  }
+  ) {}
 
   write(chunk: Buffer, source: Readable, onFailure: () => void) {
     this.receivedBytes += chunk.length
@@ -50,26 +38,13 @@ export class OutputAudit {
       this.encodingLoss = true
     }
     if (this.failed) return
-    if (this.secretSource === 'projection' && chunk.length > 0) {
-      this.failed = true
-      this.captureError = 'Secret output projection omitted from centralized capture; original MCP output unchanged'
-      this.sinkErrors += 1
-      return
-    }
     try {
-      const decoded = this.decoder.write(chunk)
-      if (this.secretSource) {
-        if (this.receivedBytes > SECRET_DOCUMENT_BYTE_BUDGET) throw new Error('Secret document byte budget exceeded')
-        this.secretChunks.push(decoded)
-      } else this.publish(this.masker.write(this.filterSelfFrames(decoded)))
+      this.publish(this.filterSelfFrames(this.decoder.write(chunk)))
     } catch {
       this.failed = true
-      this.captureError = this.secretSource
-        ? 'Secret output exceeded bounded structural capture; output capture stopped'
-        : 'credential context exceeded bounded scanner capacity; output capture stopped'
+      this.captureError = 'output audit publication failed; output capture stopped'
       this.sinkErrors += 1
-      if (this.secretSource) this.secretChunks = []
-      else onFailure()
+      onFailure()
       return
     }
     if (process.stdout.writableNeedDrain && !this.resume) {
@@ -110,9 +85,9 @@ export class OutputAudit {
   }
 
   private publish(text: string) {
-    const byteEnd =
-      this.encodingLoss || this.secretSource ? this.receivedBytes : this.masker.consumedBytes + this.selfAuditBytes
     if (!text) return
+    this.publishedBytes += Buffer.byteLength(text)
+    const byteEnd = this.publishedBytes + this.selfAuditBytes
     this.sinkErrors += this.emit('process_output', {
       stream: this.stream,
       sequence: this.sequence++,
@@ -121,8 +96,8 @@ export class OutputAudit {
       text,
       encodingLoss: this.encodingLoss,
       selfAuditBytesSuppressed: this.selfAuditBytes,
-      maskedValues: this.masker.maskedValues + this.structuralMaskedValues,
-      sourceByteCheckpointOnly: this.secretSource !== null,
+      maskedValues: 0,
+      sourceByteCheckpointOnly: false,
     })
     this.byteOffset = byteEnd
   }
@@ -139,49 +114,24 @@ export class OutputAudit {
     }
     if (!this.failed) {
       try {
-        if (this.secretSource) {
-          this.secretChunks.push(this.decoder.end())
-          const masked = maskKubernetesSecretText(
-            this.secretChunks.join(''),
-            this.secretSource,
-            this.stream === 'stderr',
-          )
-          this.structuralMaskedValues = masked.maskedValues
-          for (let offset = 0; offset < masked.text.length; ) {
-            let end = Math.min(masked.text.length, offset + 16_384)
-            if (end < masked.text.length && /[\uD800-\uDBFF]/.test(masked.text[end - 1])) end -= 1
-            this.publish(this.masker.write(masked.text.slice(offset, end)))
-            offset = end
-          }
-          this.publish(this.masker.write('', true))
-        } else this.publish(this.masker.write(this.filterSelfFrames(this.decoder.end(), true), true))
+        this.publish(this.filterSelfFrames(this.decoder.end(), true))
       } catch {
         this.failed = true
         this.sinkErrors += 1
-        this.captureError =
-          this.secretSource === 'projection'
-            ? 'Secret output projection omitted from centralized capture; original MCP output unchanged'
-            : 'Secret or credential output could not be safely captured within structural bounds'
+        this.captureError = 'output audit publication failed; output capture stopped'
       }
     }
-    this.secretChunks = []
     this.sinkErrors += this.emit('process_output_finished', {
       stream: this.stream,
       chunks: this.sequence,
       totalBytes: this.receivedBytes,
-      capturedBytes: this.failed ? this.byteOffset : this.receivedBytes,
+      capturedBytes: this.publishedBytes + this.selfAuditBytes,
       selfAuditFramesSuppressed: this.selfAuditFrames,
       selfAuditBytesSuppressed: this.selfAuditBytes,
       encodingLoss: this.encodingLoss,
-      sha256:
-        this.masker.maskedValues + this.structuralMaskedValues === 0 &&
-        !this.failed &&
-        !this.encodingLoss &&
-        this.selfAuditFrames === 0
-          ? this.hash.digest('hex')
-          : null,
-      maskedValues: this.masker.maskedValues + this.structuralMaskedValues,
-      sourceByteCheckpointOnly: this.secretSource !== null,
+      sha256: !this.failed && !this.encodingLoss && this.selfAuditFrames === 0 ? this.hash.digest('hex') : null,
+      maskedValues: 0,
+      sourceByteCheckpointOnly: false,
       sinkErrors: this.sinkErrors,
       captureError: this.captureError,
       captureIncomplete: this.failed || this.captureError !== null || this.sinkErrors > 0,

@@ -7,21 +7,6 @@ import { auditPayloadBudget } from './audit-budget'
 import { BoundedAuditWriter } from './audit-writer'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
-import {
-  isSecretRead,
-  maskKubernetesSecretCreationArgs,
-  maskKubernetesSecretCreationCommand,
-  maskKubernetesSecretText,
-  secretCaptureMode,
-  secretCreationCredentialValues,
-} from './kubernetes-secret-masker'
-import {
-  credentialEnv,
-  credentialOptionNames,
-  credentialValuesFromEnv,
-  maskCredentialValues,
-} from './credential-masker'
-
 export type ToolAuditContext = { requestId: string; toolCallId: string; tool: string }
 export const toolAuditContext = new AsyncLocalStorage<ToolAuditContext>()
 
@@ -50,166 +35,22 @@ export const isOwnAuditFrame = (line: string) => {
   }
 }
 
-// These are credential containers, not ordinary identifiers such as tokenCount or key paths.
-const credentialField =
-  /^(?:password|passwd|token|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|authorization|proxy[-_]authorization|http_authorization|cookie|set-cookie|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret|openai[_-]?api[_-]?key|bedrock[_-]?api[_-]?key|cloud[_-]?api[_-]?key|principal[_-]?api[_-]?key|personal[_-]?access[_-]?token|ssh[_-]?private[_-]?key|root[_-]?password|loki[_-]?secret[_-]?key|tempo[_-]?secret[_-]?key|mimir[_-]?secret[_-]?key|auth[_-]?key|tailscale[_-]?auth[_-]?key|signing[_-]?passphrase|passphrase|client-key-data|_authToken|_auth|_password)$/i
-
-export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOutput = false, tool?: string) => {
-  const secrets = credentialValuesFromEnv()
-  const commands = new WeakMap<object, ReturnType<typeof maskKubernetesSecretCreationCommand>>()
-  const argumentsMasks = new WeakMap<object, ReturnType<typeof maskKubernetesSecretCreationArgs>>()
-  const creationValues = new Set<string>()
-  let creationCharacters = 0
-  const collectCreationValues = (values: string[]) => {
-    for (const value of values) {
-      if (creationValues.has(value)) continue
-      creationValues.add(value)
-      creationCharacters += value.length
-      if (creationValues.size > 256 || creationCharacters > 65_536)
-        throw new Error('Secret creation literals exceeded bounded payload capture')
-    }
-  }
-  const trustedArguments =
-    tool === 'kubectl' || tool === 'kubectl_admin' ? Object.getOwnPropertyDescriptor(payload, 'arguments')?.value : null
-  const inspect = (value: unknown) => {
-    if (value === null || typeof value !== 'object') return
-    if (Array.isArray(value)) {
-      for (let index = 0; index < value.length; index += 1)
-        inspect(Object.getOwnPropertyDescriptor(value, String(index))?.value)
-      return
-    }
-    const command = Object.getOwnPropertyDescriptor(value, 'command')?.value
-    if (typeof command === 'string') {
-      const masked = maskKubernetesSecretCreationCommand(command)
-      commands.set(value, masked)
-      collectCreationValues(masked.values)
-    }
-    const args = Object.getOwnPropertyDescriptor(value, 'args')?.value
-    if (Array.isArray(args) && (value === trustedArguments || commands.get(value)?.maskedValues)) {
-      const strings = Array.from(
-        { length: args.length },
-        (_, index) => Object.getOwnPropertyDescriptor(args, String(index))?.value,
+// Admission bounds traversal before copying. Operational values are exported verbatim.
+export const prepareAuditPayload = (payload: Record<string, unknown>) => {
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value))
+      return Array.from({ length: value.length }, (_, index) =>
+        visit(Object.getOwnPropertyDescriptor(value, String(index))?.value),
       )
-      if (strings.every((item): item is string => typeof item === 'string')) {
-        const masked = maskKubernetesSecretCreationArgs(strings)
-        argumentsMasks.set(args, masked)
-        collectCreationValues(masked.values)
-      }
-    }
-    for (const key of Object.keys(value)) {
-      if (key !== '_meta') inspect(Object.getOwnPropertyDescriptor(value, key)?.value)
-    }
-  }
-  inspect(payload)
-  // A short literal cannot be replaced globally without erasing ordinary text. Omit capture explicitly instead.
-  if ([...creationValues].some((value) => value.length < 4))
-    throw new Error('Short Secret literal output cannot be safely captured')
-  const outputSecrets = [...secrets, ...secretCreationCredentialValues([...creationValues])]
-  let maskedValues = 0
-  const visit = (value: unknown, key?: string, secretSource: string | null = null, secretItem = false): unknown => {
-    if (
-      key &&
-      (credentialField.test(key) || credentialEnv.test(key)) &&
-      (typeof value === 'string' || typeof value === 'number')
-    ) {
-      maskedValues += 1
-      return '[REDACTED_CREDENTIAL]'
-    }
-    if (typeof value === 'string') {
-      if (maskedOutput && key === 'text') return value
-      const structural = maskKubernetesSecretText(
-        value,
-        secretSource !== null ? secretCaptureMode(secretSource) : null,
-        key === 'stderr',
-      )
-      maskedValues += structural.maskedValues
-      const masked = maskCredentialValues(
-        structural.text,
-        key === 'command' || key === 'args' ? secrets : outputSecrets,
-      )
-      maskedValues += masked.maskedValues
-      return masked.text
-    }
-    if (Array.isArray(value)) {
-      const secretArgs = argumentsMasks.get(value)
-      if (secretArgs) {
-        maskedValues += secretArgs.maskedValues
-      }
-      const items = secretArgs?.args ?? value
-      let maskNext = false
-      let userNext = false
-      return Array.from({ length: items.length }, (_, index) => {
-        const item = Object.getOwnPropertyDescriptor(items, String(index))?.value
-        if (userNext) {
-          userNext = false
-          if (typeof item === 'string' && item.includes(':')) {
-            maskedValues += 1
-            return `${item.slice(0, item.indexOf(':') + 1)}[REDACTED_CREDENTIAL]`
-          }
-        }
-        if (item === '--user' || item === '-u') userNext = true
-        if (maskNext && item !== '=') {
-          maskNext = false
-          maskedValues += 1
-          return '[REDACTED_CREDENTIAL]'
-        }
-        if (typeof item === 'string' && new RegExp(`^--(?:${credentialOptionNames})$`, 'i').test(item)) maskNext = true
-        return visit(item, key, secretSource, secretItem)
-      })
-    }
-    if (value !== null && typeof value === 'object') {
-      const record = value as Record<string, unknown>
-      const secretCommand = commands.get(record)
-      const kind = Object.getOwnPropertyDescriptor(record, 'kind')?.value
-      const secret = kind === 'Secret' || secretItem
-      const command = Object.getOwnPropertyDescriptor(record, 'command')?.value
-      const envName = Object.getOwnPropertyDescriptor(record, 'name')?.value
-      const maskContainer = (entry: unknown): unknown => {
-        if (entry === null || entry === undefined) return entry
-        if (typeof entry === 'object') {
-          if (Array.isArray(entry))
-            return Array.from({ length: entry.length }, (_, index) =>
-              maskContainer(Object.getOwnPropertyDescriptor(entry, String(index))?.value),
-            )
-          return Object.fromEntries(
-            Object.keys(entry).map((key) => [key, maskContainer(Object.getOwnPropertyDescriptor(entry, key)?.value)]),
-          )
-        }
-        maskedValues += 1
-        return '[REDACTED_CREDENTIAL]'
-      }
+    if (value !== null && typeof value === 'object')
       return Object.fromEntries(
-        Object.keys(record)
+        Object.keys(value)
           .filter((name) => name !== '_meta')
-          .map((name) => {
-            const item = Object.getOwnPropertyDescriptor(record, name)?.value
-            const safeItem = name === 'command' && secretCommand ? secretCommand.text : item
-            if (name === 'command' && secretCommand) maskedValues += secretCommand.maskedValues
-            const credentialName =
-              name === 'value' &&
-              typeof envName === 'string' &&
-              (credentialField.test(envName) || credentialEnv.test(envName))
-                ? envName
-                : name
-            return [
-              name,
-              secret && (name === 'data' || name === 'stringData')
-                ? maskContainer(item)
-                : visit(
-                    safeItem,
-                    credentialName,
-                    (name === 'stdout' || name === 'stderr') && typeof command === 'string' && isSecretRead(command)
-                      ? command
-                      : null,
-                    kind === 'SecretList' && name === 'items',
-                  ),
-            ]
-          }),
+          .map((name) => [name, visit(Object.getOwnPropertyDescriptor(value, name)?.value)]),
       )
-    }
     return value
   }
-  return { payload: visit(payload) as Record<string, unknown>, payloadTruncated: false, maskedValues }
+  return { payload: visit(payload) as Record<string, unknown>, payloadTruncated: false, maskedValues: 0 }
 }
 
 // Split by code points before serialization. Even all-control-character input remains below 16 KiB per frame.
@@ -235,19 +76,19 @@ export const writeAuditLog = (
   context = toolAuditContext.getStore() ?? null,
 ) => {
   const sourceBudget = auditPayloadBudget(payload)
-  let sanitized = { payload: {} as Record<string, unknown>, payloadTruncated: true, maskedValues: 0 }
+  let prepared = { payload: {} as Record<string, unknown>, payloadTruncated: true, maskedValues: 0 }
   let budget = sourceBudget
   if (sourceBudget.accepted) {
     try {
-      sanitized = sanitizeAuditPayload(payload, event === 'process_output', context?.tool)
-      budget = auditPayloadBudget(sanitized.payload)
+      prepared = prepareAuditPayload(payload)
+      budget = auditPayloadBudget(prepared.payload)
     } catch {
-      budget = { ...sourceBudget, accepted: false, reason: 'credential_capture_unavailable' }
+      budget = { ...sourceBudget, accepted: false, reason: 'payload_preparation_failed' }
     }
   }
   const captureIncomplete = !budget.accepted
   if (captureIncomplete)
-    sanitized.payload = {
+    prepared.payload = {
       captureIncomplete: true,
       rejection: budget,
       originalResultUnchanged: true,
@@ -265,20 +106,20 @@ export const writeAuditLog = (
     ...Object.fromEntries(
       ['jobId', 'sessionId', 'agentId', 'stream', 'sequence', 'byteStart', 'byteEnd']
         .filter((key) => {
-          const value = sanitized.payload[key]
+          const value = prepared.payload[key]
           return typeof value === 'string' ? value.length <= 256 : typeof value === 'number' && Number.isFinite(value)
         })
-        .map((key) => [key, sanitized.payload[key]]),
+        .map((key) => [key, prepared.payload[key]]),
     ),
     payloadTruncated: captureIncomplete,
     captureIncomplete,
-    maskedValues: sanitized.maskedValues,
+    maskedValues: prepared.maskedValues,
   }
-  const encoded = JSON.stringify(sanitized.payload)
+  const encoded = JSON.stringify(prepared.payload)
   const payloadBytes = Buffer.byteLength(encoded)
   const frames =
     payloadBytes <= 12_000
-      ? [{ ...envelope, payload: sanitized.payload }]
+      ? [{ ...envelope, payload: prepared.payload }]
       : auditFragments(encoded).map((payloadFragment, fragmentIndex, fragments) => ({
           ...envelope,
           payloadFragment,
