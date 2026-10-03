@@ -52,6 +52,19 @@ resources:
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
+replacements:
+  - source:
+      kind: SealedSecret
+      name: agents-shell-tunnel-runtime
+      fieldPath: spec.encryptedData.api-key
+    targets:
+      - select:
+          kind: Deployment
+          name: agents-shell-tunnel
+        fieldPaths:
+          - spec.template.metadata.annotations.[agents-shell.proompteng.ai/runtime-key-version]
+        options:
+          create: true
 helmGlobals:
   chartHome: ../../../charts
 helmCharts:

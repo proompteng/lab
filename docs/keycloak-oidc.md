@@ -57,6 +57,8 @@ to `https://agents-shell.proompteng.ai`, matching the backend audience mapper.
 The callback must be `https://chatgpt.com/connector_platform_oauth_redirect`.
 
 The tunnel runtime key is stored separately in `agents-shell-tunnel-runtime`.
+Kustomize copies its sealed ciphertext into the pod template annotation, so
+resealing the runtime key automatically rolls the deployment.
 It has All Platform API permissions at the operator's explicit request. The tunnel
 itself requires only Tunnels Read + Use. Neither key replaces end-user OAuth.
 The client trusts the existing authorization issuer for discovery and permits
