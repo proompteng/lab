@@ -56,9 +56,20 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
   requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
   covering the latest mutation, zero unresolved mutations, an account-bound/readable broker, and an active readable
   Restate controller with a matching plan and a durable completion. No snapshot binding is required before the first
-  full observation. After warmup, unavailable signal inputs or inference also close readiness. Ordinary abstention
+  full observation. After warmup, unavailable signal inputs or inference also close readiness; input-window failures
+  and decision lag have dedicated alerts. Input-window failures are excluded per replica only while all dedicated-alert
+  gates qualify, preserving the generic unready signal when dedicated telemetry is incomplete. Ordinary abstention
   remains ready. Repair the failed prerequisite through its existing owner. Do not move the session window,
   force a decision, or create another execution process.
+- `BaynInputWindowUnavailable`: the consumer reports `executionSession.condition=INPUT_UNAVAILABLE` for one minute
+  on an ACTIVE, decision-unbound cycle, at or after `firstObservationAt` and before `submissionCutoffAt`.
+  Runtime readiness, cycle projection availability, and scrape health must all be true on that same replica before
+  replicas are aggregated. Check the retained pass's bounded readiness reason and required feature/window identity,
+  then the existing consumer bootstrap barriers and exact raw/feature lineage. A latest-minute bar or healthy producer
+  acknowledgement does not prove all 30 required minutes, matching features, or timely availability. Missing middle
+  minutes, absent/mismatched/late features, and incomplete offset/bootstrap evidence can withhold the window.
+  Warmup, a bound decision, cutoff, and ordinary abstention do not trigger this alert. Restore the failed input owner;
+  do not relax freshness, admission, risk, or authority gates or force a trade.
 - `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
   `bayn_cycle_decision_deadline_timestamp_seconds`. For the current Jev protocol, the first full observation is 30
   minutes and two seconds after submission opens. The deadline adds the protocol's maximum decision lag to the later
@@ -81,6 +92,11 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 
 An alert clears only when its source-of-truth state changes and the next bounded projection or health probe confirms
 recovery.
+
+Missing telemetry is UNKNOWN, not a healthy input window. A stale runtime projection closes `bayn_runtime_ready`;
+an unavailable cycle projection and a failed scrape have their own alerts. This rule cannot diagnose the underlying
+input cause from the condition alone. Mimir ingestion uses the shared Kafka cluster, so this is not out-of-band
+detection of a Kafka or storage outage. No alert here proves storage repair, strategy alpha, or permission to trade.
 
 ## Database latency investigation
 

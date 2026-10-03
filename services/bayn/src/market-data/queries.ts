@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect } from 'effect'
 
-import type { RuntimeConfig } from '../config'
+import type { HistoricalMarketDataConfig } from '../config/historical-signal'
 import { withObservedSpan } from '../telemetry'
 import type { FinalizedPublicationRequest, MarketDataContract, SnapshotPublicationRequest } from './model'
 import { Pipeable } from '../pipeable'
@@ -14,7 +14,7 @@ export const cyclePublicationCandidateLimit = 16
 
 const makeMarketDataQueriesDataFirst = (
   sql: ClickhouseClient.ClickhouseClient,
-  config: Pick<RuntimeConfig, 'clickhouse'>,
+  config: Pick<HistoricalMarketDataConfig, 'historicalSignal'>,
   contract: MarketDataContract,
 ) => {
   const runQuery = <A, E, R>(logicalOperation: string, query: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
@@ -57,7 +57,7 @@ const makeMarketDataQueriesDataFirst = (
       manifest_content_hash,
       toString(finalized_at) AS finalized_at
     FROM signal.snapshot_manifests_v2
-    WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+    WHERE snapshot_id = ${sql.param('String', config.historicalSignal.snapshotId)}
     ORDER BY finalized_at
   `,
   )
@@ -74,7 +74,7 @@ const makeMarketDataQueriesDataFirst = (
       timezone,
       provider
     FROM signal.exchange_sessions_v1
-    WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+    WHERE snapshot_id = ${sql.param('String', config.historicalSignal.snapshotId)}
     ORDER BY session_date
   `,
   )
@@ -98,7 +98,7 @@ const makeMarketDataQueriesDataFirst = (
       adjustment,
       toString(publication_asof) AS publication_asof
     FROM signal.adjusted_daily_bars_v2
-    WHERE snapshot_id = ${sql.param('String', config.clickhouse.snapshotId)}
+    WHERE snapshot_id = ${sql.param('String', config.historicalSignal.snapshotId)}
     ORDER BY session_date, symbol
   `,
   )
