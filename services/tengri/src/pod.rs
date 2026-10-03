@@ -519,7 +519,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
     let mut env = vec![
         EnvVar {
             name: "SPIFFE_TRUST_DOMAIN".to_owned(),
-            value: Some("galactic.proompteng.ai".to_owned()),
+            value: Some("proompteng.ai".to_owned()),
             ..Default::default()
         },
         EnvVar {

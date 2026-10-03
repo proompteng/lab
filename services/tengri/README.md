@@ -30,16 +30,16 @@ only health probes; application/VS Code content uses HTTPS and secure WebSockets
 
 ## SPIRE workload identity
 
-The trust domain is `galactic.proompteng.ai`. Tengri's identity is
-`spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri`; its port 50051 accepts only
-`spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng`. The BFF verifies the exact Tengri identity, and signed HMAC
+The trust domain is `proompteng.ai`. Tengri's identity is
+`spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051 accepts only
+`spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. The BFF verifies the exact Tengri identity, and signed HMAC
 metadata continues to enforce GitHub ownership and replay protection. There is no plaintext production gRPC listener
 or transport fallback.
 
 Normal Kubernetes workloads obtain their rotating X.509-SVID and trust bundle through the SPIFFE CSI Workload API socket.
 Tengri requires `SPIFFE_ENDPOINT_SOCKET` and `SPIFFE_TRUST_DOMAIN` before it binds its public listeners. Each Firecracker
 guest supervises its own SPIRE agent because host process attestation cannot see processes inside the guest kernel.
-Its identity is `spiffe://galactic.proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>`. Nanoagent accepts only Tengri's
+Its identity is `spiffe://proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>`. Nanoagent accepts only Tengri's
 identity; Tengri's gRPC, HTTPS, and WebSocket clients verify the exact current guest Pod identity.
 
 The controller creates one `ClusterStaticEntry` per guest Pod. Its parent is the guest's `galactic-guests` PSAT agent,
