@@ -29,6 +29,7 @@ export enum CaptureInvalidation {
   InvalidEvent = 'INVALID_EVENT',
   ClockReversed = 'CLOCK_REVERSED',
   ControllerReplay = 'CONTROLLER_REPLAY_AMBIGUITY',
+  Finalization = 'FINALIZATION_FAILED_OR_UNKNOWN',
 }
 
 const PositionSchema = Schema.Struct({
@@ -240,6 +241,12 @@ export interface ResearchCaptureObserver {
   readonly invalidate: (reason: CaptureInvalidation) => void
 }
 
+const freezeCaptureMetadata = (value: unknown): void => {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+  Object.freeze(value)
+  for (const nested of Object.values(value)) freezeCaptureMetadata(nested)
+}
+
 /** Evidence failure must not escape into execution, including a faulty injected observer. */
 export const recordResearchCapture = (
   observer: ResearchCaptureObserver | undefined,
@@ -247,7 +254,11 @@ export const recordResearchCapture = (
   observedAtMs?: number,
 ): void => {
   if (observer === undefined) return
-  const result = Result.try(() => observer.record(event, observedAtMs))
+  const result = Result.try(() => {
+    const detached = structuredClone(event)
+    freezeCaptureMetadata(detached)
+    observer.record(detached, observedAtMs)
+  })
   if (Result.isFailure(result)) Result.try(() => observer.invalidate(CaptureInvalidation.InvalidEvent))
 }
 

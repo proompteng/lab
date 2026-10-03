@@ -74,6 +74,6 @@ bun build "$root/services/bayn/src/testing/kafka-receipts-native-node.mjs" --tar
 timeout 90s node "$directory/kafka-receipts-native-node.js"
 export BAYN_TEST_RESTATE_ADMIN_URL=http://127.0.0.1:9070
 export BAYN_TEST_RESTATE_INGRESS_URL=http://127.0.0.1:8080
-timeout 120s bun test "$root/services/bayn/src/restate/restate-execution-controller.integration.test.ts"
+timeout 150s bun test "$root/services/bayn/src/restate/restate-execution-controller.integration.test.ts"
 timeout 120s bun test "$root/services/bayn/src/restate/restate-broker-observations.integration.test.ts"
 

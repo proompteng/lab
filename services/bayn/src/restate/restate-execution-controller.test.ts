@@ -145,7 +145,7 @@ test('journal replay cannot fabricate a fresh runtime start or a complete origin
 })
 
 test('optional capture preserves synchronous scheduling, supplied command timestamps and native retry identity', async () => {
-  const exercise = async (mode: 'absent' | 'record' | 'broken') => {
+  const exercise = async (mode: 'absent' | 'record' | 'broken' | 'mutating') => {
     let state: ExecutionControllerState | null = null
     const deliveries: Delivery[] = []
     const trace: string[] = []
@@ -160,6 +160,8 @@ test('optional capture preserves synchronous scheduling, supplied command timest
         : {
             record: (event) => {
               if (mode === 'broken') throw new Error('capture unavailable')
+              if (mode === 'mutating' && event.kind === 'controller-pass')
+                Object.assign(event.tick, { sequence: 999, epoch: 999, issuedAt: '2099-01-01T00:00:00.000Z' })
               receipts.push(event)
             },
             invalidate: () => {
@@ -256,6 +258,7 @@ test('optional capture preserves synchronous scheduling, supplied command timest
   const baseline = await exercise('absent')
   expect(await exercise('record')).toEqual(baseline)
   expect(await exercise('broken')).toEqual(baseline)
+  expect(await exercise('mutating')).toEqual(baseline)
 })
 
 describe('native Restate execution controller', () => {

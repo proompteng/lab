@@ -37,7 +37,7 @@ const RecorderOptionsSchema = Schema.Struct({
 
 export interface ResearchCaptureRecorder extends ResearchCaptureObserver {
   readonly captureId: string
-  readonly finish: Effect.Effect<ResearchCaptureSeal>
+  readonly finish: Effect.Effect<ResearchCaptureSeal | undefined>
   readonly status: Effect.Effect<{
     readonly accepting: boolean
     readonly observedReceipts: number
@@ -68,6 +68,7 @@ export const makeResearchCaptureRecorder = (store: ResearchCaptureStore, input: 
     let queuedBytes = 0
     let lastObservedAtMs = 0
     let finished: ResearchCaptureSeal | undefined
+    let finalized = false
     const invalidate = (reason: CaptureInvalidation): void => {
       invalidations.add(reason)
     }
@@ -161,7 +162,8 @@ export const makeResearchCaptureRecorder = (store: ResearchCaptureStore, input: 
       accepting = false
       return serial.withPermit(
         Effect.gen(function* () {
-          if (finished !== undefined) return finished
+          if (finalized) return finished
+          finalized = true
           yield* drain
           const seal: ResearchCaptureSeal = {
             schemaVersion: 'bayn.research-capture-seal.v1',
@@ -179,9 +181,17 @@ export const makeResearchCaptureRecorder = (store: ResearchCaptureStore, input: 
           return finished
         }),
       )
-    })
+    }).pipe(
+      Effect.catchCause(() =>
+        Effect.sync(() => {
+          finalized = true
+          invalidate(CaptureInvalidation.Finalization)
+          return undefined
+        }),
+      ),
+    )
     yield* Effect.addFinalizer((exit) => {
-      if (Exit.isFailure(exit)) invalidate(CaptureInvalidation.Interrupted)
+      if (!finalized && Exit.isFailure(exit)) invalidate(CaptureInvalidation.Interrupted)
       return finish.pipe(Effect.asVoid)
     })
     return {

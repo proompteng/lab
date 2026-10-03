@@ -35,6 +35,9 @@ committed tail and claim completeness. Persistence uses the native cancellable E
 None of these outcomes changes trading, liquidation, native retry, or capital authority. A new worker cannot repair an
 earlier worker's missing observations.
 
+If finalization cannot read its clock or encode evidence, `finish` returns no seal and does not retry. No replacement
+timestamp is invented. The owning scope retains its successful result or independently requested cancellation.
+
 This patch does not export raw values, assert a session is complete, qualify a strategy, or enable model calls. Before
 production acquisition, qualification must prove raw-byte export/readback, every source frontier and control offset,
 full controller lifecycle joins, restart/replay ambiguity handling, measured storage capacity, and bounded overhead.

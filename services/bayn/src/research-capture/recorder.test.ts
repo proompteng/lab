@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
@@ -8,6 +8,7 @@ import {
   ResearchCaptureFailure,
   verifyResearchCapture,
   type ResearchCaptureBytes,
+  type ResearchCaptureSeal,
 } from './capture'
 import { makeResearchCaptureRecorder, type ResearchCaptureStore } from './recorder'
 import { captureEvent, marketEvent } from './capture.test-support'
@@ -38,6 +39,61 @@ const memory = () => {
 }
 const run = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
+
+const requireSeal = (seal: ResearchCaptureSeal | undefined): ResearchCaptureSeal => {
+  if (seal === undefined) throw new Error('Expected a constructed capture seal')
+  return seal
+}
+
+test.each(['automatic', 'explicit', 'cancelled'] as const)(
+  'a clock defect during %s finalization creates no invented seal and cannot change owner outcome',
+  async (mode) => {
+    const saved = memory()
+    let samples = 0
+    const result = await run(
+      Effect.gen(function* () {
+        const clock = yield* Clock.Clock
+        const entered = yield* Deferred.make<void>()
+        const body = Effect.scoped(
+          Effect.gen(function* () {
+            const recorder = yield* makeResearchCaptureRecorder(saved.store, options)
+            recorder.record(captureEvent('STARTED'))
+            recorder.record(captureEvent('STOPPED'))
+            if (mode === 'explicit') {
+              expect(yield* recorder.finish).toBeUndefined()
+              expect(yield* recorder.finish).toBeUndefined()
+              expect((yield* recorder.status).invalidations).toContain(CaptureInvalidation.Finalization)
+            }
+            if (mode === 'cancelled') {
+              yield* Deferred.succeed(entered, undefined)
+              return yield* Effect.never
+            }
+            return 'trading result'
+          }),
+        ).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            currentTimeMillisUnsafe: () => {
+              if (++samples > 2) throw new Error('capture clock failed during sealing')
+              return 100
+            },
+          }),
+        )
+        if (mode !== 'cancelled') return yield* body
+        const owner = yield* body.pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        yield* Fiber.interrupt(owner)
+        const exit = yield* Fiber.await(owner)
+        expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+        return 'owner interruption preserved'
+      }),
+    )
+    expect(result).toBe(mode === 'cancelled' ? 'owner interruption preserved' : 'trading result')
+    expect(samples).toBe(3)
+    expect(saved.seals).toHaveLength(0)
+    expect(Result.isFailure(verifyResearchCapture(saved.chunks, saved.seals[0]))).toBe(true)
+  },
+)
 
 test.each(['append', 'seal'] as const)(
   'synchronous adapter defects and self-interruption in %s cannot change the owning result',
@@ -75,7 +131,7 @@ test('capture admission is synchronous, immutable, and finalized exactly once', 
       mutable.topic = 'changed-after-admission'
       recorder.record(captureEvent('STOPPED'), 100)
       expect(saved.chunks).toHaveLength(0)
-      const seal = yield* recorder.finish
+      const seal = requireSeal(yield* recorder.finish)
       expect(yield* recorder.finish).toEqual(seal)
       expect(saved.seals).toHaveLength(1)
       expect(saved.chunks[0]?.payload).not.toContain('changed-after-admission')
@@ -92,7 +148,7 @@ test('overflow admits only a bounded prefix and cannot seal an omitted tail as c
       recorder.record(captureEvent('STARTED'), 100)
       recorder.record(marketEvent, 100)
       recorder.record(captureEvent('STOPPED'), 100)
-      const seal = yield* recorder.finish
+      const seal = requireSeal(yield* recorder.finish)
       expect(seal.observedReceipts).toBe(3)
       expect(seal.persistedReceipts).toBe(2)
       expect(seal.invalidations).toEqual([CaptureInvalidation.Overflow])
@@ -127,7 +183,7 @@ test('write timeout cancels persistence and cannot stall capture admission', () 
       yield* Deferred.await(entered)
       expect(recorder.record(marketEvent, 110)).toBeUndefined()
       yield* TestClock.adjust(50)
-      const seal = yield* recorder.finish
+      const seal = requireSeal(yield* recorder.finish)
       expect(cancelled).toBe(true)
       expect(seal.invalidations).toContain(CaptureInvalidation.Persistence)
       expect(seal.persistedReceipts).toBe(0)
@@ -155,7 +211,7 @@ test('lost acknowledgements are never retried into an assumed complete seal', ()
       recorder.record(captureEvent('STARTED'), 100)
       recorder.record(marketEvent, 100)
       recorder.record(captureEvent('STOPPED'), 100)
-      const seal = yield* recorder.finish
+      const seal = requireSeal(yield* recorder.finish)
       expect(attempts).toBe(1)
       expect(seal.invalidations).toContain(CaptureInvalidation.Persistence)
       expect(Result.isFailure(verifyResearchCapture(saved.chunks, saved.seals[0]))).toBe(true)

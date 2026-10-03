@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
+import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 
 import { captureEvent, marketEvent } from './capture.test-support'
 import {
@@ -9,6 +10,7 @@ import {
   recordResearchCapture,
   verifyResearchCapture,
   type ResearchCaptureChunk,
+  type ResearchCaptureEvent,
   type ResearchCaptureSeal,
 } from './capture'
 
@@ -96,6 +98,48 @@ test('faulty capture observers cannot throw into execution', () => {
       100,
     ),
   ).not.toThrow()
+})
+
+test('observers cannot mutate native bootstrap boundaries or position objects', () => {
+  const positions = [{ topic: 'quotes', partition: 0, offset: '0' }]
+  const bootstrap = {
+    schemaVersion: 'bayn.kafka-bootstrap.v1' as const,
+    epoch: 'consumer-1',
+    observedAtMs: 100,
+    lowerTimestampMs: 0,
+    timestampPolicy: KafkaBootstrapTimestampPolicy.RetainedBeginning,
+    partitions: [{ topic: 'quotes', partition: 0, logStartOffset: '0', startOffset: '0', endOffset: '10' }],
+  }
+  const event: ResearchCaptureEvent = {
+    kind: 'consumer-boundary',
+    consumerEpoch: 'consumer-1',
+    phase: 'ASSIGNED',
+    positions,
+    bootstrap,
+  }
+  const invalidations: CaptureInvalidation[] = []
+  for (const target of ['position', 'bootstrap'] as const) {
+    recordResearchCapture(
+      {
+        record: (received) => {
+          expect(received).not.toBe(event)
+          if (received.kind !== 'consumer-boundary') throw new Error('Missing boundary fixture')
+          const value = target === 'position' ? received.positions[0] : received.bootstrap?.partitions[0]
+          if (value === undefined) throw new Error('Missing native position fixture')
+          expect(Object.isFrozen(value)).toBe(true)
+          Object.assign(value, { offset: '999', endOffset: '999' })
+        },
+        invalidate: (reason) => {
+          invalidations.push(reason)
+        },
+      },
+      event,
+      100,
+    )
+  }
+  expect(positions[0]?.offset).toBe('0')
+  expect(bootstrap.partitions[0]?.endOffset).toBe('10')
+  expect(invalidations).toEqual([CaptureInvalidation.InvalidEvent, CaptureInvalidation.InvalidEvent])
 })
 
 test('property: changed bytes and truncated chunk chains cannot retain the original seal', () => {

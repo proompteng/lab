@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Effect, Option, Result } from 'effect'
+import { Clock, Config, Effect, Option, Result } from 'effect'
 import type { CaptureInvalidation, ResearchCaptureEvent } from '../research-capture/capture'
 
 import { decodeExecutionControllerState } from '../execution/controller'
@@ -37,6 +37,7 @@ describeRestate('Real Restate execution deployment activation', () => {
     let brokerActivations = 0
     let brokerPolls = 0
     let brokerReady = false
+    let failedPollNotBeforeMs = 0
     let controllerActivations = 0
     const advanced: number[] = []
     const issuedAtBySequence = new Map<number, string>()
@@ -73,9 +74,12 @@ describeRestate('Real Restate execution deployment activation', () => {
         activate: async () => {
           brokerActivations += 1
         },
-        poll: async () => {
+        poll: async (_signal, reservation) => {
           brokerPolls += 1
-          if (!brokerReady) throw new Error('Broker observation dependency is temporarily unavailable')
+          if (!brokerReady) {
+            failedPollNotBeforeMs = reservation.interruptedNotBeforeMs
+            throw new Error('Broker observation dependency is temporarily unavailable')
+          }
           return { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 }
         },
       },
@@ -182,8 +186,10 @@ describeRestate('Real Restate execution deployment activation', () => {
           }
           const accepted = yield* sendRestateInvocation(url, retry.body, options)
           expect(accepted.invocationId).not.toBe(failed.invocationId)
+          const quotaWaitMs = Math.max(0, failedPollNotBeforeMs - (yield* Clock.currentTimeMillis))
+          expect(quotaWaitMs).toBeGreaterThan(0)
           const output = yield* awaitRestateInvocation(ingress, accepted.invocationId, {
-            maximumAttempts: 100,
+            maximumAttempts: Math.ceil((quotaWaitMs + 15_000) / 100) + 1,
             pollIntervalMs: 100,
             requestTimeoutMs: 5_000,
           })
@@ -253,5 +259,5 @@ describeRestate('Real Restate execution deployment activation', () => {
         }),
       ),
     )
-  }, 30_000)
+  }, 120_000)
 })
