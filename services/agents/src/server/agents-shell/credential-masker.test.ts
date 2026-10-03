@@ -3,6 +3,14 @@ import { CredentialMasker, maskCredentialValues } from './credential-masker'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
+  ['Cookie: [REDACTED_CREDENTIAL]; sid=synthetic-test-secret\nordinary', `Cookie: ${marker}\nordinary`],
+  ['Set-Cookie: [REDACTED_CREDENTIAL]; sid=synthetic-test-secret\nordinary', `Set-Cookie: ${marker}\nordinary`],
+  ['Authorization: [REDACTED_CREDENTIAL], synthetic-test-secret\nordinary', `Authorization: ${marker}\nordinary`],
+  ['https://user:[REDACTED_CREDENTIAL];synthetic-test-secret@host/path', `https://user:${marker}@host/path`],
+  [
+    'https://host/path?token=[REDACTED_CREDENTIAL];synthetic-test-secret&limit=3',
+    `https://host/path?token=${marker}&limit=3`,
+  ],
   ['Cookie: sid=synthetic-test-secret; session=other-value\nordinary', `Cookie: ${marker}\nordinary`],
   ['Set-Cookie: sid=synthetic-test-secret; Path=/; HttpOnly\nordinary', `Set-Cookie: ${marker}\nordinary`],
   [

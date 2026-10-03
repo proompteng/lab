@@ -162,7 +162,13 @@ export class CredentialMasker {
           ? final
           : found.quote
             ? afterMarker === found.quote
-            : /[\s"'`,;)&}\]]/.test(afterMarker)
+            : found.kind === 'header' || found.kind === 'cookie'
+              ? /[\r\n]/.test(afterMarker)
+              : found.kind === 'url'
+                ? afterMarker === '@'
+                : found.kind === 'query'
+                  ? /[&#\s"'`)]/.test(afterMarker)
+                  : /[\s"'`,;)&}\]]/.test(afterMarker)
       if (this.pending.startsWith(marker) && markerDelimited && !['known', 'format', 'pem'].includes(found.kind)) {
         output += marker
         this.consume(marker.length)
