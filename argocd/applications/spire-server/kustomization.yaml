@@ -17,16 +17,37 @@ helmCharts:
     valuesFile: values.yaml
 patches:
   - target:
-      kind: Service
+      kind: StatefulSet
       name: spire-server
     patch: |-
-      - op: add
-        path: /spec/ports/-
-        value:
-          name: grpc-guests
-          port: 8081
-          targetPort: grpc
-          protocol: TCP
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: prepare-trust-domain-store
+                image: mirror.gcr.io/library/busybox:1.37.0
+                command: [sh, -ec, 'umask 077; mkdir -p /run/spire/data/proompteng.ai']
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  runAsNonRoot: true
+                  readOnlyRootFilesystem: true
+                  seccompProfile:
+                    type: RuntimeDefault
+                  capabilities:
+                    drop: [ALL]
+                volumeMounts:
+                  - name: spire-data
+                    mountPath: /run/spire/data
+            containers:
+              - name: spire-server
+                volumeMounts:
+                  - name: spire-data
+                    mountPath: /run/spire/data
+                    subPath: proompteng.ai
   - target:
       kind: Pod
       name: spire-server-test-connection

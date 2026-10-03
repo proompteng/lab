@@ -40,11 +40,11 @@ Use these upstream docs as the source of truth for the procedure:
 
 As of the Turin migration window:
 
-| OSD | HDD by-id | active block device | DB state |
-| --- | --- | --- | --- |
-| `osd.0` | `ata-ST24000NM000C-3WD103_ZXA0LVM9` | `/dev/sdd` | HDD-only, `bluefs_single_shared_device=1` |
-| `osd.1` | `ata-ST24000NM000C-3WD103_ZXA0MZ1M` | `/dev/sdb` | HDD-only, `bluefs_single_shared_device=1` |
-| `osd.2` | `ata-ST24000NM000C-3WD103_ZXA0NL5D` | `/dev/sdc` | complete, DB on Kingston `nvme2n1` |
+| OSD     | HDD by-id                           | active block device | DB state                                  |
+| ------- | ----------------------------------- | ------------------- | ----------------------------------------- |
+| `osd.0` | `ata-ST24000NM000C-3WD103_ZXA0LVM9` | `/dev/sdd`          | HDD-only, `bluefs_single_shared_device=1` |
+| `osd.1` | `ata-ST24000NM000C-3WD103_ZXA0MZ1M` | `/dev/sdb`          | HDD-only, `bluefs_single_shared_device=1` |
+| `osd.2` | `ata-ST24000NM000C-3WD103_ZXA0NL5D` | `/dev/sdc`          | complete, DB on Kingston `nvme2n1`        |
 
 Kingston NVMe state after `osd.2` was migrated:
 
@@ -203,34 +203,12 @@ done
 '
 ```
 
-This is maintenance-only tuning. After recovery is clean, return the cluster to
-the steady-state client-performance profile documented in
-`docs/runbooks/rook-ceph-on-talos.md`: `osd_mclock_profile=high_client_ops`,
-no recovery/backfill override gate, no custom mClock reservations, and no
-recovery-only limit overrides.
-
-```bash
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- sh -lc '
-ceph config set osd osd_mclock_profile high_client_ops
-for key in \
-  osd_mclock_override_recovery_settings \
-  osd_max_backfills \
-  osd_recovery_max_active \
-  osd_recovery_max_active_hdd \
-  osd_recovery_max_single_start \
-  osd_recovery_op_priority \
-  osd_recovery_sleep_hdd \
-  osd_mclock_scheduler_background_recovery_res \
-  osd_mclock_scheduler_client_res \
-  osd_mclock_scheduler_background_best_effort_res \
-  osd_mclock_scheduler_background_recovery_wgt \
-  osd_mclock_scheduler_client_wgt \
-  osd_mclock_scheduler_background_best_effort_wgt
-do
-  ceph config rm osd "${key}" || true
-done
-'
-```
+This is maintenance-only tuning. After recovery is clean, restore the current
+[GitOps scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture), including
+all nine custom mClock settings, through a reviewed configuration change. Remove the
+recovery/backfill override gate and recovery-only concurrency settings. Do not
+remove the scheduler reservations or restore the former scrub time window; the
+current profile reserves capacity for the outstanding scrub backlog.
 
 ## Create a Turin Maintenance Pod
 
@@ -442,11 +420,11 @@ Live OSD0/OSD1 examples after the 2026-06-30 recreates:
 - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
   config:
     metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-zxa0mz1m
-    databaseSizeMB: "300000"
+    databaseSizeMB: '300000'
 - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
   config:
     metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-osd1
-    databaseSizeMB: "300000"
+    databaseSizeMB: '300000'
 ```
 
 Repeat this for any later OSD only after its target DB LV is known. Do not
