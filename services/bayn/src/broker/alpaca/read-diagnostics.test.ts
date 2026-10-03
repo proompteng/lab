@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Effect, Exit, Logger, Redacted, References, Result } from 'effect'
+import { Cause, Deferred, Effect, Exit, Fiber, Logger, Redacted, References, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1 } from '../../hash'
-import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
+import { alpacaLiveBaseUrl, alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { make } from './http'
 import { diagnosticLimits, makeReadDiagnostics, projectReadDiagnostic, type DiagnosticEvent } from './read-diagnostics'
@@ -305,6 +305,171 @@ describe('bounded observational broker diagnostics', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
     expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+  })
+
+  test('retries unchanged pending metadata after sink defects, with bounded attempts and preserved omission', async () => {
+    const events: DiagnosticEvent[] = []
+    let attempts = 0
+    await clocked(
+      Effect.gen(function* () {
+        const observe = yield* makeReadDiagnostics(connection.identity, (event) => {
+          attempts += 1
+          if (attempts === 1) throw new Error('synthetic synchronous sink defect')
+          if (attempts === 2) return Effect.die('synthetic effect sink defect')
+          return record(events)(event)
+        })
+        const fees = projectReadDiagnostic(
+          'fee-activities',
+          Array.from({ length: 129 }, (_, index) => fee(index)),
+        )
+        yield* observe(projectReadDiagnostic('account', account), evidence())
+        yield* observe(fees, evidence(2))
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          yield* TestClock.adjust(60_000)
+          yield* observe(projectReadDiagnostic('account', account), evidence(3))
+          expect(attempts).toBe(attempt)
+          yield* observe(projectReadDiagnostic('account', account), evidence(4))
+          expect(attempts).toBe(attempt)
+        }
+        expect(events).toHaveLength(1)
+        expect(events[0]).toMatchObject({
+          account: { fields: { accrued_fees: { value: account.accrued_fees } } },
+          omittedRecords: 1,
+          incomplete: true,
+        })
+        expect(events[0]?.fees.length).toBeGreaterThan(0)
+        for (let pass = 0; pass < 20; pass += 1) {
+          yield* TestClock.adjust(60_000)
+          yield* observe(projectReadDiagnostic('account', account), evidence(5))
+        }
+        expect(events.flatMap((event) => event.fees)).toHaveLength(128)
+        expect(events.filter((event) => event.account !== undefined)).toHaveLength(1)
+        const delivered = events.length
+        yield* TestClock.adjust(60_000)
+        yield* observe(fees, evidence(6))
+        expect(events).toHaveLength(delivered)
+        expect(events.every((event) => JSON.stringify(event).length <= diagnosticLimits.bytes)).toBe(true)
+      }),
+    )
+  })
+
+  test('acknowledges only the delivered snapshot while concurrent observations remain pending', async () => {
+    const events: DiagnosticEvent[] = []
+    await clocked(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const observe = yield* makeReadDiagnostics(connection.identity, (event) =>
+          Effect.gen(function* () {
+            if (events.length === 0) {
+              yield* Deferred.succeed(started, undefined)
+              yield* Deferred.await(release)
+            }
+            events.push(event)
+          }),
+        )
+        yield* observe(projectReadDiagnostic('fee-activities', [fee()]), evidence())
+        yield* TestClock.adjust(60_000)
+        const first = yield* observe(projectReadDiagnostic('account', account), evidence()).pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* TestClock.adjust(60_000)
+        yield* observe(projectReadDiagnostic('fee-activities', [{ ...fee(), status: 'pending' }]), evidence(2))
+        yield* observe(projectReadDiagnostic('account', { ...account, accrued_fees: '0.02' }), evidence(2))
+        expect(events).toHaveLength(0)
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(first)
+        yield* observe(projectReadDiagnostic('account', { ...account, accrued_fees: '0.02' }), evidence(3))
+        expect(events).toHaveLength(2)
+        expect(events[0]).toMatchObject({ fees: [{ fields: { status: { value: 'executed' } } }] })
+        expect(events[1]).toMatchObject({
+          account: { fields: { accrued_fees: { value: '0.02' } } },
+          fees: [{ fields: { status: { value: 'pending' } } }],
+        })
+      }),
+    )
+  })
+
+  test('interrupted emission releases its reservation and leaves unchanged metadata retryable', async () => {
+    const events: DiagnosticEvent[] = []
+    await clocked(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        let attempts = 0
+        const observe = yield* makeReadDiagnostics(connection.identity, (event) => {
+          attempts += 1
+          return attempts === 1
+            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+            : record(events)(event)
+        })
+        yield* TestClock.adjust(60_000)
+        const first = yield* observe(projectReadDiagnostic('account', account), evidence()).pipe(Effect.forkChild)
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(first)
+        const exit = yield* Fiber.await(first)
+        expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+        yield* TestClock.adjust(60_000)
+        yield* observe(projectReadDiagnostic('account', account), evidence(2))
+        expect(attempts).toBe(2)
+        expect(events).toHaveLength(1)
+        expect(events[0]).toMatchObject({ account: { fields: { accrued_fees: { value: account.accrued_fees } } } })
+      }),
+    )
+  })
+
+  test('live readers emit no optional diagnostics and preserve the same normalized read contract', async () => {
+    const live = Result.getOrThrow(
+      decodeBrokerConnection({
+        ...connection,
+        environment: BrokerEnvironment.Live,
+        baseUrl: alpacaLiveBaseUrl,
+      }),
+    )
+    const events: unknown[] = []
+    let calls = 0
+    const logger = Logger.make<unknown, void>((entry) => {
+      const annotations = entry.fiber.getRef(References.CurrentLogAnnotations)
+      if (annotations['brokerReadDiagnostic'] !== undefined) events.push(annotations['brokerReadDiagnostic'])
+    })
+    const client = HttpClient.make((request, url) => {
+      calls += 1
+      expect(request.method).toBe('GET')
+      expect(url.origin).toBe(alpacaLiveBaseUrl)
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify(url.pathname === '/v2/account' ? account : [fee()]), {
+            headers: { 'content-type': 'application/json', 'x-request-id': 'synthetic-live-request' },
+          }),
+        ),
+      )
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const observe = yield* makeReadDiagnostics(live.identity, (event) => Effect.sync(() => events.push(event)))
+        const read = yield* make(live)
+        for (let pass = 0; pass < 3; pass += 1) {
+          yield* TestClock.adjust(60_000)
+          yield* observe(projectReadDiagnostic('account', account), evidence())
+          yield* observe(projectReadDiagnostic('fee-activities', [fee()]), evidence())
+          const actual = yield* read.account
+          const actualFees = yield* read.feeActivities()
+          expect(Object.keys(actual).sort()).toEqual(['evidence', 'value'])
+          expect(Object.keys(actualFees).sort()).toEqual(['evidence', 'value'])
+          expect(actual.value.cashMicros).toBe('76543210000')
+          expect(actual.evidence.contentHash).toBe(canonicalHashV1(account))
+          expect(actualFees.value).toEqual({
+            items: [{ accountId, activityId: fee().id, date: fee().date, netAmountMicros: '-10000' }],
+          })
+          expect(actualFees.evidence.contentHash).toBe(canonicalHashV1([fee()]))
+        }
+      }).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Logger.layer([logger])),
+      ),
+    )
+    expect(calls).toBe(6)
+    expect(events).toHaveLength(0)
   })
 
   test('uses only existing HTTP reads and preserves normalized values and response hashes', async () => {

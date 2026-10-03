@@ -1,6 +1,7 @@
 # Broker response diagnostic evidence
 
-The native Alpaca reader derives a small observational sidecar from account and USD fee responses it already fetches.
+The native Alpaca paper/sandbox reader derives a small observational sidecar from account and USD fee responses it already fetches.
+Live readers neither project nor emit this optional metadata; their normalized reads remain unchanged.
 It does not issue diagnostic requests, change financial normalization or hashes, post accounting, or grant authority.
 It uses the existing provider endpoint, account binding, HTTP budget and structured log sink. No alternate route or
 additional credentials are introduced.
@@ -24,7 +25,10 @@ identities; `pendingRecords` counts retained changes deferred to a later event. 
 the reader lifetime, and `incomplete` stays true after retention overflow even once pending records drain. Repeated
 omission-only observations are silent after truncation has been reported. The first
 flush occurs on a normal successful read at least 60 seconds after reader creation; later flushes are at most once
-per 60 seconds. Changed metadata is coalesced; fresh timestamps and response hashes alone do not trigger another
+per 60 seconds, including failed sink attempts. Delivery fingerprints advance only after the sink succeeds; a failed
+attempt leaves bounded metadata pending for a later ordinary read. Concurrent observations can update the buffer
+without waiting for the sink, and delivery acknowledges only the emitted snapshot. Changed metadata is coalesced;
+fresh timestamps and response hashes alone do not trigger another
 event. A worker replacement can repeat a bounded snapshot. This sampled log is not complete financial history.
 
 Raw JSON has only its existing request lifetime; safe sidecar state is in memory. Emitted evidence inherits the

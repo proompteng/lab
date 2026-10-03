@@ -2,7 +2,7 @@ import { Cause, Clock, Effect, Ref, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
 import { IsoDateSchema, UtcSourceTimestampSchema } from '../../schemas'
-import type { BrokerIdentity } from '../identity'
+import { BrokerEnvironment, type BrokerIdentity } from '../identity'
 import type { ReadEvidence } from './model'
 
 export const diagnosticLimits = { identities: 128, records: 32, bytes: 16_384, intervalMs: 60_000 } as const
@@ -158,7 +158,8 @@ interface State {
   readonly omitted: number
   readonly retentionTruncated: boolean
   readonly omissionReported: boolean
-  readonly lastEmittedAt: number
+  readonly lastAttemptedAt: number
+  readonly emitting: boolean
 }
 export interface DiagnosticEvent {
   readonly schemaVersion: 'bayn.broker-read-diagnostic.v1'
@@ -179,6 +180,12 @@ const newestFirst = (left: Entry<FeeMetadata>, right: Entry<FeeMetadata>): numbe
   right.metadata.reportedDate.localeCompare(left.metadata.reportedDate) ||
   left.metadata.activityHash.localeCompare(right.metadata.activityHash)
 
+interface Emission {
+  readonly event: DiagnosticEvent
+  readonly selected: readonly Entry<FeeMetadata>[]
+  readonly accountFingerprint: string | undefined
+}
+
 /** Diagnostic failures cannot replace a provider result; interruption remains interruption. */
 const diagnosticOnly = (effect: Effect.Effect<void>): Effect.Effect<void> =>
   effect.pipe(Effect.catchCause((cause) => (Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.void)))
@@ -189,106 +196,131 @@ export const makeReadDiagnostics = (
     Effect.logInfo('Broker response diagnostic evidence').pipe(Effect.annotateLogs({ brokerReadDiagnostic: event })),
 ) =>
   Effect.gen(function* () {
+    if (identity.environment !== BrokerEnvironment.Sandbox)
+      return (_diagnostic: ReadDiagnostic | undefined, _read: ReadEvidence): Effect.Effect<void> => Effect.void
     const state = yield* Ref.make<State>({
       fees: new Map(),
       omitted: 0,
       retentionTruncated: false,
       omissionReported: false,
-      lastEmittedAt: yield* Clock.currentTimeMillis,
+      lastAttemptedAt: yield* Clock.currentTimeMillis,
+      emitting: false,
     })
     return (diagnostic: ReadDiagnostic | undefined, read: ReadEvidence): Effect.Effect<void> => {
       if (diagnostic === undefined) return Effect.void
       return diagnosticOnly(
-        Effect.gen(function* () {
-          const now = yield* Clock.currentTimeMillis
-          const event = yield* Ref.modify(state, (current): [DiagnosticEvent | undefined, State] => {
-            const requestIdHash = hash('bayn.fee-diagnostic-request.v1', read.requestId)
-            if (requestIdHash === undefined) return [undefined, current]
-            const evidence = { requestIdHash, responseHash: read.contentHash, observedAt: read.observedAt }
-            let account = current.account
-            const fees = new Map(current.fees)
-            let omitted = current.omitted
-            if (diagnostic.endpoint === '/v2/account') {
-              const fingerprint = hash('bayn.account-diagnostic.v1', diagnostic.fields)
-              if (fingerprint !== undefined)
-                account = { metadata: diagnostic.fields, evidence, fingerprint, emitted: account?.emitted }
-            } else {
-              omitted = Math.min(Number.MAX_SAFE_INTEGER, omitted + diagnostic.omitted)
-              for (const metadata of diagnostic.fees) {
-                const fingerprint = hash('bayn.fee-diagnostic.v1', metadata)
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis
+            const emission = yield* Ref.modify(state, (current): [Emission | undefined, State] => {
+              const requestIdHash = hash('bayn.fee-diagnostic-request.v1', read.requestId)
+              if (requestIdHash === undefined) return [undefined, current]
+              const evidence = { requestIdHash, responseHash: read.contentHash, observedAt: read.observedAt }
+              let account = current.account
+              const fees = new Map(current.fees)
+              let omitted = current.omitted
+              if (diagnostic.endpoint === '/v2/account') {
+                const fingerprint = hash('bayn.account-diagnostic.v1', diagnostic.fields)
                 if (fingerprint !== undefined)
-                  fees.set(metadata.activityHash, {
-                    metadata,
-                    evidence,
-                    fingerprint,
-                    emitted: fees.get(metadata.activityHash)?.emitted,
-                  })
+                  account = { metadata: diagnostic.fields, evidence, fingerprint, emitted: account?.emitted }
+              } else {
+                omitted = Math.min(Number.MAX_SAFE_INTEGER, omitted + diagnostic.omitted)
+                for (const metadata of diagnostic.fees) {
+                  const fingerprint = hash('bayn.fee-diagnostic.v1', metadata)
+                  if (fingerprint !== undefined)
+                    fees.set(metadata.activityHash, {
+                      metadata,
+                      evidence,
+                      fingerprint,
+                      emitted: fees.get(metadata.activityHash)?.emitted,
+                    })
+                }
               }
-            }
-            const ordered = [...fees.values()].sort(newestFirst)
-            for (const entry of ordered.slice(diagnosticLimits.identities)) {
-              fees.delete(entry.metadata.activityHash)
-              omitted = Math.min(Number.MAX_SAFE_INTEGER, omitted + 1)
-            }
-            const next: State = {
-              fees,
-              ...(account === undefined ? {} : { account }),
-              omitted,
-              retentionTruncated: current.retentionTruncated || omitted > 0,
-              omissionReported: current.omissionReported,
-              lastEmittedAt: current.lastEmittedAt,
-            }
-            if (now - current.lastEmittedAt < diagnosticLimits.intervalMs) return [undefined, next]
-            const pending = [...fees.values()].filter((entry) => entry.fingerprint !== entry.emitted).sort(newestFirst)
-            const accountChanged = account !== undefined && account.fingerprint !== account.emitted
-            if (pending.length === 0 && !accountChanged && (omitted === 0 || current.omissionReported))
-              return [undefined, { ...next, omitted: 0 }]
-            const selected = pending.slice(0, diagnosticLimits.records)
-            const material = (): DiagnosticEvent => ({
-              schemaVersion: 'bayn.broker-read-diagnostic.v1',
-              provider: identity.provider,
-              environment: identity.environment,
-              identityHash: identity.identityHash,
-              ...(accountChanged && account !== undefined
-                ? { account: { endpoint: '/v2/account', fields: account.metadata, evidence: account.evidence } }
-                : {}),
-              fees: selected.map(({ metadata, evidence }) => ({
-                ...metadata,
-                endpoint: '/v2/account/activities/FEE',
-                evidence,
-              })),
-              omittedRecords: omitted,
-              pendingRecords: pending.length - selected.length,
-              incomplete: next.retentionTruncated || pending.length > selected.length,
-              retentionTruncated: next.retentionTruncated,
-            })
-            let output = material()
-            while (
-              new TextEncoder().encode(JSON.stringify(output)).length > diagnosticLimits.bytes &&
-              selected.length > 0
-            ) {
-              selected.pop()
-              output = material()
-            }
-            if (new TextEncoder().encode(JSON.stringify(output)).length > diagnosticLimits.bytes)
-              return [undefined, next]
-            for (const entry of selected)
-              fees.set(entry.metadata.activityHash, { ...entry, emitted: entry.fingerprint })
-            return [
-              output,
-              {
-                ...next,
+              const ordered = [...fees.values()].sort(newestFirst)
+              for (const entry of ordered.slice(diagnosticLimits.identities)) {
+                fees.delete(entry.metadata.activityHash)
+                omitted = Math.min(Number.MAX_SAFE_INTEGER, omitted + 1)
+              }
+              const next: State = {
+                fees,
+                ...(account === undefined ? {} : { account }),
+                omitted,
+                retentionTruncated: current.retentionTruncated || omitted > 0,
+                omissionReported: current.omissionReported,
+                lastAttemptedAt: current.lastAttemptedAt,
+                emitting: current.emitting,
+              }
+              if (current.emitting || now - current.lastAttemptedAt < diagnosticLimits.intervalMs)
+                return [undefined, next]
+              const pending = [...fees.values()]
+                .filter((entry) => entry.fingerprint !== entry.emitted)
+                .sort(newestFirst)
+              const accountChanged = account !== undefined && account.fingerprint !== account.emitted
+              if (pending.length === 0 && !accountChanged && (omitted === 0 || current.omissionReported))
+                return [undefined, { ...next, omitted: 0 }]
+              const selected = pending.slice(0, diagnosticLimits.records)
+              const material = (): DiagnosticEvent => ({
+                schemaVersion: 'bayn.broker-read-diagnostic.v1',
+                provider: identity.provider,
+                environment: identity.environment,
+                identityHash: identity.identityHash,
                 ...(accountChanged && account !== undefined
-                  ? { account: { ...account, emitted: account.fingerprint } }
+                  ? { account: { endpoint: '/v2/account', fields: account.metadata, evidence: account.evidence } }
                   : {}),
-                omitted: 0,
-                omissionReported: current.omissionReported || omitted > 0,
-                lastEmittedAt: now,
-              },
-            ]
-          })
-          if (event !== undefined) yield* emit(event)
-        }),
+                fees: selected.map(({ metadata, evidence }) => ({
+                  ...metadata,
+                  endpoint: '/v2/account/activities/FEE',
+                  evidence,
+                })),
+                omittedRecords: omitted,
+                pendingRecords: pending.length - selected.length,
+                incomplete: next.retentionTruncated || pending.length > selected.length,
+                retentionTruncated: next.retentionTruncated,
+              })
+              let output = material()
+              while (
+                new TextEncoder().encode(JSON.stringify(output)).length > diagnosticLimits.bytes &&
+                selected.length > 0
+              ) {
+                selected.pop()
+                output = material()
+              }
+              if (new TextEncoder().encode(JSON.stringify(output)).length > diagnosticLimits.bytes)
+                return [undefined, next]
+              return [
+                {
+                  event: output,
+                  selected,
+                  accountFingerprint: accountChanged ? account?.fingerprint : undefined,
+                },
+                { ...next, lastAttemptedAt: now, emitting: true },
+              ]
+            })
+            if (emission !== undefined)
+              yield* restore(Effect.suspend(() => emit(emission.event))).pipe(
+                Effect.andThen(
+                  Ref.update(state, (current) => {
+                    const fees = new Map(current.fees)
+                    for (const entry of emission.selected) {
+                      const retained = fees.get(entry.metadata.activityHash)
+                      if (retained !== undefined)
+                        fees.set(entry.metadata.activityHash, { ...retained, emitted: entry.fingerprint })
+                    }
+                    return {
+                      ...current,
+                      fees,
+                      ...(emission.accountFingerprint !== undefined && current.account !== undefined
+                        ? { account: { ...current.account, emitted: emission.accountFingerprint } }
+                        : {}),
+                      omitted: Math.max(0, current.omitted - emission.event.omittedRecords),
+                      omissionReported: current.omissionReported || emission.event.omittedRecords > 0,
+                    }
+                  }),
+                ),
+                Effect.ensuring(Ref.update(state, (current) => ({ ...current, emitting: false }))),
+              )
+          }),
+        ),
       )
     }
   })

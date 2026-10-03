@@ -7,6 +7,7 @@ import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
 import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
+import { BrokerEnvironment } from '../identity'
 import {
   BrokerReadContractFailure,
   BrokerReadError,
@@ -300,7 +301,10 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
           'broker.status': evidence.status,
           'broker.content_hash': evidence.contentHash,
         })
-        const diagnostic = projectReadDiagnostic(operation, raw)
+        const diagnostic =
+          connection.identity.environment === BrokerEnvironment.Sandbox
+            ? projectReadDiagnostic(operation, raw)
+            : undefined
         return { value, evidence, ...(diagnostic === undefined ? {} : { diagnostic }) }
       }).pipe(
         Effect.timeout(`${connection.operationTimeoutMs} millis`),
