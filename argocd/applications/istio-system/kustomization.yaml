@@ -20,6 +20,27 @@ helmCharts:
     version: 1.31.0
     releaseName: istiod
     namespace: istio-system
+    valuesInline:
+      meshConfig:
+        trustDomain: proompteng.ai
+      pilot:
+        cni:
+          enabled: true
+      sidecarInjectorWebhook:
+        templates:
+          spire: |
+            spec:
+              initContainers:
+                - name: istio-proxy
+                  volumeMounts:
+                    - name: spire-sds
+                      mountPath: /var/run/secrets/workload-spiffe-uds
+                      readOnly: true
+              volumes:
+                - name: spire-sds
+                  csi:
+                    driver: csi.spiffe.io
+                    readOnly: true
   - name: cni
     repo: https://blob.istio.io/istio-release/charts
     version: 1.31.0

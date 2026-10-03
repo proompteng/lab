@@ -256,7 +256,7 @@ mod tests {
             "apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"microvm-uid"},
             "spec":{"displayName":"fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64", "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":16},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"}
         })).unwrap();
-        let id = format!("spiffe://galactic.proompteng.ai/ns/tengri/nanoagent/pod/{CURRENT}")
+        let id = format!("spiffe://proompteng.ai/ns/tengri/nanoagent/pod/{CURRENT}")
             .parse()
             .unwrap();
         register(&api, &microvm, CURRENT, &id).await.unwrap();
@@ -270,7 +270,7 @@ mod tests {
             assert_eq!(
                 calls[0].3["spec"]["parentID"],
                 format!(
-                    "spiffe://galactic.proompteng.ai/spire/agent/k8s_psat/galactic-guests/pod/{CURRENT}"
+                    "spiffe://proompteng.ai/spire/agent/k8s_psat/galactic-guests/pod/{CURRENT}"
                 )
             );
             assert_eq!(calls[0].3["spec"]["selectors"], json!(["unix:uid:1000"]));

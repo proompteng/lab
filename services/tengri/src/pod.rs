@@ -314,6 +314,7 @@ pub fn build_pod(
         microvm.spec.architecture.kubernetes_label().to_owned(),
     );
     let mut annotations = BTreeMap::from([
+        ("sidecar.istio.io/inject".to_owned(), "false".to_owned()),
         (
             "runtime.proompteng.ai/isolation".to_owned(),
             "firecracker".to_owned(),
@@ -519,7 +520,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
     let mut env = vec![
         EnvVar {
             name: "SPIFFE_TRUST_DOMAIN".to_owned(),
-            value: Some("galactic.proompteng.ai".to_owned()),
+            value: Some("proompteng.ai".to_owned()),
             ..Default::default()
         },
         EnvVar {
@@ -975,6 +976,12 @@ mod tests {
         )
         .expect("pod projection");
         let annotations = pod.metadata.annotations.as_ref().expect("annotations");
+        assert_eq!(
+            annotations
+                .get("sidecar.istio.io/inject")
+                .map(String::as_str),
+            Some("false"),
+        );
         assert_eq!(
             annotations
                 .get(STORAGE_LAYOUT_ANNOTATION)

@@ -252,7 +252,7 @@ async fn fixture() -> (Fixture, GuestClient) {
     child.preview_port = config["previewPort"].as_str().unwrap().parse().unwrap();
     let identity = crate::identity::WorkloadIdentity::from_endpoint(
         config["workloadEndpoint"].as_str().unwrap().to_owned(),
-        "galactic.proompteng.ai".parse().unwrap(),
+        "proompteng.ai".parse().unwrap(),
         "tengri",
     )
     .await
@@ -318,13 +318,13 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
             )
             .serve_with_incoming(tls_incoming(listener, tls)),
     );
-    let peer: SpiffeId = "spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri"
+    let peer: SpiffeId = "spiffe://proompteng.ai/ns/tengri/sa/tengri"
         .parse()
         .unwrap();
     let bff_source = X509Source::builder()
         .endpoint(&fixture.endpoint)
         .picker(Pick(
-            "spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng"
+            "spiffe://proompteng.ai/ns/proompteng/sa/proompteng"
                 .parse()
                 .unwrap(),
         ))
@@ -333,7 +333,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
         .unwrap();
     let bff = WorkloadIdentity::Spiffe {
         source: bff_source.clone(),
-        domain: "galactic.proompteng.ai".parse().unwrap(),
+        domain: "proompteng.ai".parse().unwrap(),
     };
     let connect = |source: &WorkloadIdentity| {
         RpcClient::new(

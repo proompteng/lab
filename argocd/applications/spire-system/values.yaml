@@ -1,7 +1,7 @@
 global:
   spire:
     clusterName: galactic
-    trustDomain: galactic.proompteng.ai
+    trustDomain: proompteng.ai
     recommendations:
       enabled: true
       prometheus: false
@@ -20,6 +20,9 @@ global:
 spire-server:
   enabled: false
 spire-agent:
+  sds:
+    enabled: true
+    disableSPIFFECertValidation: false
   podSecurityContext:
     runAsUser: 0
     runAsGroup: 0

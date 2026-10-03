@@ -45,8 +45,8 @@ The BFF also restores an in-progress Codex device login from the guest after a b
 replacement attempt or invalidate the code already shown to the user.
 
 The internal gRPC connection requires SPIRE mutual TLS. The Proompteng Pod uses service account `proompteng` and a
-read-only SPIFFE CSI socket. `SPIFFE_ID` selects its exact `spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng`
-identity; `TENGRI_SPIFFE_ID` pins `spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri`. The server-only Workload API
+read-only SPIFFE CSI socket. `SPIFFE_ID` selects its exact `spiffe://proompteng.ai/ns/proompteng/sa/proompteng`
+identity; `TENGRI_SPIFFE_ID` pins `spiffe://proompteng.ai/ns/tengri/sa/tengri`. The server-only Workload API
 client validates the URI, private-key match, validity window, and CA bundle before creating a TLS gRPC client.
 Renewal creates a new client; existing streams retain their previous client until that certificate expires and then
 reconnect with their event cursor. HMAC metadata still binds every request to its authenticated GitHub owner.
