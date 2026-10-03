@@ -114,13 +114,16 @@ credentials, or guest bootstrap tokens.
 ## Lifecycle behavior
 
 `CreateAgent` derives a deterministic CR name from the authenticated GitHub subject, so one identity cannot race two
-active agents into existence. The server selects the architecture, 2 CPU, 4 GiB memory, 16 GiB workspace, and current
+active agents into existence. The server selects the architecture, 4 CPU, 8 GiB memory, 16 GiB workspace, and current
 digest-pinned guest image.
 
 - `Running`: the controller creates or retains the PVC, bootstrap Secret, and `kata-fc` Pod.
 - `Sleeping`: after 60 idle minutes the controller deletes only the Pod; the CR and PVC remain.
 - Resume: any authenticated file, terminal, preview, lifecycle, or Codex action sets the desired state to `Running` and
   waits for observed guest readiness before continuing.
+- Resource upgrade: retained 2 CPU/4 GiB guests keep running until sleep or there is no running owned guest. The
+  controller upgrades the next guest to 4 CPU/8 GiB while retaining the same CR, 16 GiB PVC, and workspace. Admission
+  permits this complete one-way upgrade and rejects partial profiles, workspace changes, and downgrades.
 - Delete: the finalizer removes the Pod, bootstrap Secret, terminal capabilities, and PVC before removing the CR.
 - Retention: workspaces remain until their owner explicitly deletes the agent. Sleeping, elapsed creation deadlines,
   and controller releases never delete the CR or PVC. The legacy CR `expiresAt` field does not control retention;
