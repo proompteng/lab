@@ -11,7 +11,7 @@ import { DateTime, Effect, Redacted, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
-import type { LoadedRuntimeConfig } from '../config'
+import type { ForwardPerformanceConfig } from './config'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
@@ -35,7 +35,7 @@ const identityResult = makeBrokerIdentity({
 })
 if (Result.isFailure(identityResult)) throw new Error('broker identity fixture failed')
 
-const config: LoadedRuntimeConfig = {
+const config: ForwardPerformanceConfig = {
   runtimeMode: 'AutonomousService',
   host: '127.0.0.1',
   port: 8080,
@@ -76,6 +76,8 @@ const config: LoadedRuntimeConfig = {
     url: 'http://clickhouse.invalid',
     username: 'bayn',
     password: Redacted.make('unused'),
+  },
+  historicalSignal: {
     snapshotId: '1'.repeat(64),
     publicationAsOf: '2026-07-20',
     calendarVersion: 'fixture-calendar-v1',
@@ -351,8 +353,8 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
 const newerMarketSnapshot = makeMarketSnapshotRevision('104.00000000', '999.00000000', '2026-07-20 21:10:00.000')
 const marketReaderConfig = {
   ...config,
-  clickhouse: {
-    ...config.clickhouse,
+  historicalSignal: {
+    ...config.historicalSignal,
     bounds: {
       schemaVersion: 'bayn.evaluation-bounds.v1' as const,
       dataStart: '2026-07-19' as const,

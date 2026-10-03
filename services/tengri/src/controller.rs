@@ -49,6 +49,7 @@ pub struct ControllerContext {
     pub namespace: String,
     pub tickets: TicketStore,
     pub guest_image: Arc<str>,
+    pub identity: crate::identity::WorkloadIdentity,
 }
 
 #[derive(Debug, Error)]
@@ -63,6 +64,8 @@ pub enum ReconcileError {
     CleanupTimeout(String),
     #[error("failed waiting for owned resource deletion: {0}")]
     CleanupWait(#[from] kube::runtime::wait::Error),
+    #[error("guest SPIRE identity reconciliation failed: {0}")]
+    Identity(#[from] anyhow::Error),
 }
 
 pub async fn run(context: ControllerContext) {
@@ -97,6 +100,7 @@ async fn reconcile(
     let pods: Api<Pod> = Api::namespaced(context.client.clone(), &namespace);
 
     if microvm.meta().deletion_timestamp.is_some() {
+        crate::guest_identity::remove_registrations(&context, &microvm, None).await?;
         let status = terminating_status(&microvm, Utc::now());
         if microvm.status.as_ref() != Some(&status) {
             patch_status(&microvms, &microvm, status).await?;
@@ -125,6 +129,7 @@ async fn reconcile(
     }
 
     if microvm.spec.desired_state == MicroVMDesiredState::Sleeping {
+        crate::guest_identity::remove_registrations(&context, &microvm, None).await?;
         persist_storage_initialization_if_proven(&context.client, &pods, &namespace, &microvm)
             .await?;
         context
@@ -248,6 +253,7 @@ async fn reconcile(
             return Err(error.into());
         }
     };
+    crate::guest_identity::ensure_registration(&context, &microvm, &pod).await?;
     if let Err(error) = persist_storage_initialization(
         &context.client,
         &pods,
@@ -309,6 +315,9 @@ async fn reconcile(
         clear_guest_image_update_started_at(&microvms, &microvm).await?;
     }
 
+    if status.phase == MicroVMPhase::Ready {
+        crate::guest_identity::refresh(&context, &microvm, &pod, now).await?;
+    }
     Ok(Action::requeue(next_requeue()))
 }
 
@@ -1360,6 +1369,7 @@ mod tests {
             tickets: TicketStore::new("https://tengri.example.test".to_owned(), "t".repeat(32))
                 .expect("test ticket store"),
             guest_image: guest_image.into(),
+            identity: crate::identity::WorkloadIdentity::Fixture,
         })
     }
 

@@ -17,6 +17,8 @@ export class IntradayMarketDataFailure extends Data.TaggedError('IntradayMarketD
   readonly operation: 'entry-decision' | 'close-quote-not-ready' | 'prices' | 'binding'
   readonly message: string
   readonly cause?: unknown
+  readonly symbol?: string
+  readonly eventAt?: string
 }> {}
 
 const failure = (
@@ -94,12 +96,23 @@ export const adverseClosingQuotePrices = (
   for (const symbol of [...new Set(symbols)].sort()) {
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined) {
-      return Result.fail(failure('close-quote-not-ready', `intraday snapshot has no verified quote for ${symbol}`))
+      return Result.fail(
+        new IntradayMarketDataFailure({
+          operation: 'close-quote-not-ready',
+          message: `intraday snapshot has no verified quote for ${symbol}`,
+          symbol,
+        }),
+      )
     }
     const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
     if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
       return Result.fail(
-        failure('close-quote-not-ready', `closing quote for ${symbol} is outside the freshness window`),
+        new IntradayMarketDataFailure({
+          operation: 'close-quote-not-ready',
+          message: `closing quote for ${symbol} is outside the freshness window`,
+          symbol,
+          eventAt: quote.eventAt,
+        }),
       )
     }
   }

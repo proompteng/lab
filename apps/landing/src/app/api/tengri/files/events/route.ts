@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     }
     let body: ReadableStream<Uint8Array>
     try {
-      const source = watchFiles(identity.subject, agentId, path, after)
+      const source = await watchFiles(identity.subject, agentId, path, after)
       body = createTengriEventStream(
         source,
         request.signal,

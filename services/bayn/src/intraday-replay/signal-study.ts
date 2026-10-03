@@ -234,6 +234,40 @@ export const studyIoc = (input: {
     }
   }).pipe(Result.mapError((cause) => new SignalStudyFailure({ message: 'Cannot simulate study IOC', cause })))
 
+export const studyEntryQuantity = (input: {
+  readonly entryBudgetMicros: string
+  readonly referencePrice: number
+  readonly protocol: PreparedBatch['observation']['protocol']
+  readonly assumptions: typeof SignalStudyInputSchema.Type.assumptions
+}) =>
+  Result.gen(function* () {
+    const budget = BigInt(input.entryBudgetMicros)
+    if (budget <= 0n) return yield* Result.fail(new SignalStudyFailure({ message: 'Entry budget must be positive' }))
+    const sizing = yield* deriveExecutionIntentPricing({
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.ImmediateOrCancel,
+      quantityMicros: MICROS,
+      referencePriceMicros: yield* numberToMicros(input.referencePrice),
+      executionModel: input.protocol.executionModel,
+      limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
+    })
+    let affordableShares = 0n
+    let maximumShares = budget / sizing.expectedExecutionPriceMicros
+    while (affordableShares < maximumShares) {
+      const shares = (affordableShares + maximumShares + 1n) / 2n
+      const notionalMicros = shares * sizing.expectedExecutionPriceMicros
+      const fees = yield* calculateSessionFees(
+        [{ side: 'buy', quantityMicros: shares * MICROS, notionalMicros }],
+        input.protocol.executionModel,
+        BigInt(input.assumptions.feeMultiplierPpm),
+      )
+      if (notionalMicros + fees.totalMicros <= budget) affordableShares = shares
+      else maximumShares = shares - 1n
+    }
+    return affordableShares * MICROS
+  })
+
 type HypothesisOutcome =
   | { readonly status: 'UNRESOLVED' | 'NO_ENTRY_FILL'; readonly reason: string }
   | {
@@ -270,29 +304,7 @@ export const studyRoundTrip = (input: {
     const reference = input.entryDecisionQuote?.value.askPrice
     if (reference === undefined || reference <= 0)
       return finish({ status: 'UNRESOLVED', reason: 'missing-entry-pricing' })
-    const sizing = yield* deriveExecutionIntentPricing({
-      side: OrderSide.Buy,
-      orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityMicros: MICROS,
-      referencePriceMicros: yield* numberToMicros(reference),
-      executionModel: input.protocol.executionModel,
-      limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
-    })
-    let affordableShares = 0n
-    let maximumShares = budget / sizing.expectedExecutionPriceMicros
-    while (affordableShares < maximumShares) {
-      const shares = (affordableShares + maximumShares + 1n) / 2n
-      const notionalMicros = shares * sizing.expectedExecutionPriceMicros
-      const fees = yield* calculateSessionFees(
-        [{ side: 'buy', quantityMicros: shares * MICROS, notionalMicros }],
-        input.protocol.executionModel,
-        BigInt(input.assumptions.feeMultiplierPpm),
-      )
-      if (notionalMicros + fees.totalMicros <= budget) affordableShares = shares
-      else maximumShares = shares - 1n
-    }
-    const quantity = affordableShares * MICROS
+    const quantity = yield* studyEntryQuantity({ ...input, referencePrice: reference })
     if (quantity === 0n) return finish({ status: 'NO_ENTRY_FILL', reason: 'budget-below-one-share' })
     const entry = yield* studyIoc({
       ...input,

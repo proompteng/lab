@@ -19,7 +19,6 @@ import type { ApplicationPlanFor } from '../app'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import type { RuntimeConfig } from '../config'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -61,25 +60,6 @@ const sourceRevision = 'a'.repeat(40)
 const completedAt = '2026-08-13T18:00:00.000Z'
 const controllerPlanHash = hash('9')
 
-type MarketDataBinding = Pick<
-  RuntimeConfig['clickhouse'],
-  'snapshotId' | 'publicationAsOf' | 'calendarVersion' | 'bounds'
->
-
-const marketDataBinding: MarketDataBinding = {
-  snapshotId: hash('8'),
-  publicationAsOf: '2026-08-12',
-  calendarVersion: 'xnys-2026-v1',
-  bounds: {
-    schemaVersion: 'bayn.evaluation-bounds.v1' as const,
-    dataStart: '2020-01-01',
-    dataEnd: '2026-08-12',
-    lookbackStart: '2025-01-01',
-    evaluationStart: '2026-01-01',
-    evaluationEnd: '2026-08-12',
-  },
-}
-
 type PlanOverrides = {
   readonly brokerAccess?: 'mutation' | 'read-only'
   readonly capitalAuthorityKind?: 'granted-capital' | 'none'
@@ -87,7 +67,6 @@ type PlanOverrides = {
   readonly cyclePollIntervalMs?: number
   readonly reconciliationStaleThresholdMs?: number
   readonly persistedGrantHash?: string
-  readonly marketDataBinding?: MarketDataBinding
   readonly tigerBeetleClusterId?: bigint
   readonly tigerBeetleLedger?: number
 }
@@ -184,7 +163,6 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
         sourceRevision,
         imageDigest: overrides.imageDigest ?? `sha256:${hash('3')}`,
       },
-      clickhouse: { ...config.clickhouse, ...(overrides.marketDataBinding ?? marketDataBinding) },
       execution: readOnly
         ? {
             brokerIdentity,
@@ -450,23 +428,6 @@ describe('native execution runtime', () => {
       plan({ capitalAuthorityKind: 'none' }),
       plan({ tigerBeetleClusterId: 2_002n }),
       plan({ tigerBeetleLedger: 7_002 }),
-      plan({ marketDataBinding: { ...marketDataBinding, snapshotId: hash('b') } }),
-      plan({ marketDataBinding: { ...marketDataBinding, publicationAsOf: '2026-08-13' } }),
-      plan({ marketDataBinding: { ...marketDataBinding, calendarVersion: 'xnys-2026-v2' } }),
-      ...[
-        { ...marketDataBinding.bounds, dataStart: '2020-01-02' as const },
-        { ...marketDataBinding.bounds, dataEnd: '2026-08-13' as const },
-        { ...marketDataBinding.bounds, lookbackStart: '2025-01-02' as const },
-        { ...marketDataBinding.bounds, evaluationStart: '2026-01-02' as const },
-        { ...marketDataBinding.bounds, evaluationEnd: '2026-08-13' as const },
-      ].map((bounds) =>
-        plan({
-          marketDataBinding: {
-            ...marketDataBinding,
-            bounds,
-          },
-        }),
-      ),
     ].map(executionControllerConfig)
 
     expect(Result.isSuccess(first)).toBe(true)
