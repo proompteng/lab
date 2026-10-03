@@ -54,10 +54,43 @@ it('rolls OSDs when scrub configuration changes', () => {
   expect(kustomization).toContain('kind: CephCluster')
   expect(kustomization).toContain('name: rook-ceph')
   expect(rolloutPatch).toContain('spec:\n  annotations:\n    osd:')
-  expect(rolloutPatch).toContain('ops.proompteng.ai/osd-config-revision: scrub-window-v2')
+  expect(rolloutPatch).toContain('ops.proompteng.ai/osd-config-revision: scrub-catchup-v1')
   expect(YAML.parse(rolloutPatch)).not.toHaveProperty([
     'metadata',
     'annotations',
     'ops.proompteng.ai/osd-config-revision',
   ])
+})
+
+it('allows scrubbing all day and reserves capacity for it without overcommitting mClock', () => {
+  const values = YAML.parse(readFileSync(join(repoRoot, 'argocd/applications/rook-ceph/cluster-values.yaml'), 'utf8'))
+  const osd: Record<string, string> = values.cephClusterSpec.cephConfig.osd
+
+  expect(osd.osd_mclock_profile).toBe('custom')
+  expect(osd.osd_scrub_begin_hour).toBe('0')
+  expect(osd.osd_scrub_end_hour).toBe('0')
+  expect(osd.osd_max_scrubs).toBe('1')
+  expect(osd).not.toHaveProperty('osd_scrub_sleep')
+
+  const classes = ['client', 'background_recovery', 'background_best_effort']
+  let reservedCapacity = 0
+  for (const service of classes) {
+    const reservation = Number(osd[`osd_mclock_scheduler_${service}_res`])
+    const weight = Number(osd[`osd_mclock_scheduler_${service}_wgt`])
+    const limit = Number(osd[`osd_mclock_scheduler_${service}_lim`])
+
+    expect(reservation).toBeGreaterThan(0)
+    expect(weight).toBeGreaterThan(0)
+    expect(Number.isInteger(weight)).toBe(true)
+    // Ceph interprets zero as unlimited; idle capacity can serve any class.
+    expect(limit).toBe(0)
+    reservedCapacity += reservation
+  }
+  expect(reservedCapacity).toBeLessThanOrEqual(1)
+  expect(Number(osd.osd_mclock_scheduler_background_best_effort_res)).toBeGreaterThan(
+    Number(osd.osd_mclock_scheduler_client_res),
+  )
+  expect(Number(osd.osd_mclock_scheduler_background_best_effort_res)).toBeGreaterThan(
+    Number(osd.osd_mclock_scheduler_background_recovery_res),
+  )
 })
