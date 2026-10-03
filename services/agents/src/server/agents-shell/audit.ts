@@ -46,7 +46,7 @@ export const isOwnAuditFrame = (line: string) => {
 const credentialField =
   /^(?:password|passwd|token|secret|access_token|accessToken|refresh_token|refreshToken|id_token|api_key|apiKey|client_secret|clientSecret|private_key|privateKey|authorization|proxy-authorization|cookie|set-cookie)$/i
 
-export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
+export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOutput = false) => {
   const secrets = credentialValuesFromEnv()
   let maskedValues = 0
   const visit = (value: unknown, key?: string): unknown => {
@@ -55,6 +55,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>) => {
       return '[REDACTED_CREDENTIAL]'
     }
     if (typeof value === 'string') {
+      if (maskedOutput && key === 'text') return value
       const masked = maskCredentialValues(value, secrets)
       maskedValues += masked.maskedValues
       return masked.text
@@ -118,7 +119,7 @@ export const writeAuditLog = (
   payload: Record<string, unknown>,
   context = toolAuditContext.getStore() ?? null,
 ) => {
-  const sanitized = sanitizeAuditPayload(payload)
+  const sanitized = sanitizeAuditPayload(payload, event === 'process_output')
   const envelope = {
     msg: 'agents-shell audit',
     schemaVersion: 2,

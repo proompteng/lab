@@ -8,6 +8,11 @@ type ValueState = { terminator: string | null; escaped: boolean; privateKey: boo
 
 export class CredentialMasker {
   private pending = ''
+  private previousChar = ''
+  private consume(count: number) {
+    if (count > 0) this.previousChar = this.pending.slice(count - 1, count)
+    this.pending = this.pending.slice(count)
+  }
   private receivedBytes = 0
   get consumedBytes() {
     return this.receivedBytes - Buffer.byteLength(this.pending)
@@ -32,10 +37,10 @@ export class CredentialMasker {
         if (this.state.privateKey) {
           const end = /-----END (?:[A-Z]+ )?PRIVATE KEY-----/.exec(this.pending)
           if (!end) {
-            this.pending = final ? '' : this.pending.slice(-64)
+            this.consume(final ? this.pending.length : Math.max(0, this.pending.length - 64))
             break
           }
-          this.pending = this.pending.slice(end.index + end[0].length)
+          this.consume(end.index + end[0].length)
           this.state = null
           continue
         }
@@ -62,12 +67,12 @@ export class CredentialMasker {
           }
         }
         if (end < 0) {
-          this.pending = ''
+          this.consume(this.pending.length)
           break
         }
         // Keep the delimiter, including a closing quote, in the operational transcript.
         output += this.pending[end]
-        this.pending = this.pending.slice(end + 1)
+        this.consume(end + 1)
         this.state = null
         continue
       }
@@ -79,7 +84,7 @@ export class CredentialMasker {
           /(?:--user(?:=|\s+)|-u\s*)[^\s:]*$/i,
           /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@]*$/i,
           /(?:--token\b|["']token["'])\s*(?:[:=]\s*)?$/i,
-          /\b(?:password|passwd|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key)["']?\s*(?:[:=]\s*)?$/i,
+          /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key)["']?\s*(?:[:=]\s*)?$/i,
           /\b(?:Authorization|Proxy-Authorization)["']?\s*[:=]\s*["']?(?:(?:Bearer|Basic)\s*)?$/i,
         ].flatMap((pattern) => {
           const match = pattern.exec(this.pending)
@@ -95,10 +100,10 @@ export class CredentialMasker {
         { regex: /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/g, kind: 'pem' },
         { regex: /\b(?:Authorization|Proxy-Authorization)["']?\s*[:=]\s*["']?(?:Bearer|Basic)\s+/gi, kind: 'value' },
         { regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:(?=[^\s/@]*@)/gi, kind: 'url' },
-        { regex: /[?&](?:token|access_token|refresh_token|api_key|apikey|password|secret)=/gi, kind: 'query' },
+        { regex: /[?&](?:token|access_token|refresh_token|api_key|apikey|password|secret)=(["']?)/gi, kind: 'query' },
         {
           regex:
-            /\b(?:password|passwd|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key)\b["']?\s*[:=]\s*(["']?)/gi,
+            /\b(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key)\b["']?\s*[:=]\s*(["']?)/gi,
           kind: 'assignment',
         },
         {
@@ -109,16 +114,18 @@ export class CredentialMasker {
       ]
       patterns.push({ regex: /["'](?:token|secret)["']\s*:\s*(["'])/gi, kind: 'assignment' })
       patterns.push({ regex: /\bAWS_SECRET_ACCESS_KEY\s*=\s*(["']?)/g, kind: 'assignment' })
-      patterns.push({ regex: /(?:--user(?:=|\s+)|-u\s*)["']?[^\s:"']+:/g, kind: 'value' })
+      patterns.push({ regex: /(?:--user(?:=|\s+)|-u\s*)(["']?)[^\s:"']+:/g, kind: 'value' })
       patterns.push({
         regex: /--(?:password|passwd|token|api-key|client-secret|oauth2-bearer)\b(?:[\t ]*=[\t ]*|[\t ]+)(["']?)/gi,
         kind: 'assignment',
       })
       let found: { index: number; text: string; kind: string; quote?: string } | null = null
       for (const { regex, kind } of patterns) {
-        const match = regex.exec(this.pending)
-        if (match && (!found || match.index < found.index))
-          found = { index: match.index, text: match[0], kind, quote: match[1] }
+        const text = this.previousChar + this.pending
+        let match = regex.exec(text)
+        while (match && match.index < this.previousChar.length) match = regex.exec(text)
+        const index = match ? match.index - this.previousChar.length : -1
+        if (match && (!found || index < found.index)) found = { index, text: match[0], kind, quote: match[1] }
       }
       if (this.known) {
         this.known.lastIndex = 0
@@ -128,22 +135,31 @@ export class CredentialMasker {
       }
       if (!found || found.index >= safeEnd) {
         output += this.pending.slice(0, safeEnd)
-        this.pending = this.pending.slice(safeEnd)
+        this.consume(safeEnd)
         continue
       }
       output += this.pending.slice(0, found.index)
       if (found.kind !== 'known' && found.kind !== 'format' && found.kind !== 'pem') output += found.text
-      this.pending = this.pending.slice(found.index + found.text.length)
-      if (this.pending.startsWith(marker) && !['known', 'format', 'pem'].includes(found.kind)) {
+      this.consume(found.index + found.text.length)
+      const afterMarker = this.pending[marker.length]
+      const markerDelimited =
+        afterMarker === undefined
+          ? final
+          : found.quote
+            ? afterMarker === found.quote
+            : /[\s"'`,;)&}\]]/.test(afterMarker)
+      if (this.pending.startsWith(marker) && markerDelimited && !['known', 'format', 'pem'].includes(found.kind)) {
         output += marker
-        this.pending = this.pending.slice(marker.length)
+        this.consume(marker.length)
         continue
       }
+      if (this.pending.startsWith(marker) && !['known', 'format', 'pem'].includes(found.kind))
+        this.consume(marker.length)
       output += marker
       this.maskedValues += 1
       if (found.kind !== 'known') {
         this.state = {
-          terminator: found.kind === 'url' ? '@' : found.kind === 'query' ? '&' : found.quote || null,
+          terminator: found.quote || (found.kind === 'url' ? '@' : found.kind === 'query' ? '&' : null),
           escaped: false,
           privateKey: found.kind === 'pem',
         }

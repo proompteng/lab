@@ -20,6 +20,11 @@ Shell jobs have generated `jobId`, authenticated owner, optional `sessionId` and
 access. Owners can list all their agents across sessions; optional filters narrow that view. Other subjects cannot
 read, list or kill those jobs. Direct Git/kubectl processes have generated job IDs too. IDs are JSON fields, not Loki labels.
 
+Native workers should use separate repository sessions and pass a short stable `agentId` on each `shell_start` or
+`shell_run`, for example `{ "command": "bun test", "sessionId": "repo-example-12345678", "agentId": "test-worker" }`.
+Use distinct labels for parallel workers. Unlabeled calls remain visible by owner, job and call IDs. These records
+describe tool execution; they do not infer a native model's thinking or overall lifecycle.
+
 ```logql
 {namespace="agents"} |= "agents-shell audit" | json | subjectHash="<owner-hash>" | jobId="<job-id>"
 ```
@@ -50,7 +55,7 @@ payloads/fragments. Grafana's line limit is a query/page limit: page a bounded t
 3. Group output by job and stream, requiring contiguous `sequence` values and source-byte checkpoints
 4. Join `payload.text`; compare against the final byte/chunk totals and SHA-256
 
-Ordering is per stream, not a total stdout/stderr interleave. Masking changes displayed length. Invalid UTF-8 uses
+Ordering is per stream, not a total stdout/stderr interleave. Masking changes displayed length. The final event is the terminal source-byte checkpoint for masked tails and suppressed self-log frames, which need not emit a text chunk. Invalid UTF-8 uses
 replacement characters and sets `encodingLoss`. A reconstruction hash is supplied only for unmasked, UTF-8-preserving
 streams without self-log suppression. Missing frames/final events, sink/capture errors or hash mismatch mean completeness
 is unverified. Neither successful local writes nor readiness prove end-to-end Loki delivery.

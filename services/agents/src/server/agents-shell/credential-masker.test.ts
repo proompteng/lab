@@ -3,6 +3,10 @@ import { CredentialMasker, maskCredentialValues } from './credential-masker'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
+  ['curl --user "alice:first synthetic-test-secret" next', `curl --user "alice:${marker}" next`],
+  ["https://example.test?token='synthetic-test-secret'&limit=3", `https://example.test?token='${marker}'&limit=3`],
+  ['token=synthetic-test-secret next', `token=${marker} next`],
+  ['password=[REDACTED_CREDENTIAL]synthetic-test-secret next', `password=${marker} next`],
   ['curl -u name:synthetic-test-secret https://example.test', `curl -u name:${marker} https://example.test`],
   ['curl -uname:synthetic-test-secret https://example.test', `curl -uname:${marker} https://example.test`],
   ['curl --user=name:synthetic-test-secret https://example.test', `curl --user=name:${marker} https://example.test`],
@@ -55,6 +59,7 @@ describe('minimal streaming credential masking', () => {
   })
 
   it.each([
+    'A'.repeat(100) + 'notpassword=ordinary' + ' '.repeat(239),
     'git show abc123 -- src/token-count.ts',
     'tokenCount=400 token_budget=20000 sessionId=repo-agent-a requestId=abcd',
     'https://example.test:8080/path?limit=4',
@@ -67,6 +72,14 @@ describe('minimal streaming credential masking', () => {
     expect([...input].map((char) => masker.write(char)).join('') + masker.write('', true)).toBe(input)
     expect(masker.maskedValues).toBe(0)
     expect(masker.consumedBytes).toBe(Buffer.byteLength(input))
+  })
+
+  it('preserves lexical boundaries at every streaming carry split', () => {
+    const input = 'A'.repeat(100) + 'notpassword=ordinary' + ' '.repeat(239)
+    for (let split = 0; split <= input.length; split += 1) {
+      const masker = new CredentialMasker([])
+      expect(masker.write(input.slice(0, split)) + masker.write(input.slice(split), true)).toBe(input)
+    }
   })
 
   it('is idempotent for already marked credential values', () => {
