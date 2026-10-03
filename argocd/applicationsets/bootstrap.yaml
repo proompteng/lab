@@ -98,6 +98,22 @@ spec:
                         - /metadata/labels
                         - /metadata/ownerReferences
                         - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                    - kind: Secret
+                      name: bayn-research-captures
+                      namespace: rook-ceph
+                      jsonPointers:
+                        - /data
+                        - /metadata/labels
+                        - /metadata/ownerReferences
+                        - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                    - kind: ConfigMap
+                      name: bayn-research-captures
+                      namespace: rook-ceph
+                      jsonPointers:
+                        - /data
+                        - /metadata/labels
+                        - /metadata/ownerReferences
+                        - /metadata/annotations/argocd.argoproj.io~1tracking-id
                 - name: local-path
                   path: argocd/applications/local-path
                   namespace: local-path-storage

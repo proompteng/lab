@@ -7,6 +7,7 @@ resources:
   - alpaca-sealedsecret.yaml
   - objectbucketclaim.yaml
   - research-storage.yaml
+  - research-objectbucket.yaml
   - postgres-objectstore.yaml
   - postgres-cluster.yaml
   - postgres-monitoring.yaml
