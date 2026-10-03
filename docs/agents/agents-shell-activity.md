@@ -16,6 +16,14 @@ Grafana/Loki audience and pod-log pipeline; it does not change OAuth, scopes or 
 and are also returned in `_meta["agents-shell/trace"]`. A request rejected before reaching this server has no execution
 receipt; upstream cancellations must be diagnosed separately.
 
+HTTP receipts use the same generated `requestId`, returned as `x-agents-shell-request-id`, and the message
+`agents-shell http request`. `started` precedes authorization; fixed `phase` receipts locate authorization,
+connection, transport and cleanup. `aborted` records a request-signal observation once, without the reason, and
+does not stop a job. `failed` records an exception escaping a handler phase without its private text.
+`completed` records the constructed response's status and duration, not proof that the caller received it.
+Only fixed methods and paths are recorded; HTTP headers, query strings, bodies and user agents are excluded.
+SDK errors returned as responses are visible through completion status and need not emit an exception receipt.
+
 Shell jobs have generated `jobId`, authenticated owner, optional `sessionId` and advisory `agentId`. Labels never grant
 access. Owners can list all their agents across sessions; optional filters narrow that view. Other subjects cannot
 read, list or kill those jobs. Direct Git/kubectl processes have generated job IDs too. IDs are JSON fields, not Loki labels.
