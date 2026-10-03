@@ -121,9 +121,9 @@ digest-pinned guest image.
 - `Sleeping`: after 60 idle minutes the controller deletes only the Pod; the CR and PVC remain.
 - Resume: any authenticated file, terminal, preview, lifecycle, or Codex action sets the desired state to `Running` and
   waits for observed guest readiness before continuing.
-- Resource upgrade: retained 2 CPU/4 GiB guests keep running until sleep or there is no running owned guest. The
-  controller upgrades the next guest to 4 CPU/8 GiB while retaining the same CR, 16 GiB PVC, and workspace. Admission
-  permits this complete one-way upgrade and rejects partial profiles, workspace changes, and downgrades.
+- Resource profile: every guest uses 4 CPU, 8 GiB memory, and a 16 GiB workspace. The controller does not upgrade
+  resource values. During a hard deployment cutover, correct any existing MicroVM's CPU and memory values once,
+  then sleep/resume it while retaining the same CR and PVC. Admission rejects all other profiles and workspace changes.
 - Delete: the finalizer removes the Pod, bootstrap Secret, terminal capabilities, and PVC before removing the CR.
 - Retention: workspaces remain until their owner explicitly deletes the agent. Sleeping, elapsed creation deadlines,
   and controller releases never delete the CR or PVC. The legacy CR `expiresAt` field does not control retention;
