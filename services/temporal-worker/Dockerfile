@@ -3,7 +3,7 @@ FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af01
 RUN apk add --no-cache curl patch
 WORKDIR /temporal
 RUN curl --fail --location --retry 3 https://codeload.github.com/temporalio/temporal/tar.gz/19a774302c613da9adc4436ab14278ccdca8e0a5 -o /tmp/source.tar.gz \
-    && echo 'e034c4ff9ef8ae7d4a326bddb9f6793bee6255285cc19f9b58874d8ee21eb3e8  /tmp/source.tar.gz' | sha256sum --check \
+    && echo 'e034c4ff9ef8ae7d4a326bddb9f6793bee6255285cc19f9b58874d8ee21eb3e8  /tmp/source.tar.gz' | sha256sum -c - \
     && tar -xzf /tmp/source.tar.gz --strip-components=1 \
     && rm /tmp/source.tar.gz
 COPY host-resources.patch /tmp/host-resources.patch
