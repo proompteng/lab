@@ -36,17 +36,36 @@ mod cold_election_connection_proof {
             status_tx,
             command_rx,
         ).unwrap();
-        let mut change = ConfChangeV2::default();
-        change.set_changes((1..=3).map(|id| {
-            let mut entry = ConfChangeSingle::default();
-            entry.node_id = id;
-            entry.change_type = ConfChangeType::AddNode;
-            entry
-        }).collect::<Vec<_>>().into());
-        member.raw_node.apply_conf_change(&change).unwrap();
+        // Auto transitions with multiple changes use joint consensus, which cannot start
+        // from zero voters. Bootstrap with the pinned fork's valid simple-change protocol.
+        // No ticks or campaigns occur until all three voters and their progress exist.
         for id in 1_u32..=3 {
+            let mut entry = ConfChangeSingle::default();
+            entry.node_id = u64::from(id);
+            entry.change_type = ConfChangeType::AddNode;
+            let mut change = ConfChangeV2::default();
+            change.set_changes(vec![entry].into());
+            let state = member.raw_node.apply_conf_change(&change)
+                .expect("ELECTION_BOOTSTRAP: single-voter transition must succeed");
             member.configuration.members.insert(PlainNodeId::from(id), 1);
+            let expected: Vec<u64> = (1..=u64::from(id)).collect();
+            let mut voters = state.voters.clone();
+            voters.sort_unstable();
+            assert_eq!(voters, expected, "ELECTION_BOOTSTRAP: wrong voter set");
+            assert!(state.voters_outgoing.is_empty() && state.learners.is_empty()
+                && state.learners_next.is_empty() && !state.auto_leave,
+                "ELECTION_BOOTSTRAP: unexpected joint or learner state");
+            let mut progress: Vec<u64> = member.raw_node.raft.prs().iter()
+                .map(|(peer, _)| *peer).collect();
+            progress.sort_unstable();
+            assert_eq!(progress, expected, "ELECTION_BOOTSTRAP: wrong progress set");
         }
+        member.validate_metadata_server_configuration();
+        assert!(member.raw_node.raft.promotable(), "ELECTION_BOOTSTRAP: self is not a voter");
+        assert_eq!(member.raw_node.raft.state, raft::StateRole::Follower,
+            "ELECTION_BOOTSTRAP: must not campaign during bootstrap");
+        assert!(member.raw_node.raft.msgs.is_empty(), "ELECTION_BOOTSTRAP: unexpected messages");
+        println!("ELECTION_BOOTSTRAP_READY: three voters, non-joint, follower, no messages");
         // No external service is contacted. This loopback listener deliberately never completes
         // the metadata handshake; installing a channel below is the controlled readiness barrier.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
