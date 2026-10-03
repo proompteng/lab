@@ -12,6 +12,7 @@ import { DateTime, Effect, Redacted, Result } from 'effect'
 import { prepareAccounting } from '../accounting/domain'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import type { ForwardPerformanceConfig } from './config'
+import type { HistoricalSignalSnapshotConfig } from '../config/historical-signal'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
@@ -20,6 +21,7 @@ import { readForwardPerformancePostgres } from './postgres'
 import {
   bindForwardPerformanceTerminalReferencePrices,
   makeForwardPerformanceMarketVolumeEvidence,
+  readForwardPerformanceMarketVolume,
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformance,
   runForwardPerformanceReport,
@@ -35,7 +37,7 @@ const identityResult = makeBrokerIdentity({
 })
 if (Result.isFailure(identityResult)) throw new Error('broker identity fixture failed')
 
-const config: ForwardPerformanceConfig = {
+const config: ForwardPerformanceConfig & { readonly historicalSignal: HistoricalSignalSnapshotConfig } = {
   runtimeMode: 'AutonomousService',
   host: '127.0.0.1',
   port: 8080,
@@ -634,11 +636,14 @@ describe('forward performance read program', () => {
       },
     }
 
+    const { historicalSignal: _historicalSignal, ...nativeConfig } = config
     const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+      Effect.scoped(runForwardPerformance(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
     const report = await Effect.runPromise(
-      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+      Effect.scoped(
+        runForwardPerformanceReport(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql)),
+      ),
     )
     expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
     expect(report.receipt).toEqual(receipt)
@@ -1068,8 +1073,9 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     const client = Object.assign(statement, {
       param: (_type: string, value: unknown) => ({ value }),
     }) as unknown as ClickhouseClient.ClickhouseClient
+    const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
     const evidence = await Effect.runPromise(
-      readForwardPerformanceMarketVolumeWithClient(marketReaderConfig, [request]).pipe(
+      readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
         Effect.provideService(ClickhouseClient.ClickhouseClient, client),
       ),
     )
@@ -1084,3 +1090,48 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     })
   },
 )
+
+test.each(['legacy', 'mixed'] as const)(
+  'rejects %s market evidence without explicit legacy configuration before any query',
+  async (kind) => {
+    const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
+    const requests =
+      kind === 'legacy' ? [marketVolumeRequest] : [makeStreamingPerformanceFixture().request, marketVolumeRequest]
+    let queries = 0
+    const client = Object.assign(
+      () => {
+        queries += 1
+        return Effect.die(new Error('No market query is authorized by incomplete report configuration'))
+      },
+      { param: (_type: string, value: unknown) => ({ value }) },
+    ) as unknown as ClickhouseClient.ClickhouseClient
+    const result = await Effect.runPromise(
+      Effect.result(
+        readForwardPerformanceMarketVolumeWithClient(nativeConfig, requests).pipe(
+          Effect.provideService(ClickhouseClient.ClickhouseClient, client),
+        ),
+      ),
+    )
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ForwardPerformanceMarketVolumeError', operation: 'read' },
+    })
+    if (Result.isFailure(result)) expect(result.failure.message).toContain('BAYN_SIGNAL_*')
+    expect(queries).toBe(0)
+
+    // The production wrapper must reject before acquiring a ClickHouse client, not only before SQL.
+    const liveResult = await Effect.runPromise(
+      Effect.result(readForwardPerformanceMarketVolume(nativeConfig, requests)),
+    )
+    expect(liveResult).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ForwardPerformanceMarketVolumeError', operation: 'read' },
+    })
+    if (Result.isFailure(liveResult)) expect(liveResult.failure.message).toContain('BAYN_SIGNAL_*')
+  },
+)
+
+test('an empty native market-evidence request needs neither historical settings nor a client', async () => {
+  const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
+  expect(await Effect.runPromise(readForwardPerformanceMarketVolume(nativeConfig, []))).toEqual([])
+})
