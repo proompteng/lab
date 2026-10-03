@@ -4,6 +4,8 @@ import { parseAllDocuments } from 'yaml'
 import { sanitizeAuditPayload } from './audit'
 import {
   isSecretRead,
+  maskKubernetesSecretCreationArgs,
+  maskKubernetesSecretCreationCommand,
   maskKubernetesSecretText,
   secretCaptureMode,
   SECRET_DOCUMENT_BYTE_BUDGET,
@@ -12,6 +14,115 @@ import { OutputAudit } from './output-audit'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const secret = '{"data":{"registry":"c3ludGhldGljLWNyZWRlbnRpYWw="},"metadata":{"name":"fixture"},"kind":"Secret"}'
+
+describe('Kubernetes Secret creation literals', () => {
+  it.each([
+    'kubectl create secret generic demo --from-literal=registry=opaque-runtime-secret',
+    "kubectl create secret generic demo --from-literal 'registry=opaque-runtime-secret'",
+    'KUBECONFIG=/tmp/config kubectl create secret generic demo --from-literal=registry=opaque-runtime-secret',
+    'env -i KUBECONFIG=/tmp/config /usr/bin/kubectl -n agents create secret generic demo --from-literal=registry=opaque-runtime-secret',
+    'kubectl --context context -v 8 create --namespace agents secret generic demo --from-literal=registry=opaque-runtime-secret',
+    'kubectl --v 8 create secret generic demo --from-literal=registry=opaque-runtime-secret',
+    'kubectl create secret generic demo \\\n --from-literal=registry=opaque-runtime-secret',
+    "kubectl create secret generic demo --from-literal='registry=opaque-runtime-secret' --dry-run=client -o json",
+  ])('masks only the literal value in %s', (command) => {
+    const masked = maskKubernetesSecretCreationCommand(command)
+    expect(masked.text).toBe(command.replace('opaque-runtime-secret', marker))
+    expect(masked.values).toEqual(['opaque-runtime-secret'])
+    expect(masked.maskedValues).toBe(1)
+  })
+
+  it.each([
+    ["'registry=left right=tail'", 'left right=tail'],
+    ['registry=left\\ right\\;tail', 'left right;tail'],
+    ['registry=\'left\'" right"', 'left right'],
+    ['registry="left\\q\\$right"', 'left\\q$right'],
+    ["registry='left'\\''right'", "left'right"],
+    ['registry=left\\\nright', 'leftright'],
+    ["registry='left;right|tail&last'", 'left;right|tail&last'],
+  ])('decodes quoted/escaped literal %s without evaluating source', (argument, value) => {
+    const masked = maskKubernetesSecretCreationCommand(`kubectl create secret generic demo --from-literal ${argument}`)
+    expect(masked.values).toEqual([value])
+    expect(masked.text).toContain(`registry=`)
+    expect(masked.text).toContain(marker)
+    expect(masked.text).not.toContain('left')
+    expect(masked.text).not.toContain('right')
+  })
+
+  it.each([
+    'kubectl create configmap secret --from-literal=registry=ordinary',
+    'kubectl create configmap demo --from-literal registry=ordinary',
+    "echo 'kubectl create secret generic demo --from-literal=registry=ordinary'",
+    'kubectl --context create configmap secret --from-literal=registry=ordinary',
+  ])('preserves ordinary literals/source in %s', (command) => {
+    expect(maskKubernetesSecretCreationCommand(command)).toEqual({ text: command, values: [], maskedValues: 0 })
+  })
+
+  it('masks attached/separate argv operands and preserves command/resource/key names', () => {
+    const args = [
+      'create',
+      'secret',
+      'generic',
+      'demo',
+      '--from-literal=registry=demo',
+      '--from-literal',
+      'another=left;right=tail',
+    ]
+    expect(maskKubernetesSecretCreationArgs(args)).toEqual({
+      args: [
+        'create',
+        'secret',
+        'generic',
+        'demo',
+        `--from-literal=registry=${marker}`,
+        '--from-literal',
+        `another=${marker}`,
+      ],
+      values: ['demo', 'left;right=tail'],
+      maskedValues: 2,
+    })
+    expect(args[4]).toBe('--from-literal=registry=demo')
+    const ordinary = ['create', 'configmap', 'secret', '--from-literal=registry=ordinary']
+    expect(maskKubernetesSecretCreationArgs(ordinary).args).toEqual(ordinary)
+  })
+
+  it('masks actual literal echo arguments while preserving creation identifiers with the same text', () => {
+    const command = "kubectl create secret generic demo --from-literal=registry=demo; printf '%s\\n' 'demo'"
+    expect(maskKubernetesSecretCreationCommand(command).text).toBe(
+      `kubectl create secret generic demo --from-literal=registry=${marker}; printf '%s\\n' '${marker}'`,
+    )
+    const escaped = "kubectl create secret generic demo --from-literal=registry='left right'; printf '%s' left\\ right"
+    expect(maskKubernetesSecretCreationCommand(escaped).text).toBe(
+      `kubectl create secret generic demo --from-literal=registry='${marker}'; printf '%s' ${marker}`,
+    )
+  })
+
+  it('fails closed after recognizing dynamic, ambiguous or oversized literal contexts', () => {
+    for (const argument of ['registry=$VALUE', "registry='unterminated", `registry=${'x'.repeat(4097)}`])
+      expect(() =>
+        maskKubernetesSecretCreationCommand(`kubectl create secret generic demo --from-literal=${argument}`),
+      ).toThrow()
+    expect(() =>
+      maskKubernetesSecretCreationCommand(
+        `kubectl create secret generic demo ${'arg '.repeat(260)} --from-literal=registry=tail`,
+      ),
+    ).toThrow()
+    expect(() =>
+      maskKubernetesSecretCreationArgs([
+        'create',
+        'secret',
+        'generic',
+        'demo',
+        `--from-literal=registry=${'x'.repeat(4097)}`,
+      ]),
+    ).toThrow()
+    expect(() =>
+      maskKubernetesSecretCreationCommand(
+        `kubectl create secret generic demo --from-literal=registry=abcd${'; echo abcd'.repeat(256)}`,
+      ),
+    ).toThrow('span capture')
+  })
+})
 
 describe('known Kubernetes Secret containers', () => {
   it('preserves JSON formatting/metadata/key names when kind follows credential data', () => {

@@ -10,12 +10,30 @@ import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
 import { OUTPUT_RETENTION_BYTES } from './constants'
 import { OutputAudit } from './output-audit'
-import { secretCaptureMode } from './kubernetes-secret-masker'
+import {
+  maskKubernetesSecretCreationCommand,
+  secretCaptureMode,
+  secretCreationCredentialValues,
+  type SecretCaptureMode,
+} from './kubernetes-secret-masker'
 import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
 import { asPositiveInteger } from './limits'
 import { formatCommand, toProcessResult, type ProcessResult } from './process-runner'
 import { createRepoSessionIdentity, RepoSessionStore } from './repo-sessions'
 import { isInsidePath, resolveExistingDirectory } from './workspace-policy'
+
+const outputSecretContext = (command: string): { mode: SecretCaptureMode | null; credentials: string[] } => {
+  try {
+    const values = maskKubernetesSecretCreationCommand(command).values
+    return {
+      mode: values.some((value) => value.length < 4) ? 'projection' : secretCaptureMode(command),
+      credentials: secretCreationCredentialValues(values),
+    }
+  } catch {
+    // Capture omission must not turn an otherwise valid Secret command into a failed caller operation.
+    return { mode: 'projection', credentials: [] }
+  }
+}
 
 export class AgentsShellRunner {
   readonly config: AgentsShellConfig
@@ -291,6 +309,7 @@ export class AgentsShellRunner {
       auditErrors: 0,
     }
 
+    const secretContext = outputSecretContext(input.command)
     const outputAudit = (stream: 'stdout' | 'stderr') =>
       new OutputAudit(
         stream,
@@ -306,7 +325,8 @@ export class AgentsShellRunner {
             },
             auditContext,
           ),
-        secretCaptureMode(input.command),
+        secretContext.mode,
+        secretContext.credentials,
       )
     let lastOutputAt = performance.now()
     const stdoutAudit = outputAudit('stdout')
@@ -514,6 +534,7 @@ export class AgentsShellRunner {
           const commandLine = formatCommand(options.command, options.args)
           const jobId = randomUUID()
           const auditContext = toolAuditContext.getStore() ?? null
+          const secretContext = outputSecretContext(commandLine)
           const outputAudit = (stream: 'stdout' | 'stderr') =>
             new OutputAudit(
               stream,
@@ -526,7 +547,8 @@ export class AgentsShellRunner {
                       { jobId, sessionId: session?.id ?? null, ...payload },
                       auditContext,
                     ),
-              secretCaptureMode(commandLine),
+              secretContext.mode,
+              secretContext.credentials,
             )
           const stdoutAudit = outputAudit('stdout')
           const stderrAudit = outputAudit('stderr')

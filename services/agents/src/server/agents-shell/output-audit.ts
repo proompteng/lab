@@ -3,7 +3,7 @@ import { StringDecoder } from 'node:string_decoder'
 import type { Readable } from 'node:stream'
 
 import { isOwnAuditFrame } from './audit'
-import { CredentialMasker } from './credential-masker'
+import { CredentialMasker, credentialValuesFromEnv } from './credential-masker'
 import {
   maskKubernetesSecretText,
   SECRET_DOCUMENT_BYTE_BUDGET,
@@ -15,7 +15,7 @@ export class OutputAudit {
   private readonly decoder = new StringDecoder('utf8')
   private readonly validator = new TextDecoder('utf-8', { fatal: true })
   private encodingLoss = false
-  private readonly masker = new CredentialMasker()
+  private readonly masker: CredentialMasker
   private lineBuffer = ''
   private selfAuditFrames = 0
   private selfAuditBytes = 0
@@ -36,7 +36,10 @@ export class OutputAudit {
     private readonly stream: 'stdout' | 'stderr',
     private readonly emit: (event: string, payload: Record<string, unknown>) => number,
     private readonly secretSource: SecretCaptureMode | null = null,
-  ) {}
+    credentialValues: string[] = [],
+  ) {
+    this.masker = new CredentialMasker([...credentialValuesFromEnv(), ...credentialValues])
+  }
 
   write(chunk: Buffer, source: Readable, onFailure: () => void) {
     this.receivedBytes += chunk.length

@@ -7,7 +7,14 @@ import { auditPayloadBudget } from './audit-budget'
 import { BoundedAuditWriter } from './audit-writer'
 import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
-import { isSecretRead, maskKubernetesSecretText, secretCaptureMode } from './kubernetes-secret-masker'
+import {
+  isSecretRead,
+  maskKubernetesSecretCreationArgs,
+  maskKubernetesSecretCreationCommand,
+  maskKubernetesSecretText,
+  secretCaptureMode,
+  secretCreationCredentialValues,
+} from './kubernetes-secret-masker'
 import {
   credentialEnv,
   credentialOptionNames,
@@ -47,8 +54,57 @@ export const isOwnAuditFrame = (line: string) => {
 const credentialField =
   /^(?:password|passwd|token|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|private[_-]?key|authorization|proxy[-_]authorization|http_authorization|cookie|set-cookie|secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token|auth[_-]?token|reconnect[_-]?token|github[_-]?token|db[_-]?password|admin[_-]?password|nats[_-]?password|discord[_-]?bot[_-]?token|bot[_-]?token|github[_-]?webhook[_-]?secret|linear[_-]?webhook[_-]?secret|webhook[_-]?secret|openai[_-]?api[_-]?key|bedrock[_-]?api[_-]?key|cloud[_-]?api[_-]?key|principal[_-]?api[_-]?key|personal[_-]?access[_-]?token|ssh[_-]?private[_-]?key|root[_-]?password|loki[_-]?secret[_-]?key|tempo[_-]?secret[_-]?key|mimir[_-]?secret[_-]?key|auth[_-]?key|tailscale[_-]?auth[_-]?key|signing[_-]?passphrase|passphrase|client-key-data|_authToken|_auth|_password)$/i
 
-export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOutput = false) => {
+export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOutput = false, tool?: string) => {
   const secrets = credentialValuesFromEnv()
+  const commands = new WeakMap<object, ReturnType<typeof maskKubernetesSecretCreationCommand>>()
+  const argumentsMasks = new WeakMap<object, ReturnType<typeof maskKubernetesSecretCreationArgs>>()
+  const creationValues = new Set<string>()
+  let creationCharacters = 0
+  const collectCreationValues = (values: string[]) => {
+    for (const value of values) {
+      if (creationValues.has(value)) continue
+      creationValues.add(value)
+      creationCharacters += value.length
+      if (creationValues.size > 256 || creationCharacters > 65_536)
+        throw new Error('Secret creation literals exceeded bounded payload capture')
+    }
+  }
+  const trustedArguments =
+    tool === 'kubectl' || tool === 'kubectl_admin' ? Object.getOwnPropertyDescriptor(payload, 'arguments')?.value : null
+  const inspect = (value: unknown) => {
+    if (value === null || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1)
+        inspect(Object.getOwnPropertyDescriptor(value, String(index))?.value)
+      return
+    }
+    const command = Object.getOwnPropertyDescriptor(value, 'command')?.value
+    if (typeof command === 'string') {
+      const masked = maskKubernetesSecretCreationCommand(command)
+      commands.set(value, masked)
+      collectCreationValues(masked.values)
+    }
+    const args = Object.getOwnPropertyDescriptor(value, 'args')?.value
+    if (Array.isArray(args) && (value === trustedArguments || commands.get(value)?.maskedValues)) {
+      const strings = Array.from(
+        { length: args.length },
+        (_, index) => Object.getOwnPropertyDescriptor(args, String(index))?.value,
+      )
+      if (strings.every((item): item is string => typeof item === 'string')) {
+        const masked = maskKubernetesSecretCreationArgs(strings)
+        argumentsMasks.set(args, masked)
+        collectCreationValues(masked.values)
+      }
+    }
+    for (const key of Object.keys(value)) {
+      if (key !== '_meta') inspect(Object.getOwnPropertyDescriptor(value, key)?.value)
+    }
+  }
+  inspect(payload)
+  // A short literal cannot be replaced globally without erasing ordinary text. Omit capture explicitly instead.
+  if ([...creationValues].some((value) => value.length < 4))
+    throw new Error('Short Secret literal output cannot be safely captured')
+  const outputSecrets = [...secrets, ...secretCreationCredentialValues([...creationValues])]
   let maskedValues = 0
   const visit = (value: unknown, key?: string, secretSource: string | null = null, secretItem = false): unknown => {
     if (
@@ -67,15 +123,23 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
         key === 'stderr',
       )
       maskedValues += structural.maskedValues
-      const masked = maskCredentialValues(structural.text, secrets)
+      const masked = maskCredentialValues(
+        structural.text,
+        key === 'command' || key === 'args' ? secrets : outputSecrets,
+      )
       maskedValues += masked.maskedValues
       return masked.text
     }
     if (Array.isArray(value)) {
+      const secretArgs = argumentsMasks.get(value)
+      if (secretArgs) {
+        maskedValues += secretArgs.maskedValues
+      }
+      const items = secretArgs?.args ?? value
       let maskNext = false
       let userNext = false
-      return Array.from({ length: value.length }, (_, index) => {
-        const item = Object.getOwnPropertyDescriptor(value, String(index))?.value
+      return Array.from({ length: items.length }, (_, index) => {
+        const item = Object.getOwnPropertyDescriptor(items, String(index))?.value
         if (userNext) {
           userNext = false
           if (typeof item === 'string' && item.includes(':')) {
@@ -95,6 +159,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
     }
     if (value !== null && typeof value === 'object') {
       const record = value as Record<string, unknown>
+      const secretCommand = commands.get(record)
       const kind = Object.getOwnPropertyDescriptor(record, 'kind')?.value
       const secret = kind === 'Secret' || secretItem
       const command = Object.getOwnPropertyDescriptor(record, 'command')?.value
@@ -118,6 +183,8 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
           .filter((name) => name !== '_meta')
           .map((name) => {
             const item = Object.getOwnPropertyDescriptor(record, name)?.value
+            const safeItem = name === 'command' && secretCommand ? secretCommand.text : item
+            if (name === 'command' && secretCommand) maskedValues += secretCommand.maskedValues
             const credentialName =
               name === 'value' &&
               typeof envName === 'string' &&
@@ -129,7 +196,7 @@ export const sanitizeAuditPayload = (payload: Record<string, unknown>, maskedOut
               secret && (name === 'data' || name === 'stringData')
                 ? maskContainer(item)
                 : visit(
-                    item,
+                    safeItem,
                     credentialName,
                     (name === 'stdout' || name === 'stderr') && typeof command === 'string' && isSecretRead(command)
                       ? command
@@ -172,7 +239,7 @@ export const writeAuditLog = (
   let budget = sourceBudget
   if (sourceBudget.accepted) {
     try {
-      sanitized = sanitizeAuditPayload(payload, event === 'process_output')
+      sanitized = sanitizeAuditPayload(payload, event === 'process_output', context?.tool)
       budget = auditPayloadBudget(sanitized.payload)
     } catch {
       budget = { ...sourceBudget, accepted: false, reason: 'credential_capture_unavailable' }

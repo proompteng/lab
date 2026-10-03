@@ -1095,9 +1095,9 @@ fi
         stdout?: string
       }
       expect(content.command).toContain('rg --line-number --no-heading --color=never --hidden')
-      expect(content.command).toContain('-g !.git/**')
-      expect(content.command).toContain('-g !node_modules/**')
-      expect(content.command).toContain('-g !schemas/custom/**')
+      expect(content.command).toContain("-g '!.git/**'")
+      expect(content.command).toContain("-g '!node_modules/**'")
+      expect(content.command).toContain("-g '!schemas/custom/**'")
       expect(content.command).toContain('--fixed-strings createAgentsShellServer .')
       expect(content.exitCode).toBe(0)
       expect(content.stdout).toContain('src/agents-shell.ts:1:export const createAgentsShellServer = true')

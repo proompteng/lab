@@ -3,20 +3,30 @@ import { CST, Lexer, isAlias, isMap, isScalar, isSeq, parseAllDocuments } from '
 export const SECRET_DOCUMENT_BYTE_BUDGET = 4 * 1024 * 1024
 const marker = '[REDACTED_CREDENTIAL]'
 export type SecretCaptureMode = 'document' | 'metadata' | 'projection'
-const normalizeCommand = (command: string) => command.replace(/\\\r?\n/g, ' ')
-type CommandWord = { value: string; literal: boolean; assignment: boolean }
+type CommandWord = {
+  value: string
+  literal: boolean
+  assignment: boolean
+  sourcePositions: number[]
+  sourceEnd: number
+}
 const COMMAND_WORD_LIMIT = 256
 const COMMAND_WORD_CHARACTER_LIMIT = 4096
 
 // Recognize simple command words without evaluating expansions or indirect scripts.
 // Quotes protect source text from becoming a command boundary; retained words have fixed bounds.
 function* commandWords(command: string) {
-  const text = normalizeCommand(command)
+  const text = command
   let words: CommandWord[] = []
   let ambiguous = false
   let prefix: 'assignments' | 'env' | 'envOperand' | 'arguments' = 'assignments'
   let envOptions = true
   for (let index = 0; index < text.length; ) {
+    const continuation = /^\\\r?\n/.exec(text.slice(index, index + 3))
+    if (continuation) {
+      index += continuation[0].length
+      continue
+    }
     if (/[;|&\n]/.test(text[index])) {
       yield { words, ambiguous }
       words = []
@@ -43,12 +53,32 @@ function* commandWords(command: string) {
     let quote: string | null = null
     let value = ''
     let literal = true
+    const sourcePositions: number[] = []
+    let sourceEnd = index
     while (index < text.length) {
       const character = text[index]
       if (!quote && (/[\s;|&]/.test(character) || text.startsWith('<<', index))) break
       index += 1
       if (character === '\\' && quote !== "'" && index < text.length) {
-        if (value.length < COMMAND_WORD_CHARACTER_LIMIT) value += text[index]
+        const continuation = /^\r?\n/.exec(text.slice(index, index + 2))
+        if (continuation) {
+          index += continuation[0].length
+          continue
+        }
+        // Double quotes only consume escapes for the shell's special characters.
+        if (quote === '"' && !/[$`"\\]/.test(text[index])) {
+          if (value.length < COMMAND_WORD_CHARACTER_LIMIT) {
+            sourcePositions.push(index - 1)
+            value += character
+            sourceEnd = index
+          }
+          continue
+        }
+        if (value.length < COMMAND_WORD_CHARACTER_LIMIT) {
+          sourcePositions.push(index - 1)
+          value += text[index]
+          sourceEnd = index + 1
+        }
         index += 1
         continue
       }
@@ -62,11 +92,21 @@ function* commandWords(command: string) {
         continue
       }
       if (quote !== "'" && (character === '$' || character === '`')) literal = false
-      if (value.length < COMMAND_WORD_CHARACTER_LIMIT) value += character
+      if (value.length < COMMAND_WORD_CHARACTER_LIMIT) {
+        sourcePositions.push(index - 1)
+        value += character
+        sourceEnd = index
+      }
     }
     const raw = text.slice(start, Math.min(index, start + COMMAND_WORD_CHARACTER_LIMIT))
     if (quote || index - start > COMMAND_WORD_CHARACTER_LIMIT) ambiguous = true
-    const word = { value, literal: literal && !quote, assignment: /^[A-Za-z_][A-Za-z0-9_]*=/.test(raw) }
+    const word = {
+      value,
+      literal: literal && !quote,
+      assignment: /^[A-Za-z_][A-Za-z0-9_]*=/.test(raw),
+      sourcePositions,
+      sourceEnd,
+    }
     // Prefixes need only finite state, so long assignment lists cannot evict the executable.
     if (prefix === 'assignments') {
       if (word.assignment) continue
@@ -148,6 +188,130 @@ export const secretCaptureMode = (command: string): SecretCaptureMode | null => 
   return mode
 }
 export const isSecretRead = (command: string) => secretCaptureMode(command) !== null
+
+const kubectlGlobalOperand =
+  /^(?:--namespace|--context|--kubeconfig|--server|--user|--cluster|--as|--as-group|--cache-dir|--request-timeout|--certificate-authority|--client-certificate|--client-key|--token|--tls-server-name|--v|--vmodule|--log-flush-frequency|--profile|--profile-output|-n|-s|-v)$/
+const createsGenericSecret = (words: CommandWord[]) => {
+  if (!executableIs(words[0], 'kubectl')) return false
+  let path = 0
+  for (let index = 1; index < words.length; index += 1) {
+    const word = words[index]
+    if (!word.literal) return false
+    if (kubectlGlobalOperand.test(word.value)) {
+      index += 1
+      continue
+    }
+    if (word.value.startsWith('-')) continue
+    if (word.value !== ['create', 'secret', 'generic'][path]) return false
+    if (++path === 3) return true
+  }
+  return false
+}
+
+const secretLiterals = (words: CommandWord[], ambiguous: boolean) => {
+  const literals: { word: CommandWord; valueOffset: number; value: string }[] = []
+  if (!createsGenericSecret(words)) return literals
+  if (ambiguous) throw new Error('Secret creation command exceeded bounded literal capture')
+  for (let index = 1; index < words.length; index += 1) {
+    const option = words[index]
+    if (option.value === '--') break
+    let word = option
+    let offset = 0
+    if (option.value === '--from-literal') {
+      const operand = words[++index]
+      if (!operand) throw new Error('Secret creation literal has no bounded operand')
+      word = operand
+    } else if (option.value.startsWith('--from-literal=')) offset = '--from-literal='.length
+    else continue
+    const delimiter = word.value.indexOf('=', offset)
+    if (!option.literal || !word.literal || delimiter <= offset)
+      throw new Error('Secret creation literal cannot be safely decoded')
+    const valueOffset = delimiter + 1
+    const value = word.value.slice(valueOffset)
+    if (value) literals.push({ word, valueOffset, value })
+  }
+  return literals
+}
+
+const checkLiteralBudget = (values: string[]) => {
+  if (values.length > COMMAND_WORD_LIMIT || values.reduce((total, value) => total + value.length, 0) > 65_536)
+    throw new Error('Secret creation literals exceeded bounded value capture')
+}
+
+export const maskKubernetesSecretCreationCommand = (command: string) => {
+  const spans: { start: number; end: number }[] = []
+  const appendSpan = (span: { start: number; end: number }) => {
+    if (spans.length >= COMMAND_WORD_LIMIT) throw new Error('Secret literal source exceeded bounded span capture')
+    spans.push(span)
+  }
+  const values: string[] = []
+  for (const candidate of commandWords(command)) {
+    for (const literal of secretLiterals(candidate.words, candidate.ambiguous)) {
+      const start = literal.word.sourcePositions[literal.valueOffset]
+      if (start === undefined) throw new Error('Secret creation literal source cannot be safely located')
+      appendSpan({ start, end: literal.word.sourceEnd })
+      values.push(literal.value)
+      checkLiteralBudget(values)
+    }
+  }
+  if (values.length) {
+    const known = new RegExp(
+      [...new Set(values)]
+        .sort((left, right) => right.length - left.length)
+        .map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|'),
+      'g',
+    )
+    for (const candidate of commandWords(command)) {
+      if (candidate.ambiguous) throw new Error('Secret literal command echo exceeded bounded source capture')
+      // Keep the creation's executable, resource and key names intact, even when a literal has the same value.
+      if (createsGenericSecret(candidate.words)) continue
+      for (const word of candidate.words.slice(1)) {
+        for (const match of word.value.matchAll(known)) {
+          const start = word.sourcePositions[match.index]
+          if (start === undefined) throw new Error('Secret literal echo source cannot be safely located')
+          appendSpan({ start, end: word.sourcePositions[match.index + match[0].length] ?? word.sourceEnd })
+        }
+      }
+    }
+  }
+  const chunks: string[] = []
+  let cursor = 0
+  for (const span of spans.sort((left, right) => left.start - right.start)) {
+    chunks.push(command.slice(cursor, span.start), marker)
+    cursor = span.end
+  }
+  chunks.push(command.slice(cursor))
+  const text = chunks.join('')
+  return { text, values, maskedValues: spans.length }
+}
+
+export const maskKubernetesSecretCreationArgs = (args: string[]) => {
+  const words = ['kubectl', ...args].slice(0, COMMAND_WORD_LIMIT).map((value) => ({
+    value: value.slice(0, COMMAND_WORD_CHARACTER_LIMIT),
+    literal: true,
+    assignment: false,
+    sourcePositions: [],
+    sourceEnd: 0,
+  }))
+  const literals = secretLiterals(
+    words,
+    args.length + 1 > COMMAND_WORD_LIMIT || args.some((value) => value.length > COMMAND_WORD_CHARACTER_LIMIT),
+  )
+  const values = literals.map((literal) => literal.value)
+  checkLiteralBudget(values)
+  const masked = new Map(
+    literals.map((literal) => [literal.word, literal.word.value.slice(0, literal.valueOffset) + marker]),
+  )
+  return {
+    args: args.map((value, index) => masked.get(words[index + 1]) ?? value),
+    values,
+    maskedValues: literals.length,
+  }
+}
+
+export const secretCreationCredentialValues = (values: string[]) =>
+  values.flatMap((value) => [value, Buffer.from(value).toString('base64'), encodeURIComponent(value)])
 
 const preflightSecretSyntax = (text: string) => {
   let tokens = 0

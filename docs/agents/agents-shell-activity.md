@@ -141,6 +141,14 @@ Secret API paths. Prefixes use finite state; retained executable/argument words 
 characters per word. Ambiguous syntax after a recognized Secret read produces incomplete capture. Indirect wrappers,
 `env -S` and arbitrary scripts remain outside this recognition path.
 
+Explicit `kubectl create secret generic --from-literal` arguments have a separate credential context. Attached and
+separate `key=value` operands retain the option, resource and key names while masking the value in argument and command
+audits. Decoded literal values and their base64/URI forms also mask echoes on both child streams. ConfigMap literals
+remain ordinary content. Displayed command arguments preserve shell word boundaries; execution uses the original argv.
+Literal capture admits at most 256 values and 65,536 characters within the word bounds above. Short values, ambiguous
+syntax and exceeded bounds produce explicit incomplete capture; the authorized command and original result continue.
+This covers recognized generic Secret literals, not every indirect credential source or Secret creation form.
+
 Structurally masked streams use terminal source-byte checkpoints (`sourceByteCheckpointOnly`), not a byte-for-byte
 reconstruction claim; source hashes are omitted when values are masked. Escaped command newlines are normalized, but
 this is not a full shell parser and cannot identify arbitrary indirect scripts or transformed credential sources.
