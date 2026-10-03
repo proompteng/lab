@@ -1,0 +1,529 @@
+import { expect, test } from 'bun:test'
+import { Cause, Deferred, Effect, Exit, Fiber, Result, Schema } from 'effect'
+import { TestClock } from 'effect/testing'
+import fc from 'fast-check'
+
+import { provideTestLayer } from '../effect-test-support'
+import { sha256 } from '../hash'
+import {
+  CaptureDisposition,
+  CaptureInvalidation,
+  CaptureQualification,
+  ResearchCaptureFailure,
+  encodeResearchCapture,
+  type ResearchCaptureBytes,
+  type ResearchCaptureChunk,
+  type ResearchCaptureSeal,
+} from './capture'
+import { captureEvent, marketEvent } from './capture.test-support'
+import {
+  buildResearchCaptureExportChunk,
+  ResearchCaptureByteIndexSchema,
+  ResearchCaptureExportManifestSchema,
+  researchCaptureObject,
+  researchCaptureExportEnvelopeReservation,
+  researchCaptureExportEntryReservation,
+  verifyResearchCaptureExport,
+  type ResearchCaptureObject,
+  type ResearchCaptureObjectStore,
+} from './export'
+import { makeResearchCaptureRecorder, type ResearchCaptureStore } from './recorder'
+
+const options = {
+  captureId: 'capture-raw',
+  sourceRevision: 'a'.repeat(40),
+  maximumQueuedReceipts: 32,
+  maximumQueuedBytes: 256 * 1024,
+  maximumReceiptBytes: 4096,
+  flushIntervalMs: 10,
+  writeTimeoutMs: 50,
+}
+const run = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
+  Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
+const text = (object: ResearchCaptureObject): ResearchCaptureBytes => ({
+  contentHash: object.contentHash,
+  payload: Buffer.from(object.payload).toString('utf8'),
+})
+const memory = () => {
+  const chunks: ResearchCaptureBytes[] = []
+  const seals: ResearchCaptureBytes[] = []
+  const objects: ResearchCaptureObject[] = []
+  const store: ResearchCaptureStore = {
+    append: (value) =>
+      Effect.sync(() => {
+        chunks.push(value)
+      }),
+    seal: (value) =>
+      Effect.sync(() => {
+        seals.push(value)
+      }),
+  }
+  const objectStore: ResearchCaptureObjectStore = {
+    putVerified: (object) =>
+      Effect.sync(() => {
+        objects.push({ ...object, payload: Buffer.from(object.payload) })
+      }),
+  }
+  const verify = () => {
+    const seal = seals[0]
+    const manifest = objects.at(-1)
+    if (seal === undefined || manifest === undefined) throw new Error('Expected finalized export')
+    const exported = chunks.map((metadata, index) => {
+      const raw = objects[index * 3]
+      const rangeIndex = objects[index * 3 + 2]
+      if (raw === undefined || rangeIndex === undefined) throw new Error('Expected exported chunk')
+      return { metadata, index: text(rangeIndex), raw: raw.payload }
+    })
+    return verifyResearchCaptureExport(exported, seal, text(manifest))
+  }
+  return { chunks, seals, objects, store, objectStore, verify }
+}
+
+test('raw capture owns exact malformed, ignored, empty and tombstone bytes while metadata remains unqualified', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const saved = memory()
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, options, saved.objectStore)
+      recorder.record(captureEvent('STARTED'), 100)
+      const originals = [Buffer.from([0x80]), Buffer.from([0x81]), Buffer.alloc(0), null]
+      for (const [index, raw] of originals.entries()) {
+        recorder.record(
+          {
+            ...marketEvent,
+            consumerSequence: index + 1,
+            offset: String(index),
+            rawValueSha256: raw === null ? null : sha256(raw),
+            rawByteLength: raw?.byteLength ?? null,
+            tombstone: raw === null,
+            disposition: index === 1 ? CaptureDisposition.Ignored : CaptureDisposition.Rejected,
+          },
+          100,
+          raw,
+        )
+        raw?.fill(0xff)
+      }
+      recorder.record(captureEvent('STOPPED'), 100)
+      const before = yield* recorder.status
+      expect(before.retainedPayloadBytes).toBeLessThanOrEqual(options.maximumQueuedBytes)
+      const seal = yield* recorder.finish
+      expect(yield* recorder.finish).toEqual(seal)
+      expect(saved.seals).toHaveLength(1)
+      expect(saved.objects).toHaveLength(5)
+      expect(saved.objects[0]?.payload).toEqual(Buffer.from([0x80, 0x81]))
+      const verified = Result.getOrThrow(saved.verify())
+      expect(verified.structurallyClosed).toBe(true)
+      expect(verified.exportVerified).toBe(true)
+      expect(verified.complete).toBe(false)
+      expect(verified.seal.qualification).toBe(CaptureQualification.Unqualified)
+      expect((yield* recorder.status).exportManifestHash).toBe(saved.objects.at(-1)?.contentHash ?? null)
+      expect((yield* recorder.status).retainedReceipts).toBe(0)
+    }),
+  ))
+
+test.each(['missing', 'wrong-length', 'wrong-hash', 'tombstone-bytes'] as const)(
+  'raw admission rejects %s before any raw export',
+  (fault) =>
+    run(
+      Effect.gen(function* () {
+        const saved = memory()
+        const recorder = yield* makeResearchCaptureRecorder(saved.store, options, saved.objectStore)
+        const raw = fault === 'missing' ? undefined : fault === 'wrong-length' ? Buffer.alloc(1) : Buffer.from('xx')
+        recorder.record(
+          fault === 'tombstone-bytes'
+            ? { ...marketEvent, tombstone: true, rawByteLength: null, rawValueSha256: null }
+            : marketEvent,
+          100,
+          raw,
+        )
+        const seal = yield* recorder.finish
+        expect(seal?.invalidations).toContain(CaptureInvalidation.MissingRawIdentity)
+        expect(saved.chunks).toHaveLength(0)
+        expect(saved.objects).toHaveLength(2)
+      }),
+    ),
+)
+
+test('in-flight payload and receipt reservations cannot be reused by nonblocking admission', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      let blocked = false
+      const recorder = yield* makeResearchCaptureRecorder(
+        saved.store,
+        { ...options, maximumQueuedReceipts: 1 },
+        {
+          putVerified: (object) =>
+            Effect.gen(function* () {
+              if (!blocked) {
+                blocked = true
+                yield* Deferred.succeed(entered, undefined)
+                yield* Deferred.await(release)
+              }
+              yield* saved.objectStore.putVerified(object)
+            }),
+        },
+      )
+      recorder.record(captureEvent('STARTED'), 100)
+      const admitted = yield* recorder.status
+      yield* TestClock.adjust(10)
+      yield* Deferred.await(entered)
+      expect((yield* recorder.status).retainedPayloadBytes).toBe(admitted.retainedPayloadBytes)
+      expect(recorder.record(captureEvent('STOPPED'), 100)).toBeUndefined()
+      expect((yield* recorder.status).invalidations).toContain(CaptureInvalidation.Overflow)
+      yield* Deferred.succeed(release, undefined)
+      const seal = yield* recorder.finish
+      expect(seal?.persistedReceipts).toBe(1)
+      expect(seal?.observedReceipts).toBe(2)
+      expect((yield* recorder.status).retainedPayloadBytes).toBe(researchCaptureExportEnvelopeReservation)
+    }),
+  ))
+
+test.each(['sql-append', 'object-ack', 'object-defect', 'object-throw', 'object-interrupt'] as const)(
+  '%s failure never advances the durable raw frontier or changes the owner result',
+  (fault) =>
+    run(
+      Effect.gen(function* () {
+        const saved = memory()
+        let attempts = 0
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            ...saved.store,
+            append: (bytes) =>
+              fault === 'sql-append'
+                ? saved.store
+                    .append(bytes)
+                    .pipe(
+                      Effect.andThen(Effect.fail(new ResearchCaptureFailure({ message: 'SQL acknowledgement lost' }))),
+                    )
+                : saved.store.append(bytes),
+          },
+          options,
+          {
+            putVerified: (object) => {
+              attempts++
+              if (attempts === 1 && fault === 'object-throw') throw new Error('sink defect')
+              if (attempts === 1 && fault === 'object-defect') return Effect.die(new Error('sink defect'))
+              if (attempts === 1 && fault === 'object-interrupt') return Effect.interrupt
+              return saved.objectStore
+                .putVerified(object)
+                .pipe(
+                  Effect.andThen(
+                    attempts === 1 && fault === 'object-ack'
+                      ? Effect.fail(new ResearchCaptureFailure({ message: 'object acknowledgement lost' }))
+                      : Effect.void,
+                  ),
+                )
+            },
+          },
+        )
+        recorder.record(captureEvent('STARTED'), 100)
+        recorder.record(captureEvent('STOPPED'), 100)
+        const seal = yield* recorder.finish
+        expect(seal?.persistedChunks).toBe(0)
+        expect(seal?.persistedReceipts).toBe(0)
+        expect(seal?.invalidations).toContain(CaptureInvalidation.Persistence)
+        expect((yield* recorder.status).retainedReceipts).toBe(0)
+        expect(attempts).toBe(fault === 'sql-append' ? 5 : 3)
+        const durableManifest = JSON.parse(text(saved.objects.at(-1) ?? researchCaptureObject('{}')).payload)
+        expect(durableManifest.lastIndexHash).toBeNull()
+        expect(durableManifest.qualification).toBe(CaptureQualification.Unqualified)
+        return 'owner result'
+      }),
+    ),
+)
+
+test('property: immutable byte ranges round-trip arbitrary binary payloads and detect mutation', () => {
+  fc.assert(
+    fc.property(fc.array(fc.option(fc.uint8Array({ maxLength: 64 }), { nil: null }), { maxLength: 24 }), (values) => {
+      const entries = [
+        { receipt: { sequence: 1, observedAtMs: 100, event: captureEvent('STARTED') } },
+        ...values.map((rawValue, index) => ({
+          rawValue,
+          receipt: {
+            sequence: index + 2,
+            observedAtMs: 100,
+            event: {
+              ...marketEvent,
+              consumerSequence: index + 1,
+              offset: String(index),
+              tombstone: rawValue === null,
+              rawValueSha256: rawValue === null ? null : sha256(rawValue),
+              rawByteLength: rawValue?.byteLength ?? null,
+            },
+          },
+        })),
+        { receipt: { sequence: values.length + 2, observedAtMs: 100, event: captureEvent('STOPPED') } },
+      ]
+      const chunk: ResearchCaptureChunk = {
+        schemaVersion: 'bayn.research-capture-chunk.v1',
+        captureId: options.captureId,
+        sourceRevision: options.sourceRevision,
+        chunkOrdinal: 0,
+        previousContentHash: null,
+        receipts: entries.map((entry) => entry.receipt),
+      }
+      const metadata = encodeResearchCapture(chunk)
+      const objects = buildResearchCaptureExportChunk(chunk, metadata, entries, null)
+      const seal: ResearchCaptureSeal = {
+        schemaVersion: 'bayn.research-capture-seal.v1',
+        qualification: CaptureQualification.Unqualified,
+        captureId: options.captureId,
+        sourceRevision: options.sourceRevision,
+        closedAtMs: 100,
+        observedReceipts: entries.length,
+        persistedReceipts: entries.length,
+        persistedChunks: 1,
+        lastContentHash: metadata.contentHash,
+        invalidations: [],
+      }
+      const sealBytes = encodeResearchCapture(seal)
+      const manifest = text(
+        researchCaptureObject(
+          JSON.stringify({
+            schemaVersion: 'bayn.research-capture-export.v1',
+            qualification: CaptureQualification.Unqualified,
+            captureId: options.captureId,
+            sourceRevision: options.sourceRevision,
+            exportedChunks: 1,
+            lastIndexHash: objects.index.contentHash,
+            metadataSeal: { contentHash: sealBytes.contentHash, byteLength: Buffer.byteLength(sealBytes.payload) },
+          }),
+        ),
+      )
+      const exported = [{ metadata, raw: objects.raw.payload, index: text(objects.index) }]
+      expect(Result.getOrThrow(verifyResearchCaptureExport(exported, sealBytes, manifest)).complete).toBe(false)
+      const rawLength = values.reduce((sum, value) => sum + (value?.byteLength ?? 0), 0)
+      const reservation =
+        researchCaptureExportEnvelopeReservation +
+        entries.reduce(
+          (sum, entry) =>
+            sum +
+            researchCaptureExportEntryReservation(
+              Buffer.byteLength(JSON.stringify(entry.receipt)),
+              'rawValue' in entry ? (entry.rawValue?.byteLength ?? 0) : 0,
+            ),
+          0,
+        )
+      const allocatedWireBytes =
+        rawLength +
+        2 * (objects.raw.payload.byteLength + objects.metadata.payload.byteLength + objects.index.payload.byteLength) +
+        Buffer.byteLength(metadata.payload)
+      expect(allocatedWireBytes).toBeLessThanOrEqual(reservation)
+      const changed = Buffer.concat([objects.raw.payload, Buffer.from([1])])
+      expect(
+        Result.isFailure(verifyResearchCaptureExport([{ ...exported[0]!, raw: changed }], sealBytes, manifest)),
+      ).toBe(true)
+      const originalIndex = Result.getOrThrow(
+        Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureByteIndexSchema))(text(objects.index).payload),
+      )
+      const originalManifest = Result.getOrThrow(
+        Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureExportManifestSchema))(manifest.payload),
+      )
+      const corrupted = [
+        { ...originalIndex, captureId: 'another-worker' },
+        { ...originalIndex, previousIndexHash: 'f'.repeat(64) },
+        {
+          ...originalIndex,
+          ranges: originalIndex.ranges.map((range) => ({ ...range, receiptSequence: range.receiptSequence + 1 })),
+        },
+        {
+          ...originalIndex,
+          ranges: originalIndex.ranges.map((range) => ({
+            ...range,
+            byteOffset: range.byteOffset === null ? 0 : range.byteOffset + 1,
+          })),
+        },
+      ]
+      for (const [index, value] of corrupted.entries()) {
+        if (index >= 2 && values.length === 0) continue
+        const changedIndex = text(researchCaptureObject(JSON.stringify(value)))
+        const changedManifest = text(
+          researchCaptureObject(JSON.stringify({ ...originalManifest, lastIndexHash: changedIndex.contentHash })),
+        )
+        expect(
+          Result.isFailure(
+            verifyResearchCaptureExport(
+              [{ metadata, raw: objects.raw.payload, index: changedIndex }],
+              sealBytes,
+              changedManifest,
+            ),
+          ),
+        ).toBe(true)
+      }
+    }),
+    { numRuns: 500, seed: 20261003 },
+  )
+})
+
+test('maximum JSON-escaped capture identities fit the chunk and terminal envelope reservation', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const saved = memory()
+      const recorder = yield* makeResearchCaptureRecorder(
+        saved.store,
+        { ...options, captureId: '\u0000'.repeat(512) },
+        saved.objectStore,
+      )
+      recorder.record(captureEvent('STARTED'), 100)
+      recorder.record(captureEvent('STOPPED'), 100)
+      const reserved = (yield* recorder.status).retainedPayloadBytes
+      yield* recorder.finish
+      expect(Result.getOrThrow(saved.verify()).structurallyClosed).toBe(true)
+      expect(
+        3 * saved.objects.slice(0, 3).reduce((sum, object) => sum + object.payload.byteLength, 0),
+      ).toBeLessThanOrEqual(reserved)
+      expect(
+        3 * saved.objects.slice(3).reduce((sum, object) => sum + object.payload.byteLength, 0),
+      ).toBeLessThanOrEqual(researchCaptureExportEnvelopeReservation)
+    }),
+  ))
+
+test('periodic drains form one immutable index chain and a different worker cannot repair its tail', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const saved = memory()
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, options, saved.objectStore)
+      recorder.record(captureEvent('STARTED'), 100)
+      recorder.record(marketEvent, 100, Buffer.from('é'))
+      yield* TestClock.adjust(10)
+      expect((yield* recorder.status).persistedReceipts).toBe(2)
+      recorder.record(captureEvent('STOPPED'), 110)
+      yield* recorder.finish
+      expect(saved.chunks).toHaveLength(2)
+      expect(Result.getOrThrow(saved.verify()).structurallyClosed).toBe(true)
+      const second = saved.objects[5]
+      const first = saved.objects[2]
+      if (second === undefined || first === undefined) throw new Error('Expected two indexes')
+      expect(JSON.parse(text(second).payload).previousIndexHash).toBe(first.contentHash)
+      const restarted = memory()
+      const replacement = yield* makeResearchCaptureRecorder(
+        restarted.store,
+        { ...options, captureId: 'new-worker' },
+        restarted.objectStore,
+      )
+      replacement.record(captureEvent('STARTED'), 110)
+      replacement.record(captureEvent('STOPPED'), 110)
+      yield* replacement.finish
+      const replacementSeal = restarted.seals[0]
+      if (replacementSeal === undefined) throw new Error('Expected replacement seal')
+      saved.seals[0] = replacementSeal
+      expect(Result.isFailure(saved.verify())).toBe(true)
+    }),
+  ))
+
+test.each([0, -1])('raw admission honors the exact conservative byte reservation with %s bytes of slack', (slack) =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const raw = Buffer.from('é')
+      const bytes = Buffer.byteLength(JSON.stringify({ sequence: 1, observedAtMs: 100, event: marketEvent }))
+      const limit =
+        researchCaptureExportEnvelopeReservation + researchCaptureExportEntryReservation(bytes, raw.byteLength) + slack
+      const recorder = yield* makeResearchCaptureRecorder(
+        saved.store,
+        { ...options, maximumQueuedBytes: limit },
+        saved.objectStore,
+      )
+      recorder.record(marketEvent, 100, raw)
+      const status = yield* recorder.status
+      expect(status.retainedPayloadBytes).toBeLessThanOrEqual(limit)
+      expect(status.retainedReceipts).toBe(slack === 0 ? 1 : 0)
+      expect(status.invalidations).toEqual(slack === 0 ? [] : [CaptureInvalidation.Overflow])
+      yield* recorder.finish
+      expect(saved.chunks).toHaveLength(slack === 0 ? 1 : 0)
+    }),
+  ),
+)
+
+test.each(['manifest', 'sql-seal'] as const)(
+  'committed %s with lost acknowledgement remains unqualified and is never repeated',
+  (fault) =>
+    run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(100)
+        const saved = memory()
+        let attempts = 0
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            ...saved.store,
+            seal: (bytes) =>
+              saved.store
+                .seal(bytes)
+                .pipe(
+                  Effect.andThen(
+                    fault === 'sql-seal'
+                      ? Effect.fail(new ResearchCaptureFailure({ message: 'Seal acknowledgement lost' }))
+                      : Effect.void,
+                  ),
+                ),
+          },
+          options,
+          {
+            putVerified: (object) =>
+              Effect.gen(function* () {
+                attempts++
+                yield* saved.objectStore.putVerified(object)
+                if (fault === 'manifest' && attempts === 5)
+                  return yield* new ResearchCaptureFailure({ message: 'Manifest acknowledgement lost' })
+              }),
+          },
+        )
+        recorder.record(captureEvent('STARTED'), 100)
+        recorder.record(captureEvent('STOPPED'), 100)
+        const seal = yield* recorder.finish
+        expect(yield* recorder.finish).toEqual(seal)
+        expect(attempts).toBe(5)
+        expect(seal?.invalidations).toContain(CaptureInvalidation.Persistence)
+        expect((yield* recorder.status).exportManifestHash).toBeNull()
+        const last = saved.objects.at(-1)
+        if (last === undefined) throw new Error('Expected committed manifest')
+        expect(JSON.parse(text(last).payload).qualification).toBe(CaptureQualification.Unqualified)
+        expect(saved.seals).toHaveLength(fault === 'manifest' ? 0 : 1)
+      }),
+    ),
+)
+
+test('owner interruption cancels an in-flight raw drain, releases its reservation, and remains interruption', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const entered = yield* Deferred.make<void>()
+      let cancelled = 0
+      let first = true
+      const owner = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const recorder = yield* makeResearchCaptureRecorder(saved.store, options, {
+            putVerified: (object) => {
+              if (!first) return saved.objectStore.putVerified(object)
+              first = false
+              return Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    cancelled++
+                  }),
+                ),
+              )
+            },
+          })
+          recorder.record(captureEvent('STARTED'), 0)
+          return yield* Effect.never
+        }),
+      ).pipe(Effect.forkChild)
+      yield* TestClock.adjust(10)
+      yield* Deferred.await(entered)
+      const cancellation = yield* Fiber.interrupt(owner).pipe(Effect.forkChild)
+      yield* TestClock.adjust(100)
+      yield* Fiber.await(cancellation)
+      const exit = yield* Fiber.await(owner)
+      expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+      expect(cancelled).toBe(1)
+      expect(saved.seals).toHaveLength(1)
+      expect(JSON.parse(saved.seals[0]?.payload ?? '{}').qualification).toBe(CaptureQualification.Unqualified)
+    }),
+  ))

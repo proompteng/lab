@@ -129,6 +129,11 @@ test('Kafka capture hashes exact bytes before UTF8 replacement and distinguishes
   })
   expect(() => decodeKafkaTransportValue(undefined)).toThrow('Kafka market message has no payload')
   expect(decodeKafkaTransportValue(Buffer.from('é'))).toEqual({ value: 'é' })
+  const binary = Buffer.from([0x80])
+  expect(decodeKafkaTransportValue(binary, true, true).rawValue).toBe(binary)
+  expect(decodeKafkaTransportValue(undefined, true, true).rawValue).toBeNull()
+  expect(decodeKafkaTransportValue(Buffer.alloc(0), true, true).rawValue).toEqual(Buffer.alloc(0))
+  expect(decodeKafkaTransportValue(binary, true).rawValue).toBeUndefined()
 })
 
 test('capture observes accepted, rejected and ignored receipts in the same clock and consumer epoch', async () => {
@@ -166,8 +171,9 @@ test('capture observes accepted, rejected and ignored receipts in the same clock
       const market = yield* makeKafkaMarketProjection(
         config,
         universe,
-        (_config, selectedEpoch, captureRaw) => {
+        (_config, selectedEpoch, captureRaw, captureValues) => {
           expect(captureRaw).toBe(true)
+          expect(captureValues).toBe(false)
           epoch = selectedEpoch
           return transport
         },

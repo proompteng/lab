@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { Admin, Producer } from '@platformatic/kafka'
-import { Effect, Logger, Redacted } from 'effect'
+import { Effect, Logger, Redacted, Result } from 'effect'
 
 import { sha256 } from '../hash.ts'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
 import { makeKafkaMarketProjection } from '../market-data/streaming/kafka.ts'
 import { CaptureDisposition } from '../research-capture/capture.ts'
+import { makeResearchCaptureRecorder } from '../research-capture/recorder.ts'
+import { verifyResearchCaptureExport } from '../research-capture/export.ts'
 
 const username = process.env.BAYN_TEST_KAFKA_USERNAME
 const password = process.env.BAYN_TEST_KAFKA_PASSWORD
@@ -62,9 +64,39 @@ try {
   const receipts = []
   const boundaries = []
   const invalidations = []
+  const chunks = []
+  const seals = []
+  const objects = []
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            append: (chunk) =>
+              Effect.sync(() => {
+                chunks.push(chunk)
+              }),
+            seal: (seal) =>
+              Effect.sync(() => {
+                seals.push(seal)
+              }),
+          },
+          {
+            captureId: prefix,
+            sourceRevision: 'a'.repeat(40),
+            maximumQueuedReceipts: 64,
+            maximumQueuedBytes: 256 * 1024,
+            maximumReceiptBytes: 64 * 1024,
+            flushIntervalMs: 50,
+            writeTimeoutMs: 1000,
+          },
+          {
+            putVerified: (object) =>
+              Effect.sync(() => {
+                objects.push({ ...object, payload: Buffer.from(object.payload) })
+              }),
+          },
+        )
         yield* makeKafkaMarketProjection(
           {
             brokers,
@@ -84,11 +116,14 @@ try {
           undefined,
           undefined,
           {
-            record: (event, observedAtMs) => {
+            rawValues: true,
+            record: (event, observedAtMs, rawValue) => {
+              recorder.record(event, observedAtMs, rawValue)
               if (event.kind === 'market-record') receipts.push({ event, observedAtMs })
               if (event.kind === 'consumer-boundary') boundaries.push(event)
             },
             invalidate: (reason) => {
+              recorder.invalidate(reason)
               invalidations.push(reason)
             },
           },
@@ -116,9 +151,24 @@ try {
     assert.ok(observedAtMs >= at)
   }
   assert.notEqual(receipts[2].event.rawValueSha256, receipts[3].event.rawValueSha256)
+  const objectText = (object) => ({ contentHash: object.contentHash, payload: object.payload.toString('utf8') })
+  const exported = chunks.map((metadata, index) => ({
+    metadata,
+    raw: objects[index * 3].payload,
+    index: objectText(objects[index * 3 + 2]),
+  }))
+  const verified = Result.getOrThrow(verifyResearchCaptureExport(exported, seals[0], objectText(objects.at(-1))))
+  assert.equal(verified.complete, false)
+  assert.equal(verified.exportVerified, true)
+  assert.deepEqual(
+    Buffer.concat(exported.map((chunk) => chunk.raw)),
+    Buffer.concat(payloads.filter((value) => value !== undefined)),
+  )
   assert.ok(boundaries.some(({ phase }) => phase === 'ASSIGNED'))
   assert.ok(boundaries.some(({ phase }) => phase === 'STOPPED'))
-  console.log('native Kafka: exact raw receipts, tombstone identity, consumer epoch and offsets verified')
+  console.log(
+    'native Kafka: original bytes, immutable export ranges, tombstones, consumer epoch and offsets verified; UNQUALIFIED',
+  )
 } finally {
   await producer.close()
   await admin.close()

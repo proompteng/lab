@@ -50,8 +50,42 @@ earlier worker's missing observations.
 If finalization cannot read its clock or encode evidence, `finish` returns no seal and does not retry. No replacement
 timestamp is invented. The owning scope retains its successful result or independently requested cancellation.
 
-This patch does not export raw values, assert a session is complete, qualify a strategy, or enable model calls. Before
-production acquisition, qualification must prove raw-byte export/readback, every source frontier and control offset,
+The optional raw sink extends this same recorder and worker. It is not acquired in production. Only explicit injection
+requests pre-UTF8 values from the existing Kafka consumer; metadata-only capture keeps its original wire formats and
+does not copy raw values. Admission validates the receipt's original hash and length before copying the bytes. The
+terminal-position map retains only topic, partition and offset, never a payload. Null tombstones and zero-length values
+remain distinct, and rejected, malformed and ignored records retain their exact original bytes.
+
+Raw admission reserves `4 * receipt UTF8 bytes + 3 * raw bytes + 512` bytes per entry and 64 KiB for envelopes and bounded SDK responses. The
+reservation covers owned bytes, binary assembly, metadata/index serialization and bounded readback payloads. It remains
+charged through in-flight writes, as does the receipt-count limit. It bounds application-owned payloads, not total
+JavaScript or SDK RSS. A raw recorder needs a buffer larger than the envelope reserve; the existing 4 MiB maximum still
+applies. Overflow rejects admission synchronously and invalidates only capture. There is no queue wait in execution.
+
+Each drained chunk writes a content-addressed binary object, the exact metadata JSON, and a hash-linked range index.
+Indexes bind receipt sequence to binary offset/length; the metadata binds original arrival, consumer epoch/sequence,
+topic/partition/offset, disposition and hash. All three objects must pass readback before the SQL append, and that append
+must acknowledge before the recorder advances its frontier. An immutable export manifest binds the last index and exact
+metadata seal. Every index, manifest and seal is `UNQUALIFIED`, including stored objects whose acknowledgements are lost.
+The verifier checks the existing metadata chain plus every binary range and always reports `complete: false`.
+
+The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
+ambient credential provider, or live composition. Future wiring must use the verified native OBC's actual `BUCKET_NAME`,
+not its claim name. Empty region maps to `us-east-1`. Keys are fixed content-addresses. There is one `PutObject` with
+`If-None-Match: *` and SDK `maxAttempts: 1`, followed by one full `GetObject`. HTTP 412 is accepted only after exact length,
+bytes and SHA-256 match. The adapter does not list, overwrite, delete or change permissions. Unknown Put outcomes are
+not retried. Readback streams are bounded, destroyed on failure or abort, and never accumulated into a second full body.
+SDK requests receive the Effect abort signal; scope release destroys the client. Error details exclude credentials.
+Before SDK deserialization, response streams are bound to that abort signal. The SDK collector is limited to 8 KiB
+for error and discarded response bodies, including PUT responses. Remote error codes and transport error names are
+not retained. Oversized or stalled error bodies fail capture and their streams close.
+
+The existing at-most-one-second write deadline contains the complete export-and-SQL operation, and finalization is
+cached once. It is not a production throughput claim. A timeout, readback failure, SQL failure, restart or missing seal
+leaves incomplete evidence and cannot change execution, retries, liquidation or capital authority.
+
+This implementation does not assert a session is complete, qualify a strategy, or enable model calls. Before
+production acquisition, qualification must prove every source frontier and control offset,
 full controller lifecycle joins, restart/replay ambiguity handling, measured storage capacity, and bounded overhead.
 Kafka retention alone cannot recover an earlier consumer's original timing. Object-store capacity and connectivity
 alone do not satisfy these gates.
