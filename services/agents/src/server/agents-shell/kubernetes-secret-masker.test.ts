@@ -181,3 +181,150 @@ it('treats dynamic, quoted and repeated unknown output flags as credential proje
   for (const suffix of ['-o json', "'-o' 'json'", '--output="yaml"'])
     expect(secretCaptureMode(`kubectl get secret demo ${suffix}`)).toBe('document')
 })
+
+describe('explicit Secret reads with environment prefixes', () => {
+  it.each([
+    'KUBECONFIG=/tmp/config',
+    "KUBECONFIG='/tmp/config with spaces' LANG=C",
+    'KUBECONFIG="/tmp/config; ordinary -o jsonpath"',
+    'env KUBECONFIG=/tmp/config',
+    'env - KUBECONFIG=/tmp/config',
+    "env 'KUBECONFIG=/tmp/config with spaces'",
+    'LANG=C /usr/bin/env -i --unset HOME --chdir /workspace KUBECONFIG=/tmp/config --',
+    'env --ignore-environment -uHOME -C/workspace KUBECONFIG=/tmp/config',
+    "env --unset=HOME --chdir='/workspace with spaces' KUBECONFIG=/tmp/config",
+  ])('preserves capture modes for %s', (prefix) => {
+    expect(secretCaptureMode(`${prefix} kubectl get secret demo`)).toBe('metadata')
+    expect(secretCaptureMode(`${prefix} kubectl get secret demo -o json`)).toBe('document')
+    expect(secretCaptureMode(`${prefix} '/usr/bin/kubectl' -n agents get secrets/demo --output='yaml'`)).toBe(
+      'document',
+    )
+    expect(secretCaptureMode(`${prefix} kubectl get secret demo -o jsonpath='{.data.registry}'`)).toBe('projection')
+    expect(secretCaptureMode(`${prefix} kubectl get secrets --template='{{.data.registry}}'`)).toBe('projection')
+    expect(secretCaptureMode(`${prefix} kubectl get configmap demo -o json`)).toBe(null)
+  })
+
+  it('omits prefixed bare projections from both streams and duplicate results', () => {
+    for (const prefix of ['KUBECONFIG=/tmp/config', 'env KUBECONFIG=/tmp/config']) {
+      const command = `${prefix} kubectl get secret demo -o jsonpath='{.data.registry}'`
+      for (const stream of ['stdout', 'stderr'] as const) {
+        const events: Array<Record<string, unknown>> = []
+        const mirror = new OutputAudit(
+          stream,
+          (_event, payload) => {
+            events.push(payload)
+            return 0
+          },
+          secretCaptureMode(command),
+        )
+        mirror.write(Buffer.from('synthetic-projected-credential'), new PassThrough(), vi.fn())
+        mirror.finish()
+        expect(JSON.stringify(events)).not.toContain('synthetic-projected-credential')
+        expect(events.at(-1)).toMatchObject({ captureIncomplete: true, capturedBytes: 0, sha256: null })
+        expect(() => sanitizeAuditPayload({ result: { command, [stream]: 'synthetic-projected-credential' } })).toThrow(
+          'projection',
+        )
+      }
+    }
+  })
+
+  it('masks prefixed Secret document duplicates on stdout and stderr without changing the original', () => {
+    const original = {
+      command: 'env -i KUBECONFIG=/tmp/config kubectl get secret demo -o json',
+      stdout: secret,
+      stderr: secret,
+    }
+    expect(sanitizeAuditPayload({ result: original }).payload).toMatchObject({
+      result: {
+        stdout: secret.replace('c3ludGhldGljLWNyZWRlbnRpYWw=', marker),
+        stderr: secret.replace('c3ludGhldGljLWNyZWRlbnRpYWw=', marker),
+      },
+    })
+    expect(original.stdout).toBe(secret)
+    expect(original.stderr).toBe(secret)
+  })
+
+  it.each([
+    'echo "KUBECONFIG=/tmp/config kubectl get secret demo -o json"',
+    "env KUBECONFIG=/tmp/config printf '%s\\n' 'kubectl get secret demo -o json'",
+    'echo "ordinary; env KUBECONFIG=/tmp/config kubectl get secret demo -o json"',
+    'python -c \'source = "env KUBECONFIG=/tmp/config kubectl get secret demo -o json"\'',
+    "cat <<'EOF'\nenv KUBECONFIG=/tmp/config kubectl get secret demo -o json\nEOF",
+    "cat<<'EOF'\nenv KUBECONFIG=/tmp/config kubectl get secret demo -o json\nEOF",
+    'KUBECONFIG=/tmp/config kubectl-example get secret demo -o json',
+    "env -S 'kubectl get secret demo -o json'",
+  ])('does not treat ordinary text or indirect wrappers as an explicit read: %s', (command) => {
+    expect(isSecretRead(command)).toBe(false)
+    expect(secretCaptureMode(command)).toBe(null)
+  })
+
+  it('recognizes prefixed commands after real separators and keeps later lexical ambiguity incomplete', () => {
+    expect(
+      secretCaptureMode(
+        'echo "ordinary; kubectl get secret demo"; env KUBECONFIG=/tmp/config kubectl get secret demo -o json',
+      ),
+    ).toBe('document')
+    expect(secretCaptureMode('KUBECONFIG=/tmp/config \\\n kubectl get secret demo -o yaml')).toBe('document')
+    expect(secretCaptureMode(`kubectl get secret demo -o json ${'argument '.repeat(300)}`)).toBe('projection')
+    expect(secretCaptureMode(`kubectl get secret demo -o json ${'x'.repeat(4097)}`)).toBe('projection')
+    expect(secretCaptureMode('kubectl get secret demo -o "json')).toBe('projection')
+  })
+
+  it('retains the executable after more assignment prefixes than the retained argument cap', () => {
+    const assignments = Array.from({ length: 300 }, (_, index) => `PREFIX_${index}=ordinary`).join(' ')
+    for (const prefix of [assignments, `env -i --unset HOME ${assignments}`, `${assignments} env -- ${assignments}`]) {
+      expect(secretCaptureMode(`${prefix} kubectl get secret demo -o json`)).toBe('document')
+      expect(secretCaptureMode(`${prefix} kubectl get secret demo -o jsonpath='{.data.registry}'`)).toBe('projection')
+      expect(secretCaptureMode(`${prefix} echo 'kubectl get secret demo -o json'`)).toBe(null)
+    }
+  })
+})
+
+describe('literal Secret API reads through kubectl get --raw', () => {
+  it.each([
+    'kubectl get --raw=/api/v1/namespaces/agents/secrets/demo',
+    "kubectl get --raw '/api/v1/namespaces/agents/secrets/demo'",
+    'KUBECONFIG=/tmp/config kubectl get --raw=/api/v1/namespaces/agents/secrets',
+    "env KUBECONFIG=/tmp/config kubectl get '--raw' '/api/v1/secrets?pretty=true'",
+    'kubectl get --raw=/api/v1/namespaces/agents/secrets/demo/ -o name',
+  ])('structurally masks both streams and duplicate results for %s', (command) => {
+    expect(secretCaptureMode(command)).toBe('document')
+    expect(isSecretRead(command)).toBe(true)
+    for (const stream of ['stdout', 'stderr'] as const) {
+      const events: Array<{ event: string; payload: Record<string, unknown> }> = []
+      const mirror = new OutputAudit(
+        stream,
+        (event, payload) => {
+          events.push({ event, payload })
+          return 0
+        },
+        secretCaptureMode(command),
+      )
+      mirror.write(Buffer.from(secret.slice(0, 40)), new PassThrough(), vi.fn())
+      mirror.write(Buffer.from(secret.slice(40)), new PassThrough(), vi.fn())
+      expect(events).toHaveLength(0)
+      mirror.finish()
+      expect(
+        events
+          .filter((entry) => entry.event === 'process_output')
+          .map((entry) => entry.payload.text)
+          .join(''),
+      ).toBe(secret.replace('c3ludGhldGljLWNyZWRlbnRpYWw=', marker))
+      expect(events.at(-1)?.payload).toMatchObject({ maskedValues: 1, captureIncomplete: false, sha256: null })
+      const original = { command, [stream]: secret }
+      expect(sanitizeAuditPayload({ result: original }).payload).toMatchObject({
+        result: { [stream]: secret.replace('c3ludGhldGljLWNyZWRlbnRpYWw=', marker) },
+      })
+      expect(original[stream]).toBe(secret)
+    }
+  })
+
+  it('does not classify unrelated raw endpoints or quoted source as Secret API reads', () => {
+    for (const command of [
+      'kubectl get --raw=/api/v1/namespaces/agents/configmaps/secrets',
+      'kubectl get --raw=/api/v1/namespaces/agents/secretreferences/demo',
+      "echo 'kubectl get --raw=/api/v1/namespaces/agents/secrets/demo'",
+    ])
+      expect(secretCaptureMode(command)).toBe(null)
+  })
+})

@@ -136,6 +136,11 @@ context and use the same rule. Default metadata/name/wide views remain visible. 
 columns can disguise credential values, so those explicit Secret projections are omitted from centralized output with
 an incomplete-capture receipt. Ordinary non-Secret streams continue streaming immediately.
 
+Simple commands support leading shell assignments, standard `env` assignment/options prefixes and literal `--raw`
+Secret API paths. Prefixes use finite state; retained executable/argument words are bounded to 256 words and 4,096
+characters per word. Ambiguous syntax after a recognized Secret read produces incomplete capture. Indirect wrappers,
+`env -S` and arbitrary scripts remain outside this recognition path.
+
 Structurally masked streams use terminal source-byte checkpoints (`sourceByteCheckpointOnly`), not a byte-for-byte
 reconstruction claim; source hashes are omitted when values are masked. Escaped command newlines are normalized, but
 this is not a full shell parser and cannot identify arbitrary indirect scripts or transformed credential sources.

@@ -4,25 +4,150 @@ export const SECRET_DOCUMENT_BYTE_BUDGET = 4 * 1024 * 1024
 const marker = '[REDACTED_CREDENTIAL]'
 export type SecretCaptureMode = 'document' | 'metadata' | 'projection'
 const normalizeCommand = (command: string) => command.replace(/\\\r?\n/g, ' ')
-export const isSecretRead = (command: string) =>
-  /(?:^|[;|&]\s*|\n\s*)(?:[^\s;|&"']*\/)?kubectl\b[^;|&\n]*\bget\b[^;|&\n]*\bsecrets?(?=[\s,/"']|$)/i.test(
-    normalizeCommand(command).trim(),
-  )
-export const secretCaptureMode = (command: string): SecretCaptureMode | null => {
-  if (!isSecretRead(command)) return null
-  const normalized = normalizeCommand(command).replace(/(^|\s)(["'])(--output|-o)\2(?=\s|=)/g, '$1$3')
-  const flags = [...normalized.matchAll(/(?:^|\s)(?:--output(?:=|\s|$)|-o(?=[=\s"'$a-z]|$))/g)]
-  if (!flags.length) return /(?:^|\s)["']?--template(?:["'=\s]|$)/.test(normalized) ? 'projection' : 'metadata'
-  const literals = [
-    ...normalized.matchAll(
-      /(?:^|\s)(?:--output(?:=|\s+)|-o[=\s]*)(?:"(json|yaml|wide|name)"|'(json|yaml|wide|name)'|(json|yaml|wide|name))(?=\s|$|[;|&<>])/g,
-    ),
-  ]
-  if (literals.length !== flags.length) return 'projection'
-  const last = literals.at(-1)!
-  const output = last[1] || last[2] || last[3]
-  return /^(?:json|yaml)$/.test(output) ? 'document' : 'metadata'
+type CommandWord = { value: string; literal: boolean; assignment: boolean }
+const COMMAND_WORD_LIMIT = 256
+const COMMAND_WORD_CHARACTER_LIMIT = 4096
+
+// Recognize simple command words without evaluating expansions or indirect scripts.
+// Quotes protect source text from becoming a command boundary; retained words have fixed bounds.
+function* commandWords(command: string) {
+  const text = normalizeCommand(command)
+  let words: CommandWord[] = []
+  let ambiguous = false
+  let prefix: 'assignments' | 'env' | 'envOperand' | 'arguments' = 'assignments'
+  let envOptions = true
+  for (let index = 0; index < text.length; ) {
+    if (/[;|&\n]/.test(text[index])) {
+      yield { words, ambiguous }
+      words = []
+      ambiguous = false
+      prefix = 'assignments'
+      envOptions = true
+      index += 1
+      continue
+    }
+    if (/\s/.test(text[index])) {
+      index += 1
+      continue
+    }
+    if (text[index] === '#') {
+      while (index < text.length && text[index] !== '\n') index += 1
+      continue
+    }
+    // Here-doc bodies are source text, not additional commands recognized by this scanner.
+    if (text.startsWith('<<', index)) {
+      yield { words, ambiguous: true }
+      return
+    }
+    const start = index
+    let quote: string | null = null
+    let value = ''
+    let literal = true
+    while (index < text.length) {
+      const character = text[index]
+      if (!quote && (/[\s;|&]/.test(character) || text.startsWith('<<', index))) break
+      index += 1
+      if (character === '\\' && quote !== "'" && index < text.length) {
+        if (value.length < COMMAND_WORD_CHARACTER_LIMIT) value += text[index]
+        index += 1
+        continue
+      }
+      if (character === quote) {
+        quote = null
+        continue
+      }
+      if (!quote && (character === '"' || character === "'" || character === '`')) {
+        quote = character
+        if (character === '`') literal = false
+        continue
+      }
+      if (quote !== "'" && (character === '$' || character === '`')) literal = false
+      if (value.length < COMMAND_WORD_CHARACTER_LIMIT) value += character
+    }
+    const raw = text.slice(start, Math.min(index, start + COMMAND_WORD_CHARACTER_LIMIT))
+    if (quote || index - start > COMMAND_WORD_CHARACTER_LIMIT) ambiguous = true
+    const word = { value, literal: literal && !quote, assignment: /^[A-Za-z_][A-Za-z0-9_]*=/.test(raw) }
+    // Prefixes need only finite state, so long assignment lists cannot evict the executable.
+    if (prefix === 'assignments') {
+      if (word.assignment) continue
+      if (executableIs(word, 'env')) {
+        prefix = 'env'
+        continue
+      }
+      prefix = 'arguments'
+    } else if (prefix === 'envOperand') {
+      prefix = 'env'
+      continue
+    } else if (prefix === 'env') {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word.value)) continue
+      if (envOptions && word.literal && ['-', '-i', '--ignore-environment'].includes(word.value)) continue
+      if (envOptions && word.literal && ['-u', '--unset', '-C', '--chdir'].includes(word.value)) {
+        prefix = 'envOperand'
+        continue
+      }
+      if (envOptions && word.literal && /^(?:--unset=|--chdir=|-u.+|-C.+)/.test(word.value)) continue
+      if (envOptions && word.literal && word.value === '--') {
+        envOptions = false
+        continue
+      }
+      prefix = 'arguments'
+    }
+    if (words.length < COMMAND_WORD_LIMIT) words.push(word)
+    else ambiguous = true
+  }
+  yield { words, ambiguous }
 }
+
+const executableIs = (word: CommandWord | undefined, name: string) =>
+  word?.literal && word.value.split('/').at(-1) === name
+const secretApiPath = /^\/api\/v1\/(?:namespaces\/[^/?#]+\/)?secrets(?:\/[^/?#]+)?\/?(?:[?#].*)?$/
+
+const secretCommandMode = (words: CommandWord[], ambiguous: boolean): SecretCaptureMode | null => {
+  if (!executableIs(words[0], 'kubectl')) return null
+  const args = words.slice(1)
+  const get = args.findIndex((word) => word.literal && word.value === 'get')
+  const rawSecret = args.some((word, index) => {
+    if (!word.literal) return false
+    if (word.value === '--raw') {
+      const path = args[index + 1]
+      return path?.literal && secretApiPath.test(path.value)
+    }
+    return word.value.startsWith('--raw=') && secretApiPath.test(word.value.slice('--raw='.length))
+  })
+  if (
+    get < 0 ||
+    (!rawSecret &&
+      !args
+        .slice(get + 1)
+        .some((word) => word.literal && word.value.split(',').some((part) => /^secrets?(?:\/|$)/i.test(part))))
+  )
+    return null
+  if (ambiguous) return 'projection'
+  let mode: SecretCaptureMode = 'metadata'
+  for (let position = 0; position < args.length; position += 1) {
+    const word = args[position]
+    if (/^--template(?:=|$)/.test(word.value)) return 'projection'
+    let output: CommandWord | undefined
+    if (word.value === '-o' || word.value === '--output') output = args[++position]
+    else if (/^(?:--output=|-o.)/.test(word.value))
+      output = { ...word, value: word.value.replace(/^(?:--output=|-o=?)/, '') }
+    else continue
+    if (!word.literal || !output?.literal || !/^(?:json|yaml|wide|name)$/.test(output.value)) return 'projection'
+    mode = /^(?:json|yaml)$/.test(output.value) ? 'document' : 'metadata'
+  }
+  return rawSecret ? 'document' : mode
+}
+
+export const secretCaptureMode = (command: string): SecretCaptureMode | null => {
+  let mode: SecretCaptureMode | null = null
+  for (const candidate of commandWords(command)) {
+    const found = secretCommandMode(candidate.words, candidate.ambiguous)
+    if (found === 'projection') return found
+    if (found === 'document' || (found === 'metadata' && mode === null)) mode = found
+  }
+  return mode
+}
+export const isSecretRead = (command: string) => secretCaptureMode(command) !== null
 
 const preflightSecretSyntax = (text: string) => {
   let tokens = 0
