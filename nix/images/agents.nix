@@ -435,7 +435,16 @@ let
     yq
   ] ++ cxTools;
 
+  # Repo-installed CLI shims commonly use #!/usr/bin/env. Nix store PATH entries alone
+  # do not provide the absolute interpreter path required by the kernel.
+  agentsShellInterpreterCompat = pkgs.runCommand "agents-shell-interpreter-compat" { } ''
+    mkdir -p "$out/usr/bin"
+    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+    "$out/usr/bin/env" --version >/dev/null
+  '';
+
   agentsShellContents = commonContents ++ [
+    agentsShellInterpreterCompat
     applyPatch
     pstackBundle
     pkgs.gh
@@ -669,7 +678,7 @@ in
       "AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true"
       "AGENTS_RUNTIME_SERVICE=agents-shell"
       "AGENTS_SHELL_WORKSPACE_ROOT=/workspace"
-      "AGENTS_SHELL_AUDIT_LOG_PATH=/workspace/.agents-shell/audit.jsonl"
+      "AGENTS_SHELL_AUDIT_LOG_PATH="
       "AGENTS_SHELL_RESOURCE=https://agents-shell.proompteng.ai"
       "AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master"
       "AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents"

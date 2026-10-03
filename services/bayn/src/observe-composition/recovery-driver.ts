@@ -36,6 +36,7 @@ import type {
   ObserveDecisionRuntime,
   ObserveStartupPreparation,
   RecoveryFirstCycleDriver,
+  RecoveryFirstCycleAdvance,
   RecoveryFirstRuntime,
 } from './model'
 import { executionDecisionFinalizationHeadroomMs } from './model'
@@ -368,6 +369,44 @@ export const recoveryFirstCycleNextDelayMs = (input: {
   readonly reconciliationIntervalMs: number
 }): number => Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
 
+/** Only verified quote staleness gets a short continuation; source failures retain the normal cadence. */
+export const closeQuoteContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.waitReason !== 'CLOSE_QUOTE_PENDING')
+    return undefined
+  const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
+  return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
+}
+
+/** Projection health is checked after the pass; a later failure owns its continuation timing. */
+export const checkAdvancedMarketProjection = <R>(
+  advanced: RecoveryFirstCycleAdvance,
+  check: IntradayMarketDataService['check'],
+  observeFailure: (cause: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>,
+): Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R> =>
+  check.pipe(
+    Effect.matchEffect({
+      onFailure: (cause) =>
+        observeFailure(
+          new CycleRunnerError({
+            operation: 'build-decision',
+            failure: 'market-data',
+            message: 'Execution worker market projection is unavailable',
+            cause,
+          }),
+        ).pipe(
+          Effect.map((failed) => {
+            const { nextDelayMs: _nextDelayMs, ...completed } = advanced
+            return { ...completed, ...failed }
+          }),
+        ),
+      onSuccess: () => Effect.succeed(advanced),
+    }),
+  )
+
 const makeRecoveryFirstCycleDriverEffect = (
   input: ObserveAutonomousCycleInput,
   startup: Parameters<AutonomousCycleStartup>[0],
@@ -489,22 +528,19 @@ const makeRecoveryFirstCycleDriverEffect = (
               input.intradayMarketData === undefined ||
               advanced.observation.result === 'FAILURE'
                 ? Effect.succeed(advanced)
-                : input.intradayMarketData.check.pipe(
-                    Effect.matchEffect({
-                      onFailure: (cause) =>
-                        observeCycleFailure(
-                          new CycleRunnerError({
-                            operation: 'build-decision',
-                            failure: 'market-data',
-                            message: 'Execution worker market projection is unavailable',
-                            cause,
-                          }),
-                        ).pipe(Effect.map((failed) => ({ ...advanced, ...failed }))),
-                      onSuccess: () => Effect.succeed(advanced),
-                    }),
-                  ),
+                : checkAdvancedMarketProjection(advanced, input.intradayMarketData.check, observeCycleFailure),
             ),
           ),
+      }),
+      Effect.flatMap((advanced) => {
+        if (advanced.observation.result === 'FAILURE' || !('result' in advanced) || advanced.result === undefined)
+          return Effect.succeed(advanced)
+        return currentUtcInstant.pipe(
+          Effect.map((observedAt) => {
+            const continuation = closeQuoteContinuationDelayMs(advanced.result, nextDelayMs, observedAt)
+            return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
+          }),
+        )
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(

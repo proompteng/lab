@@ -1207,7 +1207,7 @@ const storedIntent = (
   updatedAt,
 })
 
-test.each(['complete', 'incomplete', 'conflicting'] as const)(
+test.each(['complete', 'missing', 'planned', 'planned-risk', 'conflicting'] as const)(
   'prepares %s durable intents without replaying completed commits',
   async (kind) => {
     const fixture = await executionLifecycleFixture()
@@ -1215,13 +1215,14 @@ test.each(['complete', 'incomplete', 'conflicting'] as const)(
     for (const [index, intent] of fixture.intents.entries()) {
       const decision = fixture.document.deltaRisk[index]?.evaluation.decision
       if (decision === undefined) throw new Error('missing fixture risk decision')
+      if (kind === 'missing') continue
       records.set(intent.intentId, {
         intent: {
           ...intent,
-          state: kind === 'incomplete' ? IntentState.Planned : IntentState.Approved,
-          ...(kind === 'incomplete' ? {} : { riskDecisionId: decision.decisionId }),
+          state: kind === 'planned' || kind === 'planned-risk' ? IntentState.Planned : IntentState.Approved,
+          ...(kind === 'planned' || kind === 'planned-risk' ? {} : { riskDecisionId: decision.decisionId }),
         },
-        ...(kind === 'incomplete'
+        ...(kind === 'planned'
           ? {}
           : { decision: kind === 'conflicting' ? { ...decision, inputHash: 'f'.repeat(64) } : decision }),
         stateVersion: 2,
@@ -1275,6 +1276,17 @@ test.each(['complete', 'incomplete', 'conflicting'] as const)(
         latest: () => Effect.void,
       } as unknown as MutationStoreShape),
     )
+    if (kind === 'planned' || kind === 'planned-risk') {
+      expect(await Effect.runPromise(run.pipe(Effect.result))).toMatchObject({
+        _tag: 'Failure',
+        failure: {
+          failure: 'contract',
+          message: 'durable planned execution intent violates atomic approval persistence',
+        },
+      })
+      expect(commits).toBe(0)
+      return
+    }
     if (kind === 'conflicting') {
       expect(Exit.isFailure(await Effect.runPromiseExit(run))).toBe(true)
       expect(commits).toBe(0)
@@ -1282,7 +1294,7 @@ test.each(['complete', 'incomplete', 'conflicting'] as const)(
     }
     expect(await Effect.runPromise(run)).toMatchObject({ _tag: 'Execute', action: 'SUBMIT' })
     expect(await Effect.runPromise(run)).toMatchObject({ _tag: 'Execute', action: 'SUBMIT' })
-    expect(commits).toBe(kind === 'incomplete' ? fixture.intents.length : 0)
+    expect(commits).toBe(kind === 'missing' ? fixture.intents.length : 0)
   },
 )
 
@@ -2713,6 +2725,130 @@ describe('OBSERVE runtime composition', () => {
     expect(restrictions).toBe(0)
   })
 
+  test.each([
+    { label: 'risk expiry minus 1ms', boundary: 'risk', offsetMs: -1, reason: undefined },
+    { label: 'risk expiry equality', boundary: 'risk', offsetMs: 0, reason: CycleTerminalReason.Risk },
+    { label: 'risk expiry plus 1ms', boundary: 'risk', offsetMs: 1, reason: CycleTerminalReason.Risk },
+    { label: 'cutoff minus 1ms', boundary: 'cutoff', offsetMs: -1, reason: CycleTerminalReason.Risk },
+    { label: 'cutoff equality', boundary: 'cutoff', offsetMs: 0, reason: CycleTerminalReason.MissedSubmission },
+    { label: 'cutoff plus 1ms', boundary: 'cutoff', offsetMs: 1, reason: CycleTerminalReason.MissedSubmission },
+  ] as const)(
+    'selects expiry recovery for a restricted approved intent at $label',
+    async ({ boundary, offsetMs, reason }) => {
+      const fixture = await executionLifecycleFixture()
+      const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
+      expect(Date.parse(riskExpiresAt) + 1).toBeLessThan(Date.parse(fixture.document.submissionCutoffAt))
+      const observedAt = utcInstantFromEpochMillis(
+        Date.parse(boundary === 'risk' ? riskExpiresAt : fixture.document.submissionCutoffAt) + offsetMs,
+      )
+      const record = storedIntent(fixture.intent, IntentState.Approved, fixture.document.createdAt)
+      const restrictions: string[] = []
+      const step = await prepareStoredExecutionStep(
+        fixture,
+        record,
+        undefined,
+        observedAt,
+        0,
+        (restriction) => restrictions.push(restriction),
+        fixture.input,
+        undefined,
+        false,
+        fixture.policy,
+        fixture.preparation,
+        undefined,
+        undefined,
+        [],
+        fixture.document,
+        [],
+        Authority.Observe,
+      )
+
+      expect(step).toEqual(
+        reason === undefined
+          ? { _tag: 'Wait', observedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
+          : { _tag: 'Block', reason, observedAt },
+      )
+      expect(restrictions).toEqual([])
+    },
+  )
+
+  test.each([
+    { eventType: MutationEventType.SubmitStarted, operation: MutationOperation.Submit, state: IntentState.IoStarted },
+    { eventType: MutationEventType.SubmitUnknown, operation: MutationOperation.Submit, state: IntentState.Unknown },
+    {
+      eventType: MutationEventType.SubmitAccepted,
+      operation: MutationOperation.Submit,
+      state: IntentState.Acknowledged,
+    },
+    { eventType: MutationEventType.RecoveryFound, operation: MutationOperation.Submit, state: IntentState.Recovered },
+    {
+      eventType: MutationEventType.CancelStarted,
+      operation: MutationOperation.Cancel,
+      state: IntentState.Acknowledged,
+    },
+    {
+      eventType: MutationEventType.CancelAccepted,
+      operation: MutationOperation.Cancel,
+      state: IntentState.Acknowledged,
+    },
+    { eventType: MutationEventType.CancelUnknown, operation: MutationOperation.Cancel, state: IntentState.Unknown },
+  ])('preserves $eventType recovery ahead of restricted intent expiry', async ({ eventType, operation, state }) => {
+    const fixture = await executionLifecycleFixture()
+    const observedAt = fixture.risk.evaluation.decision.expiresAt
+    const occurredAt = utcInstantFromEpochMillis(Date.parse(observedAt) - 1_000)
+    const accepted: MutationEvent = {
+      schemaVersion: 'bayn.paper-mutation-event.v1',
+      eventId: '1'.repeat(64),
+      mutationId: '2'.repeat(64),
+      intentId: fixture.intent.intentId,
+      sequence: 2,
+      operation: MutationOperation.Submit,
+      eventType: MutationEventType.SubmitAccepted,
+      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      consistencyDelayMs: 1_000,
+      brokerOrderId: 'restricted-expiry-recovery-order',
+      occurredAt,
+    }
+    const event: MutationEvent = {
+      ...accepted,
+      eventId: '3'.repeat(64),
+      mutationId: '4'.repeat(64),
+      operation,
+      eventType,
+    }
+    const latestSubmit = operation === MutationOperation.Submit ? event : accepted
+    const latestCancel = operation === MutationOperation.Cancel ? event : undefined
+    const record = storedIntent(fixture.intent, state, occurredAt)
+    const restrictions: string[] = []
+    const step = await prepareStoredExecutionStep(
+      fixture,
+      record,
+      latestSubmit,
+      observedAt,
+      1,
+      (restriction) => restrictions.push(restriction),
+      fixture.input,
+      latestCancel,
+      false,
+      fixture.policy,
+      fixture.preparation,
+      undefined,
+      undefined,
+      [],
+      fixture.document,
+      [],
+      Authority.Observe,
+    )
+
+    expect(step).toEqual({
+      _tag: 'Execute',
+      action: operation === MutationOperation.Submit ? 'RECOVER_SUBMIT' : 'RECOVER_CANCEL',
+      intentId: fixture.intent.intentId,
+      observedAt,
+    })
+    expect(restrictions).toEqual([])
+  })
+
   test('terminalizes an untouched PAPER remainder when its durable approval expires', async () => {
     const fixture = await executionLifecycleFixture()
     const riskExpiresAt = fixture.risk.evaluation.decision.expiresAt
@@ -3314,9 +3450,12 @@ describe('OBSERVE runtime composition', () => {
     const committedIntents = new Map<string, StoredIntent>()
     const closeIntentStore: IntentStoreService = {
       commit: () => Effect.die(new Error('close admission must use commitClosing')),
-      commitClosing: (intent) =>
+      commitClosing: (intent, decision) =>
         Effect.sync(() => {
-          const record = storedIntent(intent, IntentState.Planned, close.createdAt)
+          const record: StoredIntent = {
+            ...storedIntent({ ...intent, riskDecisionId: decision.decisionId }, IntentState.Approved, close.createdAt),
+            decision,
+          }
           committedIntents.set(intent.intentId, record)
           return { record, deduplicated: false }
         }),
@@ -3396,7 +3535,7 @@ describe('OBSERVE runtime composition', () => {
           policy: fixture.policy,
           cycle: fixture.boundCycle,
           document: close,
-          reconcile: Effect.die(new Error('missed close cutoff must terminalize before broker reconciliation')),
+          reconcile: Effect.succeed(currentReconciliation),
           allowSubmit: false,
         })
       }).pipe(
@@ -3941,7 +4080,17 @@ describe('OBSERVE runtime composition', () => {
     }
     const records = new Map<string, StoredIntent>([
       [firstIntent.intentId, storedIntent(firstIntent, IntentState.Terminal, observedAt, TerminalOutcome.Rejected)],
-      [secondIntent.intentId, storedIntent(secondIntent, IntentState.Planned, close.createdAt)],
+      [
+        secondIntent.intentId,
+        {
+          ...storedIntent(
+            { ...secondIntent, riskDecisionId: close.deltaRisk[1]?.evaluation.decision.decisionId },
+            IntentState.Approved,
+            close.createdAt,
+          ),
+          decision: close.deltaRisk[1]?.evaluation.decision,
+        },
+      ],
     ])
     const latestSubmits = new Map<string, MutationEvent | undefined>([
       [firstIntent.intentId, rejected],
