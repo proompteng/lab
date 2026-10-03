@@ -41,6 +41,7 @@ import {
   type JevExitTarget,
 } from './exit'
 import { JevPositionStore } from './portfolio'
+import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
 import { JevOutcome } from './evidence'
 import { JevResolutionStatus } from './resolution'
 import { jevSnapshotSymbols, type JevProtocol } from './protocol'
@@ -334,8 +335,8 @@ export const evaluateJevPositionManagement = (input: {
         bid,
         input.protocol.protectiveStopBps,
       )
-    )
-      return yield* Effect.fromResult(
+    ) {
+      const target = yield* Effect.fromResult(
         decideJevExit({
           ...evidence,
           trigger: {
@@ -345,6 +346,15 @@ export const evaluateJevPositionManagement = (input: {
           },
         }),
       )
+      yield* Effect.logWarning('Jev protective exit uses an exchange-only price reference').pipe(
+        Effect.annotateLogs({
+          ...jevProtectiveQuoteDiagnostics(quote, input.protocol.maximumSpreadBps),
+          cycleId: input.cycle.identity.cycleId,
+          observedAt,
+        }),
+      )
+      return target
+    }
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, input.protocol, input.calendar, observedAt, [position.symbol]),
     )
