@@ -51,7 +51,10 @@ export class CredentialMasker {
             this.state.escaped = false
             continue
           }
-          if (char === '\\' && (this.state.terminator === '"' || this.state.terminator === "'")) {
+          if (
+            char === '\\' &&
+            (this.state.terminator === null || this.state.terminator === '"' || this.state.terminator === "'")
+          ) {
             this.state.escaped = true
             continue
           }

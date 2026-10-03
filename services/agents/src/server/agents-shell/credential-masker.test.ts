@@ -3,6 +3,10 @@ import { CredentialMasker, maskCredentialValues } from './credential-masker'
 
 const marker = '[REDACTED_CREDENTIAL]'
 const samples = [
+  ['curl --password opaque\\ synthetic-test-secret --verbose', `curl --password ${marker} --verbose`],
+  ['password=opaque\\ synthetic-test-secret; echo ordinary', `password=${marker}; echo ordinary`],
+  ['password=opaque\\;synthetic-test-secret next', `password=${marker} next`],
+  ['curl --user alice:opaque\\ synthetic-test-secret --verbose', `curl --user alice:${marker} --verbose`],
   ['database_password=synthetic-test-secret next', `database_password=${marker} next`],
   ['github_token=synthetic-test-secret next', `github_token=${marker} next`],
   ['service_api_key="synthetic-test-secret" next', `service_api_key="${marker}" next`],
