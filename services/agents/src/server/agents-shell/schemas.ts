@@ -4,7 +4,7 @@ const NonEmptyString = Schema.String.pipe(Schema.minLength(1))
 const NonNegativeNumber = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(0))
 const PositiveNumber = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1))
 const OutputBytes = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1024)).annotations({
-  description: 'Per-stream output tail cap in bytes. Default: 20000. Server cap: 200000.',
+  description: 'Per-stream reply page cap in bytes. Default: 20000. Server cap: 1048576. Retention is independent.',
 })
 const TimeoutSeconds = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1)).annotations({
   description: 'Timeout in seconds. Default: 60. Server cap: 1800.',
@@ -38,6 +38,18 @@ export const ShellJobSchema = Schema.extend(
   CommandResultSchema,
   Schema.Struct({
     jobId: Schema.String,
+    outputCaptureError: Schema.NullOr(Schema.String),
+    auditErrors: Schema.Number,
+    sessionId: Schema.NullOr(Schema.String),
+    agentId: Schema.NullOr(Schema.String),
+    requestId: Schema.NullOr(Schema.String),
+    toolCallId: Schema.NullOr(Schema.String),
+    outputEncoding: Schema.Literal('utf8', 'base64'),
+    outputLimitBytes: Schema.Number,
+    stdoutStartOffset: Schema.Number,
+    stderrStartOffset: Schema.Number,
+    stdoutHasMore: Schema.Boolean,
+    stderrHasMore: Schema.Boolean,
     status: Schema.Literal('running', 'exited', 'killed', 'timed_out'),
     startedAt: Schema.String,
     finishedAt: Schema.NullOr(Schema.String),
@@ -49,6 +61,11 @@ export const ShellJobSchema = Schema.extend(
 )
 
 export const ShellInputSchema = Schema.Struct({
+  agentId: Schema.optional(
+    NonEmptyString.pipe(Schema.maxLength(128)).annotations({
+      description: 'Advisory agent/task label, not an authorization identity.',
+    }),
+  ),
   command: NonEmptyString.annotations({
     description:
       'User-requested terminal command line executed inside the private agents-shell workspace container. The tool returns output only.',
@@ -107,6 +124,7 @@ export const AgentGuideOutputSchema = Schema.Struct({
 })
 
 export const ShellReadInputSchema = Schema.Struct({
+  outputEncoding: Schema.optional(Schema.Literal('utf8', 'base64')),
   jobId: NonEmptyString.annotations({ description: 'Job id returned by shell_start.' }),
   stdoutOffset: Schema.optional(NonNegativeNumber),
   stderrOffset: Schema.optional(NonNegativeNumber),
@@ -119,6 +137,8 @@ export const ShellKillInputSchema = Schema.Struct({
 })
 
 export const ShellStatusInputSchema = Schema.Struct({
+  sessionId: Schema.optional(SessionId),
+  agentId: Schema.optional(NonEmptyString),
   jobId: Schema.optional(Schema.String),
   limit: Schema.optional(PositiveNumber.pipe(Schema.lessThanOrEqualTo(100))),
 })

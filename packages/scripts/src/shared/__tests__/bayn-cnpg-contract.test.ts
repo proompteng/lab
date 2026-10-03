@@ -375,14 +375,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'BAYN_CYCLE_POLL_INTERVAL_MS',
     'BAYN_RECONCILIATION_INTERVAL_MS',
     'BAYN_OPERATION_TIMEOUT_MS',
-    'BAYN_SIGNAL_SNAPSHOT_ID',
-    'BAYN_SIGNAL_PUBLICATION_ASOF',
-    'BAYN_SIGNAL_CALENDAR_VERSION',
-    'BAYN_SIGNAL_DATA_START',
-    'BAYN_SIGNAL_DATA_END',
-    'BAYN_SIGNAL_LOOKBACK_START',
-    'BAYN_SIGNAL_EVALUATION_START',
-    'BAYN_SIGNAL_EVALUATION_END',
     'BAYN_TIGERBEETLE_CLUSTER_ID',
     'BAYN_TIGERBEETLE_ADDRESSES',
     'BAYN_TIGERBEETLE_LEDGER',
@@ -422,6 +414,25 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
 
   for (const name of sharedPlanEnvironment) {
     expect(controllerEnvironment.get(name)).toEqual(activationEnvironment.get(name))
+  }
+
+  const historicalReportEnvironment = [
+    'BAYN_SIGNAL_SNAPSHOT_ID',
+    'BAYN_SIGNAL_PUBLICATION_ASOF',
+    'BAYN_SIGNAL_CALENDAR_VERSION',
+    'BAYN_SIGNAL_DATA_START',
+    'BAYN_SIGNAL_DATA_END',
+    'BAYN_SIGNAL_LOOKBACK_START',
+    'BAYN_SIGNAL_EVALUATION_START',
+    'BAYN_SIGNAL_EVALUATION_END',
+  ]
+  for (const liveEnvironment of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+    for (const name of historicalReportEnvironment) {
+      expect(liveEnvironment.has(name)).toBe(false)
+    }
+    for (const name of ['BAYN_CLICKHOUSE_URL', 'BAYN_CLICKHOUSE_USERNAME', 'BAYN_CLICKHOUSE_PASSWORD']) {
+      expect(liveEnvironment.has(name)).toBe(true)
+    }
   }
   expect(controllerEnvironment.get('BAYN_CODE_REVISION')?.value).toBe(sourceRevision)
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)

@@ -18,7 +18,7 @@ async fn editor_browser_acceptance_fixture() {
             json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"editor-fixture-incarnation","generation":1},"spec":{
                 "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
                 "resources":{"cpuMillis":2000,"memoryMib":4096,"workspaceGib":16},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
-            },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1"}})
+            },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":"editor-fixture"}})
         };
         Ok::<_, std::io::Error>(
             Response::builder()
@@ -57,15 +57,21 @@ async fn editor_browser_acceptance_fixture() {
             .to_owned(),
         )
         .unwrap(),
+        crate::identity::WorkloadIdentity::Fixture,
     )
     .unwrap();
     let issue_state = state.clone();
     let issue = get(move |Query(query): Query<HashMap<String, String>>| {
         let state = issue_state.clone();
         async move {
-            let guest = GuestClient::for_agent(state.client.clone(), "tengri", "editor-fixture")
-                .await
-                .unwrap();
+            let guest = GuestClient::for_agent(
+                state.client.clone(),
+                "tengri",
+                "editor-fixture",
+                &crate::identity::WorkloadIdentity::Fixture,
+            )
+            .await
+            .unwrap();
             guest.open_editor().await.unwrap();
             let ticket = state
                 .tickets
@@ -79,6 +85,22 @@ async fn editor_browser_acceptance_fixture() {
             axum::Json(
                 json!({"id":ticket.id,"launchUrl":ticket.url,"expiresAt":ticket.expires_at,"previewOrigin":state.preview_origin.origin(&ticket.id)}),
             )
+        }
+    });
+    let files_state = state.clone();
+    let files = get(move |Query(query): Query<HashMap<String, String>>| {
+        let state = files_state.clone();
+        async move {
+            let guest = GuestClient::for_agent(
+                state.client.clone(),
+                "tengri",
+                "editor-fixture",
+                &crate::identity::WorkloadIdentity::Fixture,
+            )
+            .await
+            .unwrap();
+            let files = guest.list_files(query.get("path").unwrap()).await.unwrap();
+            axum::Json(json!({"path": files.path, "entries": files.entries}))
         }
     });
     let revoke_state = state.clone();
@@ -108,6 +130,7 @@ async fn editor_browser_acceptance_fixture() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let control = control_router(state.clone())
         .route("/_test/editor", issue)
+        .route("/_test/files", files)
         .route("/_test/revoke", revoke)
         .route("/_test/revoke-editors", revoke_editors)
         .route(

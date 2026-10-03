@@ -10,7 +10,7 @@ import {
   type BrokerObservationTicket,
   type ObservedBrokerSnapshot,
 } from '../broker/alpaca/observed-snapshot'
-import { BrokerReadError } from '../broker/alpaca/failures'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { currentUtcInstant } from '../time'
 import { UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -21,6 +21,10 @@ export const makeBrokerObservationStore = (
   sourceRevision: string,
   maximumAgeMs: number,
 ) => {
+  const decodeProjectionRows = Schema.decodeUnknownEffect(
+    Schema.Array(Schema.Struct({ payload: Schema.Unknown, snapshot_hash: Schema.String })),
+    strictParseOptions,
+  )
   const run = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, BrokerReadError, R> =>
     effect.pipe(
       Effect.mapError((cause) =>
@@ -34,7 +38,8 @@ export const makeBrokerObservationStore = (
     INSERT INTO broker_observations (account_id, source_revision)
     VALUES (${accountId}, ${sourceRevision})
     ON CONFLICT (account_id) DO UPDATE SET source_revision = EXCLUDED.source_revision,
-      generation = broker_observations.generation + 1, available = false
+      generation = broker_observations.generation + 1, available = false,
+      poll_started_at = NULL, observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, payload = NULL
   `.pipe(Effect.asVoid),
   )
   const invalidate = run(
@@ -72,6 +77,12 @@ export const makeBrokerObservationStore = (
   const publish = (ticket: BrokerObservationTicket, value: ObservedBrokerSnapshot) =>
     run(
       Effect.gen(function* () {
+        const decoded = decodeObservedBrokerSnapshot(value)
+        if (Result.isFailure(decoded))
+          return yield* observationUnavailable(
+            'Broker observation cannot be published because decoding failed',
+            decoded.failure,
+          )
         yield* validateObservedBrokerSnapshot(value, accountId, yield* currentUtcInstant, maximumAgeMs)
         if (value.startedAt !== ticket.startedAt)
           return yield* observationUnavailable('Broker poll start does not match its durable ticket')
@@ -96,7 +107,8 @@ export const makeBrokerObservationStore = (
   const failed = (ticket: BrokerObservationTicket) =>
     run(
       sql`
-    UPDATE broker_observations SET available = false, poll_started_at = ${ticket.startedAt}::timestamptz
+    UPDATE broker_observations SET available = false, poll_started_at = ${ticket.startedAt}::timestamptz,
+      completed_at = NULL
     WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND generation = ${ticket.generation}
       AND (poll_started_at IS NULL OR poll_started_at <= ${ticket.startedAt}::timestamptz)
   `.pipe(Effect.asVoid),
@@ -133,20 +145,24 @@ export const makeBrokerObservationStore = (
             AND EXISTS (SELECT 1 FROM mutation_events WHERE intent_id = reserved.intent_id
               AND event_type = 'SUBMIT_STARTED')
         ))
-    `.pipe(
-          Effect.flatMap(
-            Schema.decodeUnknownEffect(
-              Schema.Array(
-                Schema.Struct({
-                  payload: Schema.Unknown,
-                  snapshot_hash: Schema.String,
-                }),
-              ),
-              strictParseOptions,
-            ),
-          ),
-        )
-        const row = rows[0]
+    `.pipe(Effect.flatMap(decodeProjectionRows))
+        let row = rows[0]
+        const pending = row === undefined
+        if (pending) {
+          const now = yield* currentUtcInstant
+          const awaiting = yield* sql`
+        SELECT payload, snapshot_hash FROM broker_observations
+        WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
+          AND observed_at > ${now}::timestamptz - ${maximumAgeMs} * interval '1 millisecond'
+          AND completed_at <= ${now}::timestamptz AND completed_at >= poll_started_at
+          AND (
+            EXISTS (SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
+              WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= poll_started_at)
+            OR EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId} AND observed_at > completed_at)
+          )
+      `.pipe(Effect.flatMap(decodeProjectionRows))
+          row = awaiting[0]
+        }
         if (row === undefined)
           return yield* observationUnavailable('Broker observation is unavailable or invalidated by a mutation')
         const decoded = decodeObservedBrokerSnapshot(row.payload)
@@ -154,7 +170,20 @@ export const makeBrokerObservationStore = (
           return yield* observationUnavailable('Persisted broker observation failed decoding', decoded.failure)
         if (observedBrokerSnapshotHash(decoded.success) !== row.snapshot_hash)
           return yield* observationUnavailable('Persisted broker observation content hash changed')
-        return yield* validateObservedBrokerSnapshot(decoded.success, accountId, yield* currentUtcInstant, maximumAgeMs)
+        const validated = yield* validateObservedBrokerSnapshot(
+          decoded.success,
+          accountId,
+          yield* currentUtcInstant,
+          maximumAgeMs,
+        )
+        if (pending)
+          return yield* new BrokerReadError({
+            operation: 'preflight',
+            kind: BrokerReadErrorKind.ObservationPending,
+            retryable: true,
+            message: 'Broker observation is awaiting a fresh post-mutation cut',
+          })
+        return validated
       }),
     )
   return { activate, begin, publish, failed, invalidate, read: readProjection(null), readForSubmit: readProjection }

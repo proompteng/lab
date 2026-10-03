@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+
+	"google.golang.org/grpc"
 )
 
 const (
@@ -21,6 +22,7 @@ const (
 )
 
 type apiConfig struct {
+	identity            *guestIdentity
 	bootstrapToken      string
 	codexBinary         string
 	codeServerBinary    string
@@ -33,6 +35,7 @@ type apiConfig struct {
 }
 
 type apiServer struct {
+	identity         *guestIdentity
 	bootstrapToken   string
 	codex            *codexSupervisor
 	editor           *editorSupervisor
@@ -44,6 +47,7 @@ type apiServer struct {
 	syncDirectories  func(workspace, ...string) error
 	terminals        *terminalManager
 	workspace        workspace
+	rpc              *grpc.Server
 }
 
 type apiError struct {
@@ -71,6 +75,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	transport.Proxy = nil
 	server := &apiServer{
 		bootstrapToken:   config.bootstrapToken,
+		identity:         config.identity,
 		evidence:         config.evidence,
 		fileWatcher:      files,
 		previewRequests:  newPreviewRequestTracker(),
@@ -86,6 +91,8 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	if config.codeServerBinary != "" {
 		server.editor = newEditorSupervisor(config.codeServerBinary, config.codeServerBootstrap, config.homeRoot, workspace)
 	}
+	server.evidence.GuestProtocolVersion = guestProtocolVersion
+	server.rpc = server.newRPCServer()
 	return server, nil
 }
 
@@ -95,6 +102,9 @@ func (server *apiServer) close() {
 }
 
 func (server *apiServer) beginShutdown() {
+	if server.rpc != nil {
+		server.rpc.Stop()
+	}
 	if server.previewRequests != nil {
 		server.previewRequests.close()
 	}
@@ -108,26 +118,8 @@ func (server *apiServer) beginShutdown() {
 	}
 }
 
-func (server *apiServer) authenticatedRoutes() http.Handler {
+func (server *apiServer) previewRoutes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/evidence", server.handleEvidence)
-	mux.HandleFunc("POST /v1/editor", server.handleOpenEditor)
-	mux.HandleFunc("GET /v1/files", server.handleListFiles)
-	mux.HandleFunc("GET /v1/files/search", server.handleSearchFiles)
-	mux.HandleFunc("GET /v1/files/watch", server.handleWatchFiles)
-	mux.HandleFunc("GET /v1/files/content", server.handleReadFile)
-	mux.HandleFunc("PUT /v1/files/content", server.handleWriteFile)
-	mux.HandleFunc("POST /v1/files/directory", server.handleCreateDirectory)
-	mux.HandleFunc("POST /v1/files/move", server.handleMoveFile)
-	mux.HandleFunc("DELETE /v1/files", server.handleDeleteFile)
-	mux.HandleFunc("POST /v1/terminals", server.handleCreateTerminal)
-	mux.HandleFunc("GET /v1/terminals", server.handleListTerminals)
-	mux.HandleFunc("DELETE /v1/terminals/{id}", server.handleTerminateTerminal)
-	mux.HandleFunc("GET /v1/terminals/{id}/ws", server.handleTerminalWebSocket)
-	mux.HandleFunc("POST /v1/codex/call", server.handleCodexCall)
-	mux.HandleFunc("GET /v1/codex/login", server.handleCodexLogin)
-	mux.HandleFunc("GET /v1/codex/events", server.handleCodexEvents)
-	mux.HandleFunc("POST /v1/codex/approvals/{id}", server.handleCodexApproval)
 	mux.HandleFunc("/v1/preview/{port}/{path...}", server.handlePreview)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -145,24 +137,6 @@ func (server *apiServer) authenticatedRoutes() http.Handler {
 	})
 }
 
-func (server *apiServer) handleEvidence(writer http.ResponseWriter, _ *http.Request) {
-	writeJSON(writer, http.StatusOK, server.evidence)
-}
-
-func decodeJSON(writer http.ResponseWriter, request *http.Request, destination any) bool {
-	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, maxJSONBodyBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		writeAPIError(writer, http.StatusBadRequest, "invalid JSON request")
-		return false
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeAPIError(writer, http.StatusBadRequest, "request must contain one JSON object")
-		return false
-	}
-	return true
-}
-
 func writeJSON(writer http.ResponseWriter, status int, value any) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Cache-Control", "no-store")
@@ -177,7 +151,7 @@ func writeAPIError(writer http.ResponseWriter, status int, message string) {
 }
 
 func validatePreviewPort(port int) error {
-	if port < 1024 || port > 65535 || port == 8080 || port == editorBridgePort {
+	if port < 1024 || port > 65535 || port == 8080 || port == 8443 || port == editorBridgePort {
 		return fmt.Errorf("preview port must be between 1024 and 65535 and cannot use a reserved guest port")
 	}
 	return nil

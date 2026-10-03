@@ -2,18 +2,20 @@ import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
 import { Clock, Effect, Ref, Scope } from 'effect'
-import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http'
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { CycleState, CycleTerminalReason } from './cycle'
+import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
+import { defaultJevProtocolDocument } from './jev/protocol'
 
 export type HttpResponseDecision =
   | {
@@ -361,6 +363,7 @@ const statusFactsDataFirst = (
     cycle: publicCycleState(state),
     autonomousCycleLoop: publicAutonomousCycleLoop(state),
     executionController: publicExecutionController(state),
+    executionSession: executionSessionReadiness(state, runtimeReady),
     capitalActivation: state.capitalActivation ?? { _tag: 'NotConfigured' },
     broker,
     authority: {
@@ -522,14 +525,11 @@ const epochSeconds = (instant: string | null | undefined): number =>
 
 const booleanMetric = (value: boolean | null): number => (value === true ? 1 : 0)
 
-export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady = isReady(state)): boolean => {
-  const current = state.cycle.current
+const executionPrerequisitesReady = (state: RuntimeState, runtimeReady: boolean): boolean => {
   const controller = state.executionController
+  const status = controller?.status
   return (
     runtimeReady &&
-    current !== null &&
-    current.phase === CycleState.Active &&
-    current.snapshotId !== null &&
     state.capitalActivation?._tag === 'Realized' &&
     state.cycle.authority?.maximum === Authority.Execution &&
     state.cycle.authority.effective === Authority.Execution &&
@@ -540,7 +540,121 @@ export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady
     state.broker?.readAvailable === true &&
     state.broker.accountBound === true &&
     controller?.readAvailable === true &&
-    controller.status?.active === true
+    status !== null &&
+    status !== undefined &&
+    status.active &&
+    status.controllerKey === controller.controllerKey &&
+    status.planHash === controller.planHash &&
+    executionControllerStatusHasCompletion(status)
+  )
+}
+
+export const executionSessionPreflightReady = (state: RuntimeState, runtimeReady = isReady(state)): boolean =>
+  state.cycle.current?.phase === CycleState.Active && executionPrerequisitesReady(state, runtimeReady)
+
+enum ExecutionSessionCondition {
+  Unavailable = 'UNAVAILABLE',
+  Blocked = 'BLOCKED',
+  RecoveryOnly = 'RECOVERY_ONLY',
+  Preopen = 'PREOPEN',
+  Warmup = 'WARMUP',
+  AwaitingDecision = 'AWAITING_DECISION',
+  DecisionLagging = 'DECISION_LAGGING',
+  InputUnavailable = 'INPUT_UNAVAILABLE',
+  EvaluationUnavailable = 'EVALUATION_UNAVAILABLE',
+  Executing = 'EXECUTING',
+  Closing = 'CLOSING',
+  Abstaining = 'ABSTAINING',
+  Rearming = 'REARMING',
+  Closed = 'CLOSED',
+}
+
+const readySessionConditions = new Set([
+  ExecutionSessionCondition.Preopen,
+  ExecutionSessionCondition.Warmup,
+  ExecutionSessionCondition.AwaitingDecision,
+  ExecutionSessionCondition.Executing,
+  ExecutionSessionCondition.Closing,
+  ExecutionSessionCondition.Abstaining,
+  ExecutionSessionCondition.Rearming,
+])
+
+const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) => {
+  const session = state.cycle.current ?? state.cycle.last
+  const checkedAtMs = Date.parse(state.health.checkedAt ?? '')
+  const firstObservationMs =
+    session === null
+      ? Number.NaN
+      : Date.parse(session.submissionOpenAt) +
+        defaultJevProtocolDocument.lookbackMinutes * 60_000 +
+        defaultJevProtocolDocument.decisionDelaySeconds * 1_000
+  const deadlineMs =
+    session === null
+      ? Number.NaN
+      : Math.max(firstObservationMs, Date.parse(session.createdAt)) + defaultJevProtocolDocument.maximumDecisionLagMs
+  const result = (condition: ExecutionSessionCondition) => ({
+    schemaVersion: 'bayn.execution-session-readiness.v1',
+    condition,
+    ready: readySessionConditions.has(condition),
+    executionSessionDate: session?.executionSessionDate ?? null,
+    cycleId: session?.cycleId ?? null,
+    controllerPlanHash: state.executionController?.planHash ?? null,
+    checkedAt: state.health.checkedAt,
+    firstObservationAt: Number.isFinite(firstObservationMs) ? new Date(firstObservationMs).toISOString() : null,
+    decisionDeadlineAt: Number.isFinite(deadlineMs) ? new Date(deadlineMs).toISOString() : null,
+  })
+  if (state.capitalActivation?._tag === 'Realized' && state.cycle.authority?.kill === KillState.Active) {
+    return result(ExecutionSessionCondition.RecoveryOnly)
+  }
+  if (
+    state.cycle.condition === CycleOperationsCondition.Failed ||
+    state.cycle.condition === CycleOperationsCondition.Stalled
+  ) {
+    return result(ExecutionSessionCondition.Blocked)
+  }
+  if (session === null || !Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
+    return result(ExecutionSessionCondition.Unavailable)
+  }
+  if (checkedAtMs >= Date.parse(session.executionCloseAt)) return result(ExecutionSessionCondition.Closed)
+  if (state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined) {
+    return result(
+      checkedAtMs >= Date.parse(session.submissionCutoffAt)
+        ? ExecutionSessionCondition.Closing
+        : ExecutionSessionCondition.Executing,
+    )
+  }
+  if (checkedAtMs >= Date.parse(session.submissionCutoffAt)) return result(ExecutionSessionCondition.Closed)
+  if (state.cycle.current === null) {
+    return result(
+      session.phase === CycleState.NoTrade
+        ? ExecutionSessionCondition.Abstaining
+        : session.phase === CycleState.Completed
+          ? ExecutionSessionCondition.Rearming
+          : ExecutionSessionCondition.Blocked,
+    )
+  }
+  if (state.cycle.current.phase !== CycleState.Active) return result(ExecutionSessionCondition.Unavailable)
+  if (checkedAtMs < Date.parse(session.submissionOpenAt)) return result(ExecutionSessionCondition.Preopen)
+  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
+  const pass = state.autonomousCycleLoop.lastPass
+  if (
+    pass?.result === 'SUCCESS' &&
+    pass.readiness !== undefined &&
+    Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
+  ) {
+    if (pass.readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
+      return result(ExecutionSessionCondition.Abstaining)
+    if (pass.readiness.reason === DecisionReadinessReason.InferenceUnavailable)
+      return result(ExecutionSessionCondition.EvaluationUnavailable)
+    if (
+      pass.readiness.reason !== DecisionReadinessReason.DecisionPending &&
+      pass.readiness.reason !== DecisionReadinessReason.SignalWindowObserved
+    ) {
+      return result(ExecutionSessionCondition.InputUnavailable)
+    }
+  }
+  return result(
+    checkedAtMs >= deadlineMs ? ExecutionSessionCondition.DecisionLagging : ExecutionSessionCondition.AwaitingDecision,
   )
 }
 
@@ -575,6 +689,7 @@ const renderPrometheusMetricsDataFirst = (
   const cycleDecisionBound =
     state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined
   const sessionPreflightReady = executionSessionPreflightReady(state, runtimeReady)
+  const sessionReadiness = executionSessionReadiness(state, runtimeReady)
   const loopResults = ['unknown', 'success', 'failure'] as const
   const loopResult = state.autonomousCycleLoop.lastPass?.result.toLowerCase() ?? 'unknown'
   const capitalActivationRealized = state.capitalActivation?._tag === 'Realized'
@@ -689,6 +804,12 @@ const renderPrometheusMetricsDataFirst = (
                 '# HELP bayn_cycle_submission_cutoff_timestamp_seconds Bound broker submission cutoff.',
                 '# TYPE bayn_cycle_submission_cutoff_timestamp_seconds gauge',
                 `bayn_cycle_submission_cutoff_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.submissionCutoffAt))}`,
+                '# HELP bayn_cycle_first_observation_timestamp_seconds First complete rolling observation for the current session.',
+                '# TYPE bayn_cycle_first_observation_timestamp_seconds gauge',
+                `bayn_cycle_first_observation_timestamp_seconds ${prometheusNumber(epochSeconds(sessionReadiness.firstObservationAt))}`,
+                '# HELP bayn_cycle_decision_deadline_timestamp_seconds First observation or new attempt time plus the strategy evaluation allowance.',
+                '# TYPE bayn_cycle_decision_deadline_timestamp_seconds gauge',
+                `bayn_cycle_decision_deadline_timestamp_seconds ${prometheusNumber(epochSeconds(sessionReadiness.decisionDeadlineAt))}`,
                 '# HELP bayn_cycle_execution_open_timestamp_seconds Bound current execution-session open.',
                 '# TYPE bayn_cycle_execution_open_timestamp_seconds gauge',
                 `bayn_cycle_execution_open_timestamp_seconds ${prometheusNumber(epochSeconds(state.cycle.current.executionOpenAt))}`,
@@ -1151,6 +1272,15 @@ const renderPrometheusMetricsDataFirst = (
     '# HELP bayn_execution_session_preflight_ready Whether durable execution, authority, reconciliation, broker, and controller prerequisites are ready for the current active session.',
     '# TYPE bayn_execution_session_preflight_ready gauge',
     `bayn_execution_session_preflight_ready ${sessionPreflightReady ? 1 : 0}`,
+    '# HELP bayn_execution_session_ready Whether the projected session is usable, including legitimate pre-open, warmup, holding and abstention states.',
+    '# TYPE bayn_execution_session_ready gauge',
+    `bayn_execution_session_ready ${sessionReadiness.ready ? 1 : 0}`,
+    '# HELP bayn_execution_session_condition Current session acceptance condition, separate from controller startup.',
+    '# TYPE bayn_execution_session_condition gauge',
+    ...Object.values(ExecutionSessionCondition).map(
+      (condition) =>
+        `bayn_execution_session_condition{condition="${condition.toLowerCase()}"} ${condition === sessionReadiness.condition ? 1 : 0}`,
+    ),
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,

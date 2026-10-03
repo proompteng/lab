@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createGzip, createGunzip, gzipSync } from 'node:zlib'
 import { NodeStream } from '@effect/platform-node'
 import { Cause, DateTime, Effect, FileSystem, Pull, Schema, Stream } from 'effect'
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process'
+import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../src/hash'
 import {
   BacktestSourceManifestSchema,

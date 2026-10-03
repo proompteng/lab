@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - 'services/nanoagent/**'
+      - 'services/tengri/proto/**'
       - '.github/workflows/nanoagent.yaml'
   push:
     branches:
       - main
     paths:
       - 'services/nanoagent/**'
+      - 'services/tengri/proto/**'
       - '.github/workflows/nanoagent.yaml'
   workflow_dispatch:
 
@@ -31,7 +33,19 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: services/nanoagent/go.mod
-          cache-dependency-path: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Verify guest protobuf bindings
+        working-directory: services/nanoagent
+        run: |
+          set -euo pipefail
+          buf lint ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto
+          buf format ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto --diff --exit-code
+          bash generate-proto.sh
+          git diff --exit-code -- internal/guestpb
 
       - name: Test
         working-directory: services/nanoagent

@@ -1,0 +1,212 @@
+syntax = "proto3";
+
+package proompteng.runtime.guest.v1;
+
+option go_package = "github.com/proompteng/lab/services/nanoagent/internal/guestpb";
+
+// The authenticated API of one MicroVM. Ownership is enforced by Tengri before
+// dialing the guest; every RPC also requires that VM's bootstrap credential.
+service NanoagentService {
+  rpc RefreshSpireBootstrap(SpireBootstrap) returns (Empty);
+  rpc GetInfo(Empty) returns (GuestInfo);
+  rpc OpenEditor(Empty) returns (Editor);
+  rpc ListFiles(Path) returns (FileList);
+  rpc ReadFile(Path) returns (FileContent);
+  rpc WriteFile(FileWrite) returns (FileWriteResult);
+  rpc CreateDirectory(Path) returns (FileEntry);
+  rpc MoveFile(FileMove) returns (FileEntry);
+  rpc DeleteFile(FileDelete) returns (Empty);
+  rpc SearchFiles(FileSearch) returns (FileSearchResult);
+  rpc WatchFiles(FileWatch) returns (stream FileEvent);
+  rpc CreateTerminal(TerminalCreate) returns (TerminalCreated);
+  rpc ListTerminals(Empty) returns (TerminalList);
+  rpc TerminateTerminal(TerminalID) returns (Empty);
+  // Closing the input stream detaches; it does not terminate the PTY session.
+  rpc AttachTerminal(stream TerminalInput) returns (stream TerminalOutput);
+  rpc CodexCall(CodexRequest) returns (CodexResult);
+  rpc CodexLogin(Empty) returns (CodexLoginState);
+  rpc ResolveCodexApproval(CodexApproval) returns (Empty);
+  rpc WatchCodexEvents(CodexWatch) returns (stream CodexEvent);
+}
+
+message SpireBootstrap {
+  string pod_uid = 1;
+  bytes token = 2;
+  bytes trust_bundle = 3;
+}
+
+message Empty {}
+message GuestInfo {
+  string microvm_id = 1;
+  uint32 protocol_version = 2;
+}
+message Editor {
+  uint32 port = 1;
+}
+message Path {
+  string path = 1;
+}
+message FileEntry {
+  string name = 1;
+  string path = 2;
+  bool directory = 3;
+  int64 size = 4;
+  string modified_at = 5;
+}
+message FileList {
+  string path = 1;
+  repeated FileEntry entries = 2;
+}
+message FileContent {
+  bytes content = 1;
+  string content_type = 2;
+  string revision = 3;
+}
+message FileWrite {
+  string path = 1;
+  bytes content = 2;
+  string expected_revision = 3;
+}
+message FileWriteResult {
+  string path = 1;
+  int64 size = 2;
+  string revision = 3;
+}
+message FileMove {
+  string source_path = 1;
+  string destination_path = 2;
+}
+message FileDelete {
+  string path = 1;
+  bool recursive = 2;
+}
+message FileSearch {
+  string query = 1;
+  string path = 2;
+  uint32 limit = 3;
+}
+message FileSearchResult {
+  repeated FileEntry entries = 1;
+  bool truncated = 2;
+}
+message FileWatch {
+  string path = 1;
+  // Omission tails current state; explicit zero requests replay.
+  optional uint64 after = 2;
+}
+message FileEvent {
+  uint64 sequence = 1;
+  string kind = 2;
+  string path = 3;
+  string previous_path = 4;
+  FileEntry entry = 5;
+}
+message TerminalCreate {
+  string creation_id = 1;
+  string cwd = 2;
+  uint32 columns = 3;
+  uint32 rows = 4;
+}
+message TerminalSession {
+  string id = 1;
+  string creation_id = 2;
+  string cwd = 3;
+  string created_at = 4;
+  string last_activity_at = 5;
+  bool attached = 6;
+}
+message TerminalCreated {
+  TerminalSession session = 1;
+  bool created = 2;
+}
+message TerminalList {
+  repeated TerminalSession sessions = 1;
+}
+message TerminalID {
+  string id = 1;
+}
+message TerminalAttach {
+  string id = 1;
+  string reconnect_token = 2;
+  uint32 since = 3;
+  uint32 columns = 4;
+  uint32 rows = 5;
+}
+message TerminalResize {
+  uint32 columns = 1;
+  uint32 rows = 2;
+}
+message TerminalInput {
+  // The first message must be attach. Later messages control that session only.
+  oneof action {
+    TerminalAttach attach = 1;
+    bytes input = 2;
+    TerminalResize resize = 3;
+    string signal = 4;
+    Empty ping = 5;
+    Empty terminate = 6;
+  }
+}
+message TerminalReady {
+  string session_id = 1;
+  string token = 2;
+  uint32 buffer_start = 3;
+  uint32 buffer_end = 4;
+}
+message TerminalReset {
+  string reason = 1;
+  uint32 buffer_start = 2;
+  uint32 buffer_end = 3;
+}
+message TerminalData {
+  uint32 sequence = 1;
+  bytes data = 2;
+}
+message TerminalOutput {
+  oneof event {
+    TerminalReady ready = 1;
+    TerminalReset reset = 2;
+    TerminalData output = 3;
+    int32 exit_code = 4;
+    string error = 5;
+    Empty pong = 6;
+  }
+}
+
+// Codex owns its versioned JSON protocol. Preserve its payload bytes exactly,
+// including integers, inside a bounded, typed guest RPC envelope.
+message CodexRequest {
+  string method = 1;
+  bytes params_json = 2;
+}
+message CodexResult {
+  bytes result_json = 1;
+  uint64 event_sequence = 2;
+}
+message CodexLoginState {
+  bool active = 1;
+  bytes result_json = 2;
+  string started_at = 3;
+}
+message CodexApproval {
+  string approval_id = 1;
+  string decision = 2;
+}
+message CodexWatch {
+  uint64 after = 1;
+}
+message CodexEvent {
+  uint64 sequence = 1;
+  string method = 2;
+  string approval_id = 3;
+  bytes raw_json = 4;
+}
+
+// Operation details preserve revision conflicts and bounded-resource failures
+// without leaking filesystem or credential details.
+message OperationFailure {
+  reserved 1;
+  reserved "http_status";
+  string current_revision = 2;
+  bool resource_too_large = 3;
+}

@@ -3,7 +3,7 @@
 ARG GO_BASE_IMAGE=mirror.gcr.io/golang
 ARG GO_VERSION=1.25.5
 ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG NODE_BASE_IMAGE=mirror.gcr.io/node
 ARG NODE_VERSION=24.11.1
 ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
@@ -21,10 +21,13 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
+COPY internal ./internal
 COPY vscode-extension ./vscode-extension
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-      go build -trimpath -ldflags='-s -w' -o /out/nanoagent .
+      go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+      go test -c -o /out/nanoagent-tests
 
 FROM ${GO_BASE_IMAGE}:${GO_VERSION}-bookworm AS go-runtime
 
@@ -61,6 +64,8 @@ FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
     CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
+    SPIRE_AGENT_BINARY=/home/nanoagent/.local/bin/spire-agent \
+    SPIRE_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-spire-agent \
     CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
     CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
@@ -132,6 +137,7 @@ RUN set -eux; \
 COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
+COPY --chmod=0555 bootstrap-spire-agent.sh /usr/local/bin/bootstrap-spire-agent
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
 FROM runtime AS guest-admin-smoke
@@ -317,8 +323,8 @@ RUN mkdir -p "$HOME" && \
     test "$(node --version)" = 'v24.11.1' && \
     test "$(npm --version | cut -d. -f1)" -ge 10 && \
     test "$(npm config get prefix)" = "$HOME/.local" && \
-    test "$(bun --version)" = '1.4.0' && \
-    test "$(bunx --version)" = '1.4.0' && \
+    test "$(bun --version)" = '1.4.2' && \
+    test "$(bunx --version)" = '1.4.2' && \
     test "$(uv --version | cut -d' ' -f2)" = '0.11.14' && \
     test "$(go version | cut -d' ' -f3)" = 'go1.25.5' && \
     test "$(go env GOROOT)" = "$HOME/.local/go" && \
@@ -375,9 +381,18 @@ USER 1000:1000
 RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
     "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
 
+FROM runtime-with-toolchain AS spire-agent-smoke
+ENV HOME=/home/nanoagent/.spire-smoke
+COPY --from=build /out/nanoagent-tests /tmp/nanoagent-tests
+RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
+    "$HOME/.local/bin/spire-agent" --version > /tmp/spire-agent-version && \
+    SPIRE_AGENT_VALIDATE_BINARY="$HOME/.local/bin/spire-agent" \
+      /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v
+
 FROM runtime-with-toolchain AS guest-rootfs
 
 COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
+COPY --from=spire-agent-smoke /tmp/spire-agent-version /usr/share/nanoagent/spire-agent-version
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version

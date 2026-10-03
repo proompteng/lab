@@ -7,8 +7,8 @@ import { Config, Effect, Exit, Option, Schedule, Scope } from 'effect'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
 
-const admin = Effect.runSync(Config.option(Config.string('BAYN_TEST_RESTATE_ADMIN_URL'))).pipe(Option.getOrUndefined)
-const ingress = Effect.runSync(Config.option(Config.string('BAYN_TEST_RESTATE_INGRESS_URL'))).pipe(
+const admin = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_ADMIN_URL'))).pipe(Option.getOrUndefined)
+const ingress = Effect.runSync(Config.option(Config.String('BAYN_TEST_RESTATE_INGRESS_URL'))).pipe(
   Option.getOrUndefined,
 )
 const describeRestate = admin === undefined || ingress === undefined ? describe.skip : describe
@@ -50,12 +50,16 @@ describeRestate('Real Restate broker observation journal', () => {
     let fail = false
     const makeObserved = () =>
       makeBaynBrokerObservations(config, {
+        nextPollNotBeforeMs: async () => 0,
+        preparePoll: async () => 'test-capture',
         activate: async () => {
           activations += 1
         },
         poll: async () => {
           polls += 1
-          return fail ? { _tag: 'Unavailable' } : { _tag: 'Published', snapshotHash: '3'.repeat(64) }
+          return fail
+            ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
+            : { _tag: 'Published', snapshotHash: '3'.repeat(64), nextPollNotBeforeMs: 0 }
         },
       })
     const bridge = restate.service({

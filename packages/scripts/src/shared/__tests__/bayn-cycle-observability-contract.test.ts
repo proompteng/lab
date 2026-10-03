@@ -37,6 +37,7 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynExecutionWorkerReplicaTargetMissed',
       'BaynExecutionControllerOverdue',
       'BaynExecutionWindowUnready',
+      'BaynInputWindowUnavailable',
       'BaynExecutionDecisionLagging',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
@@ -63,16 +64,25 @@ describe('Bayn cycle operations alert contract', () => {
       'bayn_execution_controller_next_due_timestamp_seconds{',
     )
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_cycle_stall_threshold_seconds{')
-    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_preflight_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_ready{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_decision_bound{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_open_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('- 600')
+    expect(expressions.BaynExecutionWindowUnready).toMatch(
+      /unless on\(job, namespace, service, instance\)[\s\S]+condition="decision_lagging"/,
+    )
+    expect(expressions.BaynExecutionWindowUnready).toContain('condition="input_unavailable"')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_runtime_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_first_observation_timestamp_seconds{')
+    expect(expressions.BaynInputWindowUnavailable).toContain('condition="input_unavailable"')
+    expect(expressions.BaynInputWindowUnavailable).toContain('bayn_cycle_first_observation_timestamp_seconds{')
+    expect(expressions.BaynInputWindowUnavailable.match(/and on\(job, namespace, service, instance\)/g)).toHaveLength(7)
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_execution_session_preflight_ready{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_bound{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_open_timestamp_seconds{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_deadline_timestamp_seconds{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('+ 120')
+    expect(expressions.BaynExecutionDecisionLagging).not.toContain('+ 120')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')

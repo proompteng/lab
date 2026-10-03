@@ -11,6 +11,10 @@ import {
 import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import { defaultExecutionModel } from './execution-model/model'
 
+// Shared feature-window contract for the active and retained intraday protocols.
+export const intradayLookbackMinutes = 30
+export const intradayDecisionDelaySeconds = 2
+
 export const intradayUniverse = {
   id: 'torghut-core-equity-v2',
   symbols: [

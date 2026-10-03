@@ -13,6 +13,7 @@ state for domain-specific workflows; it does not own the generic Agents API, con
 - Helm implementation contract: `agents-helm-chart-implementation.md`
 - Installation, upgrade, and incident operations: `runbooks.md`
 - Control-plane UI: `control-plane-ui.md`
+- Shell tool and command activity: `agents-shell-activity.md`
 - Linear intake and source-bound operations: `linear-mcp.md`
 - Codex MCP integration: `codex-mcp-agents.md`
 - Workflow-loop launches: `agentrun-workflow-loop-launch-guide.md`

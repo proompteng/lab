@@ -2,13 +2,15 @@ import { describe, expect, test } from 'bun:test'
 
 import { Clock, Deferred, Effect, Fiber, Layer, Logger, Redacted, Ref, References, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { alpacaSandboxBaseUrl, decodeBrokerConnection } from '../connection'
 import { BrokerEnvironment, BrokerProvider } from '../identity'
 import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { BrokerObservations } from './observed-snapshot'
 import { captureBrokerObservation } from './snapshot-cache'
+import { makeBrokerObservationBudget } from './poll-budget'
+import { make as makeBrokerRead } from './http'
 import { layer as rawBrokerSessionLayer } from './session'
 import { currentUtcInstant } from '../../time'
 import { AlpacaBrokerResourcesLive } from './composition'
@@ -108,6 +110,82 @@ const completePreflightResponse = (
 }
 
 describe('Alpaca broker session acquisition retry', () => {
+  test('publishes a complete 52-request history within the unchanged capture deadline', async () => {
+    const fills = Array.from({ length: 2_002 }, (_, index) => ({
+      activity_type: 'FILL',
+      id: `fill-${index}::62e69015-8549-4bfd-b9c3-01e75843f47d`,
+      account_id: accountId,
+      cum_qty: '1',
+      leaves_qty: '0',
+      price: '100',
+      qty: '1',
+      side: index % 2 === 0 ? 'buy' : 'sell',
+      symbol: 'AAPL',
+      transaction_time: '1969-12-31T23:00:00.000Z',
+      order_id: '62e69015-8549-4bfd-b9c3-01e75843f47d',
+      type: 'fill',
+      order_status: 'filled',
+    }))
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const budget = yield* makeBrokerObservationBudget
+        let requests = 0
+        const client = budget.decorate(
+          HttpClient.make((request, url) =>
+            Effect.gen(function* () {
+              requests += 1
+              yield* Effect.sleep(250)
+              const response = (body: unknown) =>
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify(body), {
+                    headers: {
+                      ...responseHeaders(`req-${requests}`),
+                      'x-ratelimit-remaining': String(200 - requests),
+                      'x-ratelimit-reset': '60',
+                    },
+                  }),
+                )
+              if (url.pathname === '/v2/account/activities/FILL') {
+                const token = url.searchParams.get('page_token')
+                const offset = token === null ? 0 : fills.findIndex((fill) => fill.id === token) + 1
+                const pageSize = Number(url.searchParams.get('page_size'))
+                return response(fills.slice(offset, offset + pageSize))
+              }
+              if (url.pathname === '/v2/account') return response(accountResponse)
+              if (url.pathname === '/v2/account/configurations') return response(accountConfigurationResponse)
+              if (['/v2/positions', '/v2/orders', '/v2/account/activities/FEE'].includes(url.pathname))
+                return response([])
+              return yield* Effect.die(new Error('Unexpected request in the paginated capture fixture'))
+            }),
+          ),
+        )
+        const read = yield* makeBrokerRead(connection(0)).pipe(Effect.provideService(HttpClient.HttpClient, client))
+        const pending = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000).pipe(
+          Effect.result,
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(30_000)
+        const result = yield* Fiber.join(pending)
+        if (Result.isFailure(result)) expect(result.failure.message).toContain('exceeded its deadline')
+        expect(Result.isSuccess(result)).toBe(true)
+        if (Result.isFailure(result)) throw result.failure
+        expect(result.success.snapshot.history.fills).toHaveLength(2_002)
+        expect(requests).toBe(52)
+        expect(Date.parse(result.success.completedAt)).toBeLessThan(30_000)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(31_200)
+        yield* TestClock.adjust(1_200)
+        yield* budget.beginCapture
+        const second = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        )
+        yield* TestClock.adjust(30_000)
+        expect((yield* Fiber.join(second)).snapshot.history.fills).toHaveLength(2_002)
+        expect(requests).toBe(104)
+        expect(yield* budget.nextPollNotBeforeMs).toBe(62_400)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+  })
   test('production resources share one durable observation projection without starting local pollers', async () => {
     let requests = 0
     const client = HttpClient.make((request, url) => {
@@ -353,6 +431,8 @@ describe('Alpaca broker session acquisition retry', () => {
       currentTimeMillis: Effect.sync(readTime),
       currentTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
       currentTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
+      monotonicTimeNanosUnsafe: () => BigInt(currentTime()) * 1_000_000n,
+      monotonicTimeNanos: Effect.sync(() => BigInt(currentTime()) * 1_000_000n),
       sleep: () => Effect.void,
     }
     const cause = new BrokerReadError({

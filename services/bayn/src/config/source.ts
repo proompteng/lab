@@ -2,7 +2,7 @@ import { Config, Option, Redacted, Schema, SchemaTransformation } from 'effect'
 
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerEnvironmentSchema } from '../broker/identity'
-import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contracts'
+import { Sha256Schema } from '../contracts'
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
 import {
@@ -20,7 +20,6 @@ import {
 } from './model'
 import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
-import { Pipeable } from '../pipeable'
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
@@ -50,7 +49,7 @@ const operationalThreshold = (name: string, fallback: number) =>
   Config.schema(OperationalThresholdMs, name).pipe(Config.withDefault(fallback))
 
 export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, 'BAYN_KAFKA_BROKERS')).pipe(
-  Config.mapOrFail(
+  Config.flatMap(
     (brokers): Config.Config<KafkaMarketConfig | undefined> =>
       Option.isNone(brokers)
         ? Config.succeed(undefined)
@@ -78,7 +77,7 @@ export const kafkaMarketConfig = Config.option(Config.schema(ReplicaAddresses, '
 export const runtimeConfigSource = Config.all({
   kafka: kafkaMarketConfig,
   host: nonEmptyString('BAYN_HTTP_HOST').pipe(Config.withDefault('0.0.0.0')),
-  port: Config.port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
+  port: Config.Port('BAYN_HTTP_PORT').pipe(Config.withDefault(8080)),
   sourceRevision: Config.schema(SourceRevision, 'BAYN_CODE_REVISION'),
   imageRepository: Config.schema(ImageRepository, 'BAYN_IMAGE_REPOSITORY'),
   imageDigest: Config.schema(ImageDigest, 'BAYN_IMAGE_DIGEST'),
@@ -119,16 +118,8 @@ export const runtimeConfigSource = Config.all({
   clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
   clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
   clickhousePassword: secretString('BAYN_CLICKHOUSE_PASSWORD'),
-  snapshotId: Config.schema(Sha256Schema, 'BAYN_SIGNAL_SNAPSHOT_ID'),
-  publicationAsOf: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_PUBLICATION_ASOF'),
-  calendarVersion: nonEmptyString('BAYN_SIGNAL_CALENDAR_VERSION'),
-  dataStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_DATA_START'),
-  dataEnd: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_DATA_END'),
-  lookbackStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_LOOKBACK_START'),
-  evaluationStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_START'),
-  evaluationEnd: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_END'),
-  postgresUrl: Config.redacted('BAYN_POSTGRES_URL'),
-  postgresTls: Config.boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
+  postgresUrl: Config.Redacted('BAYN_POSTGRES_URL'),
+  postgresTls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
     Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt'),
   ),
@@ -180,17 +171,6 @@ export const runtimeConfigSource = Config.all({
         url: config.clickhouseUrl,
         username: config.clickhouseUsername,
         password: config.clickhousePassword,
-        snapshotId: config.snapshotId,
-        publicationAsOf: config.publicationAsOf,
-        calendarVersion: config.calendarVersion,
-        bounds: {
-          schemaVersion: 'bayn.evaluation-bounds.v1',
-          dataStart: config.dataStart,
-          dataEnd: config.dataEnd,
-          lookbackStart: config.lookbackStart,
-          evaluationStart: config.evaluationStart,
-          evaluationEnd: config.evaluationEnd,
-        },
       },
       postgres: {
         url: config.postgresUrl,
@@ -205,7 +185,3 @@ export const runtimeConfigSource = Config.all({
     }),
   ),
 )
-
-const evaluationBoundsDecoderDataFirst = Schema.decodeUnknownResult(EvaluationBoundsSchema)
-
-export const evaluationBoundsDecoder = Pipeable.dual(1, (input: unknown) => evaluationBoundsDecoderDataFirst(input))

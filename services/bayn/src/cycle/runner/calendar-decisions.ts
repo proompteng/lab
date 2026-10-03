@@ -1,7 +1,7 @@
 import { DateTime, Option, Result } from 'effect'
 
 import type { MarketCalendarObservation, MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
-import { defaultIntradayMomentumProtocolDocument } from '../../strategy/intraday-momentum/protocol'
+import { intradayDecisionDelaySeconds, intradayLookbackMinutes } from '../../strategy/intraday-market'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -11,12 +11,15 @@ import {
 } from '../construction'
 import {
   CycleState,
+  CycleTerminalReason,
   intradayCycleEntryAttemptOrdinal,
+  isIntradayAutonomousCycle,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
   type IntradayCycleEntryAttemptOrdinal,
 } from '../model'
+import { cycleDraftMatches, cycleDraftOf } from '../transitions'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
@@ -105,8 +108,8 @@ export const selectIntradayExecutionSession = (
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow =
       openAtMillis +
-        Math.max(executionPolicy.warmupAfterOpenMs, defaultIntradayMomentumProtocolDocument.lookbackMinutes * 60_000) +
-        defaultIntradayMomentumProtocolDocument.decisionDelaySeconds * 1_000 <
+        Math.max(executionPolicy.warmupAfterOpenMs, intradayLookbackMinutes * 60_000) +
+        intradayDecisionDelaySeconds * 1_000 <
       cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
     return selected === undefined || session.date < selected.date ? session : selected
@@ -178,4 +181,47 @@ export const nextIntradayEntryAttemptOrdinal = (
     Date.parse(observedAt) >= rearmAt
     ? currentAttempt + 1
     : undefined
+}
+
+/**
+ * Authority rollover can terminalize an unused pre-submission cycle without a decision document. Reconstruct its
+ * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
+ * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
+ * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
+ */
+export const canRearmUnboundPreSubmissionCycle = (
+  cycle: AutonomousCycle,
+  candidate: IntradayCycleCandidate,
+  observation: MarketCalendarObservation,
+  executionSession: MarketCalendarSession,
+): boolean => {
+  if (
+    !isIntradayAutonomousCycle(cycle) ||
+    cycle.state !== CycleState.Blocked ||
+    cycle.terminalReason !== CycleTerminalReason.ProvenanceMismatch ||
+    cycle.bindings.snapshotId !== undefined ||
+    cycle.bindings.decisionHash !== undefined ||
+    cycle.terminalAt === undefined ||
+    cycle.terminalAt >= cycle.window.submissionOpenAt
+  )
+    return false
+  const originalDraft = makeIntradayCycleDraft(
+    candidate,
+    observation,
+    executionSession,
+    intradayCycleEntryAttemptOrdinal(cycle.identity),
+  )
+  if (Result.isFailure(originalDraft)) return false
+  if (cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4') {
+    return cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
+  }
+  const identity = originalDraft.success.identity
+  if (identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') return false
+  // V3 has an implicit first ordinal. Reconstruct that original version solely for comparison;
+  // acquisition still creates a new v4 attempt and never rewrites the retained v3 record.
+  const { cycleId: _cycleId, schemaVersion: _schemaVersion, entryAttemptOrdinal: _ordinal, ...material } = identity
+  const legacyDraft = makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' }).pipe(
+    Result.flatMap((legacyIdentity) => makeCycleDraft(legacyIdentity, originalDraft.success.window)),
+  )
+  return Result.isSuccess(legacyDraft) && cycleDraftMatches(cycleDraftOf(cycle), legacyDraft.success)
 }

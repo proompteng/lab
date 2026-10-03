@@ -23,15 +23,65 @@ projection. Final submission reads account, positions and orders from one payloa
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
-`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 30,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
+`BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
 for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
 and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
 observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
 poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
 If a successful capture races a mutation or newer broker evidence and cannot publish, its successor retries after
-one second. A failed capture keeps the regular polling cadence. Both paths remain unavailable until a cut passes all
-publication and freshness checks.
+one second, subject to the background HTTP budget. A failed capture keeps the regular polling cadence or waits for
+the budget deadline, whichever is later. Both paths remain unavailable until a cut passes all publication and
+freshness checks.
+
+Jev validates cached account, position, order and reconciliation timestamps against the sixty-second broker
+observation ceiling, independently of its ten-second quote limit. A configured shorter cache lifetime still applies
+at the projection read, and final risk authorization retains its existing freshness checks.
+Maximum-hold, model and protective exits use the same broker ceiling. An expired or future broker observation still
+rejects the exit; accepting a cached position does not extend a model response or executable quote's deadline.
+A mutation or newer retained broker event can invalidate a successful cut before the next poll. While that cut is
+still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
+Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
+normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
+Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
+wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
+authority restriction.
+
+Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
+Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
+with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
+at the default cadence. The background client's transport counts every actual attempt, including startup verification,
+pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
+100 background calls per minute on average, or half a smaller reported account limit. Complete captures keep their
+existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
+remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
+or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
+journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
+captures, so worker replacement and source rotation preserve outstanding cost. Larger captures extend the
+poll cadence rather than adding artificial delays inside a full history scan. Before each capture, including repeated
+activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
+and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
+allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
+deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
+its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
+timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
+Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
+the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
+capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
+the background budget does not impose a global limit on other account callers.
+
+One serialized execution pass reads its unfinished cycle once and advances acquisition, activation and decision
+binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
+repeating an admission transition fails closed. Each transition checks the current clock, and restart begins with a
+fresh durable cycle read. Already committed intents retain exact immutable intent/decision validation without
+repeating their writer-fenced commit transaction. Missing intents still use that atomic transaction; a persisted
+`PLANNED` row is rejected as incomplete atomic persistence. Mutable intent state is read again after reconciliation,
+and close planning reuses only the closure read by its owning pass.
+
+Untouched expired entry approvals can retire under restricted submission authority only in canonical intent order.
+A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
+with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
+Close documents retain their existing residual-replanning and hard-deadline failure behavior.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -39,6 +89,9 @@ intent's own start event; other mutations or newer durable broker evidence inval
 before transmission and after completion, failure or interruption. Unknown or unresolved requests block submission;
 settled observations remain available to native reconciliation and lookup-only recovery so an unknown outcome cannot
 deadlock its own recovery. Observing an account never grants trading authority.
+Submit and cancel check the writer fence in their durable reservation transaction; there is no separate empty
+precheck transaction. Final submit authorization and mutation outcome persistence retain their existing transactional
+fences.
 A later poll must start after the existing one-second broker consistency window. Lookup-only recovery invalidates a
 cut when it finds new durable order state. Restarting a worker does not create a second cache or bypass reservations.
 
@@ -78,6 +131,14 @@ the fresh execution quote's event time and ten-second maximum age; the earlier b
 quote deadline for version-three decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
 
+Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
+headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
+limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
+deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
+still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
+final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
+freshness limits are unchanged; the preparation ordering does not guarantee submission.
+
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
 50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
@@ -105,6 +166,16 @@ leaves less time for archive reads. The overall pass and close deadlines still a
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
+
+Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
+that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
+use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
+waits continue on the next configured controller pass. Failed close attempts retain the original data reason in logs.
+A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
+continuation, bounded by the configured cadence and session deadline. Source/bootstrap failures and archive timeouts
+retain the normal cadence. Only one serialized controller pass runs at a time; a continuation rechecks all broker,
+authority, quantity, and quote-freshness gates. This reduces avoidable idle time but cannot guarantee a fill or a
+maximum-hold exit when fresh executable evidence is unavailable.
 
 Entry observations evaluate candidate availability independently. The active Jev protocol binds
 `bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
@@ -202,7 +273,10 @@ Once durable completion evidence is verified, the cycle may settle its restricte
 Native authority rollover still requires all intents to be terminal, fresh exact reconciliation, a flat account and
 no unresolved mutations or open orders before creating a clear OBSERVE successor.
 A resolved reconciliation discrepancy can also settle an idle generation with no acquired cycle under those same
-accounting and flatness checks. A bound pending or active cycle keeps its existing generation while recovery manages
+accounting and flatness checks. An untouched same-plan cycle is preserved through this rollover, including fee-driven
+cash discrepancies, incomplete reconciliation passes and execution-pass failures. Migration 0088 aligns the persisted
+rearm predicate with this preservation; it does not repair historical records or clear authority by itself.
+A bound pending or active cycle keeps its existing generation while recovery manages
 the position; it cannot attempt authority rollover until the cycle is terminal.
 An automatic failure before a research generation records any decision or intent can also settle that unused
 generation when its plan has no pending or active cycle. Recovery still requires fresh exact reconciliation and the
@@ -213,6 +287,12 @@ including restrictions after market open. Its snapshot, decision and intent hist
 bound cycles retain settlement handling. Migration 0071 repairs an already authority-blocked, untouched cycle only
 before its cutoff, under the writer fence, with clear matching authority, exact reconciliation, flat positions and
 no unresolved mutations or open orders. Manual restrictions and financial history remain protected.
+
+When authority rollover has already terminalized an unused pre-submission cycle with a provenance restriction,
+discovery may acquire a new immutable attempt under the recovered execution authority. It must find no snapshot or
+decision evidence and reconstruct the original draft exactly from the currently approved strategy, account, mandate,
+broker calendar and execution policy. The previous terminal record is retained. The existing rearm delay, submission
+cutoff and fresh decision/risk gates still apply; other restrictions and changed contracts do not use this path.
 
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
@@ -262,9 +342,13 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
   or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
   and writer permit. Commit and rollback retain their cleanup semantics. TigerBeetle requests have their own operation deadline;
   cancellation invalidates the transport and the next request creates its replacement without replaying a mutation.
-- The pinned Effect PostgreSQL adapter has a package patch for interrupted reservations. It registers release ownership
-  before requesting a pool slot and returns connections delivered after cancellation. The integration regression cancels
-  two queued writers and verifies that both pool slots remain usable; proving only one subsequent query misses a one-slot leak.
+- The pinned Effect 4 PostgreSQL adapter owns connections through its native protocol pool. Interrupted reservations
+  return their pool slots. The integration regression cancels two queued writers and verifies that every pool slot
+  remains usable; proving only one subsequent query misses a one-slot leak.
+  Pool maintenance and connection deadlines use the live clock, so replay time jumps do not drive transport timers.
+- The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
+  with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
+  transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
@@ -335,6 +419,42 @@ backfill path. See [streaming operations and replay](src/market-data/streaming/R
 recovery behavior, and evidence boundaries.
 
 ## Operations
+
+### Runtime and historical-report configuration
+
+The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
+does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
+required for archive health and evidence reads; this separation does not alter broker, authority, risk or provenance
+configuration. The three live manifests omit all eight historical settings below; a running service container does
+not supply a historical report context implicitly.
+
+The read-only forward-performance command has an explicit historical snapshot configuration in addition to its
+account-bound runtime configuration. Supply all eight settings from the intended immutable daily publication, even
+when invoking the command from a running service container:
+
+| Setting                        | Historical input                 |
+| ------------------------------ | -------------------------------- |
+| `BAYN_SIGNAL_SNAPSHOT_ID`      | Immutable daily snapshot SHA-256 |
+| `BAYN_SIGNAL_PUBLICATION_ASOF` | Publication date, `YYYY-MM-DD`   |
+| `BAYN_SIGNAL_CALENDAR_VERSION` | Exact calendar identity          |
+| `BAYN_SIGNAL_DATA_START`       | First data date                  |
+| `BAYN_SIGNAL_DATA_END`         | Last data date                   |
+| `BAYN_SIGNAL_LOOKBACK_START`   | Lookback start date              |
+| `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
+| `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
+
+After supplying these values, use `node dist/forward-performance-command.js --authority-generation <generation-hash>`
+to scope the report. Missing or malformed historical settings, including inconsistent evaluation bounds, fail
+configuration before evidence reads. They never select a default snapshot or imply zero trades or zero performance.
+Historical SIP verification retains its explicit evaluation start; intraday archive evidence and immutable receipt
+identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
+`BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
+
+The live manifests require a binary with this configuration separation. For upgrades from a binary that still
+requires daily snapshot settings at live startup, publish and select the new binary before removing those settings.
+Before rolling back to such an older binary, restore all eight settings in each of the service, execution-controller
+and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
+the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
 
 ### Private inference operating-cost report
 
@@ -457,6 +577,26 @@ lineage. Image publication alone does not authorize the revised strategy.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
+`executionSession` in `/v1/status` reports the current session's business readiness separately from process health and
+startup ownership. `PREOPEN` and `WARMUP` require realized PAPER authority, clear kill state, exact reconciliation,
+zero unresolved mutations, an account-bound broker and a matching active Restate controller with a durable pass.
+They do not require a snapshot before the first full rolling window exists. `INPUT_UNAVAILABLE`,
+`EVALUATION_UNAVAILABLE`, `DECISION_LAGGING`, `BLOCKED` and `RECOVERY_ONLY` are not ready. An ordinary no-trade result is
+`ABSTAINING`; it is distinct from a blocked session. The authenticated shared
+`BaynExecutionController/<account-key>/activateDeployment` handler verifies deployment ownership and handoff, warms
+the private broker-observation owner, and waits for a completed native successor pass. Its verified result remains
+available for seven days, and the activation Job logs the invocation ID. The journal is removed at completion so the
+bearer header is not retained with the result. Private activation, deactivation, ticks and
+status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
+establish trading readiness.
+
+For the pinned Jev protocol, the first complete observation is 30 minutes and two seconds after submission opens.
+The decision deadline adds the protocol's maximum decision lag to the later of that observation and the attempt's
+creation time. A later intraday attempt receives its own allowance; repeated waiting passes cannot extend it.
+`bayn_cycle_first_observation_timestamp_seconds`, `bayn_cycle_decision_deadline_timestamp_seconds`,
+`bayn_execution_session_ready` and `bayn_execution_session_condition` expose the same projection to monitoring.
+These facts establish session operation, not economic qualification or permission to bypass native admission.
+
 Controller `lastOutcome` distinguishes `Waiting`, `Completed`, and `Blocked`. `lastPass` retains the recovery action
 and its readiness or lifecycle reason. `JEV_POSITION_HELD` identifies a reconciled position that remains open. Snapshot
 waits retain the affected symbol, missing timestamp, required feature definition and window, or first available time when known.
@@ -499,6 +639,9 @@ Transmission reads positions, open orders and account from the shared observatio
 Position, order or cash drift from the reconciled cut denies transmission. Observed account blocks and buying power,
 persisted grant, all risk limits, quote/risk expiry and the final submit deadline remain enforced. An external broker
 change becomes visible on the next complete background poll; the observation is not an atomic broker lock. The
+projection preserves broker order and fill source timestamps at their original precision (up to nine fractional
+digits) and validates the complete payload before publishing availability. Poll and observation clocks remain
+canonical millisecond UTC instants; source event precision does not change freshness or mutation fences. The
 confirmation stage is `bayn.execution.broker-state-confirmation`. Its latency falls within `order_acknowledgement`,
 after `SUBMIT_STARTED`; it does not account for the earlier intent-to-start delay.
 
@@ -513,8 +656,8 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
 The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
-binds both. Native controller persistence still writes only the original v3 receipt. The analysis report never changes
-an immutable per-generation receipt or requires mixed-version replicas to read a new stored field.
+binds both. This read-only report never changes an immutable per-generation receipt or requires mixed-version replicas
+to read a new stored field.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
@@ -570,6 +713,11 @@ output files. Current asset eligibility must be labeled counterfactual rather th
 charge is an explicit incremental-cost scenario, not proof of zero operating costs. Apply further cost/latency stress
 without selecting favorable dates or erasing missing observations. Development comparisons do not satisfy the frozen
 prospective qualification protocol and never activate a different model, prompt, threshold or trading policy.
+
+For the bounded paired Jev-versus-relative-momentum experiment with shared protective exits, abstentions,
+cost coverage and prospective completeness gates, use the
+[matched entry study](../../docs/bayn/matched-entry-study.md). It remains an offline opportunity test and grants no
+strategy promotion or trading authority.
 
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common

@@ -75,6 +75,7 @@ export type CycleCompletionWaitReason = typeof CycleCompletionWaitReasonSchema.T
 export const CycleWaitReasonSchema = Schema.Union([
   CycleCompletionWaitReasonSchema,
   Schema.Literals([
+    'BROKER_OBSERVATION_PENDING',
     'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
     'JEV_POSITION_AWAITING_RECONCILIATION',
     'JEV_POSITION_HELD',
@@ -83,6 +84,7 @@ export const CycleWaitReasonSchema = Schema.Union([
     'AWAITING_CLOSE_WINDOW',
     'CLOSE_STORE_UNAVAILABLE',
     'CLOSE_MARKET_DATA_UNAVAILABLE',
+    'CLOSE_QUOTE_PENDING',
     'CLOSE_ONLY_UNTIL_CLOSE',
     'MUTATION_NOT_ADVANCED',
     'MUTATION_RECOVERY_BACKOFF',

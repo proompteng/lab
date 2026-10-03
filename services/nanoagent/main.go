@@ -26,13 +26,14 @@ const (
 )
 
 type evidence struct {
-	Architecture  string    `json:"architecture"`
-	BootID        string    `json:"bootId"`
-	Hostname      string    `json:"hostname"`
-	KernelRelease string    `json:"kernelRelease"`
-	MicroVMID     string    `json:"microvmId"`
-	StartedAt     time.Time `json:"startedAt"`
-	State         string    `json:"state"`
+	Architecture         string    `json:"architecture"`
+	BootID               string    `json:"bootId"`
+	Hostname             string    `json:"hostname"`
+	KernelRelease        string    `json:"kernelRelease"`
+	MicroVMID            string    `json:"microvmId"`
+	GuestProtocolVersion uint32    `json:"guestProtocolVersion"`
+	StartedAt            time.Time `json:"startedAt"`
+	State                string    `json:"state"`
 }
 
 type fileReader func(string) ([]byte, error)
@@ -58,6 +59,15 @@ func run(logger *slog.Logger) error {
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
 	}
+	identity, err := startGuestIdentity(context.Background(), microVMID, logger)
+	if err != nil {
+		return err
+	}
+	defer identity.close()
+	tlsConfig, err := identity.tlsConfig()
+	if err != nil {
+		return fmt.Errorf("configure SPIFFE TLS: %w", err)
+	}
 	if err := configureToolchainEnvironment(homeRoot); err != nil {
 		return fmt.Errorf("configure persistent toolchain environment: %w", err)
 	}
@@ -79,6 +89,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	current.GuestProtocolVersion = guestProtocolVersion
 
 	encoded, err := json.Marshal(current)
 	if err != nil {
@@ -88,7 +99,7 @@ func run(logger *slog.Logger) error {
 
 	listenAddress := strings.TrimSpace(os.Getenv("LISTEN_ADDRESS"))
 	if listenAddress == "" {
-		listenAddress = ":8080"
+		listenAddress = ":8443"
 	}
 	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
 	if codexBinary == "" {
@@ -97,6 +108,7 @@ func run(logger *slog.Logger) error {
 
 	api, err := newAPIServer(apiConfig{
 		bootstrapToken:      bootstrapToken,
+		identity:            identity,
 		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
 		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
 		codexBinary:         codexBinary,
@@ -114,6 +126,8 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr:              listenAddress,
 		Handler:           newHandler(api),
+		Protocols:         guestHTTPProtocols(),
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -121,13 +135,23 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	serverErrors := make(chan error, 1)
+	healthAddress := strings.TrimSpace(os.Getenv("HEALTH_LISTEN_ADDRESS"))
+	if healthAddress == "" {
+		healthAddress = ":8080"
+	}
+	health := &http.Server{Addr: healthAddress, Handler: newHealthHandler(api), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
+	serverErrors := make(chan error, 2)
 	go func() {
 		logger.Info("nanoagent listening", "address", listenAddress)
-		serverErrors <- server.ListenAndServe()
+		serverErrors <- server.ListenAndServeTLS("", "")
 	}()
 
+	go func() { serverErrors <- health.ListenAndServe() }()
+	defer health.Close()
+	defer server.Close()
 	select {
+	case err := <-identity.exited:
+		return fmt.Errorf("SPIRE agent exited: %v", err)
 	case <-ctx.Done():
 		api.beginShutdown()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -336,7 +360,7 @@ func readTrimmed(readFile fileReader, path string) (string, error) {
 	return trimmed, nil
 }
 
-func newHandler(api *apiServer) http.Handler {
+func newHealthHandler(api *apiServer) http.Handler {
 	mux := http.NewServeMux()
 	live := func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -344,7 +368,7 @@ func newHandler(api *apiServer) http.Handler {
 		_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
 	}
 	ready := func(writer http.ResponseWriter, _ *http.Request) {
-		if api.codex != nil && !api.codex.isReady() {
+		if (api.codex != nil && !api.codex.isReady()) || (api.identity != nil && !api.identity.ready()) {
 			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"status": "starting"})
 			return
 		}
@@ -353,6 +377,12 @@ func newHandler(api *apiServer) http.Handler {
 	mux.HandleFunc("GET /livez", live)
 	mux.HandleFunc("GET /readyz", ready)
 	mux.HandleFunc("GET /healthz", live)
-	mux.Handle("/v1/", api.authenticatedRoutes())
 	return mux
+}
+
+func newHandler(api *apiServer) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", newHealthHandler(api))
+	mux.Handle("/v1/", api.previewRoutes())
+	return api.rpcHandler(mux)
 }

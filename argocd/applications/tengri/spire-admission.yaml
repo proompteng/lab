@@ -1,0 +1,41 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tengri-guest-identities
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [spire.spiffe.io]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [clusterstaticentries]
+  matchConditions:
+    - name: tengri-controller
+      expression: request.userInfo.username == 'system:serviceaccount:tengri:tengri'
+  variables:
+    - name: entry
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+  validations:
+    - expression: "variables.entry.metadata.name.matches('^nanoagent-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')"
+      message: Tengri may manage only guest Pod identity entries.
+    - expression: "variables.entry.spec.className == 'spire-server-spire' && variables.entry.spec.spiffeID == 'spiffe://galactic.proompteng.ai/ns/tengri/nanoagent/pod/' + variables.entry.metadata.name.substring(10)"
+      message: Guest identity must match the entry's Pod UID.
+    - expression: "variables.entry.spec.parentID == 'spiffe://galactic.proompteng.ai/spire/agent/k8s_psat/galactic-guests/pod/' + variables.entry.metadata.name.substring(10) && variables.entry.spec.selectors == ['unix:uid:1000']"
+      message: Guest identity requires its attested Pod agent and guest user.
+    - expression: "(!has(variables.entry.spec.admin) || !variables.entry.spec.admin) && (!has(variables.entry.spec.downstream) || !variables.entry.spec.downstream) && (!has(variables.entry.spec.storeSVID) || !variables.entry.spec.storeSVID)"
+      message: Guest entries cannot grant SPIRE administration or delegation.
+    - expression: "variables.entry.spec.x509SVIDTTL == '2m' && variables.entry.spec.jwtSVIDTTL == '2m' && (!has(variables.entry.spec.federatesWith) || size(variables.entry.spec.federatesWith) == 0) && (!has(variables.entry.spec.dnsNames) || size(variables.entry.spec.dnsNames) == 0)"
+      message: Guest entries require short-lived local SPIFFE identities.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tengri-guest-identities
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  policyName: tengri-guest-identities
+  validationActions: [Deny]

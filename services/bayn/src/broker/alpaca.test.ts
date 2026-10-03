@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Undici } from '@effect/platform-node'
+import * as Undici from '@effect/platform-node/Undici'
 import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1 } from '../hash'
 import { BrokerEnvironment } from '../execution/authority'
@@ -205,7 +205,7 @@ describe('Alpaca paper reads', () => {
         url = target.toString()
         key = request.headers['apca-api-key-id'] ?? ''
         secret = request.headers['apca-api-secret-key'] ?? ''
-        inspected = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(request.toJSON()).pipe(
+        inspected = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(request.toJSON()).pipe(
           Effect.mapError(
             (cause) =>
               new HttpClientError.HttpClientError({
