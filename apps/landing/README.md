@@ -53,10 +53,13 @@ reconnect with their event cursor. HMAC metadata still binds every request to it
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
-The Codex view aligns user messages on the right and agent responses on the left, without visible speaker headings.
-The rounded composer keeps model and reasoning choices beside the send/stop control. Prompt suggestions prepare a
+The Codex view places user messages on the right with left-aligned text and a subtle background, and agent responses
+on the left, without visible speaker headings. The rounded composer uses a subtle border and keeps model and reasoning
+choices beside the send/stop control. Prompt suggestions prepare a
 draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
-Active turns show a Thinking label with a highlight moving left to right; reduced motion keeps the label still.
+Active turns show a Thinking label with a one-second highlight moving left to right; reduced motion keeps the label still.
+Usage shows the remaining weekly percentage and rounds credits up to a whole number. The dock keeps its blurred
+material stationary while its outline and icons magnify, with labels appearing without an opacity animation.
 Responses support Markdown tables, task lists, and code blocks with copy feedback. The conversation follows new events
 while the reader is at the bottom. Reading earlier messages preserves the scroll position until the reader chooses
 **Jump to latest**.
