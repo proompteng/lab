@@ -255,6 +255,7 @@ export const triggerControlExit = (input: {
         reason = ControlExit.MaximumHold
       else if (
         quote !== undefined &&
+        quote.value.bidSize > 0 &&
         replayQuoteRejection(quote, position.symbol, atMs, protocol) === null &&
         jevProtectiveStopCrossed(
           BigInt(position.costBasisMicros),

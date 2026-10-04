@@ -3,6 +3,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
+import { createSpiffeFixture } from './spiffe.fixture'
 import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -29,6 +30,7 @@ const descriptor = grpc.loadPackageDefinition(definition) as unknown as {
   }
 }
 
+let fixture: Awaited<ReturnType<typeof createSpiffeFixture>>
 let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
@@ -36,8 +38,10 @@ let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
+let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
 
 beforeAll(async () => {
+  fixture = await createSpiffeFixture()
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
     issueEditorSession(
@@ -279,7 +283,8 @@ beforeAll(async () => {
         kind: 'FILE_EVENT_KIND_RESET',
         path: String(call.request.path),
       })
-      call.end()
+      if (call.request.path === '/renewal') renewingFileWatch = call
+      else call.end()
     },
     resolveCodexApproval(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -330,26 +335,83 @@ beforeAll(async () => {
     },
   })
   const port = await new Promise<number>((resolve, reject) => {
-    server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, boundPort) => {
-      if (error) reject(error)
-      else resolve(boundPort)
-    })
+    server.bindAsync(
+      '127.0.0.1:0',
+      grpc.ServerCredentials.createSsl(
+        fixture.bundle,
+        [{ cert_chain: fixture.peer.pem, private_key: fixture.peer.key }],
+        true,
+      ),
+      (error, boundPort) => {
+        if (error) reject(error)
+        else resolve(boundPort)
+      },
+    )
   })
-  process.env.TENGRI_GRPC_ENDPOINT = `127.0.0.1:${port}`
-  process.env.TENGRI_GRPC_TLS = 'false'
+  process.env.TENGRI_GRPC_ENDPOINT = `localhost:${port}`
+  process.env.SPIFFE_ENDPOINT_SOCKET = fixture.endpoint
+  process.env.SPIFFE_ID = fixture.ownId
+  process.env.TENGRI_SPIFFE_ID = fixture.peerId
+  process.env.SPIFFE_WORKLOAD_API_PROTO_PATH = fixture.protoPath
   process.env.TENGRI_INTERNAL_HMAC_SECRET = secret
   process.env.TENGRI_PROTO_PATH = protoPath
 })
 
 afterAll(async () => {
-  const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client; tengriGrpcService?: unknown }
+  const state = globalThis as typeof globalThis & {
+    tengriGrpcClient?: grpc.Client
+    tengriGrpcService?: unknown
+    tengriSpiffeSource?: { close(): void }
+  }
+  state.tengriSpiffeSource?.close()
+  delete state.tengriSpiffeSource
   state.tengriGrpcClient?.close()
   delete state.tengriGrpcClient
   delete state.tengriGrpcService
   await new Promise<void>((resolve) => server.tryShutdown(() => resolve()))
+  fixture.close()
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('renews the client certificate while an existing signed stream stays open', async () => {
+    const { listCodexModels, watchFiles } = await import('./grpc')
+    const watch = await watchFiles('github:42', 'agent-test', '/renewal')
+    const first = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      watch.once('data', resolve)
+      watch.once('error', reject)
+    })
+    expect(first.sequence).toBe('1')
+    const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client; tengriSpiffeFingerprint?: string }
+    const before = state.tengriGrpcClient
+    fixture.rotate()
+    const deadline = Date.now() + 2_000
+    while (state.tengriGrpcClient === before && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      await listCodexModels('github:42', 'agent-test')
+    }
+    expect(state.tengriGrpcClient).not.toBe(before)
+    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
+    const next = new Promise<Record<string, unknown>>((resolve, reject) => {
+      watch.once('data', resolve)
+      watch.once('error', reject)
+    })
+    renewingFileWatch?.write({ sequence: '2', kind: 'FILE_EVENT_KIND_RESET', path: '/renewal' })
+    expect((await next).sequence).toBe('2')
+    watch.cancel()
+    before?.close()
+  })
+
+  test('rejects a trusted certificate with the wrong destination SPIFFE ID', async () => {
+    const { listCodexModels } = await import('./grpc')
+    process.env.TENGRI_SPIFFE_ID = 'spiffe://proompteng.ai/ns/tengri/sa/another-service'
+    try {
+      expect(await rejection(listCodexModels('github:42', 'agent-test'))).toMatchObject({ status: 503 })
+    } finally {
+      process.env.TENGRI_SPIFFE_ID = fixture.peerId
+    }
+    expect((await listCodexModels('github:42', 'agent-test')).models).toEqual(codexModelFixtures)
+  })
+
   test('reads a validated guest catalog through the owner-signed transport', async () => {
     const { listCodexModels } = await import('./grpc')
     expect(await listCodexModels('github:42', 'agent-test', 'models-2')).toEqual({
@@ -534,7 +596,7 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('distinguishes an initial file watch from an explicit zero resume cursor', async () => {
     const { watchFiles } = await import('./grpc')
-    const stream = watchFiles('github:42', 'agent-test', '/workspace')
+    const stream = await watchFiles('github:42', 'agent-test', '/workspace')
     await new Promise<void>((resolve, reject) => {
       stream.on('error', reject)
       stream.on('end', resolve)
@@ -559,7 +621,7 @@ describe('Tengri gRPC BFF transport', () => {
         .digest('hex'),
     )
 
-    const resumed = watchFiles('github:42', 'agent-test', '/workspace', 0)
+    const resumed = await watchFiles('github:42', 'agent-test', '/workspace', 0)
     await new Promise<void>((resolve, reject) => {
       resumed.on('error', reject)
       resumed.on('end', resolve)

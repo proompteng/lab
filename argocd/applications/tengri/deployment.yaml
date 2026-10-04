@@ -15,10 +15,19 @@ spec:
       app.kubernetes.io/component: control-plane
   template:
     metadata:
+      annotations:
+        inject.istio.io/templates: sidecar,spire
+        sidecar.istio.io/nativeSidecar: "true"
+        sidecar.istio.io/inject: "true"
+        sidecar.istio.io/proxyCPU: 50m
+        sidecar.istio.io/proxyCPULimit: 500m
+        sidecar.istio.io/proxyMemory: 64Mi
+        sidecar.istio.io/proxyMemoryLimit: 256Mi
       labels:
         app.kubernetes.io/name: tengri
         app.kubernetes.io/component: control-plane
         app.kubernetes.io/part-of: tengri
+        spiffe.io/spire-managed-identity: "true"
     spec:
       serviceAccountName: tengri
       automountServiceAccountToken: true
@@ -45,6 +54,10 @@ spec:
               containerPort: 8081
               protocol: TCP
           env:
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
+            - name: SPIFFE_TRUST_DOMAIN
+              value: proompteng.ai
             - name: TENGRI_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -109,12 +122,19 @@ spec:
             privileged: false
             runAsNonRoot: true
           volumeMounts:
+            - name: workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
             - name: runtime-secret
               mountPath: /var/run/secrets/tengri-runtime
               readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
         - name: runtime-secret
           secret:
             secretName: tengri-runtime

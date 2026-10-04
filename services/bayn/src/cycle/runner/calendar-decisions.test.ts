@@ -45,6 +45,26 @@ const observation: MarketCalendarObservation = {
 }
 
 describe('intraday calendar decisions', () => {
+  test.each([
+    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_000, eligible: false },
+    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_001, eligible: true },
+    { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_000, eligible: false },
+    { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_001, eligible: true },
+  ])('requires a nonempty completed-feature window: %j', ({ warmupMinutes, durationMs, eligible }) => {
+    const session = {
+      date: '2026-11-27',
+      openAt: '2026-11-27T14:30:00.000Z',
+      closeAt: new Date(Date.parse('2026-11-27T14:30:00.000Z') + durationMs).toISOString(),
+    }
+    const selected = selectIntradayExecutionSession(
+      { ...observation, sessions: [session] },
+      { ...policy, warmupAfterOpenMs: warmupMinutes * 60_000, submissionCutoffBeforeCloseMs: 5 * 60_000 },
+      session.openAt,
+    )
+
+    expect(selected).toEqual(eligible ? session : undefined)
+  })
+
   test('includes the strategy decision delay when selecting a session', () => {
     expect(selectIntradayExecutionSession(observation, policy, '2026-11-27T14:00:00.000Z')?.date).toBe('2026-11-30')
   })

@@ -11,6 +11,7 @@ import {
   MutationFailure,
   MutationOperation,
   cancelRequestHash,
+  invalidRequest,
   orderRequestBody,
   type BrokerMutationShape,
   type MutationEvidence,
@@ -76,7 +77,7 @@ import {
   type MutationStartInput,
   type MutationStoreShape,
 } from './mutations'
-import { WriterFence, WriterFenceError } from './writer-fence'
+import { WriterFenceError } from './writer-fence'
 
 const intentId = 'a'.repeat(64)
 const orderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
@@ -1294,6 +1295,7 @@ const completeEvidence = (response: PartialMutationEvidence | undefined): Mutati
     : undefined
 
 interface HarnessOptions {
+  readonly storedUpdatedAt?: string
   readonly afterBeginSubmit?: Effect.Effect<void>
   readonly crashAfterSubmit?: boolean
   readonly lostFence?: boolean
@@ -1308,7 +1310,12 @@ interface HarnessOptions {
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
-  let stored: StoredIntent = { intent, decision: riskDecision, stateVersion: 3, updatedAt: initialTime }
+  let stored: StoredIntent = {
+    intent,
+    decision: riskDecision,
+    stateVersion: 3,
+    updatedAt: options.storedUpdatedAt ?? initialTime,
+  }
   const latest = new Map<MutationOperation, MutationEvent>()
   let submitCalls = 0
   let submittedCloseOnly: boolean | undefined
@@ -1366,26 +1373,41 @@ const makeHarness = (options: HarnessOptions = {}) => {
     read: (id) => Effect.succeed(id === intentId ? Option.some(stored) : Option.none()),
   }
 
+  const fenceCheck = Effect.suspend(() =>
+    options.lostFence === true || (options.lostFenceAfterSubmit === true && latest.has(MutationOperation.Submit))
+      ? Effect.fail(
+          new WriterFenceError({
+            failure: 'unavailable',
+            operation: 'transaction',
+            message: 'injected writer-fence loss',
+          }),
+        )
+      : Effect.void,
+  )
+
   const mutationStore: MutationStoreShape = {
     authorizeSubmit: () => Effect.void,
-    beginSubmit: (_intentId, requestHash, consistencyDelayMs, occurredAt) => {
-      const existing = latest.get(MutationOperation.Submit)
-      if (existing !== undefined) {
-        if (existing.requestHash !== requestHash || existing.consistencyDelayMs !== consistencyDelayMs) {
-          return Effect.die(new Error('mutation identity was reused with different request content'))
+    beginSubmit: (_intentId, requestHash, consistencyDelayMs, occurredAt) =>
+      Effect.gen(function* () {
+        yield* fenceCheck
+        const existing = latest.get(MutationOperation.Submit)
+        if (existing !== undefined) {
+          if (existing.requestHash !== requestHash || existing.consistencyDelayMs !== consistencyDelayMs) {
+            return yield* Effect.die(new Error('mutation identity was reused with different request content'))
+          }
+          return { event: existing, started: false }
         }
-        return Effect.succeed({ event: existing, started: false })
-      }
-      const started = event(
-        MutationOperation.Submit,
-        MutationEventType.SubmitStarted,
-        requestHash,
-        consistencyDelayMs,
-        occurredAt,
-      )
-      setState(IntentState.IoStarted, occurredAt)
-      return (options.afterBeginSubmit ?? Effect.void).pipe(Effect.as({ event: started, started: true }))
-    },
+        const started = event(
+          MutationOperation.Submit,
+          MutationEventType.SubmitStarted,
+          requestHash,
+          consistencyDelayMs,
+          occurredAt,
+        )
+        setState(IntentState.IoStarted, occurredAt)
+        yield* options.afterBeginSubmit ?? Effect.void
+        return { event: started, started: true }
+      }),
     submitAccepted: (_intentId, requestHash, brokerOrderId, response, terminal) => {
       const accepted = event(
         MutationOperation.Submit,
@@ -1412,54 +1434,81 @@ const makeHarness = (options: HarnessOptions = {}) => {
       setState(IntentState.Terminal, response.observedAt, TerminalOutcome.Rejected)
       return Effect.succeed(rejected)
     },
-    submitDenied: (_intentId, requestHash, occurredAt) => {
-      const denied = event(
-        MutationOperation.Submit,
-        MutationEventType.SubmitDenied,
-        requestHash,
-        latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
-        occurredAt,
-      )
-      setState(IntentState.Terminal, occurredAt, TerminalOutcome.Rejected)
-      return Effect.succeed(denied)
-    },
-    submitUnknown: (_intentId, requestHash, occurredAt, response, brokerOrderId) => {
-      const unknown = event(
-        MutationOperation.Submit,
-        MutationEventType.SubmitUnknown,
-        requestHash,
-        latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
-        occurredAt,
-        brokerOrderId,
-        completeEvidence(response),
-      )
-      setState(IntentState.Unknown, occurredAt)
-      return Effect.succeed(unknown)
-    },
-    beginCancel: (_intentId, requestHash, brokerOrderId, consistencyDelayMs, occurredAt) => {
-      const existing = latest.get(MutationOperation.Cancel)
-      if (existing !== undefined) {
-        if (
-          existing.requestHash !== requestHash ||
-          existing.consistencyDelayMs !== consistencyDelayMs ||
-          existing.brokerOrderId !== brokerOrderId
-        ) {
-          return Effect.die(new Error('mutation identity was reused with different request content'))
-        }
-        return Effect.succeed({ event: existing, started: false })
-      }
-      return Effect.succeed({
-        event: event(
-          MutationOperation.Cancel,
-          MutationEventType.CancelStarted,
+    submitDenied: (_intentId, requestHash, occurredAt) =>
+      Effect.gen(function* () {
+        yield* Effect.fromResult(
+          decideMutationOutcome(
+            { intentId: _intentId, requestHash, occurredAt },
+            { _tag: 'SubmitDenied' },
+            latest.get(MutationOperation.Submit),
+            { state: stored.intent.state, terminalOutcome: stored.intent.terminalOutcome ?? null },
+          ),
+        )
+        const denied = event(
+          MutationOperation.Submit,
+          MutationEventType.SubmitDenied,
           requestHash,
-          consistencyDelayMs,
+          latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
+          occurredAt,
+        )
+        setState(IntentState.Terminal, occurredAt, TerminalOutcome.Rejected)
+        return denied
+      }),
+    submitUnknown: (_intentId, requestHash, occurredAt, response, brokerOrderId) =>
+      Effect.gen(function* () {
+        const responseEvidence = completeEvidence(response)
+        yield* Effect.fromResult(
+          decideMutationOutcome(
+            {
+              intentId: _intentId,
+              requestHash,
+              occurredAt,
+              ...(responseEvidence === undefined ? {} : { evidence: responseEvidence }),
+              ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+            },
+            { _tag: 'SubmitUnknown' },
+            latest.get(MutationOperation.Submit),
+            { state: stored.intent.state, terminalOutcome: stored.intent.terminalOutcome ?? null },
+          ),
+        )
+        const unknown = event(
+          MutationOperation.Submit,
+          MutationEventType.SubmitUnknown,
+          requestHash,
+          latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
           occurredAt,
           brokerOrderId,
-        ),
-        started: true,
-      })
-    },
+          completeEvidence(response),
+        )
+        setState(IntentState.Unknown, occurredAt)
+        return unknown
+      }),
+    beginCancel: (_intentId, requestHash, brokerOrderId, consistencyDelayMs, occurredAt) =>
+      Effect.gen(function* () {
+        yield* fenceCheck
+        const existing = latest.get(MutationOperation.Cancel)
+        if (existing !== undefined) {
+          if (
+            existing.requestHash !== requestHash ||
+            existing.consistencyDelayMs !== consistencyDelayMs ||
+            existing.brokerOrderId !== brokerOrderId
+          ) {
+            return yield* Effect.die(new Error('mutation identity was reused with different request content'))
+          }
+          return { event: existing, started: false }
+        }
+        return {
+          event: event(
+            MutationOperation.Cancel,
+            MutationEventType.CancelStarted,
+            requestHash,
+            consistencyDelayMs,
+            occurredAt,
+            brokerOrderId,
+          ),
+          started: true,
+        }
+      }),
     cancelAccepted: (_intentId, requestHash, brokerOrderId, response) =>
       Effect.succeed(
         event(
@@ -1613,32 +1662,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
   }
 
-  const fenceCheck = Effect.suspend(() => {
-    if (
-      options.lostFence !== true &&
-      !(options.lostFenceAfterSubmit === true && latest.has(MutationOperation.Submit))
-    ) {
-      return Effect.void
-    }
-    return Effect.fail(
-      new WriterFenceError({
-        failure: 'unavailable',
-        operation: 'check',
-        message: 'injected writer-fence loss',
-      }),
-    )
-  })
-
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerMutation, mutation),
       Effect.provideService(BrokerRead, read),
-      Effect.provideService(WriterFence, {
-        check: fenceCheck,
-        transaction: (effect) => effect,
-      }),
       provideTestLayer(TestClock.layer()),
     )
   const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
@@ -1677,6 +1706,102 @@ const mismatchedSubmissionError = () =>
   })
 
 describe('execution coordinator', () => {
+  for (const denialDelayMs of [0, 5]) {
+    test(`persists a known local denial after its durable start with ${denialDelayMs}ms of elapsed time`, async () => {
+      const harness = makeHarness({ storedUpdatedAt: '1970-01-01T00:00:00.001Z' })
+      const noSend: BrokerMutationShape = {
+        submit: () =>
+          TestClock.adjust(denialDelayMs).pipe(
+            Effect.andThen(
+              Effect.fail(
+                invalidRequest({
+                  operation: MutationOperation.Submit,
+                  message: 'synthetic final authorization denied before transmission',
+                }),
+              ),
+            ),
+          ),
+        cancel: () => Effect.die('local denial must not cancel an order'),
+      }
+      const denied = await Effect.runPromise(
+        harness.provide(submit(intentId, 1_000).pipe(Effect.provideService(BrokerMutation, noSend))),
+      )
+      expect(denied).toMatchObject({
+        eventType: MutationEventType.SubmitDenied,
+        occurredAt: denialDelayMs === 0 ? '1970-01-01T00:00:00.002Z' : '1970-01-01T00:00:00.005Z',
+      })
+      expect(harness.intent()).toMatchObject({ state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Rejected })
+      const recovered = await Effect.runPromise(harness.provideRecovery(recover(intentId, MutationOperation.Submit)))
+      expect(recovered).toEqual(denied)
+      expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
+    })
+  }
+
+  test('persists expiry before broker I/O when its durable start is ahead of the clock', async () => {
+    const harness = makeHarness({ storedUpdatedAt: riskDecision.expiresAt, afterBeginSubmit: TestClock.adjust(1) })
+    const denied = await Effect.runPromise(
+      harness.provide(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(riskDecision.expiresAt) - 1)
+          return yield* submit(intentId, 1_000)
+        }),
+      ),
+    )
+    expect(denied).toMatchObject({
+      eventType: MutationEventType.SubmitDenied,
+      occurredAt: '1970-01-01T00:10:00.001Z',
+    })
+    const recovered = await Effect.runPromise(harness.provideRecovery(recover(intentId, MutationOperation.Submit)))
+    expect(recovered).toEqual(denied)
+    expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
+  })
+
+  test('keeps a post-dispatch unknown outcome uncertain after a logically advanced start', async () => {
+    const harness = makeHarness({
+      storedUpdatedAt: '1970-01-01T00:00:00.001Z',
+      afterBeginSubmit: TestClock.adjust(3),
+      unknownSubmit: true,
+    })
+    const unknown = await Effect.runPromise(harness.provide(submit(intentId, 1_000)))
+    expect(unknown).toMatchObject({
+      eventType: MutationEventType.SubmitUnknown,
+      occurredAt: '1970-01-01T00:00:00.003Z',
+    })
+    expect(harness.state()).toBe(IntentState.Unknown)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+  })
+
+  test('does not move provider evidence forward to satisfy a logically advanced start', async () => {
+    const harness = makeHarness({
+      storedUpdatedAt: '1970-01-01T00:00:00.001Z',
+      submitError: new BrokerMutationError({
+        operation: MutationOperation.Submit,
+        failure: MutationFailure.Unknown,
+        outcome: MutationOutcome.Unknown,
+        message: 'synthetic response after dispatch',
+        evidence: evidence(200, '1970-01-01T00:00:00.001Z'),
+      }),
+    })
+    const failure = await Effect.runPromise(harness.provide(Effect.flip(submit(intentId, 1_000))))
+    expect(failure).toMatchObject({
+      _tag: 'MutationStoreError',
+      failure: 'conflict',
+      message: 'mutation identity and sequence must remain exact',
+    })
+    const latest = await Effect.runPromise(harness.mutations.latest(intentId, MutationOperation.Submit))
+    expect(latest).toMatchObject({ eventType: MutationEventType.SubmitStarted, occurredAt: '1970-01-01T00:00:00.002Z' })
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
+  })
+
+  test('submits and cancels through the fenced reservation without a standalone fence service', async () => {
+    const harness = makeHarness()
+    const canceled = await Effect.runPromise(
+      harness.provide(submit(intentId, 1_000).pipe(Effect.andThen(cancel(intentId, 1_000)))),
+    )
+    expect(canceled.eventType).toBe(MutationEventType.CancelAccepted)
+    expect(harness.calls()).toEqual({ submit: 1, cancel: 1, lookup: 0 })
+  })
+
   test('renders the exact committed request without touching the broker or mutation store', async () => {
     const harness = makeHarness()
     const result = await Effect.runPromise(harness.provideIntentRead(dryRunSubmit(intentId)))
@@ -2227,7 +2352,7 @@ describe('execution coordinator', () => {
       harness.provideRecovery(
         Effect.gen(function* () {
           yield* harness.mutations.beginSubmit(intentId, requestHash, 1_000, '1970-01-01T00:00:00.000Z')
-          const unknown = yield* harness.mutations.submitUnknown(intentId, requestHash, '1969-12-31T23:59:58.000Z')
+          const unknown = yield* harness.mutations.submitUnknown(intentId, requestHash, '1970-01-01T00:00:00.000Z')
           yield* TestClock.adjust(1_000)
           const found = yield* recover(intentId, MutationOperation.Submit)
           return { found, unknown }

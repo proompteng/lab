@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/coder/websocket"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +27,7 @@ func rpcTestClient(t *testing.T, api *apiServer) (pb.NanoagentServiceClient, str
 	t.Helper()
 	api.evidence.MicroVMID = "interop-agent"
 	server := httptest.NewUnstartedServer(newHandler(api))
-	server.Config.Protocols = guestHTTPProtocols()
+	server.Config.Protocols = fixtureHTTPProtocols()
 	server.Start()
 	t.Cleanup(server.Close)
 	connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxGuestRPCBytes)))
@@ -225,7 +227,39 @@ func TestRPCInteropServer(t *testing.T) {
 	api.codex.activeLogin = json.RawMessage(`{"loginId":"interop-login"}`)
 	api.codex.loginStartedAt = time.Now()
 	api.codex.loginGeneration = api.codex.generation
-	_, address := rpcTestClient(t, api)
+	fixture := newWorkloadFixture(t)
+	server := secureRPCTestServer(t, api, fixture)
+	address := server.URL
+	preview := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("preview leaked the bootstrap credential to the application")
+		}
+		if r.URL.Path != "/ws" {
+			_, _ = fmt.Fprint(w, "preview-over-mtls")
+			return
+		}
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer connection.Close(websocket.StatusNormalClosure, "fixture complete")
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		kind, message, err := connection.Read(ctx)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err := connection.Write(ctx, kind, append([]byte("guest:"), message...)); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(preview.Close)
+	previewURL, err := url.Parse(preview.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -242,7 +276,22 @@ func TestRPCInteropServer(t *testing.T) {
 			}
 		}
 	}()
-	fmt.Println("NANOAGENT_RPC_ADDR=" + address)
-	_, _ = io.Copy(io.Discard, os.Stdin)
+	encoded, err := json.Marshal(map[string]string{"address": address, "workloadEndpoint": fixture.endpoint, "previewPort": previewURL.Port()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("NANOAGENT_RPC_ENDPOINT=" + string(encoded))
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if scanner.Text() == "rotate" {
+			fixture.rotate(t)
+		}
+	}
 	api.beginShutdown()
+}
+
+func fixtureHTTPProtocols() *http.Protocols {
+	protocols := guestHTTPProtocols()
+	protocols.SetUnencryptedHTTP2(true)
+	return protocols
 }

@@ -2,7 +2,7 @@ import { Config, Option, Redacted, Schema, SchemaTransformation } from 'effect'
 
 import { BrokerProvider, alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerEnvironmentSchema } from '../broker/identity'
-import { EvaluationBoundsSchema, IsoDateSchema, Sha256Schema } from '../contracts'
+import { Sha256Schema } from '../contracts'
 import { BrokerAccess, BrokerAccessSchema } from '../execution/authority'
 import { CapitalAuthoritySelection } from '../execution/configuration'
 import {
@@ -20,7 +20,6 @@ import {
 } from './model'
 import { kafkaBootstrapDeadlineMs, KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
-import { Pipeable } from '../pipeable'
 
 const ProvenanceMode = Schema.Literals(['production', 'development'])
 const RetryAttempts = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))
@@ -119,14 +118,6 @@ export const runtimeConfigSource = Config.all({
   clickhouseUrl: nonEmptyString('BAYN_CLICKHOUSE_URL'),
   clickhouseUsername: nonEmptyString('BAYN_CLICKHOUSE_USERNAME'),
   clickhousePassword: secretString('BAYN_CLICKHOUSE_PASSWORD'),
-  snapshotId: Config.schema(Sha256Schema, 'BAYN_SIGNAL_SNAPSHOT_ID'),
-  publicationAsOf: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_PUBLICATION_ASOF'),
-  calendarVersion: nonEmptyString('BAYN_SIGNAL_CALENDAR_VERSION'),
-  dataStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_DATA_START'),
-  dataEnd: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_DATA_END'),
-  lookbackStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_LOOKBACK_START'),
-  evaluationStart: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_START'),
-  evaluationEnd: Config.schema(IsoDateSchema, 'BAYN_SIGNAL_EVALUATION_END'),
   postgresUrl: Config.Redacted('BAYN_POSTGRES_URL'),
   postgresTls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   postgresCaPath: nonEmptyString('BAYN_POSTGRES_CA_PATH').pipe(
@@ -180,17 +171,6 @@ export const runtimeConfigSource = Config.all({
         url: config.clickhouseUrl,
         username: config.clickhouseUsername,
         password: config.clickhousePassword,
-        snapshotId: config.snapshotId,
-        publicationAsOf: config.publicationAsOf,
-        calendarVersion: config.calendarVersion,
-        bounds: {
-          schemaVersion: 'bayn.evaluation-bounds.v1',
-          dataStart: config.dataStart,
-          dataEnd: config.dataEnd,
-          lookbackStart: config.lookbackStart,
-          evaluationStart: config.evaluationStart,
-          evaluationEnd: config.evaluationEnd,
-        },
       },
       postgres: {
         url: config.postgresUrl,
@@ -205,7 +185,3 @@ export const runtimeConfigSource = Config.all({
     }),
   ),
 )
-
-const evaluationBoundsDecoderDataFirst = Schema.decodeUnknownResult(EvaluationBoundsSchema)
-
-export const evaluationBoundsDecoder = Pipeable.dual(1, (input: unknown) => evaluationBoundsDecoderDataFirst(input))

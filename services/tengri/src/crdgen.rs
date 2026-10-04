@@ -43,7 +43,10 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         json!([
             {"rule": "self.spec.ownerHash == oldSelf.spec.ownerHash", "message": "ownerHash is immutable"},
             {"rule": "self.spec.architecture == oldSelf.spec.architecture", "message": "the server-selected architecture is immutable"},
-            {"rule": "self.spec.resources == oldSelf.spec.resources", "message": "the v1 resource profile is immutable"},
+            {
+                "rule": "self.spec.resources.workspaceGib == oldSelf.spec.resources.workspaceGib",
+                "message": "workspace size is immutable"
+            },
             {
                 "rule": "self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt == oldSelf.spec.expiresAt",
                 "message": "creation and legacy expiry fields are immutable"
@@ -87,19 +90,18 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
     )?;
 
     let resources = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources";
-    for (field, fixed) in [
-        ("cpuMillis", crd::CPU_MILLIS),
-        ("memoryMib", crd::MEMORY_MIB),
-        ("workspaceGib", crd::WORKSPACE_GIB),
+    for (field, allowed) in [
+        ("cpuMillis", json!([crd::CPU_MILLIS])),
+        ("memoryMib", json!([crd::MEMORY_MIB])),
+        ("workspaceGib", json!([crd::WORKSPACE_GIB])),
     ] {
         insert(
             &mut crd,
             &format!("{resources}/properties/{field}"),
             "enum",
-            json!([fixed]),
+            allowed,
         )?;
     }
-
     serde_json::from_value(crd).context("deserialize production CRD")
 }
 
@@ -122,9 +124,15 @@ mod tests {
             .expect("serialize production CRD");
         assert_eq!(
             crd.pointer(
-                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/cpuMillis/enum/0"
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/cpuMillis/enum"
             ),
-            Some(&json!(2_000))
+            Some(&json!([4_000]))
+        );
+        assert_eq!(
+            crd.pointer(
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/memoryMib/enum"
+            ),
+            Some(&json!([8_192]))
         );
         assert_eq!(
             crd.pointer(
