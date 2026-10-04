@@ -1,16 +1,56 @@
-_config_version: 39
+_config_version: 46
 
 dashboard:
   public_url: https://hermes.ide-newton.ts.net
+  show_token_analytics: false
   trusted_proxies:
     - 10.244.0.0/16
 
 model:
   default: qwen36-flamingo
-  provider: custom
-  base_url: http://flamingo.flamingo.svc.cluster.local/v1
-  api_mode: chat_completions
+  provider: flamingo
   context_length: 262144
+
+providers:
+  flamingo:
+    model: qwen36-flamingo
+    base_url: http://flamingo.flamingo.svc.cluster.local/v1
+    api_mode: chat_completions
+    context_length: 262144
+    extra_body:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      chat_template_kwargs:
+        enable_thinking: true
+
+toolsets: [file, memory, session_search, terminal, todo, web, skills]
+
+auxiliary:
+  compression:
+    provider: flamingo
+    timeout: 180
+    max_concurrency: 1
+  title_generation:
+    provider: flamingo
+    timeout: 30
+    max_concurrency: 1
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+  vision:
+    provider: flamingo
+  memory_query_rewrite:
+    provider: flamingo
+    max_concurrency: 1
+  skills_hub:
+    provider: flamingo
+    max_concurrency: 1
+  background_review:
+    enabled: false
 
 terminal:
   backend: local
@@ -35,25 +75,31 @@ tool_loop_guardrails:
 
 compression:
   enabled: true
-  threshold: 0.72
+  threshold: 0.75
+  threshold_tokens: 65536
+  tail_mode: lean
   target_ratio: 0.32
   protect_last_n: 20
-  protect_first_n: 1
+  protect_first_n: 3
+  min_tail_user_messages: 3
+  abort_on_summary_failure: true
 
 memory:
+  provider: ""
   memory_enabled: true
   user_profile_enabled: true
   memory_char_limit: 4400
   user_char_limit: 2200
   nudge_interval: 10
-  flush_min_turns: 4
 
-session_reset:
-  mode: both
-  idle_minutes: 1440
-  at_hour: 4
+sessions:
+  auto_prune: false
+
+context:
+  engine: compressor
 
 max_concurrent_sessions: 4
+max_live_sessions: 4
 group_sessions_per_user: true
 
 streaming:
@@ -61,9 +107,24 @@ streaming:
 
 skills:
   creation_nudge_interval: 14
+  project_discovery: true
+  trusted_project_dirs:
+    - /opt/data/workspace/tuslagch/lab
+  inline_shell: false
+  guard_agent_created: true
+
+curator:
+  enabled: false
+
+display:
+  streaming: true
+  show_reasoning: true
+  reasoning_full: false
+  tool_progress_command: true
 
 agent:
-  max_turns: 40
+  max_turns: 80
+  budget_warning_ratio: 0.75
   gateway_timeout: 1800
   gateway_timeout_warning: 1200
   restart_drain_timeout: 90
@@ -71,17 +132,27 @@ agent:
   verify_on_stop: true
   verbose: false
   reasoning_effort: medium
+  coding_context: "on"
+  tool_use_enforcement: true
+  intent_ack_continuation: true
+  disabled_toolsets: [delegation, cronjob, code_execution, kanban]
+  agent_cache:
+    max_size: 4
+    idle_ttl_secs: 1800
+    protect_recent: 2
   coding_instructions:
     - Keep all mutable work inside /opt/data/workspace/tuslagch.
     - Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory.
     - Use the authenticated tuslagch GitHub identity, codex/ branches, and pull requests for explicitly requested repository changes; never force-push or push directly to main.
     - Kubernetes access is cluster-wide read-only; never attempt to mutate resources or read Kubernetes Secrets.
     - Never claim an external action completed without a fresh readback.
+    - Manage persistent configuration, plugins, tools, and integrations through reviewed GitOps changes; never use dashboard controls or runtime installers to configure this instance.
+    - Work directly without subagents or delegation.
 
 platform_toolsets:
-  cli: [file, memory, terminal, todo, web, exa]
-  api_server: [file, memory, terminal, todo, web, exa]
-  discord: [file, memory, terminal, todo, web, exa]
+  cli: [file, memory, session_search, terminal, todo, web, skills]
+  api_server: [file, memory, session_search, terminal, todo, web, skills]
+  discord: [file, memory, session_search, terminal, todo, web, skills]
 
 platforms:
   discord:
@@ -98,6 +169,8 @@ platforms:
 
 gateway:
   write_sessions_json: false
+  multiplex_profiles: false
+  auto_multiplex_migration: false
   api_server:
     max_concurrent_runs: 2
 
@@ -150,39 +223,51 @@ checkpoints:
   max_snapshots: 20
 
 plugins:
-  enabled: []
+  enabled: [security-guidance]
   disabled: []
 
 web:
   search_backend: exa
   extract_backend: exa
+  keyless_fallback: false
+  keyless_rescue: false
+  cache_enabled: true
+  cache_ttl_minutes: 20
 
-mcp_servers:
-  exa:
-    url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"
-    headers:
-      x-api-key: "${EXA_API_KEY}"
-    connect_timeout: 15
-    timeout: 120
-    tools:
-      include:
-        - web_search_exa
-        - web_fetch_exa
+mcp_servers: {}
 
 delegation:
-  max_iterations: 20
-  max_concurrent_children: 1
-  max_spawn_depth: 1
   orchestrator_enabled: false
   subagent_auto_approve: false
   inherit_mcp_toolsets: false
 
-code_execution:
-  timeout: 120
-  max_tool_calls: 100
-
 stt:
   enabled: false
+
+cron:
+  allow_agent_scheduling: false
+
+kanban:
+  dispatch_in_gateway: false
+  auto_decompose: false
+
+security:
+  redact_secrets: true
+  protected_instruction_files: true
+  allow_lazy_installs: false
+
+telemetry:
+  shared_metrics:
+    enabled: false
+    send: false
+
+lsp:
+  install_strategy: manual
+
+logging:
+  level: INFO
+  max_size_mb: 5
+  backup_count: 3
 
 privacy:
   redact_pii: true
