@@ -21,6 +21,8 @@ service-account, and container selectors constrain each registration. X.509-SVID
 Application containers use the Workload API directly; Istio proxies obtain their identities and trust bundles through
 SPIRE's Envoy SDS API on a separate read-only CSI mount. Native sidecar injection uses the existing Istio CNI, so
 restricted application Pods do not require a privileged network init container.
+Proompteng and Tengri opt in through the `sidecar.istio.io/inject: "true"` Pod label. Their namespaces are not enrolled
+globally; an injection annotation alone does not match Istio's object admission webhook in these namespaces.
 
 The server authenticates agents with Kubernetes projected service account tokens restricted to
 `spire-system:spire-agent` under the existing `galactic` profile. Agents inspect workload processes with host PID access,

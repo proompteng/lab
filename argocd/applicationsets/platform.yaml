@@ -720,8 +720,10 @@ spec:
               - name: temporal
                 path: argocd/applications/temporal
                 namespace: temporal
+                targetRevision: kargo/temporal-worker
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
+                  kargo.akuity.io/authorized-stage: lab-delivery:temporal-worker
                 automation: auto
                 enabled: "true"
               - name: inngest
