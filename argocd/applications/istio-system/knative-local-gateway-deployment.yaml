@@ -29,6 +29,7 @@ spec:
         networking.knative.dev/ingress-provider: istio
         istio: ingressgateway
         istio.io/dataplane-mode: none
+        spiffe.io/spire-managed-identity: "true"
     spec:
       serviceAccountName: knative-local-gateway
       terminationGracePeriodSeconds: 30
@@ -116,7 +117,9 @@ spec:
             value: "0"
       volumes:
         - name: workload-socket
-          emptyDir: {}
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
         - name: credential-socket
           emptyDir: {}
         - name: workload-certs

@@ -18,7 +18,7 @@ def kubectl(context, namespace, *args, check=True):
 
 
 def verify(context, timeout):
-    expected = "spiffe://galactic.proompteng.ai/ns/spire-test/sa/identity-canary"
+    expected = "spiffe://proompteng.ai/ns/spire-test/sa/identity-canary"
     nodes = json.loads(
         kubectl(context, "spire-test", "get", "nodes", "-o", "json").stdout
     )

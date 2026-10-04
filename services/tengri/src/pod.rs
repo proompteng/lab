@@ -314,6 +314,7 @@ pub fn build_pod(
         microvm.spec.architecture.kubernetes_label().to_owned(),
     );
     let mut annotations = BTreeMap::from([
+        ("sidecar.istio.io/inject".to_owned(), "false".to_owned()),
         (
             "runtime.proompteng.ai/isolation".to_owned(),
             "firecracker".to_owned(),
@@ -519,7 +520,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
     let mut env = vec![
         EnvVar {
             name: "SPIFFE_TRUST_DOMAIN".to_owned(),
-            value: Some("galactic.proompteng.ai".to_owned()),
+            value: Some("proompteng.ai".to_owned()),
             ..Default::default()
         },
         EnvVar {
@@ -619,7 +620,7 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
             },
         ]),
         readiness_probe: Some(http_probe("/readyz", 5, 3)),
-        startup_probe: Some(http_probe("/readyz", 5, 210)),
+        startup_probe: Some(http_probe("/readyz", 5, 270)),
         liveness_probe: Some(http_probe("/livez", 15, 3)),
         resources: Some(ResourceRequirements {
             limits: Some(fixed.clone()),
@@ -977,6 +978,12 @@ mod tests {
         let annotations = pod.metadata.annotations.as_ref().expect("annotations");
         assert_eq!(
             annotations
+                .get("sidecar.istio.io/inject")
+                .map(String::as_str),
+            Some("false"),
+        );
+        assert_eq!(
+            annotations
                 .get(STORAGE_LAYOUT_ANNOTATION)
                 .map(String::as_str),
             Some(SINGLE_MOUNT_STORAGE_LAYOUT),
@@ -1211,10 +1218,10 @@ mod tests {
         );
         let startup_probe = container.startup_probe.as_ref().expect("startup probe");
         assert_eq!(startup_probe.period_seconds, Some(5));
-        assert_eq!(startup_probe.failure_threshold, Some(210));
+        assert_eq!(startup_probe.failure_threshold, Some(270));
         assert_eq!(
             startup_probe.period_seconds.unwrap() * startup_probe.failure_threshold.unwrap(),
-            1050,
+            1350,
         );
         assert_eq!(
             probe_path(container.liveness_probe.as_ref().expect("liveness probe")),

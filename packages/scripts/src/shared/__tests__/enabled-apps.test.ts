@@ -493,6 +493,12 @@ describe('enabled app inventory', () => {
     })
     expect(temporalKustomization.images).toEqual([
       {
+        name: 'temporal-worker-runtime',
+        newName: 'mirror.gcr.io/temporalio/server',
+        newTag: '1.31.2',
+        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
+      },
+      {
         name: 'docker.elastic.co/elasticsearch/elasticsearch',
         newTag: '8.19.21',
         digest: 'sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419',

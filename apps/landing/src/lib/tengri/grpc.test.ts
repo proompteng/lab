@@ -403,7 +403,7 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('rejects a trusted certificate with the wrong destination SPIFFE ID', async () => {
     const { listCodexModels } = await import('./grpc')
-    process.env.TENGRI_SPIFFE_ID = 'spiffe://galactic.proompteng.ai/ns/tengri/sa/another-service'
+    process.env.TENGRI_SPIFFE_ID = 'spiffe://proompteng.ai/ns/tengri/sa/another-service'
     try {
       expect(await rejection(listCodexModels('github:42', 'agent-test'))).toMatchObject({ status: 503 })
     } finally {
