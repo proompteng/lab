@@ -33,6 +33,7 @@ export const productionPaths = {
   discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
   githubSealedSecret: 'argocd/applications/hermes/github-sealed-secret.yaml',
   tailscaleIngress: 'argocd/applications/hermes/tailscale-ingress.yaml',
+  service: 'argocd/applications/hermes/service.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
   squidConfig: 'argocd/applications/hermes/squid.conf',
@@ -139,6 +140,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const containersSection = sectionBetween(files.statefulSet, '      containers:\n', '      volumes:\n')
   const bootstrapContainer = namedListItemSection(initContainersSection, 8, 'bootstrap')
   const gatewayContainer = namedListItemSection(containersSection, 8, 'hermes')
+  const dashboardContainer = namedListItemSection(containersSection, 8, 'dashboard')
 
   requireTerms(failures, productionPaths.kustomization, files.kustomization, [
     'namespace: hermes',
@@ -171,13 +173,63 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'namespace: hermes',
     'tailscale.com/tags: tag:k8s',
     'ingressClassName: tailscale',
-    'path: /',
-    'pathType: Prefix',
-    `backend:
+    `path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hermes
+                port:
+                  name: dashboard`,
+    `path: /v1
+            pathType: Prefix
+            backend:
               service:
                 name: hermes
                 port:
                   name: api`,
+    `path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: hermes
+                port:
+                  name: api`,
+  ])
+  requireTerms(failures, productionPaths.service, files.service, [
+    'name: api\n      port: 8642\n      targetPort: api',
+    'name: dashboard\n      port: 9119\n      targetPort: dashboard',
+  ])
+  requireTerms(failures, productionPaths.config, files.config, [
+    'dashboard:\n  public_url: https://hermes.ide-newton.ts.net\n  trusted_proxies:\n    - 10.244.0.0/16',
+  ])
+  requireTerms(failures, productionPaths.statefulSet, dashboardContainer, [
+    `image: ${hermesImage}`,
+    'workingDir: /opt/data/workspace/tuslagch/lab',
+    '- dashboard\n            - --host\n            - 0.0.0.0\n            - --port\n            - "9119"\n            - --no-open\n            - --skip-build',
+    'name: HERMES_WEB_DIST\n              value: /opt/hermes/hermes_cli/web_dist',
+    'name: HERMES_HOME\n              value: /opt/data',
+    'name: HERMES_DASHBOARD_BASIC_AUTH_USERNAME\n              value: tuslagch',
+    'name: HERMES_DASHBOARD_BASIC_AUTH_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: hermes-api-auth\n                  key: API_SERVER_KEY',
+    "d.get('auth_required') is True and 'basic' in d.get('auth_providers', [])",
+    'containerPort: 9119',
+    'runAsUser: 10000',
+    'readOnlyRootFilesystem: true',
+    'allowPrivilegeEscalation: false',
+    'mountPath: /opt/data/config.yaml\n              subPath: config.yaml\n              readOnly: true',
+    'mountPath: /opt/github-auth\n              readOnly: true',
+  ])
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, ['shareProcessNamespace: true'])
+  forbidTerms(failures, productionPaths.statefulSet, dashboardContainer, [
+    '--insecure',
+    'DISCORD_BOT_TOKEN',
+    'API_SERVER_ENABLED',
+    'GH_TOKEN',
+  ])
+  if (count(files.networkPolicy, '          port: 9119\n') !== 1) {
+    failures.push(`${productionPaths.networkPolicy}: only the exact Tailscale proxy may reach the dashboard port`)
+  }
+  requireTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
+    'tailscale.com/parent-resource: hermes-tailscale\n      ports:\n        - protocol: TCP\n          port: 8642\n        - protocol: TCP\n          port: 9119',
   ])
   if (count(files.tailscaleIngress, 'hermes.ide-newton.ts.net') !== 2) {
     failures.push(`${productionPaths.tailscaleIngress}: TLS and routing must use only the Hermes MagicDNS hostname`)
@@ -188,9 +240,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'type: LoadBalancer',
     'ingressClassName: traefik',
   ])
-  if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
+  if (count(files.statefulSet, `image: ${hermesImage}`) !== 3) {
     failures.push(
-      `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
+      `${productionPaths.statefulSet}: the bootstrap, gateway, and dashboard containers must use the mirrored immutable amd64 digest`,
     )
   }
   if (count(files.statefulSet, `app.kubernetes.io/version: ${hermesRelease}`) !== 2) {
@@ -246,7 +298,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       `${productionPaths.statefulSet}: missing production invariant "workingDir: /opt/data/workspace/tuslagch/lab"`,
     )
   }
-  if (count(files.statefulSet, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
+  if (count(gatewayContainer, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
     failures.push(`${productionPaths.statefulSet}: the gateway must mount exactly one immutable terminal login profile`)
   }
   const exaSecretKeyRef = [
@@ -256,7 +308,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '                  name: hermes-exa-auth',
     '                  key: EXA_API_KEY',
   ].join('\n')
-  if (count(files.statefulSet, exaSecretKeyRef) !== 1) {
+  if (count(gatewayContainer, exaSecretKeyRef) !== 1) {
     failures.push(`${productionPaths.statefulSet}: the gateway must receive exactly one Exa SecretKeyRef`)
   }
   forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
@@ -291,13 +343,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '              subPath: nix/store',
     '              readOnly: true',
   ].join('\n')
-  if (count(files.statefulSet, toolchainBinMount) !== 2) {
+  if (count(files.statefulSet, toolchainBinMount) !== 3) {
     failures.push(
-      `${productionPaths.statefulSet}: init and gateway must mount the immutable toolchain bin facade read-only`,
+      `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable toolchain bin facade read-only`,
     )
   }
-  if (count(files.statefulSet, toolchainStoreMount) !== 2) {
-    failures.push(`${productionPaths.statefulSet}: init and gateway must mount the immutable Nix closure read-only`)
+  if (count(files.statefulSet, toolchainStoreMount) !== 3) {
+    failures.push(
+      `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable Nix closure read-only`,
+    )
   }
   if (count(files.statefulSet, '        - name: lab-toolchain-image\n          image:\n') !== 1) {
     failures.push(`${productionPaths.statefulSet}: the toolchain must use exactly one OCI image volume`)
@@ -336,11 +390,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       `${productionPaths.statefulSet}: only the bootstrap init container may receive the sealed GitHub token`,
     )
   }
-  if (count(files.statefulSet, '            - name: GH_CONFIG_DIR\n') !== 2) {
-    failures.push(`${productionPaths.statefulSet}: init and gateway must share exactly one GitHub CLI config directory`)
+  if (count(files.statefulSet, '            - name: GH_CONFIG_DIR\n') !== 3) {
+    failures.push(
+      `${productionPaths.statefulSet}: init, gateway, and dashboard must share exactly one GitHub CLI config directory`,
+    )
   }
-  if (count(files.statefulSet, 'name: github-auth\n') !== 3) {
-    failures.push(`${productionPaths.statefulSet}: GitHub auth must use two mounts and one ephemeral volume`)
+  if (count(files.statefulSet, 'name: github-auth\n') !== 4) {
+    failures.push(`${productionPaths.statefulSet}: GitHub auth must use three mounts and one ephemeral volume`)
   }
   requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
     '            - name: github-auth\n              mountPath: /opt/github-auth\n              readOnly: true',
@@ -890,8 +946,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.',
     'Bootstrap fails closed unless every tool reports the repository-pinned version.',
     'https://hermes.ide-newton.ts.net',
-    'Kubernetes Ingress: `hermes-tailscale`',
-    'It does not enable Funnel or create a public Ingress.',
+    'The `hermes-tailscale` Ingress',
+    'There is no Funnel or public Ingress.',
     'both require bearer authentication',
   ])
   forbidPattern(

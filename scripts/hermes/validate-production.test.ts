@@ -120,7 +120,7 @@ test('rejects omitting the Hermes toolchain bin mount from one container', async
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: init and gateway must mount the immutable toolchain bin facade read-only`,
+    `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable toolchain bin facade read-only`,
   )
 })
 
@@ -132,7 +132,7 @@ test('rejects omitting the Hermes toolchain closure mount from one container', a
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: init and gateway must mount the immutable Nix closure read-only`,
+    `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable Nix closure read-only`,
   )
 })
 
@@ -226,12 +226,13 @@ test('rejects changing the Hermes Tailscale TLS or routing hostname', async () =
   )
 })
 
-test('rejects routing the Hermes Tailscale Ingress to another backend', async () => {
+test.each(['/', '/v1', '/health'])('rejects routing %s to another backend', async (path) => {
   const files = await loadProductionFiles()
-  files.tailscaleIngress = files.tailscaleIngress.replace('                name: hermes', '                name: other')
-
+  const port = path === '/' ? 'dashboard' : 'api'
+  const route = `path: ${path}\n            pathType: Prefix\n            backend:\n              service:\n                name: hermes\n                port:\n                  name: ${port}`
+  files.tailscaleIngress = files.tailscaleIngress.replace(route, route.replace('name: hermes', 'name: other'))
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.tailscaleIngress}: missing production invariant "backend:\\n              service:\\n                name: hermes\\n                port:\\n                  name: api"`,
+    `${productionPaths.tailscaleIngress}: missing production invariant ${JSON.stringify(route)}`,
   )
 })
 
@@ -333,7 +334,7 @@ test('rejects a mutable Hermes runtime image', async () => {
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
+    `${productionPaths.statefulSet}: the bootstrap, gateway, and dashboard containers must use the mirrored immutable amd64 digest`,
   )
 })
 
@@ -1526,4 +1527,38 @@ test('rejects a PR workflow that omits migration audit tests', async () => {
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.pullRequestWorkflow}: missing production invariant "bun test scripts/hermes/*.test.ts"`,
   )
+})
+
+test('rejects a dashboard without the existing Secret-backed password', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'name: HERMES_DASHBOARD_BASIC_AUTH_PASSWORD',
+    'name: UNAUTHENTICATED_DASHBOARD',
+  )
+  expect(
+    validateProductionContent(files).some((failure) => failure.includes('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD')),
+  ).toBe(true)
+})
+
+test('rejects dashboard readiness that accepts an inactive authentication gate', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace("d.get('auth_required') is True", 'True')
+  expect(validateProductionContent(files).some((failure) => failure.includes('auth_required'))).toBe(true)
+})
+
+test('rejects exposing the dashboard to same-namespace callers', async () => {
+  const files = await loadProductionFiles()
+  files.networkPolicy = files.networkPolicy.replace(
+    '  egress:',
+    '        - protocol: TCP\n          port: 9119\n  egress:',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.networkPolicy}: only the exact Tailscale proxy may reach the dashboard port`,
+  )
+})
+
+test('rejects building dashboard assets during startup', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace('            - --skip-build\n', '')
+  expect(validateProductionContent(files).some((failure) => failure.includes('--skip-build'))).toBe(true)
 })
