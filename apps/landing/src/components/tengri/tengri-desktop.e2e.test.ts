@@ -1435,6 +1435,30 @@ test('opens composer menus above the picker and supports keyboard selection on d
   await expect(reasoning).toBeFocused()
 })
 
+test('keeps composer menus clickable after repeated desktop window switches', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const model = page.getByRole('combobox', { name: 'Model', exact: true })
+  await expect(model).toBeEnabled()
+  for (let switchIndex = 0; switchIndex < 28; switchIndex += 1) {
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+    await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  }
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  expect(Number(await chrome.locator('..').evaluate((element) => getComputedStyle(element).zIndex))).toBeGreaterThan(50)
+  await model.click()
+  const option = page.getByRole('option', { name: 'GPT-5.6 Luna', exact: true })
+  await expect(option).toBeVisible()
+  expect(
+    await option.evaluate((element) => {
+      const bounds = element.getBoundingClientRect()
+      return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2))
+    }),
+  ).toBe(true)
+  await option.click()
+  await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-5.6 Luna')
+})
+
 test('selects and persists Codex models and reasoning for subsequent turns', async ({ page }) => {
   const mock = await mockTengri(page, { preserveDraftStorageOnReload: true, paginateCodexModels: true })
   await page.goto('/')
