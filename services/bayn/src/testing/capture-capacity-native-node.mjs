@@ -9,11 +9,16 @@ import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../hash.ts'
 import { PostgresClientLive } from '../db/postgres-client.ts'
-import { makeResearchCapturePostgresStore } from '../db/research-capture-postgres.ts'
+import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
 import { makeKafkaMarketProjection, platformaticProjectionTransport } from '../market-data/streaming/kafka.ts'
 import { decodeRawMarketRecord, RawMarketEventKind } from '../market-data/streaming/raw-events.ts'
-import { CaptureInvalidation } from '../research-capture/capture.ts'
+import { CaptureDisposition, CaptureInvalidation, restoreKafkaTransportTimestamp } from '../research-capture/capture.ts'
+import {
+  deriveResearchCaptureExportManifest,
+  researchCaptureObjectKey,
+  verifyResearchCaptureExportPrefix,
+} from '../research-capture/export.ts'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder.ts'
 import { makeS3ResearchCaptureObjectStore } from '../research-capture/s3.ts'
 
@@ -30,7 +35,9 @@ assert.match(username ?? '', /^bayn-fixture-[0-9a-f]+$/)
 assert.match(password ?? '', /^[0-9a-f]{64}$/)
 const pgUrl = new URL(postgresUrl ?? '')
 assert.ok(['127.0.0.1', 'localhost'].includes(pgUrl.hostname))
-assert.ok(pgUrl.pathname.endsWith('_test'))
+assert.equal(pgUrl.pathname, '/bayn_test')
+assert.equal(pgUrl.port, '5432')
+assert.equal(pgUrl.search, '')
 assert.equal(readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim(), String(plan.worker.memoryBytes))
 const [quota, period] = readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/).map(Number)
 assert.equal(quota / period, plan.worker.cpus)
@@ -109,6 +116,9 @@ const objectServer = createServer(async (request, response) => {
       if (arm.inject && !arm.injected && arm.fault === 's3-put-committed-connection-drop') {
         arm.injected = true
         arm.faultRequest = attempt
+        arm.faultObject = { key, bytes, contentHash: sha256(bytes) }
+        assert.equal(arm.pendingObject.contentHash, arm.faultObject.contentHash)
+        assert.deepEqual(bytes, Buffer.from(arm.pendingObject.payload))
         arm.faultStarted = performance.now()
         request.socket.destroy()
         return
@@ -246,6 +256,8 @@ const program = Effect.gen(function* () {
           topics,
         }
         const expectedOffsets = new Map()
+        const expectedHistory = new Map()
+        const inputByPartition = new Map()
         for (const item of data) {
           const offset = expectedOffsets.get(item.partition) ?? 0
           const decoded = decodeRawMarketRecord(
@@ -261,7 +273,24 @@ const program = Effect.gen(function* () {
           assert.ok(Result.isSuccess(decoded))
           assert.equal(decoded.success.kind, RawMarketEventKind.Quote)
           expectedOffsets.set(item.partition, offset + 1)
+          const values = inputByPartition.get(item.partition) ?? []
+          values.push(item)
+          inputByPartition.set(item.partition, values)
+          const history = expectedHistory.get(decoded.success.value.symbol) ?? []
+          history.push({ value: { ...decoded.success.value, sourceTopic: 'quotes' }, recordHash: sha256(item.value) })
+          if (history.length > 512) history.shift()
+          expectedHistory.set(decoded.success.value.symbol, history)
         }
+        const orderedHistory = [...expectedHistory].sort(([a], [b]) => a.localeCompare(b))
+        const expectedStateHash = canonicalHashV1({
+          sequence: data.length,
+          offsets: [...expectedOffsets]
+            .map(([partition, count]) => [`quotes:${partition}`, String(count - 1)])
+            .sort(([a], [b]) => a.localeCompare(b)),
+          quotes: orderedHistory.map(([symbol, entries]) => [symbol, entries.at(-1)]),
+          quoteHistory: orderedHistory,
+          emptyUnrelatedAndRejectionState: true,
+        })
         const captureId = `${prefix}-${name}`
         const arm = {
           captureId,
@@ -280,11 +309,18 @@ const program = Effect.gen(function* () {
           arm.chargedBytes += bytes
           assert.ok(arm.chargedBytes <= plan.limits.maximumCombinedAttemptedSinkBytesPerArm)
         }
+        const appendAttempts = new Map()
         const store = {
           append: (bytes) =>
-            Effect.sync(() => charge(Buffer.byteLength(bytes.payload))).pipe(
+            Effect.sync(() => {
+              charge(Buffer.byteLength(bytes.payload))
+              const ordinal = JSON.parse(bytes.payload).chunkOrdinal
+              appendAttempts.set(ordinal, (appendAttempts.get(ordinal) ?? 0) + 1)
+              assert.equal(appendAttempts.get(ordinal), 1)
+            }).pipe(
               Effect.andThen(() => {
                 const started = performance.now()
+                if (fault === 'postgres-table-lock-delay' && arm.injected) arm.faultAppendStarted = started
                 return nativeStore.append(bytes).pipe(
                   Effect.onExit((exit) =>
                     Effect.sync(() => {
@@ -326,7 +362,10 @@ const program = Effect.gen(function* () {
               },
               {
                 putVerified: (object) =>
-                  Effect.sync(() => charge(object.payload.byteLength)).pipe(
+                  Effect.sync(() => {
+                    charge(object.payload.byteLength)
+                    arm.pendingObject = object
+                  }).pipe(
                     Effect.andThen(() => objects.putVerified(object)),
                     Effect.onExit((exit) =>
                       Effect.sync(() => {
@@ -339,6 +378,10 @@ const program = Effect.gen(function* () {
             )
           : undefined
         let market
+        let nativeEpoch
+        let arrivalLowerBound
+        let arrivalMinMs = Infinity
+        let arrivalMaxMs = -Infinity
         let accepted = 0
         let published = 0
         let peakBacklog = 0
@@ -367,6 +410,12 @@ const program = Effect.gen(function* () {
                     const projection = Effect.runSync(market.readForLiquidation).projection
                     const current = projection.quotes.get(symbol)
                     assert.ok(current)
+                    assert.equal(projection.epoch, nativeEpoch)
+                    assert.ok(Number.isSafeInteger(current.availableAtMs))
+                    assert.ok(current.availableAtMs >= arrivalLowerBound && current.availableAtMs <= Date.now())
+                    assert.ok(current.availableAtMs >= arrivalMaxMs)
+                    arrivalMinMs = Math.min(arrivalMinMs, current.availableAtMs)
+                    arrivalMaxMs = current.availableAtMs
                     assert.equal(current.value.sourcePartition, record.partition)
                     assert.equal(current.value.sourceOffset, record.offset)
                     assert.equal(current.recordHash, sha256(record.value))
@@ -409,6 +458,10 @@ const program = Effect.gen(function* () {
           assert.ok(performance.now() < readyDeadline)
           yield* Effect.sleep(10)
         }
+        const initialState = yield* market.readForLiquidation
+        nativeEpoch = initialState.projection.epoch
+        assert.equal(initialState.bootstrap.epoch, nativeEpoch)
+        arrivalLowerBound = Date.now()
         let running = true
         let finishStarted = false
         let finishDone = false
@@ -431,7 +484,31 @@ const program = Effect.gen(function* () {
                     yield* sql`LOCK TABLE research_capture_chunks IN ACCESS EXCLUSIVE MODE`
                     arm.injected = true
                     arm.faultStarted = performance.now()
-                    yield* Effect.sleep(2000)
+                    const releaseAt = performance.now() + 2000
+                    let blocked
+                    let cancelled = false
+                    while (performance.now() < releaseAt) {
+                      yield* sql`SELECT pg_stat_clear_snapshot()`
+                      const waiting =
+                        yield* sql`SELECT pid, query_start::text AS query_start FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND application_name = 'bayn' AND state = 'active' AND wait_event_type = 'Lock' AND query LIKE '%FROM research_capture_chunks%' AND query LIKE '%AND chunk_ordinal =%'`
+                      if (waiting.length) {
+                        assert.equal(waiting.length, 1)
+                        assert.equal(
+                          cancelled,
+                          false,
+                          'Cancelled PostgreSQL append was retried while lock remained held',
+                        )
+                        blocked ??= waiting[0]
+                        assert.deepEqual(waiting[0], blocked)
+                      } else if (blocked && !cancelled) {
+                        cancelled = true
+                        arm.pgCancellationMs = performance.now() - arm.faultAppendStarted
+                        assert.ok(arm.pgCancellationMs <= 1100)
+                        arm.pgCancelledQuery = blocked
+                      }
+                      yield* Effect.sleep(10)
+                    }
+                    assert.ok(blocked && cancelled, 'Server-side blocked append must disappear before lock release')
                   }),
                 )
               }).pipe(Effect.forkChild)
@@ -517,7 +594,8 @@ const program = Effect.gen(function* () {
           finishDone = true
         }
         assert.ok(performance.now() < deadline)
-        const measuredMs = performance.now() - started
+        const drainedAt = performance.now()
+        const measuredMs = drainedAt - started
         const cpuCores = (cpuMicros() - cpuStart) / 1000 / measuredMs
         assert.equal(probeFailed, false)
         assert.ok(sqlLatency.length > 0)
@@ -532,7 +610,10 @@ const program = Effect.gen(function* () {
           assert.equal(state.projection.offsets.get(`${topics.quotes}:${partition}`), String(count - 1))
         assert.equal(state.positions.length, 25)
         assert.equal(state.projection.technicalTopic, topics.technicalFeatures)
+        assert.equal(state.projection.epoch, nativeEpoch)
+        assert.equal(state.bootstrap.epoch, nativeEpoch)
         const stateHash = canonicalHashV1(deterministicState(state.projection, topics))
+        assert.equal(stateHash, expectedStateHash)
         const captureStatus = recorder ? yield* recorder.status : undefined
         if (enabled && !fault && rate) assert.deepEqual(captureStatus.invalidations, [])
         if (fault) {
@@ -552,6 +633,16 @@ const program = Effect.gen(function* () {
           ignored: 0,
           stateHash,
           measuredMs,
+          producerMs: publishFinished - started,
+          drainMs: drainedAt - publishFinished,
+          rawInputBytes: data.reduce((sum, item) => sum + item.value.byteLength, 0),
+          nativeEpoch,
+          bootstrapEpoch: state.bootstrap.epoch,
+          arrivalLowerBound,
+          arrivalMinMs,
+          arrivalMaxMs,
+          pgCancellationMs: arm.pgCancellationMs ?? null,
+          pgCancelledQuery: arm.pgCancelledQuery ?? null,
           offeredRate,
           cpuCores,
           memoryPeakBytes: memoryPeak(),
@@ -591,7 +682,7 @@ const program = Effect.gen(function* () {
             offeredRate >= plan.normal.minimumObservedRecordsPerSecond,
             'INCONCLUSIVE: offered rate below frozen floor',
           )
-        return { report, captureId, recorder, arm }
+        return { report, captureId, recorder, arm, inputByPartition, topics }
       }),
     )
   const validateClosed = (result) =>
@@ -602,19 +693,111 @@ const program = Effect.gen(function* () {
       assert.ok(status.retainedPayloadBytes <= 64 * 1024)
       const rows =
         yield* sql`SELECT content_hash, payload FROM research_capture_seals WHERE capture_id = ${result.captureId} AND octet_length(convert_to(payload, 'UTF8')) <= 65536`
-      if (!result.report.fault && result.report.invalidations.length === 0) {
-        assert.equal(rows.length, 1)
-        assert.equal(sha256(rows[0].payload), rows[0].content_hash)
-        const seal = JSON.parse(rows[0].payload)
+      const clean = !result.report.fault && result.report.invalidations.length === 0
+      if (clean) assert.equal(rows.length, 1)
+      const acknowledgedObjects = new Set()
+      let marketCount = 0
+      if (rows.length) {
+        const sealBytes = { contentHash: rows[0].content_hash, payload: rows[0].payload }
+        assert.equal(sha256(sealBytes.payload), sealBytes.contentHash)
+        const seal = JSON.parse(sealBytes.payload)
         assert.equal(seal.qualification, 'UNQUALIFIED')
-        assert.deepEqual(seal.invalidations, [])
-        assert.equal(seal.observedReceipts, seal.persistedReceipts)
-        const check =
-          yield* sql`SELECT COUNT(*) AS chunks, SUM(jsonb_array_length(payload::jsonb->'receipts')) AS receipts, BOOL_AND(encode(sha256(convert_to(payload, 'UTF8')), 'hex') = content_hash) AS valid FROM research_capture_chunks WHERE capture_id = ${result.captureId}`
-        assert.equal(Number(check[0].chunks), seal.persistedChunks)
-        assert.equal(Number(check[0].receipts), seal.persistedReceipts)
-        assert.equal(check[0].valid, true)
-      } else if (rows.length) assert.ok(JSON.parse(rows[0].payload).invalidations.length > 0)
+        if (clean) {
+          assert.deepEqual(seal.invalidations, [])
+          assert.equal(seal.observedReceipts, seal.persistedReceipts)
+        } else assert.ok(seal.invalidations.length > 0)
+        const manifest = Result.getOrThrow(deriveResearchCaptureExportManifest(sealBytes))
+        const object = (hash) => {
+          const bytes = result.arm.objects.get(`/${result.arm.bucket}/${researchCaptureObjectKey(hash)}`)
+          assert.ok(bytes && bytes.byteLength <= plan.limits.maximumObjectBodyBytes)
+          assert.equal(sha256(bytes), hash)
+          acknowledgedObjects.add(hash)
+          return bytes
+        }
+        const manifestBytes = {
+          contentHash: manifest.contentHash,
+          payload: object(manifest.contentHash).toString('utf8'),
+        }
+        assert.equal(object(sealBytes.contentHash).toString('utf8'), sealBytes.payload)
+        const chunks = []
+        let indexHash = seal.exportRoot.lastIndexHash
+        let readBytes = 0
+        while (indexHash !== null) {
+          assert.ok(chunks.length < seal.persistedChunks)
+          const indexBytes = { contentHash: indexHash, payload: object(indexHash).toString('utf8') }
+          const index = JSON.parse(indexBytes.payload)
+          const metadata = yield* readResearchCapturePostgresChunk(
+            sql,
+            result.captureId,
+            index.chunkOrdinal,
+            plan.limits.maximumObjectBodyBytes,
+          )
+          assert.equal(object(index.metadata.contentHash).toString('utf8'), metadata.payload)
+          const raw = object(index.raw.contentHash)
+          readBytes += Buffer.byteLength(indexBytes.payload) + Buffer.byteLength(metadata.payload) + raw.byteLength
+          assert.ok(readBytes <= plan.limits.maximumCombinedAttemptedSinkBytesPerArm)
+          chunks.push({ index: indexBytes, metadata, raw })
+          indexHash = index.previousIndexHash
+        }
+        chunks.reverse()
+        const verified = Result.getOrThrow(verifyResearchCaptureExportPrefix(chunks, sealBytes, manifestBytes))
+        assert.equal(verified.exportVerified, true)
+        const captureOffsets = new Map()
+        for (const chunk of chunks) {
+          for (const receipt of JSON.parse(chunk.metadata.payload).receipts) {
+            const event = receipt.event
+            if (event.kind !== 'market-record') continue
+            const offset = captureOffsets.get(event.partition) ?? 0
+            assert.equal(event.offset, String(offset))
+            captureOffsets.set(event.partition, offset + 1)
+            const input = result.inputByPartition.get(event.partition)?.[offset]
+            assert.ok(input)
+            assert.equal(event.topic, result.topics.quotes)
+            assert.equal(event.consumerEpoch, result.report.nativeEpoch)
+            assert.equal(event.disposition, CaptureDisposition.Accepted)
+            assert.equal(event.tombstone, false)
+            assert.equal(event.rawByteLength, input.value.byteLength)
+            assert.equal(event.rawValueSha256, sha256(input.value))
+            assert.equal(restoreKafkaTransportTimestamp(event.originalTransport), Number(input.timestamp))
+            assert.ok(receipt.observedAtMs >= result.report.arrivalLowerBound)
+            assert.ok(receipt.observedAtMs <= result.report.arrivalMaxMs)
+            marketCount++
+            assert.equal(event.consumerSequence, marketCount)
+            assert.equal(event.projectionSequence, marketCount)
+          }
+        }
+        if (clean) {
+          assert.equal(marketCount, result.report.accepted)
+          for (const [partition, inputs] of result.inputByPartition)
+            assert.equal(captureOffsets.get(partition), inputs.length)
+        }
+      }
+      if (result.arm.faultObject) {
+        assert.equal(rows.length, 1, 'Dropped PUT must be checked against a durable incomplete seal')
+        const faultObject = result.arm.faultObject
+        assert.equal(sha256(result.arm.objects.get(faultObject.key)), faultObject.contentHash)
+        assert.equal(acknowledgedObjects.has(faultObject.contentHash), false)
+        assert.equal(result.arm.requests.get(`PUT ${faultObject.key}`), 1)
+        assert.equal(result.arm.requests.get(`GET ${faultObject.key}`) ?? 0, 0)
+        assert.ok(marketCount < result.report.accepted)
+      }
+      console.log(
+        JSON.stringify({
+          captureReadback: {
+            name: result.report.name,
+            acknowledgedMarketRecords: marketCount,
+            acknowledgedObjects: acknowledgedObjects.size,
+            orphanedPut: result.arm.faultObject
+              ? {
+                  contentHash: result.arm.faultObject.contentHash,
+                  byteLength: result.arm.faultObject.bytes.byteLength,
+                  putAttempts: 1,
+                  acknowledged: false,
+                }
+              : null,
+          },
+        }),
+      )
       result.arm.objects.clear()
     })
   for (let repeat = 0; repeat < plan.normal.pairedRepetitions; repeat++) {
@@ -678,6 +861,10 @@ try {
     ),
   )
   assert.equal(Number(readFileSync('/sys/fs/cgroup/memory.events', 'utf8').match(/^oom_kill (\d+)$/m)?.[1]), 0)
+  assert.ok(
+    memoryPeak() <= plan.performancePass.maximumCgroupMemoryPeakBytes,
+    'PERFORMANCE: final lifetime memory peak',
+  )
   console.log(
     JSON.stringify({
       capacityResult: 'PASS',
