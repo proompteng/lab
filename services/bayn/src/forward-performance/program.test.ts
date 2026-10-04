@@ -1048,7 +1048,7 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     let watermarkReads = 0
     const statement = (strings: TemplateStringsArray) => {
       const text = strings.join('?')
-      if (text.trim() === '' || text.includes('SELECT 1 FROM')) return Effect.succeed([])
+      if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
       if (text.includes('GROUP BY source_topic, source_partition')) {
         watermarkReads += 1
         return Effect.succeed(
