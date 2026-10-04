@@ -114,6 +114,11 @@ for (const scenario of [
   'future-end',
   'missing-partition',
   'lookup-failed',
+  'no-sample',
+  'stale-sample',
+  'replacement-failed',
+  'replacement-pending',
+  'frontier-regressed',
 ] as const)
   test(`research interval cut observes only a valid drained epoch: ${scenario}`, async () => {
     const transport = new FakeTransport()
@@ -129,7 +134,7 @@ for (const scenario of [
         const request = {
           intervalId: 'test-interval',
           coverageStartMs: 0,
-          coverageEndMs: scenario === 'future-end' ? 1001 : 1000,
+          coverageEndMs: scenario === 'future-end' || scenario === 'stale-sample' ? 30001 : 1000,
           universeHash: canonicalHashV1(universe),
           expectedPartitions: positions('0')
             .map(({ topic, partition }) => ({ topic, partition }))
@@ -146,13 +151,37 @@ for (const scenario of [
           })
         if (scenario === 'undrained') transport.drained = undefined
         if (scenario === 'fence-ahead') transport.offsets = async () => positions('1')
-        if (scenario === 'invalidated') transport.invalidated?.(new Error('test assignment lost'))
         if (scenario === 'missing-partition') request.expectedPartitions.pop()
         if (scenario === 'lookup-failed')
           transport.offsets = async () => {
             throw new Error('test lookup failed')
           }
+        if (scenario === 'frontier-regressed') transport.drained = positions('1')
+        if (scenario !== 'no-sample') yield* TestClock.adjust(29000)
+        if (scenario === 'stale-sample') yield* TestClock.adjust(1000)
+        if (scenario === 'replacement-failed') {
+          transport.offsets = async () => {
+            throw new Error('test replacement sample failed')
+          }
+          yield* TestClock.adjust(30000)
+        }
+        let completeLookup: ((value: readonly KafkaPartitionPosition[]) => void) | undefined
+        if (scenario === 'replacement-pending') {
+          transport.offsets = () =>
+            new Promise((resolve) => {
+              completeLookup = resolve
+            })
+          yield* TestClock.adjust(30000)
+        }
+        if (scenario === 'frontier-regressed') {
+          transport.drained = positions('0')
+          yield* TestClock.adjust(1000)
+        }
+        if (scenario === 'invalidated') transport.invalidated?.(new Error('test assignment lost'))
+        const lookups = [...transport.lookups]
         const result = yield* market.captureInterval(request).pipe(Effect.result)
+        expect(transport.lookups).toEqual(lookups)
+        completeLookup?.(positions('0'))
         expect(Result.isSuccess(result)).toBe(scenario === 'ready')
         expect(events.filter((event) => event.kind === 'consumer-interval-cut')).toHaveLength(
           scenario === 'ready' ? 1 : 0,
@@ -160,7 +189,7 @@ for (const scenario of [
         expect(transport.closeCount).toBe(0)
         if (Result.isSuccess(result)) {
           expect(result.success.finalConsumerSequence).toBe(0)
-          expect(result.success.committedFence.lookupStartedAtMs).toBe(1000)
+          expect(result.success.committedFence.lookupStartedAtMs).toBe(30000)
           expect(result.success.drainedPositions).toHaveLength(4)
         }
       }),

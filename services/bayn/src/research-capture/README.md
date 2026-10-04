@@ -116,10 +116,13 @@ alone do not satisfy these gates.
 `makeKafkaMarketProjection(..., recorder).captureInterval(request)` is available only through explicit construction.
 The live `KafkaMarketProjection` capability does not expose it, and production composition still acquires no recorder.
 The request freezes the universe hash, expected topic partitions, and requested observation interval. The native
-assignment must precede the interval. After its requested end, the existing consumer samples the read-committed latest
-offsets. A cut is recorded only when the same valid epoch has incorporated every delivered message through a drained
-SDK frontier that reaches that sample. A queued message, pending incorporation, failed lookup, changed inventory,
-or invalid epoch leaves the cut unavailable.
+assignment must precede the interval. The cut uses the latest successful read-committed offset sample from the
+existing 30-second telemetry loop. Its lookup must start after the requested interval end. A new or failed lookup
+clears the previous sample. The cut operation performs no broker request, so interruption cannot leave a capture-only
+request running or require closing the live consumer. A cut is recorded only when the same valid epoch has
+incorporated every delivered message through a drained SDK frontier that reaches the sample and prior incorporated
+positions. A queued message, pending incorporation, failed lookup, changed inventory, regressed frontier, or invalid
+epoch leaves the cut unavailable.
 
 `bayn.native-visible-input-cut.v1` binds the pinned SDK and its manual, read-committed, fail-on-error settings. Its
 committed offsets are not broker high watermarks. Transaction and control offsets can create gaps in the delivered

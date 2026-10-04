@@ -27,7 +27,8 @@ import {
 } from './export'
 
 type ExportChunks = Parameters<typeof verifyResearchCaptureExportPrefix>[0]
-const fail = (message: string) => new ResearchCaptureFailure({ message })
+const fail = (message: string, cause?: unknown) =>
+  new ResearchCaptureFailure({ message, ...(cause === undefined ? {} : { cause }) })
 const inventory = (rows: readonly { readonly topic: string; readonly partition: number }[]) =>
   rows.map(({ topic, partition }) => `${topic}:${partition}`).join('|')
 
@@ -228,7 +229,7 @@ export const replayResearchCaptureInterval = (
     }
     const bytes = yield* Result.try({
       try: () => gzipSync(events.map((event) => JSON.stringify(event)).join('\n') + '\n'),
-      catch: () => fail('Cannot encode original replay arrivals'),
+      catch: (cause) => fail('Cannot encode original replay arrivals', cause),
     })
     const first = events[0]
     const last = events.at(-1)
@@ -251,7 +252,7 @@ export const replayResearchCaptureInterval = (
     })
     const recordedAt = yield* Result.try({
       try: () => new Date(verified.seal.closedAtMs).toISOString(),
-      catch: () => fail('Capture seal timestamp cannot be represented'),
+      catch: (cause) => fail('Capture seal timestamp cannot be represented', cause),
     })
     const receiptPayload = JSON.stringify({
       schemaVersion: 'bayn.original-capture-replay-receipt.v1',

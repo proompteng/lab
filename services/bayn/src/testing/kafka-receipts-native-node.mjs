@@ -296,7 +296,25 @@ try {
           universeHash: canonicalHashV1(intervalUniverse),
           expectedPartitions,
         }
-        const cut = yield* market.captureInterval(request)
+        let cut
+        while (cut === undefined) {
+          assert.equal((yield* market.status).ready, true)
+          const attempt = yield* market.captureInterval(request).pipe(Effect.result)
+          if (Result.isSuccess(attempt)) cut = attempt.success
+          else {
+            assert.match(
+              attempt.failure.message,
+              /Capture committed fence has not observed the interval end|Capture interval is not drained/,
+            )
+            yield* Effect.sleep(100)
+          }
+        }
+        assert.ok(cut.committedFence.lookupStartedAtMs >= request.coverageEndMs)
+        assert.ok(cut.committedFence.lookupCompletedAtMs >= cut.committedFence.lookupStartedAtMs)
+        console.log('native Kafka committed-fence sample', {
+          waitMs: cut.committedFence.lookupStartedAtMs - request.coverageEndMs,
+          lookupMs: cut.committedFence.lookupCompletedAtMs - cut.committedFence.lookupStartedAtMs,
+        })
         assert.equal(cut.finalConsumerSequence, 3)
         assert.equal(
           cut.committedFence.positions.find(
@@ -348,7 +366,7 @@ try {
         assert.equal(intervalSeals[0].payload, exactSeal.payload)
         assert.equal(replayed.manifest.recordCount, 3)
       }),
-    ).pipe(Effect.timeout('30 seconds'), Effect.provide(Logger.layer([]))),
+    ).pipe(Effect.timeout('45 seconds'), Effect.provide(Logger.layer([]))),
   )
   assert.ok(observedBoundaries.some(({ event }) => event.phase === 'STOPPED'))
   console.log(

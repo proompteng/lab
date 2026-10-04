@@ -1,4 +1,5 @@
-import { expect, test } from 'bun:test'
+import { expect, spyOn, test } from 'bun:test'
+import * as zlib from 'node:zlib'
 import { Effect, FileSystem, Result } from 'effect'
 import { NodeServices } from '@effect/platform-node'
 import { TestClock } from 'effect/testing'
@@ -18,6 +19,7 @@ import {
   CaptureDisposition,
   CaptureInvalidation,
   CaptureQualification,
+  ResearchCaptureFailure,
   captureKafkaTransport,
   encodeResearchCapture,
   type CaptureIntervalRequest,
@@ -384,6 +386,22 @@ for (const [name, mutate] of [
       Result.isFailure(replayResearchCaptureInterval(data.chunks, data.seal, data.manifestBytes, request, universe)),
     ).toBe(true)
   })
+
+test('original replay retains the exact compression failure cause', () => {
+  const data = fixture()
+  const cause = new Error('fixture compression failure')
+  const compression = spyOn(zlib, 'gzipSync').mockImplementationOnce(() => {
+    throw cause
+  })
+  try {
+    const result = replayResearchCaptureInterval(data.chunks, data.seal, data.manifestBytes, request, universe)
+    if (Result.isSuccess(result)) throw new Error('Compression unexpectedly succeeded')
+    expect(result.failure).toBeInstanceOf(ResearchCaptureFailure)
+    if (result.failure instanceof ResearchCaptureFailure) expect(result.failure.cause).toBe(cause)
+  } finally {
+    compression.mockRestore()
+  }
+})
 
 test('a prefix with capture invalidations cannot authorize an otherwise plausible interval', () => {
   const data = fixture()

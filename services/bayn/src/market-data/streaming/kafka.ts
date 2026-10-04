@@ -415,6 +415,13 @@ export const makeKafkaMarketProjection = (
         }
         const evidence = bootstrap
         let invalidation: KafkaMarketFailure | undefined
+        let committedFence:
+          | (CaptureIntervalCut['committedFence'] & {
+              readonly consumerEpoch: string
+              readonly incorporatedPositions: readonly KafkaPartitionPosition[]
+            })
+          | undefined
+        const terminals = new Map<string, KafkaPartitionPosition>()
         positions = partitions.map((partition) => ({
           topic: partition.topic,
           partition: partition.partition,
@@ -443,6 +450,7 @@ export const makeKafkaMarketProjection = (
               // Cleanup and SDK rejoin events must not overwrite the first causal failure of this epoch.
               if (projection.epoch !== epoch || invalidation !== undefined) return
               invalidation = failure('consume', 'Kafka assignment invalidated', cause)
+              committedFence = undefined
               ready = false
               lastFailure = invalidation
               recovery ??= {
@@ -484,21 +492,18 @@ export const makeKafkaMarketProjection = (
                 'read',
                 'Capture interval differs from its assigned universe, start or partition inventory',
               )
-            const lookupStartedAtMs = clock.currentTimeMillisUnsafe()
-            if (lookupStartedAtMs < decoded.coverageEndMs)
-              return yield* failure('read', 'Capture interval has not ended')
-            // Capture observation uses the existing SDK request bounds and never closes the consumer on failure.
-            const fence = yield* Effect.tryPromise({
-              try: () => transport.offsets(topics, -1n),
-              catch: (cause) => failure('read', 'Capture committed-fence lookup failed', cause),
-            })
-            const lookupCompletedAtMs = clock.currentTimeMillisUnsafe()
             return yield* Effect.suspend(() => {
+              const fence = committedFence
+              if (fence === undefined || fence.lookupStartedAtMs < decoded.coverageEndMs)
+                return Effect.fail(failure('read', 'Capture committed fence has not observed the interval end'))
+              const { lookupStartedAtMs, lookupCompletedAtMs } = fence
               const drained = source.drainedPositions()
               const observedAtMs = clock.currentTimeMillisUnsafe()
-              const canonicalFence = canonicalPositions(fence)
+              const canonicalFence = fence.positions
               const canonicalDrained = drained === undefined ? [] : canonicalPositions(drained)
+              const incorporated = canonicalPositions(positions)
               if (
+                fence.consumerEpoch !== epoch ||
                 projection.epoch !== epoch ||
                 invalidation !== undefined ||
                 lastFailure !== undefined ||
@@ -509,16 +514,34 @@ export const makeKafkaMarketProjection = (
                 observedAtMs < lookupCompletedAtMs ||
                 inventory(canonicalFence) !== expected ||
                 inventory(canonicalDrained) !== expected ||
+                inventory(incorporated) !== expected ||
+                inventory(fence.incorporatedPositions) !== expected ||
                 canonicalFence.some((end, index) => {
                   const next = canonicalDrained[index]
                   const start = partitions[index]
+                  const prior = incorporated[index]
+                  const reported = fence.incorporatedPositions[index]
                   return (
                     next === undefined ||
                     start === undefined ||
+                    prior === undefined ||
+                    reported === undefined ||
                     !/^(0|[1-9][0-9]*)$/.test(end.offset) ||
                     !/^(0|[1-9][0-9]*)$/.test(next.offset) ||
-                    BigInt(end.offset) < BigInt(start.startOffset) ||
-                    BigInt(next.offset) < BigInt(end.offset)
+                    BigInt(end.offset) < BigInt(start.endOffset) ||
+                    BigInt(next.offset) < BigInt(end.offset) ||
+                    BigInt(next.offset) < BigInt(prior.offset) ||
+                    BigInt(next.offset) < BigInt(reported.offset)
+                  )
+                }) ||
+                [...terminals.values()].some((terminal) => {
+                  const next = canonicalDrained.find(
+                    (position) => position.topic === terminal.topic && position.partition === terminal.partition,
+                  )
+                  return (
+                    next === undefined ||
+                    !/^(0|[1-9][0-9]*)$/.test(terminal.offset) ||
+                    BigInt(next.offset) <= BigInt(terminal.offset)
                   )
                 })
               )
@@ -544,7 +567,6 @@ export const makeKafkaMarketProjection = (
               return Effect.succeed(cut)
             })
           })
-        const terminals = new Map<string, KafkaPartitionPosition>()
         let recordsSinceYield = 0
         const consume = Stream.fromAsyncIterable(source, (cause) =>
           failure('consume', 'Kafka consumption failed', cause),
@@ -699,6 +721,7 @@ export const makeKafkaMarketProjection = (
         const report = Effect.gen(function* () {
           while (true) {
             yield* Effect.sleep(Duration.seconds(30))
+            committedFence = undefined
             const lookupStartedAtMs = yield* Clock.currentTimeMillis
             // The SDK bounds requests and retries; an optional lookup must not use operation's whole-client timeout.
             // Consumer-scope finalization still closes this request if the worker stops during the lookup.
@@ -707,6 +730,21 @@ export const makeKafkaMarketProjection = (
               catch: (cause) => failure('read', 'Kafka read failed', cause),
             }).pipe(Effect.result)
             const measuredAtMs = yield* Clock.currentTimeMillis
+            if (
+              captureRawValues &&
+              Result.isSuccess(ends) &&
+              projection.epoch === epoch &&
+              invalidation === undefined &&
+              lastFailure === undefined &&
+              measuredAtMs >= lookupStartedAtMs
+            )
+              committedFence = {
+                consumerEpoch: epoch,
+                lookupStartedAtMs,
+                lookupCompletedAtMs: measuredAtMs,
+                positions: canonicalPositions(ends.success),
+                incorporatedPositions: canonicalPositions(positions),
+              }
             yield* Effect.logInfo('Kafka market projection measurements', {
               schemaVersion: 'bayn.kafka-projection-measurements.v1',
               epoch,
