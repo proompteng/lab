@@ -18,6 +18,7 @@ import {
 } from '../db/execution-cycle-closure'
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { WriterFence } from '../execution/writer-fence'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { recover as recoverMutation } from '../execution/coordinator'
 import { BrokerAccess } from '../execution/authority'
@@ -338,6 +339,16 @@ const isExecutionCycleReconciled = (facts: {
 export const isExecutionCycleReconciledFlat = (facts: Parameters<typeof isExecutionCycleReconciled>[0]): boolean =>
   isExecutionCycleReconciled(facts) && countOpenPositions(facts.brokerState.positions) === 0
 
+const reconciliationObservationTimes = (facts: ReconciliationPassResult): readonly string[] => [
+  facts.report.reconciliation.reconciledAt,
+  facts.brokerState.account.observedAt,
+  facts.brokerState.positionsObservedAt,
+  facts.brokerState.ordersObservedAt,
+]
+
+const isTerminalCloseReconciliationReady = (facts: ReconciliationPassResult, settledAt: string): boolean =>
+  isExecutionCycleReconciled(facts) && reconciliationObservationTimes(facts).every((at) => at >= settledAt)
+
 export const decideReconciledExecutionCycleCompletion = (
   facts: ReconciliationPassResult,
 ): { readonly _tag: 'Complete'; readonly observedAt: string } | undefined =>
@@ -528,15 +539,7 @@ export const ensureExecutionCycleClosure = <R>({
     if (terminal._tag === 'Unavailable')
       return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'BROKER_OBSERVATION_PENDING' } as const
     const residualReconciliation = terminal.reconciliation
-    if (
-      !isExecutionCycleReconciled(residualReconciliation) ||
-      [
-        residualReconciliation.report.reconciliation.reconciledAt,
-        residualReconciliation.brokerState.account.observedAt,
-        residualReconciliation.brokerState.positionsObservedAt,
-        residualReconciliation.brokerState.ordersObservedAt,
-      ].some((at) => at < terminal.settledAt)
-    )
+    if (!isTerminalCloseReconciliationReady(residualReconciliation, terminal.settledAt))
       return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'COMPLETION_EVIDENCE_PENDING' } as const
     if (isExecutionCycleReconciledFlat(residualReconciliation)) {
       const terminalization = decideReconciledExecutionCycleTerminalization(
@@ -552,14 +555,42 @@ export const ensureExecutionCycleClosure = <R>({
       policy,
       cycle,
       entryDocument,
-      reconcile: refreshReconciliation,
+      reconcile: refreshReconciliation.pipe(
+        Effect.flatMap((facts) =>
+          isTerminalCloseReconciliationReady(facts, terminal.settledAt) &&
+          countOpenPositions(facts.brokerState.positions) > 0 &&
+          reconciliationObservationTimes(facts).every(
+            (at, index) => at >= (reconciliationObservationTimes(residualReconciliation)[index] ?? terminal.settledAt),
+          )
+            ? Effect.succeed(facts)
+            : Effect.fail(
+                new BrokerReadError({
+                  operation: 'preflight',
+                  kind: BrokerReadErrorKind.ObservationPending,
+                  message: 'terminal close reconciliation evidence is not ready',
+                  retryable: true,
+                }),
+              ),
+        ),
+      ),
       initialReconciliation: residualReconciliation,
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
       ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v1'
         ? { exitTarget: existing.document.strategyDecision }
         : {}),
-    })
+    }).pipe(
+      Effect.catchTag('CycleRunnerError', (failure) =>
+        failure.operation === 'reconcile' &&
+        failure.cause instanceof OperationalError &&
+        failure.cause.operation === 'reconciliation' &&
+        failure.cause.retryable
+          ? Effect.void
+          : Effect.fail(failure),
+      ),
+    )
+    if (prepared === undefined)
+      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'BROKER_OBSERVATION_PENDING' } as const
     const document = prepared.document
     const decision = decideExecutionCycleCloseDocument(document)
     if (decision._tag !== 'Bind') {
