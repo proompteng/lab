@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test'
-import { Clock, Context, Deferred, Effect, Exit, Fiber, Option, Semaphore } from 'effect'
+import { Cause, Clock, Context, Deferred, Effect, Exit, Fiber, Option, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 import type { WriterFenceService } from '../execution/writer-fence'
-import { makeRecoveryContainmentStore, reconcileRecoveryFixture } from './recovery-clock.test-support'
+import { makeRecoveryContainmentStore, makeRecoveryClockFixture } from './recovery-clock.test-support'
 import { containRuntimeFailure } from '../simulation-reconciliation/broker-containment'
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
 import { currentUtcInstant } from '../time'
@@ -12,7 +12,7 @@ class FixtureTransaction extends Context.Service<FixtureTransaction, boolean>()(
 const initial = Date.parse('2026-09-04T19:59:03.010Z')
 const timestamp = (millis: number) => new Date(millis).toISOString()
 
-const makeFixtureFence = (requested = Effect.void, database?: { clock: number; restriction: string | null }) =>
+const makeFixtureFence = (database?: { clock: number; restriction: string | null }) =>
   Effect.gen(function* () {
     const permit = yield* Semaphore.make(1)
     return {
@@ -22,23 +22,19 @@ const makeFixtureFence = (requested = Effect.void, database?: { clock: number; r
           Effect.flatMap(
             Option.match({
               onNone: () =>
-                requested.pipe(
-                  Effect.andThen(
-                    permit.withPermit(
-                      Effect.uninterruptibleMask((restore) =>
-                        Effect.gen(function* () {
-                          const before = database === undefined ? undefined : { ...database }
-                          const exit = yield* Effect.exit(
-                            restore(effect.pipe(Effect.provideService(FixtureTransaction, true))),
-                          )
-                          if (Exit.isFailure(exit) && before !== undefined && database !== undefined) {
-                            database.clock = before.clock
-                            database.restriction = before.restriction
-                          }
-                          return yield* exit
-                        }),
-                      ),
-                    ),
+                permit.withPermit(
+                  Effect.uninterruptibleMask((restore) =>
+                    Effect.gen(function* () {
+                      const before = database === undefined ? undefined : { ...database }
+                      const exit = yield* Effect.exit(
+                        restore(effect.pipe(Effect.provideService(FixtureTransaction, true))),
+                      )
+                      if (Exit.isFailure(exit) && before !== undefined && database !== undefined) {
+                        database.clock = before.clock
+                        database.restriction = before.restriction
+                      }
+                      return yield* exit
+                    }),
                   ),
                 ),
               onSome: () => effect,
@@ -56,8 +52,8 @@ test.each(['failure', 'defect', 'interruption'] as const)(
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(initial)
-        const database = { clock: initial, restriction: null as string | null }
-        const fence = yield* makeFixtureFence(Effect.void, database)
+        const database: { clock: number; restriction: string | null } = { clock: initial, restriction: null }
+        const fence = yield* makeFixtureFence(database)
         const entered = yield* Deferred.make<void>()
         const failure = new ReconciliationError({ operation: 'snapshot', message: 'synthetic reconciliation failure' })
         const store = makeRecoveryContainmentStore((reason) =>
@@ -77,9 +73,8 @@ test.each(['failure', 'defect', 'interruption'] as const)(
           fence,
           currentUtcInstant,
         )
-        const recovery = reconcileRecoveryFixture({
-          writerFence: fence,
-          advanceClock: Clock.currentTimeMillis.pipe(
+        const pairedClock = yield* makeRecoveryClockFixture(
+          Clock.currentTimeMillis.pipe(
             Effect.tap((now) =>
               Effect.sync(() => {
                 database.clock = now + 1
@@ -87,54 +82,22 @@ test.each(['failure', 'defect', 'interruption'] as const)(
             ),
             Effect.andThen(advanceClock),
           ),
-          reconcile,
-        })
+        )
+        const recovery = pairedClock.reconcile(reconcile)
         const worker = yield* recovery.pipe(Effect.exit, Effect.forkChild)
         yield* Deferred.await(entered)
         if (mode === 'interruption') yield* Fiber.interrupt(worker)
-        else expect((yield* Fiber.join(worker))._tag).toBe('Failure')
+        else {
+          const exit = yield* Fiber.join(worker)
+          expect(exit._tag).toBe('Failure')
+          if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(failure)
+        }
         expect(database.restriction).toBe(mode === 'interruption' ? null : 'reconciliation pass incomplete')
         expect(timestamp(database.clock)).toBe('2026-09-04T19:59:03.011Z')
         expect(yield* Clock.currentTimeMillis).toBe(database.clock)
-      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-    )
-  },
-)
-
-test.each(['failure', 'interruption'] as const)(
-  'recovery %s releases the fence without a completion tick',
-  async (mode) => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(initial)
-        const fence = yield* makeFixtureFence()
-        const entered = yield* Deferred.make<void>()
-        const recovery = reconcileRecoveryFixture({
-          writerFence: fence,
-          advanceClock,
-          reconcile: Deferred.succeed(entered, undefined).pipe(
-            Effect.andThen(mode === 'failure' ? Effect.fail('synthetic reconciliation failure') : Effect.never),
-          ),
-        })
-        const worker = yield* recovery.pipe(Effect.exit, Effect.forkChild)
-        yield* Deferred.await(entered)
-        if (mode === 'interruption') yield* Fiber.interrupt(worker)
-        else expect((yield* Fiber.join(worker))._tag).toBe('Failure')
-        expect(timestamp(yield* Clock.currentTimeMillis)).toBe('2026-09-04T19:59:03.011Z')
-        let reconciledAt = initial
-        yield* reconcileRecoveryFixture({
-          writerFence: fence,
-          advanceClock,
-          reconcile: Clock.currentTimeMillis.pipe(
-            Effect.tap((now) =>
-              Effect.sync(() => {
-                reconciledAt = now
-              }),
-            ),
-          ),
-        })
-        expect(timestamp(reconciledAt)).toBe('2026-09-04T19:59:03.012Z')
-        expect(timestamp(yield* Clock.currentTimeMillis)).toBe('2026-09-04T19:59:03.013Z')
+        yield* pairedClock.reconcile(Effect.void)
+        expect(timestamp(database.clock)).toBe('2026-09-04T19:59:03.013Z')
+        expect(yield* Clock.currentTimeMillis).toBe(database.clock)
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
     )
   },
@@ -146,14 +109,8 @@ test('concurrent recovery cannot advance the clock inside another reconciliation
       yield* TestClock.setTime(initial)
       const firstReconciliation = yield* Deferred.make<void>()
       const releaseFirst = yield* Deferred.make<void>()
-      const secondTransaction = yield* Deferred.make<void>()
-      let requests = 0
-      const fence = yield* makeFixtureFence(
-        Effect.suspend(() => {
-          requests += 1
-          return requests === 2 ? Deferred.succeed(secondTransaction, undefined).pipe(Effect.asVoid) : Effect.void
-        }),
-      )
+      const fence = yield* makeFixtureFence()
+      const recoveryClock = yield* makeRecoveryClockFixture(advanceClock)
       let reconciledAt = initial
       const persisted: number[] = []
       const authority: { activatedAt: string; reconciledAt: string }[] = []
@@ -164,15 +121,17 @@ test('concurrent recovery cannot advance the clock inside another reconciliation
         }),
       )
       const owner = (reconciliation: Effect.Effect<void>) =>
-        reconcileRecoveryFixture({ writerFence: fence, advanceClock, reconcile: reconciliation }).pipe(
+        recoveryClock.reconcile(reconciliation).pipe(
           Effect.andThen(
-            fence.transaction(
-              Effect.gen(function* () {
-                const activatedAt = yield* Clock.currentTimeMillis
-                const evidence = { activatedAt: timestamp(activatedAt), reconciledAt: timestamp(reconciledAt) }
-                authority.push(evidence)
-                expect(reconciledAt, JSON.stringify(evidence)).toBeLessThan(activatedAt)
-              }),
+            recoveryClock.authority(
+              fence.transaction(
+                Effect.gen(function* () {
+                  const activatedAt = yield* Clock.currentTimeMillis
+                  const evidence = { activatedAt: timestamp(activatedAt), reconciledAt: timestamp(reconciledAt) }
+                  authority.push(evidence)
+                  expect(reconciledAt, JSON.stringify(evidence)).toBeLessThan(activatedAt)
+                }),
+              ),
             ),
           ),
         )
@@ -185,8 +144,8 @@ test('concurrent recovery cannot advance the clock inside another reconciliation
         ),
       ).pipe(Effect.forkChild)
       yield* Deferred.await(firstReconciliation)
-      const second = yield* owner(reconcile).pipe(Effect.forkChild)
-      yield* Deferred.await(secondTransaction)
+      const second = yield* owner(reconcile).pipe(Effect.forkChild({ startImmediately: true }))
+      yield* Effect.yieldNow
       expect(timestamp(yield* Clock.currentTimeMillis)).toBe('2026-09-04T19:59:03.011Z')
       yield* Deferred.succeed(releaseFirst, undefined)
       yield* Effect.all([Fiber.join(first), Fiber.join(second)])
@@ -196,27 +155,63 @@ test('concurrent recovery cannot advance the clock inside another reconciliation
   )
 })
 
+test('interruption cannot separate the committed database tick from the Effect clock tick', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(initial)
+      const databaseAdvanced = yield* Deferred.make<void>()
+      const publishClock = yield* Deferred.make<void>()
+      let databaseClock = initial
+      let reconciled = false
+      const recoveryClock = yield* makeRecoveryClockFixture(
+        Effect.gen(function* () {
+          databaseClock = (yield* Clock.currentTimeMillis) + 1
+          yield* Deferred.succeed(databaseAdvanced, undefined)
+          yield* Deferred.await(publishClock)
+          yield* TestClock.setTime(databaseClock)
+        }),
+      )
+      const worker = yield* recoveryClock
+        .reconcile(
+          Effect.sync(() => {
+            reconciled = true
+          }),
+        )
+        .pipe(Effect.forkChild)
+      yield* Deferred.await(databaseAdvanced)
+      const cancellation = yield* Fiber.interrupt(worker).pipe(Effect.forkChild({ startImmediately: true }))
+      yield* Effect.yieldNow
+      expect(worker.pollUnsafe()).toBeUndefined()
+      yield* Deferred.succeed(publishClock, undefined)
+      yield* Fiber.join(cancellation)
+      expect(reconciled).toBe(false)
+      expect(timestamp(databaseClock)).toBe('2026-09-04T19:59:03.011Z')
+      expect(yield* Clock.currentTimeMillis).toBe(databaseClock)
+      expect(yield* recoveryClock.authority(Effect.succeed('permit released'))).toBe('permit released')
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  )
+})
+
 test.each(
   [
-    ['AC', 'AG', 'BC', 'BG'],
-    ['AC', 'BC', 'AG', 'BG'],
-    ['AC', 'BC', 'BG', 'AG'],
-    ['BC', 'BG', 'AC', 'AG'],
-    ['BC', 'AC', 'BG', 'AG'],
-    ['BC', 'AC', 'AG', 'BG'],
+    ['first reconciliation', 'first authority', 'second reconciliation', 'second authority'],
+    ['first reconciliation', 'second reconciliation', 'first authority', 'second authority'],
+    ['first reconciliation', 'second reconciliation', 'second authority', 'first authority'],
+    ['second reconciliation', 'second authority', 'first reconciliation', 'first authority'],
+    ['second reconciliation', 'first reconciliation', 'second authority', 'first authority'],
+    ['second reconciliation', 'first reconciliation', 'first authority', 'second authority'],
   ].map((order) => ({ order, label: order.join(' ') })),
-)('recovery clock stays later than reconciliation in writer order $label', async ({ order }) => {
+)('recovery clock stays later than reconciliation in recovery order $label', async ({ order }) => {
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(initial)
       const fence = yield* makeFixtureFence()
+      const recoveryClock = yield* makeRecoveryClockFixture(advanceClock)
       let reconciledAt = initial
       for (const action of order) {
-        if (action.endsWith('C')) {
-          yield* reconcileRecoveryFixture({
-            writerFence: fence,
-            advanceClock,
-            reconcile: fence.transaction(
+        if (action.endsWith('reconciliation')) {
+          yield* recoveryClock.reconcile(
+            fence.transaction(
               Clock.currentTimeMillis.pipe(
                 Effect.tap((now) =>
                   Effect.sync(() => {
@@ -225,15 +220,17 @@ test.each(
                 ),
               ),
             ),
-          })
+          )
         } else {
-          yield* fence.transaction(
-            Effect.gen(function* () {
-              const activatedAt = yield* Clock.currentTimeMillis
-              expect(reconciledAt, JSON.stringify({ order, action, activatedAt, reconciledAt })).toBeLessThan(
-                activatedAt,
-              )
-            }),
+          yield* recoveryClock.authority(
+            fence.transaction(
+              Effect.gen(function* () {
+                const activatedAt = yield* Clock.currentTimeMillis
+                expect(reconciledAt, JSON.stringify({ order, action, activatedAt, reconciledAt })).toBeLessThan(
+                  activatedAt,
+                )
+              }),
+            ),
           )
         }
       }
