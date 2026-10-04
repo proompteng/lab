@@ -110,7 +110,7 @@ C, and CGO projects therefore build from the persistent home toolchain without i
 `bootstrap-developer-tools` then installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
 the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without sudo. This 26-byte prefix meets
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
-for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, GitHub CLI, fd, fzf, tmux, GNU Make,
+for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
 Subsequent boots reuse installed packages; missing baseline formulae are installed without upgrading existing ones.
 Cold installation requires GitHub and Homebrew registry access and fails startup if installation or validation fails.
@@ -118,8 +118,12 @@ Cold installation requires GitHub and Homebrew registry access and fails startup
 Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
 `/etc/profile.d/tengri-development.sh`, and newly created shell profiles source it too. Existing user shell profiles
 and Neovim configuration are preserved. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
-configuration enables line numbers, terminal colors, mouse support, and persistent undo. Homebrew's Cellar, cache,
-and Neovim configuration and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
+configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
+and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. Text icons work with the web
+terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
+or `:TSInstall` to add language support. Existing configurations remain user-owned. Repeated boots install missing
+plugins in the supplied default without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
+configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
 bootstrap before the rootfs check.
 

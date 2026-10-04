@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly INSTALLER_COMMIT='35da6871c4be7d7fdab2fd505fb7fa667926a2a5'
 readonly INSTALLER_SHA256='5f333bbe53bc490e51e7ccb1df8779b3dd6ee73a1a7379efda216edb08ccb148'
-readonly FORMULAE=(neovim gh fd fzf tmux make cmake pkgconf gcc)
+readonly FORMULAE=(neovim tree-sitter-cli gh fd fzf tmux make cmake pkgconf gcc)
 installer=''
 
 fail() { printf 'bootstrap-developer-tools: %s\n' "$*" >&2; exit 1; }
@@ -67,21 +67,22 @@ install_tools() {
   chmod 0700 "$cpp_wrapper"
   mv -Tf "$cpp_wrapper" "$HOME/.local/bin/g++"
   ln -sfn "$HOME/.local/bin/g++" "$HOME/.local/bin/c++"
-  for command in nvim gh fd fzf tmux make cmake pkg-config; do
+  for command in nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
   done
-  "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.10") == 1)' +qa
+  "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' +qa
   local config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
   mkdir -p "$config"
   if [[ ! -e "$config/init.lua" && ! -e "$config/init.vim" ]]; then
-    printf '%s\n' \
-      'vim.opt.number = true' \
-      'vim.opt.termguicolors = true' \
-      'vim.opt.mouse = "a"' \
-      'vim.opt.undofile = true' \
-      'vim.fn.mkdir(vim.fn.stdpath("state") .. "/undo", "p")' \
-      'vim.opt.undodir = vim.fn.stdpath("state") .. "/undo"' \
-      > "$config/init.lua"
+    local init
+    init="$(mktemp "$config/.init.XXXXXX")"
+    install -m 0644 /usr/share/nanoagent/astronvim-init.lua "$init"
+    mv -Tf "$init" "$config/init.lua"
+  fi
+  if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
+    "$prefix/bin/nvim" --headless \
+      "+lua require('lazy').install({wait=true,show=false}); for name,plugin in pairs(require('lazy.core.config').plugins) do assert(plugin._.installed,name .. ' is missing'); for _,task in ipairs(plugin._.tasks or {}) do assert(not task:has_errors(),name .. ' failed installation') end end" \
+      "+lua assert(require('astronvim').version() == 'v6.1.0'); assert(vim.v.errmsg == '',vim.v.errmsg)" +qa
   fi
 }
 
