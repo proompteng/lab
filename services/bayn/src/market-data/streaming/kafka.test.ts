@@ -8,15 +8,23 @@ import {
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
+import { sha256 } from '../../hash'
+import { CaptureDisposition, type ResearchCaptureEvent } from '../../research-capture/capture'
 import { AuthenticationError } from '@platformatic/kafka'
-import { decodeRollingMarketFeature } from '../features/contract'
+import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
 import { decodeTechnicalMarketFeature } from '../features/technical-contract'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../../effect-test-support'
+import { historicalRawArrivals } from '../../testing/historical-streaming-fixture'
+import { streamingFixture } from '../../testing/streaming-market-fixture'
+import { persistIntradayRecordRows } from '../intraday/verification'
+import { reproduceStreamingSnapshot } from './replay'
+import { constructStreamingSnapshot } from './snapshot'
 import {
   makeKafkaMarketProjection,
+  decodeKafkaTransportValue,
   type KafkaConsumedRecord,
   type KafkaMarketConfig,
   type KafkaProjectionStream,
@@ -97,7 +105,189 @@ class FakeTransport implements KafkaProjectionTransport {
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
+test('Kafka capture hashes exact bytes before UTF8 replacement and distinguishes tombstones from empty payloads', () => {
+  const left = decodeKafkaTransportValue(Buffer.from([0x80]), true)
+  const right = decodeKafkaTransportValue(Buffer.from([0x81]), true)
+  expect(left.value).toBe(right.value)
+  expect(left.rawValueSha256).not.toBe(right.rawValueSha256)
+  expect(left.rawValueSha256).toBe(sha256(Buffer.from([0x80])))
+  expect(decodeKafkaTransportValue(Buffer.from('é'), true)).toEqual({
+    value: 'é',
+    rawValueSha256: sha256(Buffer.from('é')),
+    rawByteLength: 2,
+  })
+  expect(decodeKafkaTransportValue(undefined, true)).toEqual({
+    value: '',
+    tombstone: true,
+    rawValueSha256: null,
+    rawByteLength: null,
+  })
+  expect(decodeKafkaTransportValue(Buffer.alloc(0), true)).toEqual({
+    value: '',
+    rawValueSha256: sha256(Buffer.alloc(0)),
+    rawByteLength: 0,
+  })
+  expect(() => decodeKafkaTransportValue(undefined)).toThrow('Kafka market message has no payload')
+  expect(decodeKafkaTransportValue(Buffer.from('é'))).toEqual({ value: 'é' })
+})
+
+test('capture observes accepted, rejected and ignored receipts in the same clock and consumer epoch', async () => {
+  const at = Date.parse('2026-09-11T14:00:02.000Z')
+  const quote = (symbol: string) =>
+    Buffer.from(
+      JSON.stringify({
+        version: 2,
+        provider: 'alpaca',
+        feed: 'iex',
+        delayClass: 'real_time_exchange_only',
+        marketSession: 'regular',
+        channel: 'quotes',
+        symbol,
+        eventTs: new Date(at).toISOString(),
+        ingestTs: new Date(at).toISOString(),
+        payload: { t: new Date(at).toISOString(), bp: 200, ap: 200.01, bs: 100, as: 100 },
+      }),
+    )
+  const transport = new FakeTransport()
+  const payloads = [quote('AAPL'), Buffer.from([0x80]), quote('ZZZ'), quote('ZZZ')]
+  transport.queue = payloads.map((value, index) => ({
+    topic: 'quotes',
+    partition: 0,
+    offset: String(Math.min(index, 2)),
+    timestampMs: at,
+    leaderEpoch: 1,
+    ...decodeKafkaTransportValue(value, true),
+  }))
+  const receipts: Array<{ event: ResearchCaptureEvent; atMs: number | undefined }> = []
+  let epoch: string | undefined
+  await program(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at)
+      const market = yield* makeKafkaMarketProjection(
+        config,
+        universe,
+        (_config, selectedEpoch, captureRaw) => {
+          expect(captureRaw).toBe(true)
+          epoch = selectedEpoch
+          return transport
+        },
+        undefined,
+        {
+          record: (event, atMs) => {
+            receipts.push({ event, atMs })
+          },
+          invalidate: () => undefined,
+        },
+      )
+      yield* TestClock.adjust(1000)
+      const cut = yield* market.read
+      const records = receipts.filter((receipt) => receipt.event.kind === 'market-record')
+      expect(
+        records.map((receipt) => (receipt.event.kind === 'market-record' ? receipt.event.disposition : undefined)),
+      ).toEqual([
+        CaptureDisposition.Accepted,
+        CaptureDisposition.Rejected,
+        CaptureDisposition.Rejected,
+        CaptureDisposition.Ignored,
+      ])
+      expect(
+        records.map((receipt) => (receipt.event.kind === 'market-record' ? receipt.event.consumerSequence : undefined)),
+      ).toEqual([1, 2, 3, 4])
+      expect(
+        records.every((receipt) => receipt.event.kind === 'market-record' && receipt.event.consumerEpoch === epoch),
+      ).toBe(true)
+      expect(records[0]?.atMs).toBe(cut.projection.quotes.get('AAPL')?.availableAtMs)
+      expect(records[1]?.event).toMatchObject({
+        rawValueSha256: sha256(Buffer.from([0x80])),
+        rawByteLength: 1,
+        bootstrap: true,
+      })
+      expect(cut.projection.sequence).toBe(3)
+    }),
+  )
+  expect(transport.closeCount).toBe(1)
+  expect(receipts.at(-1)?.event).toMatchObject({ kind: 'consumer-boundary', phase: 'STOPPED', consumerEpoch: epoch })
+})
+
 describe('Kafka bootstrap and scoped consumption', () => {
+  test('rebuilds retained RTH history without a new lookback wait or backdated availability', async () => {
+    const fixture = streamingFixture()
+    const bootAtMs = Date.parse(fixture.query.observedAt) + 1000
+    const retainedUniverse: StreamingUniverse = {
+      universeId: fixture.protocol.universeId,
+      universeSymbolHash: fixture.protocol.universeSymbolHash,
+      symbols: fixture.protocol.universe,
+      topics: { ...fixture.protocol.sourceTopics, features: fixture.protocol.streamingInput.featureTopic },
+    }
+    const records: KafkaConsumedRecord[] = [
+      ...historicalRawArrivals(fixture.snapshot, bootAtMs).map(({ record }) => ({
+        ...record,
+        timestampMs: Date.parse(JSON.parse(record.value).ingestTs),
+        leaderEpoch: 1,
+      })),
+      ...[...fixture.cut.projection.features.values()].flat().map((feature) => ({
+        topic: feature.topic,
+        partition: feature.partition,
+        offset: feature.offset,
+        timestampMs: feature.value.computedAtMs,
+        value: JSON.stringify(feature.value),
+        leaderEpoch: 1,
+      })),
+    ].sort(
+      (a, b) =>
+        a.topic.localeCompare(b.topic) || a.partition - b.partition || Number(BigInt(a.offset) - BigInt(b.offset)),
+    )
+    const delayedTrades = records.filter((record) => record.topic === retainedUniverse.topics.trades)
+    if (delayedTrades.length === 0) throw new Error('retained trade fixture is empty')
+    const transport = new FakeTransport()
+    transport.drained = undefined
+    transport.queue = records.filter((record) => record.topic !== retainedUniverse.topics.trades)
+    transport.offsets = async (_topics, timestamp) => {
+      transport.lookups.push(timestamp)
+      return fixture.cut.positions.map((position) => ({
+        ...position,
+        offset: timestamp === -1n ? position.offset : '0',
+      }))
+    }
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(bootAtMs)
+        const projection = yield* makeKafkaMarketProjection(config, retainedUniverse, () => transport)
+        yield* TestClock.adjust('1 second')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        for (const record of delayedTrades) transport.send(record)
+        yield* TestClock.adjust('1 second')
+        const cut = yield* projection.read
+        const observedAtMs = yield* Clock.currentTimeMillis
+        expect(observedAtMs - bootAtMs).toBe(2000)
+        expect(kafkaBootstrapComplete(cut.bootstrap, cut.positions)).toBe(true)
+        expect(transport.lookups).toContain(BigInt(Date.parse(fixture.query.rangeStartAt) - 5000))
+        const snapshot = Result.getOrThrow(
+          constructStreamingSnapshot(cut, { ...fixture.query, observedAt: new Date(observedAtMs).toISOString() }),
+        )
+        expect(snapshot.bars.map((bar) => Result.getOrThrow(featureBarContentHash(bar)))).toEqual(
+          fixture.snapshot.bars.map((bar) => Result.getOrThrow(featureBarContentHash(bar))),
+        )
+        expect(snapshot.manifest.streaming.records.every((receipt) => receipt.availableAtMs >= bootAtMs)).toBe(true)
+        expect(snapshot.manifest.streaming.features.every((receipt) => receipt.availableAtMs >= bootAtMs)).toBe(true)
+        expect(snapshot.manifest.streaming.features.map(({ value }) => value)).toEqual(
+          fixture.snapshot.manifest.streaming.features.map(({ value }) => value),
+        )
+        expect(
+          Result.isFailure(
+            constructStreamingSnapshot(cut, {
+              ...fixture.query,
+              observedAt: new Date(bootAtMs + 500).toISOString(),
+            }),
+          ),
+        ).toBe(true)
+        const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+        expect(Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))).toEqual(snapshot)
+      }),
+    )
+    expect(transport.closeCount).toBe(1)
+  })
+
   test.each(['rejected', 'stalled'] as const)(
     'ephemeral projection needs no offset commits even when commits would be %s',
     async (commitFailure) => {

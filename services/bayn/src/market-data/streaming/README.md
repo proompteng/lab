@@ -12,6 +12,11 @@ adapter blocks observations. ClickHouse remains the historical archive and does 
 The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
 
 A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving entry inputs.
+This is a retained-history catch-up, not a new 30-minute wait after each process starts. Jev's first eligible window
+ends 30 minutes after that exchange session opens, with the existing two-second decision delay; its separate
+warmup is zero. Later worker replacements can use already-published regular-session history as soon as catch-up and
+the existing snapshot checks succeed. Original ingestion/computation times and actual replacement-consumer receipt
+times remain distinct. Premarket bars, prior-day bars, and backdated REST recovery cannot substitute for this window.
 Liquidation snapshots require the quote topic's complete partition cut and a fresh verified quote for each held
 symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
 through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale

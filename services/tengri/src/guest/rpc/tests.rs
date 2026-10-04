@@ -1,8 +1,9 @@
+use super::test_server::{TestServer, TestService};
 use super::*;
 use axum::Router;
 use futures::StreamExt;
 use std::{
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
 };
 use tokio::sync::mpsc;
@@ -54,7 +55,7 @@ async fn grpc_only_guest_rejects_legacy_http_without_discovery_or_fallback() {
     let server = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
-    let client = RpcClient::new(&address, "fixture-token").unwrap();
+    let client = RpcClient::fixture(&address, "fixture-token").unwrap();
     assert!(
         matches!(client.verify_identity("expected").await, Err(GuestError::Api { status: StatusCode::SERVICE_UNAVAILABLE, message }) if message.contains("Sleep and resume"))
     );
@@ -197,26 +198,31 @@ async fn grpc_write_validates_preconditions_and_receipts() {
     }
 }
 
-struct Fixture(Child);
+struct Fixture {
+    child: Child,
+    endpoint: String,
+    identity: Option<crate::identity::WorkloadIdentity>,
+    preview_port: u16,
+}
 impl Drop for Fixture {
     fn drop(&mut self) {
-        drop(self.0.stdin.take());
+        drop(self.child.stdin.take());
         for _ in 0..150 {
-            if matches!(self.0.try_wait(), Ok(Some(_))) {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
-fn fixture() -> (Fixture, GuestClient) {
+async fn fixture() -> (Fixture, GuestClient) {
     let executable = std::env::var("NANOAGENT_RPC_FIXTURE")
         .expect("set NANOAGENT_RPC_FIXTURE to the Go test binary");
-    let mut child = Fixture(
-        Command::new(executable)
+    let mut child = Fixture {
+        child: Command::new(executable)
             .arg("-test.run=^TestRPCInteropServer$")
             .env("NANOAGENT_RPC_INTEROP", "1")
             .stdin(Stdio::piped())
@@ -224,26 +230,154 @@ fn fixture() -> (Fixture, GuestClient) {
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap(),
-    );
-    let stdout = child.0.stdout.take().unwrap();
+        endpoint: String::new(),
+        identity: None,
+        preview_port: 0,
+    };
+    let stdout = child.child.stdout.take().unwrap();
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
-            if let Some(address) = line.strip_prefix("NANOAGENT_RPC_ADDR=") {
+            if let Some(address) = line.strip_prefix("NANOAGENT_RPC_ENDPOINT=") {
                 let _ = sender.send(address.to_owned());
             }
         }
     });
-    let address = receiver
+    let value = receiver
         .recv_timeout(Duration::from_secs(10))
         .expect("Nanoagent fixture did not start");
+    let config: serde_json::Value = serde_json::from_str(&value).unwrap();
+    let address = config["address"].as_str().unwrap().to_owned();
+    child.endpoint = config["workloadEndpoint"].as_str().unwrap().to_owned();
+    child.preview_port = config["previewPort"].as_str().unwrap().parse().unwrap();
+    let identity = crate::identity::WorkloadIdentity::from_endpoint(
+        config["workloadEndpoint"].as_str().unwrap().to_owned(),
+        "proompteng.ai".parse().unwrap(),
+        "tengri",
+    )
+    .await
+    .unwrap();
+    let tls = identity
+        .guest_tls(identity.guest_id("tengri", "interop-agent").unwrap())
+        .unwrap();
+    let channel = identity
+        .guest_channel(
+            address.strip_prefix("https://").unwrap().parse().unwrap(),
+            tls.clone(),
+        )
+        .unwrap();
+    let mut preview = tls.unwrap().as_ref().clone();
+    preview.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let http = reqwest::Client::builder()
+        .use_preconfigured_tls(preview.clone())
+        .http1_only()
+        .build()
+        .unwrap();
     let guest = GuestClient {
-        rpc: RpcClient::new(&address, "test-bootstrap-token").unwrap(),
+        rpc: RpcClient::new(channel, "test-bootstrap-token").unwrap(),
         base_url: address,
         token: "test-bootstrap-token".into(),
+        http,
+        preview_tls: Some(std::sync::Arc::new(preview)),
     };
+    child.identity = Some(identity);
     (child, guest)
+}
+
+#[tokio::test]
+#[ignore = "requires Go SPIFFE Workload API fixture; run test-rpc-interop.sh"]
+async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
+    use super::test_server::TestService;
+    use crate::identity::{WorkloadIdentity, tls_incoming};
+    use spiffe::{SpiffeId, X509Source, X509Svid, x509_source::SvidPicker};
+    use std::sync::Arc;
+
+    struct Pick(SpiffeId);
+    impl SvidPicker for Pick {
+        fn pick_svid(&self, svids: &[Arc<X509Svid>]) -> Option<usize> {
+            svids.iter().position(|svid| svid.spiffe_id() == &self.0)
+        }
+    }
+    let (mut fixture, _) = fixture().await;
+    let identity = fixture.identity.as_ref().unwrap();
+    let tls = identity.server_tls().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(
+        tonic::transport::Server::builder()
+            .add_service(
+                proto::nanoagent_service_server::NanoagentServiceServer::new(TestService {
+                    get_info: Some(Arc::new(|_| {
+                        Ok(proto::GuestInfo {
+                            microvm_id: "tls-fixture".into(),
+                            protocol_version: 1,
+                        })
+                    })),
+                    ..Default::default()
+                }),
+            )
+            .serve_with_incoming(tls_incoming(listener, tls)),
+    );
+    let peer: SpiffeId = "spiffe://proompteng.ai/ns/tengri/sa/tengri"
+        .parse()
+        .unwrap();
+    let bff_source = X509Source::builder()
+        .endpoint(&fixture.endpoint)
+        .picker(Pick(
+            "spiffe://proompteng.ai/ns/proompteng/sa/proompteng"
+                .parse()
+                .unwrap(),
+        ))
+        .build()
+        .await
+        .unwrap();
+    let bff = WorkloadIdentity::Spiffe {
+        source: bff_source.clone(),
+        domain: "proompteng.ai".parse().unwrap(),
+    };
+    let connect = |source: &WorkloadIdentity| {
+        RpcClient::new(
+            source
+                .guest_channel(address, source.guest_tls(peer.clone()).unwrap())
+                .unwrap(),
+            "fixture-token",
+        )
+        .unwrap()
+    };
+    connect(&bff).verify_identity("tls-fixture").await.unwrap();
+    assert!(
+        connect(identity)
+            .verify_identity("tls-fixture")
+            .await
+            .is_err(),
+        "Tengri identity was accepted as the BFF"
+    );
+    assert!(
+        RpcClient::fixture(&format!("http://{address}"), "fixture-token")
+            .unwrap()
+            .verify_identity("tls-fixture")
+            .await
+            .is_err(),
+        "plaintext was accepted by the control-plane listener"
+    );
+    let WorkloadIdentity::Spiffe { source, .. } = identity else {
+        panic!("missing SPIFFE source")
+    };
+    let before = source.svid().unwrap();
+    let mut updates = source.updated();
+    let mut bff_updates = bff_source.updated();
+    writeln!(fixture.child.stdin.as_mut().unwrap(), "rotate").unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        updates.changed().await.unwrap();
+        bff_updates.changed().await.unwrap();
+    })
+    .await
+    .unwrap();
+    assert_ne!(before.cert_chain(), source.svid().unwrap().cert_chain());
+    connect(&bff).verify_identity("tls-fixture").await.unwrap();
+    server.abort();
+    bff_source.shutdown().await;
 }
 
 async fn attach(
@@ -292,8 +426,46 @@ async fn terminal_message(
 #[tokio::test]
 #[ignore = "requires Go Nanoagent fixture; run test-rpc-interop.sh"]
 async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
-    let (_fixture, guest) = fixture();
+    use futures::SinkExt;
+    use tokio_tungstenite::{
+        Connector, connect_async_tls_with_config,
+        tungstenite::{Message, client::IntoClientRequest},
+    };
+    let (fixture, guest) = fixture().await;
     guest.rpc.verify_identity("interop-agent").await.unwrap();
+    let target = format!("{}/v1/preview/{}/", guest.base_url, fixture.preview_port);
+    let response = guest
+        .http
+        .get(&target)
+        .bearer_auth(&guest.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.text().await.unwrap(), "preview-over-mtls");
+    let mut request = format!("{}ws", target.replace("https://", "wss://"))
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "authorization",
+        format!("Bearer {}", guest.token).parse().unwrap(),
+    );
+    let (mut websocket, _) = connect_async_tls_with_config(
+        request,
+        None,
+        false,
+        guest.preview_tls.clone().map(Connector::Rustls),
+    )
+    .await
+    .unwrap();
+    websocket.send(Message::Text("ping".into())).await.unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(5), websocket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.into_text().unwrap(), "guest:ping");
+    websocket.close(None).await.unwrap();
     let rpc = guest.rpc.clone();
     let directory = guest.create_directory("/files").await.unwrap();
     assert!(directory.directory);
@@ -467,7 +639,8 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     drop(reconnected);
     guest.terminate_terminal(&created.session.id).await.unwrap();
     assert!(guest.list_terminals().await.unwrap().is_empty());
-    let wrong = RpcClient::new(guest.base_url(), "wrong").unwrap();
+    let mut wrong = guest.rpc.clone();
+    wrong.authorization = MetadataValue::try_from("Bearer wrong").unwrap();
     assert!(matches!(
         wrong.list_files("/").await,
         Err(GuestError::Api {
@@ -475,4 +648,146 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
             ..
         })
     ));
+}
+
+#[tokio::test]
+async fn codex_images_are_written_before_use_as_persistent_local_inputs() {
+    use std::sync::{Arc, Mutex};
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let observed = writes.clone();
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(Arc::new(|request| {
+            assert_eq!(request.get_ref().path, "/workspace/.tengri-attachments");
+            Err(tonic::Status::aborted("path already exists"))
+        })),
+        write_file: Some(Arc::new(move |request| {
+            let file = request.into_inner();
+            assert_eq!(file.expected_revision, "missing");
+            observed
+                .lock()
+                .unwrap()
+                .push((file.path.clone(), file.content.clone()));
+            Ok(proto::FileWriteResult {
+                path: file.path,
+                size: file.content.len() as i64,
+                revision: revision_for_content(&file.content),
+            })
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    let input =
+        crate::grpc::codex_turn_input(&fixture.guest, "Inspect this", std::slice::from_ref(&image))
+            .await
+            .unwrap();
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].1, image.content);
+    assert!(writes[0].0.starts_with("/workspace/.tengri-attachments/"));
+    assert!(writes[0].0.ends_with(".png"));
+    assert_eq!(input[0]["type"], "text");
+    assert_eq!(
+        input[1],
+        serde_json::json!({"type":"localImage","path":writes[0].0})
+    );
+}
+
+#[tokio::test]
+async fn codex_image_storage_failure_does_not_produce_an_input() {
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(std::sync::Arc::new(|_| {
+            Err(tonic::Status::permission_denied("read-only workspace"))
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    assert!(
+        crate::grpc::codex_turn_input(&fixture.guest, "", &[image])
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
+    use std::sync::{Arc, Mutex};
+    let files = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let writes = files.clone();
+    let deletes = files.clone();
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(Arc::new(|request| {
+            Ok(proto::FileEntry {
+                path: request.into_inner().path,
+                directory: true,
+                ..Default::default()
+            })
+        })),
+        write_file: Some(Arc::new(move |request| {
+            let file = request.into_inner();
+            let mut files = writes.lock().unwrap();
+            files.insert(file.path.clone(), file.content.clone());
+            if files.len() == 2 {
+                return Err(tonic::Status::internal(
+                    "directory sync failed after rename",
+                ));
+            }
+            Ok(proto::FileWriteResult {
+                path: file.path,
+                size: file.content.len() as i64,
+                revision: revision_for_content(&file.content),
+            })
+        })),
+        delete_file: Some(Arc::new(move |request| {
+            let file = request.into_inner();
+            assert!(!file.recursive);
+            assert!(deletes.lock().unwrap().remove(&file.path).is_some());
+            Ok(proto::Empty {})
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    assert!(
+        crate::grpc::codex_turn_input(&fixture.guest, "Inspect these", &[image.clone(), image])
+            .await
+            .is_err()
+    );
+    assert!(files.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn image_cleanup_preserves_an_existing_file_rejected_by_create_only_write() {
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(std::sync::Arc::new(|_| {
+            Err(tonic::Status::already_exists("directory exists"))
+        })),
+        write_file: Some(std::sync::Arc::new(|_| {
+            Err(tonic::Status::aborted("file exists"))
+        })),
+        delete_file: Some(std::sync::Arc::new(|_| {
+            panic!("must not delete the existing file")
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    assert!(
+        crate::grpc::codex_turn_input(&fixture.guest, "", &[image])
+            .await
+            .is_err()
+    );
 }

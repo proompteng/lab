@@ -25,6 +25,7 @@ func childProcessEnvironment(source []string, extra ...string) []string {
 			(key == bootstrapTokenEnvironmentKey ||
 				key == bootstrapTokenFDEnvironmentKey ||
 				key == reexecWrapperEnvironmentKey ||
+				strings.HasPrefix(key, "SPIFFE_") || strings.HasPrefix(key, "SPIRE_") ||
 				overridden) {
 			continue
 		}

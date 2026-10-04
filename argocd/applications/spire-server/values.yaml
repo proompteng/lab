@@ -1,11 +1,11 @@
 global:
   spire:
     clusterName: galactic
-    trustDomain: galactic.proompteng.ai
+    trustDomain: proompteng.ai
     caSubject:
       country: US
       organization: proompteng
-      commonName: Galactic SPIRE CA
+      commonName: Proompteng SPIRE CA
     recommendations:
       enabled: true
       prometheus: false
@@ -37,6 +37,34 @@ spire-server:
     k8sPSAT:
       serviceAccountAllowList:
         - spire-system:spire-agent
+  unsupportedBuiltInPlugins:
+    nodeAttestor:
+      k8s_psat:
+        plugin_data:
+          clusters:
+            - galactic:
+                audience: [spire-server]
+                service_account_allow_list: [spire-system:spire-agent]
+                allowed_node_label_keys: []
+                allowed_pod_label_keys: []
+              galactic-guests:
+                audience: [spire-server]
+                service_account_allow_list: [tengri:nanoagent]
+                use_pod_uid_for_agent_id: true
+    bundlePublisher:
+      k8s_configmap:
+        plugin_data:
+          clusters:
+            - chart-internal:
+                format: spiffe
+                namespace: spire-system
+                configmap_name: spire-bundle
+                configmap_key: bundle.spiffe
+              galactic-guests:
+                format: pem
+                namespace: tengri
+                configmap_name: spire-guest-bundle
+                configmap_key: bundle.pem
   controllerManager:
     enabled: true
     resources:
@@ -64,6 +92,97 @@ spire-server:
               app.kubernetes.io/name: spire-identity-canary
           workloadSelectorTemplates:
             - k8s:sa:identity-canary
+          ttl: 2m
+          fallback: false
+
+        proompteng:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: proompteng
+          workloadSelectorTemplates:
+            - k8s:sa:proompteng
+            - k8s:container-name:proompteng
+          ttl: 2m
+          fallback: false
+        tengri:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri
+              app.kubernetes.io/component: control-plane
+          workloadSelectorTemplates:
+            - k8s:sa:tengri
+            - k8s:container-name:tengri
+          ttl: 2m
+          fallback: false
+        proompteng-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: proompteng
+          podSelector:
+            matchLabels:
+              app: proompteng
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:proompteng
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        tengri-proxy:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri
+              app.kubernetes.io/component: control-plane
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:tengri
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        istio-external-gateway:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/istio-ingress/sa/gateway
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-ingress
+          podSelector:
+            matchLabels:
+              app: gateway
+              istio: gateway
+          workloadSelectorTemplates:
+            - k8s:sa:gateway
+            - k8s:container-name:istio-proxy
+          ttl: 2m
+          fallback: false
+        istio-knative-gateway:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/istio-system/sa/knative-local-gateway
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: knative-local-gateway
+              istio: ingressgateway
+          workloadSelectorTemplates:
+            - k8s:sa:knative-local-gateway
+            - k8s:container-name:istio-proxy
           ttl: 2m
           fallback: false
   externalControllerManagers:

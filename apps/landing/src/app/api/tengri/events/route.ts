@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     }
     let body: ReadableStream<Uint8Array>
     try {
-      const source = watchCodexEvents(identity.subject, agentId, after)
+      const source = await watchCodexEvents(identity.subject, agentId, after)
       body = createTengriEventStream(
         source,
         request.signal,

@@ -24,11 +24,13 @@ import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-mo
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { studyIoc } from './signal-study'
+import { ResidualShockCandidate, residualShockDefinition, selectResidualShock } from './residual-shock'
 
 export enum ControlPolicy {
   RetainedBreakout = 'RETAINED_BREAKOUT_CLOSE',
   RepeatedBreakout = 'REPEATED_BREAKOUT',
   RelativeMomentum = 'REPEATED_RELATIVE_MOMENTUM',
+  ResidualShock = ResidualShockCandidate.SpyRelativeShockRebound60s,
 }
 
 export enum ControlExit {
@@ -36,6 +38,7 @@ export enum ControlExit {
   SessionClose = 'SESSION_CLOSE',
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
+  SignalHorizon = 'SIGNAL_HORIZON',
 }
 
 export class ControlStudyFailure extends Data.TaggedError('ControlStudyFailure')<{
@@ -87,6 +90,7 @@ export const controlCandidates = (policy: ControlPolicy, protocol: JevProtocol) 
 
 export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: ControlPolicy, protocol: JevProtocol) =>
   Result.gen(function* () {
+    if (policy === ControlPolicy.ResidualShock) return (yield* selectResidualShock(snapshot, protocol)).selectedSymbol
     const latestTrades = Object.fromEntries(
       snapshot.trades.toSorted(compareRecords).map((trade) => [trade.symbol, trade]),
     )
@@ -255,6 +259,7 @@ export const triggerControlExit = (input: {
         reason = ControlExit.MaximumHold
       else if (
         quote !== undefined &&
+        quote.value.bidSize > 0 &&
         replayQuoteRejection(quote, position.symbol, atMs, protocol) === null &&
         jevProtectiveStopCrossed(
           BigInt(position.costBasisMicros),
@@ -264,6 +269,11 @@ export const triggerControlExit = (input: {
         )
       )
         reason = ControlExit.ProtectiveStop
+      else if (
+        input.policy === ControlPolicy.ResidualShock &&
+        atMs - portfolio.inventory.enteredAtMs >= residualShockDefinition.targetHoldingMs
+      )
+        reason = ControlExit.SignalHorizon
     }
     return reason === undefined
       ? portfolio

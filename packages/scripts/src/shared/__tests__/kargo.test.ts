@@ -166,6 +166,21 @@ const expected = {
       'nix/toolchain-doctor.sh',
     ],
   },
+  'temporal-worker': {
+    creationCriteria: 'single',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('temporal-worker')],
+    apps: ['temporal'],
+    includePaths: [
+      'services/temporal-worker',
+      '.github/workflows/temporal-worker-images.yml',
+      'argocd/applications/temporal',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/platform.yaml',
+      'packages/scripts/src/shared/__tests__/kargo.test.ts',
+    ],
+  },
   rune: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -749,9 +764,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('points every enrolled Argo Application at its exact authorized Kargo branch', () => {
     const applications = new Map(applicationSetElements.map((element) => [element.name as string, element]))
-    const expectedApplications = Object.entries(expected)
-      .filter(([stageName]) => stageName !== 'hermes-toolchain')
-      .map(([, contract]) => contract)
+    const expectedApplications = Object.values(expected)
       .flatMap((contract) => contract.apps)
       .sort()
     const kargoApplications = applicationSetElements
@@ -760,11 +773,7 @@ describe('Kargo direct-push GitOps contract', () => {
       .sort()
     expect(kargoApplications).toEqual(expectedApplications)
 
-    expect(applications.get('hermes')?.targetRevision).toBe('main')
-    expect(applications.get('hermes')?.annotations?.['kargo.akuity.io/authorized-stage']).toBeUndefined()
-
     for (const [stageName, contract] of Object.entries(expected)) {
-      if (stageName === 'hermes-toolchain') continue
       for (const applicationName of contract.apps) {
         expect(applications.get(applicationName)?.targetRevision).toBe(`kargo/${stageName}`)
         expect(applications.get(applicationName)?.annotations?.['kargo.akuity.io/authorized-stage']).toBe(
@@ -869,11 +878,11 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns Rune source discovery with both image build triggers', () => {
-    const warehouse = byName(warehouses).get('rune')
+  it.each(['rune', 'temporal-worker'])('aligns %s source discovery with both image build triggers', (name) => {
+    const warehouse = byName(warehouses).get(name)
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
       .includePaths
-    const workflow = YAML.parse(readFileSync('.github/workflows/rune-images.yml', 'utf8'))
+    const workflow = YAML.parse(readFileSync(`.github/workflows/${name}-images.yml`, 'utf8'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
       expect(sourcePaths).toEqual(buildPaths)
@@ -918,9 +927,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
     const projectPolicies = projectConfig.spec?.promotionPolicies as Array<Record<string, any>>
     expect(projectPolicies.map((policy) => policy.stageSelector?.name).sort()).toEqual(expectedStageNames)
-    for (const policy of projectPolicies) {
-      expect(policy.autoPromotionEnabled).toBe(policy.stageSelector?.name !== 'hermes-toolchain')
-    }
+    expect(projectPolicies.every((policy) => policy.autoPromotionEnabled === true)).toBe(true)
 
     for (const stageName of expectedStageNames) {
       const contract = expected[stageName as keyof typeof expected]

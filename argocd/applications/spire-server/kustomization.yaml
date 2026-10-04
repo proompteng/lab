@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+resources:
+  - guest-bundle.yaml
 helmCharts:
   - name: spire-crds
     repo: https://spiffe.github.io/helm-charts-hardened
@@ -14,6 +16,38 @@ helmCharts:
     namespace: spire-server
     valuesFile: values.yaml
 patches:
+  - target:
+      kind: StatefulSet
+      name: spire-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: prepare-trust-domain-store
+                image: mirror.gcr.io/library/busybox:1.37.0
+                command: [sh, -ec, 'umask 077; mkdir -p /run/spire/data/proompteng.ai']
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  runAsNonRoot: true
+                  readOnlyRootFilesystem: true
+                  seccompProfile:
+                    type: RuntimeDefault
+                  capabilities:
+                    drop: [ALL]
+                volumeMounts:
+                  - name: spire-data
+                    mountPath: /run/spire/data
+            containers:
+              - name: spire-server
+                volumeMounts:
+                  - name: spire-data
+                    mountPath: /run/spire/data
+                    subPath: proompteng.ai
   - target:
       kind: Pod
       name: spire-server-test-connection

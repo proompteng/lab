@@ -2,6 +2,11 @@ import { describe, expect, test } from 'bun:test'
 
 import { TerminalError, type ObjectSharedContext, type ObjectContext } from '@restatedev/restate-sdk'
 import { Result } from 'effect'
+import {
+  CaptureInvalidation,
+  type ResearchCaptureEvent,
+  type ResearchCaptureObserver,
+} from '../research-capture/capture'
 
 import {
   executionControllerMaximumRecoveryWindow,
@@ -72,6 +77,189 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
   ).object
 
 type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
+
+test('journal replay cannot fabricate a fresh runtime start or a complete original capture', async () => {
+  let state: ExecutionControllerState = {
+    schemaVersion: 1,
+    active: true,
+    epoch: 1,
+    planHash,
+    sourceRevision,
+    initialSequence: 4,
+    nextSequence: 4,
+  }
+  const receipts: ResearchCaptureEvent[] = []
+  const invalidations: CaptureInvalidation[] = []
+  let runtimeCalls = 0
+  const cachedResult = {
+    completedAt: '2026-08-13T18:00:01.000Z',
+    outcome: { _tag: ExecutionControllerOutcome.Blocked, receiptHash: 'd'.repeat(64), nextDelayMs: 30_000 },
+  }
+  const controller = handlers(
+    makeBaynExecutionController(config, {
+      capture: {
+        record: (event) => {
+          receipts.push(event)
+        },
+        invalidate: (reason) => {
+          invalidations.push(reason)
+        },
+      },
+      advance: async () => {
+        runtimeCalls++
+        return cachedResult
+      },
+      log: async () => undefined,
+      projectState: async () => undefined,
+    }),
+  )
+  const context = {
+    key: controllerKey,
+    get: async () => state,
+    set: (_key: string, next: ExecutionControllerState) => {
+      state = next
+    },
+    genericSend: () => undefined,
+    run: async () => cachedResult,
+    date: {
+      toJSON: async () => {
+        throw new Error('Unexpected journal clock')
+      },
+    },
+    request: () => ({ id: 'replayed-invocation', attemptCompletedSignal: new AbortController().signal }),
+  } as unknown as TestContext
+  await controller.tick(context, {
+    schemaVersion: 'bayn.execution-controller-tick.v1',
+    epoch: 1,
+    sequence: 4,
+    issuedAt: '2026-08-13T18:00:00.000Z',
+  })
+  expect(runtimeCalls).toBe(0)
+  expect(state.nextSequence).toBe(5)
+  expect(receipts.map((receipt) => (receipt.kind === 'controller-pass' ? receipt.phase : undefined))).toEqual([
+    'COMPLETED',
+    'SCHEDULED',
+  ])
+  expect(receipts[0]).toMatchObject({ runtimeAttempted: false, completedAt: cachedResult.completedAt })
+  expect(invalidations).toEqual([CaptureInvalidation.ControllerReplay])
+})
+
+test('optional capture preserves synchronous scheduling, supplied command timestamps and native retry identity', async () => {
+  const exercise = async (mode: 'absent' | 'record' | 'broken' | 'mutating') => {
+    let state: ExecutionControllerState | null = null
+    const deliveries: Delivery[] = []
+    const trace: string[] = []
+    const receipts: ResearchCaptureEvent[] = []
+    const commands: unknown[] = []
+    let calls = 0
+    let journalClockCalls = 0
+    const signal = new AbortController().signal
+    const capture: ResearchCaptureObserver | undefined =
+      mode === 'absent'
+        ? undefined
+        : {
+            record: (event) => {
+              if (mode === 'broken') throw new Error('capture unavailable')
+              if (mode === 'mutating' && event.kind === 'controller-pass')
+                Object.assign(event.tick, { sequence: 999, epoch: 999, issuedAt: '2099-01-01T00:00:00.000Z' })
+              receipts.push(event)
+            },
+            invalidate: () => {
+              if (mode === 'broken') throw new Error('capture invalidation unavailable')
+            },
+          }
+    const runtime = {
+      ...(capture === undefined ? {} : { capture }),
+      advance: async (command: Parameters<Parameters<typeof makeBaynExecutionController>[1]['advance']>[0]) => {
+        commands.push(command)
+        trace.push('advance')
+        if (++calls === 1) throw new Error('recoverable fixture failure')
+        return {
+          completedAt: '2026-08-13T18:00:01.000Z',
+          outcome: { _tag: ExecutionControllerOutcome.Blocked, receiptHash: 'd'.repeat(64), nextDelayMs: 30_000 },
+        }
+      },
+      log: async () => undefined,
+      projectState: async () => {
+        trace.push('project')
+      },
+    }
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        trace.push('set')
+        state = next
+      },
+      genericSend: (delivery: Delivery) => {
+        trace.push('send')
+        deliveries.push(delivery)
+      },
+      run: async <A>(name: string, action: () => Promise<A>) => {
+        trace.push(name)
+        return action()
+      },
+      date: {
+        toJSON: async () => {
+          journalClockCalls++
+          throw new Error('No new journal clock is allowed')
+        },
+      },
+      request: () => ({ id: 'capture-test-invocation', attemptCompletedSignal: signal }),
+    } as unknown as TestContext
+    const controller = handlers(makeBaynExecutionController(config, runtime))
+    await controller.activate(context, activation)
+    const suppliedIssuedAt = '2026-08-13T18:00:00.000Z'
+    const tick = {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 1,
+      sequence: 4,
+      attempt: 0,
+      issuedAt: suppliedIssuedAt,
+    }
+    await controller.tick(context, tick)
+    const retry = deliveries[1]
+    if (retry === undefined) throw new Error('Missing native retry')
+    await controller.tick(context, retry.parameter)
+    await controller.tick(context, tick)
+    expect(journalClockCalls).toBe(0)
+    expect(commands).toHaveLength(2)
+    expect(commands.every((command) => (command as { issuedAt: string }).issuedAt === suppliedIssuedAt)).toBe(true)
+    expect(retry).toMatchObject({
+      delay: 1000,
+      idempotencyKey: executionControllerTickIdempotencyKey(1, 4, 1),
+      parameter: { issuedAt: suppliedIssuedAt },
+    })
+    if (mode === 'record') {
+      expect(receipts.map((receipt) => (receipt.kind === 'controller-pass' ? receipt.phase : undefined))).toEqual([
+        'SCHEDULED',
+        'STARTED',
+        'FAILED',
+        'SCHEDULED',
+        'STARTED',
+        'COMPLETED',
+        'SCHEDULED',
+        'IGNORED',
+      ])
+      expect(receipts[3]).toMatchObject({
+        kind: 'controller-pass',
+        phase: 'SCHEDULED',
+        tick: retry.parameter,
+        idempotencyKey: retry.idempotencyKey,
+      })
+      expect(receipts[5]).toMatchObject({
+        kind: 'controller-pass',
+        commandIssuedAt: suppliedIssuedAt,
+        completedAt: '2026-08-13T18:00:01.000Z',
+      })
+    }
+    return { trace, deliveries, commands, state }
+  }
+  const baseline = await exercise('absent')
+  expect(await exercise('record')).toEqual(baseline)
+  expect(await exercise('broken')).toEqual(baseline)
+  expect(await exercise('mutating')).toEqual(baseline)
+})
 
 describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {

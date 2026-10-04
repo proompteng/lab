@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result, Schema } from 'effect'
+import fc from 'fast-check'
+import { checkProperty } from './testing/property-test-support'
 
 import { canonicalHashV1 } from './hash'
 import {
@@ -378,6 +380,100 @@ const expectBlocked = (
   expect(result.decision.outcome).toBe(RiskOutcome.Blocked)
   expect(result.decision.reasonCodes).toContain(reason)
 }
+
+describe('entry risk properties', () => {
+  const validEntry = (quantity: number) => {
+    const policy = makePolicy()
+    const state = makeState()
+    const intent = makeIntent({ quantityMicros: String(quantity) })
+    expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
+    return { policy, state, intent }
+  }
+
+  test('property: authority restrictions and unknown mutations block otherwise approved generated entries', () => {
+    checkProperty(
+      'entry-authority',
+      fc.property(
+        fc.integer({ min: 1, max: 1_000_000 }),
+        fc.integer({ min: 1, max: 1000 }),
+        (quantity, unknownMutationCount) => {
+          const { policy, state, intent } = validEntry(quantity)
+          expectBlocked(Reason.UnknownMutation, intent, makeState({ unknownMutationCount }), policy)
+          expectBlocked(
+            Reason.AuthorityNotGranted,
+            intent,
+            makeState({ authority: { ...state.authority, effective: Authority.Observe } }),
+            policy,
+          )
+          expectBlocked(
+            Reason.KillActive,
+            intent,
+            makeState({
+              authority: {
+                ...state.authority,
+                effective: Authority.Observe,
+                kill: KillState.Active,
+                reason: 'synthetic property restriction',
+              },
+            }),
+            policy,
+          )
+          expect(
+            evaluate({
+              intent,
+              policy,
+              state: makeState({ authority: { ...state.authority, generationHash: hash('9') } }),
+            }),
+          ).toMatchObject({ _tag: 'Failure', failure: { operation: 'bind-authority', reason: 'authority-generation' } })
+        },
+      ),
+    )
+  })
+
+  test('property: market and broker freshness include the exact expiry boundary', () => {
+    checkProperty(
+      'entry-freshness',
+      fc.property(
+        fc.integer({ min: 1, max: 1_000_000 }),
+        fc.integer({ min: 0, max: 60_000 }),
+        (quantity, overdueMs) => {
+          const { policy, intent } = validEntry(quantity)
+          const before = utcInstantFromEpochMillis(Date.parse(observedAt) + policy.maxMarketDataAgeMs - 1)
+          const freshIntent = { ...intent, createdAt: before }
+          expect(evaluateSuccess(freshIntent, makeState({ evaluatedAt: before }), policy).decision.outcome).toBe(
+            RiskOutcome.Approved,
+          )
+          for (const offset of [0, overdueMs + 1]) {
+            const at = utcInstantFromEpochMillis(Date.parse(observedAt) + policy.maxMarketDataAgeMs + offset)
+            const expired = makeState({ evaluatedAt: at })
+            expectBlocked(Reason.MarketDataStale, freshIntent, expired, policy)
+            expectBlocked(Reason.BrokerStateStale, freshIntent, expired, policy)
+          }
+        },
+      ),
+    )
+  })
+
+  test('property: an entry at its exact notional cap passes and one micro above blocks', () => {
+    checkProperty(
+      'entry-notional-boundary',
+      fc.property(fc.integer({ min: 1, max: 1_000_000 }), (quantity) => {
+        const { state } = validEntry(quantity)
+        const notional = BigInt(quantity) * 100n
+        const policy = makePolicy({ maxOrderNotionalMicros: String(notional) })
+        const intent = makeIntent({ quantityMicros: String(quantity), policyHash: canonicalHashV1(policy) })
+        expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
+        const stricter = makePolicy({ maxOrderNotionalMicros: String(notional - 1n) })
+        expectBlocked(
+          Reason.OrderNotionalExceeded,
+          { ...intent, policyHash: canonicalHashV1(stricter) },
+          state,
+          stricter,
+        )
+      }),
+    )
+  })
+})
 
 const openOrder = (brokerOrderId: string) => ({
   schemaVersion: 'bayn.paper-order.v1' as const,
