@@ -139,9 +139,16 @@ original bytes, transport timestamps, and reproduced reducer dispositions. A sea
 an interval proof. Any recorded capture invalidation conservatively prevents import.
 
 The reader derives the sole manifest address from the exact durable SQL seal, fetches that object and its referenced
-seal, and walks the index chain. Each exported metadata chunk must equal its SQL counterpart. The caller supplies
-bounded read functions and an aggregate object-byte budget. Each object remains limited to 4 MiB. This bound covers
-input object bytes, not total JavaScript memory. No list, credential discovery, or production read path is added.
+seal, and walks the index chain. Each exported metadata chunk must equal its SQL counterpart. The aggregate input-byte
+budget charges the supplied SQL seal, object reads, and SQL metadata reads. The metadata callback receives the smaller
+of the remaining budget, the 4 MiB object limit, and the exact exported metadata length. Each callback must enforce its
+limit before materializing the payload. This bound covers input bytes, not total JavaScript memory.
+
+`readResearchCapturePostgresChunk` and `readResearchCapturePostgresSeal` enforce their limits in PostgreSQL with
+`octet_length(convert_to(payload, 'UTF8'))` predicates. Oversized rows never return payload text to the client. The
+bounded text is then hash-checked and decoded without re-encoding. The seal reader also applies the existing 64 KiB
+seal limit. A caller can read the seal with its total budget, then pass that seal and the same total budget to the
+interval reader, which charges the seal once. No list, credential discovery, table, or production composition is added.
 
 The adapter emits a gzip replay source and a separately hash-pinned source receipt. Version-two original arrivals
 retain exact raw bytes, tagged transport time, receipt order, and native disposition. Existing historical cursor,

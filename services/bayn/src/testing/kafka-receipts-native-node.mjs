@@ -345,9 +345,10 @@ try {
               assert.ok(bytes.byteLength <= limit)
               return bytes
             }),
-          readMetadataChunk: (ordinal) =>
+          readMetadataChunk: (ordinal, limit) =>
             Effect.sync(() => {
               assert.ok(intervalChunks[ordinal])
+              assert.ok(Buffer.byteLength(intervalChunks[ordinal].payload, 'utf8') <= limit)
               return intervalChunks[ordinal]
             }),
         })

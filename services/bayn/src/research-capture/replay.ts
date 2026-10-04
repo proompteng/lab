@@ -282,12 +282,15 @@ export const replayResearchCaptureInterval = (
     }
   })
 
-/** Readers must enforce the supplied byte limit while receiving each object. No listing or ambient credentials. */
+/** Readers enforce each supplied limit before materializing object or SQL payload bytes. */
 export const readResearchCaptureInterval = (input: {
   readonly seal: ResearchCaptureBytes
   readonly maximumBytes: number
   readonly readObject: (contentHash: string, maximumBytes: number) => Effect.Effect<Uint8Array, ResearchCaptureFailure>
-  readonly readMetadataChunk: (ordinal: number) => Effect.Effect<ResearchCaptureBytes, ResearchCaptureFailure>
+  readonly readMetadataChunk: (
+    ordinal: number,
+    maximumBytes: number,
+  ) => Effect.Effect<ResearchCaptureBytes, ResearchCaptureFailure>
   readonly request: CaptureIntervalRequest
   readonly universe: StreamingUniverse
 }) =>
@@ -297,7 +300,7 @@ export const readResearchCaptureInterval = (input: {
     let remaining = input.maximumBytes - Buffer.byteLength(input.seal.payload)
     const read = (hash: string) =>
       Effect.gen(function* () {
-        if (remaining <= 0) return yield* fail('Capture export exceeds its read budget')
+        if (remaining < 0) return yield* fail('Capture export exceeds its read budget')
         const limit = Math.min(remaining, maximumResearchCaptureChunkBytes)
         const payload = yield* input.readObject(hash, limit)
         if (!(payload instanceof Uint8Array) || payload.byteLength > limit || sha256(payload) !== hash)
@@ -328,7 +331,13 @@ export const readResearchCaptureInterval = (input: {
         strictParseOptions,
       )(indexBytes.payload)
       const metadata = asText(yield* read(index.metadata.contentHash))
-      const sqlMetadata = yield* input.readMetadataChunk(ordinal)
+      const metadataBytes = Buffer.byteLength(metadata.payload, 'utf8')
+      if (metadataBytes > remaining) return yield* fail('SQL metadata exceeds the remaining capture read budget')
+      const sqlLimit = Math.min(remaining, maximumResearchCaptureChunkBytes, metadataBytes)
+      const sqlMetadata = yield* input.readMetadataChunk(ordinal, sqlLimit)
+      const sqlBytes = Buffer.byteLength(sqlMetadata.payload, 'utf8')
+      if (sqlBytes > sqlLimit) return yield* fail('SQL metadata reader exceeded its byte limit')
+      remaining -= sqlBytes
       if (metadata.contentHash !== sqlMetadata.contentHash || metadata.payload !== sqlMetadata.payload)
         return yield* fail('Exported metadata differs from its exact SQL chunk')
       const raw = yield* read(index.raw.contentHash)

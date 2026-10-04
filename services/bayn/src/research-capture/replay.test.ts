@@ -287,14 +287,53 @@ test('reader follows only the durable root, checks actual objects and exact SQL 
           if (value === undefined || value.byteLength > limit) throw new Error('fixture bounded read refused')
           return value
         }),
-      readMetadataChunk: () =>
-        Effect.succeed(corruptSql ? { ...data.chunks[0].metadata, payload: '{}' } : data.chunks[0].metadata),
+      readMetadataChunk: (_ordinal, limit) =>
+        Effect.sync(() => {
+          const chunk = corruptSql ? { ...data.chunks[0].metadata, payload: '{}' } : data.chunks[0].metadata
+          if (Buffer.byteLength(chunk.payload, 'utf8') > limit)
+            throw new Error('Fixture SQL read exceeds its byte limit')
+          return chunk
+        }),
     })
+
   const replay = await Effect.runPromise(read(1024 * 1024))
   expect(replay.manifest.recordCount).toBe(11)
   expect(Result.isFailure(await Effect.runPromise(read(10).pipe(Effect.result)))).toBe(true)
   expect((await Effect.runPromiseExit(read(1024 * 1024, data.manifestBytes.contentHash)))._tag).toBe('Failure')
   expect(Result.isFailure(await Effect.runPromise(read(1024 * 1024, undefined, true).pipe(Effect.result)))).toBe(true)
+})
+
+test('capture budget charges SQL metadata and passes its exact allowed size to the reader', async () => {
+  const data = fixture()
+  const metadata = data.chunks[0].metadata
+  const sqlBytes = Buffer.byteLength(metadata.payload, 'utf8')
+  const objectBytes = [...data.stored.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0)
+  const totalBytes = Buffer.byteLength(data.seal.payload, 'utf8') + objectBytes + sqlBytes
+  const limits: number[] = []
+  const read = (maximumBytes: number, oversizedSql = false) =>
+    readResearchCaptureInterval({
+      seal: data.seal,
+      maximumBytes,
+      request,
+      universe,
+      readObject: (hash, limit) => {
+        const value = data.stored.get(hash)
+        return value === undefined || value.byteLength > limit
+          ? Effect.fail(new ResearchCaptureFailure({ message: 'Fixture object is missing or exceeds its read limit' }))
+          : Effect.succeed(value)
+      },
+      readMetadataChunk: (_ordinal, limit) => {
+        limits.push(limit)
+        return Effect.succeed(oversizedSql ? { ...metadata, payload: `${metadata.payload}é` } : metadata)
+      },
+    })
+  expect((await Effect.runPromise(read(totalBytes))).manifest.recordCount).toBe(11)
+  expect(limits).toEqual([sqlBytes])
+  expect(Result.isFailure(await Effect.runPromise(read(totalBytes - 1).pipe(Effect.result)))).toBe(true)
+  expect(Result.isFailure(await Effect.runPromise(read(totalBytes - sqlBytes).pipe(Effect.result)))).toBe(true)
+  const oversized = await Effect.runPromise(read(totalBytes, true).pipe(Effect.result))
+  if (Result.isSuccess(oversized)) throw new Error('Oversized SQL response was accepted')
+  expect(oversized.failure.message).toBe('SQL metadata reader exceeded its byte limit')
 })
 
 for (const [name, mutate] of [
@@ -617,10 +656,11 @@ test('original interval uses the existing snapshot and mechanical control-study 
                 throw new Error('Missing or oversized fixture object')
               return bytes
             }),
-          readMetadataChunk: (ordinal) =>
+          readMetadataChunk: (ordinal, limit) =>
             Effect.sync(() => {
               const chunk = chunks[ordinal]
-              if (chunk === undefined) throw new Error('Missing fixture SQL chunk')
+              if (chunk === undefined || Buffer.byteLength(chunk.payload, 'utf8') > limit)
+                throw new Error('Missing or oversized fixture SQL chunk')
               return chunk
             }),
         })
