@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: temporal
 resources:
+- cassandra-pvcs.yaml
 - upgrade/cassandra-509-rollout.yaml
 - upgrade/cassandra-509-backup.yaml
 - upgrade/cassandra-4112-rollout.yaml
@@ -121,6 +122,8 @@ helmCharts:
       enabled: true
       storageClass: rook-ceph-block
       accessMode: ReadWriteOnce
+      # Immutable live template. Existing ordinal claims are managed at 30Gi in cassandra-pvcs.yaml.
+      # See README.md before changing this value or scaling beyond the three declared claims.
       size: 20Gi
     config:
       cluster_size: 3
@@ -250,7 +253,7 @@ images:
   digest: sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932
 - name: temporal-worker-runtime
   newName: registry.ide-newton.ts.net/lab/temporal-worker
-  digest: sha256:674decf64eb78144ea61392384d989b29e5e87bafa273e99073fe8d389f884bf
+  digest: sha256:d301b0a5e354254fcff2b13cc43a8a718d465703959d6a985f2764fe1297b3fa
 configMapGenerator:
 - name: temporal-cassandra-upgrade-scripts
   files:

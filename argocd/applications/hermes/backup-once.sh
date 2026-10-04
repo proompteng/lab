@@ -52,6 +52,9 @@ from pathlib import Path
 archive = sys.argv[1]
 database_count = 0
 with zipfile.ZipFile(archive) as backup:
+    for entry in backup.infolist():
+        if Path(entry.filename).name == ".env" and backup.read(entry).strip():
+            raise RuntimeError("backup contains a nonempty environment credential file")
     corrupt_entry = backup.testzip()
     if corrupt_entry is not None:
         raise RuntimeError(f"corrupt zip entry: {corrupt_entry}")

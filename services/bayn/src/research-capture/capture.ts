@@ -38,6 +38,11 @@ export enum CaptureInvalidation {
   ClockReversed = 'CLOCK_REVERSED',
   ControllerReplay = 'CONTROLLER_REPLAY_AMBIGUITY',
   Finalization = 'FINALIZATION_FAILED_OR_UNKNOWN',
+  ByteLimit = 'SESSION_BYTE_LIMIT',
+  MissedBootstrap = 'SESSION_BOOTSTRAP_MISSED',
+  Deadline = 'SESSION_DEADLINE_WITHOUT_CUT',
+  WorkerReplaced = 'SESSION_WORKER_REPLACED',
+  OutsideWindow = 'SESSION_START_OUTSIDE_WINDOW',
 }
 
 const PositionSchema = Schema.Struct({
@@ -46,7 +51,125 @@ const PositionSchema = Schema.Struct({
   offset: UnsignedMicrosSchema,
 })
 
+export const CaptureIntervalRequestSchema = Schema.Struct({
+  intervalId: ResearchCaptureIdSchema,
+  coverageStartMs: NonNegativeIntegerSchema,
+  coverageEndMs: NonNegativeIntegerSchema,
+  universeHash: Sha256Schema,
+  expectedPartitions: Schema.Array(
+    Schema.Struct({
+      topic: StrictNonEmptyStringSchema,
+      partition: NonNegativeIntegerSchema,
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+})
+export type CaptureIntervalRequest = typeof CaptureIntervalRequestSchema.Type
+
+export const CaptureSessionDeclarationSchema = Schema.Struct({
+  ...CaptureIntervalRequestSchema.fields,
+  startAtMs: NonNegativeIntegerSchema,
+  bootstrapDeadlineMs: NonNegativeIntegerSchema,
+  stopAtMs: NonNegativeIntegerSchema,
+  calendarSnapshotId: Sha256Schema,
+  calendarObservedAt: UtcInstantSchema,
+  calendarHash: Sha256Schema,
+  maximumObjectBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 1024 ** 3)),
+  maximumSqlBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10 * 1024 ** 3)),
+})
+
+export const CaptureIntervalCutSchema = Schema.Struct({
+  kind: Schema.Literal('consumer-interval-cut'),
+  schemaVersion: Schema.Literal('bayn.native-visible-input-cut.v1'),
+  ...CaptureIntervalRequestSchema.fields,
+  consumerEpoch: StrictNonEmptyStringSchema,
+  transport: Schema.Struct({
+    sdk: Schema.Literal('@platformatic/kafka'),
+    version: Schema.Literal('2.12.1'),
+    isolation: Schema.Literal('READ_COMMITTED'),
+    mode: Schema.Literal('MANUAL'),
+    fallback: Schema.Literal('FAIL'),
+    deserializationFailure: Schema.Literal('FAIL'),
+  }),
+  committedFence: Schema.Struct({
+    lookupStartedAtMs: NonNegativeIntegerSchema,
+    lookupCompletedAtMs: NonNegativeIntegerSchema,
+    positions: Schema.Array(PositionSchema).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  }),
+  drainedPositions: Schema.Array(PositionSchema).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  finalConsumerSequence: NonNegativeIntegerSchema,
+})
+export type CaptureIntervalCut = typeof CaptureIntervalCutSchema.Type
+
+export enum CaptureTimestampKind {
+  Value = 'VALUE',
+  Missing = 'MISSING',
+  NotANumber = 'NAN',
+  PositiveInfinity = 'POSITIVE_INFINITY',
+  NegativeInfinity = 'NEGATIVE_INFINITY',
+  NegativeZero = 'NEGATIVE_ZERO',
+}
+const CaptureTimestampSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal(CaptureTimestampKind.Value),
+    value: Schema.Finite.check(
+      Schema.makeFilter((value: number) => !Object.is(value, -0), {
+        expected: 'a finite timestamp with negative zero separately tagged',
+      }),
+    ),
+  }),
+  Schema.Struct({
+    kind: Schema.Literals([
+      CaptureTimestampKind.Missing,
+      CaptureTimestampKind.NotANumber,
+      CaptureTimestampKind.PositiveInfinity,
+      CaptureTimestampKind.NegativeInfinity,
+      CaptureTimestampKind.NegativeZero,
+    ]),
+  }),
+])
+export const OriginalKafkaTransportSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.kafka-original-transport.v1'),
+  timestampMs: CaptureTimestampSchema,
+})
+type CapturedTimestamp = typeof CaptureTimestampSchema.Type
+const captureTimestamp = (value: number | undefined): CapturedTimestamp => {
+  if (value === undefined) return { kind: CaptureTimestampKind.Missing }
+  if (Number.isNaN(value)) return { kind: CaptureTimestampKind.NotANumber }
+  if (value === Infinity) return { kind: CaptureTimestampKind.PositiveInfinity }
+  if (value === -Infinity) return { kind: CaptureTimestampKind.NegativeInfinity }
+  if (Object.is(value, -0)) return { kind: CaptureTimestampKind.NegativeZero }
+  return { kind: CaptureTimestampKind.Value, value }
+}
+export const captureKafkaTransport = (timestampMs: number | undefined): typeof OriginalKafkaTransportSchema.Type => ({
+  schemaVersion: 'bayn.kafka-original-transport.v1',
+  timestampMs: captureTimestamp(timestampMs),
+})
+export const restoreKafkaTransportTimestamp = (
+  transport: typeof OriginalKafkaTransportSchema.Type,
+): number | undefined => {
+  switch (transport.timestampMs.kind) {
+    case CaptureTimestampKind.Value:
+      return transport.timestampMs.value
+    case CaptureTimestampKind.Missing:
+      return undefined
+    case CaptureTimestampKind.NotANumber:
+      return NaN
+    case CaptureTimestampKind.PositiveInfinity:
+      return Infinity
+    case CaptureTimestampKind.NegativeInfinity:
+      return -Infinity
+    case CaptureTimestampKind.NegativeZero:
+      return -0
+  }
+}
+
 export const ResearchCaptureEventSchema = Schema.Union([
+  CaptureIntervalCutSchema,
+  Schema.Struct({
+    kind: Schema.Literal('session-attempt'),
+    attemptId: StrictNonEmptyStringSchema,
+    session: CaptureSessionDeclarationSchema,
+  }),
   Schema.Struct({
     kind: Schema.Literal('market-record'),
     consumerEpoch: StrictNonEmptyStringSchema,
@@ -55,6 +178,7 @@ export const ResearchCaptureEventSchema = Schema.Union([
     topic: StrictNonEmptyStringSchema,
     partition: NonNegativeIntegerSchema,
     offset: UnsignedMicrosSchema,
+    originalTransport: Schema.optionalKey(OriginalKafkaTransportSchema),
     rawValueSha256: Schema.NullOr(Sha256Schema),
     rawByteLength: Schema.NullOr(NonNegativeIntegerSchema),
     tombstone: Schema.Boolean,
@@ -122,6 +246,12 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
 })
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
+const ResearchCaptureExportRootSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v1'),
+  lastIndexHash: Schema.NullOr(Sha256Schema),
+  exportedChunks: NonNegativeIntegerSchema,
+})
+
 export const ResearchCaptureSealSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-capture-seal.v1'),
   qualification: Schema.Enum(CaptureQualification),
@@ -133,6 +263,7 @@ export const ResearchCaptureSealSchema = Schema.Struct({
   persistedChunks: NonNegativeIntegerSchema,
   lastContentHash: Schema.NullOr(Sha256Schema),
   invalidations: Schema.Array(Schema.Enum(CaptureInvalidation)).check(Schema.isUnique()),
+  exportRoot: Schema.optionalKey(ResearchCaptureExportRootSchema),
 })
 export type ResearchCaptureSeal = typeof ResearchCaptureSealSchema.Type
 
@@ -169,14 +300,21 @@ export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
     if (Buffer.byteLength(input.payload, 'utf8') > maximumResearchCaptureSealBytes)
       return yield* Result.fail(fail('Capture seal exceeds the exact UTF8 payload limit'))
     if (sha256(input.payload) !== input.contentHash) return yield* Result.fail(fail('Capture seal hash mismatch'))
-    return yield* Schema.decodeUnknownResult(
+    const seal = yield* Schema.decodeUnknownResult(
       Schema.fromJsonString(ResearchCaptureSealSchema),
       strictParseOptions,
     )(input.payload)
+    if (
+      seal.exportRoot !== undefined &&
+      (seal.exportRoot.exportedChunks !== seal.persistedChunks ||
+        (seal.persistedChunks === 0 ? seal.exportRoot.lastIndexHash !== null : seal.exportRoot.lastIndexHash === null))
+    )
+      return yield* Result.fail(fail('Export root differs from the exact persisted chunk frontier'))
+    return seal
   })
 
 /** A seal describes one worker's capture. It is never evidence of an unobserved worker or epoch. */
-export const verifyResearchCapture = (
+export const verifyResearchCapturePrefix = (
   chunks: readonly ResearchCaptureBytes[],
   sealBytes: ResearchCaptureBytes | undefined,
 ) =>
@@ -189,6 +327,7 @@ export const verifyResearchCapture = (
     let completeSequence = true
     const consumers = new Map<string, number>()
     let activeEpoch: string | undefined
+    let declaredSession: typeof CaptureSessionDeclarationSchema.Type | undefined
     for (const [ordinal, bytes] of chunks.entries()) {
       const chunk = yield* decodeResearchCaptureChunk(bytes)
       if (
@@ -205,7 +344,31 @@ export const verifyResearchCapture = (
         sequence = receipt.sequence
         lastAtMs = receipt.observedAtMs
         const event = receipt.event
-        if (event.kind === 'consumer-boundary') {
+        if (event.kind === 'session-attempt') {
+          if (
+            ordinal !== 0 ||
+            receipt.sequence !== 1 ||
+            chunk.receipts.length !== 1 ||
+            receipt.observedAtMs < event.session.startAtMs ||
+            event.session.startAtMs >= event.session.bootstrapDeadlineMs ||
+            receipt.observedAtMs >= event.session.bootstrapDeadlineMs ||
+            event.session.bootstrapDeadlineMs >= event.session.coverageStartMs ||
+            event.session.coverageStartMs >= event.session.coverageEndMs ||
+            event.session.coverageEndMs >= event.session.stopAtMs
+          )
+            return yield* Result.fail(fail('A session attempt must be the sole first receipt in its claim chunk'))
+          declaredSession = event.session
+        } else if (event.kind === 'consumer-interval-cut' && declaredSession !== undefined) {
+          if (
+            event.intervalId !== declaredSession.intervalId ||
+            event.coverageStartMs !== declaredSession.coverageStartMs ||
+            event.coverageEndMs !== declaredSession.coverageEndMs ||
+            event.universeHash !== declaredSession.universeHash ||
+            JSON.stringify(event.expectedPartitions) !== JSON.stringify(declaredSession.expectedPartitions) ||
+            receipt.observedAtMs >= declaredSession.stopAtMs
+          )
+            return yield* Result.fail(fail('Capture cut differs from its fixed session declaration or stop deadline'))
+        } else if (event.kind === 'consumer-boundary') {
           if (event.phase === 'STARTED') {
             if (activeEpoch !== undefined || consumers.has(event.consumerEpoch))
               return yield* Result.fail(fail('Capture consumer epochs overlap or restart without a new identity'))
@@ -244,16 +407,39 @@ export const verifyResearchCapture = (
       completeSequence &&
       sequence === seal.observedReceipts &&
       activeEpoch === undefined
-    if (seal.invalidations.length === 0 && !structurallyClosed)
+    return {
+      seal,
+      structurallyClosed,
+      continuous: completeSequence && sequence === seal.observedReceipts,
+      complete: false,
+    }
+  })
+
+export const verifyResearchCapture = (
+  chunks: readonly ResearchCaptureBytes[],
+  sealBytes: ResearchCaptureBytes | undefined,
+) =>
+  Result.gen(function* () {
+    const capture = yield* verifyResearchCapturePrefix(chunks, sealBytes)
+    if (capture.seal.invalidations.length === 0 && !capture.structurallyClosed)
       return yield* Result.fail(
         fail('Capture seal omits an observed tail or leaves an open epoch without invalidation'),
       )
-    return { seal, structurallyClosed, complete: false }
+    return capture
   })
 
 export interface ResearchCaptureObserver {
-  readonly record: (event: ResearchCaptureEvent, observedAtMs?: number) => void
+  readonly rawValues?: boolean
+  readonly record: (event: ResearchCaptureEvent, observedAtMs?: number, rawValue?: Uint8Array | null) => void
   readonly invalidate: (reason: CaptureInvalidation) => void
+}
+
+export const capturesResearchRawValues = (observer: ResearchCaptureObserver | undefined): boolean => {
+  if (observer === undefined) return false
+  const result = Result.try(() => observer.rawValues === true)
+  if (Result.isSuccess(result)) return result.success
+  invalidateResearchCapture(observer, CaptureInvalidation.InvalidEvent)
+  return false
 }
 
 const freezeCaptureMetadata = (value: unknown): void => {
@@ -267,12 +453,13 @@ export const recordResearchCapture = (
   observer: ResearchCaptureObserver | undefined,
   event: ResearchCaptureEvent,
   observedAtMs?: number,
+  rawValue?: Uint8Array | null,
 ): void => {
   if (observer === undefined) return
   const result = Result.try(() => {
     const detached = structuredClone(event)
     freezeCaptureMetadata(detached)
-    observer.record(detached, observedAtMs)
+    observer.record(detached, observedAtMs, rawValue)
   })
   if (Result.isFailure(result)) Result.try(() => observer.invalidate(CaptureInvalidation.InvalidEvent))
 }

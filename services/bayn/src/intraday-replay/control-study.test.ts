@@ -17,6 +17,7 @@ import { ControlExit, ControlPolicy } from './control-portfolio'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { residualShockDefinition } from './residual-shock'
 import { makeControlJevJournal } from './control-jev-journal'
+import { ControlInputCoverage, runControlPreflight } from './control-preflight'
 import {
   ControlManagementMode,
   ControlStudyInputSchema,
@@ -675,7 +676,7 @@ test('a canceled residual-shock entry consumes the minute and unknown exit quote
   expect(missing.report.missingExecutionQuotes).toBeGreaterThan(0)
 })
 
-test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
+const frozenControlFixture = () => {
   const retained = retainedReplayFixture()
   const source = {
     ...retained.manifest,
@@ -729,6 +730,11 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
     },
   }
   const receipt = retainedReplayCaptureFixture(source)
+  return { retained, source, input, receipt }
+}
+
+test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
+  const { retained, source, input, receipt } = frozenControlFixture()
   await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -923,7 +929,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         (process) =>
           Effect.sync(() => {
             process.kill()
-          }),
+          }).pipe(Effect.andThen(Effect.promise(() => process.exited))),
       )
       const status = yield* Effect.promise(() => child.exited)
       const error = yield* Effect.promise(() => new Response(child.stderr).text())
@@ -935,6 +941,85 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
       )
       expect(Result.isFailure(corrupt)).toBeTrue()
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer())),
+      Effect.timeout('25 seconds'),
+    ),
   )
 }, 30_000)
+
+test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
+  'offline %s preflight verifies source coverage and writes a diagnostic without provider configuration',
+  async (management) => {
+    const { retained, source, input: base, receipt } = frozenControlFixture()
+    const input = { ...base, management }
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped()
+        const arrivals = `${directory}/arrivals.ndjson.gz`
+        yield* fs.writeFile(arrivals, gzipSync(retained.body))
+        const preflight = yield* runControlPreflight(input, arrivals, receipt)
+        expect(preflight.classification).toBe('INPUT_COMPATIBILITY_ONLY')
+        expect(preflight.coverage).toBe(ControlInputCoverage.Incomplete)
+        expect(preflight.sourceReceipt).toEqual(receipt.value)
+        expect(preflight.sessions).toHaveLength(2)
+        expect(preflight.sessions.every((session) => session.scheduledPollCount === 780)).toBeTrue()
+        expect(
+          preflight.sessions.every(
+            (session) =>
+              session.scheduledPollCount ===
+              session.warmupPollCount + session.entryCutoffPollCount + session.eligiblePollCount,
+          ),
+        ).toBeTrue()
+        expect(preflight).not.toHaveProperty('orders')
+        expect(preflight.reportHash).toBe((yield* runControlPreflight(input, arrivals, receipt)).reportHash)
+        const inputText = JSON.stringify(input)
+        const receiptText = JSON.stringify({
+          schemaVersion: 'bayn.replay-source-capture.v1',
+          capturedAt: new Date(source.coverageEndMs + 1).toISOString(),
+          origin: 'Independently frozen deterministic capture fixture',
+          coverageStartMs: source.coverageStartMs,
+          coverageEndMs: source.coverageEndMs,
+          universe: source.universe,
+          positions: source.positions,
+        })
+        yield* fs.writeFileString(`${directory}/input.json`, inputText)
+        yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
+        const preflightArgs = [
+          'bun',
+          new URL('../../tools/control-study.ts', import.meta.url).pathname,
+          '--input',
+          `${directory}/input.json`,
+          '--input-sha256',
+          sha256(inputText),
+          '--arrivals',
+          arrivals,
+          '--source-receipt',
+          `${directory}/receipt.json`,
+          '--source-receipt-sha256',
+          sha256(receiptText),
+          '--output',
+          `${directory}/preflight.json`,
+          '--mode',
+          'preflight',
+        ]
+        const preflightChild = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            Bun.spawn(preflightArgs, { stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env['PATH'] } }),
+          ),
+          (process) => Effect.sync(() => process.kill()).pipe(Effect.andThen(Effect.promise(() => process.exited))),
+        )
+        const preflightStatus = yield* Effect.promise(() => preflightChild.exited)
+        const preflightError = yield* Effect.promise(() => new Response(preflightChild.stderr).text())
+        expect(preflightStatus).toBe(1)
+        expect(preflightError).toContain('Preflight input coverage is INCOMPLETE')
+        expect(yield* fs.readFileString(`${directory}/preflight.json`)).toBe(`${JSON.stringify(preflight, null, 2)}\n`)
+        yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+        expect(Result.isFailure(yield* Effect.result(runControlPreflight(input, arrivals, receipt)))).toBeTrue()
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.timeout('25 seconds')),
+    )
+  },
+  30_000,
+)

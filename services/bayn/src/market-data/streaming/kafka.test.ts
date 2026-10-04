@@ -8,7 +8,7 @@ import {
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { readFileSync } from 'node:fs'
-import { sha256 } from '../../hash'
+import { canonicalHashV1, sha256 } from '../../hash'
 import { CaptureDisposition, type ResearchCaptureEvent } from '../../research-capture/capture'
 import { AuthenticationError } from '@platformatic/kafka'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
@@ -105,6 +105,97 @@ class FakeTransport implements KafkaProjectionTransport {
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
+for (const scenario of [
+  'ready',
+  'queued',
+  'undrained',
+  'fence-ahead',
+  'invalidated',
+  'future-end',
+  'missing-partition',
+  'lookup-failed',
+  'no-sample',
+  'stale-sample',
+  'replacement-failed',
+  'replacement-pending',
+  'frontier-regressed',
+] as const)
+  test(`research interval cut observes only a valid drained epoch: ${scenario}`, async () => {
+    const transport = new FakeTransport()
+    const events: ResearchCaptureEvent[] = []
+    await program(
+      Effect.gen(function* () {
+        const market = yield* makeKafkaMarketProjection(config, universe, () => transport, undefined, {
+          rawValues: true,
+          record: (event) => events.push(event),
+          invalidate: () => undefined,
+        })
+        yield* TestClock.adjust(1000)
+        const request = {
+          intervalId: 'test-interval',
+          coverageStartMs: 0,
+          coverageEndMs: scenario === 'future-end' || scenario === 'stale-sample' ? 30001 : 1000,
+          universeHash: canonicalHashV1(universe),
+          expectedPartitions: positions('0')
+            .map(({ topic, partition }) => ({ topic, partition }))
+            .toSorted((a, b) => a.topic.localeCompare(b.topic)),
+        }
+        if (scenario === 'queued')
+          transport.queue.push({
+            topic: 'quotes',
+            partition: 0,
+            offset: '0',
+            value: '',
+            timestampMs: 0,
+            leaderEpoch: 1,
+          })
+        if (scenario === 'undrained') transport.drained = undefined
+        if (scenario === 'fence-ahead') transport.offsets = async () => positions('1')
+        if (scenario === 'missing-partition') request.expectedPartitions.pop()
+        if (scenario === 'lookup-failed')
+          transport.offsets = async () => {
+            throw new Error('test lookup failed')
+          }
+        if (scenario === 'frontier-regressed') transport.drained = positions('1')
+        if (scenario !== 'no-sample') yield* TestClock.adjust(29000)
+        if (scenario === 'stale-sample') yield* TestClock.adjust(1000)
+        if (scenario === 'replacement-failed') {
+          transport.offsets = async () => {
+            throw new Error('test replacement sample failed')
+          }
+          yield* TestClock.adjust(30000)
+        }
+        let completeLookup: ((value: readonly KafkaPartitionPosition[]) => void) | undefined
+        if (scenario === 'replacement-pending') {
+          transport.offsets = () =>
+            new Promise((resolve) => {
+              completeLookup = resolve
+            })
+          yield* TestClock.adjust(30000)
+        }
+        if (scenario === 'frontier-regressed') {
+          transport.drained = positions('0')
+          yield* TestClock.adjust(1000)
+        }
+        if (scenario === 'invalidated') transport.invalidated?.(new Error('test assignment lost'))
+        const lookups = [...transport.lookups]
+        const result = yield* market.captureInterval(request).pipe(Effect.result)
+        expect(transport.lookups).toEqual(lookups)
+        completeLookup?.(positions('0'))
+        expect(Result.isSuccess(result)).toBe(scenario === 'ready')
+        expect(events.filter((event) => event.kind === 'consumer-interval-cut')).toHaveLength(
+          scenario === 'ready' ? 1 : 0,
+        )
+        expect(transport.closeCount).toBe(0)
+        if (Result.isSuccess(result)) {
+          expect(result.success.finalConsumerSequence).toBe(0)
+          expect(result.success.committedFence.lookupStartedAtMs).toBe(30000)
+          expect(result.success.drainedPositions).toHaveLength(4)
+        }
+      }),
+    )
+  })
+
 test('Kafka capture hashes exact bytes before UTF8 replacement and distinguishes tombstones from empty payloads', () => {
   const left = decodeKafkaTransportValue(Buffer.from([0x80]), true)
   const right = decodeKafkaTransportValue(Buffer.from([0x81]), true)
@@ -129,9 +220,14 @@ test('Kafka capture hashes exact bytes before UTF8 replacement and distinguishes
   })
   expect(() => decodeKafkaTransportValue(undefined)).toThrow('Kafka market message has no payload')
   expect(decodeKafkaTransportValue(Buffer.from('é'))).toEqual({ value: 'é' })
+  const binary = Buffer.from([0x80])
+  expect(decodeKafkaTransportValue(binary, true, true).rawValue).toBe(binary)
+  expect(decodeKafkaTransportValue(undefined, true, true).rawValue).toBeNull()
+  expect(decodeKafkaTransportValue(Buffer.alloc(0), true, true).rawValue).toEqual(Buffer.alloc(0))
+  expect(decodeKafkaTransportValue(binary, true).rawValue).toBeUndefined()
 })
 
-test('capture observes accepted, rejected and ignored receipts in the same clock and consumer epoch', async () => {
+test.each([false, true])('capture observes dispositions and exact transport time (rawValues=%s)', async (rawValues) => {
   const at = Date.parse('2026-09-11T14:00:02.000Z')
   const quote = (symbol: string) =>
     Buffer.from(
@@ -156,7 +252,7 @@ test('capture observes accepted, rejected and ignored receipts in the same clock
     offset: String(Math.min(index, 2)),
     timestampMs: at,
     leaderEpoch: 1,
-    ...decodeKafkaTransportValue(value, true),
+    ...decodeKafkaTransportValue(value, true, rawValues),
   }))
   const receipts: Array<{ event: ResearchCaptureEvent; atMs: number | undefined }> = []
   let epoch: string | undefined
@@ -166,13 +262,15 @@ test('capture observes accepted, rejected and ignored receipts in the same clock
       const market = yield* makeKafkaMarketProjection(
         config,
         universe,
-        (_config, selectedEpoch, captureRaw) => {
+        (_config, selectedEpoch, captureRaw, captureValues) => {
           expect(captureRaw).toBe(true)
+          expect(captureValues).toBe(rawValues)
           epoch = selectedEpoch
           return transport
         },
         undefined,
         {
+          rawValues,
           record: (event, atMs) => {
             receipts.push({ event, atMs })
           },
@@ -197,6 +295,14 @@ test('capture observes accepted, rejected and ignored receipts in the same clock
         records.every((receipt) => receipt.event.kind === 'market-record' && receipt.event.consumerEpoch === epoch),
       ).toBe(true)
       expect(records[0]?.atMs).toBe(cut.projection.quotes.get('AAPL')?.availableAtMs)
+      if (rawValues) {
+        expect(records[0]?.event).toMatchObject({
+          originalTransport: {
+            schemaVersion: 'bayn.kafka-original-transport.v1',
+            timestampMs: { kind: 'VALUE', value: at },
+          },
+        })
+      } else expect(records[0]?.event).not.toHaveProperty('originalTransport')
       expect(records[1]?.event).toMatchObject({
         rawValueSha256: sha256(Buffer.from([0x80])),
         rawByteLength: 1,

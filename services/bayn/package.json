@@ -14,7 +14,7 @@
     "lint:oxlint": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
     "test": "bun test",
-    "test:property": "bun test src/market-data/intraday/rows.property.test.ts src/market-data/streaming/replay.property.test.ts src/intraday-replay/ledger.property.test.ts src/risk.test.ts --test-name-pattern 'property:' --timeout 150000",
+    "test:property": "bun test src/jev/acceptance.test.ts src/market-data/intraday/rows.property.test.ts src/market-data/streaming/replay.property.test.ts src/market-data/streaming/projection.test.ts src/intraday-replay/ledger.property.test.ts src/risk.test.ts --test-name-pattern 'property:' --timeout 150000",
     "test:fuzz": "BAYN_PROPERTY_RUNS=1000 bun run test:property",
     "test:broker-sandbox": "bun test src/broker-sandbox-contract.test.ts",
     "test:effect-runtime": "bun test src/clickhouse-runtime-compatibility.test.ts src/effect-runtime-compatibility.test.ts",
@@ -25,6 +25,7 @@
     "history": "bun tools/history.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1042.0",
     "@clickhouse/client": "1.23.1",
     "@effect/platform-node": "4.0.0",
     "@effect/sql-clickhouse": "4.0.0",

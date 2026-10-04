@@ -3,8 +3,11 @@ import { Effect, Schema } from 'effect'
 
 import {
   ResearchCaptureFailure,
+  ResearchCaptureIdSchema,
   decodeResearchCaptureChunk,
   decodeResearchCaptureSeal,
+  maximumResearchCaptureChunkBytes,
+  maximumResearchCaptureSealBytes,
   type ResearchCaptureBytes,
 } from '../research-capture/capture'
 import type { ResearchCaptureStore } from '../research-capture/recorder'
@@ -41,6 +44,54 @@ const verifyExisting = (rows: typeof Rows.Type, expected: ResearchCaptureBytes) 
     if (row === undefined || row.content_hash !== expected.contentHash || row.payload !== expected.payload)
       return yield* failure('Research capture identity conflicts with different exact bytes')
   })
+
+export const readResearchCapturePostgresChunk = (
+  sql: PgClient.PgClient,
+  captureId: string,
+  ordinal: number,
+  maximumBytes: number,
+): Effect.Effect<ResearchCaptureBytes, ResearchCaptureFailure> =>
+  run(
+    Effect.gen(function* () {
+      yield* Schema.decodeUnknownEffect(ResearchCaptureIdSchema, strictParseOptions)(captureId)
+      yield* Schema.decodeUnknownEffect(NonNegativeIntegerSchema, strictParseOptions)(ordinal)
+      const budget = yield* Schema.decodeUnknownEffect(NonNegativeIntegerSchema, strictParseOptions)(maximumBytes)
+      const limit = Math.min(budget, maximumResearchCaptureChunkBytes)
+      const rows = yield* sql`
+    SELECT content_hash, payload FROM research_capture_chunks
+    WHERE capture_id = ${captureId} AND chunk_ordinal = ${ordinal}
+      AND octet_length(convert_to(payload, 'UTF8')) <= ${limit}
+  `.pipe(Effect.flatMap(decodeRows))
+      const row = rows[0]
+      if (row === undefined) return yield* failure('Capture chunk is missing or exceeds its SQL read limit')
+      const bytes = { contentHash: row.content_hash, payload: row.payload }
+      yield* Effect.fromResult(decodeResearchCaptureChunk(bytes))
+      return bytes
+    }),
+  )
+
+export const readResearchCapturePostgresSeal = (
+  sql: PgClient.PgClient,
+  captureId: string,
+  maximumBytes: number,
+): Effect.Effect<ResearchCaptureBytes, ResearchCaptureFailure> =>
+  run(
+    Effect.gen(function* () {
+      yield* Schema.decodeUnknownEffect(ResearchCaptureIdSchema, strictParseOptions)(captureId)
+      const budget = yield* Schema.decodeUnknownEffect(NonNegativeIntegerSchema, strictParseOptions)(maximumBytes)
+      const limit = Math.min(budget, maximumResearchCaptureSealBytes)
+      const rows = yield* sql`
+    SELECT content_hash, payload FROM research_capture_seals
+    WHERE capture_id = ${captureId}
+      AND octet_length(convert_to(payload, 'UTF8')) <= ${limit}
+  `.pipe(Effect.flatMap(decodeRows))
+      const row = rows[0]
+      if (row === undefined) return yield* failure('Capture seal is missing or exceeds its SQL read limit')
+      const bytes = { contentHash: row.content_hash, payload: row.payload }
+      yield* Effect.fromResult(decodeResearchCaptureSeal(bytes))
+      return bytes
+    }),
+  )
 
 export const makeResearchCapturePostgresStore = (sql: PgClient.PgClient): ResearchCaptureStore => ({
   append: (bytes) =>

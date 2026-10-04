@@ -2,16 +2,21 @@ import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Deferred, Effect, Exit, Fiber, Redacted, Schema } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Layer, Redacted, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { canonicalHashV1OrThrow } from '../hash'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { utcInstantFromEpochMillis } from '../time'
+import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { operationCurrentTimeMillis } from '../operation-timeout'
 import { ReplayBrokerFailure } from './broker'
 import { makeSimulatedExecutionClock } from './clock'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
+import { executionStoreError } from '../db/execution-store/errors'
+import { containRuntimeFailure } from '../simulation-reconciliation/broker-containment'
+import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
+import { makeRecoveryClockFixture, makeRecoveryContainmentStore } from './recovery-clock.test-support'
 
 const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
 const initialAt = Date.parse('2026-09-04T14:00:00.000Z')
@@ -32,7 +37,7 @@ const fixture = Effect.gen(function* () {
   return { clock, sql, commitNow, stopped }
 })
 
-const run = <A, E>(operation: Effect.Effect<A, E, Effect.Services<typeof fixture>>) => {
+const run = <A, E>(operation: Effect.Effect<A, E, Effect.Services<typeof fixture> | WriterFence>) => {
   if (baynTestPostgresUrl === undefined) throw new Error('Missing isolated replay database')
   const url = new URL(baynTestPostgresUrl)
   if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test'))
@@ -41,16 +46,87 @@ const run = <A, E>(operation: Effect.Effect<A, E, Effect.Services<typeof fixture
     operation.pipe(
       Effect.scoped,
       Effect.provide(
-        PostgresClientLive({
-          operationTimeoutMs: 30000,
-          postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
-        }),
+        WriterFenceLive.pipe(
+          Layer.provideMerge(
+            PostgresClientLive({
+              operationTimeoutMs: 30000,
+              postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
+            }),
+          ),
+        ),
       ),
       Effect.provide(TestClock.layer()),
       Effect.provide(NodeServices.layer),
     ),
   )
 }
+
+postgresTest.each(['failure', 'defect', 'interruption'] as const)(
+  'recovery fixture preserves native containment and both clocks after %s',
+  async (mode) => {
+    await run(
+      Effect.gen(function* () {
+        const { clock, sql, commitNow } = yield* fixture
+        const fence = yield* WriterFence
+        yield* sql`CREATE TABLE IF NOT EXISTS recovery_clock_fixture_restrictions (
+          account_id text PRIMARY KEY, reason text NOT NULL
+        )`
+        const store = makeRecoveryContainmentStore((reason) =>
+          sql`INSERT INTO recovery_clock_fixture_restrictions VALUES (${clock.accountId}, ${reason})`.pipe(
+            Effect.asVoid,
+            Effect.mapError((cause) =>
+              executionStoreError({
+                operation: 'authority',
+                failure: 'query',
+                message: 'Fixture restriction failed',
+                cause,
+              }),
+            ),
+          ),
+        )
+        const advance = Effect.gen(function* () {
+          const next = (yield* Clock.currentTimeMillis) + 1
+          yield* clock.advanceTo(utcInstantFromEpochMillis(next))
+          yield* TestClock.setTime(next)
+        })
+        const recoveryClock = yield* makeRecoveryClockFixture(advance)
+        const entered = yield* Deferred.make<void>()
+        const failure = new ReconciliationError({
+          operation: 'snapshot',
+          message: 'synthetic native reconciliation failure',
+        })
+        const reconcile = containRuntimeFailure(
+          fence.transaction(
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(
+                mode === 'interruption' ? Effect.never : mode === 'defect' ? Effect.die(failure) : Effect.fail(failure),
+              ),
+            ),
+          ),
+          store,
+          fence,
+          currentUtcInstant,
+        )
+        const worker = yield* recoveryClock.reconcile(reconcile).pipe(Effect.exit, Effect.forkChild)
+        yield* Deferred.await(entered)
+        if (mode === 'interruption') yield* Fiber.interrupt(worker)
+        else {
+          const exit = yield* Fiber.join(worker)
+          expect(exit._tag).toBe('Failure')
+          if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(failure)
+        }
+        expect(
+          yield* sql`SELECT reason FROM recovery_clock_fixture_restrictions WHERE account_id = ${clock.accountId}`,
+        ).toEqual(mode === 'interruption' ? [] : [{ reason: 'reconciliation pass incomplete' }])
+        expect(yield* commitNow).toBe(initialAt + 1)
+        expect(yield* Clock.currentTimeMillis).toBe(initialAt + 1)
+        yield* recoveryClock.reconcile(Effect.void)
+        expect(yield* commitNow).toBe(initialAt + 3)
+        expect(yield* Clock.currentTimeMillis).toBe(initialAt + 3)
+      }),
+    )
+  },
+)
 
 postgresTest.each(['success', 'typed failure', 'defect'] as const)(
   'database clock excludes source work and resumes persistence measurement after %s',
