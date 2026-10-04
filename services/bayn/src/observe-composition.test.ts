@@ -3840,6 +3840,7 @@ describe('OBSERVE runtime composition', () => {
                 expiresAt: fixture.boundCycle.window.executionCloseAt,
               },
               reconcile,
+              refreshReconciliation: reconcile,
               existing: previousClosure,
             })
             if (result._tag !== 'Close') throw new Error('expected a created close')
@@ -5431,7 +5432,10 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
                     : Effect.succeed(fixture.document)
                 }),
             },
-            Effect.succeed(reconciliationResultAt(evaluatedAt)),
+            {
+              read: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+              refresh: Effect.succeed(reconciliationResultAt(evaluatedAt)),
+            },
             { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
           ),
         )
@@ -5543,7 +5547,7 @@ test('reads the execution closure once without weakening completion evidence', a
             executionPolicy: fixture.preparation.executionPolicy,
             buildDecision: forbidden,
           },
-          Effect.succeed(reconciliationResultAt(at)),
+          { read: Effect.succeed(reconciliationResultAt(at)), refresh: Effect.succeed(reconciliationResultAt(at)) },
           { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
         ),
       )

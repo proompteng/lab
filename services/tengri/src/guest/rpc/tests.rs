@@ -1,3 +1,4 @@
+use super::test_server::{TestServer, TestService};
 use super::*;
 use axum::Router;
 use futures::StreamExt;
@@ -252,7 +253,7 @@ async fn fixture() -> (Fixture, GuestClient) {
     child.preview_port = config["previewPort"].as_str().unwrap().parse().unwrap();
     let identity = crate::identity::WorkloadIdentity::from_endpoint(
         config["workloadEndpoint"].as_str().unwrap().to_owned(),
-        "galactic.proompteng.ai".parse().unwrap(),
+        "proompteng.ai".parse().unwrap(),
         "tengri",
     )
     .await
@@ -318,13 +319,13 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
             )
             .serve_with_incoming(tls_incoming(listener, tls)),
     );
-    let peer: SpiffeId = "spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri"
+    let peer: SpiffeId = "spiffe://proompteng.ai/ns/tengri/sa/tengri"
         .parse()
         .unwrap();
     let bff_source = X509Source::builder()
         .endpoint(&fixture.endpoint)
         .picker(Pick(
-            "spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng"
+            "spiffe://proompteng.ai/ns/proompteng/sa/proompteng"
                 .parse()
                 .unwrap(),
         ))
@@ -333,7 +334,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
         .unwrap();
     let bff = WorkloadIdentity::Spiffe {
         source: bff_source.clone(),
-        domain: "galactic.proompteng.ai".parse().unwrap(),
+        domain: "proompteng.ai".parse().unwrap(),
     };
     let connect = |source: &WorkloadIdentity| {
         RpcClient::new(
@@ -647,4 +648,146 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
             ..
         })
     ));
+}
+
+#[tokio::test]
+async fn codex_images_are_written_before_use_as_persistent_local_inputs() {
+    use std::sync::{Arc, Mutex};
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let observed = writes.clone();
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(Arc::new(|request| {
+            assert_eq!(request.get_ref().path, "/workspace/.tengri-attachments");
+            Err(tonic::Status::aborted("path already exists"))
+        })),
+        write_file: Some(Arc::new(move |request| {
+            let file = request.into_inner();
+            assert_eq!(file.expected_revision, "missing");
+            observed
+                .lock()
+                .unwrap()
+                .push((file.path.clone(), file.content.clone()));
+            Ok(proto::FileWriteResult {
+                path: file.path,
+                size: file.content.len() as i64,
+                revision: revision_for_content(&file.content),
+            })
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    let input =
+        crate::grpc::codex_turn_input(&fixture.guest, "Inspect this", std::slice::from_ref(&image))
+            .await
+            .unwrap();
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].1, image.content);
+    assert!(writes[0].0.starts_with("/workspace/.tengri-attachments/"));
+    assert!(writes[0].0.ends_with(".png"));
+    assert_eq!(input[0]["type"], "text");
+    assert_eq!(
+        input[1],
+        serde_json::json!({"type":"localImage","path":writes[0].0})
+    );
+}
+
+#[tokio::test]
+async fn codex_image_storage_failure_does_not_produce_an_input() {
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(std::sync::Arc::new(|_| {
+            Err(tonic::Status::permission_denied("read-only workspace"))
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    assert!(
+        crate::grpc::codex_turn_input(&fixture.guest, "", &[image])
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
+    use std::sync::{Arc, Mutex};
+    let files = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let writes = files.clone();
+    let deletes = files.clone();
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(Arc::new(|request| {
+            Ok(proto::FileEntry {
+                path: request.into_inner().path,
+                directory: true,
+                ..Default::default()
+            })
+        })),
+        write_file: Some(Arc::new(move |request| {
+            let file = request.into_inner();
+            let mut files = writes.lock().unwrap();
+            files.insert(file.path.clone(), file.content.clone());
+            if files.len() == 2 {
+                return Err(tonic::Status::internal(
+                    "directory sync failed after rename",
+                ));
+            }
+            Ok(proto::FileWriteResult {
+                path: file.path,
+                size: file.content.len() as i64,
+                revision: revision_for_content(&file.content),
+            })
+        })),
+        delete_file: Some(Arc::new(move |request| {
+            let file = request.into_inner();
+            assert!(!file.recursive);
+            assert!(deletes.lock().unwrap().remove(&file.path).is_some());
+            Ok(proto::Empty {})
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    assert!(
+        crate::grpc::codex_turn_input(&fixture.guest, "Inspect these", &[image.clone(), image])
+            .await
+            .is_err()
+    );
+    assert!(files.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn image_cleanup_preserves_an_existing_file_rejected_by_create_only_write() {
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(std::sync::Arc::new(|_| {
+            Err(tonic::Status::already_exists("directory exists"))
+        })),
+        write_file: Some(std::sync::Arc::new(|_| {
+            Err(tonic::Status::aborted("file exists"))
+        })),
+        delete_file: Some(std::sync::Arc::new(|_| {
+            panic!("must not delete the existing file")
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    assert!(
+        crate::grpc::codex_turn_input(&fixture.guest, "", &[image])
+            .await
+            .is_err()
+    );
 }

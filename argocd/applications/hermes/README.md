@@ -1,9 +1,7 @@
 # Hermes production
 
-Hermes is disabled. The `hermes_rollout_enabled` recording rule is explicitly zero while stopped. GitOps enforces zero gateway and egress-proxy replicas, suspends scheduled backups, and retains the data and backup PVCs. The Argo Application follows `main` to enforce this stopped state; automatic `hermes-toolchain` promotion and its Argo authorization are disabled. Re-enabling requires a reviewed change that restores the Kargo source and authorization, replicas, backup schedule, rollout alert label, and `hermes_rollout_enabled` recording rule.
-
-The retained Hermes configuration serves the Tuslagch assistant through an authenticated cluster-local Service and private
-Tailscale Ingress when enabled. Neither endpoint currently has a running backend. Before re-enabling, pass the live
+Hermes serves the Tuslagch assistant through an authenticated cluster-local Service and private Tailscale Ingress.
+GitOps enables one gateway, one egress proxy, daily backups, and rollout alerts. Before restoring service, pass the live
 NetworkPolicy enforcement probe. Hermes and OpenClaw must never use the Discord token concurrently.
 
 ## Release and supply chain
@@ -27,13 +25,10 @@ the fetched in-toto predicate/source revision before copying the immutable index
 `registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64`. Run it before syncing the manifest so the private digest
 reference is pullable. The workflow never writes a Kargo tag or the Kargo-managed toolchain digest.
 
-All runtime image references are immutable digests. Relevant merges to `main` can still build toolchain images and create
-Freight, but automatic promotion is disabled and Hermes no longer authorizes the Stage. Argo follows `main` and enforces
-zero replicas. Publishing a new image does not restart Hermes.
-
-After a reviewed re-enablement restores `kargo/hermes-toolchain`, its Stage authorization, and automatic promotion, Kargo
-again copies the selected source into that deployment branch and updates the immutable toolchain reference. Freight,
-Stage, and the resulting branch commit are the deployment record.
+All runtime image references are immutable digests. Relevant merges to `main` build the Hermes toolchain image. After
+successful publication, Kargo creates Freight and automatically promotes Stage `lab-delivery/hermes-toolchain`.
+Kargo copies the selected source into `kargo/hermes-toolchain` and updates the immutable toolchain reference. Argo reconciles
+that deployment branch. Freight, Stage, and the resulting branch commit are the deployment record.
 There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.
 
 The StatefulSet is the only committed surface that owns the current Hermes toolchain digest. Do not copy that ephemeral

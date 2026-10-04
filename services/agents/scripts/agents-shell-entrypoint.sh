@@ -5,7 +5,7 @@ export HOME="${HOME:-/workspace/.agents-shell/home}"
 mkdir -p "${HOME}" /workspace/.agents-shell
 
 git config --global user.name "${AGENTS_SHELL_GIT_USER_NAME:-Greg Konush}"
-git config --global user.email "${AGENTS_SHELL_GIT_USER_EMAIL:-greg@proompteng.ai}"
+git config --global user.email "${AGENTS_SHELL_GIT_USER_EMAIL:-12027037+gregkonush@users.noreply.github.com}"
 git config --global --add safe.directory /workspace/lab
 git config --global init.defaultBranch main
 

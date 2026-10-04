@@ -79,6 +79,7 @@ ENV CARGO_HOME=/home/nanoagent/.cargo \
     NPM_CONFIG_PREFIX=/home/nanoagent/.local \
     PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
+    DEVELOPER_TOOLS_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-developer-tools \
     XDG_CACHE_HOME=/home/nanoagent/.cache
 
 RUN set -eux; \
@@ -138,6 +139,10 @@ COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
 COPY --chmod=0555 bootstrap-spire-agent.sh /usr/local/bin/bootstrap-spire-agent
+COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-developer-tools
+COPY --chmod=0444 astronvim-init.lua /usr/share/nanoagent/astronvim-init.lua
+RUN chmod 0755 /usr/share/nanoagent
+COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
 FROM runtime AS guest-admin-smoke
@@ -305,7 +310,10 @@ FROM runtime AS runtime-with-toolchain
 
 COPY --from=development-toolchain-bundle /out/development-toolchain.tar.xz /usr/share/nanoagent/development-toolchain.tar.xz
 COPY --chmod=0555 bootstrap-toolchain.sh /usr/local/bin/bootstrap-toolchain
-RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate-manifest
+RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate-manifest && \
+    ln -s /home/nanoagent/.local/bin/cc /usr/bin/cc && \
+    ln -s /home/nanoagent/.local/bin/gcc /usr/bin/gcc && \
+    ln -s /home/nanoagent/.linuxbrew/bin/make /usr/bin/make
 
 FROM runtime-with-toolchain AS toolchain-smoke
 
@@ -389,6 +397,31 @@ RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
     SPIRE_AGENT_VALIDATE_BINARY="$HOME/.local/bin/spire-agent" \
       /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v
 
+FROM runtime-with-toolchain AS developer-tools-smoke
+USER 1000:1000
+RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-only && \
+    . /etc/profile.d/tengri-development.sh && \
+    brew config > /tmp/developer-tools-version && \
+    brew list --versions >> /tmp/developer-tools-version && \
+    brew doctor && \
+    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled == false)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
+    tree-sitter --version && \
+    test "$EDITOR" = nvim && test "$VISUAL" = nvim && \
+    test "$(node --version)" = v24.11.1 && \
+    test "$(gcc -dumpfullversion)" = 13.3.0 && \
+    gh --version && fd --version && fzf --version && tmux -V && \
+    make --version && cmake --version && pkg-config --version && \
+    printf '#include <iostream>\nint main(){std::cout << "cpp-ok";}\n' > /tmp/cpp-smoke.cpp && \
+    test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \
+    brew install --formula --force-bottle hello && \
+    test "$(hello)" = 'Hello, world!' && \
+    sha256sum "$HOME/.config/nvim/init.lua" "$HOME/.config/nvim/lazy-lock.json" > /tmp/astronvim-config.sha256 && \
+    bootstrap-developer-tools --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
+    mkdir -p "$HOME/.custom-config/nvim" && \
+    printf 'vim.g.user_config_preserved = true\n' > "$HOME/.custom-config/nvim/init.lua" && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" bootstrap-developer-tools --install-only && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
+
 FROM runtime-with-toolchain AS guest-rootfs
 
 COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
@@ -396,6 +429,7 @@ COPY --from=spire-agent-smoke /tmp/spire-agent-version /usr/share/nanoagent/spir
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
+COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoagent/developer-tools-version
 
 FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
 

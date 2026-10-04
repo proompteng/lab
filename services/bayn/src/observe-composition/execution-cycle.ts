@@ -18,6 +18,7 @@ import {
 } from '../db/execution-cycle-closure'
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { WriterFence } from '../execution/writer-fence'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import { recover as recoverMutation } from '../execution/coordinator'
 import { BrokerAccess } from '../execution/authority'
@@ -47,7 +48,6 @@ import {
   countOpenPositions,
   decideExecutionIntentTerminalDisposition,
   mutationIntentReconciliationDelayMs,
-  executionClosePlanNeedsResidualReplan,
   type BoundMutationCycleOutcome,
   type PreparedMutationCycleStep,
 } from './mutation-decisions'
@@ -255,10 +255,15 @@ const readLatestExecutionCycleCloseReplan = (
     Effect.map(Option.getOrUndefined),
   )
 
-const readResidualCloseReconciliation = <R>(
+type TerminalCloseEvidence =
+  | { readonly _tag: 'Unsettled' }
+  | { readonly _tag: 'Unavailable' }
+  | { readonly _tag: 'Settled'; readonly reconciliation: ReconciliationPassResult; readonly settledAt: string }
+
+const readTerminalCloseReconciliation = <R>(
   document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
-): Effect.Effect<ReconciliationPassResult | undefined, CycleRunnerError, R | IntentStore> =>
+): Effect.Effect<TerminalCloseEvidence, CycleRunnerError, R | IntentStore> =>
   Effect.gen(function* () {
     const intentStore = yield* IntentStore
     const records = yield* Effect.forEach(
@@ -278,19 +283,19 @@ const readResidualCloseReconciliation = <R>(
       records.some(Option.isNone) ||
       records.some((record) => Option.isSome(record) && record.value.intent.state !== IntentState.Terminal)
     ) {
-      return undefined
+      return { _tag: 'Unsettled' } as const
     }
-    const facts = yield* reconcile.pipe(
-      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution residual close reconciliation failed')),
+    const refreshed = yield* Effect.result(reconcile)
+    if (Result.isFailure(refreshed)) {
+      if (refreshed.failure._tag === 'BrokerReadError' && refreshed.failure.retryable)
+        return { _tag: 'Unavailable' } as const
+      return yield* reconciliationRunnerError(refreshed.failure, 'execution terminal close reconciliation failed')
+    }
+    const settledAt = records.reduce(
+      (latest, record) => (Option.isSome(record) && record.value.updatedAt > latest ? record.value.updatedAt : latest),
+      document.createdAt,
     )
-    return executionClosePlanNeedsResidualReplan(
-      records
-        .map((record) => (Option.isSome(record) ? record.value.intent : undefined))
-        .filter((intent): intent is NonNullable<typeof intent> => intent !== undefined),
-      countOpenPositions(facts.brokerState.positions),
-    )
-      ? facts
-      : undefined
+    return { _tag: 'Settled', reconciliation: refreshed.success, settledAt } as const
   })
 
 export type ExecutionCycleCloseDocumentDecision =
@@ -313,7 +318,7 @@ const terminalOrderStatuses = new Set<OrderStatus>([
   OrderStatus.Rejected,
 ])
 
-export const isExecutionCycleReconciledFlat = (facts: {
+const isExecutionCycleReconciled = (facts: {
   readonly report: {
     readonly reconciliation: { readonly status: ReconciliationStatus }
     readonly metrics: { readonly accountingExact: boolean }
@@ -329,8 +334,20 @@ export const isExecutionCycleReconciledFlat = (facts: {
   facts.report.metrics.accountingExact &&
   facts.riskContext.unknownMutationCount === 0 &&
   facts.brokerState.unknownOrderCount === 0 &&
-  countOpenPositions(facts.brokerState.positions) === 0 &&
   facts.brokerState.orders.every(({ status }) => terminalOrderStatuses.has(status))
+
+export const isExecutionCycleReconciledFlat = (facts: Parameters<typeof isExecutionCycleReconciled>[0]): boolean =>
+  isExecutionCycleReconciled(facts) && countOpenPositions(facts.brokerState.positions) === 0
+
+const reconciliationObservationTimes = (facts: ReconciliationPassResult): readonly string[] => [
+  facts.report.reconciliation.reconciledAt,
+  facts.brokerState.account.observedAt,
+  facts.brokerState.positionsObservedAt,
+  facts.brokerState.ordersObservedAt,
+]
+
+const isTerminalCloseReconciliationReady = (facts: ReconciliationPassResult, settledAt: string): boolean =>
+  isExecutionCycleReconciled(facts) && reconciliationObservationTimes(facts).every((at) => at >= settledAt)
 
 export const decideReconciledExecutionCycleCompletion = (
   facts: ReconciliationPassResult,
@@ -420,6 +437,7 @@ export const ensureExecutionCycleClosure = <R>({
   entryDocument,
   closeWindow,
   reconcile,
+  refreshReconciliation,
   existing,
   exitTarget,
 }: {
@@ -430,6 +448,7 @@ export const ensureExecutionCycleClosure = <R>({
   readonly entryDocument: ExecutionDecisionDocument
   readonly closeWindow: ExecutionCycleCloseWindow
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
+  readonly refreshReconciliation: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
   readonly existing: ExecutionCycleClosure | undefined
   readonly exitTarget?: JevExitTarget
 }): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, R | IntentStore | MutationStore> =>
@@ -513,9 +532,21 @@ export const ensureExecutionCycleClosure = <R>({
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
-    const residualReconciliation = yield* readResidualCloseReconciliation(active.document, reconcile)
-    if (residualReconciliation === undefined) {
+    const terminal = yield* readTerminalCloseReconciliation(active.document, refreshReconciliation)
+    if (terminal._tag === 'Unsettled') {
       return { _tag: 'Close', document: active.document } as const
+    }
+    if (terminal._tag === 'Unavailable')
+      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'BROKER_OBSERVATION_PENDING' } as const
+    const residualReconciliation = terminal.reconciliation
+    if (!isTerminalCloseReconciliationReady(residualReconciliation, terminal.settledAt))
+      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'COMPLETION_EVIDENCE_PENDING' } as const
+    if (isExecutionCycleReconciledFlat(residualReconciliation)) {
+      const terminalization = decideReconciledExecutionCycleTerminalization(
+        residualReconciliation,
+        yield* entryExecutionCycleIntentEvidence(entryDocument, residualReconciliation.brokerState.orders),
+      )
+      if (terminalization !== undefined) return terminalization
     }
 
     const prepared = yield* prepareClosingExecutionCycleDecision({
@@ -524,14 +555,42 @@ export const ensureExecutionCycleClosure = <R>({
       policy,
       cycle,
       entryDocument,
-      reconcile,
+      reconcile: refreshReconciliation.pipe(
+        Effect.flatMap((facts) =>
+          isTerminalCloseReconciliationReady(facts, terminal.settledAt) &&
+          countOpenPositions(facts.brokerState.positions) > 0 &&
+          reconciliationObservationTimes(facts).every(
+            (at, index) => at >= (reconciliationObservationTimes(residualReconciliation)[index] ?? terminal.settledAt),
+          )
+            ? Effect.succeed(facts)
+            : Effect.fail(
+                new BrokerReadError({
+                  operation: 'preflight',
+                  kind: BrokerReadErrorKind.ObservationPending,
+                  message: 'terminal close reconciliation evidence is not ready',
+                  retryable: true,
+                }),
+              ),
+        ),
+      ),
       initialReconciliation: residualReconciliation,
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
       ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v1'
         ? { exitTarget: existing.document.strategyDecision }
         : {}),
-    })
+    }).pipe(
+      Effect.catchTag('CycleRunnerError', (failure) =>
+        failure.operation === 'reconcile' &&
+        failure.cause instanceof OperationalError &&
+        failure.cause.operation === 'reconciliation' &&
+        failure.cause.retryable
+          ? Effect.void
+          : Effect.fail(failure),
+      ),
+    )
+    if (prepared === undefined)
+      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'BROKER_OBSERVATION_PENDING' } as const
     const document = prepared.document
     const decision = decideExecutionCycleCloseDocument(document)
     if (decision._tag !== 'Bind') {
@@ -653,16 +712,22 @@ export const prepareNextMutationIntent = (
     },
   )
 
+interface ExecutionReconciliation {
+  readonly read: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>
+  readonly refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>
+}
+
 const executeBoundExecutionCycle = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
   document: ExecutionDecisionDocument,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
+    const reconcile = reconciliation.read
     const observedAt = yield* currentUtcInstant
     const runtimeMatchesCycle = runtimeStrategyMatchesCycle(input, cycle)
     if (!runtimeMatchesCycle || preparation.executionModel.schemaVersion !== 'bayn.execution-model.v5') {
@@ -766,6 +831,7 @@ const executeBoundExecutionCycle = (
           entryDocument: document,
           closeWindow,
           reconcile,
+          refreshReconciliation: reconciliation.refresh,
           existing: committedClosure,
         })
         if (closure._tag !== 'Close') return closure
@@ -852,6 +918,7 @@ const executeBoundExecutionCycle = (
             entryDocument: document,
             closeWindow,
             reconcile,
+            refreshReconciliation: reconciliation.refresh,
             existing: committedClosure,
             exitTarget: management.target,
           })
@@ -1154,7 +1221,7 @@ const recoverBoundMutationCycle = (
   policy: Policy,
   cycle: AutonomousCycle,
   context: CycleRunContext<ObserveDecisionRuntime>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readBoundMutationDocument(cycle).pipe(
@@ -1174,7 +1241,7 @@ const recoverBoundMutationCycle = (
                 recovered.policy,
                 cycle,
                 document,
-                reconcile,
+                reconciliation,
                 capability,
               ),
             ),
@@ -1187,7 +1254,7 @@ export const runRecoveryFirstCyclePass = (
   input: ObserveAutonomousCycleInput,
   policy: Policy,
   context: CycleRunContext<ObserveDecisionRuntime>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
@@ -1195,7 +1262,7 @@ export const runRecoveryFirstCyclePass = (
     const completedProgress = new Set<CyclePassProgress>()
     while (true) {
       if (cycle !== undefined && mutationBound(cycle)) {
-        return yield* recoverBoundMutationCycle(input, policy, cycle, context, reconcile, capability)
+        return yield* recoverBoundMutationCycle(input, policy, cycle, context, reconciliation, capability)
       }
       const observedAt = yield* currentUtcInstant
       if (cycle !== undefined) {

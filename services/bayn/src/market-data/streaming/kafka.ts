@@ -1,4 +1,14 @@
 import { randomUUID } from 'node:crypto'
+import { sha256 } from '../../hash'
+import {
+  CaptureDisposition,
+  captureKafkaTransport,
+  capturesResearchRawValues,
+  CaptureInvalidation,
+  invalidateResearchCapture,
+  recordResearchCapture,
+  type ResearchCaptureObserver,
+} from '../../research-capture/capture'
 import {
   bootstrapKafkaPartitions,
   canonicalPositions,
@@ -68,6 +78,10 @@ const failure = (operation: KafkaMarketFailure['operation'], message: string, ca
 export interface KafkaConsumedRecord extends KafkaMarketRecord {
   readonly timestampMs: number
   readonly leaderEpoch: number
+  readonly rawValueSha256?: string | null
+  readonly rawByteLength?: number | null
+  readonly tombstone?: boolean
+  readonly rawValue?: Uint8Array | null
 }
 export interface KafkaProjectionStream extends AsyncIterable<KafkaConsumedRecord> {
   readonly queuedRecords: () => number
@@ -82,19 +96,63 @@ export interface KafkaProjectionTransport {
   ) => Promise<KafkaProjectionStream>
   readonly close: () => Promise<void>
 }
-export type KafkaProjectionTransportFactory = (config: KafkaMarketConfig, epoch: string) => KafkaProjectionTransport
+export type KafkaProjectionTransportFactory = (
+  config: KafkaMarketConfig,
+  epoch: string,
+  captureRawIdentity?: boolean,
+  captureRawValues?: boolean,
+) => KafkaProjectionTransport
+
+export const decodeKafkaTransportValue = (
+  value: Buffer | string | undefined,
+  captureRawIdentity = false,
+  captureRawValues = false,
+) => {
+  if (value === undefined) {
+    if (!captureRawIdentity) throw new Error('Kafka market message has no payload')
+    return {
+      value: '',
+      rawValueSha256: null,
+      rawByteLength: null,
+      tombstone: true,
+      ...(captureRawValues ? { rawValue: null } : {}),
+    }
+  }
+  if (typeof value === 'string') return { value }
+  const rawIdentity = captureRawIdentity ? { rawValueSha256: sha256(value), rawByteLength: value.byteLength } : {}
+  return { ...rawIdentity, ...(captureRawValues ? { rawValue: value } : {}), value: value.toString('utf-8') }
+}
+
+export const kafkaCaptureDisposition = (previous: StreamingProjection, next: StreamingProjection) => {
+  if (next.rejections !== previous.rejections || next.technicalRejections !== previous.technicalRejections)
+    return CaptureDisposition.Rejected
+  return next.bars !== previous.bars ||
+    next.quotes !== previous.quotes ||
+    next.trades !== previous.trades ||
+    next.features !== previous.features ||
+    next.technicalFeatures !== previous.technicalFeatures
+    ? CaptureDisposition.Accepted
+    : CaptureDisposition.Ignored
+}
 
 const positionList = (offsets: Offsets): readonly KafkaPartitionPosition[] =>
   [...offsets].flatMap(([topic, values]) =>
     values.map((offset, partition) => ({ topic, partition, offset: String(offset) })),
   )
 
-export const platformaticProjectionTransport: KafkaProjectionTransportFactory = (config, epoch) => {
-  const consumer = new Consumer({
+export const platformaticProjectionTransport: KafkaProjectionTransportFactory = (
+  config,
+  epoch,
+  captureRawIdentity = false,
+  captureRawValues = false,
+) => {
+  const consumer = new Consumer<string, string | Buffer, string, string>({
     clientId: `bayn-market-${epoch}`,
     groupId: `${config.groupPrefix}-${epoch}`,
     bootstrapBrokers: [...config.brokers],
-    deserializers: stringDeserializers,
+    deserializers: captureRawIdentity
+      ? { ...stringDeserializers, value: (data?: Buffer) => data }
+      : stringDeserializers,
     sasl: { mechanism: 'SCRAM-SHA-512', username: config.username, password: Redacted.value(config.password) },
     autocreateTopics: false,
     timeout: config.operationTimeoutMs,
@@ -104,7 +162,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
     retryDelay: 250,
   })
   let closePromise: Promise<void> | undefined
-  let active: MessagesStream<string, string, string, string> | undefined
+  let active: MessagesStream<string, string | Buffer, string, string> | undefined
   const close = (): Promise<void> => {
     if (closePromise === undefined) {
       active?.destroy()
@@ -132,7 +190,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
       consumer.on('consumer:heartbeat:stalled', () =>
         invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.HeartbeatStalled })),
       )
-      const source = await new Promise<MessagesStream<string, string, string, string>>((resolve, reject) => {
+      const source = await new Promise<MessagesStream<string, string | Buffer, string, string>>((resolve, reject) => {
         if (closePromise !== undefined) {
           reject(new Error('Kafka consumer is closed'))
           return
@@ -193,14 +251,14 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
               if (result.done === true) return { done: true, value: undefined }
               pending = true
               const message = result.value
-              if (message.value === undefined) throw new Error('Kafka market message has no payload')
+              const payload = decodeKafkaTransportValue(message.value, captureRawIdentity, captureRawValues)
               return {
                 done: false,
                 value: {
                   topic: message.topic,
                   partition: message.partition,
                   offset: String(message.offset),
-                  value: message.value,
+                  ...payload,
                   timestampMs: Number(message.timestamp),
                   leaderEpoch: message.leaderEpoch,
                 },
@@ -243,6 +301,7 @@ export const makeKafkaMarketProjection = (
   universe: StreamingUniverse,
   factory: KafkaProjectionTransportFactory = platformaticProjectionTransport,
   diagnosticStartMs?: number,
+  capture?: ResearchCaptureObserver,
 ) =>
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
@@ -259,15 +318,23 @@ export const makeKafkaMarketProjection = (
     const cycle = Effect.scoped(
       Effect.gen(function* () {
         const epoch = yield* Effect.sync(randomUUID)
+        let consumerSequence = 0
         projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
         ready = false
         bootstrap = undefined
         positions = []
         lastFailure = undefined
         closeFailure = undefined
+        recordResearchCapture(capture, {
+          kind: 'consumer-boundary',
+          consumerEpoch: epoch,
+          phase: 'STARTED',
+          positions: [],
+        })
+        const captureRawValues = capturesResearchRawValues(capture)
         const transport = yield* Effect.acquireRelease(
           Effect.try({
-            try: () => factory(config, epoch),
+            try: () => factory(config, epoch, capture !== undefined, captureRawValues),
             catch: (cause) => failure('connect', 'Kafka client acquisition failed', cause),
           }),
           (resource) =>
@@ -281,6 +348,16 @@ export const makeKafkaMarketProjection = (
                 }),
               ),
               Effect.orDie,
+              Effect.ensuring(
+                Effect.sync(() =>
+                  recordResearchCapture(capture, {
+                    kind: 'consumer-boundary',
+                    consumerEpoch: epoch,
+                    phase: 'STOPPED',
+                    positions,
+                  }),
+                ),
+              ),
             ),
         )
         const operation = <A>(name: KafkaMarketFailure['operation'], run: () => Promise<A>) =>
@@ -322,6 +399,13 @@ export const makeKafkaMarketProjection = (
           partition: partition.partition,
           offset: partition.startOffset,
         }))
+        recordResearchCapture(capture, {
+          kind: 'consumer-boundary',
+          consumerEpoch: epoch,
+          phase: 'ASSIGNED',
+          positions,
+          bootstrap: evidence,
+        })
         const source = yield* operation('consume', () =>
           transport.consume(
             partitions.map((partition) => ({
@@ -340,10 +424,18 @@ export const makeKafkaMarketProjection = (
                 startedAtMs: clock.currentTimeMillisUnsafe(),
                 reason: invalidationReason(cause),
               }
+              recordResearchCapture(capture, {
+                kind: 'consumer-boundary',
+                consumerEpoch: epoch,
+                phase: 'INVALIDATED',
+                positions,
+                reason: invalidationReason(cause),
+              })
+              invalidateResearchCapture(capture, CaptureInvalidation.AssignmentChanged)
             },
           ),
         )
-        const terminals = new Map<string, KafkaConsumedRecord>()
+        const terminals = new Map<string, KafkaPartitionPosition>()
         let recordsSinceYield = 0
         const consume = Stream.fromAsyncIterable(source, (cause) =>
           failure('consume', 'Kafka consumption failed', cause),
@@ -354,10 +446,62 @@ export const makeKafkaMarketProjection = (
                 recordsSinceYield = 0
                 yield* Effect.yieldNow
               }
-              if (invalidation !== undefined) return
+              if (invalidation !== undefined && capture === undefined) return
+              const availableAtMs = clock.currentTimeMillisUnsafe()
+              consumerSequence++
+              const previousProjection = projection
               const previousSequence = projection.sequence
-              projection = incorporateMarketRecord(projection, record, universe, clock.currentTimeMillisUnsafe())
-              terminals.set(topicPartitionKey(record.topic, record.partition), record)
+              if (invalidation === undefined && record.tombstone !== true)
+                projection = incorporateMarketRecord(projection, record, universe, availableAtMs)
+              if (capture !== undefined) {
+                recordResearchCapture(
+                  capture,
+                  {
+                    kind: 'market-record',
+                    consumerEpoch: epoch,
+                    consumerSequence,
+                    projectionSequence: projection.sequence,
+                    topic: record.topic,
+                    partition: record.partition,
+                    offset: record.offset,
+                    ...(captureRawValues ? { originalTransport: captureKafkaTransport(record.timestampMs) } : {}),
+                    rawValueSha256: record.rawValueSha256 ?? null,
+                    rawByteLength: record.rawByteLength ?? null,
+                    tombstone: record.tombstone === true,
+                    bootstrap: !ready,
+                    disposition:
+                      record.tombstone === true
+                        ? CaptureDisposition.Rejected
+                        : invalidation !== undefined
+                          ? CaptureDisposition.Ignored
+                          : kafkaCaptureDisposition(previousProjection, projection),
+                    ...(record.tombstone === true
+                      ? { reason: 'tombstone' }
+                      : invalidation !== undefined
+                        ? { reason: 'assignment-invalidated' }
+                        : {}),
+                  },
+                  availableAtMs,
+                  record.rawValue,
+                )
+                if (
+                  record.tombstone !== true &&
+                  (record.rawValueSha256 === undefined || record.rawByteLength === undefined)
+                )
+                  invalidateResearchCapture(capture, CaptureInvalidation.MissingRawIdentity)
+              }
+              if (invalidation !== undefined) return
+              if (record.tombstone === true)
+                return yield* failure(
+                  'consume',
+                  'Kafka consumption failed',
+                  new Error('Kafka market message has no payload'),
+                )
+              terminals.set(topicPartitionKey(record.topic, record.partition), {
+                topic: record.topic,
+                partition: record.partition,
+                offset: record.offset,
+              })
               if (projection.technicalFeatureArrival !== null && projection.sequence !== previousSequence)
                 yield* Effect.logInfo('Kafka technical feature incorporated', {
                   ...featureAvailabilityMeasurement(
@@ -415,6 +559,12 @@ export const makeKafkaMarketProjection = (
               return yield* failure('bootstrap', 'Kafka bootstrap deadline exceeded')
             if (ready && !announced) {
               announced = true
+              recordResearchCapture(capture, {
+                kind: 'consumer-boundary',
+                consumerEpoch: epoch,
+                phase: 'BOOTSTRAPPED',
+                positions,
+              })
               yield* Effect.logInfo('Kafka market projection bootstrap completed', {
                 epoch,
                 partitions: positions.length,
@@ -474,6 +624,7 @@ export const makeKafkaMarketProjection = (
         Effect.gen(function* () {
           ready = false
           lastFailure ??= cause
+          invalidateResearchCapture(capture, CaptureInvalidation.AssignmentChanged)
           recovery ??= {
             failedEpoch: projection.epoch,
             startedAtMs: yield* Clock.currentTimeMillis,
