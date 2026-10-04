@@ -83,6 +83,18 @@ equity, marked equity extrema, intraday drawdown, maximum mark gap and a separat
 Session equity must continue from the $100,000 allocation and each previous close. Missing base, latency-stress or
 minute-mark coverage prevents a numerical pass. An unresolved session must remain an explicit unresolved row.
 
+The v1 money fields accept finite JSON numbers in the range -$1 billion to $1 billion, with no fixed decimal-place
+limit. Notional, equity and drawdown fields also require nonnegative values. Arithmetic interprets each decoded number's canonical decimal spelling exactly. It does not round to cents
+or micro-dollars. JSON decoding has already discarded any extra precision in the original numeric text.
+Money sums, ratio comparisons, stress deductions and bootstrap weighted sums use exact integer coefficients at a
+shared decimal scale. Only displayed report values convert back to JavaScript numbers. The displayed value can
+round to a threshold even when the exact comparison differs. Signed zero has the same meaning as zero.
+
+The arithmetic correction preserves the input and report schemas, protocol hash, resampling and thresholds.
+An unchanged input retains its input hash. Corrected metrics or verdicts can change its report hash relative to an
+earlier checker revision. Preserve original receipts and record the checker source revision when comparing results.
+The existing one-micro-dollar equity-consistency tolerance is unchanged and does not apply to acceptance thresholds.
+
 The checker uses summaries, not raw fills or market events. Independently reproduce each summary from its referenced
 evidence. Confirm exact flat reconciliation, complete fills and fees, executable-bid marks at least every minute,
 and model and allocated data costs. Spread and slippage already reflected in execution prices must not be deducted
