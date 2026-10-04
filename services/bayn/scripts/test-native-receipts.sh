@@ -23,14 +23,30 @@ capacity_name="bayn-receipts-capacity-${run_id}"
 kafka_id=
 cleanup() {
   status=$?
-  for name in "$capacity_name" "$kafka_name" "$restate_name"; do
-    identity=$(docker inspect --format '{{.Id}} {{index .Config.Labels "bayn-receipt-fixture"}}' "$name" 2>/dev/null) || continue
+  names=("$kafka_name" "$restate_name")
+  if [[ "$mode" == --capture-capacity ]]; then names=("$capacity_name" "$kafka_name"); fi
+  for name in "${names[@]}"; do
+    identity=$(timeout --kill-after=1s 2s docker inspect --format '{{.Id}} {{index .Config.Labels "bayn-receipt-fixture"}}' "$name" 2>/dev/null) || {
+      printf 'Fixture cleanup could not inspect %s; no removal attempted\n' "$name" >&2
+      status=1
+      continue
+    }
     read -r id owner <<< "$identity"
-    if [[ "$owner" != "$run_id" || ! "$id" =~ ^[0-9a-f]{64}$ ]]; then continue; fi
-    if [[ "$status" != 0 ]]; then docker logs --tail 100 "$id" >&2 || true; fi
-    docker rm --force "$id" >/dev/null 2>&1 || true
+    if [[ "$owner" != "$run_id" || ! "$id" =~ ^[0-9a-f]{64}$ ]]; then
+      printf 'Fixture cleanup refused unowned container %s\n' "$name" >&2
+      status=1
+      continue
+    fi
+    if [[ "$status" != 0 ]]; then timeout --kill-after=1s 2s docker logs --tail 100 "$id" >&2 || true; fi
+    if timeout --kill-after=1s 5s docker rm --force "$id" >/dev/null 2>&1; then
+      printf 'Fixture cleanup removed %s (%s)\n' "$name" "$id"
+    else
+      printf 'Fixture cleanup failed or timed out for %s (%s)\n' "$name" "$id" >&2
+      status=1
+    fi
   done
   rm -rf "$directory"
+  exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 143' TERM INT
@@ -96,14 +112,15 @@ if [[ "$mode" == --capture-capacity ]]; then
   setup_step timeout 120s docker pull "$node_image" >/dev/null
   setup_step bun build "$root/services/bayn/src/testing/capture-capacity-native-node.mjs" --target=node \
     --external @platformatic/kafka --outdir "$directory"
-  timeout 250s docker run --name "$capacity_name" --network host --read-only \
+  timeout --kill-after=5s 245s docker run --name "$capacity_name" --network host --read-only \
     --memory 1g --memory-swap 1g --cpus 2 --pids-limit 128 \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m --label "bayn-receipt-fixture=$run_id" \
     --env BAYN_TEST_KAFKA_USERNAME --env BAYN_TEST_KAFKA_PASSWORD --env BAYN_TEST_POSTGRES_URL \
     --volume "$root:$root:ro" --workdir "$root" "$node_image" \
-    node "$directory/capture-capacity-native-node.js" "$plan" \
+    /bin/sh -ec 'timeout --version; exec timeout --signal=KILL 240s node "$@"' capacity-worker \
+    "$directory/capture-capacity-native-node.js" "$plan" \
     "$directory/source-topics.json" "$directory/execution-controller.json" "$plan_hash"
-  state=$(docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}} {{.RestartCount}}' "$capacity_name")
+  state=$(timeout --kill-after=1s 2s docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}} {{.RestartCount}}' "$capacity_name")
   [[ "$state" == 'false 0 0' ]] || { echo "Capacity container failed: $state" >&2; exit 1; }
   exit 0
 fi
