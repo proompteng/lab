@@ -23,6 +23,7 @@ const (
 	kernelReleasePath         = "/proc/sys/kernel/osrelease"
 	maxBootstrapOutputBytes   = 4 << 10
 	toolchainBootstrapTimeout = 2 * time.Minute
+	developerBootstrapTimeout = 15 * time.Minute
 )
 
 type evidence struct {
@@ -76,6 +77,10 @@ func run(logger *slog.Logger) error {
 		os.Getenv("TOOLCHAIN_BOOTSTRAP_COMMAND"),
 		toolchainBootstrapTimeout,
 	); err != nil {
+		return err
+	}
+	if err := bootstrapPersistentInstall(context.Background(), os.Getenv("DEVELOPER_TOOLS_BOOTSTRAP_COMMAND"),
+		developerBootstrapTimeout, "DEVELOPER_TOOLS_BOOTSTRAP_COMMAND", "developer tools"); err != nil {
 		return err
 	}
 	if err := bootstrapCodex(
@@ -240,14 +245,31 @@ func configureToolchainEnvironment(home string) error {
 	}
 
 	prefix := filepath.Join(home, ".local")
-	path := prependPath(filepath.Join(prefix, "bin"), os.Getenv("PATH"))
+	brew := filepath.Join(home, ".linuxbrew")
+	path := prependPath(filepath.Join(brew, "sbin"), os.Getenv("PATH"))
+	path = prependPath(filepath.Join(brew, "bin"), path)
+	path = prependPath(filepath.Join(prefix, "bin"), path)
 	for key, value := range map[string]string{
-		"BUN_INSTALL":       prefix,
-		"NPM_CONFIG_PREFIX": prefix,
-		"PATH":              path,
+		"BUN_INSTALL":         prefix,
+		"NPM_CONFIG_PREFIX":   prefix,
+		"PATH":                path,
+		"HOMEBREW_PREFIX":     brew,
+		"HOMEBREW_CELLAR":     filepath.Join(brew, "Cellar"),
+		"HOMEBREW_REPOSITORY": filepath.Join(brew, "Homebrew"),
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			return fmt.Errorf("set %s: %w", key, err)
+		}
+	}
+	for _, key := range []string{"EDITOR", "VISUAL"} {
+		if os.Getenv(key) == "" {
+			value := "nvim"
+			if key == "VISUAL" {
+				value = os.Getenv("EDITOR")
+			}
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("set %s: %w", key, err)
+			}
 		}
 	}
 
@@ -292,7 +314,8 @@ func bootstrapUserHome(home string) error {
 	}
 	toolchainProfile := "export BUN_INSTALL=\"$HOME/.local\"\n" +
 		"export NPM_CONFIG_PREFIX=\"$HOME/.local\"\n" +
-		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n"
+		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n" +
+		"if [ -f /etc/profile.d/tengri-development.sh ]; then . /etc/profile.d/tengri-development.sh; fi\n"
 	files := map[string]string{
 		".bashrc":  toolchainProfile + "cd /workspace 2>/dev/null || true\n",
 		".profile": toolchainProfile,

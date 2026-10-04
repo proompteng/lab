@@ -1,19 +1,26 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
-import { Effect, FileSystem, Layer, Result } from 'effect'
+import { Clock, Effect, FileSystem, Layer, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
+import fc from 'fast-check'
 
 import { OrderSide } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
-import { nativeJevFixture } from '../jev/native.test-support'
+import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
+import { JevPurpose } from '../jev/portfolio'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
-import { ControlPolicy } from './control-portfolio'
+import { ControlExit, ControlPolicy } from './control-portfolio'
+import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
+import { residualShockDefinition } from './residual-shock'
+import { makeControlJevJournal } from './control-jev-journal'
 import {
   ControlManagementMode,
+  ControlStudyInputSchema,
+  controlStudyDefinition,
   runControlSession,
   runControlStudy,
   type ControlCapital,
@@ -24,9 +31,19 @@ const fixture = nativeJevFixture()
 const openMs = Date.parse(fixture.snapshot.manifest.calendar.sessions[0]?.openAt ?? '')
 const closeMs = openMs + 90 * 60_000
 const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
-const simulate = async (
+const simulate = (
   options: {
     missingSnapshot?: boolean
+    missingSelection?: boolean
+    noSignal?: boolean
+    excludedSymbols?: readonly string[]
+    accountScheduledOpportunities?: boolean
+    sessionDurationMs?: number
+    routingLatencyMs?: number
+    managedLatencyMs?: number
+    residualShock?: boolean
+    entrySize?: number
+    canceledEntries?: boolean
     missingExitQuotes?: boolean
     decisionLatencyMs?: number
     pollIntervalMs?: number
@@ -39,97 +56,386 @@ const simulate = async (
     zeroBidAtMs?: number
     bidPriceAtMs?: (atMs: number, referencePrice: number) => number
   } = {},
-) => {
-  let clock = openMs - 1
-  let snapshots = 0
-  const observations: { atMs: number; rangeEndMs: number }[] = []
-  const market: ControlMarket = {
-    advanceTo: (atMs) =>
-      Effect.sync(() => {
-        expect(atMs).toBeGreaterThanOrEqual(clock)
-        clock = atMs
-      }),
-    quoteAt: (symbol, atMs) =>
-      Effect.sync(() => {
-        expect(atMs).toBe(clock)
-        const original = fixture.snapshot.latestQuotes[symbol]
-        if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 44 * 60_000))
-          return undefined
-        const at = new Date(atMs).toISOString()
-        const bidPrice = options.bidPriceAtMs?.(atMs, original.bidPrice) ?? original.bidPrice
-        const value = {
-          ...original,
-          bidPrice,
-          askPrice: original.askPrice + (bidPrice - original.bidPrice),
-          eventAt: at,
-          ingestedAt: at,
-          bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
-          askSize: 1000,
-        }
-        return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
-      }),
-    snapshot: (query) =>
-      Effect.sync(() => {
-        snapshots += 1
-        expect(Date.parse(query.observedAt)).toBe(clock)
-        expect(query.candidateEvidencePolicy).toBe(fixture.protocol.candidateEvidencePolicy)
-        observations.push({ atMs: clock, rangeEndMs: Date.parse(query.rangeEndAt) })
-        if (options.missingSnapshot === true)
-          return { status: 'UNAVAILABLE' as const, cause: { reason: 'fixture-missing-benchmark' } }
-        const snapshot = {
-          ...fixture.snapshot,
-          manifest: { ...fixture.snapshot.manifest, observedAt: query.observedAt },
-          latestQuotes: Object.fromEntries(
-            Object.entries(fixture.snapshot.latestQuotes).map(([symbol, value]) => [
-              symbol,
-              { ...value, eventAt: query.observedAt, ingestedAt: query.observedAt },
-            ]),
-          ),
-          trades: fixture.snapshot.trades.map((value) => ({
-            ...value,
-            eventAt: query.observedAt,
-            ingestedAt: query.observedAt,
-          })),
-        }
-        return { status: 'AVAILABLE' as const, snapshot }
-      }),
-  }
-  const risk = await Effect.runPromise(
-    loadQuoteBoundExecutionRiskPolicy('control-session-test', fixture.protocol.universe),
+) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const marketClock = yield* TestClock.make()
+      let clock = openMs - 1
+      let snapshots = 0
+      const observations: { atMs: number; rangeEndMs: number }[] = []
+      const market: ControlMarket = {
+        advanceTo: (atMs) =>
+          Effect.gen(function* () {
+            expect(atMs).toBeGreaterThanOrEqual(clock)
+            clock = atMs
+            yield* marketClock.setTime(atMs)
+          }),
+        quoteAt: (symbol, atMs) =>
+          Effect.sync(() => {
+            expect(atMs).toBe(clock)
+            const original = fixture.snapshot.latestQuotes[symbol]
+            if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 44 * 60_000))
+              return undefined
+            const at = new Date(atMs).toISOString()
+            const bidPrice = options.bidPriceAtMs?.(atMs, original.bidPrice) ?? original.bidPrice
+            const value = {
+              ...original,
+              bidPrice,
+              askPrice: original.askPrice + (bidPrice - original.bidPrice),
+              eventAt: at,
+              ingestedAt: at,
+              bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
+              askSize: options.canceledEntries === true ? 0 : (options.entrySize ?? 1000),
+            }
+            return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+          }),
+        snapshot: (query) =>
+          Effect.sync(() => {
+            snapshots += 1
+            expect(Date.parse(query.observedAt)).toBe(clock)
+            expect(query.candidateEvidencePolicy).toBe(fixture.protocol.candidateEvidencePolicy)
+            observations.push({ atMs: clock, rangeEndMs: Date.parse(query.rangeEndAt) })
+            if (options.missingSnapshot === true)
+              return { status: 'UNAVAILABLE' as const, cause: { reason: 'fixture-missing-benchmark' } }
+            if (options.managedLatencyMs !== undefined)
+              return {
+                status: 'AVAILABLE' as const,
+                snapshot: nativeJevFixture(
+                  query.candidateSymbols?.length === 1 ? JevPurpose.Manage : JevPurpose.Entry,
+                  query.observedAt,
+                ).snapshot,
+              }
+            const snapshot = {
+              ...fixture.snapshot,
+              manifest: {
+                ...fixture.snapshot.manifest,
+                observedAt: query.observedAt,
+                ...(options.excludedSymbols === undefined
+                  ? {}
+                  : {
+                      candidateExclusions: options.excludedSymbols.map((symbol) => ({
+                        symbol,
+                        reason: 'not-ready' as const,
+                        message: 'Missing fixture input',
+                      })),
+                    }),
+                ...(options.missingSelection === true
+                  ? { streaming: { ...fixture.snapshot.manifest.streaming, features: [] } }
+                  : {}),
+                ...(options.residualShock === true
+                  ? { rangeStartAt: query.rangeStartAt, rangeEndAt: query.rangeEndAt }
+                  : {}),
+              },
+              bars:
+                options.residualShock === true
+                  ? fixture.snapshot.bars.map((bar) => {
+                      const index =
+                        (Date.parse(bar.eventAt) - Date.parse(fixture.snapshot.manifest.rangeStartAt)) / 60_000
+                      return {
+                        ...bar,
+                        eventAt: new Date(Date.parse(query.rangeStartAt) + index * 60_000).toISOString(),
+                        close: bar.symbol === 'AAPL' ? (index === 29 ? 99 : 100 + (index % 2) * 0.01) : 100,
+                      }
+                    })
+                  : fixture.snapshot.bars,
+              latestQuotes: Object.fromEntries(
+                Object.entries(fixture.snapshot.latestQuotes).map(([symbol, value]) => [
+                  symbol,
+                  {
+                    ...value,
+                    eventAt: query.observedAt,
+                    ingestedAt: query.observedAt,
+                    ...(options.noSignal === true && symbol !== fixture.protocol.benchmarkSymbol ? { askSize: 0 } : {}),
+                  },
+                ]),
+              ),
+              trades: fixture.snapshot.trades.map((value) => ({
+                ...value,
+                eventAt: query.observedAt,
+                ingestedAt: query.observedAt,
+              })),
+            }
+            return { status: 'AVAILABLE' as const, snapshot }
+          }),
+      }
+      const risk = yield* loadQuoteBoundExecutionRiskPolicy('control-session-test', fixture.protocol.universe)
+      const providerClock = yield* TestClock.make()
+      const fs = yield* FileSystem.FileSystem
+      const management =
+        options.managedLatencyMs === undefined
+          ? null
+          : {
+              runId: '3'.repeat(64),
+              binding: {
+                providerClock,
+                journal: yield* makeControlJevJournal(
+                  `${yield* fs.makeTempDirectoryScoped()}/evidence`,
+                  '3'.repeat(64),
+                ),
+                provider: {
+                  evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
+                    Effect.gen(function* () {
+                      yield* providerClock.adjust(options.managedLatencyMs ?? 0)
+                      return nativeJevInference(
+                        input,
+                        new Date(yield* providerClock.currentTimeMillis).toISOString(),
+                        'hold',
+                      )
+                    }),
+                },
+              },
+              costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
+            }
+      const report = yield* runControlSession({
+        policy: options.residualShock === true ? ControlPolicy.ResidualShock : ControlPolicy.RelativeMomentum,
+        protocol: fixture.protocol,
+        risk: {
+          ...risk,
+          maxDailyLossMicros: options.maximumLossMicros ?? risk.maxDailyLossMicros,
+          maxDrawdownMicros: options.maximumDrawdownMicros ?? risk.maxDrawdownMicros,
+        },
+        session: {
+          date: fixture.snapshot.manifest.sessionDate,
+          openAt: new Date(openMs).toISOString(),
+          closeAt: new Date(openMs + (options.sessionDurationMs ?? closeMs - openMs)).toISOString(),
+        },
+        calendar: fixture.snapshot.manifest.calendar,
+        openingCapital: options.openingCapital ?? {
+          cashMicros: '100000000000',
+          peakBrokerEquityMicros: '100000000000',
+          peakNetEquityMicros: '100000000000',
+          accruedExternalCostMicros: '0',
+        },
+        dataCostMicros: options.dataCostMicros ?? '0',
+        targetWeight: 0.1,
+        decisionLatencyMs: options.decisionLatencyMs ?? 1000,
+        pollIntervalMs: options.pollIntervalMs ?? 30_000,
+        ...(options.accountScheduledOpportunities === true ? { accountScheduledOpportunities: true } : {}),
+        assumptions: { ...assumptions, latencyMs: options.routingLatencyMs ?? assumptions.latencyMs },
+        eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
+        market,
+        management,
+      }).pipe(Effect.provideService(Clock.Clock, marketClock))
+      return { report, snapshots, observations }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
-  const report = await Effect.runPromise(
-    runControlSession({
-      policy: ControlPolicy.RelativeMomentum,
-      protocol: fixture.protocol,
-      risk: {
-        ...risk,
-        maxDailyLossMicros: options.maximumLossMicros ?? risk.maxDailyLossMicros,
-        maxDrawdownMicros: options.maximumDrawdownMicros ?? risk.maxDrawdownMicros,
-      },
-      session: {
-        date: fixture.snapshot.manifest.sessionDate,
+
+test('scheduled accounting covers management work beyond close without inventing controller evidence', async () => {
+  const { report } = await simulate({
+    accountScheduledOpportunities: true,
+    managedLatencyMs: 8 * 60_000,
+    sessionDurationMs: 37 * 60_000 + 45_000,
+  })
+  expect(report.simulatedOpportunityAccounting).toMatchObject({
+    scheduledPollCount: 76,
+    accountedPollCount: 76,
+    engineStartedPollCount: 63,
+    dispositionCounts: { WARMUP: 61, SELECTED: 1, EXITING: 1, SKIPPED_WHILE_BUSY: 13 },
+    capturedControllerStarts: null,
+    capturedControllerTerminals: null,
+  })
+  expect(report.issues).toContain('MANAGEMENT_AFTER_CLOSE')
+  expect(report.netPnlAfterKnownCostsMicros).toBeNull()
+})
+
+test.each([
+  [0, 30_000, 0],
+  [1, 30_000, 1],
+  [30_000, 30_000, 1],
+  [30_001, 30_000, 2],
+  [60_001, 17_000, 4],
+] as const)(
+  'scheduled accounting covers %d ms at %d ms cadence with %d warmup polls',
+  async (sessionDurationMs, pollIntervalMs, count) => {
+    const { report } = await simulate({ accountScheduledOpportunities: true, sessionDurationMs, pollIntervalMs })
+    expect(report.simulatedOpportunityAccounting).toEqual({
+      schemaVersion: 'bayn.simulated-opportunity-accounting.v1',
+      schedule: {
         openAt: new Date(openMs).toISOString(),
-        closeAt: new Date(closeMs).toISOString(),
+        closeAtExclusive: new Date(openMs + sessionDurationMs).toISOString(),
+        pollIntervalMs,
       },
-      calendar: fixture.snapshot.manifest.calendar,
-      openingCapital: options.openingCapital ?? {
-        cashMicros: '100000000000',
-        peakBrokerEquityMicros: '100000000000',
-        peakNetEquityMicros: '100000000000',
-        accruedExternalCostMicros: '0',
+      scheduledPollCount: count,
+      accountedPollCount: count,
+      engineStartedPollCount: count,
+      dispositionCounts: {
+        WARMUP: count,
+        HOLDING: 0,
+        EXITING: 0,
+        ENTRY_CUTOFF: 0,
+        WINDOW_ALREADY_CONSUMED: 0,
+        INPUT_UNAVAILABLE: 0,
+        SELECTION_UNAVAILABLE: 0,
+        NO_SIGNAL: 0,
+        SELECTED: 0,
+        SKIPPED_WHILE_BUSY: 0,
       },
-      dataCostMicros: options.dataCostMicros ?? '0',
-      targetWeight: 0.1,
-      decisionLatencyMs: options.decisionLatencyMs ?? 1000,
-      pollIntervalMs: options.pollIntervalMs ?? 30_000,
-      assumptions,
-      eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
-      market,
-      management: null,
-    }),
+      entrySnapshotsWithCandidateExclusions: 0,
+      excludedCandidateObservationCount: 0,
+      capturedControllerStarts: null,
+      capturedControllerTerminals: null,
+    })
+    expect(report.completedEpisodes).toBe(0)
+    expect(report.netPnlAfterKnownCostsMicros).toBe('0')
+  },
+)
+
+test.each([
+  [{ noSignal: true }, { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 }],
+  [
+    { missingSnapshot: true },
+    { INPUT_UNAVAILABLE: 109, WINDOW_ALREADY_CONSUMED: 0, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 0 },
+  ],
+  [
+    { missingSelection: true },
+    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 55, NO_SIGNAL: 0 },
+  ],
+  [
+    { excludedSymbols: fixture.protocol.candidateSymbols },
+    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 },
+  ],
+] as const)('scheduled accounting preserves missing, excluded and consumed outcomes %#', async (options, expected) => {
+  const { report } = await simulate({ ...options, accountScheduledOpportunities: true })
+  expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
+    WARMUP: 61,
+    HOLDING: 0,
+    EXITING: 0,
+    ENTRY_CUTOFF: 10,
+    SELECTED: 0,
+    SKIPPED_WHILE_BUSY: 0,
+    ...expected,
+  })
+  expect(report.simulatedOpportunityAccounting?.scheduledPollCount).toBe(180)
+  expect(report.simulatedOpportunityAccounting?.engineStartedPollCount).toBe(180)
+  expect(report.completedEpisodes).toBe(0)
+  if ('excludedSymbols' in options) {
+    expect(report.simulatedOpportunityAccounting?.entrySnapshotsWithCandidateExclusions).toBe(55)
+    expect(report.simulatedOpportunityAccounting?.excludedCandidateObservationCount).toBe(55 * 15)
+    expect(report.decisions[0]?.exclusions).toHaveLength(15)
+  }
+})
+
+test.each([
+  [
+    30_000,
+    30_000,
+    { WARMUP: 61, SELECTED: 55, SKIPPED_WHILE_BUSY: 0, WINDOW_ALREADY_CONSUMED: 54, ENTRY_CUTOFF: 10 },
+    180,
+  ],
+  [
+    30_000,
+    30_001,
+    { WARMUP: 61, SELECTED: 55, SKIPPED_WHILE_BUSY: 55, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 9 },
+    125,
+  ],
+  [
+    17_000,
+    60_000,
+    { WARMUP: 106, SELECTED: 49, SKIPPED_WHILE_BUSY: 147, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 16 },
+    171,
+  ],
+] as const)(
+  'scheduled accounting separates work at %d ms cadence and %d ms duration',
+  async (pollIntervalMs, decisionLatencyMs, expected, started) => {
+    const { report } = await simulate({
+      accountScheduledOpportunities: true,
+      emptyAssets: true,
+      pollIntervalMs,
+      decisionLatencyMs,
+    })
+    expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
+      HOLDING: 0,
+      EXITING: 0,
+      INPUT_UNAVAILABLE: 0,
+      SELECTION_UNAVAILABLE: 0,
+      NO_SIGNAL: 0,
+      ...expected,
+    })
+    expect(report.simulatedOpportunityAccounting?.engineStartedPollCount).toBe(started)
+    expect(report.simulatedOpportunityAccounting?.scheduledPollCount).toBe(pollIntervalMs === 17_000 ? 318 : 180)
+  },
+)
+
+test('scheduled accounting observes the exact warmup boundary and covers work ending at close', async () => {
+  const { report } = await simulate({
+    accountScheduledOpportunities: true,
+    pollIntervalMs: 17_000,
+    decisionLatencyMs: 20 * 60_000,
+    sessionDurationMs: 40 * 60_000,
+  })
+  expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
+    WARMUP: 106,
+    HOLDING: 0,
+    EXITING: 0,
+    ENTRY_CUTOFF: 0,
+    WINDOW_ALREADY_CONSUMED: 0,
+    INPUT_UNAVAILABLE: 0,
+    SELECTION_UNAVAILABLE: 0,
+    NO_SIGNAL: 0,
+    SELECTED: 1,
+    SKIPPED_WHILE_BUSY: 35,
+  })
+  expect(report.simulatedOpportunityAccounting?.accountedPollCount).toBe(142)
+  expect(report.orders).toHaveLength(0)
+  expect(report.decisions.at(-1)?.status).toBe('DECISION_EXPIRED')
+})
+
+test.each([
+  {},
+  { missingSnapshot: true },
+  { missingExitQuotes: true },
+  { tinyExit: true },
+  { excludedSymbols: ['AAPL'] },
+  { routingLatencyMs: 45_000 },
+  { residualShock: true, entrySize: 4, tinyExit: true },
+])('scheduled accounting preserves all existing economic evidence %#', async (options) => {
+  const baseline = (await simulate(options)).report
+  const { simulatedOpportunityAccounting: accounting, ...observed } = (
+    await simulate({ ...options, accountScheduledOpportunities: true })
+  ).report
+  expect(observed).toEqual(baseline)
+  expect(accounting?.scheduledPollCount).toBe(180)
+  expect(accounting?.accountedPollCount).toBe(180)
+  expect(Object.values(accounting?.dispositionCounts ?? {}).reduce((sum, count) => sum + count, 0)).toBe(180)
+  expect((accounting?.engineStartedPollCount ?? 0) + (accounting?.dispositionCounts.SKIPPED_WHILE_BUSY ?? 0)).toBe(180)
+  if ('missingExitQuotes' in options) expect(observed.netPnlAfterKnownCostsMicros).toBeNull()
+  if ('excludedSymbols' in options) {
+    expect(accounting?.entrySnapshotsWithCandidateExclusions).toBe(
+      observed.decisions.filter((decision) => decision.exclusions?.length === 1).length,
+    )
+    expect(accounting?.excludedCandidateObservationCount).toBe(accounting?.entrySnapshotsWithCandidateExclusions)
+  }
+  if ('routingLatencyMs' in options)
+    expect(accounting?.dispositionCounts.SKIPPED_WHILE_BUSY).toBe(observed.orders.length)
+})
+
+test('property: scheduled accounting covers non-divisible sessions without adding rows', async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.integer({ min: 30_001, max: 60_000 }),
+      fc.integer({ min: 36 * 60_000, max: 48 * 60_000 }),
+      fc.integer({ min: 0, max: 60_000 }),
+      async (pollIntervalMs, sessionDurationMs, decisionLatencyMs) => {
+        const { report } = await simulate({
+          accountScheduledOpportunities: true,
+          emptyAssets: true,
+          pollIntervalMs,
+          sessionDurationMs,
+          decisionLatencyMs,
+        })
+        const accounting = report.simulatedOpportunityAccounting
+        if (accounting === undefined) throw new Error('Expected scheduled accounting')
+        const expected = Math.ceil(sessionDurationMs / pollIntervalMs)
+        expect(accounting.accountedPollCount).toBe(expected)
+        expect(accounting.scheduledPollCount).toBe(expected)
+        expect(Object.values(accounting.dispositionCounts).reduce((sum, count) => sum + count, 0)).toBe(expected)
+        expect(accounting.engineStartedPollCount + accounting.dispositionCounts.SKIPPED_WHILE_BUSY).toBe(expected)
+        expect(JSON.stringify(accounting).length).toBeLessThan(1000)
+      },
+    ),
+    { numRuns: 12, seed: 4096 },
   )
-  return { report, snapshots, observations }
-}
+})
 
 test('chronological controls reuse flat cash, respect full decision and route latency, and mark open through close', async () => {
   const { report, snapshots } = await simulate({ dataCostMicros: '1000000' })
@@ -339,6 +645,36 @@ test.each(['maximumLossMicros', 'maximumDrawdownMicros'] as const)(
   },
 )
 
+test('residual shock uses poll-rounded first-fill target and retains partial-exit retries', async () => {
+  const { report } = await simulate({ residualShock: true, entrySize: 4, tinyExit: true })
+  const first = report.episodes[0]
+  if (first === undefined) throw new Error('Expected residual shock episode')
+  expect(first.reason).toBe(ControlExit.SignalHorizon)
+  const exits = report.orders.filter(
+    (order) => order.side === OrderSide.Sell && Date.parse(order.arrivedAt) <= first.exitedAtMs,
+  )
+  expect(exits).toHaveLength(4)
+  const target = first.enteredAtMs + residualShockDefinition.targetHoldingMs
+  const submitted = Date.parse(exits[0]?.submittedAt ?? '')
+  expect(submitted).toBeGreaterThanOrEqual(target)
+  expect(submitted).toBeLessThan(target + 30_000)
+  expect((submitted - openMs) % 30_000).toBe(0)
+  expect(first.exitedAtMs - first.enteredAtMs).toBeGreaterThan(60_000)
+  expect(report.managementMode).toBe(ControlManagementMode.Mechanical)
+  expect(report.modelCallCount).toBe(0)
+  expect(report.decisions.some((decision) => 'signal' in decision)).toBeTrue()
+})
+
+test('a canceled residual-shock entry consumes the minute and unknown exit quotes stay incomplete', async () => {
+  const canceled = await simulate({ residualShock: true, canceledEntries: true })
+  expect(canceled.report.orders.length).toBeGreaterThan(0)
+  expect(canceled.report.episodes).toHaveLength(0)
+  expect(new Set(canceled.observations.map((entry) => entry.rangeEndMs)).size).toBe(canceled.observations.length)
+  const missing = await simulate({ residualShock: true, missingExitQuotes: true })
+  expect(missing.report.completion).toBe('INCOMPLETE')
+  expect(missing.report.missingExecutionQuotes).toBeGreaterThan(0)
+})
+
 test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const retained = retainedReplayFixture()
   const source = {
@@ -400,8 +736,26 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       const arrivals = `${directory}/arrivals.ndjson.gz`
       yield* fs.writeFile(arrivals, gzipSync(retained.body))
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
+      const legacyV3 = yield* runControlStudy(
+        {
+          ...input,
+          schemaVersion: 'bayn.control-study-input.v3',
+          turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
+        },
+        arrivals,
+        receipt,
+        { mode: ControlManagementMode.Mechanical },
+      )
+      expect([report.runId, report.reportHash, legacyV3.runId, legacyV3.reportHash]).toEqual([
+        '4bf32cd85cced9fef200083d643a3a837c9968f84712041e407f4b6705afc1be',
+        '459e3a6a045311f6e83f7a97296feb3c4da65ec5f98e043cf433f1dc28aaed3e',
+        '85229c530965ae8502eda1419fba41bc4217e45b14bb220cf1a959260da7203c',
+        '563aad78ecb75ab371da1bc903b24cb2653299314cb7859efb9f4e9f13bd25d1',
+      ])
       expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
       expect(report.sessions).toHaveLength(6)
+      expect(report.definition).toEqual(controlStudyDefinition)
+      expect(report.sessions.some((session) => session.policy === ControlPolicy.ResidualShock)).toBeFalse()
       for (const session of report.sessions) {
         expect(session.completion).toBe('INCOMPLETE')
         expect(session.completedEpisodes).toBe(0)
@@ -421,6 +775,90 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       }
       const { reportHash, ...material } = report
       expect(canonicalHashV1(material)).toBe(reportHash)
+      const falsificationInput = {
+        ...input,
+        schemaVersion: 'bayn.control-study-input.v4',
+        repeatedTargetWeightPpm: residualShockDefinition.targetWeightPpm,
+        turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
+        falsificationCandidate: residualShockDefinition.id,
+      }
+      const falsification = yield* runControlStudy(falsificationInput, arrivals, receipt, {
+        mode: ControlManagementMode.Mechanical,
+      })
+      expect([falsification.runId, falsification.reportHash]).toEqual([
+        '978cc19244679d09ed1c588b2ab7702cc032f28b6aae937ae238277b6f24e98c',
+        'bc5a34cf3a1968ccf9a707df8c146cc9b4fa083a85c880a6b7fcb9d3b6cc99af',
+      ])
+      expect(falsification.sessions).toHaveLength(8)
+      expect(falsification.sessions.filter((session) => session.policy === ControlPolicy.ResidualShock)).toHaveLength(2)
+      expect(
+        falsification.sessions.every((session) => session.modelCallCount === 0 && session.completion === 'INCOMPLETE'),
+      ).toBeTrue()
+      expect(falsification.definition).toMatchObject({ falsificationCandidate: residualShockDefinition })
+      expect(falsification.runId).not.toBe(report.runId)
+      for (const [legacyInput, legacyReport] of [
+        [{ ...input, turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment }, legacyV3],
+        [falsificationInput, falsification],
+      ] as const) {
+        const accountedInput = {
+          falsificationCandidate: null,
+          ...legacyInput,
+          schemaVersion: 'bayn.control-study-input.v5',
+        }
+        const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ControlStudyInputSchema))(
+          JSON.stringify(accountedInput),
+        )
+        expect(canonicalHashV1(decoded)).toBe(canonicalHashV1(accountedInput))
+        const accounted = yield* runControlStudy(accountedInput, arrivals, receipt, {
+          mode: ControlManagementMode.Mechanical,
+        })
+        expect(accounted.schemaVersion).toBe('bayn.control-study-report.v4')
+        expect(accounted.definition.schemaVersion).toBe('bayn.control-study-definition.v7')
+        expect(
+          accounted.sessions.map(({ simulatedOpportunityAccounting: _accounting, ...session }) => session),
+        ).toEqual(legacyReport.sessions)
+        expect(accounted.sessions.map((session) => session.simulatedOpportunityAccounting?.scheduledPollCount)).toEqual(
+          legacyReport.sessions.map(() => 780),
+        )
+        expect(accounted.sessions.map((session) => session.completedEpisodes)).toEqual(
+          legacyReport.sessions.map(() => 0),
+        )
+        expect(accounted.runId).not.toBe(legacyReport.runId)
+        const { reportHash: accountedHash, ...accountedMaterial } = accounted
+        expect(canonicalHashV1(accountedMaterial)).toBe(accountedHash)
+        expect(
+          Result.isFailure(
+            Schema.decodeUnknownResult(Schema.fromJsonString(ControlStudyInputSchema))(
+              JSON.stringify({ ...accountedInput, falsificationCandidate: 'UNREGISTERED' }),
+            ),
+          ),
+        ).toBeTrue()
+        for (const pollIntervalMs of [0, 1.5, Number.POSITIVE_INFINITY])
+          expect(
+            Result.isFailure(
+              Schema.decodeUnknownResult(ControlStudyInputSchema)({
+                ...accountedInput,
+                backtest: { ...input.backtest, cadence: { ...input.backtest.cadence, pollIntervalMs } },
+              }),
+            ),
+          ).toBeTrue()
+      }
+      for (const invalid of [
+        { ...falsificationInput, management: ControlManagementMode.Jev },
+        { ...falsificationInput, repeatedTargetWeightPpm: 100000 },
+        { ...falsificationInput, falsificationCandidate: 'UNREGISTERED' },
+        {
+          ...falsificationInput,
+          backtest: { ...input.backtest, cadence: { ...input.backtest.cadence, pollIntervalMs: 1000 } },
+        },
+      ])
+        expect(
+          Result.isFailure(
+            yield* Effect.result(
+              runControlStudy(invalid, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
+            ),
+          ),
+        ).toBeTrue()
       const providerClock = yield* TestClock.make()
       const evidenceDirectory = `${directory}/managed-evidence`
       const managedInput = { ...input, management: ControlManagementMode.Jev }

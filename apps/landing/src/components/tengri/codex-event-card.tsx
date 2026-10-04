@@ -32,7 +32,7 @@ export function CodexEventCard({
     return (
       <article
         aria-label="Your message"
-        className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-2xl bg-zinc-900 px-4 py-2.5 text-right text-sm leading-6 text-zinc-100"
+        className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-2xl bg-white/[0.035] px-4 py-2.5 text-left text-sm leading-6 text-zinc-100"
       >
         <Markdown text={text} />
       </article>

@@ -4,6 +4,11 @@ Tengri is the standalone Rust owner of `runtime.proompteng.ai/v1alpha1 MicroVM` 
 authenticated internal gRPC calls, derives one deterministic MicroVM name per GitHub subject, and projects each CR into
 a `kata-fc` Pod with guest administrator access and a 16 GiB persistent home PVC.
 
+Every guest uses 4 vCPU, 8 GiB memory, and a 16 GiB workspace. Admission rejects any other profile. There is no
+controller compatibility or automatic resource upgrade path. Correct any existing MicroVM resource values once
+during the deployment cutover, then sleep/resume it to apply the profile while preserving its home PVC. The namespace
+quota accommodates six guests plus Kata overhead and the controller.
+
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
 
@@ -24,16 +29,16 @@ only health probes; application/VS Code content uses HTTPS and secure WebSockets
 
 ## SPIRE workload identity
 
-The trust domain is `galactic.proompteng.ai`. Tengri's identity is
-`spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri`; its port 50051 accepts only
-`spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng`. The BFF verifies the exact Tengri identity, and signed HMAC
+The trust domain is `proompteng.ai`. Tengri's identity is
+`spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051 accepts only
+`spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. The BFF verifies the exact Tengri identity, and signed HMAC
 metadata continues to enforce GitHub ownership and replay protection. There is no plaintext production gRPC listener
 or transport fallback.
 
 Normal Kubernetes workloads obtain their rotating X.509-SVID and trust bundle through the SPIFFE CSI Workload API socket.
 Tengri requires `SPIFFE_ENDPOINT_SOCKET` and `SPIFFE_TRUST_DOMAIN` before it binds its public listeners. Each Firecracker
 guest supervises its own SPIRE agent because host process attestation cannot see processes inside the guest kernel.
-Its identity is `spiffe://galactic.proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>`. Nanoagent accepts only Tengri's
+Its identity is `spiffe://proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>`. Nanoagent accepts only Tengri's
 identity; Tengri's gRPC, HTTPS, and WebSocket clients verify the exact current guest Pod identity.
 
 The controller creates one `ClusterStaticEntry` per guest Pod. Its parent is the guest's `galactic-guests` PSAT agent,
@@ -265,3 +270,13 @@ webviews retain their own HTML and CSP; editor frame ancestors allow both the is
 Packaged assets under an exact upstream revision are compressed and privately cached. Workspace resources, HTML,
 tickets, and integration scripts remain uncached. The private extension bridge binds its session query to the
 cookie-authenticated preview origin. Ordinary preview sessions cannot select either reserved editor port.
+
+Codex `SendCodexInput` and `SteerCodexInput` RPCs accept text, PNG/JPEG/WebP image bytes, or both.
+These replace the former turn-input RPCs. A controller with the old contract rejects the new RPCs before
+starting or steering a turn, preventing silent image loss during a mismatched release. Image inputs are limited to four,
+4 MiB each, and 8 MiB total. Tengri verifies media signatures, writes the images into the owned retained guest
+under `/workspace/.tengri-attachments` through gRPC, and submits Codex `localImage` inputs. A failed image write
+fails the request before Codex starts or steers a turn. Attachments remain with the persistent workspace so saved
+conversation references remain valid.
+If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
+Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.

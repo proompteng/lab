@@ -346,6 +346,8 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
               catch: (cause) => fail('Invalid arrival JSON', cause),
             })
             const event = yield* Schema.decodeUnknownEffect(HistoricalMarketArrivalSchema, strictParseOptions)(json)
+            if ('receipt' in event)
+              return yield* fail('Original receipt export requires a separately qualified capture manifest')
             const key = partitionKey(event.record.topic, event.record.partition)
             const bound = bounds.get(key)
             const offset = BigInt(event.record.offset)

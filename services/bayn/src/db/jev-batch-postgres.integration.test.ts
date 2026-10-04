@@ -16,6 +16,7 @@ import {
 } from 'effect'
 import { TestClock } from 'effect/testing'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
+import type { Statement } from 'effect/sql/Statement'
 
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { operationalError } from '../errors'
@@ -218,6 +219,75 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         expect(Result.getOrThrow(usableJevBatchInferences(plan, result, yield* Clock.currentTimeMillis))).toHaveLength(
           requested.length,
         )
+      }).pipe(atObservation),
+    )
+  })
+
+  test('finalization restricts observation scan work to the indexed cycle and exact observation time', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        let lookup: Statement<Record<string, unknown>> | undefined
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (statement.compile()[0].includes('AS matching_symbols')) lookup = statement
+            return statement
+          },
+        })
+        const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, monitored))
+        yield* batches.begin(plan)
+        yield* sql`
+          INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+          SELECT md5(n::text) || md5('history-' || n::text), ${plan.cycleId}, history.observed_at,
+            jsonb_build_object(
+              'schemaVersion', 'bayn.jev-observation.v1',
+              'cycleId', ${plan.cycleId}::text,
+              'authorityGenerationHash', ${plan.authorityGenerationHash}::text,
+              'observedAt', to_char(history.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+              'manifest', jsonb_build_object(
+                'observedAt', to_char(history.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                'snapshotId', ${plan.snapshotId}::text,
+                'candidateSymbols', jsonb_build_array(${first.symbol}::text),
+                'candidateExclusions', '[]'::jsonb
+              )
+            )
+          FROM generate_series(1, 4096) AS n
+          CROSS JOIN LATERAL (SELECT ${plan.observedAt}::timestamptz - n * INTERVAL '1 minute' AS observed_at) AS history
+        `
+        // These timestamps have the same SQL instant, but are not the exact canonical source text.
+        // Forged identities must remain irrelevant rather than broadening the evidence set.
+        for (const [index, timestamp] of [
+          plan.observedAt.replace('Z', '+00:00'),
+          plan.observedAt.replace('Z', '000Z'),
+        ].entries()) {
+          const payload = {
+            ...fixture.observation.payload,
+            observedAt: timestamp,
+            manifest: { ...fixture.observation.payload.manifest, observedAt: timestamp },
+          }
+          yield* sql`
+            INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
+            VALUES (${String(index + 1).repeat(64)}, ${plan.cycleId}, ${plan.observedAt}::timestamptz, ${sql.json(payload)})
+          `
+        }
+        yield* sql`ANALYZE intraday_candidate_observations`
+        expect((yield* batches.finish(plan.batchId)).result).toBeNull()
+        if (lookup === undefined) throw new Error('Finalization did not read candidate observations')
+        const [query, parameters] = lookup.compile()
+        const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+        const plans = yield* Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+            }),
+          ),
+        )(explanation)
+        const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+        if (root === undefined) throw new Error('PostgreSQL did not return the observation query plan')
+        expect(JSON.stringify(root)).toMatch(/"Index Cond":"[^"]*observed_at/)
+        expect(root['Actual Rows']).toBe(1)
+        expect(Number(root['Rows Removed by Filter'] ?? 0)).toBeLessThanOrEqual(2)
       }).pipe(atObservation),
     )
   })
