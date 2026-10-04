@@ -234,6 +234,18 @@ helm upgrade --install agents oci://ghcr.io/proompteng/charts/agents \
 helm test agents --namespace agents
 ```
 
+### Repository CI
+
+The `Agents Kind smoke` job runs on a GitHub-hosted Ubuntu runner. The official Tailscale action joins an ephemeral
+`tag:ci` node before Kind pulls published Agents images from `registry.ide-newton.ts.net`. Changed runtime images are
+built with Nix using `https://attic.ide-newton.ts.net/lab` and loaded into Kind. The test uses its own cluster and does
+not connect to the production Kubernetes API.
+
+Configure repository secrets `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` with a Tailscale OAuth client that can write
+auth keys for `tag:ci`. The tailnet policy must permit that tag to reach the registry and Attic on TCP 443. The job
+checks registry connectivity from both the host and the Kind node, configures the node to use MagicDNS, and verifies
+Attic when local image builds need it. The Tailscale node logs out when the job ends.
+
 ### Use A Local Chart Checkout
 
 ```bash

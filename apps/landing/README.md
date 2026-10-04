@@ -57,6 +57,12 @@ The Codex view places user messages on the right with left-aligned text and a su
 on the left, without visible speaker headings. The rounded composer uses a subtle border and keeps model and reasoning
 choices beside the send/stop control. Prompt suggestions prepare a
 draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
+Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
+Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
+Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
+`/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
+by saved conversations.
+
 Active turns show a Thinking label with a one-second highlight moving left to right; reduced motion keeps the label still.
 Usage shows the remaining weekly percentage and rounds credits up to a whole number. The dock keeps its blurred
 material stationary while its outline and icons magnify, with labels appearing without an opacity animation.
