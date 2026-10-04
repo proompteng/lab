@@ -21,20 +21,19 @@ kafka_name="bayn-receipts-kafka-${run_id}"
 restate_name="bayn-receipts-restate-${run_id}"
 capacity_name="bayn-receipts-capacity-${run_id}"
 kafka_id=
+cleanup_names=()
 cleanup() {
   status=$?
-  names=("$kafka_name" "$restate_name")
-  if [[ "$mode" == --capture-capacity ]]; then names=("$capacity_name" "$kafka_name"); fi
-  for name in "${names[@]}"; do
+  for name in "${cleanup_names[@]}"; do
     identity=$(timeout --kill-after=1s 2s docker inspect --format '{{.Id}} {{index .Config.Labels "bayn-receipt-fixture"}}' "$name" 2>/dev/null) || {
       printf 'Fixture cleanup could not inspect %s; no removal attempted\n' "$name" >&2
-      status=1
+      if [[ "$status" == 0 ]]; then status=1; fi
       continue
     }
     read -r id owner <<< "$identity"
     if [[ "$owner" != "$run_id" || ! "$id" =~ ^[0-9a-f]{64}$ ]]; then
       printf 'Fixture cleanup refused unowned container %s\n' "$name" >&2
-      status=1
+      if [[ "$status" == 0 ]]; then status=1; fi
       continue
     fi
     if [[ "$status" != 0 ]]; then timeout --kill-after=1s 2s docker logs --tail 100 "$id" >&2 || true; fi
@@ -42,7 +41,7 @@ cleanup() {
       printf 'Fixture cleanup removed %s (%s)\n' "$name" "$id"
     else
       printf 'Fixture cleanup failed or timed out for %s (%s)\n' "$name" "$id" >&2
-      status=1
+      if [[ "$status" == 0 ]]; then status=1; fi
     fi
   done
   rm -rf "$directory"
@@ -55,6 +54,7 @@ kafka_image='apache/kafka:4.1.1@sha256:0bc1bb2478f45b6cea78864df86acdc11e8df2c51
 restate_image='docker.restate.dev/restatedev/restate:1.7.9@sha256:3efeb748ebea40f0a895ca858321d0ef33396d40fe6d16ec593cd5553eb98441'
 setup_step timeout 180s docker pull "$kafka_image" >/dev/null
 if [[ "$mode" == receipts ]]; then timeout 180s docker pull "$restate_image" >/dev/null; fi
+cleanup_names+=("$kafka_name")
 # The embedded script expands the fixture credentials inside the Kafka container.
 # shellcheck disable=SC2016
 kafka_id=$(setup_step docker run --detach --name "$kafka_name" --memory 2g --cpus 2 --pids-limit 512 \
@@ -84,6 +84,7 @@ cluster=$(/opt/kafka/bin/kafka-storage.sh random-uuid)
 exec /opt/kafka/bin/kafka-server-start.sh /tmp/bayn-server.properties
 ')
 if [[ "$mode" == receipts ]]; then
+  cleanup_names+=("$restate_name")
   docker run --detach --name "$restate_name" --memory 2g --cpus 2 --pids-limit 512 \
     --label "bayn-receipt-fixture=$run_id" \
     --publish 127.0.0.1:8080:8080 --publish 127.0.0.1:9070:9070 \
@@ -114,6 +115,7 @@ if [[ "$mode" == --capture-capacity ]]; then
   setup_step timeout 120s docker pull "$node_image" >/dev/null
   setup_step bun build "$root/services/bayn/src/testing/capture-capacity-native-node.mjs" --target=node \
     --external @platformatic/kafka --outdir "$directory"
+  cleanup_names=("$capacity_name" "${cleanup_names[@]}")
   timeout --kill-after=5s 245s docker run --name "$capacity_name" --network host --read-only \
     --memory 1g --memory-swap 1g --cpus 2 --pids-limit 128 \
     --tmpfs /tmp:rw,noexec,nosuid,size=64m --label "bayn-receipt-fixture=$run_id" \

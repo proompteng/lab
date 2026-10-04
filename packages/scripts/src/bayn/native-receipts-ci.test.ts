@@ -49,8 +49,8 @@ const run = async (overrides: Record<string, string>) => {
   return { exit, stdout, stderr }
 }
 
-test.each(['kafka', 'restate', 'foreign'] as const)(
-  'created-but-failed %s fixture removes only verified job-owned container IDs',
+test.each(['kafka', 'restate', 'foreign', 'cleanup'] as const)(
+  '%s fixture cleanup preserves failure status and removes only verified job-owned container IDs',
   async (mode) => {
     const directory = await mkdtemp(join(tmpdir(), 'bayn-native-cleanup-'))
     try {
@@ -61,7 +61,8 @@ set -eu
 command=$1
 shift
 case "$command" in
-  pull|logs) exit 0 ;;
+  pull) exit 0 ;;
+  logs) if [[ "$BAYN_FAKE_DOCKER_MODE" == cleanup ]]; then echo 'Kafka Server started'; fi; exit 0 ;;
   run)
     name= owner=
     while (( $# > 0 )); do
@@ -74,10 +75,13 @@ case "$command" in
     if [[ "$name" == *-kafka-* ]]; then id=$(printf 'a%.0s' {1..64}); else id=$(printf 'b%.0s' {1..64}); fi
     if [[ "$BAYN_FAKE_DOCKER_MODE" == foreign ]]; then owner=another-run; fi
     printf '%s %s\\n' "$id" "$owner" > "$BAYN_FAKE_DOCKER_STATE/$name"
-    if [[ "$BAYN_FAKE_DOCKER_MODE" != restate || "$name" == *-restate-* ]]; then exit 125; fi
+    if [[ "$BAYN_FAKE_DOCKER_MODE" != cleanup && ( "$BAYN_FAKE_DOCKER_MODE" != restate || "$name" == *-restate-* ) ]]; then exit 125; fi
     printf '%s\\n' "$id"
     ;;
-  inspect) cat "$BAYN_FAKE_DOCKER_STATE/\${!#}" ;;
+  inspect)
+    if [[ "$BAYN_FAKE_DOCKER_MODE" == cleanup && "\${!#}" == *-restate-* ]]; then exit 55; fi
+    cat "$BAYN_FAKE_DOCKER_STATE/\${!#}"
+    ;;
   rm) printf '%s\\n' "\${!#}" >> "$BAYN_FAKE_DOCKER_STATE/removed" ;;
   *) exit 99 ;;
 esac
@@ -85,6 +89,15 @@ esac
         { mode: 0o755 },
       )
       await writeFile(join(directory, 'removed'), '')
+      if (mode === 'cleanup') {
+        for (const executable of ['bun', 'curl'])
+          await writeFile(join(directory, executable), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 })
+        await writeFile(
+          join(directory, 'node'),
+          '#!/usr/bin/env bash\nif [[ "$1" == *kafka-receipts-native-node.js ]]; then exit 0; fi\nexec "$BAYN_FAKE_REAL_NODE" "$@"\n',
+          { mode: 0o755 },
+        )
+      }
       const root = join(import.meta.dir, '../../../..')
       const child = Bun.spawn(['bash', join(root, 'services/bayn/scripts/test-native-receipts.sh')], {
         cwd: root,
@@ -92,6 +105,7 @@ esac
           PATH: `${directory}:${process.env.PATH ?? ''}`,
           BAYN_FAKE_DOCKER_STATE: directory,
           BAYN_FAKE_DOCKER_MODE: mode,
+          BAYN_FAKE_REAL_NODE: Bun.which('node') ?? '',
         },
         stdout: 'pipe',
         stderr: 'pipe',
@@ -101,11 +115,19 @@ esac
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
       ])
-      expect({ exit, stdout, stderr }).toEqual({ exit: 125, stdout: '', stderr: '' })
+      expect(exit).toBe(mode === 'cleanup' ? 1 : 125)
+      if (mode === 'foreign') {
+        expect(stderr).toContain('Fixture cleanup refused unowned container bayn-receipts-kafka-')
+        expect(stderr).not.toContain('restate')
+      } else if (mode === 'cleanup') {
+        expect(stderr).toContain('Fixture cleanup could not inspect bayn-receipts-restate-')
+      } else expect(stderr).toBe('')
       const removed = (await readFile(join(directory, 'removed'), 'utf8')).trim().split('\n').filter(Boolean)
       expect(removed).toEqual(
-        mode === 'foreign' ? [] : mode === 'kafka' ? ['a'.repeat(64)] : ['a'.repeat(64), 'b'.repeat(64)],
+        mode === 'foreign' ? [] : mode === 'restate' ? ['a'.repeat(64), 'b'.repeat(64)] : ['a'.repeat(64)],
       )
+      expect(stdout.trim().split('\n').filter(Boolean)).toHaveLength(removed.length)
+      for (const id of removed) expect(stdout).toContain(`(${id})`)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
