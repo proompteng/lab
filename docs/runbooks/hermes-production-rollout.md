@@ -10,6 +10,12 @@ Application follows `main`. Kargo automatic promotion and Argo Stage authorizati
 are retained. The procedures below describe the enabled service and must not be used to restart it without a reviewed
 re-enablement that restores the Kargo source, authorization, promotion policy, replicas, schedule, rollout alert label, and `hermes_rollout_enabled` recording rule.
 
+Before merging enabled Hermes manifests, reconcile the reviewed ApplicationSet with `automation: manual` and verify
+the live Application has no automated sync policy, no active operation, and zero gateway/proxy replicas. Keep that live
+hold while the restoration source builds. Do not reconcile the enabled ApplicationSet until the new image is published
+and the selected Kargo promotion has generated its exact deployment commit; this avoids syncing either enabled `main`
+or the pre-disable Kargo branch before publication. Then restore the authorized Kargo source through reviewed GitOps.
+
 ## Steady-state reconciliation after re-enablement
 
 The completed production cutover uses `automation: auto` on the verified

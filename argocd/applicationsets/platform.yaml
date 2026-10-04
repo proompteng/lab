@@ -406,7 +406,7 @@ spec:
                 targetRevision: main
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                automation: auto
+                automation: manual
                 enabled: "true"
                 ignoreDifferences:
                   - group: apps
