@@ -182,9 +182,12 @@ class ArchiveTimestampPrecisionIntegrationTest {
                 assertTrue(result.next())
                 result.getString(1)
               }
+          val storageCosts = compareSerializationSize(statement)
           assertEquals(
-            emptyList(), numericMismatches,
-            "JDBC binary64 parity; zeroExpressions=$zeroExpressions kinds=$serializationKinds fullZero=$fullSerializationZero",
+            emptyList(),
+            numericMismatches,
+            "JDBC binary64 parity; zeroExpressions=$zeroExpressions kinds=$serializationKinds " +
+              "fullZero=$fullSerializationZero storageCosts=$storageCosts",
           )
           verified = true
         } finally {
@@ -195,4 +198,79 @@ class ArchiveTimestampPrecisionIntegrationTest {
       }
     }
   }
+
+  private fun compareSerializationSize(statement: java.sql.Statement): List<String> {
+    val costs = mutableListOf<String>()
+    for (legacy in listOf(false, true)) {
+      for (defaults in listOf(false, true)) {
+        for (ratio in listOf("0.9375", "1")) {
+          val table = "signal.archive_precision_size_${if (ratio == "1") "full" else "sparse"}"
+          statement.execute(
+            "CREATE TABLE $table AS signal.intraday_bars_1m_v2 ENGINE = ReplacingMergeTree(source_offset) " +
+              "PARTITION BY toYYYYMM(event_ts) " +
+              "ORDER BY (universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset) " +
+              "SETTINGS ratio_of_defaults_for_sparse_serialization = $ratio",
+          )
+          try {
+            val event = "1790861400000 + intDiv(number, 16) * 60000"
+            val exactEvent = if (legacy) "NULL" else "fromUnixTimestamp64Nano(toInt64(($event) * 1000000))"
+            val exactIngest = if (legacy) "NULL" else "fromUnixTimestamp64Nano(toInt64(($event) * 1000000 + 60321780322))"
+            val volume =
+              if (defaults) {
+                "reinterpretAsFloat64(if(number % 2 = 0, toInt64('-9223372036854775808'), toInt64(0)))"
+              } else {
+                "toFloat64(1000 + number % 31)"
+              }
+            val vwap = if (defaults) "NULL" else "reinterpretAsFloat64(toInt64(${248.518186.toRawBits()}))"
+            val trades = if (defaults) "NULL" else "toUInt64(21)"
+            statement.execute(
+              "INSERT INTO $table " +
+                "SELECT 'alpaca', 'archive-size-v1', repeat('a', 64), 'sip', 'bars', 'regular', " +
+                "'real_time_consolidated', concat('S', toString(number % 16)), " +
+                "fromUnixTimestamp64Milli(toInt64($event)), fromUnixTimestamp64Milli(toInt64(($event) + 60321)), " +
+                "'archive-size', toUInt32(${if (defaults) "0" else "number % 3"}), number, toUInt8(1), " +
+                "reinterpretAsFloat64(toInt64(${248.51.toRawBits()})), " +
+                "reinterpretAsFloat64(toInt64(${248.605.toRawBits()})), " +
+                "reinterpretAsFloat64(toInt64(${248.44.toRawBits()})), " +
+                "reinterpretAsFloat64(toInt64(${248.44.toRawBits()})), " +
+                "$volume, $vwap, $trades, toUInt32(1), $exactEvent, $exactIngest FROM numbers(4096)",
+            )
+            val mismatches =
+              statement
+                .executeQuery(
+                  "SELECT countIf(" +
+                    "reinterpretAsUInt64(open) != ${248.51.toRawBits()} OR " +
+                    "reinterpretAsUInt64(high) != ${248.605.toRawBits()} OR " +
+                    "reinterpretAsUInt64(low) != ${248.44.toRawBits()} OR " +
+                    "reinterpretAsUInt64(close) != ${248.44.toRawBits()} OR " +
+                    "reinterpretAsUInt64(volume) != reinterpretAsUInt64(${volume.replace("number", "source_offset")}) OR " +
+                    (if (defaults) "isNotNull(vwap)" else "reinterpretAsUInt64(vwap) != ${248.518186.toRawBits()}") +
+                    ") FROM $table",
+                ).use { result ->
+                  assertTrue(result.next())
+                  result.getLong(1)
+                }
+            if (ratio == "1") assertEquals(0, mismatches)
+            statement
+              .executeQuery(
+                "SELECT sum(rows), sum(data_compressed_bytes), sum(data_uncompressed_bytes), sum(bytes_on_disk) " +
+                  "FROM system.parts WHERE database = 'signal' AND table = '${table.substringAfter('.')}' AND active",
+              ).use { result ->
+                assertTrue(result.next())
+                assertEquals(4096, result.getLong(1))
+                costs.add(
+                  "legacy=$legacy defaults=$defaults ratio=$ratio rows=${result.getLong(1)} " +
+                    "compressed=${result.getLong(2)} uncompressed=${result.getLong(3)} disk=${result.getLong(4)} " +
+                    "identityMismatches=$mismatches",
+                )
+              }
+          } finally {
+            statement.execute("DROP TABLE $table")
+          }
+        }
+      }
+    }
+    return costs
+  }
+
 }
