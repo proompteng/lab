@@ -42,7 +42,8 @@ training counts, and inconsistent zero scales reject the artifact. Zero scale en
 second flag that could disagree.
 
 The scorer applies the frozen training means, scales, intercept, and coefficients. All candidates must share one
-decision time and session, have unique symbols, and carry the matching feature definition. SPY remains benchmark-only.
+decision time and session, have unique symbols, and carry the matching feature definition. Decisions must be on or after
+the declared first evaluation decision, and their date must match the session. SPY remains benchmark-only.
 A score strictly greater than zero beats cash. Exact ties use ascending symbol order. An empty or nonpositive set
 selects cash. Scores are predicted fixed-budget execution returns, not realized portfolio returns.
 

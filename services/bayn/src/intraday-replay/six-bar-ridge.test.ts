@@ -136,6 +136,19 @@ describe('offline six-bar ridge numeric oracles', () => {
     expect(score(artifact, [1, 1, 0, 0, 0, 0, 0]).scores).toEqual([{ symbol: 'AAPL', scoreBps: 7 }])
   })
 
+  test.each([
+    [1, 1 + Number.EPSILON, Number.EPSILON / 2],
+    [1e16, 1e16 + 2, 1],
+  ])('uses population variance when the mean of %p and %p is not representable', (left, right, scale) => {
+    const artifact = fitted(
+      input([{ date: '2026-09-01', rows: [row([left, 0, 0, 0, 0, 0, 0], -1), row([right, 0, 0, 0, 0, 0, 0], 1)] }]),
+    )
+    expect(artifact.scales[0]).toBe(scale)
+    expect(artifact.coefficients[0]).toBeCloseTo(0.5, 14)
+    expect(score(artifact, [left, 0, 0, 0, 0, 0, 0]).scores[0]!.scoreBps).toBeCloseTo(-0.5, 14)
+    expect(score(artifact, [right, 0, 0, 0, 0, 0, 0]).scores[0]!.scoreBps).toBeCloseTo(0.5, 14)
+  })
+
   test('weights nonempty days equally and retains empty days without fabricated rows', () => {
     const artifact = fitted(
       input([
@@ -186,10 +199,15 @@ describe('offline six-bar ridge numeric oracles', () => {
   test('property: row permutations reproduce coefficients and every artifact byte', () => {
     checkProperty(
       'six-bar-ridge-row-permutation',
-      fc.property(fc.boolean(), (reverse) => {
-        const data = input()
+      fc.property(fc.shuffledSubarray([0, 1, 2, 3, 4, 5, 6, 7], { minLength: 8, maxLength: 8 }), (order) => {
+        const data = input([
+          {
+            date: '2026-09-01',
+            rows: Array.from({ length: 8 }, (_, index) => row([index - 4, 0, 0, 0, 0, 0, 0], index * 3)),
+          },
+        ])
         const first = fitted(data)
-        const second = fitted({ ...data, rows: reverse ? [...data.rows].reverse() : [...data.rows] })
+        const second = fitted({ ...data, rows: order.map((index) => data.rows[index]!) })
         expect(second).toEqual(first)
       }),
     )
@@ -418,5 +436,15 @@ describe('offline six-bar ridge artifact and scoring boundaries', () => {
     ]
     for (const candidates of mutations)
       expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, binding(artifact)))).toBe(true)
+  })
+
+  test('rejects the cutoff-to-evaluation gap and a false scoring session date', () => {
+    const artifact = fitted(),
+      valid = feature(zeros)
+    expect(score(artifact, zeros).selectedSymbol).toBe('AAPL')
+    const beforeEvaluation = { ...valid, decisionAt: '2026-09-04T13:30:59.999Z' }
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [beforeEvaluation], binding(artifact)))).toBe(true)
+    const falseDate = { ...valid, sessionDate: '2026-09-08' }
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [falseDate], binding(artifact)))).toBe(true)
   })
 })

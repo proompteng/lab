@@ -200,7 +200,11 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
       for (const value of values) {
         const difference = yield* finite(value - mean)
         differences.push(difference)
-        squares.push(yield* product(difference, difference))
+      }
+      const residualMean = yield* weighted(differences, weights)
+      for (const difference of differences) {
+        const centeredDifference = yield* finite(difference - residualMean)
+        squares.push(yield* product(centeredDifference, centeredDifference))
       }
       const variance = yield* weighted(squares, weights)
       const scale = Math.sqrt(variance)
@@ -244,7 +248,7 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
           if (other === undefined) return yield* Result.fail(fail('Ridge covariance dimensions are incomplete'))
           products.push(yield* product(value, other))
         }
-        const value = yield* finite((yield* weighted(products, weights)) + (j === k ? 1 : 0))
+        const value = yield* finite((yield* weighted(products, weights)) + (j === k ? sixBarRidgeRecipe.lambda : 0))
         gram.set(j, k, value)
         gram.set(k, j, value)
       }

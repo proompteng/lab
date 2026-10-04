@@ -136,7 +136,8 @@ export const scoreSixBarRidge = (input: unknown, candidatesInput: unknown, expec
         candidate.symbol === sixBarResearchDefinition.benchmarkSymbol ||
         candidate.featureDefinitionHash !== artifact.featureDefinitionHash ||
         candidate.availableAt > candidate.decisionAt ||
-        candidate.decisionAt < artifact.fitCutoffAt ||
+        candidate.decisionAt < artifact.firstEvaluationDecisionAt ||
+        candidate.sessionDate !== candidate.decisionAt.slice(0, 10) ||
         candidate.decisionAt !== first?.decisionAt ||
         candidate.sessionDate !== first.sessionDate
       )
