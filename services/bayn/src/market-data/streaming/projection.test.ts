@@ -12,6 +12,11 @@ import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../intraday/model'
 import { canonicalHashV1, sha256 } from '../../hash'
+import {
+  captureKafkaTransport,
+  OriginalKafkaTransportSchema,
+  restoreKafkaTransportTimestamp,
+} from '../../research-capture/capture'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
 import {
@@ -90,6 +95,58 @@ const select = (state: ReturnType<typeof incorporate>, at = end + 3000) =>
   selectStreamingSymbolInputs(state, 'AAPL', start, end, at)
 
 describe('streaming raw and rolling feature projection', () => {
+  test.each([
+    'valid',
+    'missing',
+    'late',
+    'nan',
+    'positive-infinity',
+    'negative-infinity',
+    'negative-zero',
+    'fraction',
+    'unsafe',
+  ] as const)('original transport round-trip preserves quote and feature decisions (%s)', (mode) => {
+    for (const record of [quote, featureRecord]) {
+      const producerTime = record.topic === universe.topics.features ? feature.computedAtMs : end + 2000
+      const timestampMs = {
+        valid: producerTime,
+        missing: undefined,
+        late: producerTime + 5001,
+        nan: NaN,
+        'positive-infinity': Infinity,
+        'negative-infinity': -Infinity,
+        'negative-zero': -0,
+        fraction: producerTime + 0.5,
+        unsafe: Number.MAX_SAFE_INTEGER + 1,
+      }[mode]
+      const initial = emptyStreamingProjection('transport-clock')
+      const observed = incorporateMarketRecord(
+        initial,
+        { ...record, ...(timestampMs === undefined ? {} : { timestampMs }) },
+        universe,
+        end + 3000,
+      )
+      const transport = Result.getOrThrow(
+        Schema.decodeUnknownResult(Schema.fromJsonString(OriginalKafkaTransportSchema))(
+          JSON.stringify(captureKafkaTransport(timestampMs)),
+        ),
+      )
+      const restoredTimestamp = restoreKafkaTransportTimestamp(transport)
+      const replayed = incorporateMarketRecord(
+        initial,
+        {
+          ...record,
+          value: Buffer.from(record.value, 'utf8').toString('utf8'),
+          ...(restoredTimestamp === undefined ? {} : { timestampMs: restoredTimestamp }),
+        },
+        universe,
+        end + 3000,
+      )
+      expect(replayed).toEqual(observed)
+      expect(replayed.rejections.size).toBe(mode === 'valid' || mode === 'missing' ? 0 : 1)
+      expect(incorporateMarketRecord(initial, record, universe, end + 3000).rejections.size).toBe(0)
+    }
+  })
   test('very late accepted features retain arrival evidence even when newer windows fill join history', () => {
     const receivedAtMs = end + 65 * 60_000
     let state = emptyStreamingProjection('late-feature-epoch')

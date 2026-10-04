@@ -280,6 +280,15 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
+  test('hides token counts during live streaming and replay while keeping account usage visible', () => {
+    const tokenUsage = { ...event, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' }
+    const rateLimits = { ...tokenUsage, method: 'account/rateLimits/updated' }
+    for (const snapshotSequence of [0, event.sequence + 1]) {
+      expect(codexEventShouldRender(tokenUsage, event.threadId, new Set(), snapshotSequence)).toBe(false)
+      expect(codexEventShouldRender(rateLimits, event.threadId, new Set(), snapshotSequence)).toBe(true)
+    }
+  })
+
   test('keeps only post-resume item updates plus snapshot-independent events visible', () => {
     const restoredItemIds = new Set([event.itemId])
     const itemlessSnapshotEvent = { ...event, kind: 'usage' as const, itemId: '' }
