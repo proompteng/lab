@@ -243,7 +243,8 @@ not connect to the production Kubernetes API.
 
 Configure repository secrets `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` with a Tailscale OAuth client that can write
 auth keys for `tag:ci`. The tailnet policy must permit that tag to reach the registry and Attic on TCP 443. The job
-checks registry connectivity and verifies Attic when local image builds need it. The node logs out when the job ends.
+checks registry connectivity from both the host and the Kind node, configures the node to use MagicDNS, and verifies
+Attic when local image builds need it. The Tailscale node logs out when the job ends.
 
 ### Use A Local Chart Checkout
 

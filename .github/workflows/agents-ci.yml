@@ -396,6 +396,17 @@ jobs:
           # Functional cleanup runs explicitly below and must not overwrite a passed smoke test.
           ignore_failed_clean: 'true'
 
+      - name: Configure and verify Kind tailnet access
+        run: |
+          set -euo pipefail
+          # Containerd pulls images inside the node, which does not inherit the host's per-link MagicDNS.
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" sh -c \
+            'printf "nameserver 100.100.100.100\n" > /etc/resolv.conf'
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" getent hosts registry.ide-newton.ts.net
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" \
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+            https://registry.ide-newton.ts.net/v2/ >/dev/null
+
       - name: Build and preload selected local Nix Agents images
         if: env.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
         timeout-minutes: 35
