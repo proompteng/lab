@@ -127,6 +127,30 @@ identical state produces the same semantic ID. Each raw input digest binds the s
 volume bit patterns, including optional VWAP and trade count. The shared fixture and Bayn decoder bind both runtimes
 to that encoding.
 
+## Bar archive timestamp precision
+
+The raw envelope and JDBC writer retain nanosecond event and ingestion times. The bar archive stores those values in
+nullable `event_ts_exact` and `ingest_ts_exact` columns on `signal.intraday_bars_1m_v2`. A NULL pair identifies records
+whose exact source precision is unknown. Existing millisecond columns, sorting and partition keys, source coordinates,
+and retention remain unchanged. Historical rows are not reconstructed or backfilled with invented nanoseconds.
+The legacy v1 seed copies only legacy columns. Quote and trade archives already retain nanoseconds. Published feature
+computation, window, and archive times remain milliseconds according to their wire contract.
+
+The schema hook adds the two nullable columns without materializing or mutating retained parts. Changing the existing
+`event_ts` scale would change its serialized key representation, which MergeTree forbids. Bayn uses the exact columns
+when available for time bounds, canonical revision selection, ordering, and pagination. Coarse millisecond predicates
+remain for partition and key pruning. Legacy rows retain their original three-digit timestamp strings and continue to
+fail exact feature joins when the source had additional precision.
+
+Deploy the reviewed schema hook before the archive and Bayn images through the existing GitOps and Kargo paths. The new
+writer fails if the exact columns are absent. Older writers remain compatible and write NULL exact timestamps. A rollback
+to an older writer resumes millisecond-only archival, so it loses exact identity for newly archived data. Keep the added
+columns on rollback. Restored Kafka records may supply actual source timestamps; this does not authorize a historical
+reconstruction or imply historical availability. Flink operator IDs and checkpoint state are unchanged.
+
+Bayn's guarded disposable ClickHouse CI verifies the production JDBC writer and additive migration, mixed old and new
+rows, sub-millisecond boundaries, duplicate revisions, and cursor progression. Native tests do not run against production.
+
 ## Feature archive
 
 Set `ARCHIVE_FEATURES_TOPIC=torghut.market-features.v1` on `MarketDataArchiveJob`. The archive consumes the published

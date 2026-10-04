@@ -284,6 +284,9 @@ jobs:
       - name: Build the production Dorvud feature jar
         working-directory: services/dorvud
         run: ./gradlew :technical-analysis-flink:uberJar
+      - name: Verify production archive JDBC timestamp precision
+        working-directory: services/dorvud
+        run: ./gradlew :technical-analysis-flink:test --tests '*ArchiveTimestampPrecisionIntegrationTest'
       - name: Verify historical storage and shared feature export
         env:
           BAYN_TEST_DORVUD_JAR: ${{ github.workspace }}/services/dorvud/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar

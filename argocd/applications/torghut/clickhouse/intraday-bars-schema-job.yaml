@@ -120,6 +120,10 @@ spec:
                 )
                 TTL toDateTime(event_ts) + INTERVAL 400 DAY DELETE;
 
+                ALTER TABLE signal.intraday_bars_1m_v2 ON CLUSTER default
+                  ADD COLUMN IF NOT EXISTS event_ts_exact Nullable(DateTime64(9, 'UTC')),
+                  ADD COLUMN IF NOT EXISTS ingest_ts_exact Nullable(DateTime64(9, 'UTC'));
+
                 CREATE TABLE IF NOT EXISTS signal.intraday_quotes_v1 ON CLUSTER default
                 (
                   provider LowCardinality(String),
@@ -185,7 +189,11 @@ spec:
               # it rotates to the immutable v2 sink. Seed the latest visible v1 bar for every historical
               # minute before that rotation so the new table does not begin at the current Kafka offset.
               "${client[@]}" --query "
-                INSERT INTO signal.intraday_bars_1m_v2
+                INSERT INTO signal.intraday_bars_1m_v2 (
+                  provider, universe_id, universe_symbol_hash, feed, channel, market_session, delay_class,
+                  symbol, event_ts, ingest_ts, source_topic, source_partition, source_offset, is_final,
+                  open, high, low, close, volume, vwap, trade_count, schema_version
+                )
                 SELECT src.*
                 FROM signal.intraday_bars_1m_v1 AS src FINAL
                 LEFT ANTI JOIN signal.intraday_bars_1m_v2 AS dst
@@ -304,6 +312,18 @@ spec:
                   )
                   FROM system.columns
                   WHERE database = 'signal' AND table IN ('intraday_bars_1m_v1', 'intraday_bars_1m_v2')
+                    AND name NOT IN ('event_ts_exact', 'ingest_ts_exact')
+                "
+
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 2
+                      OR countIf(type = 'Nullable(DateTime64(9, \'UTC\'))') != 2,
+                    'Signal immutable intraday-bars exact timestamps do not match the archive contract'
+                  )
+                  FROM system.columns
+                  WHERE database = 'signal' AND table = 'intraday_bars_1m_v2'
+                    AND name IN ('event_ts_exact', 'ingest_ts_exact')
                 "
 
                 "${replica_client[@]}" --query "
