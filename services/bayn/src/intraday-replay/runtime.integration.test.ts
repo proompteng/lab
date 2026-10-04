@@ -59,6 +59,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeRecoveryClockFixture } from './recovery-clock.test-support'
 import { BrokerRead } from '../broker/alpaca'
 import {
   AuthorityGenerationStore,
@@ -897,19 +898,41 @@ durableTest.each(
               message: 'Recovery proof operation failed',
               cause,
             })
-          const reconcile = advanceBy(1).pipe(
-            Effect.andThen(runtime.reconcile),
-            Effect.andThen(advanceBy(1)),
-            Effect.asVoid,
-            Effect.mapError(asOperational),
-          )
+          const recoveryClock = yield* makeRecoveryClockFixture(advanceBy(1))
+          const reconcile = recoveryClock.reconcile(runtime.reconcile).pipe(Effect.mapError(asOperational))
           const settle = recoverTerminalGenerationToObserve({
             accountId,
             blockedIntents,
-            authorityStore: store.authorityGeneration,
+            authorityStore: {
+              ...store.authorityGeneration,
+              ensureAuthorityGeneration: (request) =>
+                recoveryClock.authority(store.authorityGeneration.ensureAuthorityGeneration(request)),
+            },
             writerFence: fence,
             reconcileAfterSettlement: reconcile,
-          })
+          }).pipe(
+            Effect.tapError((error) =>
+              error.message !== 'terminal generation OBSERVE rollover failed'
+                ? Effect.void
+                : sql`SELECT
+                to_char(${clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS database_clock,
+                to_char(state.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS authority_updated_at,
+                to_char(reconciliation.reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS reconciled_at
+              FROM authority_state AS state
+              LEFT JOIN LATERAL (
+                SELECT reconciled_at FROM reconciliations WHERE account_id = ${accountId}
+                ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1
+              ) AS reconciliation ON true
+              WHERE state.singleton`.pipe(
+                    Effect.flatMap((timestamps) =>
+                      Effect.logWarning('Recovery fixture clock evidence sampled after failure').pipe(
+                        Effect.annotateLogs({ scenario, timestamps }),
+                      ),
+                    ),
+                    Effect.ignoreCause,
+                  ),
+            ),
+          )
           let lostResponses = 0
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
             Effect.gen(function* () {
