@@ -17,6 +17,7 @@ import { ControlExit, ControlPolicy } from './control-portfolio'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { residualShockDefinition } from './residual-shock'
 import { makeControlJevJournal } from './control-jev-journal'
+import { ControlInputCoverage, runControlPreflight } from './control-preflight'
 import {
   ControlManagementMode,
   ControlStudyInputSchema,
@@ -930,7 +931,58 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       expect({ status, error }).toEqual({ status: 0, error: '' })
       const written = yield* fs.readFileString(`${directory}/report.json`)
       expect(written).toBe(`${JSON.stringify(report, null, 2)}\n`)
+      const preflight = yield* runControlPreflight(input, arrivals, receipt)
+      expect(preflight.classification).toBe('INPUT_COMPATIBILITY_ONLY')
+      expect(preflight.coverage).toBe(ControlInputCoverage.Incomplete)
+      expect(preflight.sourceReceipt).toEqual(receipt.value)
+      expect(preflight.sessions).toHaveLength(2)
+      expect(preflight.sessions.every((session) => session.scheduledPollCount === 780)).toBeTrue()
+      expect(
+        preflight.sessions.every(
+          (session) =>
+            session.scheduledPollCount ===
+            session.warmupPollCount + session.entryCutoffPollCount + session.eligiblePollCount,
+        ),
+      ).toBeTrue()
+      expect(preflight).not.toHaveProperty('orders')
+      expect(preflight.reportHash).toBe((yield* runControlPreflight(input, arrivals, receipt)).reportHash)
+      const preflightArgs = [...args.slice(0, -1), `${directory}/preflight.json`, '--mode', 'preflight']
+      const preflightChild = yield* Effect.acquireRelease(
+        Effect.sync(() => Bun.spawn(preflightArgs, { stdout: 'pipe', stderr: 'pipe' })),
+        (process) => Effect.sync(() => process.kill()),
+      )
+      const preflightStatus = yield* Effect.promise(() => preflightChild.exited)
+      const preflightError = yield* Effect.promise(() => new Response(preflightChild.stderr).text())
+      expect(preflightStatus).toBe(1)
+      expect(preflightError).toContain('Preflight input coverage is INCOMPLETE')
+      expect(yield* fs.readFileString(`${directory}/preflight.json`)).toBe(`${JSON.stringify(preflight, null, 2)}\n`)
+      const jevPreflightInput = { ...input, management: ControlManagementMode.Jev }
+      const jevPreflightText = JSON.stringify(jevPreflightInput)
+      yield* fs.writeFileString(`${directory}/jev-preflight-input.json`, jevPreflightText)
+      const jevPreflightArgs = preflightArgs.map((value) =>
+        value === `${directory}/input.json`
+          ? `${directory}/jev-preflight-input.json`
+          : value === sha256(inputText)
+            ? sha256(jevPreflightText)
+            : value === `${directory}/preflight.json`
+              ? `${directory}/jev-preflight.json`
+              : value,
+      )
+      const jevPreflightChild = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.spawn(jevPreflightArgs, { stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env['PATH'] } }),
+        ),
+        (process) => Effect.sync(() => process.kill()),
+      )
+      expect(yield* Effect.promise(() => jevPreflightChild.exited)).toBe(1)
+      expect(yield* Effect.promise(() => new Response(jevPreflightChild.stderr).text())).toContain(
+        'Preflight input coverage is INCOMPLETE',
+      )
+      expect(yield* fs.readFileString(`${directory}/jev-preflight.json`)).toBe(
+        `${JSON.stringify(yield* runControlPreflight(jevPreflightInput, arrivals, receipt), null, 2)}\n`,
+      )
       yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+      expect(Result.isFailure(yield* Effect.result(runControlPreflight(input, arrivals, receipt)))).toBeTrue()
       const corrupt = yield* Effect.result(
         runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
       )

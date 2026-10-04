@@ -11,6 +11,31 @@ removes model decisions, while `JEV` gives each repeated control its own native 
 control always uses its original close lifecycle. The full acceptance experiment still needs frozen control
 definitions, calibrated timing and execution assumptions, and untouched prospective sessions.
 
+## Offline input preflight
+
+Run the command with `--mode preflight` and the same pinned input, arrivals and source receipt before an economic
+study. It writes `bayn.control-input-preflight.v1` to the new `--output` path without selecting signals, constructing
+a portfolio, computing returns, calling Jev or opening a broker or database connection. This also works for a `JEV`
+study input without an API key. Do not supply `--evidence-directory` in preflight mode.
+
+The checker consumes and verifies the frozen source once. It uses the control runner's entry query and native
+snapshot constructor for every session-anchored entry-eligible poll across the complete candidate universe. It
+does not skip a repeated minute window after a successful observation or model a held position. Warmup and cutoff
+polls remain in the denominator. Per-session counts distinguish unavailable snapshots from candidate-local
+exclusions, and retain the first native failure message and observation time for each failure reason.
+
+`COMPLETE` requires at least one eligible poll per session and no missing snapshot or candidate exclusion.
+`INCOMPLETE` and `NO_ELIGIBLE_POLLS` write the diagnostic report and then exit nonzero. A malformed or corrupt source
+fails before a report is written, including corruption after the last inspected poll. Output files are never
+overwritten. This is a strict input-coverage screen, not a replacement for production candidate-local admission.
+An available benchmark with every candidate excluded cannot pass it. Partial coverage is not a zero-return result.
+
+The original source receipt is retained unchanged. A complete screen does not establish original stream
+availability, prospective completeness, executable liquidity, calibrated latency, costs or profitability. Keep the
+input and diagnostic output private, outside Git and CI artifacts. Omitting `--mode`, or using `--mode study`, retains
+the existing study behavior, input versions, report definitions and identities. Preflight never starts that study
+automatically.
+
 ## Fixed policies
 
 | Policy                       | Entry selection                                                                                      | Size                                  | Exit                                                        |
