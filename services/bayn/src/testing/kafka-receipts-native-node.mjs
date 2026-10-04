@@ -34,8 +34,8 @@ const transactional = new Producer({
   clientId: `${prefix}-transactional`,
   transactionalId: `${prefix}-transaction`,
   idempotent: true,
-  // The SDK sends this as the transaction TTL; the fixture waits for the 30-second telemetry sample.
-  timeout: 60_000,
+  // The SDK sends this as the transaction TTL; it must outlast the bounded bootstrap and telemetry sample.
+  timeout: 120_000,
 })
 let openTransaction
 try {
@@ -233,10 +233,21 @@ try {
   const intervalObjects = new Map()
   const delivered = []
   const observedBoundaries = []
+  const intervalBootstrapTimeoutMs = 15_000
+  const intervalOperationTimeoutMs = 5000
+  const intervalTimeoutMs = 75_000
   let replayed
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
+        const intervalStart = Date.now()
+        const request = {
+          intervalId: 'native-committed-interval',
+          coverageStartMs: intervalStart + intervalBootstrapTimeoutMs + intervalOperationTimeoutMs,
+          coverageEndMs: intervalStart + intervalBootstrapTimeoutMs + intervalOperationTimeoutMs + 1000,
+          universeHash: canonicalHashV1(intervalUniverse),
+          expectedPartitions,
+        }
         const recorder = yield* makeResearchCaptureRecorder(
           {
             append: (chunk) => Effect.sync(() => intervalChunks.push(chunk)),
@@ -250,6 +261,19 @@ try {
             maximumReceiptBytes: 64 * 1024,
             flushIntervalMs: 50,
             writeTimeoutMs: 1000,
+            maximumObjectBytes: 4 * 1024 * 1024,
+            maximumSqlBytes: 4 * 1024 * 1024,
+            session: {
+              ...request,
+              startAtMs: intervalStart,
+              bootstrapDeadlineMs: intervalStart + 3000,
+              stopAtMs: intervalStart + intervalTimeoutMs - 1000,
+              calendarSnapshotId: 'b'.repeat(64),
+              calendarObservedAt: new Date(intervalStart - 1000).toISOString(),
+              calendarHash: 'c'.repeat(64),
+              maximumObjectBytes: 4 * 1024 * 1024,
+              maximumSqlBytes: 4 * 1024 * 1024,
+            },
           },
           {
             putVerified: (object) =>
@@ -262,8 +286,8 @@ try {
             username,
             password: Redacted.make(password),
             groupPrefix: prefix,
-            operationTimeoutMs: 5000,
-            bootstrapTimeoutMs: 15000,
+            operationTimeoutMs: intervalOperationTimeoutMs,
+            bootstrapTimeoutMs: intervalBootstrapTimeoutMs,
             timestampPolicy: KafkaBootstrapTimestampPolicy.RetainedBeginning,
           },
           intervalUniverse,
@@ -291,13 +315,7 @@ try {
         )
         const assigned = observedBoundaries.find(({ event }) => event.phase === 'ASSIGNED')
         assert.ok(assigned)
-        const request = {
-          intervalId: 'native-committed-interval',
-          coverageStartMs: assigned.observedAtMs,
-          coverageEndMs: Date.now(),
-          universeHash: canonicalHashV1(intervalUniverse),
-          expectedPartitions,
-        }
+        assert.ok(assigned.observedAtMs <= request.coverageStartMs)
         let cut
         while (cut === undefined) {
           assert.equal((yield* market.status).ready, true)
@@ -329,6 +347,8 @@ try {
         const exactSeal = intervalSeals[0]
         assert.ok(exactSeal)
         const retained = intervalChunks.flatMap((chunk) => JSON.parse(chunk.payload).receipts)
+        assert.equal(retained[0].event.kind, 'session-attempt')
+        assert.equal(retained[0].event.session.intervalId, request.intervalId)
         assert.equal(
           retained.some(({ event }) => event.kind === 'consumer-boundary' && event.phase === 'STOPPED'),
           false,
@@ -369,7 +389,7 @@ try {
         assert.equal(intervalSeals[0].payload, exactSeal.payload)
         assert.equal(replayed.manifest.recordCount, 3)
       }),
-    ).pipe(Effect.timeout('45 seconds'), Effect.provide(Logger.layer([]))),
+    ).pipe(Effect.timeout(intervalTimeoutMs), Effect.provide(Logger.layer([]))),
   )
   assert.ok(observedBoundaries.some(({ event }) => event.phase === 'STOPPED'))
   console.log(
