@@ -4,6 +4,8 @@ import { resolve } from 'node:path'
 import { parseAllDocuments } from 'yaml'
 
 import {
+  checkFreshDeploymentReady,
+  isFreshDeploymentReady,
   buildHelmArgs,
   buildPodHealthProbeArgs,
   buildPostgresBootstrapManifest,
@@ -20,6 +22,98 @@ import {
 const skipCrossProductBoundaryTests = process.env.AGENTS_CI_SKIP_CROSS_PRODUCT_BOUNDARIES === 'true'
 const crossProductDescribe = skipCrossProductBoundaryTests ? describe.skip : describe
 const crossProductIt = skipCrossProductBoundaryTests ? it.skip : it
+
+const readyDeployment = () => ({
+  metadata: { generation: 3 },
+  spec: { replicas: 1 },
+  status: {
+    observedGeneration: 3,
+    replicas: 1,
+    updatedReplicas: 1,
+    readyReplicas: 1,
+    availableReplicas: 1,
+    unavailableReplicas: 0,
+    conditions: [
+      { type: 'Available', status: 'True' },
+      { type: 'Progressing', status: 'True' },
+    ],
+  },
+})
+
+describe('fresh deployment readiness after a failed watch', () => {
+  it('accepts current fully available state from one bounded fresh read', async () => {
+    const commands: string[][] = []
+    const ready = await checkFreshDeploymentReady('agents-ci', 'agents-ci-postgres', async (command) => {
+      commands.push(command)
+      return { exitCode: 0, timedOut: false, stderr: '', stdout: JSON.stringify(readyDeployment()) }
+    })
+    expect(ready).toBe(true)
+    expect(commands).toEqual([
+      ['kubectl', '--request-timeout=5s', '-n', 'agents-ci', 'get', 'deployment', 'agents-ci-postgres', '-o', 'json'],
+    ])
+  })
+
+  it('rejects a stale observed generation even with ready replica counts', () => {
+    const snapshot = readyDeployment()
+    snapshot.status.observedGeneration = 2
+    expect(isFreshDeploymentReady(snapshot)).toBe(false)
+  })
+
+  it('rejects a scaled-to-zero dependency even when all zero counts are available', () => {
+    const snapshot = readyDeployment()
+    snapshot.spec.replicas = 0
+    snapshot.status.replicas = 0
+    snapshot.status.updatedReplicas = 0
+    snapshot.status.readyReplicas = 0
+    snapshot.status.availableReplicas = 0
+    expect(isFreshDeploymentReady(snapshot)).toBe(false)
+  })
+
+  it.each(['replicas', 'updatedReplicas', 'readyReplicas', 'availableReplicas'] as const)(
+    'rejects incomplete %s',
+    (field) => {
+      const snapshot = readyDeployment()
+      snapshot.status[field] = 0
+      expect(isFreshDeploymentReady(snapshot)).toBe(false)
+    },
+  )
+
+  it('rejects unavailable replicas, old replicas, and a current failed rollout', () => {
+    const snapshot = readyDeployment()
+    snapshot.status.unavailableReplicas = 1
+    expect(isFreshDeploymentReady(snapshot)).toBe(false)
+    snapshot.status.unavailableReplicas = 0
+    snapshot.status.replicas = 2
+    expect(isFreshDeploymentReady(snapshot)).toBe(false)
+    snapshot.status.replicas = 1
+    snapshot.status.conditions[1] = { type: 'Progressing', status: 'False' }
+    expect(isFreshDeploymentReady(snapshot)).toBe(false)
+  })
+
+  it('fails closed for deleting, missing, or malformed deployment state', () => {
+    expect(
+      isFreshDeploymentReady({ ...readyDeployment(), metadata: { generation: 3, deletionTimestamp: 'now' } }),
+    ).toBe(false)
+    expect(isFreshDeploymentReady({})).toBe(false)
+    expect(isFreshDeploymentReady({ ...readyDeployment(), spec: { replicas: '1' } })).toBe(false)
+    expect(isFreshDeploymentReady(null)).toBe(false)
+  })
+
+  it('preserves failure on timeout, unreachable API, or invalid JSON', async () => {
+    for (const response of [
+      { exitCode: 1, timedOut: false, stderr: 'unreachable', stdout: '' },
+      { exitCode: 0, timedOut: true, stderr: '', stdout: JSON.stringify(readyDeployment()) },
+      { exitCode: 0, timedOut: false, stderr: '', stdout: 'not-json' },
+    ]) {
+      expect(await checkFreshDeploymentReady('agents-ci', 'fixture', async () => response)).toBe(false)
+    }
+    expect(
+      await checkFreshDeploymentReady('agents-ci', 'fixture', async () => {
+        throw new Error('unavailable')
+      }),
+    ).toBe(false)
+  })
+})
 
 describe('buildHelmArgs', () => {
   it('applies chart deployment image repository, tag, and empty digest overrides', () => {
