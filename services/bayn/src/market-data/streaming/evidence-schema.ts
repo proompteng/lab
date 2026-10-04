@@ -84,14 +84,28 @@ export const StreamingSnapshotEvidenceSchema = Schema.Struct({
   ...CutFields,
 })
 
+export const OriginalCaptureDeliverySchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.original-capture-arrivals.v1'),
+  description: StrictNonEmptyStringSchema,
+  tieBreak: Schema.Literal('availability-receipt-sequence'),
+  captureId: StrictNonEmptyStringSchema,
+  consumerEpoch: StrictNonEmptyStringSchema,
+  exportManifestHash: Sha256Schema,
+  intervalReceiptHash: Sha256Schema,
+  finalConsumerSequence: NonNegativeIntegerSchema,
+})
+
 export const SimulatedSnapshotSourceSchema = Schema.Struct({
   runId: Sha256Schema,
   sourceManifestHash: Sha256Schema,
-  deliveryModel: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.supplied-arrival-times.v1'),
-    description: StrictNonEmptyStringSchema,
-    tieBreak: Schema.Literal('availability-topic-partition-offset'),
-  }),
+  deliveryModel: Schema.Union([
+    Schema.Struct({
+      schemaVersion: Schema.Literal('bayn.supplied-arrival-times.v1'),
+      description: StrictNonEmptyStringSchema,
+      tieBreak: Schema.Literal('availability-topic-partition-offset'),
+    }),
+    OriginalCaptureDeliverySchema,
+  ]),
   featureTopic: StrictNonEmptyStringSchema,
   technicalFeatureTopic: Schema.optionalKey(StrictNonEmptyStringSchema),
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),

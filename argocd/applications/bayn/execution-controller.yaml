@@ -17,11 +17,6 @@ spec:
         name: restate
         namespace: restate
         port: 9070
-    # Restate serializes the account-keyed controller while every durable
-    # trading-state mutation acquires the same transaction-scoped PostgreSQL
-    # writer fence. Old revisions can therefore drain alongside ready replicas
-    # without overlapping durable writers.
-    drainDelaySeconds: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: bayn-execution-controller

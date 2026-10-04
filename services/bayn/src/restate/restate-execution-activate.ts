@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { NodeRuntime } from '@effect/platform-node'
 import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
 
@@ -67,7 +66,8 @@ export interface RestateExecutionActivationConfig {
   readonly sourceRevision: string
 }
 
-const restateExecutionActivationTransportConfig = Config.all({
+export const restateExecutionActivationTransportConfig = Config.all({
+  activationAttemptId: Config.schema(Schema.String.check(Schema.isUUID(4)), 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID'),
   activationGeneration: Config.schema(Sha256Schema, 'BAYN_EXECUTION_ACTIVATION_GENERATION'),
   activationToken: Config.Redacted('BAYN_EXECUTION_ACTIVATION_TOKEN'),
   ingressOrigin: Config.schema(InternalHttpOriginSchema, 'RESTATE_INGRESS_ORIGIN').pipe(
@@ -187,6 +187,14 @@ export const activateRestateExecutionController = (
           }),
       ),
     )
+    yield* Effect.logInfo('Bayn native Restate execution controller activation accepted').pipe(
+      Effect.annotateLogs({
+        activationAttemptId: config.activationAttemptId,
+        activationInvocationId: receipt.invocationId,
+        sourceRevision: config.sourceRevision,
+        status: receipt.status,
+      }),
+    )
     const output = yield* awaitRestateInvocation(
       config.ingressOrigin,
       receipt.invocationId,
@@ -224,8 +232,17 @@ export const activateRestateExecutionController = (
   }).pipe(withObservedSpan('bayn.execution.activate'))
 
 export const restateExecutionActivationProgram = Effect.gen(function* () {
-  const [{ activationGeneration, activationToken, ingressOrigin, previousPlanHash, previousSourceRevision }, plan] =
-    yield* Effect.all([restateExecutionActivationTransportConfig, loadApplicationPlan])
+  const [
+    {
+      activationAttemptId,
+      activationGeneration,
+      activationToken,
+      ingressOrigin,
+      previousPlanHash,
+      previousSourceRevision,
+    },
+    plan,
+  ] = yield* Effect.all([restateExecutionActivationTransportConfig, loadApplicationPlan])
   if (plan._tag !== 'AutonomousService') {
     return yield* new RestateExecutionActivationError({
       operation: 'configuration',
@@ -258,7 +275,7 @@ export const restateExecutionActivationProgram = Effect.gen(function* () {
   )
   const configured: RestateExecutionActivationConfig = {
     ...controller,
-    activationAttemptId: yield* Effect.sync(randomUUID),
+    activationAttemptId,
     activationGeneration,
     ingressOrigin,
     ...(previousBinding === undefined ? {} : { previousBinding }),
