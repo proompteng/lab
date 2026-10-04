@@ -163,7 +163,39 @@ Each policy carries broker cash, its broker and net equity peaks, and cumulative
 A session's net result deducts only that session's expense, without charging prior expenses again. Reports also subtract an additional 10 bp
 from each filled dollar of turnover as a cost stress.
 
-The report uses `bayn.control-study-report.v3` and definition `bayn.control-study-definition.v5` for legacy inputs
+### Scheduled opportunity accounting
+
+Input `bayn.control-study-input.v5` explicitly opts into report `bayn.control-study-report.v4` and definition
+`bayn.control-study-definition.v7`. Use the v3 fields with `falsificationCandidate: null` for the three existing
+controls, or the v4 fields to include the frozen mechanical residual-shock candidate. The candidate's signal, cadence, sizing and
+protective rules remain unchanged. Existing v2, v3 and v4 inputs retain their original reports and hashes.
+
+Each session adds `simulatedOpportunityAccounting`. Its denominator is every session-open anchored poll strictly
+before session close, including zero-trade and incomplete sessions. `scheduledPollCount` is the ceiling of session
+duration divided by the integer poll interval. An internal contiguous-ordinal check rejects gaps, overlaps and
+out-of-range accounting, and requires `accountedPollCount` to equal the scheduled count at completion.
+The fixed-size summary does not retain a new row or snapshot for each poll.
+
+Every scheduled poll has exactly one disposition. The existing post-management entry branch determines the reason:
+
+- `EXITING` and `HOLDING` take precedence while the portfolio owns inventory
+- A flat portfolio records `WARMUP`, then `ENTRY_CUTOFF`, then `WINDOW_ALREADY_CONSUMED` when applicable
+- A new entry observation records `INPUT_UNAVAILABLE`, `SELECTION_UNAVAILABLE`, `NO_SIGNAL` or `SELECTED`
+- Scheduled ticks passed during decision, management or routing work record `SKIPPED_WHILE_BUSY`. They are never
+  classified as observed no-signal ticks, and the engine does not execute them
+
+`SELECTED` describes the entry selection. Later expiry, missing prices, risk blocks and execution outcomes remain
+in the existing decisions and orders. Available entry snapshots with candidate exclusions have separate,
+non-additive counts. The existing decision exclusions retain their details; excluded inputs do not become evidence
+that every candidate had no signal. All disposition counts sum to `scheduledPollCount`, which also equals
+`engineStartedPollCount` plus `SKIPPED_WHILE_BUSY`.
+
+This summary proves coverage of the simulated engine schedule. It does not prove delivery to a production controller.
+`capturedControllerStarts` and `capturedControllerTerminals` remain null because this report has no such evidence.
+Missing financial outcomes retain their existing null values. No new acceptance threshold, strategy decision,
+provider call, order or runtime collection process is introduced.
+
+The legacy report uses `bayn.control-study-report.v3` and definition `bayn.control-study-definition.v5` for v2/v3 inputs
 or `bayn.control-study-definition.v6` for the opted-in falsification candidate. Marks expose
 `brokerEquityMicros` and `netEquityAfterKnownCostsMicros`; `closingCapital` contains the carried state. Previous v1
 reports charged external expenses to broker cash and are not comparable at nonzero allocated data cost. Retain

@@ -1,6 +1,6 @@
 # Flamingo
 
-Flamingo is disabled. GitOps enforces zero Deployment replicas and retains the model-cache PVC. Argo automatic reconciliation keeps the workload stopped. The Blackwell allocation is released for Rune. The configuration below is retained for reference; re-enabling this service requires a reviewed GPU allocation change.
+Flamingo shares Turin's Blackwell GPU with Rune and Plex. The launch profile reserves 60% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
 
 `flamingo` is the Turin Blackwell GPU model-serving application for coding
 agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
@@ -28,10 +28,10 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --trust-remote-code
 --dtype bfloat16
 --max-model-len 262144
---gpu-memory-utilization 0.85
+--gpu-memory-utilization 0.60
 --kv-cache-dtype fp8
---max-num-seqs 16
---max-num-batched-tokens 16384
+--max-num-seqs 8
+--max-num-batched-tokens 8192
 --enable-prefix-caching
 --reasoning-parser qwen3
 --enable-auto-tool-choice
@@ -39,10 +39,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --optimization-level 2
 ```
 
-The production target is full 262K server context. If this profile fails,
-reduce concurrency first by moving to `--max-num-seqs 8` and
-`--max-num-batched-tokens 8192`. Do not reduce context below 262K unless both
-vLLM KV/concurrency tuning and an SGLang validation path fail.
+The production target remains full 262K server context. Rune holds about 28 GiB of the 96 GiB Blackwell, so the earlier standalone 85% vLLM allocation cannot coexist with it. The 60% budget leaves memory for Rune, Plex, and transient allocations. Validate startup, long-context inference, and both services' GPU memory before treating this shared profile as accepted. The historical standalone benchmarks below do not establish throughput for this profile. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
 
 NUMA auto-binding is intentionally disabled. The vLLM 0.23.0 rollout proved
 that Turin's GPU-to-NUMA topology was not detected automatically and exited with
@@ -144,8 +141,7 @@ kubectl -n flamingo exec deploy/flamingo -- df -h /models || true
 Expected:
 
 - `nvidia.com/gpu` allocatable is non-zero.
-- `flamingo` and the approved Plex transcode workload are the only expected
-  Blackwell GPU consumers before tuning.
+- `flamingo`, Rune, and the approved Plex transcode workload share the Blackwell. Inspect actual VRAM use before tuning.
 - `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
   separate embeddings path.
 - The model-cache PVC has enough free space for the Qwen3.6 NVFP4 artifact.
@@ -295,7 +291,7 @@ production route.
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-fp8` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
+| `context-262k-fp8` | `262144` | `0.85` | `16` | `16384` | Historical standalone baseline |
 | `eager-262k` | `262144` | `0.85` | `16` | `16384` | Test `--safetensors-load-strategy eager` alone before promotion |
 | `image-lane` | `262144` | `0.85` | `16` | `16384` | New official stable vLLM CUDA digest with current flags first |
 | `batch-262k-24k` | `262144` | `0.88` | `24` | `24576` | Test only after Saigak leaves Turin |
