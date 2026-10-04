@@ -4,6 +4,13 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 mode=${1:-receipts}
 [[ "$mode" == receipts || "$mode" == --capture-capacity ]] || { echo 'Unknown native fixture mode' >&2; exit 2; }
+setup_deadline=$((SECONDS + 200))
+setup_step() {
+  if [[ "$mode" != --capture-capacity ]]; then "$@"; return; fi
+  local remaining=$((setup_deadline - SECONDS))
+  (( remaining > 0 )) || { echo 'Capacity fixture setup budget exhausted' >&2; return 1; }
+  timeout --kill-after=2s "${remaining}s" "$@"
+}
 run_id=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(8).toString("hex"))')
 export BAYN_TEST_KAFKA_USERNAME="bayn-fixture-${run_id}"
 export BAYN_TEST_KAFKA_PASSWORD
@@ -30,9 +37,9 @@ trap 'exit 143' TERM INT
 
 kafka_image='apache/kafka:4.1.1@sha256:0bc1bb2478f45b6cea78864df86acdc11e8df2c5172477819a4d12942cbe5d40'
 restate_image='docker.restate.dev/restatedev/restate:1.7.9@sha256:3efeb748ebea40f0a895ca858321d0ef33396d40fe6d16ec593cd5553eb98441'
-timeout 180s docker pull "$kafka_image" >/dev/null
-timeout 180s docker pull "$restate_image" >/dev/null
-kafka_id=$(docker run --detach --name "$kafka_name" --memory 2g --cpus 2 --pids-limit 512 \
+setup_step timeout 180s docker pull "$kafka_image" >/dev/null
+if [[ "$mode" == receipts ]]; then timeout 180s docker pull "$restate_image" >/dev/null; fi
+kafka_id=$(setup_step docker run --detach --name "$kafka_name" --memory 2g --cpus 2 --pids-limit 512 \
   --label "bayn-receipt-fixture=$run_id" \
   --publish 127.0.0.1:19092:9092 --env BAYN_TEST_KAFKA_USERNAME --env BAYN_TEST_KAFKA_PASSWORD \
   --entrypoint /bin/bash "$kafka_image" -euc '
@@ -58,22 +65,27 @@ cluster=$(/opt/kafka/bin/kafka-storage.sh random-uuid)
   --add-scram "SCRAM-SHA-512=[name=${BAYN_TEST_KAFKA_USERNAME},password=${BAYN_TEST_KAFKA_PASSWORD}]"
 exec /opt/kafka/bin/kafka-server-start.sh /tmp/bayn-server.properties
 ')
-docker run --detach --name "$restate_name" --memory 2g --cpus 2 --pids-limit 512 \
-  --label "bayn-receipt-fixture=$run_id" \
-  --publish 127.0.0.1:8080:8080 --publish 127.0.0.1:9070:9070 \
-  --add-host host.docker.internal:host-gateway "$restate_image" >/dev/null
+if [[ "$mode" == receipts ]]; then
+  docker run --detach --name "$restate_name" --memory 2g --cpus 2 --pids-limit 512 \
+    --label "bayn-receipt-fixture=$run_id" \
+    --publish 127.0.0.1:8080:8080 --publish 127.0.0.1:9070:9070 \
+    --add-host host.docker.internal:host-gateway "$restate_image" >/dev/null
+fi
 ready=false
 for ((attempt = 1; attempt <= 60; attempt++)); do
-  if docker logs --tail 100 "$kafka_id" 2>&1 | grep -q 'Kafka Server started'; then
-    if curl --max-time 2 --fail --silent http://127.0.0.1:9070/health >/dev/null; then ready=true; break; fi
+  if [[ "$mode" == --capture-capacity ]] && (( SECONDS >= setup_deadline )); then
+    echo 'Capacity fixture setup budget exhausted' >&2; exit 1
+  fi
+  if setup_step docker logs --tail 100 "$kafka_id" 2>&1 | grep -q 'Kafka Server started'; then
+    if [[ "$mode" == --capture-capacity ]] || curl --max-time 2 --fail --silent http://127.0.0.1:9070/health >/dev/null; then ready=true; break; fi
   fi
   sleep 1
 done
 [[ "$ready" == true ]] || { echo 'Native fixture startup timed out' >&2; exit 1; }
 
-bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
+setup_step bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
   "$root/argocd/applications/kafka/torghut-topics.yaml" > "$directory/source-topics.json"
-bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
+setup_step bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
   "$root/argocd/applications/bayn/execution-controller.yaml" > "$directory/execution-controller.json"
 
 if [[ "$mode" == --capture-capacity ]]; then
@@ -81,8 +93,8 @@ if [[ "$mode" == --capture-capacity ]]; then
   node_image=$(node -e 'process.stdout.write(require(process.argv[1]).worker.image)' "$plan")
   plan_hash=$(sha256sum "$plan" | cut -d ' ' -f 1)
   printf 'Frozen capture capacity plan: %s\n' "$plan_hash"
-  timeout 120s docker pull "$node_image" >/dev/null
-  bun build "$root/services/bayn/src/testing/capture-capacity-native-node.mjs" --target=node \
+  setup_step timeout 120s docker pull "$node_image" >/dev/null
+  setup_step bun build "$root/services/bayn/src/testing/capture-capacity-native-node.mjs" --target=node \
     --external @platformatic/kafka --outdir "$directory"
   timeout 250s docker run --name "$capacity_name" --network host --read-only \
     --memory 1g --memory-swap 1g --cpus 2 --pids-limit 128 \
