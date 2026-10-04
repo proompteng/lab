@@ -240,6 +240,29 @@ jobs:
             INSERT INTO bayn_ci_guard.endpoint_identity VALUES ('${guard_token}');
           "
           echo "BAYN_TEST_CLICKHOUSE_GUARD_TOKEN=${guard_token}" >> "${GITHUB_ENV}"
+      - name: Verify Bayn ClickHouse Date query semantics
+        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
+      - name: Set up Java 25 for shared Dorvud features
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+      - name: Build the production Dorvud feature jar
+        working-directory: services/dorvud
+        run: ./gradlew :technical-analysis-flink:uberJar
+      - name: Verify production archive JDBC timestamp precision
+        working-directory: services/dorvud
+        env:
+          BAYN_TEST_JDBC_RETAIN_ARCHIVE: 'true'
+        run: |
+          ./gradlew :technical-analysis-flink:test --tests '*ArchiveTimestampPrecisionIntegrationTest' || {
+            cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
+            exit 1
+          }
+          cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
+      - name: Verify Bayn reads the actual JDBC archive fixture
+        run: bun test services/bayn/src/market-data/archive-jdbc-readback.integration.test.ts
       - name: Verify complete Bayn PostgreSQL persistence workflows
         run: bun run --cwd services/bayn test:postgres
       - name: Start isolated TigerBeetle for durable replay acceptance
@@ -273,17 +296,6 @@ jobs:
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true
-      - name: Verify Bayn ClickHouse Date query semantics
-        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
-      - name: Set up Java 25 for shared Dorvud features
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 25
-          cache: gradle
-      - name: Build the production Dorvud feature jar
-        working-directory: services/dorvud
-        run: ./gradlew :technical-analysis-flink:uberJar
       - name: Verify historical storage and shared feature export
         env:
           BAYN_TEST_DORVUD_JAR: ${{ github.workspace }}/services/dorvud/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar

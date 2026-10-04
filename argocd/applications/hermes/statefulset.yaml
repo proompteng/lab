@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: hermes
     app.kubernetes.io/component: gateway
-    app.kubernetes.io/version: v2026.9.7
+    app.kubernetes.io/version: v2026.9.24
 spec:
   serviceName: hermes
   replicas: 1
@@ -27,7 +27,7 @@ spec:
       labels:
         app.kubernetes.io/name: hermes
         app.kubernetes.io/component: gateway
-        app.kubernetes.io/version: v2026.9.7
+        app.kubernetes.io/version: v2026.9.24
     spec:
       serviceAccountName: hermes
       automountServiceAccountToken: true
@@ -55,7 +55,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: bootstrap
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -63,6 +63,10 @@ spec:
           env:
             - name: HERMES_HOME
               value: /opt/data
+            - name: HERMES_MANAGED
+              value: gitops
+            - name: PYTHONPATH
+              value: /opt/lab-toolchain/python
             - name: HOME
               value: /opt/data/home
             - name: GH_CONFIG_DIR
@@ -115,6 +119,13 @@ spec:
               mountPath: /opt/data/.env
               subPath: runtime.env
               readOnly: true
+            - name: profiles
+              mountPath: /opt/data/profiles
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/.managed
+              subPath: managed-install
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
@@ -132,6 +143,10 @@ spec:
               subPath: bin
               readOnly: true
             - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/python
+              subPath: python
+              readOnly: true
+            - name: lab-toolchain-image
               mountPath: /nix/store
               subPath: nix/store
               readOnly: true
@@ -141,7 +156,7 @@ spec:
               mountPath: /opt/github-auth
       containers:
         - name: hermes
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
           imagePullPolicy: IfNotPresent
           workingDir: /opt/data/workspace/tuslagch/lab
           command:
@@ -153,6 +168,10 @@ spec:
           env:
             - name: HERMES_HOME
               value: /opt/data
+            - name: HERMES_MANAGED
+              value: gitops
+            - name: PYTHONPATH
+              value: /opt/lab-toolchain/python
             - name: HERMES_WRITE_SAFE_ROOT
               value: /opt/data/workspace/tuslagch:/opt/data/memories:/opt/data/skills
             - name: HERMES_DISABLE_LAZY_INSTALLS
@@ -277,6 +296,13 @@ spec:
               mountPath: /opt/data/.env
               subPath: runtime.env
               readOnly: true
+            - name: profiles
+              mountPath: /opt/data/profiles
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/.managed
+              subPath: managed-install
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
@@ -316,6 +342,10 @@ spec:
               subPath: bin
               readOnly: true
             - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/python
+              subPath: python
+              readOnly: true
+            - name: lab-toolchain-image
               mountPath: /nix/store
               subPath: nix/store
               readOnly: true
@@ -323,7 +353,7 @@ spec:
               mountPath: /opt/github-auth
               readOnly: true
         - name: dashboard
-          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
           imagePullPolicy: IfNotPresent
           workingDir: /opt/data/workspace/tuslagch/lab
           command:
@@ -341,6 +371,10 @@ spec:
               value: http://127.0.0.1:8642
             - name: HERMES_HOME
               value: /opt/data
+            - name: HERMES_MANAGED
+              value: gitops
+            - name: PYTHONPATH
+              value: /opt/lab-toolchain/python
             - name: HERMES_WRITE_SAFE_ROOT
               value: /opt/data/workspace/tuslagch:/opt/data/memories:/opt/data/skills
             - name: HERMES_DISABLE_LAZY_INSTALLS
@@ -448,6 +482,13 @@ spec:
               mountPath: /opt/data/.env
               subPath: runtime.env
               readOnly: true
+            - name: profiles
+              mountPath: /opt/data/profiles
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/.managed
+              subPath: managed-install
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
@@ -484,6 +525,10 @@ spec:
               subPath: bin
               readOnly: true
             - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/python
+              subPath: python
+              readOnly: true
+            - name: lab-toolchain-image
               mountPath: /nix/store
               subPath: nix/store
               readOnly: true
@@ -518,6 +563,9 @@ spec:
           emptyDir:
             sizeLimit: 128Mi
         - name: github-auth
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: profiles
           emptyDir:
             sizeLimit: 1Mi
   volumeClaimTemplates:
