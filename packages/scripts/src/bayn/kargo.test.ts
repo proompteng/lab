@@ -162,6 +162,15 @@ test('writes source, digest, and research lineage into the correct field in ever
       expect(assignments.get('BAYN_EXECUTION_ACTIVATION_GENERATION')).toBe(
         "${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}",
       )
+      expect(
+        environment.find((entry: { name: string }) => entry.name === 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID'),
+      ).toEqual({
+        name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
+        valueFrom: {
+          fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" },
+        },
+      })
+      expect(assignments.has('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toBe(false)
     }
   }
   expect(lineageValues).toHaveLength(3)

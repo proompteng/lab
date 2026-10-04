@@ -12,7 +12,7 @@ import {
   type HistoricalMarketArrival,
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
-import { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
+import { OriginalCaptureDeliverySchema, SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -37,7 +37,7 @@ const UnobservedArchivePartitionSchema = Schema.Struct({
 export const BacktestSourceManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest-source.v1'),
   encoding: Schema.Literal('ndjson-gzip'),
-  transport: Schema.Literals(['captured-kafka', 'alpaca-rest', 'archive-reconstruction']),
+  transport: Schema.Literals(['captured-kafka', 'alpaca-rest', 'archive-reconstruction', 'original-capture']),
   dataSha256: Sha256Schema,
   recordCount: PositiveIntegerSchema,
   coverageStartMs: NonNegativeIntegerSchema,
@@ -47,6 +47,7 @@ export const BacktestSourceManifestSchema = Schema.Struct({
   origin: StrictNonEmptyStringSchema,
   positions: Schema.Array(SourcePositionSchema).check(Schema.isMinLength(1)),
   archiveUnobservedPartitions: Schema.optionalKey(Schema.Array(UnobservedArchivePartitionSchema)),
+  nativeVisiblePartitions: Schema.optionalKey(Schema.Array(UnobservedArchivePartitionSchema)),
   universe: Schema.Struct({
     universeId: StrictNonEmptyStringSchema,
     universeSymbolHash: Sha256Schema,
@@ -83,6 +84,18 @@ const CapturedKafkaSourceReceiptSchema = Schema.Struct({
 
 export const BacktestSourceReceiptSchema = Schema.Union([
   CapturedKafkaSourceReceiptSchema,
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.original-capture-replay-receipt.v1'),
+    recordedAt: UtcInstantSchema,
+    origin: StrictNonEmptyStringSchema,
+    coverageStartMs: NonNegativeIntegerSchema,
+    coverageEndMs: NonNegativeIntegerSchema,
+    universe: BacktestSourceManifestSchema.fields.universe,
+    positions: BacktestSourceManifestSchema.fields.positions,
+    nativeVisiblePartitions: Schema.Array(UnobservedArchivePartitionSchema).check(Schema.isMinLength(1)),
+    deliveryModel: OriginalCaptureDeliverySchema,
+    sourceDataSha256: Sha256Schema,
+  }),
   Schema.Struct({
     schemaVersion: Schema.Literal('bayn.archive-reconstruction-receipt.v1'),
     recordedAt: UtcInstantSchema,
@@ -153,13 +166,25 @@ export type BacktestSourceReceipt = Result.Result.Success<ReturnType<typeof vali
 export const validateBacktestSourceCuts = (manifest: BacktestSourceManifest, capture: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const expectedTransport =
-      capture.value.schemaVersion === 'bayn.replay-source-capture.v1'
-        ? 'captured-kafka'
-        : capture.value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v2'
-          ? 'alpaca-rest'
-          : 'archive-reconstruction'
+      capture.value.schemaVersion === 'bayn.original-capture-replay-receipt.v1'
+        ? 'original-capture'
+        : capture.value.schemaVersion === 'bayn.replay-source-capture.v1'
+          ? 'captured-kafka'
+          : capture.value.schemaVersion === 'bayn.alpaca-rest-replay-receipt.v2'
+            ? 'alpaca-rest'
+            : 'archive-reconstruction'
     if (manifest.transport !== expectedTransport)
       return yield* Result.fail(fail('Source transport differs from its independently pinned receipt'))
+    if (
+      capture.value.schemaVersion === 'bayn.original-capture-replay-receipt.v1' &&
+      ((yield* canonicalHashV1Result(manifest.deliveryModel)) !==
+        (yield* canonicalHashV1Result(capture.value.deliveryModel)) ||
+        (yield* canonicalHashV1Result(manifest.nativeVisiblePartitions)) !==
+          (yield* canonicalHashV1Result(capture.value.nativeVisiblePartitions)) ||
+        manifest.origin !== capture.value.origin ||
+        manifest.recordCount !== capture.value.deliveryModel.finalConsumerSequence)
+    )
+      return yield* Result.fail(fail('Original source differs from its frozen capture interval provenance'))
     if (
       capture.value.schemaVersion !== 'bayn.replay-source-capture.v1' &&
       capture.value.sourceDataSha256 !== manifest.dataSha256
@@ -190,30 +215,41 @@ export const validateBacktestSourceCuts = (manifest: BacktestSourceManifest, cap
 
 /** The current Torghut capture profile matches the committed KafkaTopic topology, not observed records. */
 export const backtestSourcePartitions = (manifest: BacktestSourceManifest) =>
-  Object.values(manifest.universe.topics)
-    .flatMap((topic) =>
-      Array.from(
-        {
-          length:
-            manifest.transport === 'alpaca-rest'
-              ? 1
-              : topic === manifest.universe.topics.quotes
-                ? 13
-                : (topic === manifest.universe.topics.features &&
-                      manifest.regeneratedFeaturesRecordedAtMs !== undefined) ||
-                    (topic === manifest.universe.topics.technicalFeatures &&
-                      manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined)
+  manifest.transport === 'original-capture'
+    ? (manifest.nativeVisiblePartitions ?? [])
+    : Object.values(manifest.universe.topics)
+        .flatMap((topic) =>
+          Array.from(
+            {
+              length:
+                manifest.transport === 'alpaca-rest'
                   ? 1
-                  : 3,
-        },
-        (_, partition) => ({ topic, partition }),
-      ),
-    )
-    .sort((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition)
+                  : topic === manifest.universe.topics.quotes
+                    ? 13
+                    : (topic === manifest.universe.topics.features &&
+                          manifest.regeneratedFeaturesRecordedAtMs !== undefined) ||
+                        (topic === manifest.universe.topics.technicalFeatures &&
+                          manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined)
+                      ? 1
+                      : 3,
+            },
+            (_, partition) => ({ topic, partition }),
+          ),
+        )
+        .sort((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition)
 
 export const validateBacktestSourceManifest = (input: unknown) =>
   Result.gen(function* () {
     const manifest = yield* Schema.decodeUnknownResult(BacktestSourceManifestSchema, strictParseOptions)(input)
+    const original = manifest.transport === 'original-capture'
+    if (
+      original !== (manifest.deliveryModel.schemaVersion === 'bayn.original-capture-arrivals.v1') ||
+      original !== (manifest.nativeVisiblePartitions !== undefined) ||
+      (original &&
+        (manifest.regeneratedFeaturesRecordedAtMs !== undefined ||
+          manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined))
+    )
+      return yield* Result.fail(fail('Original capture provenance cannot mix with legacy or regenerated delivery'))
     const topics = Object.values(manifest.universe.topics)
     if (new Set(topics).size !== topics.length)
       return yield* Result.fail(fail('Raw and derived source topics must be distinct'))
@@ -223,6 +259,16 @@ export const validateBacktestSourceManifest = (input: unknown) =>
     )
       return yield* Result.fail(fail('Technical regeneration requires its bound source topic'))
     const expected = backtestSourcePartitions(manifest)
+    if (
+      original &&
+      (expected.length === 0 ||
+        new Set(expected.map(({ topic, partition }) => partitionKey(topic, partition))).size !== expected.length ||
+        topics.some((topic) => !expected.some((position) => position.topic === topic)) ||
+        expected.some((position) => !topics.includes(position.topic)))
+    )
+      return yield* Result.fail(
+        fail('Original source inventory must account for every configured topic without duplicates'),
+      )
     const unobserved = manifest.archiveUnobservedPartitions ?? []
     if (
       manifest.transport === 'archive-reconstruction' &&
@@ -314,6 +360,8 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       createHistoricalMarketCursor(runId, manifest.universe, manifest.regeneratedFeaturesRecordedAtMs, source),
     )
     const read = () => {
+      const original = manifest.deliveryModel.schemaVersion === 'bayn.original-capture-arrivals.v1'
+      let validationCursor = cursor
       const digest = createHash('sha256')
       let count = 0
       let firstMs: number | undefined
@@ -346,27 +394,33 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
               catch: (cause) => fail('Invalid arrival JSON', cause),
             })
             const event = yield* Schema.decodeUnknownEffect(HistoricalMarketArrivalSchema, strictParseOptions)(json)
-            if ('receipt' in event)
+            if ('receipt' in event && (!original || event.schemaVersion !== 'bayn.original-market-arrival.v2'))
               return yield* fail('Original receipt export requires a separately qualified capture manifest')
+            if (original) {
+              if (!('schemaVersion' in event) || event.schemaVersion !== 'bayn.original-market-arrival.v2')
+                return yield* fail('Original capture cannot contain legacy arrival records')
+              validationCursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(validationCursor, event))
+            }
             const key = partitionKey(event.record.topic, event.record.partition)
             const bound = bounds.get(key)
             const offset = BigInt(event.record.offset)
             const previous = offsets.get(key)
             if (bound === undefined || offset < BigInt(bound.startOffset) || offset >= BigInt(bound.endOffsetExclusive))
               return yield* fail('Arrival is outside frozen source partition bounds')
-            if (previous === undefined && offset !== BigInt(bound.startOffset))
+            if (!original && previous === undefined && offset !== BigInt(bound.startOffset))
               return yield* fail('Source omits the first data record of a declared partition cut')
             // Archive envelopes retain original coordinates, not every record in the underlying Kafka log.
             // The separately hashed reconstruction receipt explicitly limits completeness to retained rows.
             if (
               manifest.transport !== 'archive-reconstruction' &&
+              !original &&
               previous !== undefined &&
               offset !== BigInt(previous) + 1n
             )
               return yield* fail('Source partition cuts must contain every consecutive source offset')
             if (
               (last !== undefined && compareArrivalPositions(arrivalPosition(last), arrivalPosition(event)) > 0) ||
-              (previous !== undefined && offset <= BigInt(previous))
+              (previous !== undefined && (original ? offset < BigInt(previous) : offset <= BigInt(previous)))
             )
               return yield* fail('Source arrivals reverse time or repeat/reverse a source coordinate')
             count++
@@ -381,11 +435,13 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
         count !== manifest.recordCount ||
         firstMs !== manifest.firstAvailableAtMs ||
         last?.availableAtMs !== manifest.lastAvailableAtMs ||
-        manifest.positions.some((bound) =>
-          bound.startOffset === bound.endOffsetExclusive
-            ? offsets.has(partitionKey(bound.topic, bound.partition))
-            : offsets.get(partitionKey(bound.topic, bound.partition)) !== String(BigInt(bound.endOffsetExclusive) - 1n),
-        ) ||
+        (!original &&
+          manifest.positions.some((bound) =>
+            bound.startOffset === bound.endOffsetExclusive
+              ? offsets.has(partitionKey(bound.topic, bound.partition))
+              : offsets.get(partitionKey(bound.topic, bound.partition)) !==
+                String(BigInt(bound.endOffsetExclusive) - 1n),
+          )) ||
         digest.digest('hex') !== manifest.dataSha256
           ? Effect.fail(fail('Source bytes, record count, or availability bounds differ from the frozen manifest'))
           : Effect.void,

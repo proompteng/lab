@@ -84,10 +84,18 @@ describe('intraday archive queries', () => {
       capture.match(new RegExp(`ingest_ts <= parseDateTime64BestEffort\\("${request.observedAt}", 9, 'UTC'\\)`, 'g')),
     ).toHaveLength(2)
     expect(bars).toContain('FROM signal.intraday_bars_1m_v2')
-    expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
-    expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
-    expect(bars).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)
-    expect(bars).toContain('ORDER BY ingest_ts DESC, source_partition DESC, source_offset DESC')
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(ingest_ts_exact, ingest_ts) <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      'ORDER BY coalesce(ingest_ts_exact, ingest_ts) DESC, source_partition DESC, source_offset DESC',
+    )
     expect(bars).not.toContain('ORDER BY source_offset DESC\n')
     for (const query of [quotes, trades]) {
       expect(query).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
@@ -119,9 +127,15 @@ describe('intraday archive queries', () => {
     }
     const bars = String(queries.loadIntradayBars(preciseRequest))
 
-    expect(bars).toContain(`event_ts >= parseDateTime64BestEffort("${preciseRequest.rangeStartAt}", 9, 'UTC')`)
-    expect(bars).toContain(`event_ts < parseDateTime64BestEffort("${preciseRequest.rangeEndAt}", 9, 'UTC')`)
-    expect(bars).toContain(`ingest_ts <= parseDateTime64BestEffort("${preciseRequest.observedAt}", 9, 'UTC')`)
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) >= parseDateTime64BestEffort("${preciseRequest.rangeStartAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(event_ts_exact, event_ts) < parseDateTime64BestEffort("${preciseRequest.rangeEndAt}", 9, 'UTC')`,
+    )
+    expect(bars).toContain(
+      `coalesce(ingest_ts_exact, ingest_ts) <= parseDateTime64BestEffort("${preciseRequest.observedAt}", 9, 'UTC')`,
+    )
   })
 
   test('filters close evidence to requested positions while retaining archive-universe lineage', () => {
@@ -162,11 +176,11 @@ describe('intraday archive queries', () => {
     const trades = String(queries.loadIntradayTrades(request, cursor))
 
     expect(bars).toContain(
-      `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort("${cursor.eventAt}", 3, 'UTC')`,
+      `WHERE tuple(coalesce(event_ts_exact, event_ts), symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`,
     )
     for (const query of [quotes, trades]) {
       expect(query).toContain(
-        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(`,
+        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(`,
       )
       expect(query).toContain(`parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`)
       expect(query).toContain(`toUInt64("${cursor.sourcePartition}")`)
