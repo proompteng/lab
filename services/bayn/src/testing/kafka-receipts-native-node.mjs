@@ -6,7 +6,7 @@ import { Effect, Logger, Redacted, Result } from 'effect'
 import { sha256 } from '../hash.ts'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
 import { makeKafkaMarketProjection } from '../market-data/streaming/kafka.ts'
-import { CaptureDisposition } from '../research-capture/capture.ts'
+import { CaptureDisposition, restoreKafkaTransportTimestamp } from '../research-capture/capture.ts'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder.ts'
 import { verifyResearchCaptureExport } from '../research-capture/export.ts'
 
@@ -147,6 +147,7 @@ try {
     assert.equal(event.rawValueSha256, raw === undefined ? null : sha256(raw))
     assert.equal(event.rawByteLength, raw === undefined ? null : raw.byteLength)
     assert.equal(event.tombstone, raw === undefined)
+    assert.equal(restoreKafkaTransportTimestamp(event.originalTransport), at)
     assert.equal(event.disposition, index === 0 ? CaptureDisposition.Accepted : CaptureDisposition.Rejected)
     assert.ok(observedAtMs >= at)
   }

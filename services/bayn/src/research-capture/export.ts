@@ -74,6 +74,7 @@ export const researchCaptureObject = (payload: string | Uint8Array): ResearchCap
   const bytes = typeof payload === 'string' ? Buffer.from(payload, 'utf8') : payload
   return { contentHash: sha256(bytes), payload: bytes }
 }
+export const researchCaptureObjectKey = (contentHash: string): string => `research-capture/sha256/${contentHash}`
 const reference = (object: ResearchCaptureObject) => ({
   contentHash: object.contentHash,
   byteLength: object.payload.byteLength,
@@ -134,28 +135,32 @@ export const persistResearchCaptureExportChunk = (
     return objects.index.contentHash
   })
 
-export const persistResearchCaptureExportSeal = (
-  store: ResearchCaptureObjectStore,
-  sealBytes: ResearchCaptureBytes,
-  lastIndexHash: string | null,
-) =>
-  Effect.gen(function* () {
-    const seal = yield* Effect.fromResult(decodeResearchCaptureSeal(sealBytes)).pipe(
-      Effect.mapError((cause) => new ResearchCaptureFailure({ message: 'Invalid capture export seal', cause })),
-    )
+export const deriveResearchCaptureExportManifest = (sealBytes: ResearchCaptureBytes | undefined) =>
+  Result.gen(function* () {
+    if (sealBytes === undefined) return yield* Result.fail(fail('Unsealed capture has no durable export root'))
+    const seal = yield* decodeResearchCaptureSeal(sealBytes)
+    const root = seal.exportRoot
+    if (root === undefined) return yield* Result.fail(fail('Metadata-only seal has no durable export root'))
     const metadataSeal = researchCaptureObject(sealBytes.payload)
-    const manifest = researchCaptureObject(
+    return researchCaptureObject(
       JSON.stringify({
         schemaVersion: 'bayn.research-capture-export.v1',
         qualification: CaptureQualification.Unqualified,
         captureId: seal.captureId,
         sourceRevision: seal.sourceRevision,
-        exportedChunks: seal.persistedChunks,
-        lastIndexHash,
+        exportedChunks: root.exportedChunks,
+        lastIndexHash: root.lastIndexHash,
         metadataSeal: reference(metadataSeal),
       } satisfies typeof ResearchCaptureExportManifestSchema.Type),
     )
-    yield* store.putVerified(metadataSeal)
+  })
+
+export const persistResearchCaptureExportSeal = (store: ResearchCaptureObjectStore, sealBytes: ResearchCaptureBytes) =>
+  Effect.gen(function* () {
+    const manifest = yield* Effect.fromResult(deriveResearchCaptureExportManifest(sealBytes)).pipe(
+      Effect.mapError((cause) => new ResearchCaptureFailure({ message: 'Invalid capture export root', cause })),
+    )
+    yield* store.putVerified(researchCaptureObject(sealBytes.payload))
     yield* store.putVerified(manifest)
     return manifest.contentHash
   })
@@ -186,6 +191,12 @@ export const verifyResearchCaptureExport = (
       sealBytes,
     )
     const manifest = yield* decodeExport(ResearchCaptureExportManifestSchema, manifestBytes)
+    const expectedManifest = yield* deriveResearchCaptureExportManifest(sealBytes)
+    if (
+      manifestBytes.contentHash !== expectedManifest.contentHash ||
+      manifestBytes.payload !== Buffer.from(expectedManifest.payload).toString('utf8')
+    )
+      return yield* Result.fail(fail('Export manifest differs from its durable SQL seal root'))
     if (
       manifest.captureId !== capture.seal.captureId ||
       manifest.sourceRevision !== capture.seal.sourceRevision ||
@@ -219,6 +230,8 @@ export const verifyResearchCaptureExport = (
         const event = receipt.event
         if (event.kind !== 'market-record' || range === undefined || range.receiptSequence !== receipt.sequence)
           return yield* Result.fail(fail('Export range does not belong to its original receipt'))
+        if (event.originalTransport === undefined)
+          return yield* Result.fail(fail('Raw export omits the original transport timestamp contract'))
         if (event.tombstone) {
           if (range.byteOffset !== null || range.byteLength !== null)
             return yield* Result.fail(fail('Tombstone has a byte range'))

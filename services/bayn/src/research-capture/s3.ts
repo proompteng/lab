@@ -17,7 +17,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { ResearchCaptureFailure, maximumResearchCaptureChunkBytes } from './capture'
-import type { ResearchCaptureObjectStore } from './export'
+import { researchCaptureObjectKey, type ResearchCaptureObjectStore } from './export'
 
 const CaptureS3OptionsSchema = Schema.Struct({
   endpoint: StrictNonEmptyStringSchema,
@@ -124,7 +124,7 @@ export const makeS3ResearchCaptureObjectStore = (
               sha256(object.payload) !== object.contentHash
             )
               throw failure('Capture object exceeds its byte limit or differs from its content address')
-            const location = { Bucket: options.bucket, Key: `research-capture/sha256/${object.contentHash}` }
+            const location = { Bucket: options.bucket, Key: researchCaptureObjectKey(object.contentHash) }
             const put = new PutObjectCommand({
               ...location,
               Body: object.payload,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
 import {
   CaptureDisposition,
+  captureKafkaTransport,
   capturesResearchRawValues,
   CaptureInvalidation,
   invalidateResearchCapture,
@@ -330,9 +331,10 @@ export const makeKafkaMarketProjection = (
           phase: 'STARTED',
           positions: [],
         })
+        const captureRawValues = capturesResearchRawValues(capture)
         const transport = yield* Effect.acquireRelease(
           Effect.try({
-            try: () => factory(config, epoch, capture !== undefined, capturesResearchRawValues(capture)),
+            try: () => factory(config, epoch, capture !== undefined, captureRawValues),
             catch: (cause) => failure('connect', 'Kafka client acquisition failed', cause),
           }),
           (resource) =>
@@ -462,6 +464,7 @@ export const makeKafkaMarketProjection = (
                     topic: record.topic,
                     partition: record.partition,
                     offset: record.offset,
+                    ...(captureRawValues ? { originalTransport: captureKafkaTransport(record.timestampMs) } : {}),
                     rawValueSha256: record.rawValueSha256 ?? null,
                     rawByteLength: record.rawByteLength ?? null,
                     tombstone: record.tombstone === true,

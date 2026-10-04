@@ -125,6 +125,10 @@ export const makeResearchCaptureRecorder = (
         }
         const bytes = Buffer.byteLength(JSON.stringify(retained.success), 'utf8')
         if (objectStore !== undefined && event.kind === 'market-record') {
+          if (event.originalTransport === undefined) {
+            invalidate(CaptureInvalidation.InvalidEvent)
+            return
+          }
           if (
             event.tombstone
               ? rawValue !== null || event.rawValueSha256 !== null || event.rawByteLength !== null
@@ -281,6 +285,15 @@ export const makeResearchCaptureRecorder = (
             persistedChunks,
             lastContentHash: previousContentHash,
             invalidations: [...invalidations],
+            ...(objectStore === undefined
+              ? {}
+              : {
+                  exportRoot: {
+                    schemaVersion: 'bayn.research-capture-export-root.v1' as const,
+                    lastIndexHash: previousIndexHash,
+                    exportedChunks: persistedChunks,
+                  },
+                }),
           }
           let verifiedManifestHash: string | null = null
           let sealAcknowledged = false
@@ -288,7 +301,7 @@ export const makeResearchCaptureRecorder = (
             Effect.gen(function* () {
               const bytes = encodeResearchCapture(seal)
               if (objectStore !== undefined)
-                verifiedManifestHash = yield* persistResearchCaptureExportSeal(objectStore, bytes, previousIndexHash)
+                verifiedManifestHash = yield* persistResearchCaptureExportSeal(objectStore, bytes)
               yield* store.seal(bytes)
               sealAcknowledged = true
             }),

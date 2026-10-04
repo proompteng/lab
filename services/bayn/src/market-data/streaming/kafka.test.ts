@@ -136,7 +136,7 @@ test('Kafka capture hashes exact bytes before UTF8 replacement and distinguishes
   expect(decodeKafkaTransportValue(binary, true).rawValue).toBeUndefined()
 })
 
-test('capture observes accepted, rejected and ignored receipts in the same clock and consumer epoch', async () => {
+test.each([false, true])('capture observes dispositions and exact transport time (rawValues=%s)', async (rawValues) => {
   const at = Date.parse('2026-09-11T14:00:02.000Z')
   const quote = (symbol: string) =>
     Buffer.from(
@@ -161,7 +161,7 @@ test('capture observes accepted, rejected and ignored receipts in the same clock
     offset: String(Math.min(index, 2)),
     timestampMs: at,
     leaderEpoch: 1,
-    ...decodeKafkaTransportValue(value, true),
+    ...decodeKafkaTransportValue(value, true, rawValues),
   }))
   const receipts: Array<{ event: ResearchCaptureEvent; atMs: number | undefined }> = []
   let epoch: string | undefined
@@ -173,12 +173,13 @@ test('capture observes accepted, rejected and ignored receipts in the same clock
         universe,
         (_config, selectedEpoch, captureRaw, captureValues) => {
           expect(captureRaw).toBe(true)
-          expect(captureValues).toBe(false)
+          expect(captureValues).toBe(rawValues)
           epoch = selectedEpoch
           return transport
         },
         undefined,
         {
+          rawValues,
           record: (event, atMs) => {
             receipts.push({ event, atMs })
           },
@@ -203,6 +204,14 @@ test('capture observes accepted, rejected and ignored receipts in the same clock
         records.every((receipt) => receipt.event.kind === 'market-record' && receipt.event.consumerEpoch === epoch),
       ).toBe(true)
       expect(records[0]?.atMs).toBe(cut.projection.quotes.get('AAPL')?.availableAtMs)
+      if (rawValues) {
+        expect(records[0]?.event).toMatchObject({
+          originalTransport: {
+            schemaVersion: 'bayn.kafka-original-transport.v1',
+            timestampMs: { kind: 'VALUE', value: at },
+          },
+        })
+      } else expect(records[0]?.event).not.toHaveProperty('originalTransport')
       expect(records[1]?.event).toMatchObject({
         rawValueSha256: sha256(Buffer.from([0x80])),
         rawByteLength: 1,

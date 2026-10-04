@@ -56,6 +56,12 @@ does not copy raw values. Admission validates the receipt's original hash and le
 terminal-position map retains only topic, partition and offset, never a payload. Null tombstones and zero-length values
 remain distinct, and rejected, malformed and ignored records retain their exact original bytes.
 
+Raw-mode market receipts include `bayn.kafka-original-transport.v1`. It retains the exact `timestampMs` value that the
+Kafka adapter supplied to the reducer. Finite numbers remain numbers. Missing values, NaN, either infinity and negative
+zero have explicit tags so JSON cannot turn them into null or silently omit them. This includes invalid producer clocks:
+replay must reproduce their rejection instead of inferring a timestamp from the payload. Metadata-only receipts omit this
+block. No leader-epoch qualification or offset-gap rule is added.
+
 Raw admission reserves `4 * receipt UTF8 bytes + 3 * raw bytes + 512` bytes per entry and 64 KiB for envelopes and bounded SDK responses. The
 reservation covers owned bytes, binary assembly, metadata/index serialization and bounded readback payloads. It remains
 charged through in-flight writes, as does the receipt-count limit. It bounds application-owned payloads, not total
@@ -68,6 +74,21 @@ topic/partition/offset, disposition and hash. All three objects must pass readba
 must acknowledge before the recorder advances its frontier. An immutable export manifest binds the last index and exact
 metadata seal. Every index, manifest and seal is `UNQUALIFIED`, including stored objects whose acknowledgements are lost.
 The verifier checks the existing metadata chain plus every binary range and always reports `complete: false`.
+
+Raw-mode SQL seals also retain `bayn.research-capture-export-root.v1`, binding the last verified index hash and chunk
+count to the immutable metadata frontier. The manifest references the exact seal bytes; the seal does not reference its
+own manifest hash. `deriveResearchCaptureExportManifest` is the single writer/reader representation. Given the exact
+durably read SQL seal, it derives the expected manifest bytes and content address. Derivation alone does not prove the
+object exists. A reader must Get that object from the known bucket, traverse the index chain by content-addressed keys,
+and verify every referenced raw/metadata object against the durable SQL chunks. No List or recorder status is needed.
+
+A committed SQL seal remains recoverable if its acknowledgement or process state is lost. Reconstruction does not prove
+that acknowledgement arrived and never upgrades `UNQUALIFIED`. A failed or unknown manifest write prevents the SQL seal;
+orphan objects without that seal have an unknown crash tail. Missing objects, mismatched roots or corrupt bytes cannot
+establish a verified export. Metadata-only seal bytes and hashes remain unchanged.
+
+The existing whole-worker verifier still requires genuine consumer closure. Deriving a manifest from an UNQUALIFIED
+sealed prefix does not fabricate `STOPPED`, prove a complete session, or authorize an original-arrival replay source.
 
 The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
 ambient credential provider, or live composition. Future wiring must use the verified native OBC's actual `BUCKET_NAME`,

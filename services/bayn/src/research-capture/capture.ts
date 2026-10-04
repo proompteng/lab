@@ -46,6 +46,69 @@ const PositionSchema = Schema.Struct({
   offset: UnsignedMicrosSchema,
 })
 
+export enum CaptureTimestampKind {
+  Value = 'VALUE',
+  Missing = 'MISSING',
+  NotANumber = 'NAN',
+  PositiveInfinity = 'POSITIVE_INFINITY',
+  NegativeInfinity = 'NEGATIVE_INFINITY',
+  NegativeZero = 'NEGATIVE_ZERO',
+}
+const CaptureTimestampSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal(CaptureTimestampKind.Value),
+    value: Schema.Finite.check(
+      Schema.makeFilter((value: number) => !Object.is(value, -0), {
+        expected: 'a finite timestamp with negative zero separately tagged',
+      }),
+    ),
+  }),
+  Schema.Struct({
+    kind: Schema.Literals([
+      CaptureTimestampKind.Missing,
+      CaptureTimestampKind.NotANumber,
+      CaptureTimestampKind.PositiveInfinity,
+      CaptureTimestampKind.NegativeInfinity,
+      CaptureTimestampKind.NegativeZero,
+    ]),
+  }),
+])
+export const OriginalKafkaTransportSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.kafka-original-transport.v1'),
+  timestampMs: CaptureTimestampSchema,
+})
+type CapturedTimestamp = typeof CaptureTimestampSchema.Type
+const captureTimestamp = (value: number | undefined): CapturedTimestamp => {
+  if (value === undefined) return { kind: CaptureTimestampKind.Missing }
+  if (Number.isNaN(value)) return { kind: CaptureTimestampKind.NotANumber }
+  if (value === Infinity) return { kind: CaptureTimestampKind.PositiveInfinity }
+  if (value === -Infinity) return { kind: CaptureTimestampKind.NegativeInfinity }
+  if (Object.is(value, -0)) return { kind: CaptureTimestampKind.NegativeZero }
+  return { kind: CaptureTimestampKind.Value, value }
+}
+export const captureKafkaTransport = (timestampMs: number | undefined): typeof OriginalKafkaTransportSchema.Type => ({
+  schemaVersion: 'bayn.kafka-original-transport.v1',
+  timestampMs: captureTimestamp(timestampMs),
+})
+export const restoreKafkaTransportTimestamp = (
+  transport: typeof OriginalKafkaTransportSchema.Type,
+): number | undefined => {
+  switch (transport.timestampMs.kind) {
+    case CaptureTimestampKind.Value:
+      return transport.timestampMs.value
+    case CaptureTimestampKind.Missing:
+      return undefined
+    case CaptureTimestampKind.NotANumber:
+      return NaN
+    case CaptureTimestampKind.PositiveInfinity:
+      return Infinity
+    case CaptureTimestampKind.NegativeInfinity:
+      return -Infinity
+    case CaptureTimestampKind.NegativeZero:
+      return -0
+  }
+}
+
 export const ResearchCaptureEventSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('market-record'),
@@ -55,6 +118,7 @@ export const ResearchCaptureEventSchema = Schema.Union([
     topic: StrictNonEmptyStringSchema,
     partition: NonNegativeIntegerSchema,
     offset: UnsignedMicrosSchema,
+    originalTransport: Schema.optionalKey(OriginalKafkaTransportSchema),
     rawValueSha256: Schema.NullOr(Sha256Schema),
     rawByteLength: Schema.NullOr(NonNegativeIntegerSchema),
     tombstone: Schema.Boolean,
@@ -122,6 +186,12 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
 })
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
+const ResearchCaptureExportRootSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v1'),
+  lastIndexHash: Schema.NullOr(Sha256Schema),
+  exportedChunks: NonNegativeIntegerSchema,
+})
+
 export const ResearchCaptureSealSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-capture-seal.v1'),
   qualification: Schema.Enum(CaptureQualification),
@@ -133,6 +203,7 @@ export const ResearchCaptureSealSchema = Schema.Struct({
   persistedChunks: NonNegativeIntegerSchema,
   lastContentHash: Schema.NullOr(Sha256Schema),
   invalidations: Schema.Array(Schema.Enum(CaptureInvalidation)).check(Schema.isUnique()),
+  exportRoot: Schema.optionalKey(ResearchCaptureExportRootSchema),
 })
 export type ResearchCaptureSeal = typeof ResearchCaptureSealSchema.Type
 
@@ -169,10 +240,17 @@ export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
     if (Buffer.byteLength(input.payload, 'utf8') > maximumResearchCaptureSealBytes)
       return yield* Result.fail(fail('Capture seal exceeds the exact UTF8 payload limit'))
     if (sha256(input.payload) !== input.contentHash) return yield* Result.fail(fail('Capture seal hash mismatch'))
-    return yield* Schema.decodeUnknownResult(
+    const seal = yield* Schema.decodeUnknownResult(
       Schema.fromJsonString(ResearchCaptureSealSchema),
       strictParseOptions,
     )(input.payload)
+    if (
+      seal.exportRoot !== undefined &&
+      (seal.exportRoot.exportedChunks !== seal.persistedChunks ||
+        (seal.persistedChunks === 0 ? seal.exportRoot.lastIndexHash !== null : seal.exportRoot.lastIndexHash === null))
+    )
+      return yield* Result.fail(fail('Export root differs from the exact persisted chunk frontier'))
+    return seal
   })
 
 /** A seal describes one worker's capture. It is never evidence of an unobserved worker or epoch. */

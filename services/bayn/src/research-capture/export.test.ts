@@ -9,18 +9,25 @@ import {
   CaptureDisposition,
   CaptureInvalidation,
   CaptureQualification,
+  captureKafkaTransport,
   ResearchCaptureFailure,
   encodeResearchCapture,
+  decodeResearchCaptureSeal,
   type ResearchCaptureBytes,
   type ResearchCaptureChunk,
   type ResearchCaptureSeal,
 } from './capture'
-import { captureEvent, marketEvent } from './capture.test-support'
+import {
+  captureEvent,
+  marketEvent as metadataMarketEvent,
+  recoverCaptureFromStoredObjects,
+} from './capture.test-support'
 import {
   buildResearchCaptureExportChunk,
+  deriveResearchCaptureExportManifest,
   ResearchCaptureByteIndexSchema,
-  ResearchCaptureExportManifestSchema,
   researchCaptureObject,
+  researchCaptureObjectKey,
   researchCaptureExportEnvelopeReservation,
   researchCaptureExportEntryReservation,
   verifyResearchCaptureExport,
@@ -28,6 +35,8 @@ import {
   type ResearchCaptureObjectStore,
 } from './export'
 import { makeResearchCaptureRecorder, type ResearchCaptureStore } from './recorder'
+
+const marketEvent = { ...metadataMarketEvent, originalTransport: captureKafkaTransport(100) }
 
 const options = {
   captureId: 'capture-raw',
@@ -79,6 +88,175 @@ const memory = () => {
   return { chunks, seals, objects, store, objectStore, verify }
 }
 
+test.each(['acknowledged', 'seal-ack-lost', 'manifest-ack-lost', 'interrupted-prefix', 'empty'] as const)(
+  'process-loss recovery uses only durable SQL and content-addressed Gets (%s)',
+  async (fault) => {
+    const saved = memory()
+    const bucket = new Map<string, ResearchCaptureObject>()
+    let puts = 0
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(100)
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            ...saved.store,
+            seal: (bytes) =>
+              saved.store
+                .seal(bytes)
+                .pipe(
+                  Effect.andThen(
+                    fault === 'seal-ack-lost'
+                      ? Effect.fail(new ResearchCaptureFailure({ message: 'Seal committed, acknowledgement lost' }))
+                      : Effect.void,
+                  ),
+                ),
+          },
+          options,
+          {
+            putVerified: (object) =>
+              Effect.gen(function* () {
+                puts++
+                bucket.set(researchCaptureObjectKey(object.contentHash), {
+                  ...object,
+                  payload: Buffer.from(object.payload),
+                })
+                if (fault === 'manifest-ack-lost' && puts === 5)
+                  return yield* new ResearchCaptureFailure({ message: 'Manifest committed, acknowledgement lost' })
+              }),
+          },
+        )
+        if (fault === 'empty') return
+        recorder.record(captureEvent('STARTED'), 100)
+        recorder.record(marketEvent, 100, Buffer.from('é'))
+        if (fault === 'interrupted-prefix') recorder.invalidate(CaptureInvalidation.Interrupted)
+        else recorder.record(captureEvent('STOPPED'), 100)
+      }),
+    )
+    const reads: string[] = []
+    const recovered = recoverCaptureFromStoredObjects(saved.chunks, saved.seals[0], (key) => {
+      reads.push(key)
+      return bucket.get(key)
+    })
+    expect(saved.seals).toHaveLength(fault === 'manifest-ack-lost' ? 0 : 1)
+    if (fault === 'manifest-ack-lost') {
+      expect(bucket.size).toBe(5)
+      expect(Result.isFailure(recovered)).toBe(true)
+      expect(reads).toEqual([])
+    } else {
+      const result = Result.getOrThrow(recovered)
+      expect(result.complete).toBe(false)
+      expect(result.structurallyClosed).toBe(fault !== 'interrupted-prefix')
+      expect(result.seal.qualification).toBe(CaptureQualification.Unqualified)
+      expect(reads).toHaveLength(fault === 'empty' ? 1 : 4)
+    }
+  },
+)
+
+test.each(['manifest', 'index', 'metadata', 'raw', 'corrupt-raw'] as const)(
+  'durable root cannot conceal a missing or corrupt %s object',
+  (fault) =>
+    run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(100)
+        const saved = memory()
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const recorder = yield* makeResearchCaptureRecorder(saved.store, options, saved.objectStore)
+            recorder.record(captureEvent('STARTED'), 100)
+            recorder.record(marketEvent, 100, Buffer.from('é'))
+            recorder.record(captureEvent('STOPPED'), 100)
+          }),
+        )
+        const bucket = new Map(saved.objects.map((object) => [researchCaptureObjectKey(object.contentHash), object]))
+        const position = { manifest: 4, index: 2, metadata: 1, raw: 0, 'corrupt-raw': 0 }[fault]
+        const target = saved.objects[position]
+        if (target === undefined) throw new Error('Expected persisted object')
+        const key = researchCaptureObjectKey(target.contentHash)
+        if (fault === 'corrupt-raw') bucket.set(key, { ...target, payload: Buffer.from('wrong') })
+        else bucket.delete(key)
+        expect(
+          Result.isFailure(recoverCaptureFromStoredObjects(saved.chunks, saved.seals[0], (key) => bucket.get(key))),
+        ).toBe(true)
+      }),
+    ),
+)
+
+test('metadata-only capture retains byte-identical legacy chunks and seals', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const saved = memory()
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, options)
+      recorder.record(captureEvent('STARTED'), 100)
+      recorder.record(captureEvent('STOPPED'), 100)
+      yield* recorder.finish
+      const chunk = encodeResearchCapture({
+        schemaVersion: 'bayn.research-capture-chunk.v1',
+        captureId: options.captureId,
+        sourceRevision: options.sourceRevision,
+        chunkOrdinal: 0,
+        previousContentHash: null,
+        receipts: [captureEvent('STARTED'), captureEvent('STOPPED')].map((event, index) => ({
+          sequence: index + 1,
+          observedAtMs: 100,
+          event,
+        })),
+      })
+      const seal = encodeResearchCapture({
+        schemaVersion: 'bayn.research-capture-seal.v1',
+        qualification: CaptureQualification.Unqualified,
+        captureId: options.captureId,
+        sourceRevision: options.sourceRevision,
+        closedAtMs: 100,
+        observedReceipts: 2,
+        persistedReceipts: 2,
+        persistedChunks: 1,
+        lastContentHash: chunk.contentHash,
+        invalidations: [],
+      })
+      expect(saved.chunks).toEqual([chunk])
+      expect(saved.seals).toEqual([seal])
+      expect(recorder.rawValues).toBeUndefined()
+      expect(Result.isFailure(deriveResearchCaptureExportManifest(seal))).toBe(true)
+    }),
+  ))
+
+test('raw admission rejects an absent transport block without inferring payload time', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, options, saved.objectStore)
+      recorder.record(metadataMarketEvent, 100, Buffer.from('é'))
+      const seal = yield* recorder.finish
+      expect(seal?.invalidations).toContain(CaptureInvalidation.InvalidEvent)
+      expect(saved.chunks).toHaveLength(0)
+    }),
+  ))
+
+test('absent and inconsistent durable roots cannot reconstruct an export manifest', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const saved = memory()
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, options, saved.objectStore)
+      recorder.record(captureEvent('STARTED'), 100)
+      recorder.record(captureEvent('STOPPED'), 100)
+      yield* recorder.finish
+      const stored = saved.seals[0]
+      if (stored === undefined) throw new Error('Expected seal')
+      const decoded = Result.getOrThrow(decodeResearchCaptureSeal(stored))
+      for (const exportRoot of [
+        undefined,
+        { schemaVersion: 'bayn.research-capture-export-root.v1', exportedChunks: 2, lastIndexHash: 'a'.repeat(64) },
+        { schemaVersion: 'bayn.research-capture-export-root.v1', exportedChunks: 1, lastIndexHash: null },
+        { schemaVersion: 'foreign-root.v1', exportedChunks: 1, lastIndexHash: 'a'.repeat(64) },
+      ]) {
+        const bytes = text(researchCaptureObject(JSON.stringify({ ...decoded, exportRoot })))
+        expect(Result.isFailure(deriveResearchCaptureExportManifest(bytes))).toBe(true)
+      }
+    }),
+  ))
+
 test('raw capture owns exact malformed, ignored, empty and tombstone bytes while metadata remains unqualified', () =>
   run(
     Effect.gen(function* () {
@@ -110,6 +288,13 @@ test('raw capture owns exact malformed, ignored, empty and tombstone bytes while
       expect(yield* recorder.finish).toEqual(seal)
       expect(saved.seals).toHaveLength(1)
       expect(saved.objects).toHaveLength(5)
+      expect(seal).toMatchObject({
+        exportRoot: {
+          schemaVersion: 'bayn.research-capture-export-root.v1',
+          exportedChunks: 1,
+          lastIndexHash: saved.objects[2]?.contentHash,
+        },
+      })
       expect(saved.objects[0]?.payload).toEqual(Buffer.from([0x80, 0x81]))
       const verified = Result.getOrThrow(saved.verify())
       expect(verified.structurallyClosed).toBe(true)
@@ -278,21 +463,14 @@ test('property: immutable byte ranges round-trip arbitrary binary payloads and d
         persistedChunks: 1,
         lastContentHash: metadata.contentHash,
         invalidations: [],
+        exportRoot: {
+          schemaVersion: 'bayn.research-capture-export-root.v1',
+          exportedChunks: 1,
+          lastIndexHash: objects.index.contentHash,
+        },
       }
       const sealBytes = encodeResearchCapture(seal)
-      const manifest = text(
-        researchCaptureObject(
-          JSON.stringify({
-            schemaVersion: 'bayn.research-capture-export.v1',
-            qualification: CaptureQualification.Unqualified,
-            captureId: options.captureId,
-            sourceRevision: options.sourceRevision,
-            exportedChunks: 1,
-            lastIndexHash: objects.index.contentHash,
-            metadataSeal: { contentHash: sealBytes.contentHash, byteLength: Buffer.byteLength(sealBytes.payload) },
-          }),
-        ),
-      )
+      const manifest = text(Result.getOrThrow(deriveResearchCaptureExportManifest(sealBytes)))
       const exported = [{ metadata, raw: objects.raw.payload, index: text(objects.index) }]
       expect(Result.getOrThrow(verifyResearchCaptureExport(exported, sealBytes, manifest)).complete).toBe(false)
       const rawLength = values.reduce((sum, value) => sum + (value?.byteLength ?? 0), 0)
@@ -319,9 +497,6 @@ test('property: immutable byte ranges round-trip arbitrary binary payloads and d
       const originalIndex = Result.getOrThrow(
         Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureByteIndexSchema))(text(objects.index).payload),
       )
-      const originalManifest = Result.getOrThrow(
-        Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureExportManifestSchema))(manifest.payload),
-      )
       const corrupted = [
         { ...originalIndex, captureId: 'another-worker' },
         { ...originalIndex, previousIndexHash: 'f'.repeat(64) },
@@ -340,14 +515,20 @@ test('property: immutable byte ranges round-trip arbitrary binary payloads and d
       for (const [index, value] of corrupted.entries()) {
         if (index >= 2 && values.length === 0) continue
         const changedIndex = text(researchCaptureObject(JSON.stringify(value)))
-        const changedManifest = text(
-          researchCaptureObject(JSON.stringify({ ...originalManifest, lastIndexHash: changedIndex.contentHash })),
-        )
+        const changedSeal = encodeResearchCapture({
+          ...seal,
+          exportRoot: {
+            schemaVersion: 'bayn.research-capture-export-root.v1',
+            exportedChunks: 1,
+            lastIndexHash: changedIndex.contentHash,
+          },
+        })
+        const changedManifest = text(Result.getOrThrow(deriveResearchCaptureExportManifest(changedSeal)))
         expect(
           Result.isFailure(
             verifyResearchCaptureExport(
               [{ metadata, raw: objects.raw.payload, index: changedIndex }],
-              sealBytes,
+              changedSeal,
               changedManifest,
             ),
           ),
@@ -396,6 +577,18 @@ test('periodic drains form one immutable index chain and a different worker cann
       yield* recorder.finish
       expect(saved.chunks).toHaveLength(2)
       expect(Result.getOrThrow(saved.verify()).structurallyClosed).toBe(true)
+      const bucket = new Map(saved.objects.map((object) => [researchCaptureObjectKey(object.contentHash), object]))
+      const reads: string[] = []
+      const recovered = Result.getOrThrow(
+        recoverCaptureFromStoredObjects(saved.chunks, saved.seals[0], (key) => {
+          reads.push(key)
+          return bucket.get(key)
+        }),
+      )
+      expect(recovered.seal.exportRoot?.exportedChunks).toBe(2)
+      expect(recovered.structurallyClosed).toBe(true)
+      expect(recovered.complete).toBe(false)
+      expect(reads).toHaveLength(7)
       const second = saved.objects[5]
       const first = saved.objects[2]
       if (second === undefined || first === undefined) throw new Error('Expected two indexes')
