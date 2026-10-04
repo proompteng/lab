@@ -27,7 +27,7 @@ Each process admits four live sessions and caches four agents. The API admits tw
 existing shared-service capacity model.
 
 Exa's native search and extract tools are the sole web integration. Removing the duplicate Exa MCP server removes its
-connection and duplicate tool schemas. Native web responses have a twenty-minute cache. Keyless fallback and rescue
+connection and duplicate tool schemas. The toolchain image supplies the hash-pinned `exa-py` SDK through a read-only Python path; bootstrap verifies its import and version before starting Hermes. Native web responses have a twenty-minute cache. Keyless fallback and rescue
 are disabled so an Exa failure remains visible.
 
 Only the bundled `security-guidance` agent plugin is enabled. It adds pattern-based warnings to file writes and can have
