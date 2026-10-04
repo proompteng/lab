@@ -278,3 +278,5 @@ starting or steering a turn, preventing silent image loss during a mismatched re
 under `/workspace/.tengri-attachments` through gRPC, and submits Codex `localImage` inputs. A failed image write
 fails the request before Codex starts or steers a turn. Attachments remain with the persistent workspace so saved
 conversation references remain valid.
+If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
+Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.

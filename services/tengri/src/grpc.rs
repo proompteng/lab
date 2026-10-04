@@ -2216,12 +2216,24 @@ pub(crate) async fn codex_turn_input(
         {
             return Err(map_guest_error(error));
         }
+        let mut written_paths = Vec::new();
         for image in images {
             let path = format!("{directory}/{}.{}", Uuid::new_v4(), image_extension(image)?);
-            guest
-                .write_file(&path, &image.content, "missing")
-                .await
-                .map_err(map_guest_error)?;
+            if let Err(error) = guest.write_file(&path, &image.content, "missing").await {
+                if !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
+                {
+                    written_paths.push(path);
+                }
+                for staged_path in &written_paths {
+                    if let Err(cleanup_error) = guest.delete_file(staged_path, false).await
+                        && !matches!(&cleanup_error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::NOT_FOUND)
+                    {
+                        tracing::warn!(error = %cleanup_error, "failed to clean unsent Codex attachment");
+                    }
+                }
+                return Err(map_guest_error(error));
+            }
+            written_paths.push(path.clone());
             input.push(json!({"type": "localImage", "path": path}));
         }
     }
