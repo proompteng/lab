@@ -107,9 +107,13 @@ out after that verified native binding. The worker advertises exactly `BaynExecu
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
 `activate`, `deactivate`, `tick` and `status`, and every broker-observation handler, remain private. The activation
-result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job's
-verified log includes `activationInvocationId`, allowing
-the handoff and its completed successor proof to be inspected after the successful hook is removed.
+result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
+`BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
+and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait
+expires. Missing or invalid Job identity fails before invocation. A recreated Job has a new UID and can retry a retained
+terminal failure after its dependency recovers. This identity does not deduplicate separate Job incarnations.
+The acceptance log records the attempt UID, `activationInvocationId`, source revision and receipt status before waiting.
+The verified log retains the completed successor proof after the successful hook is removed.
 
 The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the
 operator-added `pod-template-hash`, so retained draining ReplicaSets cannot satisfy spreading for the current revision and
@@ -257,11 +261,10 @@ This is a hard route migration from `BaynExecutionBootstrap/start` to
 image. Native controller state, tick and mutation contracts, account keys and credentials are unchanged. No legacy
 handler is served by the replacement endpoint.
 
-Each activation process generates one attempt UUID, combined with the immutable deployment binding in its
-idempotency key. Transport retries within that process reuse the same invocation. A new process, including the
-Job's `OnFailure` container retry, gets a new attempt identity so a retained terminal failure cannot block a
-recovered dependency for seven days. Native account ownership and controller mutations remain idempotent across
-attempts. Successful results retain their invocation ID for inspection; the completed request journal containing
+Activation follows the [Job-scoped retry contract](#native-restate-execution-cutover). The Job's `OnFailure` container
+retries and replacement Pods reuse the same invocation, including a retained terminal failure. A recreated Job supplies
+a new identity after its dependency recovers. Native account ownership and controller mutations remain idempotent
+across attempts. Successful results retain their invocation ID for inspection; the completed request journal containing
 the bearer header is discarded.
 
 Removing a service from discovery does not remove its existing Restate metadata. Operator 3.0.1 keeps an old

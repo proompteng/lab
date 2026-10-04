@@ -486,6 +486,11 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate).not.toHaveProperty('drainDelaySeconds')
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(mandateIdentity.requestHash)
+  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toEqual({
+    name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
+    valueFrom: { fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } },
+  })
+  expect(activation.spec.template.spec.restartPolicy).toBe('OnFailure')
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
