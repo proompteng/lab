@@ -9,10 +9,26 @@ RUN curl --fail --location --retry 3 https://codeload.github.com/temporalio/temp
 COPY host-resources.patch /tmp/host-resources.patch
 COPY host-resources.go common/sdk/host_resources.go
 RUN patch --batch --fuzz=0 -p1 < /tmp/host-resources.patch
+COPY routing-propagation.patch /tmp/routing-propagation.patch
+COPY routing-reconciliation.go service/worker/workerdeployment/routing_reconciliation.go
+RUN patch --batch --fuzz=0 -p1 < /tmp/routing-propagation.patch
 
 FROM source AS test
 COPY host-resources_test.go common/sdk/host_resources_test.go
+COPY routing-*_test.go service/worker/workerdeployment/
+COPY testdata/routing-reconciliation/ service/worker/workerdeployment/testdata/routing-reconciliation/
 RUN mkdir /proof
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    set -eu; \
+    patch --batch --fuzz=0 --reverse -p1 < /tmp/routing-propagation.patch; \
+    if go test -mod=readonly -count=1 -run '^TestWorkerDeploymentSuite$/Test_RoutingSignalAtActivityCompletion$' ./service/worker/workerdeployment > /proof/routing-baseline.log 2>&1; then \
+      cat /proof/routing-baseline.log; exit 1; \
+    fi; \
+    grep -F 'Should be empty, but was map[previous:revision_numbers:98]' /proof/routing-baseline.log; \
+    patch --batch --fuzz=0 -p1 < /tmp/routing-propagation.patch; \
+    go test -mod=readonly -count=1 ./service/worker/workerdeployment ./service/worker/workerdeployment/replaytester > /proof/routing.log 2>&1 \
+      || { cat /proof/routing.log; exit 1; }
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     set -eu; \
@@ -38,4 +54,4 @@ FROM mirror.gcr.io/temporalio/server:1.31.2@sha256:b5ecdb8282bededae2a10c36e8d86
 COPY --from=builder /tmp/temporal-server /usr/local/bin/temporal-server
 LABEL org.opencontainers.image.base.name="mirror.gcr.io/temporalio/server:1.31.2" \
       ai.proompteng.temporal.upstream-revision="19a774302c613da9adc4436ab14278ccdca8e0a5" \
-      ai.proompteng.temporal.patch="host-resources-v1"
+      ai.proompteng.temporal.patch="host-resources-v1,routing-propagation-v1"
