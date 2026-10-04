@@ -1,5 +1,12 @@
 import { z } from 'zod'
 import { codexModelIdSchema, codexReasoningEffortSchema } from './codex-models'
+import {
+  CODEX_IMAGE_MEDIA_TYPES,
+  MAX_CODEX_IMAGE_BYTES,
+  MAX_CODEX_IMAGES,
+  MAX_CODEX_TOTAL_IMAGE_BYTES,
+  codexImageMatchesMediaType,
+} from './codex-images'
 
 const agentId = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)
 export const MAX_EDITABLE_FILE_BYTES = 4 * 1024 * 1024
@@ -18,9 +25,35 @@ const fileRevision = z.string().regex(/^(?:[a-f0-9]{64}|missing)$/, 'A valid bas
 const codexPrompt = z
   .string()
   .trim()
-  .min(1)
   .max(MAX_CODEX_PROMPT_BYTES)
   .refine((value) => Buffer.byteLength(value, 'utf8') <= MAX_CODEX_PROMPT_BYTES, 'Prompt exceeds 64 KiB')
+const codexImages = z
+  .array(
+    z.strictObject({
+      mediaType: z.enum(CODEX_IMAGE_MEDIA_TYPES),
+      data: z
+        .string()
+        .min(1)
+        .max(Math.ceil(MAX_CODEX_IMAGE_BYTES / 3) * 4)
+        .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+    }),
+  )
+  .max(MAX_CODEX_IMAGES)
+  .default([])
+  .refine((images) => {
+    let total = 0
+    return images.every((image) => {
+      const bytes = Buffer.from(image.data, 'base64')
+      total += bytes.length
+      return (
+        bytes.length > 0 &&
+        bytes.length <= MAX_CODEX_IMAGE_BYTES &&
+        total <= MAX_CODEX_TOTAL_IMAGE_BYTES &&
+        bytes.toString('base64') === image.data &&
+        codexImageMatchesMediaType(image.mediaType, bytes)
+      )
+    })
+  }, 'Invalid image or images exceed 8 MiB total')
 const codexId = z
   .string()
   .trim()
@@ -115,20 +148,26 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
   z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
   z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
-  z.strictObject({
-    action: z.literal('send-turn'),
-    agentId,
-    threadId: codexId,
-    text: codexPrompt,
-    ...codexOptions,
-  }),
-  z.strictObject({
-    action: z.literal('steer-turn'),
-    agentId,
-    threadId: codexId,
-    turnId: codexId,
-    text: codexPrompt,
-  }),
+  z
+    .strictObject({
+      action: z.literal('send-turn'),
+      agentId,
+      threadId: codexId,
+      text: codexPrompt,
+      images: codexImages,
+      ...codexOptions,
+    })
+    .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
+  z
+    .strictObject({
+      action: z.literal('steer-turn'),
+      agentId,
+      threadId: codexId,
+      turnId: codexId,
+      text: codexPrompt,
+      images: codexImages,
+    })
+    .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
   z.strictObject({ action: z.literal('interrupt-turn'), agentId, threadId: codexId, turnId: codexId }),
   z.strictObject({
     action: z.literal('resolve-approval'),
