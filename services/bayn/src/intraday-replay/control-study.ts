@@ -175,6 +175,37 @@ export interface ControlCapital {
   readonly accruedExternalCostMicros: string
 }
 
+export const makeControlEntryQuery = (input: {
+  readonly protocol: JevProtocol
+  readonly calendar: MarketCalendarObservation
+  readonly sessionDate: IntradaySnapshotQuery['sessionDate']
+  readonly observedAtMs: number
+  readonly candidates: readonly string[]
+}): IntradaySnapshotQuery => {
+  const { protocol, candidates } = input
+  const rangeEndMs = Math.floor((input.observedAtMs - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
+  return {
+    sessionDate: input.sessionDate,
+    calendar: input.calendar,
+    observedAt: utcInstantFromEpochMillis(input.observedAtMs),
+    rangeStartAt: utcInstantFromEpochMillis(rangeEndMs - protocol.lookbackMinutes * 60_000),
+    rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
+    universeId: protocol.universeId,
+    universeSymbolHash: protocol.universeSymbolHash,
+    universe: protocol.universe,
+    symbols: [...candidates, protocol.benchmarkSymbol].sort(),
+    candidateSymbols: candidates,
+    ...(protocol.candidateEvidencePolicy === undefined
+      ? {}
+      : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
+    feed: protocol.feed,
+    delayClass: protocol.delayClass,
+    sourceTopics: protocol.sourceTopics,
+    maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
+    minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
+  }
+}
+
 const failureDetails = (cause: unknown) =>
   Result.try({
     try: () => JSON.stringify(cause),
@@ -487,26 +518,9 @@ export const runControlSession = (input: {
         if (rangeEndMs > lastWindow) {
           const observedAt = utcInstantFromEpochMillis(atMs)
           const candidates = controlCandidates(input.policy, protocol)
-          const observed = yield* market.snapshot({
-            sessionDate,
-            calendar: input.calendar,
-            observedAt,
-            rangeStartAt: utcInstantFromEpochMillis(rangeEndMs - protocol.lookbackMinutes * 60_000),
-            rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
-            universeId: protocol.universeId,
-            universeSymbolHash: protocol.universeSymbolHash,
-            universe: protocol.universe,
-            symbols: [...candidates, protocol.benchmarkSymbol].sort(),
-            candidateSymbols: candidates,
-            ...(protocol.candidateEvidencePolicy === undefined
-              ? {}
-              : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-            feed: protocol.feed,
-            delayClass: protocol.delayClass,
-            sourceTopics: protocol.sourceTopics,
-            maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
-            minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
-          })
+          const observed = yield* market.snapshot(
+            makeControlEntryQuery({ protocol, sessionDate, calendar: input.calendar, observedAtMs: atMs, candidates }),
+          )
           if (observed.status === 'UNAVAILABLE') {
             disposition = ControlPollDisposition.InputUnavailable
             missingDecisions += 1
@@ -719,17 +733,10 @@ export const runControlSession = (input: {
     }
   }).pipe(Effect.mapError((cause) => new ControlStudyFailure({ message: 'Control session failed', cause })))
 
-export const runControlStudy = (
-  raw: unknown,
-  arrivalsPath: string,
-  receipt: BacktestSourceReceipt,
-  management: ControlStudyManagement,
-) =>
-  Effect.gen(function* () {
-    const input = yield* Schema.decodeUnknownEffect(ControlStudyInputSchema, strictParseOptions)(raw)
-    if (input.management !== management.mode)
-      return yield* new ControlStudyFailure({ message: 'Control management binding differs from its frozen input' })
-    const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
+export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt) =>
+  Result.gen(function* () {
+    const input = yield* Schema.decodeUnknownResult(ControlStudyInputSchema, strictParseOptions)(raw)
+    const prepared = yield* prepareBacktest(input.backtest, receipt)
     const falsification = 'falsificationCandidate' in input && input.falsificationCandidate !== null
     const accountScheduledOpportunities = input.schemaVersion === 'bayn.control-study-input.v5'
     if (
@@ -740,9 +747,9 @@ export const runControlStudy = (
         prepared.protocol.maximumHoldingMinutes !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)
     )
-      return yield* new ControlStudyFailure({
-        message: 'Frozen residual shock cadence or native protective rules differ',
-      })
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Frozen residual shock cadence or native protective rules differ' }),
+      )
     const policyDefinition = falsification ? residualShockControlStudyDefinition : controlStudyDefinition
     const definition = accountScheduledOpportunities
       ? {
@@ -752,9 +759,24 @@ export const runControlStudy = (
         }
       : policyDefinition
     if (prepared.input.cadence.pollIntervalMs > 60_000 || prepared.input.assumptions.latencyMs > 60_000)
-      return yield* new ControlStudyFailure({
-        message: 'Control polling and routing latency must each be at most one minute',
-      })
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Control polling and routing latency must each be at most one minute' }),
+      )
+    return { input, prepared, falsification, accountScheduledOpportunities, definition }
+  })
+
+export const runControlStudy = (
+  raw: unknown,
+  arrivalsPath: string,
+  receipt: BacktestSourceReceipt,
+  management: ControlStudyManagement,
+) =>
+  Effect.gen(function* () {
+    const { input, prepared, falsification, accountScheduledOpportunities, definition } = yield* Effect.fromResult(
+      prepareControlStudy(raw, receipt),
+    )
+    if (input.management !== management.mode)
+      return yield* new ControlStudyFailure({ message: 'Control management binding differs from its frozen input' })
     const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, prepared.protocol.universe)
     const firstDate = prepared.input.sessionDates[0]
     const lastDate = prepared.input.calendar.at(-1)?.date
