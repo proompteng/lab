@@ -7,8 +7,8 @@ test('accepts the committed Hermes production surfaces', async () => {
 })
 
 test.each([
-  'TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.7-amd64',
-  'PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64',
+  'TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.24-amd64',
+  'PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64',
 ])('rejects redirecting the Hermes mirror destination %s', async (reference) => {
   const files = await loadProductionFiles()
   files.mirrorWorkflow = files.mirrorWorkflow.replace(
@@ -23,7 +23,7 @@ test.each([
 
 test('rejects a source-index digest that disagrees with the reviewed Hermes release', async () => {
   const files = await loadProductionFiles()
-  const assignment = 'SOURCE_INDEX_DIGEST: sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7'
+  const assignment = 'SOURCE_INDEX_DIGEST: sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7'
   files.mirrorWorkflow = files.mirrorWorkflow.replace(assignment, `SOURCE_INDEX_DIGEST: sha256:${'0'.repeat(64)}`)
 
   expect(validateProductionContent(files)).toContain(
@@ -166,15 +166,12 @@ test('rejects a gateway working directory above the lab checkout', async () => {
   )
 })
 
-test('rejects a reduced code-execution tool-call budget', async () => {
+test('rejects exposing code execution outside the approved terminal path', async () => {
   const files = await loadProductionFiles()
-  files.config = files.config.replace(
-    'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
-    'code_execution:\n  timeout: 120\n  max_tool_calls: 10',
-  )
-
+  const invariant = 'disabled_toolsets: [delegation, cronjob, code_execution, kanban]'
+  files.config = files.config.replace(invariant, 'disabled_toolsets: [delegation, cronjob, kanban]')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant \"code_execution:\\n  timeout: 120\\n  max_tool_calls: 100\"`,
+    `${productionPaths.config}: missing production invariant ${JSON.stringify(invariant)}`,
   )
 })
 
@@ -341,21 +338,21 @@ test('rejects a mutable Hermes runtime image', async () => {
 test('rejects release evidence that does not enforce the mirrored digest', async () => {
   const files = await loadProductionFiles()
   files.runbook = files.runbook.replace(
-    'test "$mirror_digest" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
+    'test "$mirror_digest" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283',
     'printf \'%s\\n\' "$mirror_digest"',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b"`,
+    `${productionPaths.runbook}: missing production invariant "test \\"$mirror_digest\\" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283"`,
   )
 })
 
-test('rejects a Hermes config that is not pre-migrated to schema 39', async () => {
+test('rejects a Hermes config that is not pre-migrated to schema 46', async () => {
   const files = await loadProductionFiles()
-  files.config = files.config.replace('_config_version: 39', '_config_version: 33')
+  files.config = files.config.replace('_config_version: 46', '_config_version: 33')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant "_config_version: 39"`,
+    `${productionPaths.config}: missing production invariant "_config_version: 46"`,
   )
 })
 
@@ -364,7 +361,7 @@ test('rejects changing the Qwen Flamingo model during the runtime upgrade', asyn
   files.config = files.config.replace('default: qwen36-flamingo', 'default: replacement-model')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant "model:\\n  default: qwen36-flamingo\\n  provider: custom\\n  base_url: http://flamingo.flamingo.svc.cluster.local/v1\\n  api_mode: chat_completions\\n  context_length: 262144"`,
+    `${productionPaths.config}: missing production invariant "model:\\n  default: qwen36-flamingo\\n  provider: flamingo\\n  context_length: 262144"`,
   )
 })
 
@@ -508,20 +505,20 @@ test('rejects a broadly scoped GitHub SealedSecret', async () => {
 test('rejects API sessions without the terminal toolset', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '  api_server: [file, memory, terminal, todo, web, exa]',
-    '  api_server: [file, memory, todo, web, exa]',
+    '  api_server: [file, memory, session_search, terminal, todo, web, skills]',
+    '  api_server: [file, memory, session_search, todo, web, skills]',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: missing production invariant "platform_toolsets:\\n  cli: [file, memory, terminal, todo, web, exa]\\n  api_server: [file, memory, terminal, todo, web, exa]\\n  discord: [file, memory, terminal, todo, web, exa]"`,
+    `${productionPaths.config}: missing production invariant "platform_toolsets:\\n  cli: [file, memory, session_search, terminal, todo, web, skills]\\n  api_server: [file, memory, session_search, terminal, todo, web, skills]\\n  discord: [file, memory, session_search, terminal, todo, web, skills]"`,
   )
 })
 
 test('rejects duplicate platform toolset keys', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '  discord: [file, memory, terminal, todo, web, exa]\n',
-    '  discord: [file, memory, terminal, todo, web, exa]\n  discord: [file, memory, terminal, todo, web, exa]\n',
+    '  discord: [file, memory, session_search, terminal, todo, web, skills]\n',
+    '  discord: [file, memory, session_search, terminal, todo, web, skills]\n  discord: [file, memory, session_search, terminal, todo, web, skills]\n',
   )
 
   expect(validateProductionContent(files)).toContain(
@@ -595,7 +592,7 @@ test('rejects a duplicate Exa API key mapping', async () => {
 
 test('rejects Exa MCP tools with mutation or agent authority', async () => {
   const files = await loadProductionFiles()
-  files.config = files.config.replace('        - web_fetch_exa', '        - web_fetch_exa\n        - agent_run')
+  files.config += '\nagent_run: enabled\n'
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.config}: contains forbidden production term "agent_run"`,
@@ -605,12 +602,12 @@ test('rejects Exa MCP tools with mutation or agent authority', async () => {
 test('rejects an additional MCP server', async () => {
   const files = await loadProductionFiles()
   files.config = files.config.replace(
-    '\ndelegation:',
-    '\n  unreviewed:\n    url: "https://example.com/mcp"\n\ndelegation:',
+    'mcp_servers: {}',
+    'mcp_servers:\n  unreviewed:\n    url: "https://example.com/mcp"',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.config}: Exa must be the only MCP server with exactly two read-only web tools`,
+    `${productionPaths.config}: native Exa web tools must be the only web integration`,
   )
 })
 
@@ -1517,6 +1514,15 @@ test('rejects removing Hermes surfaces from production validation routing', asyn
   )
 })
 
+test('rejects removing Kargo Stage edits from Hermes production validation routing', async () => {
+  const files = await loadProductionFiles()
+  files.impactMap = files.impactMap.replace('      - argocd/applications/kargo/stages.yaml\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.impactMap}: missing production invariant "- argocd/applications/kargo/stages.yaml"`,
+  )
+})
+
 test('rejects a PR workflow that omits migration audit tests', async () => {
   const files = await loadProductionFiles()
   files.pullRequestWorkflow = files.pullRequestWorkflow.replace(
@@ -1587,4 +1593,87 @@ test('rejects publishing backups with nonempty environment credential files', as
     'if False:',
   )
   expect(validateProductionContent(files).some((failure) => failure.includes('backup.read(entry).strip()'))).toBe(true)
+})
+
+for (const [name, invariant, replacement] of [
+  ['automatic deletion of session history', 'sessions:\n  auto_prune: false', 'sessions:\n  auto_prune: true'],
+  [
+    'cloud compression routing',
+    'compression:\n    provider: flamingo\n    timeout: 180\n    max_concurrency: 1',
+    'compression:\n    provider: auto\n    timeout: 180\n    max_concurrency: 1',
+  ],
+  [
+    'unbounded long-context prefill',
+    'compression:\n  enabled: true\n  threshold: 0.75\n  threshold_tokens: 65536',
+    'compression:\n  enabled: true\n  threshold: 0.75',
+  ],
+  ['silent compaction data loss', 'abort_on_summary_failure: true', 'abort_on_summary_failure: false'],
+  [
+    'unattended Kanban execution',
+    'kanban:\n  dispatch_in_gateway: false\n  auto_decompose: false',
+    'kanban:\n  dispatch_in_gateway: true\n  auto_decompose: true',
+  ],
+  ['runtime language-server installation', 'lsp:\n  install_strategy: manual', 'lsp:\n  install_strategy: auto'],
+] as const) {
+  test(`rejects ${name}`, async () => {
+    const files = await loadProductionFiles()
+    files.config = files.config.replace(invariant, replacement)
+    expect(validateProductionContent(files)).toContain(
+      `${productionPaths.config}: missing production invariant ${JSON.stringify(invariant)}`,
+    )
+  })
+}
+
+test('rejects a gateway without native GitOps managed mode', async () => {
+  const files = await loadProductionFiles()
+  const gatewayStart = files.statefulSet.indexOf('        - name: hermes\n')
+  files.statefulSet =
+    files.statefulSet.slice(0, gatewayStart) +
+    files.statefulSet
+      .slice(gatewayStart)
+      .replace('name: HERMES_MANAGED\n              value: gitops', 'name: HERMES_MANAGED\n              value: false')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "name: HERMES_MANAGED\\n              value: gitops"`,
+  )
+})
+
+test('rejects a writable managed-install marker', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'mountPath: /opt/data/.managed\n              subPath: managed-install\n              readOnly: true',
+    'mountPath: /opt/data/.managed\n              subPath: managed-install\n              readOnly: false',
+  )
+  expect(validateProductionContent(files).some((failure) => failure.includes('/opt/data/.managed'))).toBe(true)
+})
+
+test('rejects publication that can race the agent mirror', async () => {
+  const files = await loadProductionFiles()
+  files.toolchainBuildWorkflow = files.toolchainBuildWorkflow.replace('    needs: verify-agent-mirror\n', '')
+  expect(validateProductionContent(files).some((failure) => failure.includes('needs: verify-agent-mirror'))).toBe(true)
+})
+
+test('rejects runtime creation of secondary profiles', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: true',
+    'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: false',
+  )
+  expect(validateProductionContent(files).some((failure) => failure.includes('/opt/data/profiles'))).toBe(true)
+})
+
+test('rejects a retired multiplex opt-out', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('gateway:\n', 'gateway:\n  multiplex_profiles: false\n')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: contains forbidden production term "multiplex_profiles: false"`,
+  )
+})
+
+test('rejects a volume order that redirects Kargo promotion to the kubectl image', async () => {
+  const files = await loadProductionFiles()
+  const volume = '        - name: profiles\n          emptyDir:\n            sizeLimit: 1Mi\n'
+  files.statefulSet = files.statefulSet.replace(volume, '').replace('      volumes:\n', '      volumes:\n' + volume)
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kargoStages}: missing production invariant "- key: spec.template.spec.volumes.6.image.reference"`,
+  )
 })
