@@ -12,8 +12,8 @@ SHA-256 of zero bytes and length zero. They are different evidence.
 
 Kafka samples its Effect clock once per record and gives that exact time to incorporation and capture. Equal
 milliseconds remain equal. The versioned original-arrival cursor uses receipt sequence for ties and rejects mixed
-capture identities, epochs, and legacy ordering. Legacy whole-file replay and export manifests reject original-order
-receipts until an independently qualified manifest can bind them. The existing reducer and evaluator remain the only
+capture identities, epochs, and legacy ordering. Legacy whole-file replay manifests reject unbound original-order receipts. The versioned original-capture adapter
+binds a verified interval to its immutable export root. The existing reducer and evaluator remain the only
 market interpretation path.
 
 The native controller records synchronous schedule submission, pass start, completion, failure, and ignored delivery.
@@ -110,6 +110,49 @@ production acquisition, qualification must prove every source frontier and contr
 full controller lifecycle joins, restart/replay ambiguity handling, measured storage capacity, and bounded overhead.
 Kafka retention alone cannot recover an earlier consumer's original timing. Object-store capacity and connectivity
 alone do not satisfy these gates.
+
+## Bounded native-visible replay
+
+`makeKafkaMarketProjection(..., recorder).captureInterval(request)` is available only through explicit construction.
+The live `KafkaMarketProjection` capability does not expose it, and production composition still acquires no recorder.
+The request freezes the universe hash, expected topic partitions, and requested observation interval. The native
+assignment must precede the interval. After its requested end, the existing consumer samples the read-committed latest
+offsets. A cut is recorded only when the same valid epoch has incorporated every delivered message through a drained
+SDK frontier that reaches that sample. A queued message, pending incorporation, failed lookup, changed inventory,
+or invalid epoch leaves the cut unavailable.
+
+`bayn.native-visible-input-cut.v1` binds the pinned SDK and its manual, read-committed, fail-on-error settings. Its
+committed offsets are not broker high watermarks. Transaction and control offsets can create gaps in the delivered
+stream. The adapter preserves those gaps without inventing records or claiming why an individual offset was absent.
+The proof trusts the same SDK boundary as native execution. It requires every delivered consumer sequence and the
+actual drained frontier. Additional messages delivered beyond the sampled committed fence remain in the interval
+with their original observation times. Later commits are outside the claim.
+
+`finish` can seal the recorder's immutable prefix while the Kafka worker continues. It stops admission without
+inventing `STOPPED`, detaching the observer, or changing the epoch's raw transport mode. The whole-worker verifier
+remains strict. `verifyResearchCaptureExportPrefix` verifies the sealed bytes without claiming worker closure.
+`readResearchCaptureInterval` additionally requires the actual typed cut, continuous delivery, exact inventory,
+original bytes, transport timestamps, and reproduced reducer dispositions. A seal or recorder status alone is not
+an interval proof. Any recorded capture invalidation conservatively prevents import.
+
+The reader derives the sole manifest address from the exact durable SQL seal, fetches that object and its referenced
+seal, and walks the index chain. Each exported metadata chunk must equal its SQL counterpart. The caller supplies
+bounded read functions and an aggregate object-byte budget. Each object remains limited to 4 MiB. This bound covers
+input object bytes, not total JavaScript memory. No list, credential discovery, or production read path is added.
+
+The adapter emits a gzip replay source and a separately hash-pinned source receipt. Version-two original arrivals
+retain exact raw bytes, tagged transport time, receipt order, and native disposition. Existing historical cursor,
+snapshot, and control-study code performs replay. Legacy delivery, regeneration, and original capture provenance
+cannot be mixed. Tombstones retain their original evidence but fail the native epoch, so an interval spanning one
+cannot become a valid replay source. A valid input interval does not imply sufficient decision evidence, complete
+controller execution, or profitable strategy behavior. Controller receipts remain unchanged and their coverage is
+`UNKNOWN`. Every capture seal, index, and export manifest remains `UNQUALIFIED`.
+
+The native fixture derives topic counts from committed KafkaTopic configuration and the execution controller's
+technical topic. It exercises the current 25-partition profile with committed, aborted, and open transactions,
+malformed and empty values, then seals an interval while the consumer continues. Unit fixtures also cover the
+22-partition profile without technical features, equal-time order, omission and frontier failures, and the existing
+snapshot and mechanical control-study path. The control-study smoke deliberately retains missing-decision outcomes.
 
 Run the capture unit tests with `bun test services/bayn/src/research-capture`. The PostgreSQL suite runs through
 `test:postgres` against its guarded disposable native database. Existing Kafka and controller regression suites also
