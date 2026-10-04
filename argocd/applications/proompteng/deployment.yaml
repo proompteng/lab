@@ -14,8 +14,17 @@ spec:
       app: proompteng
   template:
     metadata:
+      annotations:
+        inject.istio.io/templates: sidecar,spire
+        sidecar.istio.io/nativeSidecar: "true"
+        sidecar.istio.io/inject: "true"
+        sidecar.istio.io/proxyCPU: 50m
+        sidecar.istio.io/proxyCPULimit: 500m
+        sidecar.istio.io/proxyMemory: 64Mi
+        sidecar.istio.io/proxyMemoryLimit: 256Mi
       labels:
         app: proompteng
+        spiffe.io/spire-managed-identity: "true"
     spec:
       serviceAccountName: proompteng
       automountServiceAccountToken: false
@@ -56,9 +65,9 @@ spec:
             - name: SPIFFE_ENDPOINT_SOCKET
               value: unix:///spiffe-workload-api/spire-agent.sock
             - name: SPIFFE_ID
-              value: spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng
+              value: spiffe://proompteng.ai/ns/proompteng/sa/proompteng
             - name: TENGRI_SPIFFE_ID
-              value: spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri
+              value: spiffe://proompteng.ai/ns/tengri/sa/tengri
             - name: TENGRI_PUBLIC_URL
               value: https://tengri.proompteng.ai
             - name: TENGRI_BFF_SECRET_DIR
