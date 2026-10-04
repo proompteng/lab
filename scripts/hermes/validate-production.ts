@@ -158,6 +158,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- bootstrap-lab-checkout.sh',
     '- bootstrap-github.sh',
     '- terminal-profile.sh',
+    '- runtime.env=',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
@@ -218,7 +219,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'mountPath: /opt/data/config.yaml\n              subPath: config.yaml\n              readOnly: true',
     'mountPath: /opt/github-auth\n              readOnly: true',
   ])
-  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, ['shareProcessNamespace: true'])
+  for (const runtimeContainer of [gatewayContainer, dashboardContainer]) {
+    requireTerms(failures, productionPaths.statefulSet, runtimeContainer, [
+      'mountPath: /opt/data/.env\n              subPath: runtime.env\n              readOnly: true',
+    ])
+  }
+  requireTerms(failures, productionPaths.statefulSet, dashboardContainer, [
+    'name: GATEWAY_HEALTH_URL\n              value: http://127.0.0.1:8642',
+  ])
+  forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, ['shareProcessNamespace: true'])
+  requireTerms(failures, productionPaths.backupScript, files.backupScript, [
+    'if Path(entry.filename).name == ".env" and backup.read(entry).strip():',
+    'backup contains a nonempty environment credential file',
+  ])
   forbidTerms(failures, productionPaths.statefulSet, dashboardContainer, [
     '--insecure',
     'DISCORD_BOT_TOKEN',

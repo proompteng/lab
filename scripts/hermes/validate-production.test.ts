@@ -1562,3 +1562,29 @@ test('rejects building dashboard assets during startup', async () => {
   files.statefulSet = files.statefulSet.replace('            - --skip-build\n', '')
   expect(validateProductionContent(files).some((failure) => failure.includes('--skip-build'))).toBe(true)
 })
+
+test('rejects sharing gateway process credentials with dashboard subprocesses', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    '      enableServiceLinks: false',
+    '      enableServiceLinks: false\n      shareProcessNamespace: true',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: contains forbidden production term "shareProcessNamespace: true"`,
+  )
+})
+
+test('rejects allowing dashboard credentials to be persisted to the data PVC', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replaceAll('mountPath: /opt/data/.env', 'mountPath: /opt/data/writable.env')
+  expect(validateProductionContent(files).some((failure) => failure.includes('/opt/data/.env'))).toBe(true)
+})
+
+test('rejects publishing backups with nonempty environment credential files', async () => {
+  const files = await loadProductionFiles()
+  files.backupScript = files.backupScript.replace(
+    'if Path(entry.filename).name == ".env" and backup.read(entry).strip():',
+    'if False:',
+  )
+  expect(validateProductionContent(files).some((failure) => failure.includes('backup.read(entry).strip()'))).toBe(true)
+})

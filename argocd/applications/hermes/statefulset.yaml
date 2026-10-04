@@ -32,7 +32,6 @@ spec:
       serviceAccountName: hermes
       automountServiceAccountToken: true
       enableServiceLinks: false
-      shareProcessNamespace: true
       terminationGracePeriodSeconds: 120
       nodeSelector:
         kubernetes.io/arch: amd64
@@ -112,6 +111,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /opt/data
+            - name: bootstrap
+              mountPath: /opt/data/.env
+              subPath: runtime.env
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
@@ -270,6 +273,10 @@ spec:
               readOnly: true
             - name: data
               mountPath: /opt/data
+            - name: bootstrap
+              mountPath: /opt/data/.env
+              subPath: runtime.env
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
@@ -330,6 +337,8 @@ spec:
             - --no-open
             - --skip-build
           env:
+            - name: GATEWAY_HEALTH_URL
+              value: http://127.0.0.1:8642
             - name: HERMES_HOME
               value: /opt/data
             - name: HERMES_WRITE_SAFE_ROOT
@@ -435,6 +444,10 @@ spec:
               readOnly: true
             - name: data
               mountPath: /opt/data
+            - name: bootstrap
+              mountPath: /opt/data/.env
+              subPath: runtime.env
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml

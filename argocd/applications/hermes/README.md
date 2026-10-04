@@ -95,10 +95,9 @@ also rotates the dashboard password and requires a Pod restart.
 
 The dashboard runs `hermes dashboard --host 0.0.0.0 --port 9119 --no-open --skip-build` using the frontend bundled in the
 same pinned Hermes image as the gateway. Kubernetes supervises both containers independently. They share `/opt/data`,
-the terminal toolchain, read-only GitHub CLI authentication, and the Pod process namespace so the dashboard can identify
-the live gateway PID. The dashboard has no Discord token and does not start a second gateway.
+the terminal toolchain, read-only GitHub CLI authentication, and the native HTTP gateway health probe. Their process namespaces remain separate. The dashboard has no Discord token and does not start a second gateway.
 
-Configuration and identity files remain read-only GitOps mounts. Edit those files through the repository. Dashboard chat,
+Configuration, identity files, and an empty runtime `.env` remain read-only GitOps mounts. Manage credentials through the existing External Secrets and sealed identity paths. Edit configuration through the repository. Dashboard chat,
 session history, memory, and skills use the retained Hermes data PVC. Use GitOps for gateway lifecycle changes.
 
 The `hermes-tailscale` Ingress terminates TLS and routes `/` to named port `dashboard` / `9119`. The more specific `/v1`
@@ -119,6 +118,7 @@ An unauthenticated dashboard `/api/sessions` or gateway `/health/detailed` reque
 - StatefulSet PVC retention is `Retain` on delete and scale-down.
 - Migration Jobs mount the stable, read-only `hermes-operation-config` generated from the same production `config.yaml` as
   the gateway, so previews, memory limits, reports, and restore points use production settings rather than Hermes defaults.
+- The backup wrapper refuses to publish an archive containing any nonempty `.env` credential file. Failed pending archives are removed.
 - The daily backup CronJob retains the latest 14 verified archives and retries failures independently from the gateway. Its
   first scheduled success and subsequent last-success timestamp are monitored on a 26-hour window without removing a
   healthy API endpoint.
