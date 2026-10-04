@@ -34,8 +34,8 @@ const transactional = new Producer({
   clientId: `${prefix}-transactional`,
   transactionalId: `${prefix}-transaction`,
   idempotent: true,
-  // The SDK sends this as the transaction TTL; the fixture waits for the 30-second telemetry sample.
-  timeout: 60_000,
+  // The SDK sends this as the transaction TTL; it must outlast the bounded bootstrap and telemetry sample.
+  timeout: 120_000,
 })
 let openTransaction
 try {
@@ -233,6 +233,9 @@ try {
   const intervalObjects = new Map()
   const delivered = []
   const observedBoundaries = []
+  const intervalBootstrapTimeoutMs = 15_000
+  const intervalOperationTimeoutMs = 5000
+  const intervalTimeoutMs = 75_000
   let replayed
   await Effect.runPromise(
     Effect.scoped(
@@ -240,8 +243,8 @@ try {
         const intervalStart = Date.now()
         const request = {
           intervalId: 'native-committed-interval',
-          coverageStartMs: intervalStart + 5000,
-          coverageEndMs: intervalStart + 6000,
+          coverageStartMs: intervalStart + intervalBootstrapTimeoutMs + intervalOperationTimeoutMs,
+          coverageEndMs: intervalStart + intervalBootstrapTimeoutMs + intervalOperationTimeoutMs + 1000,
           universeHash: canonicalHashV1(intervalUniverse),
           expectedPartitions,
         }
@@ -264,7 +267,7 @@ try {
               ...request,
               startAtMs: intervalStart,
               bootstrapDeadlineMs: intervalStart + 3000,
-              stopAtMs: intervalStart + 44000,
+              stopAtMs: intervalStart + intervalTimeoutMs - 1000,
               calendarSnapshotId: 'b'.repeat(64),
               calendarObservedAt: new Date(intervalStart - 1000).toISOString(),
               calendarHash: 'c'.repeat(64),
@@ -283,8 +286,8 @@ try {
             username,
             password: Redacted.make(password),
             groupPrefix: prefix,
-            operationTimeoutMs: 5000,
-            bootstrapTimeoutMs: 15000,
+            operationTimeoutMs: intervalOperationTimeoutMs,
+            bootstrapTimeoutMs: intervalBootstrapTimeoutMs,
             timestampPolicy: KafkaBootstrapTimestampPolicy.RetainedBeginning,
           },
           intervalUniverse,
@@ -386,7 +389,7 @@ try {
         assert.equal(intervalSeals[0].payload, exactSeal.payload)
         assert.equal(replayed.manifest.recordCount, 3)
       }),
-    ).pipe(Effect.timeout('45 seconds'), Effect.provide(Logger.layer([]))),
+    ).pipe(Effect.timeout(intervalTimeoutMs), Effect.provide(Logger.layer([]))),
   )
   assert.ok(observedBoundaries.some(({ event }) => event.phase === 'STOPPED'))
   console.log(
