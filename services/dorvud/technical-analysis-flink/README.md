@@ -139,6 +139,13 @@ feature wire contracts are unchanged. Existing numeric values are not rewritten.
 The legacy v1 seed copies only legacy columns. Quote and trade archives already retain nanoseconds. Published feature
 computation, window, and archive times remain milliseconds according to their wire contract.
 
+The schema hook also sets `ratio_of_defaults_for_sparse_serialization=1` only on the v2 bar table. Sparse serialization
+can collapse negative-zero volume to positive zero even though the feature identity hashes distinguish their bits.
+Full serialization preserves that distinction in future writes and background merges. This metadata change creates no
+explicit mutation and does not recover signs or precision already lost in historical parts. It can change physical
+storage costs. The native 4,096-row comparisons report compressed and uncompressed bytes for representative and
+default-heavy data, with legacy NULL and exact timestamps; those fixtures are not production-capacity predictions.
+
 The schema hook adds the two nullable columns without materializing or mutating retained parts. Changing the existing
 `event_ts` scale would change its serialized key representation, which MergeTree forbids. Bayn uses the exact columns
 when available for time bounds, canonical revision selection, ordering, and pagination. Coarse millisecond predicates
@@ -148,7 +155,7 @@ fail exact feature joins when the source had additional precision.
 Deploy the reviewed schema hook before the archive and Bayn images through the existing GitOps and Kargo paths. The new
 writer fails if the exact columns are absent. Older writers remain compatible and write NULL exact timestamps. A rollback
 to an older writer resumes millisecond-only archival, so it loses exact identity for newly archived data. Keep the added
-columns on rollback. Restored Kafka records may supply actual source timestamps; this does not authorize a historical
+columns and the table-local full-serialization setting on rollback. Restored Kafka records may supply actual source timestamps; this does not authorize a historical
 reconstruction or imply historical availability. Flink operator IDs and checkpoint state are unchanged.
 
 Bayn's guarded disposable ClickHouse CI verifies the production JDBC writer and additive migration, mixed old and new

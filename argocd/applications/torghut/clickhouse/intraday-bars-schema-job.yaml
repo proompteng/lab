@@ -124,6 +124,9 @@ spec:
                   ADD COLUMN IF NOT EXISTS event_ts_exact Nullable(DateTime64(9, 'UTC')),
                   ADD COLUMN IF NOT EXISTS ingest_ts_exact Nullable(DateTime64(9, 'UTC'));
 
+                ALTER TABLE signal.intraday_bars_1m_v2 ON CLUSTER default
+                  MODIFY SETTING ratio_of_defaults_for_sparse_serialization = 1;
+
                 CREATE TABLE IF NOT EXISTS signal.intraday_quotes_v1 ON CLUSTER default
                 (
                   provider LowCardinality(String),
@@ -276,6 +279,19 @@ spec:
                         position(create_table_query, 'TTL toDateTime(event_ts) + toIntervalDay(400)') > 0
                       ) != 1,
                     'Signal immutable intraday-bars table engine, key, version, or TTL is incorrect'
+                  )
+                  FROM system.tables
+                  WHERE database = 'signal' AND name = 'intraday_bars_1m_v2'
+                "
+
+                "${replica_client[@]}" --query "
+                  SELECT throwIf(
+                    count() != 1
+                      OR countIf(toFloat64OrZero(extract(
+                        create_table_query,
+                        'ratio_of_defaults_for_sparse_serialization = ([0-9.eE+-]+)'
+                      )) = 1) != 1,
+                    'Signal immutable intraday-bars must preserve signed-zero identity with full serialization'
                   )
                   FROM system.tables
                   WHERE database = 'signal' AND name = 'intraday_bars_1m_v2'

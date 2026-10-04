@@ -28,10 +28,12 @@ class ArchiveTimestampPrecisionIntegrationTest {
     val createPrefix = "CREATE TABLE IF NOT EXISTS signal.intraday_bars_1m_v2 ON CLUSTER default"
     require(schema.contains(createPrefix))
     val columns = schema.substringAfter(createPrefix).substringBefore("ENGINE =")
-    val migration =
-      requireNotNull(Regex("ALTER TABLE signal\\.intraday_bars_1m_v2 ON CLUSTER default[\\s\\S]+?;").find(schema))
-        .value
-        .replace(" ON CLUSTER default", "")
+    val migrations =
+      Regex("ALTER TABLE signal\\.intraday_bars_1m_v2 ON CLUSTER default[\\s\\S]+?;")
+        .findAll(schema)
+        .map { it.value.replace(" ON CLUSTER default", "") }
+        .toList()
+    require(migrations.isNotEmpty())
     DriverManager.getConnection("jdbc:clickhouse:$endpoint/default", "default", "").use { connection ->
       connection.createStatement().use { statement ->
         statement.executeQuery("SELECT toString(token) FROM bayn_ci_guard.endpoint_identity").use { result ->
@@ -48,14 +50,14 @@ class ArchiveTimestampPrecisionIntegrationTest {
         var verified = false
         try {
           statement.execute(
-            "INSERT INTO signal.intraday_bars_1m_v2 (event_ts, ingest_ts, source_offset) " +
-              "VALUES ('2026-10-01 13:30:00.123456789', '2026-10-01 13:31:00.321780322', 1)",
+            "INSERT INTO signal.intraday_bars_1m_v2 (event_ts, ingest_ts, source_offset, vwap) " +
+              "VALUES ('2026-10-01 13:30:00.123456789', '2026-10-01 13:31:00.321780322', 1, " +
+              "reinterpretAsFloat64(toInt64(${0x406f1094face67d8L})))",
           )
-          statement.execute(migration)
-          statement.execute(migration)
+          repeat(2) { migrations.forEach { migration -> statement.execute(migration) } }
           statement
             .executeQuery(
-              "SELECT toString(event_ts), toString(ingest_ts), event_ts_exact, ingest_ts_exact " +
+              "SELECT toString(event_ts), toString(ingest_ts), event_ts_exact, ingest_ts_exact, reinterpretAsUInt64(vwap) " +
                 "FROM signal.intraday_bars_1m_v2 WHERE source_offset = 1",
             ).use { result ->
               assertTrue(result.next())
@@ -63,6 +65,23 @@ class ArchiveTimestampPrecisionIntegrationTest {
               assertEquals("2026-10-01 13:31:00.321", result.getString(2))
               assertEquals(null, result.getObject(3))
               assertEquals(null, result.getObject(4))
+              assertEquals(0x406f1094face67d8L, java.lang.Long.parseUnsignedLong(result.getString(5)))
+            }
+          statement
+            .executeQuery(
+              "SELECT count() FROM system.mutations WHERE database = 'signal' AND table = 'intraday_bars_1m_v2'",
+            ).use { result ->
+              assertTrue(result.next())
+              assertEquals(0L, result.getLong(1))
+            }
+          statement
+            .executeQuery(
+              "SELECT toFloat64OrZero(extract(create_table_query, " +
+                "'ratio_of_defaults_for_sparse_serialization = ([0-9.eE+-]+)')) " +
+                "FROM system.tables WHERE database = 'signal' AND name = 'intraday_bars_1m_v2'",
+            ).use { result ->
+              assertTrue(result.next())
+              assertEquals(1.0, result.getDouble(1))
             }
           val universe = ArchiveUniverse("archive-precision-v1", "a".repeat(64), setOf("SPY"))
           val topic = "archive-precision-bars"
@@ -87,7 +106,6 @@ class ArchiveTimestampPrecisionIntegrationTest {
               ),
               List(6) { 1.0 },
             )
-          var negativeZeroRow: IntradayBarRecord? = null
           samples.forEachIndexed { index, prices ->
             val nanos = fractions[index % fractions.size]
             val vwap = if (index == samples.lastIndex) null else prices[5]
@@ -109,7 +127,6 @@ class ArchiveTimestampPrecisionIntegrationTest {
               )
             val row = decodeArchiveBar(ArchiveKafkaRecord(topic, 0, index + 2L, Json.encodeToString(envelope)), routes)
             assertEquals(prices[4].toRawBits(), row.volume.toRawBits(), "decoded volume")
-            if (index == 5) negativeZeroRow = row
             connection.prepareStatement(archiveBarInsertSql()).use { prepared ->
               archiveBarStatement().accept(prepared, row)
               prepared.addBatch()
@@ -149,46 +166,8 @@ class ArchiveTimestampPrecisionIntegrationTest {
                 assertEquals(false, result.next())
               }
           }
-          val zeroExpressions =
-            statement
-              .executeQuery(
-                "SELECT " +
-                  "toString(reinterpretAsUInt64(reinterpretAsFloat64(CAST(-9223372036854775808 AS Int64)))), " +
-                  "toString(reinterpretAsUInt64(reinterpretAsFloat64(CAST('-9223372036854775808' AS Int64)))), " +
-                  "toString(reinterpretAsUInt64(reinterpretAsFloat64(CAST('9223372036854775808' AS UInt64))))",
-              ).use { result ->
-                assertTrue(result.next())
-                (1..3).map(result::getString)
-              }
-          val serializationKinds =
-            statement
-              .executeQuery(
-                "SELECT toString(groupUniqArray(serialization_kind)) FROM system.parts_columns " +
-                  "WHERE database = 'signal' AND table = 'intraday_bars_1m_v2' AND column = 'volume' AND active",
-              ).use { result ->
-                assertTrue(result.next())
-                result.getString(1)
-              }
-          statement.execute("ALTER TABLE signal.intraday_bars_1m_v2 MODIFY SETTING ratio_of_defaults_for_sparse_serialization = 1")
-          connection.prepareStatement(archiveBarInsertSql()).use { prepared ->
-            archiveBarStatement().accept(prepared, requireNotNull(negativeZeroRow).copy(sourceOffset = 1000))
-            prepared.addBatch()
-            prepared.executeBatch()
-          }
-          val fullSerializationZero =
-            statement
-              .executeQuery("SELECT toString(reinterpretAsUInt64(volume)) FROM signal.intraday_bars_1m_v2 WHERE source_offset = 1000")
-              .use { result ->
-                assertTrue(result.next())
-                result.getString(1)
-              }
-          val storageCosts = compareSerializationSize(statement)
-          assertEquals(
-            emptyList(),
-            numericMismatches,
-            "JDBC binary64 parity; zeroExpressions=$zeroExpressions kinds=$serializationKinds " +
-              "fullZero=$fullSerializationZero storageCosts=$storageCosts",
-          )
+          assertEquals(emptyList(), numericMismatches, "JDBC binary64 parity")
+          println("Archive serialization footprint: ${compareSerializationSize(statement)}")
           verified = true
         } finally {
           if (!verified || System.getenv("BAYN_TEST_JDBC_RETAIN_ARCHIVE") != "true") {
@@ -250,14 +229,14 @@ class ArchiveTimestampPrecisionIntegrationTest {
                   assertTrue(result.next())
                   result.getLong(1)
                 }
-            if (ratio == "1") assertEquals(0, mismatches)
+            if (ratio == "1") assertEquals(0L, mismatches)
             statement
               .executeQuery(
                 "SELECT sum(rows), sum(data_compressed_bytes), sum(data_uncompressed_bytes), sum(bytes_on_disk) " +
                   "FROM system.parts WHERE database = 'signal' AND table = '${table.substringAfter('.')}' AND active",
               ).use { result ->
                 assertTrue(result.next())
-                assertEquals(4096, result.getLong(1))
+                assertEquals(4096L, result.getLong(1))
                 costs.add(
                   "legacy=$legacy defaults=$defaults ratio=$ratio rows=${result.getLong(1)} " +
                     "compressed=${result.getLong(2)} uncompressed=${result.getLong(3)} disk=${result.getLong(4)} " +
@@ -272,5 +251,4 @@ class ArchiveTimestampPrecisionIntegrationTest {
     }
     return costs
   }
-
 }

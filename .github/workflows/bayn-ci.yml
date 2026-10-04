@@ -260,6 +260,7 @@ jobs:
             cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
             exit 1
           }
+          cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
       - name: Verify Bayn reads the actual JDBC archive fixture
         run: bun test services/bayn/src/market-data/archive-jdbc-readback.integration.test.ts
       - name: Verify complete Bayn PostgreSQL persistence workflows
