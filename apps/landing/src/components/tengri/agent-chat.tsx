@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@proompteng/design/ui'
-import { ArrowDown, ArrowUp, ArrowUpRight, Command, ExternalLink, LoaderCircle, Plus, Square } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpRight, Command, ExternalLink, LoaderCircle, Plus, Square, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   codexOptionsForSelection,
@@ -28,6 +28,13 @@ import type {
   TengriCodexThread,
   TengriCodexTurn,
 } from '@/lib/tengri/types'
+import {
+  MAX_CODEX_IMAGES,
+  MAX_CODEX_TOTAL_IMAGE_BYTES,
+  codexImageUrl,
+  readCodexImage,
+  type TengriCodexImage,
+} from '@/lib/tengri/codex-images'
 import { CodexEventCard } from './codex-event-card'
 import { CodexCopyButton } from './codex-copy-button'
 import {
@@ -56,6 +63,8 @@ import { runTengriAction, TengriRequestError } from './client'
 
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
+type DraftImage = { id: string; name: string; size: number; input: TengriCodexImage | null }
+
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
   const composerHelpId = useId()
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
@@ -73,6 +82,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
   const [prompt, setPrompt] = useState('')
+  const [images, setImages] = useState<DraftImage[]>([])
+  const imagesRef = useRef<DraftImage[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
@@ -103,7 +114,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const optionsRef = useRef<TengriCodexOptions>({})
   optionsRef.current = selectedOptions ?? {}
   const accountChecked = account !== null
-  const showStopAction = Boolean(activeTurnId) && !prompt.trim()
+  const showStopAction = Boolean(activeTurnId) && !prompt.trim() && images.length === 0
+  const readingImages = images.some((image) => image.input === null)
   const canStartNewConversation = codexCanStartNewConversation({
     activeTurnId,
     recovering: replayRecovering,
@@ -532,10 +544,52 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     )
   }
 
+  function commitImages(next: DraftImage[]) {
+    imagesRef.current = next
+    setImages(next)
+  }
+
+  async function pasteImages(files: File[]) {
+    if (submitting || replayRecovering || (threadId && !threadReady)) return
+    const pending = files.map((file) => ({
+      id: crypto.randomUUID(),
+      name: file.name || 'Pasted image',
+      size: file.size,
+      input: null,
+    }))
+    const next = [...imagesRef.current, ...pending]
+    if (
+      next.length > MAX_CODEX_IMAGES ||
+      next.reduce((total, image) => total + image.size, 0) > MAX_CODEX_TOTAL_IMAGE_BYTES
+    ) {
+      setError('Attach at most 4 images and 8 MiB total.')
+      return
+    }
+    setError('')
+    commitImages(next)
+    await Promise.all(
+      files.map(async (file, index) => {
+        const id = pending[index].id
+        try {
+          const input = await readCodexImage(file)
+          if (mountedRef.current)
+            commitImages(imagesRef.current.map((image) => (image.id === id ? { ...image, input } : image)))
+        } catch (cause) {
+          if (!mountedRef.current) return
+          commitImages(imagesRef.current.filter((image) => image.id !== id))
+          setError(cause instanceof Error ? cause.message : 'The image could not be read.')
+        }
+      }),
+    )
+  }
+
   async function send() {
     const text = prompt.trim()
+    const draftImages = imagesRef.current
+    const inputImages = draftImages.flatMap((image) => (image.input ? [image.input] : []))
     if (
-      !text ||
+      (!text && !inputImages.length) ||
+      inputImages.length !== draftImages.length ||
       submitting ||
       replayRecovering ||
       replayRecoveryRef.current ||
@@ -547,6 +601,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setFollowingConversation(true)
     setError('')
     setPrompt('')
+    commitImages([])
     try {
       const currentThread = await ensureThread()
       if (currentThread.activeTurnId) {
@@ -556,6 +611,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           threadId: currentThread.id,
           turnId: currentThread.activeTurnId,
           text,
+          images: inputImages,
         })
       } else {
         const turn = await runTengriAction<TengriCodexTurn>({
@@ -563,6 +619,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           agentId,
           threadId: currentThread.id,
           text,
+          images: inputImages,
           ...optionsRef.current,
         })
         if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
@@ -570,6 +627,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Message could not be sent')
       setPrompt(text)
+      commitImages(draftImages)
     } finally {
       setSubmitting(false)
     }
@@ -857,9 +915,26 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 data-window-default-focus
                 aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
                 aria-describedby={composerHelpId}
-                disabled={replayRecovering || Boolean(threadId && !threadReady)}
+                disabled={submitting || replayRecovering || Boolean(threadId && !threadReady)}
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.items)
+                    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                    .flatMap((item) => {
+                      const file = item.getAsFile()
+                      return file ? [file] : []
+                    })
+                  if (!files.length) return
+                  event.preventDefault()
+                  const text = event.clipboardData.getData('text/plain')
+                  if (text) {
+                    const start = event.currentTarget.selectionStart
+                    const end = event.currentTarget.selectionEnd
+                    setPrompt((current) => current.slice(0, start) + text + current.slice(end))
+                  }
+                  void pasteImages(files)
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault()
@@ -876,6 +951,34 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 }
                 className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
               />
+              {images.length ? (
+                <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
+                  {images.map((image) => (
+                    <li
+                      key={image.id}
+                      className="relative flex h-20 w-24 items-center justify-center overflow-hidden rounded-lg bg-white/5 ring-1 ring-white/10"
+                    >
+                      {image.input ? (
+                        <img alt={image.name} src={codexImageUrl(image.input)} className="h-full w-full object-cover" />
+                      ) : (
+                        <LoaderCircle
+                          aria-label={`Reading ${image.name}`}
+                          className="size-4 animate-spin text-zinc-400"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Remove image ${image.name}`}
+                        disabled={submitting}
+                        onClick={() => commitImages(imagesRef.current.filter((candidate) => candidate.id !== image.id))}
+                        className="absolute top-1 right-1 grid size-6 place-items-center rounded-full bg-zinc-900/85 text-zinc-200 outline-none hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-white/50"
+                      >
+                        <X className="size-3" aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
             <div className="flex items-end gap-2 px-2 pb-2">
               <CodexModelPicker
@@ -890,7 +993,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 type={showStopAction ? 'button' : 'submit'}
                 aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
                 disabled={
-                  (!showStopAction && !prompt.trim()) ||
+                  (!showStopAction && !prompt.trim() && !images.length) ||
+                  readingImages ||
                   submitting ||
                   interrupting ||
                   replayRecovering ||
@@ -913,7 +1017,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <p id={composerHelpId} className="sr-only">
             {activeTurnId
               ? 'Send a message to steer, or stop the response.'
-              : 'Enter to send · Shift + Enter for a new line'}
+              : 'Enter to send · Shift + Enter for a new line · Paste images to attach'}
           </p>
         </div>
       </div>
