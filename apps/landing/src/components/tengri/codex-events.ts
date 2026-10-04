@@ -624,7 +624,11 @@ function usageDisplayText(params: Record<string, unknown>) {
       rateLimitWindowText('Secondary', rateLimits.secondary),
     ].filter(Boolean)
     const credits = record(rateLimits.credits)
-    if (credits.balance !== undefined && credits.balance !== null) windows.push(`Credits: ${string(credits.balance)}`)
+    const balance =
+      typeof credits.balance === 'string' && credits.balance.trim() ? Number(credits.balance) : credits.balance
+    if (typeof balance === 'number' && Number.isFinite(balance) && balance >= 0) {
+      windows.push(`Credits: ${Math.ceil(balance).toLocaleString('en-US')}`)
+    }
     const reached = string(rateLimits.rateLimitReachedType)
     if (reached) windows.push(`Limit state: ${reached.replaceAll('_', ' ')}`)
     if (windows.length > 0) return windows.join(' · ')
@@ -644,8 +648,9 @@ function rateLimitWindowText(label: string, value: unknown) {
   const used = nonNegativeNumber(window.usedPercent)
   if (used === null) return ''
   const duration = nonNegativeNumber(window.windowDurationMins)
-  const durationLabel = duration === null ? label : `${formatDuration(duration)} window`
-  return `${durationLabel}: ${Math.min(100, used)}% used`
+  const durationLabel =
+    duration === 10_080 ? 'Weekly' : duration === null ? label : `${formatDuration(duration)} window`
+  return `${durationLabel} ${Math.floor(100 - Math.min(100, used))}% left`
 }
 
 function formatDuration(minutes: number) {

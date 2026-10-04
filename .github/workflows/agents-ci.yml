@@ -170,6 +170,7 @@ jobs:
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
             packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
+            packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
@@ -256,7 +257,7 @@ jobs:
         (needs.unit.result == 'success' || needs.unit.result == 'skipped') &&
         (needs.static.result == 'success' || needs.static.result == 'skipped')
       }}
-    runs-on: arc-amd64
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
       KIND_DOCKER_NETWORK_NAME: kind-${{ github.run_id }}-${{ github.run_attempt }}
@@ -266,6 +267,24 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+
+      - name: Connect to the tailnet
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: registry.ide-newton.ts.net
+
+      - name: Verify internal image and cache access
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+            https://registry.ide-newton.ts.net/v2/ >/dev/null
+          if [ "${NEEDS_LOCAL_AGENTS_IMAGE}" = true ]; then
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+              https://attic.ide-newton.ts.net/lab/nix-cache-info >/dev/null
+          fi
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -298,10 +317,9 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           install-ci-toolchain: 'false'
-          require-preinstalled: 'true'
           extra-nix-config: |
             experimental-features = nix-command flakes
-            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            substituters = https://attic.ide-newton.ts.net/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
             fallback = true
 
@@ -376,8 +394,19 @@ jobs:
           node_image: mirror.gcr.io/kindest/node:v1.29.4
           kubectl_version: v1.29.4
           wait: 180s
-          # Functional cleanup runs explicitly below. A wedged ARC Docker teardown must not overwrite a passed smoke test.
+          # Functional cleanup runs explicitly below and must not overwrite a passed smoke test.
           ignore_failed_clean: 'true'
+
+      - name: Configure and verify Kind tailnet access
+        run: |
+          set -euo pipefail
+          # Containerd pulls images inside the node, which does not inherit the host's per-link MagicDNS.
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" sh -c \
+            'printf "nameserver 100.100.100.100\n" > /etc/resolv.conf'
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" getent hosts registry.ide-newton.ts.net
+          docker exec "${KIND_CLUSTER_NAME}-control-plane" \
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 \
+            https://registry.ide-newton.ts.net/v2/ >/dev/null
 
       - name: Build and preload selected local Nix Agents images
         if: env.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
@@ -547,6 +576,29 @@ jobs:
         run: |
           set -euo pipefail
           timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts
+
+      - name: Collect sanitized Agents fixture diagnostics
+        if: always()
+        timeout-minutes: 2
+        env:
+          AGENTS_DIAGNOSTICS_DIR: ${{ runner.temp }}/agents-fixture-diagnostics
+        run: |
+          mkdir -p "${AGENTS_DIAGNOSTICS_DIR}"
+          if command -v bun >/dev/null 2>&1 && [ -f packages/scripts/src/agents/collect-smoke-diagnostics.ts ]; then
+            bun run packages/scripts/src/agents/collect-smoke-diagnostics.ts || \
+              printf '{"collection":"unavailable"}\n' > "${AGENTS_DIAGNOSTICS_DIR}/collection-status.json"
+          else
+            printf '{"collection":"tooling_unavailable"}\n' > "${AGENTS_DIAGNOSTICS_DIR}/collection-status.json"
+          fi
+
+      - name: Upload sanitized Agents fixture diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agents-fixture-diagnostics
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Cleanup Agents integration resources
         if: always()

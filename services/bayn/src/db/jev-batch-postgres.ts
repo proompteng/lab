@@ -164,6 +164,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
                   ) AS matching_symbols
                 FROM intraday_candidate_observations AS observation
                 WHERE observation.cycle_id = ${saved.plan.cycleId}
+                  AND observation.observed_at = ${saved.plan.observedAt}::timestamptz
                   AND observation.payload->>'authorityGenerationHash' = ${saved.plan.authorityGenerationHash}
                   AND observation.payload->>'observedAt' = ${saved.plan.observedAt}
                   AND observation.payload->'manifest'->>'observedAt' = ${saved.plan.observedAt}
