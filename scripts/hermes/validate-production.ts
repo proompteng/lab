@@ -224,6 +224,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     requireTerms(failures, productionPaths.statefulSet, managedContainer, [
       'name: HERMES_MANAGED\n              value: gitops',
       'mountPath: /opt/data/.managed\n              subPath: managed-install\n              readOnly: true',
+      'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: true',
     ])
   }
   for (const runtimeContainer of [gatewayContainer, dashboardContainer]) {
@@ -231,6 +232,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       'mountPath: /opt/data/.env\n              subPath: runtime.env\n              readOnly: true',
     ])
   }
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    'name: profiles\n          emptyDir:\n            sizeLimit: 1Mi',
+  ])
   requireTerms(failures, productionPaths.statefulSet, dashboardContainer, [
     'name: GATEWAY_HEALTH_URL\n              value: http://127.0.0.1:8642',
   ])
@@ -552,12 +556,17 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'plugins:\n  enabled: [security-guidance]\n  disabled: []',
     'cron:\n  allow_agent_scheduling: false',
     'kanban:\n  dispatch_in_gateway: false\n  auto_decompose: false',
-    'multiplex_profiles: false\n  auto_multiplex_migration: false',
+    'auto_multiplex_migration: false',
     'keyless_fallback: false\n  keyless_rescue: false',
     'lsp:\n  install_strategy: manual',
     'Manage persistent configuration, plugins, tools, and integrations through reviewed GitOps changes',
   ])
-  forbidTerms(failures, productionPaths.config, files.config, ['session_reset:', 'flush_min_turns:'])
+  forbidTerms(failures, productionPaths.config, files.config, [
+    'session_reset:',
+    'flush_min_turns:',
+    'multiplex_profiles: false',
+    'standalone: true',
+  ])
 
   requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
     'name: onepassword-infra',

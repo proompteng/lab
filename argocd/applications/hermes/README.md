@@ -99,7 +99,8 @@ same pinned Hermes image as the gateway. Kubernetes supervises both containers i
 the terminal toolchain, read-only GitHub CLI authentication, and the native HTTP gateway health probe. Their process namespaces remain separate. The dashboard has no Discord token and does not start a second gateway.
 
 Configuration, identity files, an empty runtime `.env`, and the `.managed` marker are read-only GitOps mounts.
-`HERMES_MANAGED=gitops` also enables native managed-install guards. The complete setting inventory and profile rationale
+`HERMES_MANAGED=gitops` also enables native managed-install guards. A read-only empty profiles directory prevents
+creating secondary runtime profiles; the retained installation had no secondary profiles before this mount. The complete setting inventory and profile rationale
 are in [configuration.md](configuration.md). Manage credentials through the existing External Secrets and sealed identity paths. Edit configuration through the repository. Dashboard chat,
 session history, memory, and skills use the retained Hermes data PVC. Use GitOps for gateway lifecycle changes.
 

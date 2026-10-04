@@ -40,8 +40,10 @@ activation still require a repository change. Missing language servers are never
 binaries through the pinned toolchain before configuring them.
 
 Delegation, agent scheduling, code execution, and Kanban toolsets are disabled. Kanban dispatch, automatic decomposition,
-background skill curation, background review, gateway profile multiplexing, and multiplex migration are also disabled.
-This instance has one operator-owned profile. Manual approvals and existing command deny rules remain active.
+background skill curation, background review, and automatic multiplex migration are also disabled.
+This instance has one operator-owned profile. A read-only empty `/opt/data/profiles` mount prevents runtime profile
+creation. Hermes serves only the default profile because there are no secondary profiles. The release ignores
+`multiplex_profiles: false`; this deployment does not use that retired flag or the temporary standalone compatibility shim. Manual approvals and existing command deny rules remain active.
 
 ## GitOps ownership
 

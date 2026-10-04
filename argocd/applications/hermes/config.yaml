@@ -169,7 +169,6 @@ platforms:
 
 gateway:
   write_sessions_json: false
-  multiplex_profiles: false
   auto_multiplex_migration: false
   api_server:
     max_concurrent_runs: 2

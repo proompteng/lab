@@ -1642,3 +1642,20 @@ test('rejects publication that can race the agent mirror', async () => {
   files.toolchainBuildWorkflow = files.toolchainBuildWorkflow.replace('    needs: verify-agent-mirror\n', '')
   expect(validateProductionContent(files).some((failure) => failure.includes('needs: verify-agent-mirror'))).toBe(true)
 })
+
+test('rejects runtime creation of secondary profiles', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: true',
+    'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: false',
+  )
+  expect(validateProductionContent(files).some((failure) => failure.includes('/opt/data/profiles'))).toBe(true)
+})
+
+test('rejects a retired multiplex opt-out', async () => {
+  const files = await loadProductionFiles()
+  files.config = files.config.replace('gateway:\n', 'gateway:\n  multiplex_profiles: false\n')
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.config}: contains forbidden production term "multiplex_profiles: false"`,
+  )
+})

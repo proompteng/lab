@@ -117,6 +117,9 @@ spec:
               mountPath: /opt/data/.env
               subPath: runtime.env
               readOnly: true
+            - name: profiles
+              mountPath: /opt/data/profiles
+              readOnly: true
             - name: bootstrap
               mountPath: /opt/data/.managed
               subPath: managed-install
@@ -284,6 +287,9 @@ spec:
             - name: bootstrap
               mountPath: /opt/data/.env
               subPath: runtime.env
+              readOnly: true
+            - name: profiles
+              mountPath: /opt/data/profiles
               readOnly: true
             - name: bootstrap
               mountPath: /opt/data/.managed
@@ -462,6 +468,9 @@ spec:
               mountPath: /opt/data/.env
               subPath: runtime.env
               readOnly: true
+            - name: profiles
+              mountPath: /opt/data/profiles
+              readOnly: true
             - name: bootstrap
               mountPath: /opt/data/.managed
               subPath: managed-install
@@ -509,6 +518,9 @@ spec:
               mountPath: /opt/github-auth
               readOnly: true
       volumes:
+        - name: profiles
+          emptyDir:
+            sizeLimit: 1Mi
         - name: config
           configMap:
             name: hermes-config
