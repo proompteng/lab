@@ -8,6 +8,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../hash.ts'
+import { observeConsumedRecords } from './capture-capacity-iterator.ts'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
@@ -397,43 +398,41 @@ const program = Effect.gen(function* () {
             ...transport,
             consume: async (...input) => {
               const source = await transport.consume(...input)
+              const observed = observeConsumedRecords(source, (record) => {
+                const key = `${record.topic}:${record.partition}`
+                assert.equal(BigInt(record.offset), BigInt((seenOffsets.get(key) ?? -1) + 1))
+                seenOffsets.set(key, Number(record.offset))
+                const symbol = JSON.parse(record.value).symbol
+                const projection = Effect.runSync(market.readForLiquidation).projection
+                const current = projection.quotes.get(symbol)
+                assert.ok(current)
+                assert.equal(projection.epoch, nativeEpoch)
+                assert.ok(Number.isSafeInteger(current.availableAtMs))
+                assert.ok(current.availableAtMs >= arrivalLowerBound && current.availableAtMs <= Date.now())
+                assert.ok(current.availableAtMs >= arrivalMaxMs)
+                arrivalMinMs = Math.min(arrivalMinMs, current.availableAtMs)
+                arrivalMaxMs = current.availableAtMs
+                assert.equal(current.value.sourcePartition, record.partition)
+                assert.equal(current.value.sourceOffset, record.offset)
+                assert.equal(current.recordHash, sha256(record.value))
+                accepted++
+                assert.equal(projection.sequence, accepted)
+                peakBacklog = Math.max(peakBacklog, published - accepted)
+                peakQueued = Math.max(peakQueued, source.queuedRecords())
+                if (recorder) {
+                  const state = Effect.runSync(recorder.status)
+                  peakRetained = Math.max(peakRetained, state.retainedReceipts)
+                  peakPayload = Math.max(peakPayload, state.retainedPayloadBytes)
+                  assert.ok(state.retainedReceipts <= 1024 && state.retainedPayloadBytes <= 4 * 1024 ** 2)
+                  if (state.invalidations.length && invalidatedAtCount === undefined) invalidatedAtCount = accepted
+                  if (invalidatedAtCount !== undefined) progressAfterFailure = accepted - invalidatedAtCount
+                }
+                if (accepted >= plan.faults.triggerAfterRecords) arm.inject = true
+              })
               return {
                 queuedRecords: () => source.queuedRecords(),
                 drainedPositions: () => source.drainedPositions(),
-                async *[Symbol.asyncIterator]() {
-                  for await (const record of source) {
-                    const key = `${record.topic}:${record.partition}`
-                    assert.equal(BigInt(record.offset), BigInt((seenOffsets.get(key) ?? -1) + 1))
-                    seenOffsets.set(key, Number(record.offset))
-                    const symbol = JSON.parse(record.value).symbol
-                    yield record
-                    const projection = Effect.runSync(market.readForLiquidation).projection
-                    const current = projection.quotes.get(symbol)
-                    assert.ok(current)
-                    assert.equal(projection.epoch, nativeEpoch)
-                    assert.ok(Number.isSafeInteger(current.availableAtMs))
-                    assert.ok(current.availableAtMs >= arrivalLowerBound && current.availableAtMs <= Date.now())
-                    assert.ok(current.availableAtMs >= arrivalMaxMs)
-                    arrivalMinMs = Math.min(arrivalMinMs, current.availableAtMs)
-                    arrivalMaxMs = current.availableAtMs
-                    assert.equal(current.value.sourcePartition, record.partition)
-                    assert.equal(current.value.sourceOffset, record.offset)
-                    assert.equal(current.recordHash, sha256(record.value))
-                    accepted++
-                    assert.equal(projection.sequence, accepted)
-                    peakBacklog = Math.max(peakBacklog, published - accepted)
-                    peakQueued = Math.max(peakQueued, source.queuedRecords())
-                    if (recorder) {
-                      const state = Effect.runSync(recorder.status)
-                      peakRetained = Math.max(peakRetained, state.retainedReceipts)
-                      peakPayload = Math.max(peakPayload, state.retainedPayloadBytes)
-                      assert.ok(state.retainedReceipts <= 1024 && state.retainedPayloadBytes <= 4 * 1024 ** 2)
-                      if (state.invalidations.length && invalidatedAtCount === undefined) invalidatedAtCount = accepted
-                      if (invalidatedAtCount !== undefined) progressAfterFailure = accepted - invalidatedAtCount
-                    }
-                    if (accepted >= plan.faults.triggerAfterRecords) arm.inject = true
-                  }
-                },
+                [Symbol.asyncIterator]: () => observed[Symbol.asyncIterator](),
               }
             },
           }
