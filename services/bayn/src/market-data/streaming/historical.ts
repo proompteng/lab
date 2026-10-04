@@ -1,13 +1,6 @@
 import { SimulatedSnapshotSourceSchema } from './evidence-schema'
 import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
-import { sha256 } from '../../hash'
-import {
-  CaptureDisposition,
-  OriginalKafkaTransportSchema,
-  restoreKafkaTransportTimestamp,
-} from '../../research-capture/capture'
-import { kafkaCaptureDisposition } from './kafka'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
@@ -38,24 +31,6 @@ export const HistoricalMarketArrivalSchema = Schema.Union([
       captureId: StrictNonEmptyStringSchema,
       consumerEpoch: StrictNonEmptyStringSchema,
       sequence: PositiveIntegerSchema,
-    }),
-  }),
-  Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.original-market-arrival.v2'),
-    ...ArrivalFields,
-    originalTransport: OriginalKafkaTransportSchema,
-    rawValueBase64: Schema.NullOr(Schema.String),
-    receipt: Schema.Struct({
-      captureId: StrictNonEmptyStringSchema,
-      consumerEpoch: StrictNonEmptyStringSchema,
-      sequence: PositiveIntegerSchema,
-      consumerSequence: PositiveIntegerSchema,
-      projectionSequence: NonNegativeIntegerSchema,
-      disposition: Schema.Enum(CaptureDisposition),
-      tombstone: Schema.Boolean,
-      rawValueSha256: Schema.NullOr(Sha256Schema),
-      rawByteLength: Schema.NullOr(NonNegativeIntegerSchema),
-      reason: Schema.optionalKey(StrictNonEmptyStringSchema),
     }),
   }),
 ])
@@ -228,16 +203,8 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
     const { record } = event
     const last = cursor.lastArrival
     const receipt = 'receipt' in event ? event.receipt : undefined
-    const original =
-      'schemaVersion' in event && event.schemaVersion === 'bayn.original-market-arrival.v2' ? event : undefined
-    const model = cursor.source?.deliveryModel
-    const originalModel = model?.schemaVersion === 'bayn.original-capture-arrivals.v1' ? model : undefined
     if (
-      (receipt !== undefined && cursor.source !== undefined && originalModel === undefined) ||
-      (originalModel !== undefined &&
-        (original === undefined ||
-          receipt?.captureId !== originalModel.captureId ||
-          receipt.consumerEpoch !== originalModel.consumerEpoch)) ||
+      (receipt !== undefined && cursor.source !== undefined) ||
       (last !== null &&
         ((receipt === undefined) !== (last.receipt === undefined) ||
           (receipt !== undefined &&
@@ -266,69 +233,16 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
           offset: record.offset,
         }),
       )
-    let projection = cursor.projection
-    if (original !== undefined) {
-      const raw = original.rawValueBase64 === null ? null : Buffer.from(original.rawValueBase64, 'base64')
-      const priorConsumerSequence =
-        last?.receipt !== undefined && 'consumerSequence' in last.receipt ? last.receipt.consumerSequence : 0
-      if (
-        original.receipt.consumerSequence !== priorConsumerSequence + 1 ||
-        (originalModel !== undefined && original.receipt.consumerSequence > originalModel.finalConsumerSequence) ||
-        original.record.timestampMs !== undefined ||
-        (raw === null
-          ? !original.receipt.tombstone ||
-            original.receipt.rawValueSha256 !== null ||
-            original.receipt.rawByteLength !== null ||
-            record.value !== ''
-          : original.receipt.tombstone ||
-            raw.toString('base64') !== original.rawValueBase64 ||
-            sha256(raw) !== original.receipt.rawValueSha256 ||
-            raw.byteLength !== original.receipt.rawByteLength ||
-            raw.toString('utf8') !== record.value)
-      )
-        return yield* Result.fail(
-          new HistoricalMarketArrivalFailure({
-            message: 'Original arrival lost its exact bytes, timestamp or delivered sequence',
-            topic: record.topic,
-            partition: record.partition,
-            offset: record.offset,
-          }),
-        )
-      if (!original.receipt.tombstone && original.receipt.reason !== 'assignment-invalidated') {
-        const timestampMs = restoreKafkaTransportTimestamp(original.originalTransport)
-        projection = incorporateSimulatedMarketRecord(
-          cursor.projection,
-          { ...record, ...(timestampMs === undefined ? {} : { timestampMs }) },
-          cursor.universe,
-          event.availableAtMs,
-        )
-      }
-      const disposition = original.receipt.tombstone
-        ? CaptureDisposition.Rejected
-        : original.receipt.reason === 'assignment-invalidated'
-          ? CaptureDisposition.Ignored
-          : kafkaCaptureDisposition(cursor.projection, projection)
-      if (projection.sequence !== original.receipt.projectionSequence || disposition !== original.receipt.disposition)
-        return yield* Result.fail(
-          new HistoricalMarketArrivalFailure({
-            message: 'Original arrival does not reproduce its captured reducer disposition or sequence',
-            topic: record.topic,
-            partition: record.partition,
-            offset: record.offset,
-          }),
-        )
-    } else
-      projection = incorporateSimulatedMarketRecord(
+    return {
+      ...cursor,
+      projection: incorporateSimulatedMarketRecord(
         cursor.projection,
         record,
         cursor.universe,
         event.availableAtMs,
         cursor.regeneratedFeaturesRecordedAtMs ?? event.availableAtMs,
         cursor.regeneratedTechnicalFeaturesRecordedAtMs ?? event.availableAtMs,
-      )
-    return {
-      ...cursor,
-      projection,
+      ),
       processedRecords: cursor.processedRecords + 1,
       suppliedOffsets: new Map(cursor.suppliedOffsets).set(partitionKey, record.offset),
       lastArrival: arrivalPosition(event),

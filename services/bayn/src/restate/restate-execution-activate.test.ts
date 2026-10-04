@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ConfigProvider, Effect, Fiber, Layer, Logger, Redacted, References, Result } from 'effect'
-import { TestClock } from 'effect/testing'
+import { Effect, Layer, Redacted, Result } from 'effect'
 
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import {
@@ -8,7 +7,6 @@ import {
   restateExecutionActivationCompletionWindowMs,
   restateExecutionActivationIdempotencyKey,
   restateExecutionActivationRequest,
-  restateExecutionActivationTransportConfig,
   runFiniteLayer,
   verifyRestateExecutionActivation,
   type RestateExecutionActivationConfig,
@@ -25,18 +23,6 @@ const config: RestateExecutionActivationConfig = {
 }
 const token = Buffer.alloc(32, 9).toString('base64url')
 const invocationId = 'inv_1aiqX0vFEFNH1Umgre58JiCLgHfTtztYK5'
-const transportConfig = (activationAttemptId: string | undefined) =>
-  restateExecutionActivationTransportConfig.pipe(
-    Effect.provideService(
-      ConfigProvider.ConfigProvider,
-      ConfigProvider.fromUnknown({
-        ...(activationAttemptId === undefined ? {} : { BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID: activationAttemptId }),
-        BAYN_EXECUTION_ACTIVATION_GENERATION: config.activationGeneration,
-        BAYN_EXECUTION_ACTIVATION_TOKEN: token,
-        RESTATE_INGRESS_ORIGIN: config.ingressOrigin,
-      }),
-    ),
-  )
 const activeState = {
   schemaVersion: 1 as const,
   active: true,
@@ -70,7 +56,7 @@ describe('native Restate execution activation', () => {
     expect(released).toBe(true)
   })
 
-  test('binds one activation Job to its exact deployment generation and controller', () => {
+  test('binds one activation process to its exact deployment generation and controller', () => {
     const idempotencyKey = restateExecutionActivationIdempotencyKey(config)
     expect(idempotencyKey).toMatch(/^bayn-execution-[0-9a-f]{64}$/)
     expect(idempotencyKey.length).toBeLessThanOrEqual(128)
@@ -130,119 +116,16 @@ describe('native Restate execution activation', () => {
     expect(restateExecutionActivationCompletionWindowMs(config.operationTimeoutMs)).toBeLessThan(900_000)
   })
 
-  test('reuses the Job identity across fresh container and replacement Pod configuration loads', async () => {
-    const requests = []
-    for (let restart = 0; restart < 3; restart += 1) {
-      const loaded = await Effect.runPromise(transportConfig(config.activationAttemptId))
-      expect(loaded.activationAttemptId).toBe(config.activationAttemptId)
-      requests.push(restateExecutionActivationRequest({ ...config, ...loaded }, token))
-    }
-    expect(new Set(requests.map((request) => request.headers['idempotency-key'])).size).toBe(1)
-    const recreated = await Effect.runPromise(transportConfig('5c25a32e-938a-47d1-8e8c-0b254679a592'))
-    expect(restateExecutionActivationRequest({ ...config, ...recreated }, token).headers['idempotency-key']).not.toBe(
-      requests[0]?.headers['idempotency-key'],
-    )
-  })
+  test('keeps transport retries stable while giving a new activation process a fresh invocation', () => {
+    const first = { ...config, activationAttemptId: '5c25a32e-938a-47d1-8e8c-0b254679a591' }
+    const retry = { ...first, activationAttemptId: '5c25a32e-938a-47d1-8e8c-0b254679a592' }
 
-  test('rejects missing and malformed Job identities before an activation can be sent', async () => {
-    for (const identity of [
-      undefined,
-      '',
-      'pod-name',
-      '00000000-0000-0000-0000-000000000000',
-      `${config.activationAttemptId}\n`,
-    ]) {
-      let requests = 0
-      const outcome = await Effect.runPromise(
-        transportConfig(identity).pipe(
-          Effect.flatMap((loaded) =>
-            activateRestateExecutionController({ ...config, ...loaded }, Redacted.make(token), async () => {
-              requests += 1
-              throw new Error('invalid configuration must not send')
-            }),
-          ),
-          Effect.result,
-        ),
-      )
-      expect(Result.isFailure(outcome)).toBe(true)
-      expect(requests).toBe(0)
-    }
-  })
-
-  test('a completion timeout and restarted waiter keep the accepted invocation and log its safe receipt', async () => {
-    const keys: Array<string | null> = []
-    const outputUrls: string[] = []
-    const logs: Array<{ message: unknown; annotations: unknown }> = []
-    let complete = false
-    const logger = Logger.make<unknown, void>((entry) => {
-      const { trace_id: _trace, span_id: _span, ...annotations } = entry.fiber.getRef(References.CurrentLogAnnotations)
-      logs.push({ message: entry.message, annotations })
-    })
-    const request = async (input: string | URL | Request, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (init?.method === 'POST') {
-        keys.push(new Headers(init.headers).get('idempotency-key'))
-        return new Response(
-          JSON.stringify({ invocationId, status: keys.length === 1 ? 'Accepted' : 'PreviouslyAccepted' }),
-          {
-            status: 202,
-            headers: { 'content-type': 'application/json' },
-          },
-        )
-      }
-      outputUrls.push(url)
-      return complete
-        ? new Response(JSON.stringify(activeState), {
-            status: 200,
-            headers: { 'content-type': 'application/json', 'x-restate-id': invocationId },
-          })
-        : new Response(null, { status: 470 })
-    }
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const loaded = yield* transportConfig(config.activationAttemptId)
-        const pending = yield* activateRestateExecutionController(
-          { ...config, ...loaded },
-          Redacted.make(token),
-          request,
-        ).pipe(Effect.result, Effect.forkChild({ startImmediately: true }))
-        yield* TestClock.adjust(480_000)
-        const timedOut = yield* Fiber.join(pending)
-        expect(Result.isFailure(timedOut)).toBe(true)
-        if (Result.isFailure(timedOut))
-          expect(timedOut.failure).toMatchObject({
-            operation: 'invoke',
-            cause: {
-              operation: 'await',
-              message: 'Restate invocation remains incomplete after the bounded completion check',
-            },
-          })
-        expect(keys).toHaveLength(1)
-        expect(logs).toEqual([
-          {
-            message: ['Bayn native Restate execution controller activation accepted'],
-            annotations: {
-              activationAttemptId: config.activationAttemptId,
-              activationInvocationId: invocationId,
-              sourceRevision: config.sourceRevision,
-              status: 'Accepted',
-            },
-          },
-        ])
-        complete = true
-        const restarted = yield* transportConfig(config.activationAttemptId)
-        expect(
-          yield* activateRestateExecutionController({ ...config, ...restarted }, Redacted.make(token), request),
-        ).toEqual(activeState)
-      }).pipe(Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([logger]))),
+    expect(restateExecutionActivationRequest(first, token).headers['idempotency-key']).toBe(
+      restateExecutionActivationRequest({ ...first }, token).headers['idempotency-key'],
     )
-    expect(keys).toHaveLength(2)
-    expect(new Set(keys).size).toBe(1)
-    expect(new Set(outputUrls)).toEqual(new Set([`${config.ingressOrigin}/restate/invocation/${invocationId}/output`]))
-    expect(logs[1]).toMatchObject({
-      annotations: { status: 'PreviouslyAccepted', activationInvocationId: invocationId },
-    })
-    expect(JSON.stringify(logs)).not.toContain(token)
+    expect(restateExecutionActivationRequest(retry, token).headers['idempotency-key']).not.toBe(
+      restateExecutionActivationRequest(first, token).headers['idempotency-key'],
+    )
   })
 
   test('verifies the active controller plan after the current worker completed a successor pass', () => {

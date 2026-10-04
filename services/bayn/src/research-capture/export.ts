@@ -16,7 +16,6 @@ import {
   decodeResearchCaptureSeal,
   maximumResearchCaptureChunkBytes,
   verifyResearchCapture,
-  verifyResearchCapturePrefix,
   type ResearchCaptureBytes,
   type ResearchCaptureChunk,
   type ResearchCaptureReceipt,
@@ -177,7 +176,7 @@ const decodeExport = <A>(schema: Schema.Codec<A>, bytes: ResearchCaptureBytes) =
   })
 
 /** Readback proves these objects, never missing source coverage or trading authority. */
-const verifyExport = (
+export const verifyResearchCaptureExport = (
   chunks: readonly {
     readonly index: ResearchCaptureBytes
     readonly metadata: ResearchCaptureBytes
@@ -185,10 +184,9 @@ const verifyExport = (
   }[],
   sealBytes: ResearchCaptureBytes,
   manifestBytes: ResearchCaptureBytes,
-  prefix: boolean,
 ) =>
   Result.gen(function* () {
-    const capture = yield* (prefix ? verifyResearchCapturePrefix : verifyResearchCapture)(
+    const capture = yield* verifyResearchCapture(
       chunks.map((chunk) => chunk.metadata),
       sealBytes,
     )
@@ -256,16 +254,3 @@ const verifyExport = (
       return yield* Result.fail(fail('Export manifest omits its index tail'))
     return { ...capture, exportVerified: true, complete: false }
   })
-
-export const verifyResearchCaptureExport = (
-  chunks: Parameters<typeof verifyExport>[0],
-  sealBytes: ResearchCaptureBytes,
-  manifestBytes: ResearchCaptureBytes,
-) => verifyExport(chunks, sealBytes, manifestBytes, false)
-
-/** An immutable observation prefix can end while its consumer continues. It is not a closed worker. */
-export const verifyResearchCaptureExportPrefix = (
-  chunks: Parameters<typeof verifyExport>[0],
-  sealBytes: ResearchCaptureBytes,
-  manifestBytes: ResearchCaptureBytes,
-) => verifyExport(chunks, sealBytes, manifestBytes, true)

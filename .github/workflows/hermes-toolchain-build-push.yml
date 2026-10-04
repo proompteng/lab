@@ -10,7 +10,6 @@ on:
     paths:
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/hermes-toolchain-build-push.yml'
-      - '.github/workflows/hermes-agent-mirror.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'packages/scripts/src/shared/oci.ts'
       - 'flake.lock'
@@ -30,34 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify-agent-mirror:
-    runs-on: arc-arm64
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-      - uses: imjasonh/setup-crane@v0.4
-      - name: Wait for the immutable Hermes agent mirror
-        shell: bash
-        run: |
-          set -euo pipefail
-          public_reference=$(sed -n 's/^          image: \(registry.ide-newton.ts.net\/lab\/hermes-agent@sha256:[a-f0-9]\{64\}\)$/\1/p' argocd/applications/hermes/statefulset.yaml | sort -u)
-          test "$(printf '%s\n' "$public_reference" | wc -l)" -eq 1
-          test -n "$public_reference"
-          mirror_reference="${public_reference/registry.ide-newton.ts.net/registry.registry.svc.cluster.local}"
-          for attempt in $(seq 1 30); do
-            if timeout 30s crane manifest --insecure "$mirror_reference" > agent-manifest.json; then
-              test "$(timeout 30s crane digest --insecure "$mirror_reference")" = "${public_reference##*@}"
-              printf 'Verified immutable agent mirror %s\n' "$public_reference"
-              exit 0
-            fi
-            printf 'Waiting for Hermes agent mirror, attempt %s/30\n' "$attempt" >&2
-            sleep 20
-          done
-          printf 'Hermes agent mirror unavailable; withholding toolchain publication\n' >&2
-          exit 1
-
   nix-image:
-    needs: verify-agent-mirror
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: hermes-toolchain

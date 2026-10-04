@@ -13,14 +13,14 @@ on:
   workflow_dispatch: {}
 
 env:
-  SOURCE_REF: docker.io/nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
-  SOURCE_INDEX_DIGEST: sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
-  SOURCE_AMD64_DIGEST: sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
-  SOURCE_ATTESTATION_DIGEST: sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c
-  SOURCE_PROVENANCE_LAYER_DIGEST: sha256:80bc715251a9a4cb80b1c7127baa208ef2585859c09302d5c218cddcb9dc4317
-  EXPECTED_SOURCE_REVISION: f97608f178d1ffeca59860195ab7da295f7c8e5f
-  TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.24-amd64
-  PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64
+  SOURCE_REF: docker.io/nousresearch/hermes-agent@sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7
+  SOURCE_INDEX_DIGEST: sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7
+  SOURCE_AMD64_DIGEST: sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+  SOURCE_ATTESTATION_DIGEST: sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db
+  SOURCE_PROVENANCE_LAYER_DIGEST: sha256:ae6c21ad6159175419b5c83d866c96f94e79f0726c0cf32df0c5918664ead91e
+  EXPECTED_SOURCE_REVISION: 2237be355906fbe6065ce1815711eee52b2d646e
+  TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:v2026.9.7-amd64
+  PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64
 
 jobs:
   mirror:

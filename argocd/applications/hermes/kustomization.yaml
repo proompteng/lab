@@ -15,7 +15,6 @@ configMapGenerator:
   - name: hermes-bootstrap
     literals:
       - runtime.env=
-      - managed-install=gitops
     files:
       - bootstrap.sh
       - bootstrap-lab-checkout.sh

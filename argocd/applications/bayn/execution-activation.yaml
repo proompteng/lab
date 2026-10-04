@@ -40,6 +40,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
+              # Kargo binds the deployment; each activation process adds its own retry identity.
               value: "44a58a1d26ec2cad62fae863739d8101a919ef74272770ae93fb2d8fb5e89bf5"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
@@ -135,11 +136,6 @@ spec:
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
-            - name: BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID
-              valueFrom:
-                fieldRef:
-                  apiVersion: v1
-                  fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
           resources:
             requests:
               cpu: 25m
