@@ -56,8 +56,7 @@ class ArchiveTimestampPrecisionIntegrationTest {
             .executeQuery(
               "SELECT toString(event_ts), toString(ingest_ts), event_ts_exact, ingest_ts_exact " +
                 "FROM signal.intraday_bars_1m_v2 WHERE source_offset = 1",
-            )
-            .use { result ->
+            ).use { result ->
               assertTrue(result.next())
               assertEquals("2026-10-01 13:30:00.123", result.getString(1))
               assertEquals("2026-10-01 13:31:00.321", result.getString(2))
@@ -68,6 +67,7 @@ class ArchiveTimestampPrecisionIntegrationTest {
           val topic = "archive-precision-bars"
           val routes = mapOf(topic to ArchiveRoute("sip", universe))
           val fractions = listOf(0, 1, 999_999, 1_000_000, 321_780_322, 999_999_999)
+          val numericMismatches = mutableListOf<String>()
           fractions.forEachIndexed { index, nanos ->
             val prices =
               if (index % 2 == 0) {
@@ -100,20 +100,31 @@ class ArchiveTimestampPrecisionIntegrationTest {
             statement
               .executeQuery(
                 "SELECT toUnixTimestamp64Nano(event_ts_exact), toUnixTimestamp64Nano(ingest_ts_exact), " +
-                  "open, high, low, close, volume, vwap, toString(vwap) " +
+                  "open, high, low, close, volume, vwap, toString(vwap), " +
+                  "reinterpretAsUInt64(open), reinterpretAsUInt64(high), reinterpretAsUInt64(low), " +
+                  "reinterpretAsUInt64(close), reinterpretAsUInt64(volume), reinterpretAsUInt64(assumeNotNull(vwap)) " +
                   "FROM signal.intraday_bars_1m_v2 WHERE source_topic = '$topic' AND source_offset = ${index + 2}",
-              )
-              .use { result ->
+              ).use { result ->
                 assertTrue(result.next())
                 assertEquals(1_790_861_400_000_000_000L + nanos, result.getLong(1))
                 assertEquals(1_790_861_460_000_000_000L + nanos, result.getLong(2))
                 prices.forEachIndexed { field, expected ->
-                  assertEquals(expected.toBits(), result.getDouble(field + 3).toBits(), "binary64 field $field")
+                  val actual = result.getDouble(field + 3).toBits()
+                  val stored = result.getLong(field + 10)
+                  if (expected.toBits() != actual || expected.toBits() != stored) {
+                    numericMismatches.add(
+                      "row=$index field=$field expected=${expected.toBits().toString(16)} " +
+                        "stored=${stored.toString(16)} read=${actual.toString(16)}",
+                    )
+                  }
                 }
-                assertEquals(prices[5].toBits(), result.getString(9).toDouble().toBits(), "archive VWAP text")
+                if (prices[5].toBits() != result.getString(9).toDouble().toBits()) {
+                  numericMismatches.add("row=$index VWAP text=${result.getString(9)} expected=${prices[5]}")
+                }
                 assertEquals(false, result.next())
               }
           }
+          assertEquals(emptyList(), numericMismatches, "JDBC binary64 parity")
         } finally {
           statement.execute("DROP TABLE signal.intraday_bars_1m_v2")
         }
