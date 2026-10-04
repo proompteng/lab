@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/version: v2026.9.7
 spec:
   serviceName: hermes
-  replicas: 0
+  replicas: 1
   podManagementPolicy: OrderedReady
   updateStrategy:
     type: RollingUpdate
