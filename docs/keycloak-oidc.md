@@ -27,7 +27,7 @@ Capabilities:
 - Implicit flow: Off
 - Service accounts roles: Off
 - PKCE: `S256`
-- Valid redirect URI: `https://chatgpt.com/connector/oauth/*`
+- Valid redirect URI: `https://chatgpt.com/connector_platform_oauth_redirect`
 - Web origin: `https://chatgpt.com`
 
 Required scopes and role mapping:
@@ -40,6 +40,30 @@ Required scopes and role mapping:
 The `offline_access` client scope alone is not enough for durable ChatGPT connector sessions. The ChatGPT user must
 also have the realm `offline_access` role, otherwise Keycloak can issue ordinary access/refresh tokens but will not
 issue offline refresh tokens for long-lived reconnect-free sessions.
+
+### Secure MCP Tunnel
+
+The private Agents Shell endpoint is connected through OpenAI tunnel
+`tunnel_6ac1804615c081918532d0d91b1b097d` in Platform organization
+`org-WZKvBOMUIEWQ1GpsJ7paS1Kz`. The client runs as `agents-shell-tunnel` in the
+`agents` namespace and forwards to `http://agents-shell.agents.svc.cluster.local/mcp`.
+Its deployment and runtime SealedSecret are resources of the `agents` Argo CD application.
+
+In ChatGPT developer mode, create a custom MCP plugin named `agents-shell-tunnel`,
+select Tunnel, and enter that tunnel ID. Use OAuth with the existing user-defined
+`chatgpt-agents-shell` client and `client_secret_post`; obtain its secret from
+`keycloak-agents-shell-client` without placing it in prompts or logs. Set Resource
+to `https://agents-shell.proompteng.ai`, matching the backend audience mapper.
+The callback must be `https://chatgpt.com/connector_platform_oauth_redirect`.
+
+The tunnel runtime key is stored separately in `agents-shell-tunnel-runtime`.
+Kustomize copies its sealed ciphertext into the pod template annotation, so
+resealing the runtime key automatically rolls the deployment.
+It has All Platform API permissions at the operator's explicit request. The tunnel
+itself requires only Tunnels Read + Use. Neither key replaces end-user OAuth.
+The client trusts the existing authorization issuer for discovery and permits
+HTTP only for the private service's OAuth metadata forwarding; external OAuth
+endpoints and control-plane traffic use HTTPS.
 
 ## Operations model
 

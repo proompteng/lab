@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Option, Result } from 'effect'
+import { Clock, Effect, Exit, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
+import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type BrokerReadShape } from '../broker/alpaca'
 import { CycleState, decodeAutonomousCycle } from '../cycle'
 import { Authority, IntentState, KillState, OrderType, TerminalOutcome } from '../execution/contracts'
-import { IntentStore, type StoredIntent } from '../execution/intents'
+import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import { MutationStore, type MutationStoreShape } from '../execution/mutations'
-import type { ExecutionCycleClosure, ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
+import {
+  makeExecutionCycleClosure,
+  type ExecutionCycleClosure,
+  type ExecutionCycleClosureStoreShape,
+} from '../db/execution-cycle-closure'
 import { ensureExecutionCycleClosure } from './execution-cycle'
 import { resolveExecutionCycleCloseWindow } from './execution-window'
 import { prepareMutationIntent } from './mutation-intent-interpreter'
@@ -16,6 +20,7 @@ import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { nativeJevBatchResult, nativeJevFixture } from '../jev/native.test-support'
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
+import { decideJevExit, JevExitReason } from '../jev/exit'
 import { type IntradayMarketDataService, MarketData } from '../market-data'
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { retryableOperationalError } from '../errors'
@@ -233,7 +238,209 @@ const fixture = async () => {
 }
 
 describe('closing market-data fallback boundaries', () => {
-  test('current Jev residual close selects a fresh intent after terminal broker expiry', async () => {
+  test.each([
+    'filled',
+    'denied',
+    'unknown',
+    'inexact-accounting',
+    'failed-refresh',
+    'invalid-refresh',
+    'older-cut',
+    'fallback-flat',
+    'fallback-flat-exit',
+  ] as const)('terminal close uses fresh settlement evidence before another action (%s)', async (scenario) => {
+    const fallbackFlat = scenario.startsWith('fallback-flat')
+    const request = await fixture()
+    const closeWindow = Result.getOrThrow(
+      resolveExecutionCycleCloseWindow({
+        executionCloseAt: request.closeExpiresAt,
+        sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
+        sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
+      }),
+    )
+    const records = new Map<string, StoredIntent>()
+    let closure: ExecutionCycleClosure | undefined
+    let retainedReplan: ExecutionCycleClosure | undefined
+    let residualBinds = 0
+    let freshReads = 0
+    const store: ExecutionCycleClosureStoreShape = {
+      read: () => Effect.sync(() => Option.fromUndefinedOr(closure)),
+      readLatestReplan: () => Effect.sync(() => Option.fromUndefinedOr(retainedReplan)),
+      bind: (value) =>
+        Effect.sync(() => {
+          closure = value
+          return value
+        }),
+      bindReplan: (value) =>
+        Effect.sync(() => {
+          residualBinds += 1
+          return value
+        }),
+      containsIntent: () => Effect.succeed(true),
+    }
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
+        const before = yield* currentUtcInstant
+        const exitTarget =
+          scenario === 'fallback-flat-exit'
+            ? Result.getOrThrow(
+                decideJevExit({
+                  cycleId: request.cycle.identity.cycleId,
+                  sessionDate: request.cycle.identity.executionSessionDate,
+                  protocol: native.protocol,
+                  portfolio: {
+                    ...nativeJevFixture(JevPurpose.Manage).portfolio,
+                    entryDecisionHash: request.entryDocument.contentHash,
+                    brokerState: factsAt(before, true).brokerState,
+                  },
+                  observedAt: before,
+                  trigger: { reason: JevExitReason.MaximumHold },
+                }),
+              )
+            : undefined
+        const initial = yield* ensureExecutionCycleClosure({
+          ...request,
+          input: { ...request.input, executionCycleClosureStore: store },
+          closeWindow,
+          reconcile: Effect.succeed(factsAt(before, true)),
+          refreshReconciliation: Effect.die('an uncommitted close has no terminal evidence to refresh'),
+          existing: undefined,
+          ...(exitTarget === undefined ? {} : { exitTarget }),
+        })
+        if (initial._tag !== 'Close' || closure === undefined) throw new Error('missing committed close fixture')
+        if (exitTarget !== undefined) expect(initial.document.strategyDecision).toEqual(exitTarget)
+        yield* TestClock.adjust(1_000)
+        const terminalAt = yield* currentUtcInstant
+        if (scenario === 'denied') {
+          const replan = yield* prepareClosingExecutionCycleDecision({
+            ...request,
+            reconcile: Effect.succeed(factsAt(terminalAt, true)),
+            initialReconciliation: factsAt(terminalAt, true),
+            replanGenerationHash: closure.contentHash,
+          })
+          retainedReplan = yield* Effect.fromResult(
+            makeExecutionCycleClosure({
+              schemaVersion: 'bayn.paper-cycle-closure.v1',
+              cycleId: request.cycle.identity.cycleId,
+              entryDecisionHash: request.entryDocument.contentHash,
+              document: replan.document,
+              createdAt: replan.document.createdAt,
+              expiresAt: request.closeExpiresAt,
+            }),
+          )
+        }
+        for (const [document, terminalOutcome] of [
+          [request.entryDocument, TerminalOutcome.Filled],
+          [initial.document, TerminalOutcome.Filled],
+          ...(retainedReplan === undefined ? [] : [[retainedReplan.document, TerminalOutcome.Rejected] as const]),
+        ] as const) {
+          const authority = factsAt(document.createdAt).riskContext.authority
+          if (authority === null) throw new Error('missing fixture authority')
+          for (const [index, target] of document.targetPlan.intentTargets.entries()) {
+            const risk = document.deltaRisk[index]
+            if (risk === undefined) throw new Error('missing fixture risk binding')
+            const intent = yield* planExecutionIntent(
+              {
+                schemaVersion: 'bayn.paper-intent-plan.v1',
+                ...target,
+                notionalLimitMicros: risk.notionalLimitMicros,
+                ...(document.replanGenerationHash === undefined
+                  ? {}
+                  : { replanGenerationHash: document.replanGenerationHash }),
+                createdAt: document.createdAt,
+              },
+              { authority },
+            )
+            records.set(intent.intentId, {
+              intent: {
+                ...intent,
+                state: IntentState.Terminal,
+                terminalOutcome,
+                riskDecisionId: risk.evaluation.decision.decisionId,
+              },
+              decision: risk.evaluation.decision,
+              stateVersion: 5,
+              updatedAt: terminalAt,
+            })
+          }
+        }
+        const expectedIntentCount = scenario === 'denied' ? 3 : 2
+        expect(records.size).toBe(expectedIntentCount)
+        const fresh = factsAt(scenario === 'older-cut' ? before : terminalAt)
+        const refreshReconciliation = Effect.suspend(() => {
+          freshReads += 1
+          if (fallbackFlat && freshReads <= 4 && freshReads % 2 === 1) return Effect.succeed(factsAt(terminalAt, true))
+          if (scenario === 'failed-refresh' || scenario === 'invalid-refresh')
+            return Effect.fail(
+              new BrokerReadError({
+                operation: 'preflight',
+                kind:
+                  scenario === 'failed-refresh' ? BrokerReadErrorKind.Transport : BrokerReadErrorKind.InvalidResponse,
+                message: 'synthetic terminal-close refresh unavailable',
+                retryable: scenario === 'failed-refresh',
+              }),
+            )
+          return Effect.succeed(
+            scenario === 'inexact-accounting'
+              ? { ...fresh, report: { ...fresh.report, metrics: { ...fresh.report.metrics, accountingExact: false } } }
+              : scenario === 'unknown'
+                ? { ...fresh, riskContext: { ...fresh.riskContext, unknownMutationCount: 1 } }
+                : fresh,
+          )
+        })
+        const recoverClose = ensureExecutionCycleClosure({
+          ...request,
+          input: {
+            ...request.input,
+            executionCycleClosureStore: store,
+            ...(fallbackFlat
+              ? { intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) } }
+              : {}),
+          },
+          closeWindow,
+          reconcile: Effect.succeed(factsAt(before, true)),
+          refreshReconciliation,
+          existing: closure,
+        })
+        for (let pass = 0; pass < (fallbackFlat ? 3 : 2); pass++) {
+          const result = yield* Effect.exit(recoverClose)
+          if (scenario === 'invalid-refresh') expect(Exit.isFailure(result)).toBe(true)
+          else {
+            if (Exit.isFailure(result)) throw new Error('terminal close fixture unexpectedly failed')
+            expect(result.value._tag).toBe(
+              scenario === 'filled' || scenario === 'denied' || (fallbackFlat && pass === 2) ? 'Complete' : 'Wait',
+            )
+          }
+          expect(freshReads).toBe(fallbackFlat ? Math.min((pass + 1) * 2, 5) : pass + 1)
+          expect(residualBinds).toBe(0)
+          expect(records.size).toBe(expectedIntentCount)
+        }
+      }).pipe(
+        Effect.provideService(IntentStore, {
+          read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
+          commit: () => Effect.die('terminal close must not commit another intent'),
+          commitClosing: () => Effect.die('terminal close must not commit another close'),
+        }),
+        Effect.provideService(MutationStore, { latest: () => Effect.void } as unknown as MutationStoreShape),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+  })
+
+  test.each([
+    'expiry',
+    'partial fill',
+    'partial fill without archive',
+    'fallback becomes unknown',
+    'fallback loses accounting',
+    'fallback becomes older',
+    'fallback regresses after settlement',
+    'fallback read fails',
+    'fallback read is invalid',
+  ] as const)('residual close uses fresh remaining exposure after %s', async (scenario) => {
+    const terminalOutcome = scenario === 'expiry' ? TerminalOutcome.Expired : TerminalOutcome.Canceled
+    const unavailableArchive = scenario !== 'expiry' && scenario !== 'partial fill'
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
@@ -247,6 +454,7 @@ describe('closing market-data fallback boundaries', () => {
     let replan: ExecutionCycleClosure | undefined
     let closeCommits = 0
     let restrictions = 0
+    let closeSettled = false
     const store: ExecutionCycleClosureStoreShape = {
       read: () => Effect.sync(() => Option.fromUndefinedOr(closure)),
       readLatestReplan: () => Effect.sync(() => Option.fromUndefinedOr(replan)),
@@ -269,7 +477,29 @@ describe('closing market-data fallback boundaries', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
         const reconcile = Effect.gen(function* () {
-          return factsAt(yield* currentUtcInstant, true)
+          const facts = factsAt(yield* currentUtcInstant, true)
+          if (!closeSettled || terminalOutcome !== TerminalOutcome.Canceled) return facts
+          const positions = facts.brokerState.positions.map((position) => ({
+            ...position,
+            quantityMicros: (BigInt(position.quantityMicros) / 2n).toString(),
+            marketValueMicros: (BigInt(position.marketValueMicros) / 2n).toString(),
+          }))
+          const releasedValue = facts.brokerState.positions.reduce(
+            (sum, position) => sum + BigInt(position.marketValueMicros) / 2n,
+            0n,
+          )
+          const state = {
+            ...facts.brokerState,
+            positions,
+            account: {
+              ...facts.brokerState.account,
+              cashMicros: (BigInt(facts.brokerState.account.cashMicros) + releasedValue).toString(),
+              buyingPowerMicros: (BigInt(facts.brokerState.account.buyingPowerMicros) + releasedValue).toString(),
+            },
+          }
+          const hash = Result.getOrThrow(reconciledStateHash(state))
+          const reconciliation = { ...state.reconciliation, expectedHash: hash, observedHash: hash }
+          return { ...facts, brokerState: { ...state, reconciliation }, report: { ...facts.report, reconciliation } }
         })
         const prepare = (document: NonNullable<typeof closure>['document']) =>
           prepareMutationIntent(
@@ -292,7 +522,7 @@ describe('closing market-data fallback boundaries', () => {
               readFacts: () =>
                 Effect.gen(function* () {
                   const evaluatedAt = yield* currentUtcInstant
-                  const reconciliation = factsAt(evaluatedAt, true)
+                  const reconciliation = yield* reconcile
                   const authority = reconciliation.riskContext.authority
                   if (authority === null) throw new Error('missing existing close authority')
                   return {
@@ -316,6 +546,7 @@ describe('closing market-data fallback boundaries', () => {
           input: { ...request.input, executionCycleClosureStore: store },
           closeWindow,
           reconcile,
+          refreshReconciliation: reconcile,
           existing: undefined,
         })
         if (first._tag !== 'Close') throw new Error('fresh owned position should produce a close')
@@ -328,26 +559,85 @@ describe('closing market-data fallback boundaries', () => {
         expect(closeCommits).toBe(1)
         const prior = records.get(first.document.orderedIntentIds[0] ?? '')
         if (prior === undefined || closure === undefined) throw new Error('missing first committed close')
-        // Model the broker's terminal IOC expiry at the store boundary, with the owned position still open.
         records.set(prior.intent.intentId, {
           ...prior,
-          intent: { ...prior.intent, state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Expired },
+          intent: { ...prior.intent, state: IntentState.Terminal, terminalOutcome },
           stateVersion: prior.stateVersion + 1,
+          updatedAt: new Date(Date.parse(first.document.createdAt) + 1_000).toISOString(),
         })
+        closeSettled = true
         const expiredAt = first.document.deltaRisk[0]?.evaluation.decision.expiresAt
         if (expiredAt === undefined) throw new Error('missing original close risk deadline')
-        yield* TestClock.setTime(Date.parse(first.document.createdAt) + 1_000)
+        yield* TestClock.setTime(Date.parse(first.document.createdAt) + 2_000)
         expect(Date.parse(yield* currentUtcInstant)).toBeLessThan(Date.parse(expiredAt))
         const stale = yield* prepare(first.document)
         expect(stale).toMatchObject({ _tag: 'Wait', waitReason: 'intent-unsuccessful' })
         expect(closeCommits).toBe(1)
-        const next = yield* ensureExecutionCycleClosure({
+        let unstableFallback = scenario.startsWith('fallback')
+        let residualReads = 0
+        const refreshResidual = reconcile.pipe(
+          Effect.flatMap((facts) => {
+            residualReads += 1
+            if (!unstableFallback || residualReads % 2 === 1) return Effect.succeed(facts)
+            if (scenario === 'fallback read fails' || scenario === 'fallback read is invalid')
+              return Effect.fail(
+                new BrokerReadError({
+                  operation: 'preflight',
+                  kind:
+                    scenario === 'fallback read fails'
+                      ? BrokerReadErrorKind.Timeout
+                      : BrokerReadErrorKind.InvalidResponse,
+                  message: 'synthetic residual fallback read failure',
+                  retryable: scenario === 'fallback read fails',
+                }),
+              )
+            if (scenario === 'fallback becomes unknown')
+              return Effect.succeed({ ...facts, riskContext: { ...facts.riskContext, unknownMutationCount: 1 } })
+            if (scenario === 'fallback loses accounting')
+              return Effect.succeed({
+                ...facts,
+                report: { ...facts.report, metrics: { ...facts.report.metrics, accountingExact: false } },
+              })
+            return Effect.succeed(
+              factsAt(
+                scenario === 'fallback regresses after settlement'
+                  ? new Date(Date.parse(first.document.createdAt) + 1_000).toISOString()
+                  : first.document.createdAt,
+                true,
+              ),
+            )
+          }),
+        )
+        const recoverResidual = ensureExecutionCycleClosure({
           ...request,
-          input: { ...request.input, executionCycleClosureStore: store },
+          input: {
+            ...request.input,
+            executionCycleClosureStore: store,
+            ...(unavailableArchive
+              ? { intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) } }
+              : {}),
+          },
           closeWindow,
-          reconcile,
+          reconcile: Effect.succeed(factsAt(first.document.createdAt, unavailableArchive)),
+          refreshReconciliation: refreshResidual,
           existing: closure,
         })
+        if (scenario === 'fallback read is invalid') {
+          expect(Exit.isFailure(yield* Effect.exit(recoverResidual))).toBe(true)
+          expect(replan).toBeUndefined()
+          expect(closeCommits).toBe(1)
+          unstableFallback = false
+        }
+        let next = yield* recoverResidual
+        if (unstableFallback) {
+          expect(next._tag).toBe('Wait')
+          expect(replan).toBeUndefined()
+          expect(closeCommits).toBe(1)
+          expect((yield* recoverResidual)._tag).toBe('Wait')
+          expect(replan).toBeUndefined()
+          unstableFallback = false
+          next = yield* recoverResidual
+        }
         if (next._tag !== 'Close') throw new Error('remaining owned position should produce a residual replan')
         expect(next.document.replanGenerationHash).toBe(closure.contentHash)
         expect(next.document.bindings.authorityGenerationHash).toBe(first.document.bindings.authorityGenerationHash)
@@ -362,7 +652,8 @@ describe('closing market-data fallback boundaries', () => {
           first.document.targetPlan.intentTargets.map(({ symbol, side, quantityMicros }) => ({
             symbol,
             side,
-            quantityMicros,
+            quantityMicros:
+              terminalOutcome === TerminalOutcome.Canceled ? (BigInt(quantityMicros) / 2n).toString() : quantityMicros,
           })),
         )
         expect(yield* prepare(next.document)).toMatchObject({

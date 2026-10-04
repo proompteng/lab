@@ -17,12 +17,12 @@ spec:
       annotations:
         inject.istio.io/templates: sidecar,spire
         sidecar.istio.io/nativeSidecar: "true"
-        sidecar.istio.io/inject: "true"
         sidecar.istio.io/proxyCPU: 50m
         sidecar.istio.io/proxyCPULimit: 500m
         sidecar.istio.io/proxyMemory: 64Mi
         sidecar.istio.io/proxyMemoryLimit: 256Mi
       labels:
+        sidecar.istio.io/inject: "true"
         app: proompteng
         spiffe.io/spire-managed-identity: "true"
     spec:
