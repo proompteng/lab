@@ -141,6 +141,7 @@ COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
 COPY --chmod=0555 bootstrap-spire-agent.sh /usr/local/bin/bootstrap-spire-agent
 COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-developer-tools
 COPY --chmod=0444 astronvim-init.lua /usr/share/nanoagent/astronvim-init.lua
+RUN chmod 0755 /usr/share/nanoagent
 COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
