@@ -136,6 +136,45 @@ test('rejects omitting the Hermes toolchain closure mount from one container', a
   )
 })
 
+test('rejects a container without the immutable native web SDK path', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace('name: PYTHONPATH', 'name: DISABLED_PYTHONPATH')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "name: PYTHONPATH\\n              value: /opt/lab-toolchain/python"`,
+  )
+})
+
+test('rejects a container without the native web SDK mount', async () => {
+  const files = await loadProductionFiles()
+  files.statefulSet = files.statefulSet.replace(
+    'mountPath: /opt/lab-toolchain/python',
+    'mountPath: /opt/disabled-python',
+  )
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.statefulSet}: missing production invariant "name: lab-toolchain-image\\n              mountPath: /opt/lab-toolchain/python\\n              subPath: python\\n              readOnly: true"`,
+  )
+})
+
+test('rejects omitting the native web SDK from the immutable toolchain image', async () => {
+  const files = await loadProductionFiles()
+  files.toolchainImage = files.toolchainImage.replace('    pythonDependencies\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.toolchainImage}: missing production invariant "    pythonDependencies\\n"`,
+  )
+})
+
+test('rejects bootstrap without the native web SDK import check', async () => {
+  const files = await loadProductionFiles()
+  files.bootstrap = files.bootstrap.replace('import exa_py; ', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.bootstrap}: missing production invariant "import exa_py; import importlib.metadata as m; print(m.version(\\"exa-py\\"))"`,
+  )
+})
+
 test('rejects bootstrap without exact Hermes toolchain version checks', async () => {
   const files = await loadProductionFiles()
   files.bootstrap = files.bootstrap.replace(

@@ -388,6 +388,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable Nix closure read-only`,
     )
   }
+  for (const container of [bootstrapContainer, gatewayContainer, dashboardContainer]) {
+    requireTerms(failures, productionPaths.statefulSet, container, [
+      'name: PYTHONPATH\n              value: /opt/lab-toolchain/python',
+      'name: lab-toolchain-image\n              mountPath: /opt/lab-toolchain/python\n              subPath: python\n              readOnly: true',
+    ])
+  }
   if (count(files.statefulSet, '        - name: lab-toolchain-image\n          image:\n') !== 1) {
     failures.push(`${productionPaths.statefulSet}: the toolchain must use exactly one OCI image volume`)
   }
@@ -1021,6 +1027,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '"proompteng.ai/toolchain.node" = lib.getVersion nodejs;',
     '"proompteng.ai/toolchain.bun" = lib.getVersion bun;',
     '"proompteng.ai/toolchain.go" = lib.getVersion go;',
+    'exa_py-2.10.2-py3-none-any.whl',
+    'sha256 = "ecb2a7581f4b7a8aeb6b434acce1bbc40f92ed1d4126b2aa6029913acd904a47";',
+    'unzip -q ${exaWheel} -d "$out/python"',
+    '    pythonDependencies\n',
+    '"proompteng.ai/toolchain.exa-py" = "2.10.2";',
+  ])
+  requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
+    'check_tool_version exa-py 2.10.2 /opt/hermes/.venv/bin/python -c',
+    'import exa_py; import importlib.metadata as m; print(m.version("exa-py"))',
   ])
   forbidTerms(failures, productionPaths.toolchainImage, files.toolchainImage, [
     'pkgs.nix',

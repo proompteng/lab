@@ -76,7 +76,9 @@ validating a rollout.
 - The API is available through the cluster-local Service and the private tailnet URL
   `https://hermes.ide-newton.ts.net`; both require bearer authentication for model requests and detailed health.
 - Native Exa-backed `web_search` and `web_extract` are enabled for CLI, authenticated API, and Discord sessions. The
-  native web tools are the sole Exa integration. Session search and skills are available on all three surfaces. The
+  native web tools are the sole Exa integration. The toolchain OCI image carries `exa-py` `2.10.2` from a
+  SHA-256-pinned wheel. A read-only `/opt/lab-toolchain/python` mount and `PYTHONPATH` supply it to bootstrap, gateway,
+  and dashboard. Bootstrap verifies its import and version; runtime lazy package installation remains disabled. Session search and skills are available on all three surfaces. The
   bundled `security-guidance` plugin warns about risky file writes. Delegation, agent scheduling, Kanban dispatch, custom
   hooks, and speech-to-text remain disabled. The bundled dashboard password provider, manual approvals, and unconditional
   deny rules remain enabled.

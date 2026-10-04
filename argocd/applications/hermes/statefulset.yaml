@@ -65,6 +65,8 @@ spec:
               value: /opt/data
             - name: HERMES_MANAGED
               value: gitops
+            - name: PYTHONPATH
+              value: /opt/lab-toolchain/python
             - name: HOME
               value: /opt/data/home
             - name: GH_CONFIG_DIR
@@ -141,6 +143,10 @@ spec:
               subPath: bin
               readOnly: true
             - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/python
+              subPath: python
+              readOnly: true
+            - name: lab-toolchain-image
               mountPath: /nix/store
               subPath: nix/store
               readOnly: true
@@ -164,6 +170,8 @@ spec:
               value: /opt/data
             - name: HERMES_MANAGED
               value: gitops
+            - name: PYTHONPATH
+              value: /opt/lab-toolchain/python
             - name: HERMES_WRITE_SAFE_ROOT
               value: /opt/data/workspace/tuslagch:/opt/data/memories:/opt/data/skills
             - name: HERMES_DISABLE_LAZY_INSTALLS
@@ -334,6 +342,10 @@ spec:
               subPath: bin
               readOnly: true
             - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/python
+              subPath: python
+              readOnly: true
+            - name: lab-toolchain-image
               mountPath: /nix/store
               subPath: nix/store
               readOnly: true
@@ -361,6 +373,8 @@ spec:
               value: /opt/data
             - name: HERMES_MANAGED
               value: gitops
+            - name: PYTHONPATH
+              value: /opt/lab-toolchain/python
             - name: HERMES_WRITE_SAFE_ROOT
               value: /opt/data/workspace/tuslagch:/opt/data/memories:/opt/data/skills
             - name: HERMES_DISABLE_LAZY_INSTALLS
@@ -509,6 +523,10 @@ spec:
             - name: lab-toolchain-image
               mountPath: /opt/lab-toolchain/bin
               subPath: bin
+              readOnly: true
+            - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/python
+              subPath: python
               readOnly: true
             - name: lab-toolchain-image
               mountPath: /nix/store
