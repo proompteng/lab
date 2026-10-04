@@ -1,16 +1,15 @@
 'use client'
 
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpRight,
-  ChevronDown,
-  Command,
-  ExternalLink,
-  LoaderCircle,
-  Plus,
-  Square,
-} from 'lucide-react'
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@proompteng/design/ui'
+import { ArrowDown, ArrowUp, ArrowUpRight, Command, ExternalLink, LoaderCircle, Plus, Square } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   codexOptionsForSelection,
@@ -846,7 +845,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <form
             aria-label="Message composer"
             aria-busy={replayRecovering}
-            className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 shadow-sm transition-colors focus-within:border-zinc-500 motion-reduce:transition-none"
+            className="w-full rounded-2xl border border-white/[0.06] bg-zinc-900/60 shadow-sm transition-colors focus-within:border-white/15 motion-reduce:transition-none"
             onSubmit={(event) => {
               event.preventDefault()
               void send()
@@ -1063,90 +1062,105 @@ function CodexModelPicker({
 }) {
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
-  const selectClass =
-    'h-8 min-w-0 max-w-full appearance-none rounded-md bg-transparent py-1 pr-6 pl-2 text-xs text-zinc-300 outline-none transition-colors [field-sizing:content] hover:bg-zinc-700/60 focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 motion-reduce:transition-none [&_option]:bg-zinc-800'
+  const triggerClass =
+    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+  const menuClass =
+    'font-system w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-zinc-900/95 p-1 text-zinc-200 shadow-[0_12px_40px_rgba(0,0,0,0.45)] ring-white/10 backdrop-blur-xl motion-reduce:animate-none'
+  const itemClass =
+    'min-h-10 rounded-lg px-3 py-2 pr-8 text-sm focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
+  const reasoningLabel =
+    selection.reasoningEffort === 'default'
+      ? model
+        ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})`
+        : 'Default'
+      : `${codexReasoningLabels[selection.reasoningEffort]}${model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? '' : ' (unavailable)'}`
   return (
     <div className="min-w-0 flex-1 space-y-1">
       <div className="flex flex-wrap items-center justify-end gap-1">
-        <label
-          className="relative flex min-w-0 max-w-full text-xs text-zinc-400"
-          title={
-            disabled
-              ? 'Model settings are available when the response and conversation recovery finish.'
-              : model?.description
-          }
+        <Select
+          disabled={disabled || !models?.length}
+          onValueChange={(value) => {
+            const next = models?.find((model) => model.model === value)
+            if (!next) return
+            const reasoningEffort =
+              selection.reasoningEffort === 'default' ||
+              next.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort)
+                ? selection.reasoningEffort
+                : 'default'
+            onChange({ model: next.model, reasoningEffort })
+          }}
+          value={selection.model}
         >
-          <span className="sr-only">Model</span>
-          <select
+          <SelectTrigger
             aria-label="Model"
-            className={selectClass}
-            disabled={disabled || !models?.length}
-            onChange={(event) => {
-              const next = models?.find((model) => model.model === event.target.value)
-              if (!next) return
-              const reasoningEffort =
-                selection.reasoningEffort === 'default' ||
-                next.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort)
-                  ? selection.reasoningEffort
-                  : 'default'
-              onChange({ model: next.model, reasoningEffort })
-            }}
-            value={selection.model}
-          >
-            {!model ? (
-              <option value={selection.model} disabled>
-                {models ? `${selection.model} (unavailable)` : error ? 'Models unavailable' : 'Loading models…'}
-              </option>
-            ) : null}
-            {models?.map((model) => (
-              <option key={model.model} value={model.model}>
-                {model.displayName}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute top-2.5 right-1.5 size-3 text-zinc-400"
-            aria-hidden="true"
-          />
-        </label>
-        <label
-          className="relative flex min-w-0 max-w-full items-center text-xs text-zinc-400"
-          title={
-            disabled
-              ? 'Reasoning settings are available when the response and conversation recovery finish.'
-              : 'Reasoning effort'
-          }
-        >
-          <span className="sr-only">Reasoning</span>
-          <select
-            aria-label="Reasoning effort"
-            className={selectClass}
-            disabled={disabled || !model}
-            onChange={(event) =>
-              onChange(codexSelectionSchema.parse({ ...selection, reasoningEffort: event.target.value }))
+            className={triggerClass}
+            title={
+              disabled
+                ? 'Model settings are available when the response and conversation recovery finish.'
+                : model?.description
             }
-            value={selection.reasoningEffort}
           >
-            <option value="default">
-              {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
-            </option>
-            {selection.reasoningEffort !== 'default' &&
-            !model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? (
-              <option value={selection.reasoningEffort} disabled>
-                {codexReasoningLabels[selection.reasoningEffort]} (unavailable)
-              </option>
-            ) : null}
-            {model?.supportedReasoningEfforts.map((effort) => (
-              <option key={effort.reasoningEffort} value={effort.reasoningEffort} title={effort.description}>
-                {codexReasoningLabels[effort.reasoningEffort]}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute top-2.5 right-1.5 size-3 text-zinc-400"
-            aria-hidden="true"
-          />
-        </label>
+            <SelectValue>
+              {model?.displayName ??
+                (models ? `${selection.model} (unavailable)` : error ? 'Models unavailable' : 'Loading models…')}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent side="top" align="end" sideOffset={8} alignItemWithTrigger={false} className={menuClass}>
+            <SelectGroup>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">Model</SelectLabel>
+              {models?.map((model) => (
+                <SelectItem key={model.model} value={model.model} className={itemClass} title={model.description}>
+                  {model.displayName}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select
+          disabled={disabled || !model}
+          onValueChange={(value) => {
+            if (value !== null) onChange(codexSelectionSchema.parse({ ...selection, reasoningEffort: value }))
+          }}
+          value={selection.reasoningEffort}
+        >
+          <SelectTrigger
+            aria-label="Reasoning effort"
+            className={triggerClass}
+            title={
+              disabled
+                ? 'Reasoning settings are available when the response and conversation recovery finish.'
+                : 'Reasoning effort'
+            }
+          >
+            <SelectValue>{reasoningLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent
+            side="top"
+            align="end"
+            sideOffset={8}
+            alignItemWithTrigger={false}
+            className={`${menuClass} w-60`}
+          >
+            <SelectGroup>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">
+                Reasoning effort
+              </SelectLabel>
+              <SelectItem value="default" className={itemClass}>
+                {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
+              </SelectItem>
+              {model?.supportedReasoningEfforts.map((effort) => (
+                <SelectItem
+                  key={effort.reasoningEffort}
+                  value={effort.reasoningEffort}
+                  className={itemClass}
+                  title={effort.description}
+                >
+                  {codexReasoningLabels[effort.reasoningEffort]}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
       {error ? (
         <p className="text-xs text-amber-200/80" role="alert">

@@ -40,6 +40,7 @@ const STATIC_PREFIXES = [
 ]
 
 const STATIC_EXACT_PATHS = new Set([
+  '.github/workflows/agents-ci.yml',
   'packages/scripts/src/agents/deploy-service.ts',
   'packages/scripts/src/agents/smoke-agents.ts',
   'scripts/download_crd_schema.py',

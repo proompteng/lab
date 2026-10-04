@@ -79,3 +79,6 @@ spec:
     - stageSelector:
         name: rune
       autoPromotionEnabled: true
+    - stageSelector:
+        name: temporal-worker
+      autoPromotionEnabled: true
