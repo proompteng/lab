@@ -68,6 +68,7 @@ targets:
       - .github/workflows/forgejo-image-publish.yml
       - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
+      - argocd/applications/kargo/stages.yaml
       - argocd/applications/kube-router/**
       - argocd/applications/buzz/networkpolicy.yaml
       - argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml

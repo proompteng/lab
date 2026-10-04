@@ -123,7 +123,7 @@ test('rejects an unscoped optional Tengri namespace check in the coverage probe'
 test('rejects a preflight that does not pin the exact Hermes policy set', async () => {
   const files = copy(await loadProductionFiles())
   files.preflightHook = files.preflightHook.replace(
-    'expected_hermes_policy_hash=048056134b08a44eedf8530f3dccc2a5d8903432e31ee0bc7ead474bfe6586e3',
+    'expected_hermes_policy_hash=9480db61358cfe0459d7d0de9e755751dee551616c2f576b0cb312c581bf066a',
     `expected_hermes_policy_hash=${'0'.repeat(64)}`,
   )
   expect(validateProductionContent(files)).toContainEqual(

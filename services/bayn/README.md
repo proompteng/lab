@@ -912,11 +912,13 @@ additional full execution windows are needed, preserving the earlier dataset ver
 ### Property tests and structured fuzzing
 
 `bun run --cwd services/bayn test:property` runs the fixed seed `20261003` with 100 generated cases per property
-(20 for full streaming snapshots). These tests also run in the normal `test` command and existing Bayn CI gate.
+(20 for full streaming snapshots and acceptance bootstraps). These tests also run in the normal `test` command and
+existing Bayn CI gate.
 The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
 mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
 row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
-and authority/freshness failures. All data is synthetic; no broker, database, or live account is contacted.
+authority/freshness failures, and exact decimal acceptance thresholds against an independent bootstrap oracle.
+All data is synthetic; no broker, database, or live account is contacted.
 
 Run a longer, reproducible 1,000-case-per-property campaign with a new seed:
 
