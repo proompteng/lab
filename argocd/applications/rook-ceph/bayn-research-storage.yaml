@@ -1,0 +1,75 @@
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStoreAccount
+metadata:
+  name: bayn-research
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  store: objectstore
+  rootUser:
+    displayName: bayn-research-owner
+---
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStoreUser
+metadata:
+  name: bayn-research-capture
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  store: objectstore
+  displayName: bayn-research-capture
+  accountRef:
+    name: bayn-research
+  opMask:
+    - read
+    - write
+  quotas:
+    maxBuckets: -1
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rook-ceph-object-user-objectstore-bayn-research-capture
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: bayn
+type: kubernetes.io/rook
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-research-storage-bootstrap
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-research-storage-bootstrap
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rook-ceph-rgw
+              rook_cluster: rook-ceph
+              rook_object_store: objectstore
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

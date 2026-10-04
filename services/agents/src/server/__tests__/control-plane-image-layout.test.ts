@@ -30,6 +30,13 @@ const dockerfileTarget = (target: string) => {
 }
 
 describe('Agents control-plane image layout', () => {
+  it('disables the unrotated optional audit file in both chart and production defaults', () => {
+    for (const path of ['charts/agents/values.yaml', 'argocd/applications/agents/values.yaml']) {
+      const content = readFileSync(new URL(`../../../../../${path}`, import.meta.url), 'utf8')
+      expect(content).toMatch(/AGENTS_SHELL_AUDIT_LOG_PATH:\s*(?:''|"")/)
+    }
+  })
+
   it('builds the Agents service for the control-plane target', () => {
     const content = dockerfileTarget('control-plane')
 
@@ -98,7 +105,11 @@ describe('Agents control-plane image layout', () => {
     expect(content).toContain('pname = "agents-shell-pstack"')
     expect(content).toContain('cp -R plugins/pstack "$out/opt/agents-shell/pstack"')
     expect(content).toContain('"$out/app/services/agents/scripts/install-agents-shell-pstack.sh"')
-    expect(content).toContain('agentsShellContents = commonContents ++ [\n    applyPatch\n    pstackBundle')
+    const shellContents = content.match(/agentsShellContents\s*=\s*commonContents\s*\+\+\s*\[([\s\S]*?)\]/)?.[1]
+    expect(shellContents?.trim().split(/\s+/)).toEqual(
+      expect.arrayContaining(['applyPatch', 'pstackBundle', 'agentsShellInterpreterCompat']),
+    )
+    expect(content).toContain('ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"')
   })
 
   it('runs package builds on the build platform while keeping runtime dependencies target-native', () => {

@@ -5,9 +5,12 @@ import { Effect, Layer } from 'effect'
 
 import { persistedMarketDataContract } from '../testing/persisted-snapshot-fixture'
 import { config } from '../testing/runtime-fixtures'
+import { historicalSignalConfig } from '../testing/historical-signal-fixture'
 import { MarketData } from './model'
 import { MarketDataLive } from './program'
 import { makeMarketDataQueries } from './queries'
+
+const historicalConfig = { operationTimeoutMs: config.operationTimeoutMs, historicalSignal: historicalSignalConfig }
 
 const makeSqlRecorder = (queryIds: string[]): ClickhouseClient.ClickhouseClient => {
   const statement = (): Effect.Effect<readonly unknown[]> => Effect.succeed([])
@@ -23,8 +26,8 @@ const makeSqlRecorder = (queryIds: string[]): ClickhouseClient.ClickhouseClient 
 describe('market-data query execution identity', () => {
   test('keeps one logical operation while assigning every concurrent replica attempt a unique query id', async () => {
     const queryIds: string[] = []
-    const left = makeMarketDataQueries(makeSqlRecorder(queryIds), config, persistedMarketDataContract)
-    const right = makeMarketDataQueries(makeSqlRecorder(queryIds), config, persistedMarketDataContract)
+    const left = makeMarketDataQueries(makeSqlRecorder(queryIds), historicalConfig, persistedMarketDataContract)
+    const right = makeMarketDataQueries(makeSqlRecorder(queryIds), historicalConfig, persistedMarketDataContract)
 
     await Effect.runPromise(
       Effect.all(
@@ -54,7 +57,7 @@ describe('market-data query execution identity', () => {
         <A, E, R>(effect: Effect.Effect<A, E, R>) =>
           effect,
     }) as unknown as ClickhouseClient.ClickhouseClient
-    const layer = MarketDataLive({ ...config, operationTimeoutMs: 5 }, persistedMarketDataContract).pipe(
+    const layer = MarketDataLive({ ...historicalConfig, operationTimeoutMs: 5 }, persistedMarketDataContract).pipe(
       Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)),
     )
 

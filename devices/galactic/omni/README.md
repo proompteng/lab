@@ -84,6 +84,13 @@ Never commit the raw or rendered templates. Delete both temporary files after th
 [Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
 `docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
 
+## CI scratch reclamation
+
+The Turin `turin-nvme-transcend` user volume enables filesystem TRIM every 24 hours.
+Talos schedules each volume at a stable time within that interval. This configuration does not
+trigger an immediate trim. After initial enablement, run one filesystem trim against the mounted
+scratch volume and verify completed discards, runner startup, and CI behavior.
+
 ## PodCIDR maintenance checks
 
 Turin and Altra have re-registered with distinct `/23` PodCIDRs. The template sets both to `maxPods: 500` and requests

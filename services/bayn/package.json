@@ -14,9 +14,11 @@
     "lint:oxlint": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "bun ../../node_modules/oxlint/bin/oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json .",
     "test": "bun test",
+    "test:property": "bun test src/market-data/intraday/rows.property.test.ts src/market-data/streaming/replay.property.test.ts src/intraday-replay/ledger.property.test.ts src/risk.test.ts --test-name-pattern 'property:' --timeout 150000",
+    "test:fuzz": "BAYN_PROPERTY_RUNS=1000 bun run test:property",
     "test:broker-sandbox": "bun test src/broker-sandbox-contract.test.ts",
     "test:effect-runtime": "bun test src/clickhouse-runtime-compatibility.test.ts src/effect-runtime-compatibility.test.ts",
-    "test:postgres": "bun test src/execution/writer-fence.integration.test.ts && bun test src/db/broker-observations.integration.test.ts && bun test src/cycle/store/observability.integration.test.ts && bun test src/db/execution-store.integration.test.ts && bun test src/db/execution-controller-status-postgres.integration.test.ts && bun test src/cycle/store/integration.test.ts && bun test src/execution/intents/blocked-cycle-postgres.integration.test.ts && bun test src/forward-performance/postgres/read.integration.test.ts src/forward-performance/postgres/strategy.integration.test.ts && bun test src/db/streaming-snapshot.integration.test.ts && bun test src/db/jev-evaluation-postgres.integration.test.ts && bun test src/db/jev-batch-postgres.integration.test.ts && bun test src/db/jev-native-postgres.integration.test.ts && bun test src/intraday-replay/clock.integration.test.ts && bun test src/inference-costs-postgres.integration.test.ts && bun test src/postgres-monitoring.integration.test.ts src/cycle/store/entry-allocation-query.integration.test.ts",
+    "test:postgres": "bun test src/shadow-decision.test.ts -t \"migrated cycle guard\" && bun test src/execution/writer-fence.integration.test.ts && bun test src/db/broker-observations.integration.test.ts && bun test src/cycle/store/observability.integration.test.ts && bun test src/db/execution-store.integration.test.ts && bun test src/db/execution-controller-status-postgres.integration.test.ts && bun test src/cycle/store/integration.test.ts && bun test src/execution/intents/blocked-cycle-postgres.integration.test.ts && bun test src/forward-performance/postgres/read.integration.test.ts src/forward-performance/postgres/strategy.integration.test.ts && bun test src/db/streaming-snapshot.integration.test.ts && bun test src/db/research-capture-postgres.integration.test.ts && bun test src/db/jev-evaluation-postgres.integration.test.ts && bun test src/db/jev-batch-postgres.integration.test.ts && bun test src/db/jev-native-postgres.integration.test.ts && bun test src/intraday-replay/clock.integration.test.ts && bun test src/inference-costs-postgres.integration.test.ts && bun test src/postgres-monitoring.integration.test.ts src/cycle/store/entry-allocation-query.integration.test.ts",
     "tsc": "bun run tsc:all && bun run tsc:production",
     "tsc:all": "find ../../node_modules/.bun -path '*/@effect/tsgo-*/lib/tsc*' -type f ! -name '*.json' -exec chmod +x {} + 2>/dev/null || true; \"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.json",
     "tsc:production": "\"$(bun node_modules/@effect/tsgo/dist/effect-tsgo.js get-exe-path)\" --noEmit --project tsconfig.production.json",
@@ -42,6 +44,7 @@
     "@effect/tsgo": "0.24.3",
     "@types/bun": "1.4.2",
     "@types/node": "^25.6.0",
+    "fast-check": "3.23.2",
     "typescript": "^7.0.2"
   },
   "packageManager": "bun@1.4.2"

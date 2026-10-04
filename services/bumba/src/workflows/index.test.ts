@@ -328,6 +328,58 @@ test('reconcileAtlasRepository consumes the legacy failed upsert before correcti
   expect((failedTerminal.failure as Error).message).toContain(realFailure.message)
 })
 
+test('a fresh reconciliation replays a timed out activity and records terminal failure', async () => {
+  const { executor } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab',
+    repository: 'proompteng/lab',
+    eventDeliveryId: 'delivery-timeout',
+  }
+  const initial = await execute(executor, { workflowType: 'reconcileAtlasRepository', arguments: input })
+  const runningResult: ActivityResolution = { status: 'completed', value: { ingestionId: 'ingestion-timeout' } }
+  const pending = await execute(executor, {
+    workflowType: 'reconcileAtlasRepository',
+    arguments: input,
+    determinismState: initial.determinismState,
+    activityResults: new Map([['activity-0', runningResult]]),
+  })
+  expect(pending.completion).toBe('pending')
+
+  const timeout = new Error('reconciliation activity schedule-to-close timeout')
+  const failedResult: ActivityResolution = { status: 'failed', error: timeout }
+  const failing = await execute(executor, {
+    workflowType: 'reconcileAtlasRepository',
+    arguments: input,
+    determinismState: pending.determinismState,
+    activations: [
+      { jobs: [] },
+      { jobs: [{ type: 'activity', id: 'activity-0', resolution: runningResult }] },
+      { jobs: [{ type: 'activity', id: 'activity-2', resolution: failedResult }] },
+    ],
+  })
+  expect(failing.completion).toBe('pending')
+  const failureIntent = failing.determinismState.commandHistory[3]?.intent
+  if (failureIntent?.kind !== 'schedule-activity') throw new Error('expected failed ingestion upsert')
+  expect(failureIntent.input).toEqual([
+    { deliveryId: input.eventDeliveryId, workflowId: 'test-workflow-id', status: 'failed', error: timeout.message },
+  ])
+
+  const terminal = await execute(executor, {
+    workflowType: 'reconcileAtlasRepository',
+    arguments: input,
+    determinismState: failing.determinismState,
+    activations: [
+      { jobs: [] },
+      { jobs: [{ type: 'activity', id: 'activity-0', resolution: runningResult }] },
+      { jobs: [{ type: 'activity', id: 'activity-2', resolution: failedResult }] },
+      { jobs: [{ type: 'activity', id: 'activity-3', resolution: runningResult }] },
+    ],
+  })
+  expect(terminal.completion).toBe('failed')
+  expect(terminal.failure).toBe(timeout)
+  expect(terminal.commands.at(-1)?.commandType).toBe(CommandType.FAIL_WORKFLOW_EXECUTION)
+})
+
 test('only the authoritative repository reconciliation workflow is registered for Atlas ingestion', () => {
   const { registry } = makeExecutor()
   const names = registry.list().map((definition) => definition.name)

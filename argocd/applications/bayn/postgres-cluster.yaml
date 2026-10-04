@@ -39,7 +39,7 @@ spec:
       memory: 2Gi
   storage:
     storageClass: rook-ceph-block
-    size: 10Gi
+    size: 100Gi
     resizeInUseVolumes: true
   bootstrap:
     initdb:

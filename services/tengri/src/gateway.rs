@@ -19,14 +19,13 @@ use futures::{SinkExt, StreamExt};
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{Api, Client, api::ListParams};
 use rand::distr::{Alphanumeric, SampleString};
-use reqwest::redirect::Policy;
 use serde::Deserialize;
 use tokio::{
     net::TcpStream,
     sync::{Mutex, OnceCell},
 };
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async_with_config,
+    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
     tungstenite::{
         Error as TungsteniteError, Message as TungsteniteMessage, client::IntoClientRequest,
         protocol::WebSocketConfig,
@@ -155,7 +154,7 @@ pub struct GatewayState {
     pub namespace: String,
     pub tickets: TicketStore,
     activity: ActivityTracker,
-    http: reqwest::Client,
+    identity: crate::identity::WorkloadIdentity,
     preview_origin: PreviewOrigin,
     preview_guests: Arc<Mutex<HashMap<String, PreviewGuestBinding>>>,
 }
@@ -201,16 +200,14 @@ impl GatewayState {
         tickets: TicketStore,
         activity: ActivityTracker,
         preview_origin: PreviewOrigin,
+        identity: crate::identity::WorkloadIdentity,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             client,
             namespace,
             tickets,
             activity,
-            http: reqwest::Client::builder()
-                .redirect(Policy::none())
-                .connect_timeout(Duration::from_secs(5))
-                .build()?,
+            identity,
             preview_origin,
             preview_guests: Arc::new(Mutex::new(HashMap::new())),
         })
@@ -237,6 +234,7 @@ impl GatewayState {
         let namespace = self.namespace.clone();
         let agent_id = session.agent_id.clone();
         let incarnation = session.incarnation.clone();
+        let identity = self.identity.clone();
         let guest = binding
             .get_or_try_init(|| async move {
                 GuestClient::for_agent_incarnation(
@@ -244,6 +242,7 @@ impl GatewayState {
                     &namespace,
                     &agent_id,
                     incarnation.as_deref(),
+                    &identity,
                 )
                 .await
             })
@@ -464,7 +463,13 @@ async fn terminal_websocket(
         );
     };
     state.activity.touch(&ticket.agent_id);
-    let guest = match GuestClient::for_agent(state.client, &state.namespace, &ticket.agent_id).await
+    let guest = match GuestClient::for_agent(
+        state.client,
+        &state.namespace,
+        &ticket.agent_id,
+        &state.identity,
+    )
+    .await
     {
         Ok(guest) => guest,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
@@ -733,24 +738,30 @@ async fn preview_host_proxy(
         query,
     );
     if let Some(websocket) = websocket {
-        let websocket_target = target.replacen("http://", "ws://", 1);
+        let websocket_target = target
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
         let token = guest.client.token().to_owned();
         let activity = state.activity.clone();
         let agent_id = session.agent_id.clone();
-        let (upstream, selected_protocol) =
-            match connect_upstream_websocket(&websocket_target, &token, Some(request.headers()))
-                .await
-            {
-                Ok(connection) => connection,
-                Err(error) => {
-                    if error.invalidates_guest_binding() {
-                        state
-                            .invalidate_preview_guest(&session.id, &guest.binding)
-                            .await;
-                    }
-                    return StatusCode::BAD_GATEWAY.into_response();
+        let (upstream, selected_protocol) = match connect_upstream_websocket(
+            &websocket_target,
+            &token,
+            Some(request.headers()),
+            guest.client.preview_tls.clone(),
+        )
+        .await
+        {
+            Ok(connection) => connection,
+            Err(error) => {
+                if error.invalidates_guest_binding() {
+                    state
+                        .invalidate_preview_guest(&session.id, &guest.binding)
+                        .await;
                 }
-            };
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+        };
         let websocket = websocket
             .max_frame_size(MAX_WEBSOCKET_FRAME)
             .max_message_size(MAX_WEBSOCKET_MESSAGE)
@@ -851,7 +862,8 @@ async fn proxy_http(
                 .into_response();
         }
     };
-    let mut upstream = state
+    let mut upstream = guest
+        .client
         .http
         .request(parts.method, target)
         .bearer_auth(guest.client.token());
@@ -984,6 +996,7 @@ async fn connect_upstream_websocket(
     target: &str,
     token: &str,
     forwarded_headers: Option<&HeaderMap>,
+    tls: Option<Arc<rustls::ClientConfig>>,
 ) -> Result<(UpstreamWebSocket, Option<String>), UpstreamWebSocketError> {
     let request = upstream_websocket_request(target, token, forwarded_headers)
         .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
@@ -993,9 +1006,10 @@ async fn connect_upstream_websocket(
         .max_frame_size(Some(MAX_WEBSOCKET_FRAME))
         .max_message_size(Some(MAX_WEBSOCKET_MESSAGE))
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER);
-    let (upstream, response) = connect_async_with_config(request, Some(config), false)
-        .await
-        .map_err(|error| classify_upstream_websocket_error(&error))?;
+    let (upstream, response) =
+        connect_async_tls_with_config(request, Some(config), false, tls.map(Connector::Rustls))
+            .await
+            .map_err(|error| classify_upstream_websocket_error(&error))?;
     let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)
         .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     Ok((upstream, selected_protocol))
@@ -1413,6 +1427,7 @@ mod tests {
                 "https://proompteng.ai".to_owned(),
             )
             .expect("preview origin"),
+            crate::identity::WorkloadIdentity::Fixture,
         )
         .expect("gateway state")
     }

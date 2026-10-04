@@ -124,39 +124,26 @@ export type IntradayQuoteRow = typeof IntradayQuoteRowSchema.Type
 export type IntradayTradeRow = typeof IntradayTradeRowSchema.Type
 export type IntradayArchiveWatermarkRow = typeof IntradayArchiveWatermarkRowSchema.Type
 
-const decodeRows = <A>(
-  kind: 'bars' | 'quotes' | 'trades' | 'watermarks',
-  schema: Schema.Codec<readonly A[], readonly A[]>,
-  rows: readonly unknown[],
-): Result.Result<readonly A[], IntradaySnapshotFailure> =>
-  pipe(
-    Schema.decodeUnknownResult(schema, strictParseOptions)(rows),
-    Result.mapError(
-      (cause) =>
-        new IntradaySnapshotFailure({
-          reason: 'rows',
-          message: `intraday ${kind} rows do not match the archive contract`,
-          cause,
-        }),
-    ),
-  )
+const makeRowsDecoder = <A>(kind: 'bars' | 'quotes' | 'trades' | 'watermarks', schema: Schema.Codec<A, A>) => {
+  const decode = Schema.decodeUnknownResult(Schema.Array(schema), strictParseOptions)
+  return (rows: readonly unknown[]): Result.Result<readonly A[], IntradaySnapshotFailure> =>
+    pipe(
+      decode(rows),
+      Result.mapError(
+        (cause) =>
+          new IntradaySnapshotFailure({
+            reason: 'rows',
+            message: `intraday ${kind} rows do not match the archive contract`,
+            cause,
+          }),
+      ),
+    )
+}
 
-export const decodeIntradayBarRows = (
-  rows: readonly unknown[],
-): Result.Result<readonly IntradayBarRow[], IntradaySnapshotFailure> =>
-  decodeRows('bars', Schema.Array(IntradayBarRowSchema), rows)
+export const decodeIntradayBarRows = makeRowsDecoder('bars', IntradayBarRowSchema)
 
-export const decodeIntradayQuoteRows = (
-  rows: readonly unknown[],
-): Result.Result<readonly IntradayQuoteRow[], IntradaySnapshotFailure> =>
-  decodeRows('quotes', Schema.Array(IntradayQuoteRowSchema), rows)
+export const decodeIntradayQuoteRows = makeRowsDecoder('quotes', IntradayQuoteRowSchema)
 
-export const decodeIntradayTradeRows = (
-  rows: readonly unknown[],
-): Result.Result<readonly IntradayTradeRow[], IntradaySnapshotFailure> =>
-  decodeRows('trades', Schema.Array(IntradayTradeRowSchema), rows)
+export const decodeIntradayTradeRows = makeRowsDecoder('trades', IntradayTradeRowSchema)
 
-export const decodeIntradayArchiveWatermarkRows = (
-  rows: readonly unknown[],
-): Result.Result<readonly IntradayArchiveWatermarkRow[], IntradaySnapshotFailure> =>
-  decodeRows('watermarks', Schema.Array(IntradayArchiveWatermarkRowSchema), rows)
+export const decodeIntradayArchiveWatermarkRows = makeRowsDecoder('watermarks', IntradayArchiveWatermarkRowSchema)

@@ -290,6 +290,21 @@ jobs:
                 nix develop -c yq eval-all -o=json -I=0 '[.]' "${RUNNER_TEMP}/temporal-render.yaml" |
                   python3 scripts/cluster-upgrades/temporal_manifest_check.py
               fi
+              if jq -e 'any(.[]; startswith("argocd/applications/rook-ceph/") or . == ".github/workflows/pull-request.yml")' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                rendered="${RUNNER_TEMP}/rook-ceph-render.yaml"
+                nix develop -c kustomize build --enable-helm argocd/applications/rook-ceph >"${rendered}"
+                nix develop -c scripts/kubeconform.sh "${rendered}"
+                nix develop -c yq eval-all -o=json -I=0 '[.]' "${rendered}" | jq -e '
+                  any(.[]; .kind == "ObjectBucketClaim" and .metadata.name == "bayn-research-captures"
+                    and .spec == {generateBucketName: "bayn-research-captures", storageClassName: "rook-ceph-bucket"})
+                  and all(.[]; ((.kind == "Job" or .kind == "ConfigMap")
+                    and (.metadata.name | startswith("bayn-research-storage-bootstrap"))) | not)
+                '
+                if grep -Eq 'bootstrap\.sh|bayn-research-storage-policy\.json' "${rendered}"; then
+                  echo 'Obsolete Bayn bootstrap code must not remain in the shared Rook render' >&2
+                  exit 1
+                fi
+              fi
               ;;
             cdk8s)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/k8s

@@ -74,8 +74,14 @@ One serialized execution pass reads its unfinished cycle once and advances acqui
 binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
 repeating an admission transition fails closed. Each transition checks the current clock, and restart begins with a
 fresh durable cycle read. Already committed intents retain exact immutable intent/decision validation without
-repeating their writer-fenced commit transaction. Missing or incomplete intents still use that transaction. Mutable
-intent state is read again after reconciliation, and close planning reuses only the closure read by its owning pass.
+repeating their writer-fenced commit transaction. Missing intents still use that atomic transaction; a persisted
+`PLANNED` row is rejected as incomplete atomic persistence. Mutable intent state is read again after reconciliation,
+and close planning reuses only the closure read by its owning pass.
+
+Untouched expired entry approvals can retire under restricted submission authority only in canonical intent order.
+A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
+with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
+Close documents retain their existing residual-replanning and hard-deadline failure behavior.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -125,6 +131,14 @@ the fresh execution quote's event time and ten-second maximum age; the earlier b
 quote deadline for version-three decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
 
+Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
+headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
+limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
+deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
+still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
+final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
+freshness limits are unchanged; the preparation ordering does not guarantee submission.
+
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
 50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
@@ -152,6 +166,16 @@ leaves less time for archive reads. The overall pass and close deadlines still a
 Malformed archive identities, hashes, ordering and lineage still fail. Unknown mutations, unresolved orders,
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
+
+Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
+that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
+use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
+waits continue on the next configured controller pass. Failed close attempts retain the original data reason in logs.
+A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
+continuation, bounded by the configured cadence and session deadline. Source/bootstrap failures and archive timeouts
+retain the normal cadence. Only one serialized controller pass runs at a time; a continuation rechecks all broker,
+authority, quantity, and quote-freshness gates. This reduces avoidable idle time but cannot guarantee a fill or a
+maximum-hold exit when fresh executable evidence is unavailable.
 
 Entry observations evaluate candidate availability independently. The active Jev protocol binds
 `bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
@@ -396,6 +420,42 @@ recovery behavior, and evidence boundaries.
 
 ## Operations
 
+### Runtime and historical-report configuration
+
+The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
+does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
+required for archive health and evidence reads; this separation does not alter broker, authority, risk or provenance
+configuration. The three live manifests omit all eight historical settings below; a running service container does
+not supply a historical report context implicitly.
+
+The read-only forward-performance command has an explicit historical snapshot configuration in addition to its
+account-bound runtime configuration. Supply all eight settings from the intended immutable daily publication, even
+when invoking the command from a running service container:
+
+| Setting                        | Historical input                 |
+| ------------------------------ | -------------------------------- |
+| `BAYN_SIGNAL_SNAPSHOT_ID`      | Immutable daily snapshot SHA-256 |
+| `BAYN_SIGNAL_PUBLICATION_ASOF` | Publication date, `YYYY-MM-DD`   |
+| `BAYN_SIGNAL_CALENDAR_VERSION` | Exact calendar identity          |
+| `BAYN_SIGNAL_DATA_START`       | First data date                  |
+| `BAYN_SIGNAL_DATA_END`         | Last data date                   |
+| `BAYN_SIGNAL_LOOKBACK_START`   | Lookback start date              |
+| `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
+| `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
+
+After supplying these values, use `node dist/forward-performance-command.js --authority-generation <generation-hash>`
+to scope the report. Missing or malformed historical settings, including inconsistent evaluation bounds, fail
+configuration before evidence reads. They never select a default snapshot or imply zero trades or zero performance.
+Historical SIP verification retains its explicit evaluation start; intraday archive evidence and immutable receipt
+identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
+`BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
+
+The live manifests require a binary with this configuration separation. For upgrades from a binary that still
+requires daily snapshot settings at live startup, publish and select the new binary before removing those settings.
+Before rolling back to such an older binary, restore all eight settings in each of the service, execution-controller
+and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
+the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
+
 ### Private inference operating-cost report
 
 Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
@@ -596,8 +656,8 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
 The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
-binds both. Native controller persistence still writes only the original v3 receipt. The analysis report never changes
-an immutable per-generation receipt or requires mixed-version replicas to read a new stored field.
+binds both. This read-only report never changes an immutable per-generation receipt or requires mixed-version replicas
+to read a new stored field.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
@@ -653,6 +713,11 @@ output files. Current asset eligibility must be labeled counterfactual rather th
 charge is an explicit incremental-cost scenario, not proof of zero operating costs. Apply further cost/latency stress
 without selecting favorable dates or erasing missing observations. Development comparisons do not satisfy the frozen
 prospective qualification protocol and never activate a different model, prompt, threshold or trading policy.
+
+For the bounded paired Jev-versus-relative-momentum experiment with shared protective exits, abstentions,
+cost coverage and prospective completeness gates, use the
+[matched entry study](../../docs/bayn/matched-entry-study.md). It remains an offline opportunity test and grants no
+strategy promotion or trading authority.
 
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
@@ -836,6 +901,38 @@ are useful retained history; they are insufficient for quote-based execution tes
 additional full execution windows are needed, preserving the earlier dataset version and results.
 
 ## Validation
+
+### Property tests and structured fuzzing
+
+`bun run --cwd services/bayn test:property` runs the fixed seed `20261003` with 100 generated cases per property
+(20 for full streaming snapshots). These tests also run in the normal `test` command and existing Bayn CI gate.
+The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
+mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
+row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
+and authority/freshness failures. All data is synthetic; no broker, database, or live account is contacted.
+
+Run a longer, reproducible 1,000-case-per-property campaign with a new seed:
+
+```sh
+BAYN_PROPERTY_SEED=123456789 bun run --cwd services/bayn test:fuzz
+# Or choose an explicit size (1–100000 cases per property):
+BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_RUNS=5000 bun run --cwd services/bayn test:property
+```
+
+Each property has a 120-second campaign budget; interruption fails rather than silently reducing coverage.
+The command allows 150 seconds per test. `fast-check` shrinks failures and reports their seed, path and minimal
+counterexample. The same information is retained under `services/bayn/.fuzz-failures/` (git-ignored).
+Replay one failure using the reported seed/path and the exact test name, for example:
+
+```sh
+cd services/bayn
+BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_PATH='0:1:2' bun test src/intraday-replay/ledger.property.test.ts \
+  --test-name-pattern 'property: a one-micro oversell' --timeout 150000
+```
+
+Never apply a shrink path to the whole suite. After fixing a discovered product defect, keep the minimized
+synthetic case as an ordinary named regression test so changing the campaign seed cannot lose coverage.
+`fast-check` is an exact, direct development dependency for shrinking and replay; it is not in the runtime image.
 
 ```sh
 bun run --filter @proompteng/bayn test

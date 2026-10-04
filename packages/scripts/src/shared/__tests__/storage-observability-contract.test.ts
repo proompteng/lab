@@ -149,7 +149,7 @@ test('Ceph performance rules preserve missing-data semantics and inventory cover
   )
 })
 
-test('steady-state Ceph retains client QoS without ineffective scrub or recovery overrides', () => {
+test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub or recovery overrides', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml'))
   const config = values.cephClusterSpec.cephConfig
   for (const key of [
@@ -160,9 +160,9 @@ test('steady-state Ceph retains client QoS without ineffective scrub or recovery
     'osd_scrub_sleep',
   ])
     expect(config.osd[key]).toBeUndefined()
-  expect(config.osd.osd_mclock_profile).toBe('high_client_ops')
-  expect(config.osd.osd_scrub_begin_hour).toBe('8')
-  expect(config.osd.osd_scrub_end_hour).toBe('12')
+  expect(config.osd.osd_mclock_profile).toBe('custom')
+  expect(config.osd.osd_scrub_begin_hour).toBe('0')
+  expect(config.osd.osd_scrub_end_hour).toBe('0')
   expect(config.osd.osd_max_scrubs).toBe('1')
   expect([0, 1, 2, 3, 4, 5].map((id) => config[`osd.${id}`].osd_mclock_max_capacity_iops_hdd)).toEqual([
     '210',
