@@ -55,6 +55,8 @@ kafka_image='apache/kafka:4.1.1@sha256:0bc1bb2478f45b6cea78864df86acdc11e8df2c51
 restate_image='docker.restate.dev/restatedev/restate:1.7.9@sha256:3efeb748ebea40f0a895ca858321d0ef33396d40fe6d16ec593cd5553eb98441'
 setup_step timeout 180s docker pull "$kafka_image" >/dev/null
 if [[ "$mode" == receipts ]]; then timeout 180s docker pull "$restate_image" >/dev/null; fi
+# The embedded script expands the fixture credentials inside the Kafka container.
+# shellcheck disable=SC2016
 kafka_id=$(setup_step docker run --detach --name "$kafka_name" --memory 2g --cpus 2 --pids-limit 512 \
   --label "bayn-receipt-fixture=$run_id" \
   --publish 127.0.0.1:19092:9092 --env BAYN_TEST_KAFKA_USERNAME --env BAYN_TEST_KAFKA_PASSWORD \
