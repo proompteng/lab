@@ -1,8 +1,64 @@
 # Original receipt capture
 
-Production capture is **HARD DISABLED**. No live composition acquires the recorder or passes its observer to Kafka or
-the native controller. There is no environment switch. Enabling it requires a separately reviewed export and capture
-qualification change.
+Production capture is **disabled by default**. All deployment manifests leave it disabled and grant no new access.
+The native execution worker has optional, fixed-session wiring through `BAYN_RESEARCH_CAPTURE_SESSION`. An absent or
+invalid setting acquires no capture recorder, S3 client, or capture database operation. Live activation, credentials,
+and capacity qualification require separate review and approval.
+
+## One fixed attempt
+
+`BAYN_RESEARCH_CAPTURE_SESSION` contains at most 64 KiB of JSON matching `ResearchCaptureSessionConfigSchema`.
+It freezes a capture ID, interval ID, full universe hash, ordered topic-partition inventory, and one calendar session.
+Supply the retained calendar observation, snapshot ID, observation timestamp, normalized hash, and session date.
+Validation recomputes the calendar hash and requires the interval to match that session's exact open and close.
+The calendar is supplied evidence; the worker does not fetch a calendar or choose another date.
+
+`startAtMs` is the earliest admission time on the selected UTC session date. `bootstrapDeadlineMs` is the latest time
+at which the existing lazy worker may begin the attempt. Both precede the session open. The worker must finish bootstrap
+by `coverageStartMs`. Before `startAtMs`, the session timer acquires no client and writes no evidence. If the worker
+acquires early, the attempt ends incomplete and the worker starts without capture or raw mode. Activate capture inside
+the declared window. The observer cannot attach later to an existing consumer without losing its original assignment
+and deliveries.
+`stopAtMs` must be after the close and no more than five minutes later. No timer acquires trading resources, starts
+another Kafka consumer, or changes native bootstrap timestamps. If the worker never acquires, the attempt ends
+incomplete at its bootstrap deadline. A missed bootstrap, changed assignment, replacement worker, reversed clock,
+capture failure, or deadline without an actual cut ends the attempt without selecting another session.
+
+The worker uses its existing PostgreSQL client and capture tables. Explicit S3 configuration uses
+`BAYN_RESEARCH_CAPTURE_S3_ENDPOINT`, `BAYN_RESEARCH_CAPTURE_S3_BUCKET`, `BAYN_RESEARCH_CAPTURE_S3_REGION`,
+`BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`, and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`.
+Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. No manifest mounts these
+credentials as part of this implementation. Mounting credentials or granting access requires separate approval.
+
+Before any object write or consumer observation, the recorder writes an ordinal-zero `session-attempt` chunk to SQL.
+It contains the frozen declaration and a fresh attempt nonce. This sole control receipt claims the fixed capture ID.
+It is the only chunk whose SQL write precedes object export. SQL must acknowledge the claim before its empty raw object,
+metadata, and index can be exported, and all must acknowledge before raw admission begins. The marker participates in
+the ordinary hash and export chains but represents no consumer start or market delivery. Readers reject a marker in
+any other position. Normal data chunks retain object-readback-before-SQL ordering.
+The claim's complete SQL-and-export operation uses the smaller of the one-second write timeout and the remaining
+admission window. At that deadline the recorder cancels the operation and retains incomplete evidence. Cancellation
+does not prove that a remote SQL commit rolled back. An unknown committed claim still consumes the fixed ID and cannot
+authorize an export, raw admission, or a replacement attempt.
+An attempt begins when its SQL claim commits. A restart uses a new nonce and conflicts with that claim, even when its
+acknowledgement was lost. Before the first claim commits there is no retained capture progress to resume. The same
+process never retries the claim, selects a new ID, or repairs it. Every process rejects startup outside the frozen
+start and bootstrap-deadline window. A failed claim or its export leaves no qualified seal and does not change native work.
+
+The configured `maximumObjectBytes` and `maximumSqlBytes` are cumulative logical-payload ceilings. They must not exceed
+24 GiB and 10 GiB respectively. Every attempted raw, metadata, index, seal, and manifest object is charged before its
+write. SQL charges each chunk and seal's UTF8 payload before its write. Failed or unknown writes keep their charge.
+The recorder uses two counters, not a per-event history. It refuses a write that would exceed its ceiling and invalidates
+capture. A limit may prevent the final seal, leaving an unknown tail. These are failure ceilings, not evidence of
+available storage or production throughput. They exclude SQL indexes, WAL, replication, object-store replication,
+network readbacks, and runtime memory. The existing receipt, reservation, and complete-write limits still apply.
+
+After the fixed close, the attempt checks the existing native `captureInterval` hook at most once per second. It
+records one successful cut and calls `finish` once. Otherwise it finishes incomplete at the fixed stop deadline.
+Final drainage and seal writes retain their existing one-second write bounds. The consumer keeps trading. Its raw
+transport mode and scoped S3 client remain until normal worker disposal; remove the observer and temporary access
+through a separately approved GitOps change after the session. Do not stop the trading consumer to clean up capture.
+Controller observations still have `UNKNOWN` coverage, and every export remains `UNQUALIFIED`.
 
 The recorder retains metadata from one worker. Each capture has a new identity, a strictly increasing receipt sequence,
 and explicit consumer assignment boundaries. Market receipts retain the consumer epoch and sequence, projection
@@ -50,7 +106,7 @@ earlier worker's missing observations.
 If finalization cannot read its clock or encode evidence, `finish` returns no seal and does not retry. No replacement
 timestamp is invented. The owning scope retains its successful result or independently requested cancellation.
 
-The optional raw sink extends this same recorder and worker. It is not acquired in production. Only explicit injection
+The optional raw sink extends this same recorder and worker. Only explicit injection or a valid one-session setting
 requests pre-UTF8 values from the existing Kafka consumer; metadata-only capture keeps its original wire formats and
 does not copy raw values. Admission validates the receipt's original hash and length before copying the bytes. The
 terminal-position map retains only topic, partition and offset, never a payload. Null tombstones and zero-length values
@@ -91,7 +147,7 @@ The existing whole-worker verifier still requires genuine consumer closure. Deri
 sealed prefix does not fabricate `STOPPED`, prove a complete session, or authorize an original-arrival replay source.
 
 The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
-ambient credential provider, or live composition. Future wiring must use the verified native OBC's actual `BUCKET_NAME`,
+ambient credential provider. Session wiring must use the verified native OBC's actual `BUCKET_NAME`,
 not its claim name. Empty region maps to `us-east-1`. Keys are fixed content-addresses. There is one `PutObject` with
 `If-None-Match: *` and SDK `maxAttempts: 1`, followed by one full `GetObject`. HTTP 412 is accepted only after exact length,
 bytes and SHA-256 match. The adapter does not list, overwrite, delete or change permissions. Unknown Put outcomes are
@@ -114,7 +170,8 @@ alone do not satisfy these gates.
 ## Bounded native-visible replay
 
 `makeKafkaMarketProjection(..., recorder).captureInterval(request)` is available only through explicit construction.
-The live `KafkaMarketProjection` capability does not expose it, and production composition still acquires no recorder.
+The live `KafkaMarketProjection` capability does not expose it. Optional session wiring binds the constructed worker
+directly to its capture attempt.
 The request freezes the universe hash, expected topic partitions, and requested observation interval. The native
 assignment must precede the interval. The cut uses the latest successful read-committed offset sample from the
 existing 30-second telemetry loop. Its lookup must start after the requested interval end. A new or failed lookup
