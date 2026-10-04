@@ -850,13 +850,13 @@ test('rejects syncing Hermes before network-policy enforcement proof', async () 
 
 test('allows manual Hermes reconciliation for a reviewed maintenance phase', async () => {
   const files = await loadProductionFiles()
-  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) auto/, '$1 manual')
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, '$1 manual')
   expect(validateProductionContent(files)).toEqual([])
 })
 
 test.each(['auto', 'manual'])('keeps disabled Hermes on main in %s mode', async (mode) => {
   const files = await loadProductionFiles()
-  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) auto/, `$1 ${mode}`)
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
   files.platform = files.platform.replace(
     /(\n\s+- name: hermes\n[\s\S]*?targetRevision:) main/,
     '$1 kargo/hermes-toolchain',
@@ -889,7 +889,7 @@ test.each(['automatic', 'automatically', 'manual-only', 'false', ''])(
   'rejects invalid Hermes automation mode %s',
   async (mode) => {
     const files = await loadProductionFiles()
-    files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) auto/, `$1 ${mode}`)
+    files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
     expect(validateProductionContent(files)).toContain(
       `${productionPaths.platform}: Hermes automation must be exactly auto or manual`,
     )
