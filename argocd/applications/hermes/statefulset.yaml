@@ -518,9 +518,6 @@ spec:
               mountPath: /opt/github-auth
               readOnly: true
       volumes:
-        - name: profiles
-          emptyDir:
-            sizeLimit: 1Mi
         - name: config
           configMap:
             name: hermes-config
@@ -548,6 +545,9 @@ spec:
           emptyDir:
             sizeLimit: 128Mi
         - name: github-auth
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: profiles
           emptyDir:
             sizeLimit: 1Mi
   volumeClaimTemplates:

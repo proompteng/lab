@@ -1514,6 +1514,15 @@ test('rejects removing Hermes surfaces from production validation routing', asyn
   )
 })
 
+test('rejects removing Kargo Stage edits from Hermes production validation routing', async () => {
+  const files = await loadProductionFiles()
+  files.impactMap = files.impactMap.replace('      - argocd/applications/kargo/stages.yaml\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.impactMap}: missing production invariant "- argocd/applications/kargo/stages.yaml"`,
+  )
+})
+
 test('rejects a PR workflow that omits migration audit tests', async () => {
   const files = await loadProductionFiles()
   files.pullRequestWorkflow = files.pullRequestWorkflow.replace(
@@ -1657,5 +1666,14 @@ test('rejects a retired multiplex opt-out', async () => {
   files.config = files.config.replace('gateway:\n', 'gateway:\n  multiplex_profiles: false\n')
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.config}: contains forbidden production term "multiplex_profiles: false"`,
+  )
+})
+
+test('rejects a volume order that redirects Kargo promotion to the kubectl image', async () => {
+  const files = await loadProductionFiles()
+  const volume = '        - name: profiles\n          emptyDir:\n            sizeLimit: 1Mi\n'
+  files.statefulSet = files.statefulSet.replace(volume, '').replace('      volumes:\n', '      volumes:\n' + volume)
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.kargoStages}: missing production invariant "- key: spec.template.spec.volumes.6.image.reference"`,
   )
 })

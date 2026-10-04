@@ -28,6 +28,7 @@ export const productionPaths = {
   backupScript: 'argocd/applications/hermes/backup-once.sh',
   backupPolicy: 'argocd/applications/hermes/backup-output-policy.sh',
   config: 'argocd/applications/hermes/config.yaml',
+  kargoStages: 'argocd/applications/kargo/stages.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
   exaExternalSecret: 'argocd/applications/hermes/exa-external-secret.yaml',
   discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
@@ -141,6 +142,16 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const bootstrapContainer = namedListItemSection(initContainersSection, 8, 'bootstrap')
   const gatewayContainer = namedListItemSection(containersSection, 8, 'hermes')
   const dashboardContainer = namedListItemSection(containersSection, 8, 'dashboard')
+  const volumeNames = [
+    ...sectionBetween(files.statefulSet, '      volumes:\n', '  volumeClaimTemplates:').matchAll(
+      /^        - name: (.+)$/gm,
+    ),
+  ].map((match) => match[1])
+  const toolchainVolumeIndex = volumeNames.indexOf('lab-toolchain-image')
+  const hermesStage = sectionBetween(files.kargoStages, 'metadata:\n  name: hermes-toolchain\n', '\n---\n')
+  requireTerms(failures, productionPaths.kargoStages, hermesStage, [
+    `- key: spec.template.spec.volumes.${toolchainVolumeIndex}.image.reference`,
+  ])
 
   requireTerms(failures, productionPaths.kustomization, files.kustomization, [
     'namespace: hermes',
@@ -1801,10 +1812,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '        - list\n        - watch',
   ])
 
-  requireTerms(failures, productionPaths.impactMap, files.impactMap, [
+  const rootScriptsImpact = sectionBetween(files.impactMap, '  root-scripts:\n', '\n  sag:\n')
+  requireTerms(failures, productionPaths.impactMap, rootScriptsImpact, [
     '- .github/ci/impact-map.yml',
     '- .github/workflows/pull-request.yml',
     '- argocd/applications/hermes/**',
+    '- argocd/applications/kargo/stages.yaml',
     '- argocd/applications/observability/cluster-metrics-alloy-config.river',
     '- argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
     '- argocd/applications/observability/graf-mimir-rules.yaml',
