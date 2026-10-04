@@ -259,6 +259,9 @@ patches:
       apiVersion: v1alpha1
       kind: UserVolumeConfig
       name: turin-nvme-transcend
+      trim:
+        enabled: true
+        interval: 24h
       provisioning:
         diskSelector:
           match: "'/dev/disk/by-id/nvme-TS256GMTE652T2_I203860329' in disk.symlinks && !system_disk"
