@@ -35,8 +35,6 @@ const identityFields = {
   market_session: Schema.Literal('regular'),
   delay_class: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
   symbol: Schema.String,
-  // Bars use millisecond precision while raw SIP quotes and trades retain the
-  // provider's nanosecond ordering timestamp. Both remain canonical UTC wire values.
   event_at: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
   ingested_at: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
   source_topic: StrictNonEmptyStringSchema,

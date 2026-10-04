@@ -690,6 +690,27 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+`src/intraday-replay/six-bar-features.ts` extracts a separate offline research observation from an original-capture
+cursor. Each candidate and SPY require six exact consecutive completed regular-session minute bars. The seven
+ordered values are the candidate's one-minute close return, five-minute return relative to SPY, SPY's five-minute
+return, root-sum-square of five candidate log returns, quote spread in basis points, displayed-size imbalance, and
+elapsed calendar-session fraction. Missing minutes are explicit and are never filled from older bars.
+
+The research definition requires a two-second watermark delay, zero producer-clock allowance, and quotes no older
+than ten seconds. Each producer publication must precede or equal its original consumer receipt. Both symbols
+require positive displayed sizes and spread at most five basis points. Candidate
+trades may occur anywhere in the selected window. SPY requires post-window quotes and trades, and its trade must be
+no older than ten seconds at observation. This definition is stricter than the streaming source-clock allowance.
+
+Available values, evidenced spread or size exclusions, and unavailable inputs are separate outcomes. Each outcome
+binds the definition, source, query, original receipt cut, decoded record-text hashes, and selected availability times.
+`recordTextSha256` hashes the decoded UTF-8 text, which can differ from the original byte hash for malformed UTF-8.
+The verified capture export and source hashes bind original bytes and receipt coordinates. Callers must verify the
+capture interval and source bytes through `replayResearchCaptureInterval` and `openBacktestSource` before using its cursor.
+Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
+It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
+contract. Capture interval verification remains the caller's responsibility before economic research.
+
 ### Bounded mechanical control and turnover comparison
 
 The explicitly opted-in `bayn.control-study-input.v4` adds the research-only
@@ -912,11 +933,13 @@ additional full execution windows are needed, preserving the earlier dataset ver
 ### Property tests and structured fuzzing
 
 `bun run --cwd services/bayn test:property` runs the fixed seed `20261003` with 100 generated cases per property
-(20 for full streaming snapshots). These tests also run in the normal `test` command and existing Bayn CI gate.
+(20 for full streaming snapshots and acceptance bootstraps). These tests also run in the normal `test` command and
+existing Bayn CI gate.
 The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
 mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
 row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
-and authority/freshness failures. All data is synthetic; no broker, database, or live account is contacted.
+authority/freshness failures, and exact decimal acceptance thresholds against an independent bootstrap oracle.
+All data is synthetic; no broker, database, or live account is contacted.
 
 Run a longer, reproducible 1,000-case-per-property campaign with a new seed:
 
