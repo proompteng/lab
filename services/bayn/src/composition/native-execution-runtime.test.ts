@@ -257,55 +257,62 @@ describe('native execution runtime', () => {
     })
   })
 
-  test('failed Jev store access cannot advertise an empty complete reference collection', async () => {
-    const failure = operationalError({ component: 'database', operation: 'fixture', message: 'record failed' })
-    const candidate = {
-      contentHash: hash('a'),
-      payload: { schemaVersion: 'bayn.jev-observation.v1' },
-    } as CandidateObservation
-    const context = Context.make(CandidateObservationStore, {
-      record: () => Effect.fail(failure),
-      latestJevWindowEnd: () => Effect.succeed(Option.none()),
-    }).pipe(
-      Context.add(JevBatchStore, {
-        read: () => Effect.succeed(null),
-        pending: () => Effect.succeed([]),
-        begin: () => Effect.fail(failure),
-        finish: () => Effect.fail(failure),
-      }),
-    ) as Context.Context<RecoveryFirstRuntime>
-    const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const slot = {
-            state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
-            ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
-          }
-          yield* captureRecoveryFirstCycleDriver(slot)({
-            ...driver,
-            advance: Effect.gen(function* () {
-              yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.ignore)
-              return {
-                observation: {
-                  result: 'FAILURE' as const,
-                  observedAt: completedAt,
-                  operation: 'build-decision' as const,
-                  failure: 'database' as const,
-                  message: 'record failed',
-                },
-              }
-            }),
-          }).pipe(Effect.provideContext(context), Effect.forkScoped)
-          yield* Deferred.await(slot.ready)
-          return yield* (yield* readRecoveryFirstCycleDriverSlot(slot)).advance
+  test.each([false, true])(
+    'failed Jev store access preserves earlier references without claiming completeness (%s)',
+    async (retainEarlier) => {
+      const failure = operationalError({ component: 'database', operation: 'fixture', message: 'record failed' })
+      const candidate = {
+        contentHash: hash('a'),
+        payload: { schemaVersion: 'bayn.jev-observation.v1' },
+      } as CandidateObservation
+      const context = Context.make(CandidateObservationStore, {
+        record: (observation) => (observation.contentHash === hash('b') ? Effect.void : Effect.fail(failure)),
+        latestJevWindowEnd: () => Effect.succeed(Option.none()),
+      }).pipe(
+        Context.add(JevBatchStore, {
+          read: () => Effect.succeed(null),
+          pending: () => Effect.succeed([]),
+          begin: () => Effect.fail(failure),
+          finish: () => Effect.fail(failure),
         }),
-      ),
-    )
-    expect(result.observation).toMatchObject({
-      result: 'FAILURE',
-      jevObservationReferences: { hashes: [], complete: false },
-    })
-  })
+      ) as Context.Context<RecoveryFirstRuntime>
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const slot = {
+              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
+              ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+            }
+            yield* captureRecoveryFirstCycleDriver(slot)({
+              ...driver,
+              advance: Effect.gen(function* () {
+                if (retainEarlier)
+                  yield* (yield* CandidateObservationStore)
+                    .record({ ...candidate, contentHash: hash('b') })
+                    .pipe(Effect.orDie)
+                yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.ignore)
+                return {
+                  observation: {
+                    result: 'FAILURE' as const,
+                    observedAt: completedAt,
+                    operation: 'build-decision' as const,
+                    failure: 'database' as const,
+                    message: 'record failed',
+                  },
+                }
+              }),
+            }).pipe(Effect.provideContext(context), Effect.forkScoped)
+            yield* Deferred.await(slot.ready)
+            return yield* (yield* readRecoveryFirstCycleDriverSlot(slot)).advance
+          }),
+        ),
+      )
+      expect(result.observation).toMatchObject({
+        result: 'FAILURE',
+        jevObservationReferences: { hashes: retainEarlier ? [hash('b')] : [], complete: false },
+      })
+    },
+  )
 
   test.each(['overflow', 'malformed', 'instrumentation-failure'] as const)(
     'Jev reference %s does not change pass results',
