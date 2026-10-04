@@ -429,7 +429,7 @@ const program = Effect.gen(function* () {
                       peakPayload = Math.max(peakPayload, state.retainedPayloadBytes)
                       assert.ok(state.retainedReceipts <= 1024 && state.retainedPayloadBytes <= 4 * 1024 ** 2)
                       if (state.invalidations.length && invalidatedAtCount === undefined) invalidatedAtCount = accepted
-                      if (invalidatedAtCount !== undefined) progressAfterFailure++
+                      if (invalidatedAtCount !== undefined) progressAfterFailure = accepted - invalidatedAtCount
                     }
                     if (accepted >= plan.faults.triggerAfterRecords) arm.inject = true
                   }
