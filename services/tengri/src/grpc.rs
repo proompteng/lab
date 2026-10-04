@@ -54,8 +54,8 @@ use proto::{
     ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
     PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
     ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
-    SearchFilesResponse, SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest,
-    SteerCodexTurnRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
+    SearchFilesResponse, SendCodexInputRequest, SleepAgentRequest, StartCodexLoginRequest,
+    SteerCodexInputRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
     WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
     WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
 };
@@ -894,11 +894,11 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    async fn send_codex_turn(
+    async fn send_codex_input(
         &self,
-        request: Request<SendCodexTurnRequest>,
+        request: Request<SendCodexInputRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request, "SendCodexTurn").await?;
+        let principal = self.authorize(&request, "SendCodexInput").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         validate_codex_message(&request.text, &request.images)?;
@@ -929,11 +929,11 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    async fn steer_codex_turn(
+    async fn steer_codex_input(
         &self,
-        request: Request<SteerCodexTurnRequest>,
+        request: Request<SteerCodexInputRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request, "SteerCodexTurn").await?;
+        let principal = self.authorize(&request, "SteerCodexInput").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         validate_codex_id(&request.turn_id)?;

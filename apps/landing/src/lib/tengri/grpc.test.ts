@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
 import { createSpiffeFixture } from './spiffe.fixture'
+import { verifySpiffePeer } from './spiffe'
 import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -150,7 +151,7 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, { id: 'thread-selected', rawJson: '{}', eventSequence: 0 })
     },
-    sendCodexTurn(
+    sendCodexInput(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
@@ -158,7 +159,7 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, { id: 'turn-selected', threadId: call.request.threadId })
     },
-    steerCodexTurn(
+    steerCodexInput(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
@@ -462,6 +463,87 @@ describe('Tengri gRPC BFF transport', () => {
       text: 'Inspect this',
       images: [{ mediaType: 'image/png', content }],
     })
+  })
+
+  test('rejects the previous input contract without starting or steering a text-only turn', async () => {
+    const oldController = new grpc.Server()
+    const service = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service
+    let startedTurns = 0
+    const oldInput = (
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) => {
+      startedTurns += 1
+      callback(null, { id: 'image-lost', threadId: call.request.threadId })
+    }
+    oldController.addService(
+      {
+        SendCodexTurn: {
+          ...service.SendCodexInput,
+          path: service.SendCodexInput.path.replace('SendCodexInput', 'SendCodexTurn'),
+          originalName: 'sendCodexTurn',
+        },
+        SteerCodexTurn: {
+          ...service.SteerCodexInput,
+          path: service.SteerCodexInput.path.replace('SteerCodexInput', 'SteerCodexTurn'),
+          originalName: 'steerCodexTurn',
+        },
+        GetCodexAccount: service.GetCodexAccount,
+      },
+      {
+        sendCodexTurn: oldInput,
+        steerCodexTurn: oldInput,
+        getCodexAccount: (
+          _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+          callback: grpc.sendUnaryData<Record<string, unknown>>,
+        ) => callback(null, { authenticated: true, plan: 'pro' }),
+      },
+    )
+    const port = await new Promise<number>((resolve, reject) => {
+      oldController.bindAsync(
+        '127.0.0.1:0',
+        grpc.ServerCredentials.createSsl(
+          fixture.bundle,
+          [{ cert_chain: fixture.peer.pem, private_key: fixture.peer.key }],
+          true,
+        ),
+        (error, boundPort) => (error ? reject(error) : resolve(boundPort)),
+      )
+    })
+    const client = new grpc.Client(
+      `localhost:${port}`,
+      grpc.credentials.createSsl(fixture.bundle, fixture.own.key, fixture.own.pem, {
+        checkServerIdentity: (_hostname, certificate) => verifySpiffePeer(fixture.peerId, certificate),
+      }),
+    )
+    const request = {
+      agentId: 'agent-test',
+      threadId: 'thread-selected',
+      turnId: 'turn-selected',
+      text: 'Inspect this',
+      images: [{ mediaType: 'image/png', content: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]) }],
+    }
+    const call = (method: grpc.MethodDefinition<Record<string, unknown>, Record<string, unknown>>) =>
+      new Promise<unknown>((resolve, reject) => {
+        client.makeUnaryRequest(
+          method.path,
+          method.requestSerialize,
+          method.responseDeserialize,
+          request,
+          new grpc.Metadata(),
+          { deadline: Date.now() + 3000 },
+          (error, result) => (error ? reject(error) : resolve(result)),
+        )
+      })
+    try {
+      expect(await call(service.GetCodexAccount)).toMatchObject({ authenticated: true })
+      expect(await rejection(call(service.SendCodexInput))).toMatchObject({ code: grpc.status.UNIMPLEMENTED })
+      expect(await rejection(call(service.SteerCodexInput))).toMatchObject({ code: grpc.status.UNIMPLEMENTED })
+      expect(startedTurns).toBe(0)
+    } finally {
+      client.close()
+      oldController.forceShutdown()
+    }
   })
 
   test('identifies unsupported model selection without disguising other catalog failures', async () => {

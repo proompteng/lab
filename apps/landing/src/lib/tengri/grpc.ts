@@ -372,7 +372,7 @@ export async function sendCodexTurn(
 ) {
   return normalizeTurn(
     await unary<RawRecord>(
-      'sendCodexTurn',
+      'sendCodexInput',
       {
         agentId,
         threadId,
@@ -396,7 +396,7 @@ export async function steerCodexTurn(
 ) {
   return normalizeTurn(
     await unary<RawRecord>(
-      'steerCodexTurn',
+      'steerCodexInput',
       {
         agentId,
         threadId,

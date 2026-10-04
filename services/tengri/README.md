@@ -271,7 +271,9 @@ Packaged assets under an exact upstream revision are compressed and privately ca
 tickets, and integration scripts remain uncached. The private extension bridge binds its session query to the
 cookie-authenticated preview origin. Ordinary preview sessions cannot select either reserved editor port.
 
-Codex send and steer requests accept text, PNG/JPEG/WebP image bytes, or both. Image inputs are limited to four,
+Codex `SendCodexInput` and `SteerCodexInput` RPCs accept text, PNG/JPEG/WebP image bytes, or both.
+These replace the former turn-input RPCs. A controller with the old contract rejects the new RPCs before
+starting or steering a turn, preventing silent image loss during a mismatched release. Image inputs are limited to four,
 4 MiB each, and 8 MiB total. Tengri verifies media signatures, writes the images into the owned retained guest
 under `/workspace/.tengri-attachments` through gRPC, and submits Codex `localImage` inputs. A failed image write
 fails the request before Codex starts or steers a turn. Attachments remain with the persistent workspace so saved
