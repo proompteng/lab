@@ -45,6 +45,7 @@ class ArchiveTimestampPrecisionIntegrationTest {
             "ENGINE = ReplacingMergeTree(source_offset) PARTITION BY toYYYYMM(event_ts) " +
             "ORDER BY (universe_id, feed, symbol, event_ts, source_topic, source_partition, source_offset)",
         )
+        var verified = false
         try {
           statement.execute(
             "INSERT INTO signal.intraday_bars_1m_v2 (event_ts, ingest_ts, source_offset) " +
@@ -68,15 +69,29 @@ class ArchiveTimestampPrecisionIntegrationTest {
           val routes = mapOf(topic to ArchiveRoute("sip", universe))
           val fractions = listOf(0, 1, 999_999, 1_000_000, 321_780_322, 999_999_999)
           val numericMismatches = mutableListOf<String>()
-          fractions.forEachIndexed { index, nanos ->
-            val prices =
-              if (index % 2 == 0) {
-                listOf(248.51, 248.605, 248.44, 248.44, 1311.0, Double.fromBits(0x406f1094face67d7L))
-              } else {
-                listOf(346.45, 346.55, 346.39, 346.44, 3562.0, Double.fromBits(0x4075a78811b1d92bL))
-              }
-            val eventTime = Instant.parse("2026-10-01T13:30:00Z").plusNanos(nanos.toLong())
-            val ingestionTime = Instant.parse("2026-10-01T13:31:00Z").plusNanos(nanos.toLong())
+          val samples =
+            listOf(
+              listOf(248.51, 248.605, 248.44, 248.44, 1311.0, Double.fromBits(0x406f1094face67d7L)),
+              listOf(346.45, 346.55, 346.39, 346.44, 3562.0, Double.fromBits(0x4075a78811b1d92bL)),
+              List(6) { Double.MIN_VALUE },
+              List(6) { Double.MAX_VALUE },
+              listOf(1.0, 1.0, 1.0, 1.0, 0.0, 1.0),
+              listOf(1.0, 1.0, 1.0, 1.0, -0.0, 1.0),
+              listOf(
+                Math.nextDown(1.0),
+                Math.nextUp(1.0),
+                Math.nextDown(1.0),
+                1.0,
+                java.lang.Double.MIN_NORMAL,
+                Math.nextUp(1.0),
+              ),
+              List(6) { 1.0 },
+            )
+          samples.forEachIndexed { index, prices ->
+            val nanos = fractions[index % fractions.size]
+            val vwap = if (index == samples.lastIndex) null else prices[5]
+            val eventTime = Instant.parse("2026-10-01T13:30:00Z").plusSeconds(index * 60L).plusNanos(nanos.toLong())
+            val ingestionTime = Instant.parse("2026-10-01T13:31:00Z").plusSeconds(index * 60L).plusNanos(nanos.toLong())
             val envelope =
               Envelope(
                 ingestTs = ingestionTime,
@@ -85,7 +100,7 @@ class ArchiveTimestampPrecisionIntegrationTest {
                 channel = "bars",
                 symbol = "SPY",
                 seq = 1,
-                payload = AlpacaBarPayload(prices[0], prices[1], prices[2], prices[3], prices[4], prices[5], 2, eventTime.toString()),
+                payload = AlpacaBarPayload(prices[0], prices[1], prices[2], prices[3], prices[4], vwap, 2, eventTime.toString()),
                 provider = "alpaca",
                 marketSession = "regular",
                 delayClass = "real_time_consolidated",
@@ -102,31 +117,41 @@ class ArchiveTimestampPrecisionIntegrationTest {
                 "SELECT toUnixTimestamp64Nano(event_ts_exact), toUnixTimestamp64Nano(ingest_ts_exact), " +
                   "open, high, low, close, volume, vwap, toString(vwap), " +
                   "reinterpretAsUInt64(open), reinterpretAsUInt64(high), reinterpretAsUInt64(low), " +
-                  "reinterpretAsUInt64(close), reinterpretAsUInt64(volume), reinterpretAsUInt64(assumeNotNull(vwap)) " +
+                  "reinterpretAsUInt64(close), reinterpretAsUInt64(volume), reinterpretAsUInt64(vwap) " +
                   "FROM signal.intraday_bars_1m_v2 WHERE source_topic = '$topic' AND source_offset = ${index + 2}",
               ).use { result ->
                 assertTrue(result.next())
-                assertEquals(1_790_861_400_000_000_000L + nanos, result.getLong(1))
-                assertEquals(1_790_861_460_000_000_000L + nanos, result.getLong(2))
-                prices.forEachIndexed { field, expected ->
-                  val actual = result.getDouble(field + 3).toBits()
-                  val stored = result.getLong(field + 10)
-                  if (expected.toBits() != actual || expected.toBits() != stored) {
-                    numericMismatches.add(
-                      "row=$index field=$field expected=${expected.toBits().toString(16)} " +
-                        "stored=${stored.toString(16)} read=${actual.toString(16)}",
-                    )
+                assertEquals(1_790_861_400_000_000_000L + index * 60_000_000_000L + nanos, result.getLong(1))
+                assertEquals(1_790_861_460_000_000_000L + index * 60_000_000_000L + nanos, result.getLong(2))
+                (prices.take(5) + vwap).forEachIndexed { field, expected ->
+                  if (expected == null) {
+                    assertEquals(null, result.getObject(field + 3))
+                    assertEquals(null, result.getObject(field + 10))
+                  } else {
+                    val actual = result.getDouble(field + 3).toBits()
+                    val stored = java.lang.Long.parseUnsignedLong(result.getString(field + 10))
+                    if (expected.toBits() != actual || expected.toBits() != stored) {
+                      numericMismatches.add(
+                        "row=$index field=$field expected=${expected.toBits().toString(16)} " +
+                          "stored=${stored.toString(16)} read=${actual.toString(16)}",
+                      )
+                    }
                   }
                 }
-                if (prices[5].toBits() != result.getString(9).toDouble().toBits()) {
-                  numericMismatches.add("row=$index VWAP text=${result.getString(9)} expected=${prices[5]}")
+                if (vwap == null) {
+                  assertEquals(null, result.getString(9))
+                } else if (vwap.toBits() != result.getString(9).toDouble().toBits()) {
+                  numericMismatches.add("row=$index VWAP text=${result.getString(9)} expected=$vwap")
                 }
                 assertEquals(false, result.next())
               }
           }
           assertEquals(emptyList(), numericMismatches, "JDBC binary64 parity")
+          verified = true
         } finally {
-          statement.execute("DROP TABLE signal.intraday_bars_1m_v2")
+          if (!verified || System.getenv("BAYN_TEST_JDBC_RETAIN_ARCHIVE") != "true") {
+            statement.execute("DROP TABLE signal.intraday_bars_1m_v2")
+          }
         }
       }
     }

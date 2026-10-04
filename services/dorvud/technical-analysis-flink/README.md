@@ -127,12 +127,15 @@ identical state produces the same semantic ID. Each raw input digest binds the s
 volume bit patterns, including optional VWAP and trade count. The shared fixture and Bayn decoder bind both runtimes
 to that encoding.
 
-## Bar archive timestamp precision
+## Bar archive source precision
 
 The raw envelope and JDBC writer retain nanosecond event and ingestion times. The bar archive stores those values in
 nullable `event_ts_exact` and `ingest_ts_exact` columns on `signal.intraday_bars_1m_v2`. A NULL pair identifies records
 whose exact source precision is unknown. Existing millisecond columns, sorting and partition keys, source coordinates,
 and retention remain unchanged. Historical rows are not reconstructed or backfilled with invented nanoseconds.
+The JDBC statement also sends OHLC, volume, and optional VWAP as their raw Int64 bit patterns and reconstructs Float64
+values in ClickHouse. This avoids decimal SQL-literal parsing that can change VWAP by one ULP. Provider envelopes and
+feature wire contracts are unchanged. Existing numeric values are not rewritten.
 The legacy v1 seed copies only legacy columns. Quote and trade archives already retain nanoseconds. Published feature
 computation, window, and archive times remain milliseconds according to their wire contract.
 
@@ -149,7 +152,8 @@ columns on rollback. Restored Kafka records may supply actual source timestamps;
 reconstruction or imply historical availability. Flink operator IDs and checkpoint state are unchanged.
 
 Bayn's guarded disposable ClickHouse CI verifies the production JDBC writer and additive migration, mixed old and new
-rows, sub-millisecond boundaries, duplicate revisions, and cursor progression. Native tests do not run against production.
+rows, sub-millisecond boundaries, duplicate revisions, and cursor progression. The actual JDBC rows then pass through Bayn's production reader, including subnormals, finite
+extremes, signed volume zeros, adjacent ULPs, and NULL VWAP. Native tests do not run against production.
 
 ## Feature archive
 

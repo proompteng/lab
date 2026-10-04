@@ -710,7 +710,12 @@ internal fun archiveBarInsertSql(): String =
     provider, universe_id, universe_symbol_hash, feed, channel, market_session, delay_class, symbol, event_ts, ingest_ts,
     source_topic, source_partition, source_offset, is_final,
     open, high, low, close, volume, vwap, trade_count, schema_version, event_ts_exact, ingest_ts_exact
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Int64)),
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Int64)),
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Nullable(Int64))), ?, ?, ?, ?
+  )
   """.trimIndent()
 
 internal fun archiveBarStatement(): JdbcStatementBuilder<IntradayBarRecord> =
@@ -729,12 +734,12 @@ internal fun archiveBarStatement(): JdbcStatementBuilder<IntradayBarRecord> =
     prepared.setInt(12, bar.sourcePartition)
     prepared.setLong(13, bar.sourceOffset)
     prepared.setInt(14, if (bar.final) 1 else 0)
-    prepared.setDouble(15, bar.open)
-    prepared.setDouble(16, bar.high)
-    prepared.setDouble(17, bar.low)
-    prepared.setDouble(18, bar.close)
-    prepared.setDouble(19, bar.volume)
-    if (bar.vwap == null) prepared.setNull(20, java.sql.Types.DOUBLE) else prepared.setDouble(20, bar.vwap)
+    prepared.setLong(15, bar.open.toRawBits())
+    prepared.setLong(16, bar.high.toRawBits())
+    prepared.setLong(17, bar.low.toRawBits())
+    prepared.setLong(18, bar.close.toRawBits())
+    prepared.setLong(19, bar.volume.toRawBits())
+    if (bar.vwap == null) prepared.setNull(20, java.sql.Types.BIGINT) else prepared.setLong(20, bar.vwap.toRawBits())
     if (bar.tradeCount == null) prepared.setNull(21, java.sql.Types.BIGINT) else prepared.setLong(21, bar.tradeCount)
     prepared.setInt(22, bar.schemaVersion)
     prepared.setTimestamp(23, Timestamp.from(bar.eventTime))
