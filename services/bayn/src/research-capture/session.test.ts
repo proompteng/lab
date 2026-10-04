@@ -220,7 +220,12 @@ test('a capture acquisition clock defect cannot fail or acquire resources for na
       let reads = 0
       const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40)).pipe(
         Effect.provideService(Clock.Clock, {
-          ...clock,
+          currentTimeMillis: clock.currentTimeMillis,
+          currentTimeNanos: clock.currentTimeNanos,
+          currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+          monotonicTimeNanos: clock.monotonicTimeNanos,
+          monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+          sleep: (duration) => clock.sleep(duration),
           currentTimeMillisUnsafe: () => {
             if (++reads > 1) throw new Error('capture acquisition clock defect')
             return sessionStart
