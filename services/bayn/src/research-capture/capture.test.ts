@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import fc from 'fast-check'
 import { sha256 } from '../hash'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
@@ -8,6 +8,10 @@ import { captureEvent, marketEvent } from './capture.test-support'
 import {
   CaptureInvalidation,
   CaptureQualification,
+  CaptureTimestampKind,
+  OriginalKafkaTransportSchema,
+  captureKafkaTransport,
+  restoreKafkaTransportTimestamp,
   decodeResearchCaptureChunk,
   decodeResearchCaptureSeal,
   encodeResearchCapture,
@@ -18,6 +22,28 @@ import {
   type ResearchCaptureEvent,
   type ResearchCaptureSeal,
 } from './capture'
+
+test.each([undefined, NaN, Infinity, -Infinity, -0, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, 1789135202000])(
+  'original adapter timestamp survives exact JSON round-trip (%s)',
+  (timestampMs) => {
+    const bytes = JSON.stringify(captureKafkaTransport(timestampMs))
+    const decoded = Result.getOrThrow(
+      Schema.decodeUnknownResult(Schema.fromJsonString(OriginalKafkaTransportSchema))(bytes),
+    )
+    expect(Object.is(restoreKafkaTransportTimestamp(decoded), timestampMs)).toBe(true)
+    expect(bytes).not.toContain('null')
+  },
+)
+test('negative zero cannot enter the finite timestamp variant and silently normalize', () => {
+  expect(
+    Result.isFailure(
+      Schema.decodeUnknownResult(OriginalKafkaTransportSchema)({
+        schemaVersion: 'bayn.kafka-original-transport.v1',
+        timestampMs: { kind: CaptureTimestampKind.Value, value: -0 },
+      }),
+    ),
+  ).toBe(true)
+})
 
 const captureFixture = () => {
   const chunk: ResearchCaptureChunk = {
