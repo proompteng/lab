@@ -352,7 +352,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [
     'kind: CronJob',
-    'suspend: true',
+    'suspend: false',
     'concurrencyPolicy: Forbid',
     'backoffLimit: 3',
     'restartPolicy: OnFailure',
@@ -1166,19 +1166,20 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- .spec.volumeClaimTemplates[].spec.volumeMode',
     '- .spec.volumeClaimTemplates[].status',
     'external-secrets.proompteng.ai/enabled: "true"',
-    'observability.proompteng.ai/hermes-rollout-enabled: "false"',
+    'observability.proompteng.ai/hermes-rollout-enabled: "true"',
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
   ])
-  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, ['  replicas: 0\n'])
-  requireTerms(failures, productionPaths.egressProxy, files.egressProxy, ['  replicas: 0\n'])
   const hermesAutomation = hermesApplication.match(/^\s+automation: ([^\r\n]+)$/m)?.[1]?.trim()
-  requireTerms(failures, productionPaths.platform, hermesApplication, ['targetRevision: main'])
-  if (hermesAutomation !== 'auto' && hermesAutomation !== 'manual') {
+  if (hermesAutomation === 'auto') {
+    requireTerms(failures, productionPaths.platform, hermesApplication, [
+      'targetRevision: kargo/hermes-toolchain',
+      'kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
+    ])
+  } else if (hermesAutomation !== 'manual') {
     failures.push(`${productionPaths.platform}: Hermes automation must be exactly auto or manual`)
   }
   forbidTerms(failures, productionPaths.platform, hermesApplication, [
-    'kargo.akuity.io/authorized-stage:',
     'group: coordination.k8s.io',
     'kind: Lease',
     'name: hermes-maintenance',
@@ -1673,7 +1674,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'alert: HermesGatewayUnavailable',
     'alert: HermesEgressProxyUnavailable',
     'alert: HermesBackupStale',
-    'record: hermes_rollout_enabled\n            expr: vector(0)',
+    'record: hermes_rollout_enabled',
+    'kube_argocd_application_deployment_history_info{',
+    'namespace="argocd"',
+    'application="hermes"',
     'absent(\n                  kube_statefulset_status_replicas_ready{',
     'absent(\n                  kube_deployment_status_replicas_available{',
     'time() - kube_cronjob_status_last_successful_time{',

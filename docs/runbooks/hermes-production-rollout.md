@@ -3,12 +3,13 @@
 This runbook deploys Hermes as Tuslagch's production runtime, migrates non-secret OpenClaw user data, transfers the Discord
 channel without dual writers, and retains a tested rollback path. All `kubectl` commands use an explicit namespace.
 
-## Disabled state
+## Restoring retained service
 
-Hermes is currently stopped through GitOps. The gateway and proxy have zero replicas, backups are suspended, and the
-Application follows `main`. Kargo automatic promotion and Argo Stage authorization are disabled. The data and backup PVCs
-are retained. The procedures below describe the enabled service and must not be used to restart it without a reviewed
-re-enablement that restores the Kargo source, authorization, promotion policy, replicas, schedule, rollout alert label, and `hermes_rollout_enabled` recording rule.
+Restore the gateway, egress proxy, backup schedule, rollout alert label, and `hermes_rollout_enabled` recording rule through
+reviewed GitOps. The Application follows `kargo/hermes-toolchain` and authorizes Stage `lab-delivery/hermes-toolchain`;
+automatic promotion is enabled. Preserve the retained data and backup PVCs. Verify that OpenClaw remains stopped and the
+live NetworkPolicy enforcement probe passes before restoring Hermes. Wait for the selected source's successful image
+publication and Kargo promotion, then verify authenticated inference through Flamingo and the Hermes gateway.
 
 Before merging enabled Hermes manifests, reconcile the reviewed ApplicationSet with `automation: manual` and verify
 the live Application has no automated sync policy, no active operation, and zero gateway/proxy replicas. Keep that live
@@ -16,7 +17,7 @@ hold while the restoration source builds. Do not reconcile the enabled Applicati
 and the selected Kargo promotion has generated its exact deployment commit; this avoids syncing either enabled `main`
 or the pre-disable Kargo branch before publication. Then restore the authorized Kargo source through reviewed GitOps.
 
-## Steady-state reconciliation after re-enablement
+## Steady-state reconciliation
 
 The completed production cutover uses `automation: auto` on the verified
 `kargo/hermes-toolchain` branch. Kargo remains the only image promotion owner.
