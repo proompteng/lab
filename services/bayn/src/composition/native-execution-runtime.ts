@@ -44,6 +44,8 @@ import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeAutonomousServiceRuntime } from './autonomous-runtime'
 import { AutonomousWorkerApplicationResourcesLive, ExecutionControllerStatusResourceLive } from './resources'
+import { makeResearchCaptureSession } from '../research-capture/session'
+import { researchCaptureSessionConfig } from '../research-capture/session-config'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -598,8 +600,22 @@ export const acquireNativeExecutionRuntime = (
     const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
     const config: ExecutionControllerConfig =
       previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
+    const requestedCapture = yield* researchCaptureSessionConfig.pipe(Effect.result)
+    const decodedCapture = Result.isSuccess(requestedCapture) ? requestedCapture.success : undefined
+    const capture =
+      decodedCapture !== undefined && Result.isSuccess(decodedCapture)
+        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision).pipe(
+            Effect.catchCause(() =>
+              Effect.logWarning('Bayn research capture could not start; capture is disabled').pipe(
+                Effect.as(undefined),
+              ),
+            ),
+          )
+        : undefined
+    if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
+      yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
     const sharedResources = Layer.mergeAll(
-      AutonomousWorkerApplicationResourcesLive(plan),
+      AutonomousWorkerApplicationResourcesLive(plan, capture),
       ExecutionControllerStatusResourceLive(plan.config),
       makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
     )
@@ -618,14 +634,12 @@ export const acquireNativeExecutionRuntime = (
     const logManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
     )
-    return {
-      config,
-      runtime: makeRecoveringManagedNativeExecutionRuntimeAdapter(
-        managed,
-        executionResources,
-        projectionManaged,
-        logManaged,
-        config.planHash,
-      ),
-    }
+    const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+      managed,
+      executionResources,
+      projectionManaged,
+      logManaged,
+      config.planHash,
+    )
+    return { config, runtime: capture === undefined ? runtime : { ...runtime, capture: capture.observer } }
   })

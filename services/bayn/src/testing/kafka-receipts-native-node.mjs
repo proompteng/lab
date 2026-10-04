@@ -237,6 +237,14 @@ try {
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
+        const intervalStart = Date.now()
+        const request = {
+          intervalId: 'native-committed-interval',
+          coverageStartMs: intervalStart + 5000,
+          coverageEndMs: intervalStart + 6000,
+          universeHash: canonicalHashV1(intervalUniverse),
+          expectedPartitions,
+        }
         const recorder = yield* makeResearchCaptureRecorder(
           {
             append: (chunk) => Effect.sync(() => intervalChunks.push(chunk)),
@@ -250,6 +258,18 @@ try {
             maximumReceiptBytes: 64 * 1024,
             flushIntervalMs: 50,
             writeTimeoutMs: 1000,
+            maximumObjectBytes: 4 * 1024 * 1024,
+            maximumSqlBytes: 4 * 1024 * 1024,
+            session: {
+              ...request,
+              bootstrapDeadlineMs: intervalStart + 3000,
+              stopAtMs: intervalStart + 44000,
+              calendarSnapshotId: 'b'.repeat(64),
+              calendarObservedAt: new Date(intervalStart - 1000).toISOString(),
+              calendarHash: 'c'.repeat(64),
+              maximumObjectBytes: 4 * 1024 * 1024,
+              maximumSqlBytes: 4 * 1024 * 1024,
+            },
           },
           {
             putVerified: (object) =>
@@ -291,13 +311,7 @@ try {
         )
         const assigned = observedBoundaries.find(({ event }) => event.phase === 'ASSIGNED')
         assert.ok(assigned)
-        const request = {
-          intervalId: 'native-committed-interval',
-          coverageStartMs: assigned.observedAtMs,
-          coverageEndMs: Date.now(),
-          universeHash: canonicalHashV1(intervalUniverse),
-          expectedPartitions,
-        }
+        assert.ok(assigned.observedAtMs <= request.coverageStartMs)
         let cut
         while (cut === undefined) {
           assert.equal((yield* market.status).ready, true)
@@ -329,6 +343,8 @@ try {
         const exactSeal = intervalSeals[0]
         assert.ok(exactSeal)
         const retained = intervalChunks.flatMap((chunk) => JSON.parse(chunk.payload).receipts)
+        assert.equal(retained[0].event.kind, 'session-attempt')
+        assert.equal(retained[0].event.session.intervalId, request.intervalId)
         assert.equal(
           retained.some(({ event }) => event.kind === 'consumer-boundary' && event.phase === 'STOPPED'),
           false,

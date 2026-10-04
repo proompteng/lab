@@ -33,6 +33,7 @@ import {
 } from '../research-capture/capture.test-support'
 import { researchCaptureObjectKey, type ResearchCaptureObject } from '../research-capture/export'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder'
+import { sessionConfig } from '../research-capture/session.test-support'
 
 const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
 const fixture = Effect.gen(function* () {
@@ -84,6 +85,45 @@ const run = <A, E>(program: Effect.Effect<A, E, Effect.Services<typeof fixture> 
     ),
   )
 }
+
+postgresTest('a session claim commits before objects and a fresh attempt cannot reuse the fixed capture identity', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk } = yield* fixture
+      const { captureId: _captureId, calendar: _calendar, sessionDate: _sessionDate, ...session } = sessionConfig
+      const options = {
+        captureId: chunk.captureId,
+        sourceRevision: chunk.sourceRevision,
+        maximumQueuedReceipts: 1024,
+        maximumQueuedBytes: 4 * 1024 * 1024,
+        maximumReceiptBytes: 64 * 1024,
+        flushIntervalMs: 50,
+        writeTimeoutMs: 1000,
+        maximumObjectBytes: session.maximumObjectBytes,
+        maximumSqlBytes: session.maximumSqlBytes,
+        session,
+      }
+      let objects = 0
+      const first = yield* makeResearchCaptureRecorder(store, options, {
+        putVerified: () =>
+          Effect.gen(function* () {
+            const claim = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
+            expect(claim.payload).toContain('session-attempt')
+            objects++
+          }),
+      })
+      const claimed = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
+      expect(objects).toBe(3)
+      const second = yield* makeResearchCaptureRecorder(store, options, {
+        putVerified: () => Effect.die('a reused claim must not write objects'),
+      })
+      expect((yield* second.status).invalidations).toContain(CaptureInvalidation.Persistence)
+      expect(yield* second.finish).toBeUndefined()
+      expect(yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)).toEqual(claimed)
+      expect((yield* first.finish)?.qualification).toBe(CaptureQualification.Unqualified)
+    }),
+  ),
+)
 
 postgresTest('SQL capture reads bound UTF8 payloads before returning and preserve exact hashes and text', () =>
   run(
