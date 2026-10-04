@@ -121,6 +121,15 @@ without waiting for a process-lifetime lease. A disruption budget keeps at least
 voluntary node maintenance. The controller and activation hook remain architecture-neutral and use the reviewed
 multi-architecture image.
 
+Bayn leaves `drainDelaySeconds` unset and uses the
+[Restate operator 3.0.1 default five-minute post-drain grace](https://github.com/restatedev/restate-operator/blob/v3.0.1/src/resources/restatedeployments.rs#L321-L330).
+The former zero-delay override addressed a process-wide writer fence. Transaction-scoped fencing now allows old and
+current workers to coexist while native invocations drain. The operator checks active usage before removal; pinned
+invocations, including paused ones, count as active. The grace preserves an inactive endpoint between usage checks,
+but does not guarantee protection against every late-arrival race or restore a historical ReplicaSet already at zero.
+Argo readiness still requires the current registered generation and ready replicas; it does not wait for old revisions
+to reach zero. Activation deadlines and the Pod termination grace remain unchanged.
+
 The public Bayn process is read-only status/health only and owns no writer fence or scheduler. It runs two replicas,
 spreads them across Kubernetes hostnames, and keeps at least one available during voluntary disruption. Its stateless
 CONNECT-only trading API egress proxy uses the same two-replica, hostname-spread, minimum-one-available contract, so broker
