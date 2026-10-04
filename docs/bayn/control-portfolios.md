@@ -42,6 +42,83 @@ The retained control reproduces its selection and successful-entry close lifecyc
 not reproduce the historical strategy's persistence, reconciliation, authority, retry machinery, or market-close
 fallback. Use the native execution engine to verify those behaviors.
 
+## Frozen residual-shock falsification candidate
+
+Input `bayn.control-study-input.v4` explicitly adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` to the three legacy controls.
+It requires `management: "MECHANICAL"`, `repeatedTargetWeightPpm: 200000`, a declared `turnoverPolicy`, and
+`falsificationCandidate: "SPY_RELATIVE_SHOCK_REBOUND_60S_V1"`. The existing backtest input must use the native
+30,000 ms polling cadence. Decision latency, routing delay, execution assumptions, data allocation and turnover
+policy remain explicit, hash-bound scenario inputs; freeze them before any outcome and never choose a favorable
+scenario afterward. The v4 definition is `bayn.control-study-definition.v6`. Legacy v2/v3 policy sets, definitions
+and run identities are unchanged.
+
+The candidate definition in `services/bayn/src/intraday-replay/residual-shock.ts` has canonical SHA-256
+`76afb9108e06eaacb0231bbfc6a1dc00861451f2677cc8b99aee263691af68d6`. It is a bounded falsification hypothesis,
+not a fitted model or an assertion of positive expected net returns. It does not activate or register a production
+strategy. No provider calls, data acquisition, raw exporter or new evaluation engine are introduced.
+
+### Frozen signal and lifecycle
+
+- Use the 30 chronological, contiguous, point-in-time verified IEX minute closes for each candidate and SPY.
+  The existing source publication and candidate-exclusion policy remains binding. Never impute a missing minute,
+  substitute SIP, or use a revision unavailable at the observation cut.
+- For each of the 29 adjacent pairs, compute simple return in basis points as
+  `10000 * (current close / previous close - 1)`. Residual is stock return minus SPY return with coefficient one.
+  This is SPY-relative, not an estimated beta-neutral return. Prices use the existing native micro-dollar conversion;
+  every subsequent operation and comparison is exact rational arithmetic.
+- Compute mean and sample variance from the first 28 residual returns only, with variance denominator 27.
+  The latest return never enters its own baseline. Require negative latest stock return, negative latest residual,
+  negative centered residual and squared centered residual at least `95481/10000` times the sample variance.
+  This is the inclusive `z <= -3.09` rule, not a calibrated empirical tail probability.
+- Zero baseline variance is an ordinary no-signal. Missing or malformed required evidence is unavailable and
+  remains incomplete; candidate-local source exclusions are retained separately. Candidates must pass the native
+  positive-size, 10-second freshness and signal-time 5-bp spread filters. This is not a guaranteed realized spread
+  ceiling: later submission and arrival quotes retain native freshness, side and limit checks, without imposing a
+  new spread filter. SPY retains its required benchmark freshness/liquidity
+  checks. Rank eligible candidates by squared z descending, then symbol ascending.
+- Preserve the source universe of 15 candidates plus benchmark-only SPY, long-only, one position, and at most
+  20% of bounded allocation. Shared cash, turnover, order and symbol limits can further reduce size.
+- Evaluate each successfully observed completed-minute window once. A canceled entry consumes that window.
+  The 2-second completed-bar delay and 30-second session-anchored poll schedule remain unchanged. A minute closing
+  at 10:00 is ordinarily first eligible at the 10:00:30 poll, before declared decision and routing delays.
+- Begin the exit at the first poll at or after the first actual partial entry fill plus 60 seconds. Close-window
+  and 50-bp protective-stop triggers take precedence. The native 15-minute holding ceiling remains a fallback.
+  Routing, missing quotes and partial-fill retries can extend actual holding beyond 60 or 90 seconds. A target is
+  not a guaranteed execution deadline. No take-profit, learned management or same-window entry retry is added.
+
+Selected and unselected candidate calculations are retained as rational numerators/denominators alongside the
+snapshot hash. Orders, fills, quote hashes, partial fills, retry triggers, missing observations and session marks
+use the existing report. Episode net includes quote-side execution and fees; session net additionally deducts the
+explicit data allocation. The existing stress adds 10 bp per filled dollar of turnover, roughly 20 bp for a
+round trip, on top of quote-side spread and modeled execution costs.
+
+### Evidence and stopping limits
+
+The motivating [one-minute crash/rebound research](https://d-nb.info/1255615907/34) does not validate this
+SPY-relative, 28-return standardized, long-only IEX adaptation. Native polling may miss the early rebound and the
+additional round-trip cost stress is substantial. Implementation tests establish software behavior only.
+
+The existing exposed opening-RVOL observations and all other inspected historical sessions remain development
+data, never untouched holdout. Archive reconstruction and REST receipts marked `NOT_OBSERVED` cannot prove
+original observation availability or complete prospective opportunities. Sparse retained decision snapshots do
+not supply missing periods while a prior strategy held a position.
+
+Before a qualified future experiment, independently freeze candidate/input/source-code identity and scenario
+hashes; obtain original availability receipts and complete full-session IEX source cuts for all 15 candidates plus
+SPY; retain no-signal, excluded, missing and zero-trade opportunities; and calibrate timing, quote-size interpretation
+and costs. Acquisition/export readiness is a separate prerequisite. No current data or future collection date is
+promised by this code. Preserve negative, incomplete and failed runs. Any later parameter change is a new hypothesis
+requiring a new version and untouched data, not a retry of this frozen one.
+
+A later prospective registration should fix its calendar block of 60 consecutive exchange sessions in advance,
+including zero-opportunity and missing-data days. A 100-episode floor is only a coverage requirement, not sufficient
+statistical evidence. Do not replace incomplete days or extend the block until a result becomes significant.
+The primary economic estimand is daily strategy net including zero-trade days, failures and all applicable costs;
+unknown outcomes stay unknown rather than being assigned zero. Freeze the tested hypotheses, endpoints, dependence
+model and inference method before outcomes. Too few independent event-days or unresolved receipt completeness,
+costs or cross-day dependence leaves the result inconclusive. The motivating paper's regression coefficients are
+not realizable returns from this candidate. This change implements no statistical acceptance engine.
+
 ## Execution and accounting
 
 The command validates the native replay input, calendar, assets, frozen source manifest, and independent source
@@ -86,7 +163,8 @@ Each policy carries broker cash, its broker and net equity peaks, and cumulative
 A session's net result deducts only that session's expense, without charging prior expenses again. Reports also subtract an additional 10 bp
 from each filled dollar of turnover as a cost stress.
 
-The report uses `bayn.control-study-report.v3` and definition `bayn.control-study-definition.v3`. Marks expose
+The report uses `bayn.control-study-report.v3` and definition `bayn.control-study-definition.v5` for legacy inputs
+or `bayn.control-study-definition.v6` for the opted-in falsification candidate. Marks expose
 `brokerEquityMicros` and `netEquityAfterKnownCostsMicros`; `closingCapital` contains the carried state. Previous v1
 reports charged external expenses to broker cash and are not comparable at nonzero allocated data cost. Retain
 their original evidence and generate a new report with the corrected executable when comparing net performance.

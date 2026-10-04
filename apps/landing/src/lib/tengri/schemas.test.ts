@@ -278,3 +278,39 @@ describe('Tengri BFF action schema', () => {
     ).toBe(false)
   })
 })
+
+describe('Codex image inputs', () => {
+  const png = { mediaType: 'image/png', data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]).toString('base64') }
+  const request = { action: 'send-turn', agentId: 'agent-123', threadId: 'thread-1', text: '' }
+  test('accepts image-only and mixed text/image messages', () => {
+    expect(tengriActionSchema.safeParse({ ...request, images: [png] }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ ...request, text: 'Inspect this', images: [png] }).success).toBe(true)
+    expect(
+      tengriActionSchema.safeParse({ ...request, action: 'steer-turn', turnId: 'turn-1', images: [png] }).success,
+    ).toBe(true)
+    expect(tengriActionSchema.safeParse(request).success).toBe(false)
+  })
+  test('rejects spoofed formats, malformed base64, remote URLs, and excessive images', () => {
+    for (const image of [
+      { ...png, mediaType: 'image/jpeg' },
+      { ...png, data: 'https://example.test/image.png' },
+      { ...png, data: 'not base64' },
+      { ...png, mediaType: 'image/svg+xml' },
+    ])
+      expect(tengriActionSchema.safeParse({ ...request, images: [image] }).success).toBe(false)
+    expect(tengriActionSchema.safeParse({ ...request, images: Array(5).fill(png) }).success).toBe(false)
+  })
+  test('bounds each image and total decoded size', () => {
+    const bytes = Buffer.alloc(4 * 1024 * 1024)
+    Buffer.from(png.data, 'base64').copy(bytes)
+    const exact = { ...png, data: bytes.toString('base64') }
+    expect(tengriActionSchema.safeParse({ ...request, images: [exact, exact] }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ ...request, images: [exact, exact, png] }).success).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        ...request,
+        images: [{ ...png, data: Buffer.concat([bytes, Buffer.from([0])]).toString('base64') }],
+      }).success,
+    ).toBe(false)
+  })
+})

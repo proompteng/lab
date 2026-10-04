@@ -207,6 +207,7 @@ test('mechanical stops require fresh quotes and retained policy holds until the 
   expect(
     Result.getOrThrow(triggerControlExit({ ...common, policy: ControlPolicy.RelativeMomentum })).inventory,
   ).toMatchObject({ status: 'EXITING', reason: ControlExit.ProtectiveStop })
+
   expect(
     Result.getOrThrow(
       triggerControlExit({
@@ -224,6 +225,61 @@ test('mechanical stops require fresh quotes and retained policy holds until the 
     Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 2_000_000, policy: ControlPolicy.RetainedBreakout }))
       .inventory,
   ).toMatchObject({ status: 'EXITING', reason: ControlExit.SessionClose })
+})
+
+test('residual shock target starts at first partial fill and follows protective stop and close precedence', () => {
+  const buy = order(OrderSide.Buy)
+  const portfolio = Result.getOrThrow(
+    applyControlOrder(flat(), { ...buy, arrivalQuote: quote(at + 100, { askSize: 4 }) }),
+  ).portfolio
+  const common = {
+    portfolio,
+    protocol: fixture.protocol,
+    policy: ControlPolicy.ResidualShock,
+    cutoffMs: at + 2_000_000,
+  }
+  expect(
+    Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 60_099, quote: quote(at + 60_099) })).inventory.status,
+  ).toBe('HOLDING')
+  const triggered = Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 60_100, quote: quote(at + 60_100) }))
+  expect(triggered.inventory).toMatchObject({
+    status: 'EXITING',
+    reason: ControlExit.SignalHorizon,
+    enteredAtMs: at + 100,
+  })
+  expect(
+    Result.getOrThrow(
+      triggerControlExit({
+        ...common,
+        atMs: at + 60_100,
+        quote: quote(at + 60_100, { bidPrice: 98, askPrice: 98.02 }),
+      }),
+    ).inventory,
+  ).toMatchObject({ reason: ControlExit.ProtectiveStop })
+  expect(
+    Result.getOrThrow(
+      triggerControlExit({
+        ...common,
+        atMs: at + 60_100,
+        cutoffMs: at + 60_100,
+        quote: quote(at + 60_100, { bidPrice: 98, askPrice: 98.02 }),
+      }),
+    ).inventory,
+  ).toMatchObject({ reason: ControlExit.SessionClose })
+  expect(
+    Result.getOrThrow(triggerControlExit({ ...common, portfolio: triggered, atMs: at + 120_100, quote: undefined }))
+      .inventory,
+  ).toEqual(triggered.inventory)
+  expect(
+    Result.getOrThrow(
+      triggerControlExit({
+        ...common,
+        policy: ControlPolicy.RelativeMomentum,
+        atMs: at + 60_100,
+        quote: quote(at + 60_100),
+      }),
+    ).inventory.status,
+  ).toBe('HOLDING')
 })
 
 test('entry sizing obeys order and daily turnover bounds including the adverse limit and fees', async () => {

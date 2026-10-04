@@ -11,9 +11,12 @@ import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decisi
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
-import { ControlPolicy } from './control-portfolio'
+import { ControlExit, ControlPolicy } from './control-portfolio'
+import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
+import { residualShockDefinition } from './residual-shock'
 import {
   ControlManagementMode,
+  controlStudyDefinition,
   runControlSession,
   runControlStudy,
   type ControlCapital,
@@ -27,6 +30,9 @@ const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_0
 const simulate = async (
   options: {
     missingSnapshot?: boolean
+    residualShock?: boolean
+    entrySize?: number
+    canceledEntries?: boolean
     missingExitQuotes?: boolean
     decisionLatencyMs?: number
     pollIntervalMs?: number
@@ -64,7 +70,7 @@ const simulate = async (
           eventAt: at,
           ingestedAt: at,
           bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
-          askSize: 1000,
+          askSize: options.canceledEntries === true ? 0 : (options.entrySize ?? 1000),
         }
         return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
       }),
@@ -78,7 +84,24 @@ const simulate = async (
           return { status: 'UNAVAILABLE' as const, cause: { reason: 'fixture-missing-benchmark' } }
         const snapshot = {
           ...fixture.snapshot,
-          manifest: { ...fixture.snapshot.manifest, observedAt: query.observedAt },
+          manifest: {
+            ...fixture.snapshot.manifest,
+            observedAt: query.observedAt,
+            ...(options.residualShock === true
+              ? { rangeStartAt: query.rangeStartAt, rangeEndAt: query.rangeEndAt }
+              : {}),
+          },
+          bars:
+            options.residualShock === true
+              ? fixture.snapshot.bars.map((bar) => {
+                  const index = (Date.parse(bar.eventAt) - Date.parse(fixture.snapshot.manifest.rangeStartAt)) / 60_000
+                  return {
+                    ...bar,
+                    eventAt: new Date(Date.parse(query.rangeStartAt) + index * 60_000).toISOString(),
+                    close: bar.symbol === 'AAPL' ? (index === 29 ? 99 : 100 + (index % 2) * 0.01) : 100,
+                  }
+                })
+              : fixture.snapshot.bars,
           latestQuotes: Object.fromEntries(
             Object.entries(fixture.snapshot.latestQuotes).map(([symbol, value]) => [
               symbol,
@@ -99,7 +122,7 @@ const simulate = async (
   )
   const report = await Effect.runPromise(
     runControlSession({
-      policy: ControlPolicy.RelativeMomentum,
+      policy: options.residualShock === true ? ControlPolicy.ResidualShock : ControlPolicy.RelativeMomentum,
       protocol: fixture.protocol,
       risk: {
         ...risk,
@@ -339,6 +362,36 @@ test.each(['maximumLossMicros', 'maximumDrawdownMicros'] as const)(
   },
 )
 
+test('residual shock uses poll-rounded first-fill target and retains partial-exit retries', async () => {
+  const { report } = await simulate({ residualShock: true, entrySize: 4, tinyExit: true })
+  const first = report.episodes[0]
+  if (first === undefined) throw new Error('Expected residual shock episode')
+  expect(first.reason).toBe(ControlExit.SignalHorizon)
+  const exits = report.orders.filter(
+    (order) => order.side === OrderSide.Sell && Date.parse(order.arrivedAt) <= first.exitedAtMs,
+  )
+  expect(exits).toHaveLength(4)
+  const target = first.enteredAtMs + residualShockDefinition.targetHoldingMs
+  const submitted = Date.parse(exits[0]?.submittedAt ?? '')
+  expect(submitted).toBeGreaterThanOrEqual(target)
+  expect(submitted).toBeLessThan(target + 30_000)
+  expect((submitted - openMs) % 30_000).toBe(0)
+  expect(first.exitedAtMs - first.enteredAtMs).toBeGreaterThan(60_000)
+  expect(report.managementMode).toBe(ControlManagementMode.Mechanical)
+  expect(report.modelCallCount).toBe(0)
+  expect(report.decisions.some((decision) => 'signal' in decision)).toBeTrue()
+})
+
+test('a canceled residual-shock entry consumes the minute and unknown exit quotes stay incomplete', async () => {
+  const canceled = await simulate({ residualShock: true, canceledEntries: true })
+  expect(canceled.report.orders.length).toBeGreaterThan(0)
+  expect(canceled.report.episodes).toHaveLength(0)
+  expect(new Set(canceled.observations.map((entry) => entry.rangeEndMs)).size).toBe(canceled.observations.length)
+  const missing = await simulate({ residualShock: true, missingExitQuotes: true })
+  expect(missing.report.completion).toBe('INCOMPLETE')
+  expect(missing.report.missingExecutionQuotes).toBeGreaterThan(0)
+})
+
 test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const retained = retainedReplayFixture()
   const source = {
@@ -402,6 +455,8 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
       expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
       expect(report.sessions).toHaveLength(6)
+      expect(report.definition).toEqual(controlStudyDefinition)
+      expect(report.sessions.some((session) => session.policy === ControlPolicy.ResidualShock)).toBeFalse()
       for (const session of report.sessions) {
         expect(session.completion).toBe('INCOMPLETE')
         expect(session.completedEpisodes).toBe(0)
@@ -421,6 +476,39 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       }
       const { reportHash, ...material } = report
       expect(canonicalHashV1(material)).toBe(reportHash)
+      const falsificationInput = {
+        ...input,
+        schemaVersion: 'bayn.control-study-input.v4',
+        repeatedTargetWeightPpm: residualShockDefinition.targetWeightPpm,
+        turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
+        falsificationCandidate: residualShockDefinition.id,
+      }
+      const falsification = yield* runControlStudy(falsificationInput, arrivals, receipt, {
+        mode: ControlManagementMode.Mechanical,
+      })
+      expect(falsification.sessions).toHaveLength(8)
+      expect(falsification.sessions.filter((session) => session.policy === ControlPolicy.ResidualShock)).toHaveLength(2)
+      expect(
+        falsification.sessions.every((session) => session.modelCallCount === 0 && session.completion === 'INCOMPLETE'),
+      ).toBeTrue()
+      expect(falsification.definition).toMatchObject({ falsificationCandidate: residualShockDefinition })
+      expect(falsification.runId).not.toBe(report.runId)
+      for (const invalid of [
+        { ...falsificationInput, management: ControlManagementMode.Jev },
+        { ...falsificationInput, repeatedTargetWeightPpm: 100000 },
+        { ...falsificationInput, falsificationCandidate: 'UNREGISTERED' },
+        {
+          ...falsificationInput,
+          backtest: { ...input.backtest, cadence: { ...input.backtest.cadence, pollIntervalMs: 1000 } },
+        },
+      ])
+        expect(
+          Result.isFailure(
+            yield* Effect.result(
+              runControlStudy(invalid, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
+            ),
+          ),
+        ).toBeTrue()
       const providerClock = yield* TestClock.make()
       const evidenceDirectory = `${directory}/managed-evidence`
       const managedInput = { ...input, management: ControlManagementMode.Jev }
