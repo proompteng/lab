@@ -4,6 +4,7 @@ import { TestClock } from 'effect/testing'
 
 import { sha256 } from '../src/hash'
 import { ControlStudyFailure } from '../src/intraday-replay/control-portfolio'
+import { ControlInputCoverage, runControlPreflight } from '../src/intraday-replay/control-preflight'
 import {
   ControlManagementMode,
   ControlStudyInputSchema,
@@ -31,8 +32,10 @@ const main = Effect.gen(function* () {
   const receiptHash = flags.get('--source-receipt-sha256')
   const outputPath = flags.get('--output')
   const evidenceDirectory = flags.get('--evidence-directory')
+  const mode = flags.get('--mode') ?? 'study'
   if (
-    (flags.size !== 6 && !(flags.size === 7 && evidenceDirectory !== undefined)) ||
+    flags.size !== 6 + (evidenceDirectory === undefined ? 0 : 1) + (flags.has('--mode') ? 1 : 0) ||
+    (mode !== 'study' && mode !== 'preflight') ||
     inputPath === undefined ||
     inputHash === undefined ||
     arrivals === undefined ||
@@ -42,7 +45,7 @@ const main = Effect.gen(function* () {
   )
     return yield* new ControlStudyFailure({
       message:
-        'Usage: bun tools/control-study.ts --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> [--evidence-directory <new-directory-required-for-JEV>]',
+        'Usage: bun tools/control-study.ts --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> [--mode study|preflight] [--evidence-directory <new-directory-required-for-JEV-study>]',
     })
   const fs = yield* FileSystem.FileSystem
   if (yield* fs.exists(outputPath)) return yield* new ControlStudyFailure({ message: 'Control output already exists' })
@@ -52,6 +55,22 @@ const main = Effect.gen(function* () {
   const receipt = yield* Effect.fromResult(
     validateBacktestSourceReceipt(yield* fs.readFileString(receiptPath), receiptHash),
   )
+  if (mode === 'preflight') {
+    if (evidenceDirectory !== undefined)
+      return yield* new ControlStudyFailure({ message: 'Preflight does not create a Jev evidence directory' })
+    const report = yield* runControlPreflight(input, arrivals, receipt)
+    yield* fs.writeFileString(outputPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
+    const stdio = yield* Stdio.Stdio
+    yield* Stream.run(
+      Stream.make(`${JSON.stringify({ outputPath, reportHash: report.reportHash, coverage: report.coverage })}\n`),
+      stdio.stdout(),
+    )
+    if (report.coverage !== ControlInputCoverage.Complete)
+      return yield* new ControlStudyFailure({
+        message: `Preflight input coverage is ${report.coverage}; diagnostic report written without running a study`,
+      })
+    return
+  }
   let management: ControlStudyManagement
   if (input.management === ControlManagementMode.Jev) {
     if (evidenceDirectory === undefined)

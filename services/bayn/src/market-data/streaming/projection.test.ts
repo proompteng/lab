@@ -6,12 +6,14 @@ import { persistIntradayRecordRows } from '../intraday/verification'
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { Result, Schema } from 'effect'
+import fc from 'fast-check'
 
 import { constructStreamingSnapshot } from './snapshot'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
-import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../intraday/model'
+import { IntradaySnapshotPurpose, type IntradayQuote, type IntradaySnapshotQuery } from '../intraday/model'
 import { canonicalHashV1, sha256 } from '../../hash'
+import { checkProperty } from '../../testing/property-test-support'
 import {
   captureKafkaTransport,
   OriginalKafkaTransportSchema,
@@ -23,7 +25,9 @@ import {
   emptyStreamingProjection,
   incorporateMarketRecord,
   incorporateRecordedMarketValue,
+  observedQuoteAt,
   selectStreamingSymbolInputs,
+  type ObservedMarketValue,
 } from './projection'
 
 const fixture: unknown = JSON.parse(
@@ -95,6 +99,101 @@ const select = (state: ReturnType<typeof incorporate>, at = end + 3000) =>
   selectStreamingSymbolInputs(state, 'AAPL', start, end, at)
 
 describe('streaming raw and rolling feature projection', () => {
+  test.each([0, 511, 512, 513])(
+    'property: quote history preserves bounded immutable cuts after %i updates',
+    (priorCount) => {
+      checkProperty(
+        `quote-history-${priorCount}`,
+        fc.property(
+          fc.array(fc.integer({ min: 0, max: 8 }), { minLength: priorCount + 1, maxLength: priorCount + 1 }),
+          (delays) => {
+            const digest = (state: ReturnType<typeof incorporate>) =>
+              sha256(JSON.stringify(state, (_key, value: unknown) => (value instanceof Map ? [...value] : value)))
+            let state = emptyStreamingProjection('quote-history-property')
+            const retained = [{ state, hash: digest(state) }]
+            const accepted: ObservedMarketValue<IntradayQuote>[] = []
+            let latestRecord = quote
+            for (const [index, delay] of delays.entries()) {
+              const previousHistory = state.quoteHistory.get('AAPL')
+              if (previousHistory !== undefined) Object.freeze(previousHistory)
+              const record = rawRecord('quotes', index, end + 2000 + Math.floor(index / 2), {
+                bp: 130,
+                ap: 131 + index / 1000,
+                bs: 100,
+                as: 100,
+              })
+              const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe))
+              if (decoded.kind !== RawMarketEventKind.Quote) throw new Error('expected quote fixture')
+              const availableAtMs = end + 3000 + delay
+              accepted.push({
+                value: decoded.value,
+                availableAtMs,
+                sequence: index + 1,
+                recordHash: sha256(record.value),
+              })
+              state = incorporateMarketRecord(state, record, universe, availableAtMs)
+              latestRecord = record
+              if ([1, 511, 512, 513].includes(index + 1)) retained.push({ state, hash: digest(state) })
+            }
+            const expected = accepted.slice(Math.max(0, accepted.length - 512))
+            const discarded = accepted.slice(0, Math.max(0, accepted.length - 512))
+            const minimumObservationMs = Math.max(0, ...discarded.map((entry) => entry.availableAtMs))
+            expect(state.quoteHistory.get('AAPL')).toEqual(expected)
+            expect(state.quotes.get('AAPL')).toEqual(accepted.at(-1))
+            expect(state.sequence).toBe(priorCount + 1)
+            expect(state.offsets.get(`${universe.topics.quotes}:0`)).toBe(String(priorCount))
+            expect(state.minimumObservationMs).toBe(minimumObservationMs)
+            expect(state.minimumQuoteObservationMs.get('AAPL')).toBe(
+              discarded.length === 0 ? undefined : minimumObservationMs,
+            )
+            const at = end + 3004
+            expect(observedQuoteAt(state, 'AAPL', at)).toEqual(
+              expected.filter((entry) => entry.availableAtMs <= at).at(-1),
+            )
+            expect(observedQuoteAt(state, 'AAPL', end + 3008)).toEqual(accepted.at(-1))
+
+            const history = state.quoteHistory.get('AAPL')
+            if (history === undefined) throw new Error('missing accepted quote history')
+            Object.freeze(history)
+            const duplicate = incorporateMarketRecord(state, latestRecord, universe, end + 4000)
+            expect(duplicate).toBe(state)
+            const conflict = incorporateMarketRecord(
+              state,
+              { ...latestRecord, value: `${latestRecord.value} ` },
+              universe,
+              end + 4000,
+            )
+            expect(conflict.rejections.get(`${universe.topics.quotes}:0`)).toEqual([
+              { availableAtMs: end + 4000, offset: String(priorCount), reason: 'conflicting-immutable-record' },
+            ])
+            const lateRecord = rawRecord('quotes', priorCount + 1, end + 1000, { bp: 1, ap: 2, bs: 1, as: 1 })
+            const late = incorporateMarketRecord(state, lateRecord, universe, end + 4000)
+            expect(late.sequence).toBe(priorCount + 2)
+            expect(late.offsets.get(`${universe.topics.quotes}:0`)).toBe(String(priorCount + 1))
+            const rejected = incorporateMarketRecord(
+              late,
+              { ...lateRecord, offset: String(priorCount + 2), value: '{' },
+              universe,
+              end + 4001,
+            )
+            expect(rejected.sequence).toBe(priorCount + 3)
+            expect(rejected.rejections.get(`${universe.topics.quotes}:0`)).toEqual([
+              { availableAtMs: end + 4001, offset: String(priorCount + 2), reason: 'schema' },
+            ])
+            for (const unchanged of [conflict, late, rejected]) {
+              expect(unchanged.quoteHistory).toBe(state.quoteHistory)
+              expect(unchanged.quotes).toBe(state.quotes)
+              expect(unchanged.minimumObservationMs).toBe(state.minimumObservationMs)
+              expect(unchanged.minimumQuoteObservationMs).toBe(state.minimumQuoteObservationMs)
+            }
+            for (const previous of retained) expect(digest(previous.state)).toBe(previous.hash)
+          },
+        ),
+        10,
+      )
+    },
+  )
+
   test.each([
     'valid',
     'missing',
@@ -752,6 +851,37 @@ describe('verified streaming decision snapshot', () => {
     const current = incorporateMarketRecord(initial, later, universe, end + 4000)
     const snapshot = Result.getOrThrow(constructStreamingSnapshot(cutFor(current), query))
     expect(snapshot.latestQuotes['AAPL']?.askPrice).toBe(131)
+  })
+
+  test('retained projection and snapshot survive later quote-history eviction', () => {
+    const initial = incorporate([...raw(), featureRecord])
+    const initialHistory = initial.quoteHistory.get('AAPL')
+    if (initialHistory === undefined) throw new Error('missing initial quote history')
+    Object.freeze(initialHistory)
+    const initialCut = cutFor(initial)
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(initialCut, query))
+    const snapshotHash = sha256(JSON.stringify(snapshot))
+    let current = initial
+    for (let index = 0; index < 514; index++) {
+      current = incorporateMarketRecord(
+        current,
+        rawRecord('quotes', index + 2, end + 4000 + index, { bp: 132, ap: 133, bs: 100, as: 100 }),
+        universe,
+        end + 4000 + index,
+      )
+    }
+    expect(current.quoteHistory.get('AAPL')).toHaveLength(512)
+    expect(current.minimumQuoteObservationMs.get('AAPL')).toBe(end + 4001)
+    expect(constructStreamingSnapshot(cutFor(current), query)).toMatchObject({ _tag: 'Failure' })
+    expect(initial.quoteHistory.get('AAPL')).toBe(initialHistory)
+    expect(initialHistory.map((entry) => entry.value.sourceOffset)).toEqual(['1'])
+    expect(Result.getOrThrow(constructStreamingSnapshot(initialCut, query))).toEqual(snapshot)
+    expect(sha256(JSON.stringify(snapshot))).toBe(snapshotHash)
+    expect(
+      Result.getOrThrow(
+        reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
+      ),
+    ).toEqual(snapshot)
   })
 
   test('cannot create entry evidence without the required feature or a complete source barrier', () => {
