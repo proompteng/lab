@@ -1,0 +1,41 @@
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: bayn-db
+  labels:
+    app.kubernetes.io/name: bayn-db
+    app.kubernetes.io/part-of: bayn
+  annotations:
+    argocd.argoproj.io/sync-wave: "-8"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,SkipDryRunOnMissingResource=true
+spec:
+  retentionPolicy: 14d
+  instanceSidecarConfiguration:
+    logLevel: info
+    retentionPolicyIntervalSeconds: 1800
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  configuration:
+    destinationPath: s3://cnpg-bayn/
+    endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+    s3Credentials:
+      accessKeyId:
+        name: cnpg-bayn-db
+        key: AWS_ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-bayn-db
+        key: AWS_SECRET_ACCESS_KEY
+    data:
+      compression: snappy
+      jobs: 1
+      additionalCommandArgs:
+        - --max-bandwidth
+        - 8MB
+    wal:
+      compression: snappy
+      maxParallel: 2

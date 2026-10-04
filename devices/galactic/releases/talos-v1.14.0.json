@@ -1,0 +1,52 @@
+{
+  "talosVersion": "v1.14.0",
+  "factory": "http://100.100.244.148:8081",
+  "catalog": "ghcr.io/proompteng/talos-extensions@sha256:dfb6e48e9e7362532b25b118a0fb751012501a33de40637bbd6171c7e306a63a",
+  "kataExtension": "ghcr.io/proompteng/talos-kata-runtimes:4.1.0-talos-v1.14.0-r5@sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d",
+  "signingIdentity": "https://github.com/proompteng/lab/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main",
+  "profiles": {
+    "ryzen": {
+      "talosAddress": "100.100.244.141",
+      "architecture": "amd64",
+      "schematic": "1146e679c37da65960431dfb8f90ec3fe9af454d68da3a7ffe78ec72aa7571bd",
+      "indexDigest": "sha256:d3c2c00e7f663087f6478c2fbfca28472ec842e6457e9f9d9eda3694b6b457d9",
+      "platformDigest": "sha256:99c2d699be5c66e3ab755dac78e579c0525563c0bb9682b620d8ef13b0856c16",
+      "factoryRequestId": "4e74f94f-61ba-4fa1-9971-4ad9d8c66400",
+      "extensionDigests": [
+        "sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d",
+        "sha256:2f846db3cfe189608ff2d4756243cf6c10f8592d4803c96a5aad6b72fa4e6a7b",
+        "sha256:741b37c0a92fa6fb9178c5607668573081a3957e3143525efdc1265683430fc4",
+        "sha256:396225a95a04983f882489ae37a9c8fc837a0c9d67c2ce99486d9c0e612f0ab9",
+        "sha256:b84c796cc86125d2d0d09d526486bd0f1627ae39bcbfb97eb17d8b8205a5b857"
+      ]
+    },
+    "turin": {
+      "talosAddress": "100.100.244.190",
+      "architecture": "amd64",
+      "schematic": "cf3a3e88087d1ccb35a6aa3ebc4404bc7b66cd90f836bf66f42cea5b2854f0ca",
+      "indexDigest": "sha256:4959f3c5bd93e0e41cf60b2f3206a310f13e727aad7dcb5c72771df4b1bc637e",
+      "platformDigest": "sha256:670ba84c0ef248cc5d5e1a1d1d4a7f8f2cad784a1e0836e336a31f5ce910362e",
+      "factoryRequestId": "9406028a-8981-42b8-8db8-076ce0b18fc5",
+      "extensionDigests": [
+        "sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d",
+        "sha256:8c9e76b10e77564fea9868f63199553a7dc3d00bc6f3c5a6e5dedbd6f23d6e94",
+        "sha256:d695ca7ca68248272697bbdfd2f37532c30701d38862ffc960d24571e417f94c",
+        "sha256:b84c796cc86125d2d0d09d526486bd0f1627ae39bcbfb97eb17d8b8205a5b857"
+      ]
+    },
+    "altra": {
+      "talosAddress": "100.100.244.142",
+      "architecture": "arm64",
+      "schematic": "cf3a3e88087d1ccb35a6aa3ebc4404bc7b66cd90f836bf66f42cea5b2854f0ca",
+      "indexDigest": "sha256:4959f3c5bd93e0e41cf60b2f3206a310f13e727aad7dcb5c72771df4b1bc637e",
+      "platformDigest": "sha256:176d86298198ce9651f2714950f938b5d27458a0d11790e63029f07d1d522521",
+      "factoryRequestId": "9406028a-8981-42b8-8db8-076ce0b18fc5",
+      "extensionDigests": [
+        "sha256:8d34965e669a53d3f7d7565d674fbe140acc0874422676601bb5638c705f8e8d",
+        "sha256:8c9e76b10e77564fea9868f63199553a7dc3d00bc6f3c5a6e5dedbd6f23d6e94",
+        "sha256:d695ca7ca68248272697bbdfd2f37532c30701d38862ffc960d24571e417f94c",
+        "sha256:b84c796cc86125d2d0d09d526486bd0f1627ae39bcbfb97eb17d8b8205a5b857"
+      ]
+    }
+  }
+}

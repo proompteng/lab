@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proompteng
+  namespace: proompteng
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: proompteng
+  template:
+    metadata:
+      annotations:
+        inject.istio.io/templates: sidecar,spire
+        sidecar.istio.io/nativeSidecar: "true"
+        sidecar.istio.io/inject: "true"
+        sidecar.istio.io/proxyCPU: 50m
+        sidecar.istio.io/proxyCPULimit: 500m
+        sidecar.istio.io/proxyMemory: 64Mi
+        sidecar.istio.io/proxyMemoryLimit: 256Mi
+      labels:
+        app: proompteng
+        spiffe.io/spire-managed-identity: "true"
+    spec:
+      serviceAccountName: proompteng
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proompteng
+          image: registry.ide-newton.ts.net/lab/proompteng
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NEXT_PUBLIC_CONVEX_URL
+              value: https://convex.proompteng.ai
+            - name: LANDING_CMS_URL
+              value: https://cms.proompteng.ai
+            - name: BETTER_AUTH_URL
+              value: https://proompteng.ai
+            - name: TENGRI_GRPC_ENDPOINT
+              # The release promotion enables this endpoint atomically with
+              # the Tengri ApplicationSet entry and immutable image digests.
+              value: tengri-grpc.tengri.svc.cluster.local:50051
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
+            - name: SPIFFE_ID
+              value: spiffe://proompteng.ai/ns/proompteng/sa/proompteng
+            - name: TENGRI_SPIFFE_ID
+              value: spiffe://proompteng.ai/ns/tengri/sa/tengri
+            - name: TENGRI_PUBLIC_URL
+              value: https://tengri.proompteng.ai
+            - name: TENGRI_BFF_SECRET_DIR
+              value: /var/run/secrets/tengri-bff
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          volumeMounts:
+            - name: workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/apps/landing/.next/cache
+            - name: tengri-bff
+              mountPath: /var/run/secrets/tengri-bff
+              readOnly: true
+      volumes:
+        - name: workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tengri-bff
+          secret:
+            secretName: tengri-bff

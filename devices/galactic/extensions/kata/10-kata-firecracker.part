@@ -1,0 +1,39 @@
+[plugins."io.containerd.snapshotter.v1.blockfile"]
+  root_path = "/var/lib/containerd/io.containerd.snapshotter.v1.blockfile"
+  scratch_file = "/usr/local/share/kata-containers/blockfile-scratch.ext4"
+  fs_type = "ext4"
+  mount_options = ["loop"]
+  recreate_scratch = false
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-qemu]
+  runtime_type = "io.containerd.kata.v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-qemu.options]
+  ConfigPath = "/usr/local/share/kata-containers/configuration-qemu-runtime-rs.toml"
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-clh]
+  runtime_type = "io.containerd.kata.v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-clh.options]
+  ConfigPath = "/usr/local/share/kata-containers/configuration-clh-runtime-rs.toml"
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-fc]
+  runtime_type = "io.containerd.kata.v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+  snapshotter = "blockfile"
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-fc.options]
+  ConfigPath = "/usr/local/share/kata-containers/configuration-rs-fc.toml"
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-dragonball]
+  runtime_type = "io.containerd.kata.v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-dragonball.options]
+  ConfigPath = "/usr/local/share/kata-containers/configuration-dragonball.toml"

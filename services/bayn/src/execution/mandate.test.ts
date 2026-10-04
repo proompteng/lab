@@ -1,0 +1,468 @@
+import { describe, expect, test } from 'bun:test'
+import { Result } from 'effect'
+
+import { defaultExecutionModel, desiredQuantityMicros, notionalMicros } from '../execution-model'
+import { reconciliationIncompleteRestrictionReason } from './authority'
+import {
+  decideExecutionMandateAuthority,
+  decideExecutionMandateCycleTerminalization,
+  constrainExecutionTargetAllocationCapitalMicros,
+  executionActivationExpiredRestrictionReason,
+  executionMandateAllocationCapitalMicros,
+  executionMandateCompletedRestrictionReason,
+  executionMandateFailureRestrictionPrefix,
+  isExecutionCyclePreflightStoreRestriction,
+  isExecutionMandateFailureRestriction,
+  isExecutionMandateRecoveryRestriction,
+  legacyExecutionActivationExpiredRestrictionReason,
+  legacyV1CompletedRestrictionReason,
+  capitalGrantFromLegacyGeneration,
+  capitalGrantKey,
+} from './mandate'
+
+describe('executionMandateAllocationCapitalMicros', () => {
+  test('keeps the recorded partial target at its account weight while the complete order fits remaining turnover', () => {
+    const facts = {
+      accountEquityMicros: 99_766_030_000n,
+      dailyTradedNotionalMicros: 118_742_840_000n,
+      maxGrossExposureMicros: 100_000_000_000n,
+      maxNetExposureMicros: 100_000_000_000n,
+      maxDailyTradedNotionalMicros: 200_000_000_000n,
+      maxAdverseSlippageBps: 10n,
+      positions: [],
+      referencePriceMicros: { AAPL: '335000000' },
+      targetWeights: { AAPL: 0.2 },
+    }
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros(facts))).toBe(99_766_030_000n)
+    expect(
+      Result.getOrThrow(
+        executionMandateAllocationCapitalMicros({ ...facts, dailyTradedNotionalMicros: 190_000_000_000n }),
+      ),
+    ).toBe(49_950_049_950n)
+    expect(
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, maxGrossExposureMicros: 10_000_000_000n })),
+    ).toBe(50_000_000_000n)
+    expect(
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, maxNetExposureMicros: 8_000_000_000n })),
+    ).toBe(40_000_000_000n)
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...facts, targetWeights: {} }))).toBe(0n)
+    expect(Result.isFailure(executionMandateAllocationCapitalMicros({ ...facts, targetWeights: { AAPL: -0.2 } }))).toBe(
+      true,
+    )
+  })
+
+  test('selects the smallest account, exposure, and remaining-turnover bound', () => {
+    const common = {
+      accountEquityMicros: 100_000_000_000n,
+      dailyTradedNotionalMicros: 0n,
+      maxGrossExposureMicros: 1_000_000_000n,
+      maxNetExposureMicros: 1_000_000_000n,
+      maxDailyTradedNotionalMicros: 1_000_000_000n,
+      maxAdverseSlippageBps: 0n,
+      positions: [],
+      referencePriceMicros: {},
+      targetWeights: { SPY: 1 },
+    }
+
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros(common))).toBe(1_000_000_000n)
+    expect(
+      Result.getOrThrow(
+        executionMandateAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 750_000_000n }),
+      ),
+    ).toBe(250_000_000n)
+    expect(
+      Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...common, accountEquityMicros: 200_000_000n })),
+    ).toBe(200_000_000n)
+    expect(
+      Result.getOrThrow(
+        executionMandateAllocationCapitalMicros({ ...common, dailyTradedNotionalMicros: 1_000_000_001n }),
+      ),
+    ).toBe(0n)
+    expect(Result.getOrThrow(executionMandateAllocationCapitalMicros({ ...common, maxAdverseSlippageBps: 10n }))).toBe(
+      999_000_999n,
+    )
+  })
+
+  test('bounds both sides of a rebalance and rejects exposure that cannot fit the remaining turnover', () => {
+    const common = {
+      accountEquityMicros: 100_000_000_000n,
+      dailyTradedNotionalMicros: 750_000_000n,
+      maxGrossExposureMicros: 1_000_000_000n,
+      maxNetExposureMicros: 1_000_000_000n,
+      maxDailyTradedNotionalMicros: 1_000_000_000n,
+      maxAdverseSlippageBps: 0n,
+      referencePriceMicros: { SPY: '100000000' },
+      targetWeights: { SPY: 1 },
+    }
+    const scalable = Result.getOrThrow(
+      executionMandateAllocationCapitalMicros({
+        ...common,
+        positions: [{ symbol: 'SPY', quantityMicros: '1000000' }],
+      }),
+    )
+    const rejected = executionMandateAllocationCapitalMicros({
+      ...common,
+      positions: [{ symbol: 'SPY', quantityMicros: '10000000' }],
+    })
+
+    expect(scalable).toBe(150_000_000n)
+    expect(rejected).toEqual(
+      Result.fail({
+        _tag: 'CurrentExposureExceedsRemainingTurnover',
+        currentReferenceGrossExposureMicros: 1_000_000_000n,
+        remainingReferenceTurnoverMicros: 250_000_000n,
+      }),
+    )
+  })
+
+  test('caps portfolio capital before planning so each target fits order and symbol limits', () => {
+    expect(
+      Result.getOrThrow(
+        constrainExecutionTargetAllocationCapitalMicros({
+          allocationCapitalMicros: 100_000_000_000n,
+          maxOrderNotionalMicros: 40_000_000_000n,
+          maxSymbolExposureMicros: 50_000_000_000n,
+          maxAdverseSlippageBps: 0n,
+          targetWeights: { AMD: 0.5, NVDA: 0.5 },
+        }),
+      ),
+    ).toBe(80_000_000_000n)
+    expect(
+      Result.isFailure(
+        constrainExecutionTargetAllocationCapitalMicros({
+          allocationCapitalMicros: 100_000_000_000n,
+          maxOrderNotionalMicros: 40_000_000_000n,
+          maxSymbolExposureMicros: 40_000_000_000n,
+          maxAdverseSlippageBps: 0n,
+          targetWeights: { AMD: Number.NaN },
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  test('uses the planner weight precision when enforcing the actual target notional limit', () => {
+    const weight = 0.20000049
+    const capital = Result.getOrThrow(
+      constrainExecutionTargetAllocationCapitalMicros({
+        allocationCapitalMicros: 100_000_000_000n,
+        maxOrderNotionalMicros: 20_000_000_000n,
+        maxSymbolExposureMicros: 40_000_000_000n,
+        maxAdverseSlippageBps: 0n,
+        targetWeights: { AAPL: weight },
+      }),
+    )
+    const quantity = Result.getOrThrow(
+      desiredQuantityMicros(capital, weight, 1_000_000n, {
+        precision: { ...defaultExecutionModel.precision, quantityIncrementMicros: '1' },
+      }),
+    )
+    expect(Result.getOrThrow(notionalMicros(quantity, 1_000_000n))).toBeLessThanOrEqual(20_000_000_000n)
+  })
+})
+
+describe('execution mandate decisions', () => {
+  test('recognizes only canonical and exact legacy system failure restrictions', () => {
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy ' + 'a'.repeat(64))).toBe(true)
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy unknown')).toBe(false)
+    expect(isExecutionMandateFailureRestriction('reconciliation discrepancy ' + 'a'.repeat(64) + ' extra')).toBe(false)
+    const cycleId = 'a'.repeat(64)
+    const intentId = 'b'.repeat(64)
+
+    expect(
+      isExecutionMandateFailureRestriction(
+        `${executionMandateFailureRestrictionPrefix} bound cycle blocked: BLOCKED_RISK`,
+      ),
+    ).toBe(true)
+    expect(
+      isExecutionMandateFailureRestriction(
+        'PAPER autonomous cycle loop restricted effective authority: bound cycle blocked: BLOCKED_RISK',
+      ),
+    ).toBe(true)
+    expect(
+      isExecutionMandateFailureRestriction(
+        `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} submit settled denied`,
+      ),
+    ).toBe(true)
+    expect(
+      isExecutionMandateFailureRestriction(
+        `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended REJECTED`,
+      ),
+    ).toBe(true)
+    expect(isExecutionMandateFailureRestriction('operator requested PAPER stop')).toBe(false)
+    expect(
+      isExecutionMandateFailureRestriction(
+        `bound PAPER cycle ${cycleId} restricted effective authority: intent ${intentId} ended FILLED`,
+      ),
+    ).toBe(false)
+    expect(
+      isExecutionMandateFailureRestriction(
+        `bound PAPER cycle ${cycleId.slice(1)} restricted effective authority: intent ${intentId} submit settled denied`,
+      ),
+    ).toBe(false)
+    expect(isExecutionMandateRecoveryRestriction(reconciliationIncompleteRestrictionReason)).toBe(true)
+    expect(isExecutionMandateRecoveryRestriction('operator requested PAPER stop')).toBe(false)
+    expect(
+      isExecutionCyclePreflightStoreRestriction(
+        `${executionMandateFailureRestrictionPrefix} recover-cycle: oldest unfinished mutation cycle read failed`,
+      ),
+    ).toBe(true)
+    expect(
+      isExecutionCyclePreflightStoreRestriction(
+        `${executionMandateFailureRestrictionPrefix} recover-cycle: durable submit recovery read failed`,
+      ),
+    ).toBe(false)
+  })
+
+  test('adapts legacy qualification history and research history to one grant boundary', () => {
+    const qualified = capitalGrantFromLegacyGeneration({
+      schemaVersion: 'bayn.paper-authority-generation.v2',
+      qualificationRunId: 'a'.repeat(64),
+      qualificationLockId: 'b'.repeat(64),
+      qualificationResultHash: 'c'.repeat(64),
+    })
+    const research = capitalGrantFromLegacyGeneration({
+      schemaVersion: 'bayn.paper-authority-generation.v3',
+      grant: { _tag: 'Research', planHash: 'd'.repeat(64) },
+    })
+
+    expect(qualified).toEqual({
+      _tag: 'Qualified',
+      qualification: {
+        runId: 'a'.repeat(64),
+        lockId: 'b'.repeat(64),
+        resultHash: 'c'.repeat(64),
+      },
+    })
+    expect(capitalGrantKey(qualified)).toBe('a'.repeat(64))
+    expect(capitalGrantKey(research)).toBe('d'.repeat(64))
+  })
+
+  test('keeps the entry cycle active through holding and terminalizes only after close evidence', () => {
+    const cutoff = '2026-09-01T13:00:00.000Z'
+    expect(
+      decideExecutionMandateCycleTerminalization({
+        closeOnly: false,
+        observedAt: '2026-08-31T20:00:00.000Z',
+        entryCutoffAt: cutoff,
+        entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
+      }),
+    ).toEqual({ _tag: 'WaitForClose' })
+    expect(
+      decideExecutionMandateCycleTerminalization({
+        closeOnly: false,
+        observedAt: '2026-08-31T20:00:00.000Z',
+        entryCutoffAt: cutoff,
+        entryHasUnsuccessfulIntent: false,
+        entrySettledWithoutFill: true,
+      }),
+    ).toEqual({ _tag: 'Complete' })
+    expect(
+      decideExecutionMandateCycleTerminalization({
+        closeOnly: true,
+        observedAt: cutoff,
+        entryCutoffAt: cutoff,
+        entryHasUnsuccessfulIntent: false,
+        entrySettledWithoutFill: false,
+      }),
+    ).toEqual({ _tag: 'Complete' })
+    expect(
+      decideExecutionMandateCycleTerminalization({
+        closeOnly: true,
+        observedAt: cutoff,
+        entryCutoffAt: cutoff,
+        entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
+      }),
+    ).toEqual({ _tag: 'Block' })
+    expect(
+      decideExecutionMandateCycleTerminalization({
+        closeOnly: false,
+        observedAt: cutoff,
+        entryCutoffAt: cutoff,
+        entryHasUnsuccessfulIntent: true,
+        entrySettledWithoutFill: false,
+      }),
+    ).toEqual({ _tag: 'Block' })
+  })
+
+  test('activates, rearms, and resumes only from their exact durable authority states', () => {
+    const common = {
+      sourceGenerationHash: 'a'.repeat(64),
+      currentGenerationMatchesRequest: false,
+    }
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: common.sourceGenerationHash,
+        maximum: 'OBSERVE',
+        effective: 'OBSERVE',
+        kill: 'CLEAR',
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Activate' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'PAPER',
+        kill: 'CLEAR',
+        currentGenerationMatchesRequest: true,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Resume' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    for (const reason of [
+      'reconciliation discrepancy ' + 'a'.repeat(64),
+      executionActivationExpiredRestrictionReason,
+      executionMandateCompletedRestrictionReason,
+      legacyExecutionActivationExpiredRestrictionReason,
+      legacyV1CompletedRestrictionReason,
+    ]) {
+      expect(
+        decideExecutionMandateAuthority({
+          ...common,
+          generationHash: 'b'.repeat(64),
+          maximum: 'PAPER',
+          effective: 'OBSERVE',
+          kill: 'ACTIVE',
+          reason,
+        }),
+      ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    }
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: 'reconciliation discrepancy ' + 'a'.repeat(64),
+      }),
+    ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: `${executionMandateFailureRestrictionPrefix} recover-cycle: oldest unfinished mutation cycle read failed`,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        reason: reconciliationIncompleteRestrictionReason,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: reconciliationIncompleteRestrictionReason,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'b'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'OBSERVE',
+        kill: 'ACTIVE',
+        currentGenerationMatchesRequest: true,
+        reason: `bound PAPER cycle ${'c'.repeat(64)} restricted effective authority: intent ${'d'.repeat(64)} submit settled denied`,
+      }),
+    ).toEqual(Result.succeed({ _tag: 'ResumeRestricted' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        generationHash: 'c'.repeat(64),
+        maximum: 'PAPER',
+        effective: 'PAPER',
+        kill: 'CLEAR',
+      }),
+    ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+  })
+
+  test('does not rearm an operator kill, an unchanged source generation, or unknown authority state', () => {
+    const common = {
+      generationHash: 'b'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'PAPER' as const,
+      effective: 'OBSERVE' as const,
+      kill: 'ACTIVE' as const,
+      currentGenerationMatchesRequest: false,
+    }
+    expect(decideExecutionMandateAuthority({ ...common, reason: 'operator kill' })).toEqual(
+      Result.fail({ _tag: 'IdentityDrift' }),
+    )
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        sourceGenerationHash: common.generationHash,
+        reason: 'PAPER autonomous cycle loop restricted effective authority: build-decision failed',
+      }),
+    ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    expect(
+      decideExecutionMandateAuthority({
+        ...common,
+        sourceGenerationHash: common.generationHash,
+        maximum: 'PAPER',
+        effective: 'PAPER',
+        kill: 'CLEAR',
+      }),
+    ).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    expect(decideExecutionMandateAuthority(common)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+  })
+
+  test('rejects source-generation drift instead of activating over unknown OBSERVE history', () => {
+    const result = decideExecutionMandateAuthority({
+      generationHash: 'c'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'OBSERVE',
+      effective: 'OBSERVE',
+      kill: 'CLEAR',
+      currentGenerationMatchesRequest: false,
+    })
+    expect(result).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+  })
+
+  test('rearms a matching OBSERVE generation only for an incomplete reconciliation', () => {
+    const facts = {
+      generationHash: 'a'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'OBSERVE' as const,
+      effective: 'OBSERVE' as const,
+      kill: 'ACTIVE' as const,
+      currentGenerationMatchesRequest: false,
+      reason: reconciliationIncompleteRestrictionReason,
+    }
+    expect(decideExecutionMandateAuthority(facts)).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    for (const change of [
+      { reason: 'operator hold' },
+      { reason: 'unknown restriction' },
+      { sourceGenerationHash: 'b'.repeat(64) },
+    ]) {
+      expect(decideExecutionMandateAuthority({ ...facts, ...change })).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    }
+  })
+})

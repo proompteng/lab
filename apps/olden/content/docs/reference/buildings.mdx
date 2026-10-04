@@ -1,0 +1,36 @@
+---
+title: Buildings Reference
+description: Town building categories and how to prioritize them during play.
+---
+
+import { buildingEntries } from '@/src/data/olden/encyclopedia'
+
+# Buildings Reference
+
+Buildings turn resources into recurring power. Most town mistakes are timing mistakes: a useful building arrives one week too late or consumes resources needed for a more urgent dwelling.
+
+## Building categories
+
+- Core dwellings: weekly creature growth.
+- Upgrades: stronger creature variants, speed, durability, or abilities.
+- Economy: gold and resource flow.
+- Magic: spell access and hero options.
+- Defense: walls, towers, and town protection.
+- Faction mechanics: buildings that unlock or improve the faction's unique plan.
+
+## Beginner rule
+
+Build what changes this week and next week. A late payoff is still good only if you survive to collect it.
+
+## Building index
+
+<EncyclopediaEntryTable
+  entries={buildingEntries}
+  title="Building index"
+  description="Public building rows grouped by faction source path."
+  groupBy="Faction"
+  defaultOpenGroups={8}
+  sourceLabel="Building page"
+/>
+
+<SourceNote ids={['community-olden-era-buildings', 'official-wiki-main-page']} />

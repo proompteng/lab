@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: khoshut
+  labels:
+    app.kubernetes.io/name: khoshut
+    app.kubernetes.io/part-of: lab
+spec:
+  selector:
+    app.kubernetes.io/name: khoshut
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

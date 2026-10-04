@@ -1,0 +1,8 @@
+cluster:
+  etcd:
+    extraArgs:
+      quota-backend-bytes: '4294967296'
+    advertisedSubnets:
+      - 100.100.244.128/25
+    listenSubnets:
+      - 100.100.244.128/25

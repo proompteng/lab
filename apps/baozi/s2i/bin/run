@@ -1,0 +1,33 @@
+#!/bin/bash -e
+#
+# S2I run script for the 'baozi' image.
+# The run script executes the server that runs your application.
+#
+# For more information see the documentation:
+#	https://github.com/openshift/source-to-image/blob/master/docs/builder_image.md
+#
+
+# Define potential entry points
+entry_points=(
+  "server.ts"
+  "index.ts"
+  "server.js"
+  "index.js"
+  "src/server.ts"
+  "src/index.ts"
+  "src/server.js"
+  "src/index.js"
+)
+
+# Loop through potential entry points and execute the first one found
+for entry_point in "${entry_points[@]}"; do
+  if [ -f "$entry_point" ]; then
+    echo "---> Found entry point: $entry_point, executing with bun run..."
+    exec bun run "$entry_point"
+  fi
+done
+
+# If no entry point was found after checking all possibilities
+echo "Error: Unable to find a suitable entry point (checked: ${entry_points[*]})."
+echo "Please ensure your application entry point is one of these or update the run script."
+exit 1

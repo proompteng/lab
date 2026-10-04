@@ -1,0 +1,36 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: proompteng-tengri-rate-limit
+  namespace: proompteng
+spec:
+  rateLimit:
+    average: 240
+    burst: 240
+    period: 1m
+    sourceCriterion:
+      requestHeaderName: CF-Connecting-IP
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: proompteng
+  namespace: proompteng
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`proompteng.ai`) && PathPrefix(`/api/tengri`)
+      priority: 100
+      middlewares:
+        - name: proompteng-tengri-rate-limit
+      services:
+        - name: proompteng
+          port: 80
+    - kind: Rule
+      match: Host(`proompteng.ai`)
+      services:
+        - name: proompteng
+          port: 80

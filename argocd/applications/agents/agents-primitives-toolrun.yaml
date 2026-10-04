@@ -1,0 +1,10 @@
+apiVersion: tools.proompteng.ai/v1alpha1
+kind: ToolRun
+metadata:
+  name: agents-primitives-toolrun
+  namespace: agents
+spec:
+  toolRef:
+    name: agents-primitives-tool
+  parameters:
+    action: toolrun

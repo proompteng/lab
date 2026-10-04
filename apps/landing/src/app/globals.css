@@ -1,0 +1,86 @@
+@import '@proompteng/design/globals.css';
+
+@source "../**/*.{js,jsx,ts,tsx,mdx}";
+@source not "../../node_modules";
+@source not "../../.next";
+@source not "../../../../.pnpm-store";
+@source not "../../../../.bun";
+
+@font-face {
+  font-family: 'JetBrains Mono Desktop';
+  src: url('/tengri/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@keyframes hero-glow {
+  0%,
+  100% {
+    transform: translate3d(-10%, -6%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(12%, 10%, 0) scale(1.05);
+  }
+}
+
+@keyframes tengri-thinking-shimmer {
+  from {
+    background-position: 100% center;
+  }
+  to {
+    background-position: 0% center;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family:
+      var(--font-space-grotesk, 'Space Grotesk'), 'Space Grotesk', var(--font-jetbrains-mono, 'JetBrains Mono'),
+      ui-sans-serif, sans-serif;
+  }
+
+  .font-inter {
+    font-family: var(--font-inter, 'Inter'), Inter, ui-sans-serif, sans-serif;
+  }
+
+  .font-system {
+    --font-mono: 'JetBrains Mono Desktop', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .animate-hero-glow {
+    animation: hero-glow 18s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    @supports (background-clip: text) or (-webkit-background-clip: text) {
+      .tengri-thinking-shimmer {
+        background-color: var(--color-zinc-400);
+        background-image: linear-gradient(
+          90deg,
+          var(--color-zinc-400) 42%,
+          var(--color-zinc-100) 50%,
+          var(--color-zinc-400) 58%
+        );
+        background-size: 250% 100%;
+        background-repeat: no-repeat;
+        background-position: 100% center;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        animation: tengri-thinking-shimmer 1s linear infinite;
+      }
+    }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    font-family:
+      var(--font-jetbrains-mono, 'JetBrains Mono'), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', 'Courier New', monospace;
+  }
+}

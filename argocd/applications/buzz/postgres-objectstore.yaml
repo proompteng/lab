@@ -1,0 +1,38 @@
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: buzz-db
+  labels:
+    app.kubernetes.io/name: buzz-db
+    app.kubernetes.io/part-of: buzz
+  annotations:
+    argocd.argoproj.io/sync-wave: "-8"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false,SkipDryRunOnMissingResource=true
+spec:
+  retentionPolicy: 14d
+  instanceSidecarConfiguration:
+    logLevel: info
+    retentionPolicyIntervalSeconds: 1800
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  configuration:
+    destinationPath: s3://cnpg-buzz/
+    endpointURL: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+    s3Credentials:
+      accessKeyId:
+        name: cnpg-buzz-db
+        key: AWS_ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-buzz-db
+        key: AWS_SECRET_ACCESS_KEY
+    data:
+      compression: snappy
+      jobs: 1
+    wal:
+      compression: snappy
+      maxParallel: 2

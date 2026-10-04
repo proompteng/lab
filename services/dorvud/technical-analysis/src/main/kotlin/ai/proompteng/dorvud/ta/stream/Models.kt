@@ -1,0 +1,230 @@
+package ai.proompteng.dorvud.ta.stream
+
+import ai.proompteng.dorvud.platform.Envelope
+import ai.proompteng.dorvud.platform.InstantIsoSerializer
+import ai.proompteng.dorvud.platform.Window
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import java.time.Instant
+
+@Serializable
+data class TradePayload(
+  val p: Double,
+  val s: Double,
+  @Serializable(with = InstantIsoSerializer::class)
+  val t: Instant,
+)
+
+@Serializable
+data class QuotePayload(
+  val bp: Double,
+  val bs: Double,
+  val ap: Double,
+  val `as`: Double,
+  @Serializable(with = InstantIsoSerializer::class)
+  val t: Instant,
+)
+
+@Serializable
+data class AlpacaBarPayload(
+  @SerialName("o")
+  val open: Double,
+  @SerialName("h")
+  val high: Double,
+  @SerialName("l")
+  val low: Double,
+  @SerialName("c")
+  val close: Double,
+  @SerialName("v")
+  val volume: Double,
+  @SerialName("vw")
+  val vwap: Double? = null,
+  @SerialName("n")
+  val tradeCount: Long? = null,
+  @SerialName("t")
+  val timestamp: String,
+)
+
+@Serializable
+data class MicroBarPayload(
+  val o: Double,
+  val h: Double,
+  val l: Double,
+  val c: Double,
+  val v: Double,
+  val vwap: Double?,
+  val count: Long,
+  @Serializable(with = InstantIsoSerializer::class)
+  val t: Instant,
+)
+
+@Serializable
+data class TaSignalsPayload(
+  val macd: Macd? = null,
+  val ema: Ema? = null,
+  val rsi14: Double? = null,
+  val boll: Bollinger? = null,
+  val vwap: Vwap? = null,
+  val imbalance: Imbalance? = null,
+  val vol_realized: RealizedVol? = null,
+  @SerialName("microstructure_signal_v1")
+  val microstructureSignalV1: MicrostructureSignalV1? = null,
+)
+
+@Serializable
+data class TaStatusPayload(
+  @SerialName("watermark_lag_ms")
+  val watermarkLagMs: Long? = null,
+  @SerialName("source_lag_ms")
+  val sourceLagMs: Long? = null,
+  @SerialName("last_event_ts")
+  val lastEventTs: String? = null,
+  @SerialName("last_input_event_ts")
+  val lastInputEventTs: String? = null,
+  @SerialName("last_output_event_ts")
+  val lastOutputEventTs: String? = null,
+  @SerialName("input_event_count")
+  val inputEventCount: Long? = null,
+  @SerialName("output_event_count")
+  val outputEventCount: Long? = null,
+  @SerialName("current_input_event_count")
+  val currentInputEventCount: Long? = null,
+  @SerialName("current_output_event_count")
+  val currentOutputEventCount: Long? = null,
+  @SerialName("current_record_count")
+  val currentRecordCount: Long? = null,
+  @SerialName("input_rate_per_second")
+  val inputRatePerSecond: Double? = null,
+  @SerialName("output_rate_per_second")
+  val outputRatePerSecond: Double? = null,
+  @SerialName("microbar_event_count")
+  val microbarEventCount: Long? = null,
+  @SerialName("signal_event_count")
+  val signalEventCount: Long? = null,
+  @SerialName("microbar_rate_per_second")
+  val microbarRatePerSecond: Double? = null,
+  @SerialName("signal_rate_per_second")
+  val signalRatePerSecond: Double? = null,
+  @SerialName("clickhouse_sink_enabled")
+  val clickhouseSinkEnabled: Boolean? = null,
+  @SerialName("per_symbol_latest_event_ts")
+  val perSymbolLatestEventTs: Map<String, String>? = null,
+  @SerialName("market_session_state")
+  val marketSessionState: String? = null,
+  @SerialName("status_reason")
+  val statusReason: String? = null,
+  val status: String = "ok",
+  val heartbeat: Boolean = true,
+)
+
+@Serializable
+data class Macd(
+  val macd: Double,
+  val signal: Double,
+  val hist: Double,
+)
+
+@Serializable
+data class Ema(
+  val ema12: Double,
+  val ema26: Double,
+)
+
+@Serializable
+data class Bollinger(
+  val mid: Double,
+  val upper: Double,
+  val lower: Double,
+)
+
+@Serializable
+data class Vwap(
+  val session: Double,
+  val w5m: Double? = null,
+)
+
+@Serializable
+data class Imbalance(
+  val spread: Double,
+  val bid_px: Double,
+  val ask_px: Double,
+  val bid_sz: Double,
+  val ask_sz: Double,
+)
+
+@Serializable
+data class RealizedVol(
+  val w60s: Double,
+)
+
+@Serializable
+data class MicrostructureSignalV1(
+  @SerialName("schema_version")
+  val schemaVersion: String,
+  val symbol: String,
+  val horizon: String,
+  @SerialName("direction_probabilities")
+  val directionProbabilities: DirectionProbabilities,
+  @SerialName("uncertainty_band")
+  val uncertaintyBand: String,
+  @SerialName("expected_spread_impact_bps")
+  val expectedSpreadImpactBps: Double,
+  @SerialName("expected_slippage_bps")
+  val expectedSlippageBps: Double,
+  @SerialName("feature_quality_status")
+  val featureQualityStatus: String,
+  val artifact: MicrostructureSignalArtifact,
+)
+
+@Serializable
+data class DirectionProbabilities(
+  val up: Double,
+  val flat: Double,
+  val down: Double,
+)
+
+@Serializable
+data class MicrostructureSignalArtifact(
+  @SerialName("model_id")
+  val modelId: String,
+  @SerialName("feature_schema_version")
+  val featureSchemaVersion: String,
+  @SerialName("training_run_id")
+  val trainingRunId: String,
+)
+
+/** Helper to copy envelope with a new payload but the same metadata. */
+fun <T, R> Envelope<T>.withPayload(
+  newPayload: R,
+  window: Window? = this.window,
+  seqOverride: Long? = null,
+): Envelope<R> =
+  Envelope(
+    ingestTs = ingestTs,
+    eventTs = eventTs,
+    feed = feed,
+    channel = channel,
+    symbol = symbol,
+    seq = seqOverride ?: seq,
+    payload = newPayload,
+    provider = provider,
+    marketSession = marketSession,
+    delayClass = delayClass,
+    accountLabel = accountLabel,
+    isFinal = isFinal,
+    source = source,
+    window = window,
+    version = version,
+  )
+
+fun AlpacaBarPayload.toMicroBarPayload(): MicroBarPayload =
+  MicroBarPayload(
+    o = open,
+    h = high,
+    l = low,
+    c = close,
+    v = volume,
+    vwap = vwap,
+    count = tradeCount ?: 0L,
+    t = Instant.parse(timestamp),
+  )

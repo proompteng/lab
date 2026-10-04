@@ -1,0 +1,6 @@
+# Optional local convenience:
+#   cp .envrc.example .envrc
+#   direnv allow
+#
+# Keep .envrc untracked so Nix activation remains opt-in per developer.
+use flake

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: facteur-tailscale
+  namespace: facteur
+  annotations:
+    tailscale.com/expose: "true"
+    tailscale.com/hostname: facteur
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    serving.knative.dev/service: facteur
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

@@ -1,0 +1,20 @@
+name: schematic-ci
+
+on:
+  pull_request:
+    paths:
+      - 'packages/schematic/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    uses: ./.github/workflows/common-monorepo.yml
+    with:
+      install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/schematic
+      lint-command: bunx oxfmt --check packages/schematic
+      oxlint-command: bun run --cwd packages/schematic lint:oxlint
+      oxlint-type-command: bun run --cwd packages/schematic lint:oxlint:type
+      test-command: bun test packages/schematic

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tengri
+spec:
+  hard:
+    count/microvms.runtime.proompteng.ai: "6"
+    persistentvolumeclaims: "6"
+    requests.storage: 96Gi
+    pods: "8"
+    secrets: "8"
+    # Six 4 CPU/8 GiB guests, kata-fc's 250m/130Mi fixed overhead per guest,
+    # and the Tengri control plane must all fit before Kubernetes admits a Pod.
+    requests.cpu: "26"
+    limits.cpu: "27"
+    requests.memory: 50Gi
+    limits.memory: 50Gi

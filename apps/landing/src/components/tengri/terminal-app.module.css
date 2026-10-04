@@ -1,0 +1,9 @@
+.terminal :global(.xterm) {
+  height: 100%;
+  background-color: inherit;
+}
+
+.terminal :global(.xterm .xterm-viewport) {
+  background-color: inherit;
+  scrollbar-color: rgb(255 255 255 / 0.2) transparent;
+}
