@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/version: v2026.9.7
 spec:
   serviceName: hermes
-  replicas: 1
+  replicas: 0
   podManagementPolicy: OrderedReady
   updateStrategy:
     type: RollingUpdate
@@ -336,7 +336,7 @@ spec:
             pullPolicy: IfNotPresent
         - name: lab-toolchain-image
           image:
-            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:1291a2f2bf5feaf926ed0633cd0cc3092f7428465bf719cbc7094047081aea32
+            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:cc970e0930c6ab55fd0b6560ba178d160b81e91dede32babe4faf9074002f47e
             pullPolicy: IfNotPresent
         - name: tools
           emptyDir:

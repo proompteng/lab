@@ -76,7 +76,11 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
   if (observation.outcome === 'WINDOW_CLOSED') {
     return { _tag: 'Waiting', reason: { _tag: 'WindowClosed' } }
   }
-  if ((result?.outcome === 'RECOVERED' && result.action === 'WAITING') || observation.recoveryAction === 'WAITING') {
+  if (
+    observation.outcome === 'WAITING' ||
+    (result?.outcome === 'RECOVERED' && result.action === 'WAITING') ||
+    observation.recoveryAction === 'WAITING'
+  ) {
     return { _tag: 'Waiting', reason: { _tag: 'RecoveryWaiting' } }
   }
   if ((result?.outcome === 'RECOVERED' && result.action === 'BLOCKED') || observation.recoveryAction === 'BLOCKED') {

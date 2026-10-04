@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rook-ceph-host-metrics-alloy
+  labels:
+    app.kubernetes.io/name: rook-ceph-host-metrics-alloy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rook-ceph-host-metrics-alloy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rook-ceph-host-metrics-alloy
+    spec:
+      # Reuse the existing host-access namespace; do not weaken namespace policy.
+      # Network namespace access does not grant a privileged container or host PID access.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 473
+        runAsGroup: 473
+        fsGroup: 473
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: alloy
+          # Same reviewed multi-architecture image as the cluster metrics collector.
+          image: grafana/alloy:v1.19.2
+          args:
+            - run
+            - --server.http.listen-addr=127.0.0.1:12346
+            - --storage.path=/var/lib/alloy
+            - /etc/alloy/config.river
+          workingDir: /var/lib/alloy
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /-/ready
+              port: 12346
+          livenessProbe:
+            httpGet:
+              host: 127.0.0.1
+              path: /-/healthy
+              port: 12346
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: rook-ceph-host-metrics-alloy
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: data
+          emptyDir:
+            sizeLimit: 512Mi

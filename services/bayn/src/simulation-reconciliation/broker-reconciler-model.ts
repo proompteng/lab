@@ -1,14 +1,6 @@
 import { Cause, Data, Result, pipe } from 'effect'
 
-import type {
-  Account as BrokerAccount,
-  BrokerReadError,
-  FillActivity,
-  Order as BrokerOrder,
-  Position as BrokerPosition,
-  ReadEvidence,
-  ReadResult,
-} from '../broker/alpaca'
+import type { BrokerReadError, Observed } from '../broker/alpaca'
 import {
   renderBrokerObservationError,
   sourceTimestamp,
@@ -30,27 +22,7 @@ export const ordersPageSize = 500
 export const fillsPageSize = 100
 export const incompletePassReason = reconciliationIncompleteRestrictionReason
 
-export interface Observed<A> {
-  readonly value: A
-  readonly evidence: ReadEvidence
-}
-
-export interface OrderRead {
-  readonly rows: readonly Observed<BrokerOrder>[]
-  readonly observedAt: string
-}
-
-export interface BrokerHistory {
-  readonly orders: OrderRead
-  readonly fills: readonly Observed<FillActivity>[]
-  readonly fees: readonly Observed<import('../broker/alpaca').FeeActivity>[]
-}
-
-export interface StableBrokerSnapshot {
-  readonly account: ReadResult<BrokerAccount>
-  readonly positions: ReadResult<readonly BrokerPosition[]>
-  readonly history: BrokerHistory
-}
+export type { BrokerHistory, Observed, OrderRead, StableBrokerSnapshot } from '../broker/alpaca/model'
 
 export type AccountEventInput = Extract<BrokerEventInput, { readonly _tag: 'Account' }>
 export type OrderEventInput = Extract<BrokerEventInput, { readonly _tag: 'Order' }>

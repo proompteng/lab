@@ -81,6 +81,17 @@ async fn editor_browser_acceptance_fixture() {
             )
         }
     });
+    let files_state = state.clone();
+    let files = get(move |Query(query): Query<HashMap<String, String>>| {
+        let state = files_state.clone();
+        async move {
+            let guest = GuestClient::for_agent(state.client.clone(), "tengri", "editor-fixture")
+                .await
+                .unwrap();
+            let files = guest.list_files(query.get("path").unwrap()).await.unwrap();
+            axum::Json(json!({"path": files.path, "entries": files.entries}))
+        }
+    });
     let revoke_state = state.clone();
     let revoke = post(move |axum::Json(value): axum::Json<Value>| {
         let state = revoke_state.clone();
@@ -108,6 +119,7 @@ async fn editor_browser_acceptance_fixture() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let control = control_router(state.clone())
         .route("/_test/editor", issue)
+        .route("/_test/files", files)
         .route("/_test/revoke", revoke)
         .route("/_test/revoke-editors", revoke_editors)
         .route(

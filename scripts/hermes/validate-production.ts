@@ -352,7 +352,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
   requireTerms(failures, productionPaths.backupCronJob, files.backupCronJob, [
     'kind: CronJob',
-    'suspend: false',
+    'suspend: true',
     'concurrencyPolicy: Forbid',
     'backoffLimit: 3',
     'restartPolicy: OnFailure',
@@ -759,8 +759,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
     'toolchain_bin=/opt/lab-toolchain/bin',
     'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
-    'check_tool_version bun 1.4.0 "$toolchain_bin/bun" --version',
-    'check_tool_version bunx 1.4.0 "$toolchain_bin/bunx" --version',
+    'check_tool_version bun 1.4.2 "$toolchain_bin/bun" --version',
+    'check_tool_version bunx 1.4.2 "$toolchain_bin/bunx" --version',
     'check_tool_version go \'go version go1.25.5 linux/amd64\' "$toolchain_bin/go" version',
     'check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template \'{{.Version}}\'',
     'check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version',
@@ -863,7 +863,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
     '/opt/data/workspace/tuslagch/lab',
     'GitHub CLI `2.96.0` and Git are authenticated as `tuslagch`',
-    'Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`',
+    'Node `24.11.1`, Bun/Bunx `1.4.2`, Go `1.25.5`',
     '/opt/lab-toolchain/bin',
   ])
   requireTerms(failures, productionPaths.readme, files.readme, [
@@ -1166,20 +1166,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- .spec.volumeClaimTemplates[].spec.volumeMode',
     '- .spec.volumeClaimTemplates[].status',
     'external-secrets.proompteng.ai/enabled: "true"',
-    'observability.proompteng.ai/hermes-rollout-enabled: "true"',
+    'observability.proompteng.ai/hermes-rollout-enabled: "false"',
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
   ])
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, ['  replicas: 0\n'])
+  requireTerms(failures, productionPaths.egressProxy, files.egressProxy, ['  replicas: 0\n'])
   const hermesAutomation = hermesApplication.match(/^\s+automation: ([^\r\n]+)$/m)?.[1]?.trim()
-  if (hermesAutomation === 'auto') {
-    requireTerms(failures, productionPaths.platform, hermesApplication, [
-      'targetRevision: kargo/hermes-toolchain',
-      'kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
-    ])
-  } else if (hermesAutomation !== 'manual') {
+  requireTerms(failures, productionPaths.platform, hermesApplication, ['targetRevision: main'])
+  if (hermesAutomation !== 'auto' && hermesAutomation !== 'manual') {
     failures.push(`${productionPaths.platform}: Hermes automation must be exactly auto or manual`)
   }
   forbidTerms(failures, productionPaths.platform, hermesApplication, [
+    'kargo.akuity.io/authorized-stage:',
     'group: coordination.k8s.io',
     'kind: Lease',
     'name: hermes-maintenance',
@@ -1246,7 +1245,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(command -v bun)" = /opt/lab-toolchain/bin/bun',
     'test "$(command -v go)" = /opt/lab-toolchain/bin/go',
     'test "$(node --version)" = v24.11.1',
-    'test "$(bun --version)" = 1.4.0',
+    'test "$(bun --version)" = 1.4.2',
     'test "$(go version)" = "go version go1.25.5 linux/amd64"',
     'bun run scripts/hermes/validate-production.ts',
     'shellcheck argocd/applications/hermes/*.sh',
@@ -1674,10 +1673,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'alert: HermesGatewayUnavailable',
     'alert: HermesEgressProxyUnavailable',
     'alert: HermesBackupStale',
-    'record: hermes_rollout_enabled',
-    'kube_argocd_application_deployment_history_info{',
-    'namespace="argocd"',
-    'application="hermes"',
+    'record: hermes_rollout_enabled\n            expr: vector(0)',
     'absent(\n                  kube_statefulset_status_replicas_ready{',
     'absent(\n                  kube_deployment_status_replicas_available{',
     'time() - kube_cronjob_status_last_successful_time{',

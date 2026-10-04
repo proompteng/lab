@@ -4,13 +4,7 @@ import { Effect, Exit, Fiber, Layer } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from './effect-test-support'
-import {
-  AuthenticationError,
-  AuthorizationError,
-  ConnectionError,
-  SqlError,
-  UnknownError,
-} from 'effect/unstable/sql/SqlError'
+import { AuthenticationError, AuthorizationError, ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError'
 
 import { CycleObservabilityError } from './cycle/store'
 import { DatabaseError } from './db/database-error'

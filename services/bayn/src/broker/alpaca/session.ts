@@ -1,5 +1,5 @@
 import { Clock, Context, Data, Duration, Effect, Layer, pipe } from 'effect'
-import { HttpClient } from 'effect/unstable/http'
+import { HttpClient } from 'effect/http'
 
 import type { BrokerConnection } from '../connection'
 import { BrokerReadError } from './failures'
@@ -8,6 +8,8 @@ import { BrokerRead, type BrokerReadShape, type ReadPreflight } from './model'
 import { BrokerAccountPreflightError, verifyReadAccess } from './preflight'
 import { mapLayerAcquisitionError } from '../../resource-boundary'
 import { Pipeable } from '../../pipeable'
+import { makeProjectedBrokerRead } from './snapshot-cache'
+import { BrokerObservations } from './observed-snapshot'
 
 export enum BrokerSessionAcquisitionStage {
   Connection = 'CONNECTION',
@@ -142,6 +144,27 @@ export const layer = (
   ).pipe(Layer.provideMerge(session))
 }
 
+export const cachedLayer = (
+  connection: BrokerConnection,
+): Layer.Layer<
+  BrokerSession | BrokerRead,
+  BrokerSessionAcquisitionError,
+  HttpClient.HttpClient | BrokerObservations
+> => {
+  const session = Layer.effect(
+    BrokerSession,
+    Effect.gen(function* () {
+      const verified = yield* acquireBrokerSession(connection)
+      const read = yield* makeProjectedBrokerRead(verified.read)
+      return Object.freeze({ ...verified, read })
+    }),
+  )
+  return Layer.effect(
+    BrokerRead,
+    Effect.map(BrokerSession, (value) => value.read),
+  ).pipe(Layer.provideMerge(session))
+}
+
 const mapHttpAcquisitionErrorDataFirst = (
   connection: BrokerConnection,
   http: Layer.Layer<HttpClient.HttpClient, BrokerReadError>,
@@ -152,5 +175,5 @@ export const mapHttpAcquisitionError = Pipeable.dual(2, mapHttpAcquisitionErrorD
 
 export const live = (
   connection: BrokerConnection,
-): Layer.Layer<BrokerSession | BrokerRead, BrokerSessionAcquisitionError> =>
-  layer(connection).pipe(Layer.provide(mapHttpAcquisitionError(connection, alpacaHttpLayer(connection))))
+): Layer.Layer<BrokerSession | BrokerRead, BrokerSessionAcquisitionError, BrokerObservations> =>
+  cachedLayer(connection).pipe(Layer.provide(mapHttpAcquisitionError(connection, alpacaHttpLayer(connection))))

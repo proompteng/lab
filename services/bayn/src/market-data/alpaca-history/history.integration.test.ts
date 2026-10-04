@@ -4,7 +4,7 @@ import { expect, test } from 'bun:test'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { NodeServices } from '@effect/platform-node'
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Result, Schema } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http'
+import { HttpClient, HttpClientResponse } from 'effect/http'
 import { backfillAlpacaHistory } from '../../../tools/backfill'
 import { publishHistoricalDataset, restoreHistoricalDataset } from '../../../tools/history-store'
 import { exportHistoricalDataset } from '../../../tools/history-export'
@@ -22,7 +22,7 @@ import { historyFixtureCredentials, historyFixtureHttp, historyFixtureRequest } 
 
 const settings = Effect.runSync(
   Config.all({
-    jar: Config.option(Config.string('BAYN_TEST_DORVUD_JAR')),
+    jar: Config.option(Config.String('BAYN_TEST_DORVUD_JAR')),
   }),
 )
 const featureTest = Option.isSome(settings.jar) ? test : test.skip

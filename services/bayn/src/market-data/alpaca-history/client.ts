@@ -1,5 +1,5 @@
 import { Clock, Duration, Effect, FileSystem, Option, Redacted, Ref, Result, Schema, Semaphore } from 'effect'
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http'
+import { HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result, canonicalJsonV1Result, renderCanonicalJsonFailure, sha256 } from '../../hash'
 import { utcInstantFromEpochMillis } from '../../time'

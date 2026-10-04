@@ -1,6 +1,6 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import { Cause, Config, Context, Effect, Exit, Layer, Logger, Option } from 'effect'
-import { OtlpSerialization, OtlpTracer } from 'effect/unstable/observability'
+import { OtlpSerialization, OtlpTracer } from 'effect/observability'
 import { operationCurrentTimeMillis } from './operation-timeout'
 
 export type OtlpTraceEndpoint =
@@ -82,7 +82,7 @@ const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
   }).pipe(Layer.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, OtlpSerialization.layerProtobuf)))
 
 const optionalText = (name: string) =>
-  Config.option(Config.string(name)).pipe(
+  Config.option(Config.String(name)).pipe(
     Config.map(Option.getOrUndefined),
     Config.map((value) => value?.trim() || undefined),
   )

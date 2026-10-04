@@ -34,8 +34,8 @@ const main = Effect.scoped(
     if ((mode !== 'crash' && mode !== 'recover') || checkpointPath === undefined || resultPath === undefined)
       return yield* new ReplayBrokerFailure({ message: 'Invalid restart acceptance arguments' })
     const runId = yield* Schema.decodeUnknownEffect(Sha256Schema)(rawRunId)
-    const postgresUrl = yield* Config.redacted('BAYN_TEST_POSTGRES_URL')
-    const tigerAddress = yield* Config.string('BAYN_TEST_TIGERBEETLE_ADDRESS')
+    const postgresUrl = yield* Config.Redacted('BAYN_TEST_POSTGRES_URL')
+    const tigerAddress = yield* Config.String('BAYN_TEST_TIGERBEETLE_ADDRESS')
     if (!Redacted.value(postgresUrl).endsWith('/bayn_test'))
       return yield* new ReplayBrokerFailure({
         message: 'Restart acceptance requires its disposable bayn_test database',

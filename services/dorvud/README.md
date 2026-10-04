@@ -19,6 +19,9 @@ active after the market closes and while the WebSocket reconnects, refreshing re
 It first checks `BARS_BACKFILL_LOOKBACK_HOURS`,
 then uses five-minute overlapping windows. It repeats the full lookback hourly and when the requested symbols change.
 Every request page uses the same completed-minute cutoff. Each pass has a 60-second deadline.
+Recovery runs on the blocking-I/O dispatcher and interrupts a blocked Kafka enqueue when canceled. Undispatched
+batches retain enqueue order, and a bar is acknowledged only after Kafka confirms publication. A timeout or shutdown
+does not pin the caller's dispatcher or mark an unacknowledged bar as recovered.
 
 Recovery publishes only provider-supplied completed bars that this process has not acknowledged in Kafka. A failed
 request, malformed page or failed acknowledgement leaves the scan incomplete for retry. It does not invent bars for

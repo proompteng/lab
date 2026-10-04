@@ -173,3 +173,5 @@ printf 'export const version = "0.11.4"\n' > "${metadata_fixture}/after/packages
   bun -e 'const pkg = await Bun.file("packages/sdk/package.json").json(); if (pkg.version !== "0.11.4" || !pkg.scripts.release) throw new Error("Stale workspace manifest")'
 )
 printf 'release metadata preserved the dependency closure hash and current workspace resolution\n'
+
+bash "${repo_root}/nix/images/relativize-bun-cache.test.sh"

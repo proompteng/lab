@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Clock, Effect, Exit, Option, Result } from 'effect'
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -40,8 +40,37 @@ import {
   type RiskDecision,
 } from './contracts'
 import type { StoredIntent } from './intents'
-import { authorizeFinalBrokerSubmit, makeExecutionProgram, type ExecutionProgramDependencies } from './runtime-program'
+import {
+  authorizeFinalBrokerSubmit as authorizeCachedFinalBrokerSubmit,
+  makeExecutionProgram,
+  type ExecutionProgramDependencies,
+} from './runtime-program'
+import {
+  cachedBrokerStateFixture,
+  nativeBrokerStateFixture,
+  submissionProjectionFixture,
+} from './broker-state-cache.fixture'
+import { makeBrokerStateCache } from './broker-state-cache'
 import { WriterFenceError } from './writer-fence'
+
+const authorizeFinalBrokerSubmit = <A, E, R>(
+  authority: Parameters<typeof makeExecutionProgram>[0] & { brokerAccess: BrokerAccess.Mutation },
+  intent: Intent,
+  transmit: Effect.Effect<A, E, R>,
+  deps: ExecutionProgramDependencies,
+) =>
+  authorizeCachedFinalBrokerSubmit(authority, intent, transmit, {
+    ...deps,
+    brokerRead: submissionProjectionFixture(deps.brokerRead),
+    brokerStateCache: {
+      ...deps.brokerStateCache,
+      take: () =>
+        Effect.all([deps.brokerRead.positions, deps.brokerRead.orders()]).pipe(
+          Effect.orDie,
+          Effect.map(([positions, orders]) => cachedBrokerStateFixture(brokerAccount(), positions.value, orders.value)),
+        ),
+    },
+  })
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const authorityGenerationHash = '1'.repeat(64)
@@ -85,6 +114,12 @@ const identity = (environment: BrokerEnvironment) =>
   )
 
 const dependencies = (label: string): ExecutionProgramDependencies => ({
+  brokerStateCache: {
+    record: () => Effect.void,
+    invalidate: Effect.void,
+    take: () => Effect.succeed(cachedBrokerStateFixture(brokerAccount())),
+  },
+  verifyBrokerStateVersion: () => Effect.void,
   brokerRead: stableBrokerRead(),
   brokerMutation: {
     submit: () => Effect.die(new Error(`${label} submit must not run during composition proof`)),
@@ -143,7 +178,7 @@ const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
 
 const stableBrokerRead = (positions: readonly Position[] = [], account: Account = brokerAccount()): BrokerReadShape => {
   const unusedRead = Effect.die(new Error('stable broker fixture used an unrelated broker read'))
-  return {
+  return submissionProjectionFixture({
     account: Effect.succeed(readResult(account)),
     accountConfiguration: unusedRead,
     assetBySymbol: () => unusedRead,
@@ -154,7 +189,7 @@ const stableBrokerRead = (positions: readonly Position[] = [], account: Account 
     feeActivities: () => unusedRead,
     fillActivities: () => unusedRead,
     marketCalendar: () => unusedRead,
-  }
+  })
 }
 
 const finalLiveFixture = () => {
@@ -1197,7 +1232,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(finalAuthorizationFailureTag(exit)).toBe('BrokerPositionSnapshotChanged')
-    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions'])
+    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'account'])
     expect(posts).toBe(0)
   })
 
@@ -1261,7 +1296,7 @@ describe('same-code execution program composition', () => {
     )
 
     expect(exit._tag).toBe('Success')
-    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'positions', 'orders', 'account'])
+    expect(trace).toEqual(['lock', 'positions', 'orders', 'positions', 'orders', 'account'])
     expect(posts).toBe(1)
   })
 
@@ -1554,3 +1589,171 @@ for (const phase of [
     }
   })
 }
+
+describe('execution with the native reconciliation cache', () => {
+  const setup = () => {
+    const fixture = finalLiveFixture()
+    const cache = makeBrokerStateCache(accountId, authorityGenerationHash)
+    const base = dependencies('native-cache')
+    const deps: ExecutionProgramDependencies = {
+      ...base,
+      brokerStateCache: cache,
+      intentStore: { ...base.intentStore, read: () => Effect.succeed(Option.some(fixture.stored)) },
+      mutationStore: { ...base.mutationStore, authorizeSubmit: () => Effect.void },
+      writerFence: { check: Effect.void, transaction: (effect) => effect },
+      persistedCapitalGrants: {
+        ...base.persistedCapitalGrants,
+        lockForSubmit: () => Effect.succeed(grantedCapitalAuthority(fixture.grant)),
+      },
+    }
+    return { fixture, cache, deps }
+  }
+  test.each(['empty', 'stale', 'changed-version'])(
+    'denies %s cache before broker confirmation or transmission',
+    async (scenario) => {
+      const { fixture, cache, deps } = setup()
+      let reads = 0
+      let posts = 0
+      if (scenario !== 'empty')
+        await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+      const changed: ExecutionProgramDependencies = {
+        ...deps,
+        ...(scenario === 'stale' ? { riskPolicy: { ...riskPolicy, maxBrokerStateAgeMs: 1 } } : {}),
+        currentUtcInstant: Effect.succeed(scenario === 'stale' ? '2026-07-28T08:00:01.000Z' : observedAt),
+        verifyBrokerStateVersion: () =>
+          scenario === 'changed-version' ? Effect.fail({ _tag: 'ChangedVersion' }) : Effect.void,
+        brokerRead: {
+          ...deps.brokerRead,
+          positions: Effect.sync(() => {
+            reads += 1
+            return readResult([])
+          }),
+        },
+      }
+      // The stale bound is part of the intent's verified policy, so bind the updated policy hash too.
+      const policyHash = Result.getOrThrow(canonicalHashV1Result(changed.riskPolicy))
+      const intent = { ...fixture.intent, policyHash }
+      if (fixture.stored.decision === undefined) throw new Error('missing risk approval')
+      const stored = { ...fixture.stored, intent, decision: { ...fixture.stored.decision, policyHash } }
+      const exit = await Effect.runPromiseExit(
+        authorizeCachedFinalBrokerSubmit(
+          fixture.authority,
+          intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          { ...changed, intentStore: { ...changed.intentStore, read: () => Effect.succeed(Option.some(stored)) } },
+        ),
+      )
+      expect(finalAuthorizationFailureTag(exit)).toBe(
+        scenario === 'changed-version' ? 'ChangedVersion' : 'BrokerStateCacheUnavailable',
+      )
+      expect(reads).toBe(0)
+      expect(posts).toBe(0)
+    },
+  )
+  test.each(['cash', 'positions'])('rejects external %s drift from the reconciled cut', async (source) => {
+    const { fixture, cache, deps } = setup()
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+    let posts = 0
+    const exit = await Effect.runPromiseExit(
+      authorizeCachedFinalBrokerSubmit(
+        fixture.authority,
+        fixture.intent,
+        Effect.sync(() => {
+          posts += 1
+        }),
+        {
+          ...deps,
+          brokerRead: stableBrokerRead(
+            source === 'positions' ? [brokerPosition()] : [],
+            brokerAccount(source === 'cash' ? { cashMicros: '900000000' } : {}),
+          ),
+        },
+      ),
+    )
+    expect(finalAuthorizationFailureTag(exit)).toBe(
+      source === 'cash' ? 'BrokerAccountSnapshotChanged' : 'BrokerPositionSnapshotChanged',
+    )
+    expect(posts).toBe(0)
+    expect(Exit.isFailure(await Effect.runPromiseExit(cache.take(observedAt, 1000)))).toBe(true)
+  })
+  test('normal final submission never calls the direct broker reader', async () => {
+    const { fixture, cache, deps } = setup()
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+    let directReads = 0
+    const direct = stableBrokerRead([], brokerAccount())
+    const read = {
+      ...direct,
+      projection: {
+        fresh: {
+          ...direct,
+          account: Effect.sync(() => {
+            directReads += 1
+          }).pipe(Effect.andThen(direct.account)),
+          positions: Effect.sync(() => {
+            directReads += 1
+          }).pipe(Effect.andThen(direct.positions)),
+          orders: (query: Parameters<typeof direct.orders>[0]) =>
+            Effect.sync(() => {
+              directReads += 1
+            }).pipe(Effect.andThen(direct.orders(query))),
+        },
+        invalidate: Effect.void,
+        withMutation: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+        snapshot: Effect.die('not used by this final confirmation fixture'),
+        submissionSnapshot: () =>
+          Effect.succeed({
+            account: readResult(brokerAccount()),
+            positions: readResult([]),
+            openOrders: readResult([]),
+          }),
+      },
+    }
+    await Effect.runPromise(
+      authorizeCachedFinalBrokerSubmit(fixture.authority, fixture.intent, Effect.void, { ...deps, brokerRead: read }),
+    )
+    expect(directReads).toBe(0)
+  })
+  test('interrupting confirmation cancels the broker read and keeps the reservation consumed', async () => {
+    const { fixture, cache, deps } = setup()
+    await Effect.runPromise(cache.record(nativeBrokerStateFixture(cachedBrokerStateFixture(brokerAccount()))))
+    let cancelled = false
+    let posts = 0
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>()
+        const attempt = yield* authorizeCachedFinalBrokerSubmit(
+          fixture.authority,
+          fixture.intent,
+          Effect.sync(() => {
+            posts += 1
+          }),
+          {
+            ...deps,
+            brokerRead: {
+              ...deps.brokerRead,
+              projection: {
+                ...submissionProjectionFixture(deps.brokerRead).projection!,
+                submissionSnapshot: () =>
+                  Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        cancelled = true
+                      }),
+                    ),
+                  ),
+              },
+            },
+          },
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(attempt)
+        expect(Exit.isFailure(yield* cache.take(observedAt, 1000).pipe(Effect.exit))).toBe(true)
+      }).pipe(Effect.scoped),
+    )
+    expect(cancelled).toBe(true)
+    expect(posts).toBe(0)
+  })
+})
