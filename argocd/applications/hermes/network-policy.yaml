@@ -36,6 +36,8 @@ spec:
       ports:
         - protocol: TCP
           port: 8642
+        - protocol: TCP
+          port: 9119
     - from:
         - namespaceSelector:
             matchLabels:
