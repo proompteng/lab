@@ -70,8 +70,12 @@ install_tools() {
   for command in nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
   done
-  "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
-    '+if v:errmsg != "" | cquit 1 | endif' +qa
+  if ! "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
+    '+if v:errmsg != "" | cquit 1 | endif' +qa; then
+    HOMEBREW_NO_ASK=1 "$prefix/bin/brew" upgrade --formula --force-bottle neovim
+    "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
+      '+if v:errmsg != "" | cquit 1 | endif' +qa
+  fi
   local config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
   mkdir -p "$config"
   if [[ ! -e "$config/init.lua" && ! -e "$config/init.vim" ]]; then

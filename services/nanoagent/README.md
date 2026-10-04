@@ -112,7 +112,8 @@ the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without su
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
 for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
-Subsequent boots reuse installed packages; missing baseline formulae are installed without upgrading existing ones.
+Subsequent boots reuse installed packages and install missing baseline formulae. Neovim is upgraded when it is below
+AstroNvim's required 0.11 minimum; other installed baseline formulae are reused.
 Cold installation requires GitHub and Homebrew registry access and fails startup if installation or validation fails.
 
 Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
