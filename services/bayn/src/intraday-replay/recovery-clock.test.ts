@@ -31,6 +31,45 @@ const makeFixtureFence = (requested = Effect.void) =>
 
 const advanceClock = Clock.currentTimeMillis.pipe(Effect.flatMap((now) => TestClock.setTime(now + 1)))
 
+test.each(['failure', 'interruption'] as const)(
+  'recovery %s releases the fence without a completion tick',
+  async (mode) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(initial)
+        const fence = yield* makeFixtureFence()
+        const entered = yield* Deferred.make<void>()
+        const recovery = reconcileRecoveryFixture({
+          writerFence: fence,
+          advanceClock,
+          reconcile: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(mode === 'failure' ? Effect.fail('synthetic reconciliation failure') : Effect.never),
+          ),
+        })
+        const worker = yield* recovery.pipe(Effect.exit, Effect.forkChild)
+        yield* Deferred.await(entered)
+        if (mode === 'interruption') yield* Fiber.interrupt(worker)
+        else expect((yield* Fiber.join(worker))._tag).toBe('Failure')
+        expect(timestamp(yield* Clock.currentTimeMillis)).toBe('2026-09-04T19:59:03.011Z')
+        let reconciledAt = initial
+        yield* reconcileRecoveryFixture({
+          writerFence: fence,
+          advanceClock,
+          reconcile: Clock.currentTimeMillis.pipe(
+            Effect.tap((now) =>
+              Effect.sync(() => {
+                reconciledAt = now
+              }),
+            ),
+          ),
+        })
+        expect(timestamp(reconciledAt)).toBe('2026-09-04T19:59:03.012Z')
+        expect(timestamp(yield* Clock.currentTimeMillis)).toBe('2026-09-04T19:59:03.013Z')
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+    )
+  },
+)
+
 test('concurrent recovery cannot advance the clock inside another reconciliation transaction', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
