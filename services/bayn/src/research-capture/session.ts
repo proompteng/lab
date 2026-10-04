@@ -41,6 +41,7 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
       expectedPartitions: config.expectedPartitions,
     }
     let state: SessionState = { phase: 'waiting' }
+    const isFinished = () => state.phase === 'finished'
     let lastNow = clock.currentTimeMillisUnsafe()
     const finish = (reason?: CaptureInvalidation) =>
       Effect.suspend(() => {
@@ -118,10 +119,9 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
       if (Result.isSuccess(cut)) yield* finish()
     })
     yield* Effect.gen(function* () {
-      const finished = () => state.phase === 'finished'
-      while (!finished()) {
+      while (!isFinished()) {
         yield* tick
-        if (!finished()) {
+        if (!isFinished()) {
           const now = yield* Clock.currentTimeMillis
           const next = [
             config.bootstrapDeadlineMs,
@@ -159,6 +159,10 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
           state = { phase: 'acquiring' }
           return Effect.gen(function* () {
             const objectStore = yield* objects
+            if (state.phase !== 'acquiring') return
+            const acquiredAtMs = clock.currentTimeMillisUnsafe()
+            if (acquiredAtMs < now) return yield* finish(CaptureInvalidation.ClockReversed)
+            if (acquiredAtMs >= config.bootstrapDeadlineMs) return yield* finish(CaptureInvalidation.MissedBootstrap)
             const recorder = yield* makeResearchCaptureRecorder(
               store,
               {
@@ -175,7 +179,7 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
               },
               objectStore,
             )
-            if (state.phase === 'finished') {
+            if (isFinished()) {
               recorder.invalidate(CaptureInvalidation.MissedBootstrap)
               yield* recorder.finish
               return

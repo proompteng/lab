@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Clock, ConfigProvider, Effect, Exit, Fiber, Result, type Scope } from 'effect'
+import { Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, Result, type Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
@@ -263,6 +263,28 @@ test('a capture acquisition clock defect cannot fail or acquire resources for na
       expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.Persistence })
       expect(saved.writes).toEqual([])
       expect(yield* Effect.succeed('native result')).toBe('native result')
+    }),
+  ))
+
+test('S3 acquisition that crosses the bootstrap deadline cannot claim or export after the attempt finishes', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(sessionStart)
+      const saved = sessionMemory()
+      const objects = yield* Deferred.make<typeof saved.objectStore>()
+      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+      const acquiring = yield* session
+        .start(saved.store, Deferred.await(objects), sessionUniverse)
+        .pipe(Effect.forkChild)
+      yield* Effect.yieldNow
+      expect(yield* session.status).toEqual({ phase: 'acquiring' })
+      yield* TestClock.adjust(5000)
+      expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.MissedBootstrap })
+      yield* Deferred.succeed(objects, saved.objectStore)
+      yield* Fiber.join(acquiring)
+      expect(saved.writes).toEqual([])
+      expect(session.workerObserver).toBeUndefined()
+      expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.MissedBootstrap })
     }),
   ))
 
