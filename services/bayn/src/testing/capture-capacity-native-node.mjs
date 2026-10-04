@@ -9,6 +9,7 @@ import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../hash.ts'
 import { observeConsumedRecords } from './capture-capacity-iterator.ts'
+import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
@@ -27,6 +28,8 @@ const planBytes = readFileSync(process.argv[2])
 const plan = JSON.parse(planBytes)
 const expectedPlanHash = process.argv[5]
 assert.equal(sha256(planBytes), expectedPlanHash)
+const profileEnabled = process.env.BAYN_TEST_CAPTURE_CPU_PROFILE === '1'
+if (profileEnabled) console.log(JSON.stringify({ instrumentedDiagnostic: true, capacityQualification: false }))
 const sourceTopics = JSON.parse(readFileSync(process.argv[3], 'utf8'))
 const execution = JSON.parse(readFileSync(process.argv[4], 'utf8'))
 const username = process.env.BAYN_TEST_KAFKA_USERNAME
@@ -313,12 +316,14 @@ const program = Effect.gen(function* () {
           assert.ok(arm.chargedBytes <= plan.limits.maximumCombinedAttemptedSinkBytesPerArm)
         }
         const sinkTimings = {}
+        let cpuProfile
         let activeSink = null
         let lastChunk = null
         const timedSink = (stage, bytes, operation) =>
           Effect.suspend(() => {
             const began = performance.now()
-            activeSink = { stage, bytes, began }
+            const profileCpuStart = cpuProfile?.window.stoppedAt === null ? wholeProcessCpuMicros() : undefined
+            activeSink = { stage, bytes, began, profileCpuStart }
             return operation.pipe(
               Effect.onExit((exit) =>
                 Effect.sync(() => {
@@ -329,6 +334,16 @@ const program = Effect.gen(function* () {
                   value.bytes += bytes
                   value.totalMs += ms
                   value.maximumMs = Math.max(value.maximumMs, ms)
+                  if (profileCpuStart !== undefined) {
+                    value.profiledCalls = (value.profiledCalls ?? 0) + 1
+                    value.diagnosticWholeProcessCpuMs =
+                      (value.diagnosticWholeProcessCpuMs ?? 0) +
+                      ((cpuProfile.window.cpuEnd ?? wholeProcessCpuMicros()) - profileCpuStart) / 1000
+                    value.diagnosticProfileWindowWallMs =
+                      (value.diagnosticProfileWindowWallMs ?? 0) +
+                      Math.min(performance.now(), cpuProfile.window.stoppedAt ?? Infinity) -
+                      began
+                  }
                   activeSink = null
                 }),
               ),
@@ -519,6 +534,7 @@ const program = Effect.gen(function* () {
               invalidatedAtCount = recordCount
               firstInvalidation = structuredClone({ ...snapshot(), observedAtMs: Date.now(), recordCount })
               console.log(JSON.stringify({ captureFirstInvalidation: firstInvalidation }))
+              if (cpuProfile !== undefined) void cpuProfile.stop('invalidation')
             }
           } catch (error) {
             diagnosticFailure = error
@@ -697,8 +713,15 @@ const program = Effect.gen(function* () {
           ),
           Effect.forkChild,
         )
+        if (profileEnabled && name === 'normal-0-enabled')
+          cpuProfile = yield* Effect.acquireRelease(Effect.promise(startCapacityCpuProfile), (profile) =>
+            Effect.promise(async () => {
+              console.log(JSON.stringify({ capacityCpuProfile: await profile.stop('finalization') }))
+            }),
+          )
         cpuStart = cpuMicros()
         started = performance.now()
+        if (cpuProfile !== undefined) cpuProfile.window.inputStartOffsetMs = started - cpuProfile.window.startedAt
         inputStartSinkBaseline = structuredClone({
           completedOperations: sinkTimings,
           activeOperation:
@@ -1057,7 +1080,7 @@ try {
   )
   console.log(
     JSON.stringify({
-      capacityResult: 'PASS',
+      capacityResult: profileEnabled ? 'INSTRUMENTED_DIAGNOSTIC_ONLY' : 'PASS',
       planHash: sha256(planBytes),
       totalRecords,
       memoryPeakBytes: memoryPeak(),
