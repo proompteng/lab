@@ -137,6 +137,7 @@ type MockOptions = {
   codexAuthenticated?: boolean
   codexModels?: typeof codexModelFixtures
   failCodexModels?: boolean
+  failSendTurnOnce?: boolean
   legacyCodexModels?: boolean
   paginateCodexModels?: boolean
   deferSleepReconciliation?: boolean
@@ -169,6 +170,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let resumeThreadResponses = 0
   let codexAccountFailuresReleased = !options.failCodexAccountUntilReleased
   let heldCodexAccountRequest = false
+  let sendTurnFailuresRemaining = options.failSendTurnOnce ? 1 : 0
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
   const readFileFailures = new Map<string, number>()
@@ -729,6 +731,11 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'send-turn':
+        if (sendTurnFailuresRemaining) {
+          sendTurnFailuresRemaining -= 1
+          await route.fulfill({ status: 503, json: { error: 'Temporary image send failure' } })
+          return
+        }
         result = { id: 'turn-1', threadId: action.threadId }
         break
       case 'sleep-agent':
@@ -4169,4 +4176,106 @@ test('makes device login readable and copyable at desktop and narrow widths', as
   expect(
     accessibility.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
   ).toEqual([])
+})
+
+const clipboardPng =
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGUlEQVR4nGOQy3v2nxLMMGrAqAGjBgwXAwBI3HEfWzO/eAAAAABJRU5ErkJggg=='
+
+async function pasteClipboardImage(page: Page, prompt: Locator) {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: desktopOrigin })
+  await page.bringToFront()
+  await page.evaluate(async (base64) => {
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })])
+  }, clipboardPng)
+  const expected = await page.evaluate(async () => {
+    const item = (await navigator.clipboard.read())[0]
+    const bytes = new Uint8Array(await (await item.getType('image/png')).arrayBuffer())
+    return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''))
+  })
+  await prompt.focus()
+  await prompt.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V')
+  return expected
+}
+
+test('pastes a real clipboard image, previews it, and sends an image-only message', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  const expected = await pasteClipboardImage(page, prompt)
+  const attachments = page.getByRole('list', { name: 'Image attachments' })
+  await expect(attachments.getByRole('img')).toHaveCount(1)
+  expect((await new AxeBuilder({ page }).include('[aria-label="Message composer"]').analyze()).violations).toEqual([])
+  await page.screenshot({ path: 'test-results/composer-image-attachment.png' })
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({ text: '', images: [{ mediaType: 'image/png', data: expected }] })
+  await expect(attachments).toHaveCount(0)
+})
+
+test('retains pasted images and text after a failed send and supports retry', async ({ page }) => {
+  const mock = await mockTengri(page, { failSendTurnOnce: true })
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  await prompt.fill('Inspect this screenshot')
+  await pasteClipboardImage(page, prompt)
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Chrome window' }).getByRole('alert')).toContainText(
+    'Temporary image send failure',
+  )
+  await expect(prompt).toHaveValue('Inspect this screenshot')
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(2)
+  await expect(page.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
+})
+
+test('steers with a clipboard image and keeps plain text paste native', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: desktopOrigin })
+  await page.evaluate(() => navigator.clipboard.writeText('Inspect the workspace'))
+  await prompt.focus()
+  await prompt.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V')
+  await expect(prompt).toHaveValue('Inspect the workspace')
+  await prompt.press('Enter')
+  const steering = page.getByRole('textbox', { name: 'Steer the current turn', exact: true })
+  await expect(steering).toBeEnabled()
+  const expected = await pasteClipboardImage(page, steering)
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'steer-turn'))
+    .toMatchObject({ text: '', images: [{ mediaType: 'image/png', data: expected }] })
+})
+
+test('bounds pasted images and removes attachments before sending', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  for (let count = 1; count <= 4; count += 1) {
+    await pasteClipboardImage(page, prompt)
+    await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(count)
+  }
+  await pasteClipboardImage(page, prompt)
+  await expect(page.getByRole('region', { name: 'Chrome window' }).getByRole('alert')).toContainText(
+    'Attach at most 4 images',
+  )
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(4)
+  for (let count = 4; count > 0; count -= 1) {
+    await page
+      .getByRole('button', { name: /Remove image/ })
+      .first()
+      .click()
+    await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(count - 1)
+  }
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
 })
