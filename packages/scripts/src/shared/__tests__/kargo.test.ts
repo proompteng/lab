@@ -166,6 +166,21 @@ const expected = {
       'nix/toolchain-doctor.sh',
     ],
   },
+  'temporal-worker': {
+    creationCriteria: 'single',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('temporal-worker')],
+    apps: ['temporal'],
+    includePaths: [
+      'services/temporal-worker',
+      '.github/workflows/temporal-worker-images.yml',
+      'argocd/applications/temporal',
+      'argocd/applications/kargo',
+      'argocd/applicationsets/platform.yaml',
+      'packages/scripts/src/shared/__tests__/kargo.test.ts',
+    ],
+  },
   rune: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -869,11 +884,11 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns Rune source discovery with both image build triggers', () => {
-    const warehouse = byName(warehouses).get('rune')
+  it.each(['rune', 'temporal-worker'])('aligns %s source discovery with both image build triggers', (name) => {
+    const warehouse = byName(warehouses).get(name)
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
       .includePaths
-    const workflow = YAML.parse(readFileSync('.github/workflows/rune-images.yml', 'utf8'))
+    const workflow = YAML.parse(readFileSync(`.github/workflows/${name}-images.yml`, 'utf8'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
       expect(sourcePaths).toEqual(buildPaths)
