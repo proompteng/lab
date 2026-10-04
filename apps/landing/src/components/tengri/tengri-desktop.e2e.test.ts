@@ -1506,8 +1506,10 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
   await selectCodexOption(page, model, 'GPT-5.6 Luna')
   await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Default (Low)')
   await reasoning.click()
+  await expect(page.getByRole('listbox')).toBeVisible()
   await expect(page.getByRole('option', { name: 'High', exact: true })).toHaveCount(0)
   await page.keyboard.press('Escape')
+  await expect(page.getByRole('listbox')).toHaveCount(0)
   await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected model')
   await chrome.getByRole('button', { name: 'Send message' }).click()
   await expect
@@ -2480,7 +2482,7 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
       kind: 'usage',
       method: 'account/rateLimits/updated',
       itemId: '',
-      text: 'Weekly: 90% left · Credits: 62,307',
+      text: 'Weekly 90% left · Credits: 62,307',
     },
     {
       sequence: 43,
@@ -2494,7 +2496,7 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
       kind: 'usage',
       method: 'account/rateLimits/updated',
       itemId: '',
-      text: 'Weekly: 88% left · Credits: 62,307',
+      text: 'Weekly 88% left · Credits: 62,307',
     },
     {
       sequence: 45,
@@ -2524,9 +2526,9 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
   await expect(page.getByText(progressText, { exact: true })).toHaveCount(1)
   await expect(page.getByText(finalText, { exact: true })).toHaveCount(1)
   await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Weekly: 90% left · Credits: 62,307', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Weekly 90% left · Credits: 62,307', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Tokens: 20 input · 6 output', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Weekly: 88% left · Credits: 62,307', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Weekly 88% left · Credits: 62,307', { exact: true })).toHaveCount(1)
   await expect(page.getByText('One oversized Codex event was omitted', { exact: true })).toHaveCount(1)
   await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
 })
