@@ -1,5 +1,58 @@
+import { ChildProcess, type ChildProcessByStdio } from 'node:child_process'
+import { PassThrough } from 'node:stream'
+import { jsonTextResult } from './results'
+import { REPLY_META_RESERVE_BYTES } from './constants'
 import { describe, expect, it, vi } from 'vitest'
-import { appendTail, outputFromOffset, ShellJobStore, tail, type ShellJob } from './jobs'
+import {
+  appendTail,
+  outputFromOffset,
+  ShellJobStore,
+  tail,
+  decodeOutputCursor,
+  encodeOutputCursor,
+  readJobOutput,
+  listJobMetadata,
+  type CompletedShellJob,
+  type RunningShellJob,
+} from './jobs'
+
+const completedJob = (id: string): CompletedShellJob => ({
+  kind: 'completed',
+  id,
+  ownerSubject: 'owner',
+  sessionId: null,
+  taskId: id,
+  agentId: null,
+  requestKey: id,
+  requestId: null,
+  toolCallId: null,
+  commandPreview: 'printf output',
+  commandHash: 'a'.repeat(64),
+  cwd: '/workspace',
+  startedAt: new Date().toISOString(),
+  finishedAt: new Date().toISOString(),
+  status: 'exited',
+  exitCode: 0,
+  signal: null,
+  stdout: tail(),
+  stderr: tail(),
+  outputCaptureError: null,
+  auditErrors: 0,
+})
+const runningJob = (id: string): RunningShellJob => {
+  const { status: _status, exitCode: _exitCode, signal: _signal, ...identity } = completedJob(id)
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  const stdio: ChildProcessByStdio<null, PassThrough, PassThrough>['stdio'] = [null, stdout, stderr, null, null]
+  return {
+    ...identity,
+    kind: 'running',
+    finishedAt: null,
+    termination: null,
+    timeout: null,
+    process: Object.assign(new ChildProcess(), { stdin: null, stdout, stderr, stdio }),
+  }
+}
 
 describe('shell output pages', () => {
   it('returns every retained byte exactly once in forward pages', () => {
@@ -110,15 +163,137 @@ describe('shell output pages', () => {
     expect(outputFromOffset(output, 0, 10).text).toBe('')
   })
 
-  it('bounds completed job history without evicting live jobs', () => {
+  it('retains a long job receipt after newer jobs finish and output history is full', () => {
     const store = new ShellJobStore()
-    const job = (id: string, live = false) =>
-      ({ id, finishedAt: live ? null : new Date().toISOString(), stdout: tail(), stderr: tail() }) as ShellJob
-    store.set('live', job('live', true))
-    for (let i = 0; i < 100; i += 1) store.set(String(i), job(String(i)))
-    expect(store.size).toBe(64)
+    const long = runningJob('live')
+    store.set('live', long)
+    for (let i = 0; i < 100; i += 1) store.set(String(i), completedJob(String(i)))
     expect(store.get('live')).toBeDefined()
-    expect(store.get('0')).toBeUndefined()
+    store.set('live', completedJob('live'))
+    store.set('next', completedJob('next'))
+    expect(store.get('live')).toBeDefined()
+    expect(store.get('0')).toBeDefined()
     expect(store.get('99')).toBeDefined()
+  })
+
+  it('evicts output independently and expires receipts one hour after completion', () => {
+    vi.useFakeTimers()
+    try {
+      const store = new ShellJobStore()
+      for (let i = 0; i < 100; i += 1) {
+        const stdout = tail()
+        appendTail(stdout, Buffer.from('retained-output'), 1024)
+        store.set(String(i), { ...completedJob(String(i)), stdout })
+      }
+      const first = store.get('0')
+      expect(first).toBeDefined()
+      expect(first?.stdout.totalBytes).toBe(15)
+      expect(first?.stdout.storage.length).toBe(0)
+      expect(first?.stdout.truncated).toBe(true)
+      expect(store.get('99')?.stdout.length).toBe(15)
+      vi.advanceTimersByTime(60 * 60 * 1000)
+      expect(store.get('0')).toBeUndefined()
+      expect(store.get('99')).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('execution receipts and bounded replies', () => {
+  it.each(['utf8', 'base64'] as const)(
+    'pages both streams within the whole reply budget using %s',
+    (outputEncoding) => {
+      const job = completedJob('pages')
+      const expected = Buffer.from('\u0000\n"雪😀'.repeat(3000))
+      appendTail(job.stdout, expected, expected.length)
+      appendTail(job.stderr, expected, expected.length)
+      let cursor = { jobId: job.id, stdoutOffset: 0, stderrOffset: 0, outputEncoding }
+      const stdout: Buffer[] = []
+      const stderr: Buffer[] = []
+      while (cursor.stdoutOffset < expected.length || cursor.stderrOffset < expected.length) {
+        const page = readJobOutput(job, cursor, 8192)
+        expect(Buffer.byteLength(JSON.stringify(jsonTextResult(page))) + REPLY_META_RESERVE_BYTES).toBeLessThanOrEqual(
+          8192,
+        )
+        expect(page.stdoutNextOffset + page.stderrNextOffset).toBeGreaterThan(cursor.stdoutOffset + cursor.stderrOffset)
+        stdout.push(Buffer.from(page.stdout, outputEncoding))
+        stderr.push(Buffer.from(page.stderr, outputEncoding))
+        cursor = decodeOutputCursor(page.cursor, job.id)
+      }
+      expect(Buffer.concat(stdout)).toEqual(expected)
+      expect(Buffer.concat(stderr)).toEqual(expected)
+    },
+  )
+
+  it('rejects malformed, mismatched and future output cursors', () => {
+    const job = completedJob('owned')
+    const cursor = { jobId: job.id, stdoutOffset: 0, stderrOffset: 0, outputEncoding: 'utf8' as const }
+    expect(() => decodeOutputCursor('invalid', job.id)).toThrow('invalid output cursor')
+    expect(() => decodeOutputCursor(encodeOutputCursor(cursor), 'other')).toThrow('does not match')
+    expect(() => decodeOutputCursor(encodeOutputCursor({ ...cursor, stdoutOffset: -1 }), job.id)).toThrow(
+      'invalid offsets',
+    )
+    expect(() => readJobOutput(job, { ...cursor, stdoutOffset: 1 }, 8192)).toThrow('beyond produced bytes')
+  })
+
+  it('returns the receipt and an explicit output gap after buffer eviction', () => {
+    const job = completedJob('expired-output')
+    appendTail(job.stdout, Buffer.from('gone'), 0)
+    const page = readJobOutput(job, { jobId: job.id, stdoutOffset: 0, stderrOffset: 0, outputEncoding: 'utf8' }, 4096)
+    expect(page).toMatchObject({
+      state: 'exited',
+      ok: true,
+      stdout: '',
+      stdoutBytes: 4,
+      stdoutStartOffset: 4,
+      stdoutNextOffset: 4,
+      stdoutTruncated: true,
+    })
+  })
+
+  it('paginates metadata within 8 KiB without command bodies or output', () => {
+    const jobs = Array.from({ length: 150 }, (_, i) => {
+      const job = completedJob(String(i).padStart(4, '0'))
+      appendTail(job.stdout, Buffer.from('large output'.repeat(1000)), 64_000)
+      return job
+    })
+    const seen: string[] = []
+    let cursor: string | undefined
+    do {
+      const page = listJobMetadata(jobs, cursor, 100)
+      expect(Buffer.byteLength(JSON.stringify(jsonTextResult(page))) + REPLY_META_RESERVE_BYTES).toBeLessThanOrEqual(
+        8192,
+      )
+      for (const job of page.jobs) {
+        expect(job).not.toHaveProperty('stdout')
+        expect(job).not.toHaveProperty('stderr')
+        expect(job).not.toHaveProperty('command')
+        seen.push(job.jobId)
+      }
+      cursor = page.cursor ?? undefined
+    } while (cursor)
+    expect(new Set(seen).size).toBe(jobs.length)
+    expect(seen).toHaveLength(jobs.length)
+  })
+
+  it('enforces the aggregate memory budget while protecting live buffers and receipts', () => {
+    const store = new ShellJobStore()
+    const live = runningJob('live')
+    appendTail(live.stdout, Buffer.alloc(4 * 1024 * 1024), 4 * 1024 * 1024)
+    store.set(live.id, live)
+    for (let i = 0; i < 20; i += 1) {
+      const job = completedJob(String(i))
+      appendTail(job.stdout, Buffer.alloc(4 * 1024 * 1024), 4 * 1024 * 1024)
+      store.set(job.id, job)
+    }
+    expect(store.size).toBe(21)
+    expect(store.get('live')?.stdout.length).toBe(4 * 1024 * 1024)
+    const bytes = Array.from(store.values()).reduce(
+      (sum, job) => sum + job.stdout.storage.length + job.stderr.storage.length,
+      0,
+    )
+    expect(bytes).toBeLessThanOrEqual(64 * 1024 * 1024)
+    expect(store.get('0')?.stdout.storage.length).toBe(0)
   })
 })

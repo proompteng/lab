@@ -1,10 +1,16 @@
 import type { ChildProcessByStdio } from 'node:child_process'
 import type { Readable } from 'node:stream'
 
-import type { ProcessResult } from './process-runner'
-import { MAX_RETAINED_JOBS } from './constants'
-
-export type ShellJobStatus = 'running' | 'exited' | 'killed' | 'timed_out'
+import {
+  MAX_RETAINED_OUTPUT_JOBS,
+  MAX_RETAINED_RECEIPTS,
+  OUTPUT_RETENTION_TOTAL_BYTES,
+  RECEIPT_TTL_MS,
+  REPLY_META_RESERVE_BYTES,
+  STATUS_REPLY_BYTES,
+} from './constants'
+import { AgentsShellRuntimeError } from './errors'
+import { jsonTextResult } from './results'
 
 export type OutputTail = {
   totalBytes: number
@@ -14,75 +20,102 @@ export type OutputTail = {
   length: number
 }
 
-export type ShellJob = {
+type JobIdentity = {
   id: string
   ownerSubject: string
   sessionId: string | null
+  taskId: string
   agentId: string | null
+  requestKey: string
   requestId: string | null
   toolCallId: string | null
-  command: string
+  commandPreview: string
+  commandHash: string
   cwd: string
-  process: ChildProcessByStdio<null, Readable, Readable>
   startedAt: string
-  finishedAt: string | null
-  status: ShellJobStatus
-  exitCode: number | null
-  signal: string | null
-  timedOut: boolean
-  outputCaptureError: string | null
-  auditErrors: number
-  timeout: ReturnType<typeof setTimeout> | null
   stdout: OutputTail
   stderr: OutputTail
+  outputCaptureError: string | null
+  auditErrors: number
 }
+
+export type RunningShellJob = JobIdentity & {
+  kind: 'running'
+  process: ChildProcessByStdio<null, Readable, Readable>
+  termination: 'cancelled' | 'timed_out' | null
+  timeout: ReturnType<typeof setTimeout> | null
+  finishedAt: null
+}
+
+export type CompletedShellJob = JobIdentity & {
+  kind: 'completed'
+  status: 'exited' | 'cancelled' | 'timed_out'
+  finishedAt: string
+  exitCode: number | null
+  signal: string | null
+}
+
+export type ShellJob = RunningShellJob | CompletedShellJob
 
 export type CommandInput = {
   command: string
   cwd: string
   timeoutSeconds: number
-  maxOutputBytes: number
+  maxBytes: number
+  waitMs: number
+  requestKey: string
   sessionId?: string
   agentId?: string
 }
 
-export type ShellJobSummary = ProcessResult & {
+export type OutputCursor = {
   jobId: string
-  outputCaptureError: string | null
-  auditErrors: number
-  sessionId: string | null
-  agentId: string | null
-  requestId: string | null
-  toolCallId: string | null
+  stdoutOffset: number
+  stderrOffset: number
   outputEncoding: 'utf8' | 'base64'
-  outputLimitBytes: number
-  stdoutStartOffset: number
-  stderrStartOffset: number
-  stdoutHasMore: boolean
-  stderrHasMore: boolean
-  status: ShellJobStatus
-  startedAt: string
-  finishedAt: string | null
-  stdoutRetentionStartByte: number
-  stderrRetentionStartByte: number
-  stdoutNextOffset: number
-  stderrNextOffset: number
+}
+
+export const previewCommand = (command: string, maxBytes = 160) => {
+  const bytes = Buffer.from(command)
+  if (bytes.length <= maxBytes) return command
+  let end = maxBytes
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1
+  return bytes.subarray(0, end).toString('utf8')
 }
 
 export class ShellJobStore {
   private readonly jobs = new Map<string, ShellJob>()
+  private readonly completed = new Map<string, number>()
+  private readonly outputs = new Set<string>()
+  private readonly active = new Set<string>()
 
   get size() {
     return this.jobs.size
   }
 
+  has(jobId: string) {
+    return this.jobs.has(jobId)
+  }
+
   get(jobId: string) {
     this.prune()
-    return this.jobs.get(jobId)
+    const job = this.jobs.get(jobId)
+    if (job?.kind === 'completed' && Date.now() - Date.parse(job.finishedAt) >= RECEIPT_TTL_MS) {
+      this.delete(jobId)
+      return undefined
+    }
+    return job
   }
 
   set(jobId: string, job: ShellJob) {
+    if (!this.jobs.has(jobId)) this.ensureCapacity()
     this.jobs.set(jobId, job)
+    if (job.kind === 'running') this.active.add(jobId)
+    else {
+      this.active.delete(jobId)
+      this.completed.set(jobId, Date.parse(job.finishedAt))
+      if (job.stdout.storage.length + job.stderr.storage.length > 0) this.outputs.add(jobId)
+    }
     this.prune()
     return this
   }
@@ -92,22 +125,53 @@ export class ShellJobStore {
     return this.jobs.values()
   }
 
+  *running() {
+    for (const id of this.active) {
+      const job = this.jobs.get(id)
+      if (job?.kind === 'running') yield job
+    }
+  }
+
+  ensureCapacity() {
+    this.prune()
+    if (this.jobs.size >= MAX_RETAINED_RECEIPTS)
+      throw new AgentsShellRuntimeError({
+        message: 'completion receipt capacity reached; retry after expiry',
+        code: 'CAPACITY_BUSY',
+        retryAfterMs: 1000,
+      })
+  }
+
+  private delete(id: string) {
+    this.jobs.delete(id)
+    this.completed.delete(id)
+    this.outputs.delete(id)
+    this.active.delete(id)
+  }
+
   prune() {
-    // Running jobs are never evicted. Completed histories have an explicit bounded lifetime.
-    let bytes = Array.from(this.jobs.values()).reduce(
-      (total, job) => total + job.stdout.storage.length + job.stderr.storage.length,
-      0,
-    )
-    for (const [id, job] of this.jobs) {
-      if (job.finishedAt === null) continue
-      if (
-        this.jobs.size <= MAX_RETAINED_JOBS &&
-        bytes <= 64 * 1024 * 1024 &&
-        Date.now() - Date.parse(job.finishedAt) < 60 * 60 * 1000
-      )
-        continue
+    const expiry = Date.now() - RECEIPT_TTL_MS
+    for (const [id, finishedAt] of this.completed) {
+      if (finishedAt > expiry) break
+      this.delete(id)
+    }
+    let bytes = 0
+    for (const id of [...this.active, ...this.outputs]) {
+      const job = this.jobs.get(id)
+      if (job) bytes += job.stdout.storage.length + job.stderr.storage.length
+    }
+    for (const id of this.outputs) {
+      if (this.outputs.size <= MAX_RETAINED_OUTPUT_JOBS && bytes <= OUTPUT_RETENTION_TOTAL_BYTES) break
+      const job = this.jobs.get(id)
+      this.outputs.delete(id)
+      if (!job) continue
       bytes -= job.stdout.storage.length + job.stderr.storage.length
-      this.jobs.delete(id)
+      for (const output of [job.stdout, job.stderr]) {
+        output.storage = Buffer.alloc(0)
+        output.start = 0
+        output.length = 0
+        output.truncated ||= output.totalBytes > 0
+      }
     }
   }
 }
@@ -205,57 +269,181 @@ export const outputFromOffset = (
   }
 }
 
-export const summarizeJob = (
-  job: ShellJob,
-  maxOutputBytes: number,
-  offsets: { stdoutOffset?: number | null; stderrOffset?: number | null; outputEncoding?: 'utf8' | 'base64' } = {},
-): ShellJobSummary => {
-  const stdout = outputFromOffset(
-    job.stdout,
-    offsets.stdoutOffset ?? null,
-    maxOutputBytes,
-    offsets.outputEncoding,
-    job.finishedAt !== null,
-  )
-  const stderr = outputFromOffset(
-    job.stderr,
-    offsets.stderrOffset ?? null,
-    maxOutputBytes,
-    offsets.outputEncoding,
-    job.finishedAt !== null,
-  )
-  return {
-    ok: job.exitCode === 0 && !job.timedOut,
-    command: job.command,
-    cwd: job.cwd,
-    exitCode: job.exitCode,
-    signal: job.signal,
-    timedOut: job.timedOut,
-    outputCaptureError: job.outputCaptureError,
-    auditErrors: job.auditErrors,
-    stdout: stdout.text,
-    stderr: stderr.text,
-    stdoutBytes: job.stdout.totalBytes,
-    stderrBytes: job.stderr.totalBytes,
-    stdoutTruncated: job.stdout.truncated || stdout.truncatedBeforeOffset,
-    stderrTruncated: job.stderr.truncated || stderr.truncatedBeforeOffset,
+export const jobMetadata = (job: ShellJob) => {
+  const identity = {
     jobId: job.id,
     sessionId: job.sessionId,
+    taskId: job.taskId,
     agentId: job.agentId,
+    requestKey: job.requestKey,
     requestId: job.requestId,
     toolCallId: job.toolCallId,
-    outputEncoding: offsets.outputEncoding ?? 'utf8',
-    outputLimitBytes: maxOutputBytes,
-    stdoutStartOffset: stdout.startOffset,
-    stderrStartOffset: stderr.startOffset,
-    stdoutHasMore: stdout.hasMore,
-    stderrHasMore: stderr.hasMore,
-    status: job.status,
+    commandPreview: job.commandPreview,
+    commandHash: job.commandHash,
+    cwd: job.cwd,
     startedAt: job.startedAt,
-    finishedAt: job.finishedAt,
-    stdoutRetentionStartByte: stdout.retentionStartByte,
-    stderrRetentionStartByte: stderr.retentionStartByte,
-    stdoutNextOffset: stdout.nextOffset,
-    stderrNextOffset: stderr.nextOffset,
+    stdoutBytes: job.stdout.totalBytes,
+    stderrBytes: job.stderr.totalBytes,
+    stdoutRetentionStartByte: job.stdout.totalBytes - job.stdout.length,
+    stderrRetentionStartByte: job.stderr.totalBytes - job.stderr.length,
+    outputCaptureError: job.outputCaptureError,
+    auditErrors: job.auditErrors,
+    captureIncomplete: job.outputCaptureError !== null || job.auditErrors > 0,
   }
+  return job.kind === 'running'
+    ? {
+        ...identity,
+        state: 'running' as const,
+        ok: null,
+        exitCode: null,
+        signal: null,
+        finishedAt: null,
+        expiresAt: null,
+      }
+    : {
+        ...identity,
+        state: job.status,
+        ok: job.status === 'exited' && job.exitCode === 0,
+        exitCode: job.exitCode,
+        signal: job.signal,
+        finishedAt: job.finishedAt,
+        expiresAt: new Date(Date.parse(job.finishedAt) + RECEIPT_TTL_MS).toISOString(),
+      }
+}
+
+export const encodeOutputCursor = (cursor: OutputCursor) => Buffer.from(JSON.stringify(cursor)).toString('base64url')
+
+export const decodeOutputCursor = (value: string, jobId: string): OutputCursor => {
+  let cursor: unknown
+  try {
+    cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+  } catch {
+    throw new Error('invalid output cursor')
+  }
+  if (
+    typeof cursor !== 'object' ||
+    cursor === null ||
+    !('jobId' in cursor) ||
+    cursor.jobId !== jobId ||
+    !('stdoutOffset' in cursor) ||
+    typeof cursor.stdoutOffset !== 'number' ||
+    !Number.isSafeInteger(cursor.stdoutOffset) ||
+    cursor.stdoutOffset < 0 ||
+    !('stderrOffset' in cursor) ||
+    typeof cursor.stderrOffset !== 'number' ||
+    !Number.isSafeInteger(cursor.stderrOffset) ||
+    cursor.stderrOffset < 0 ||
+    !('outputEncoding' in cursor) ||
+    (cursor.outputEncoding !== 'utf8' && cursor.outputEncoding !== 'base64')
+  )
+    throw new Error('output cursor does not match this job or contains invalid offsets')
+  return {
+    jobId,
+    stdoutOffset: cursor.stdoutOffset,
+    stderrOffset: cursor.stderrOffset,
+    outputEncoding: cursor.outputEncoding,
+  }
+}
+
+export const readJobOutput = (job: ShellJob, cursor: OutputCursor, maxBytes: number) => {
+  if (cursor.stdoutOffset > job.stdout.totalBytes || cursor.stderrOffset > job.stderr.totalBytes)
+    throw new Error('output cursor is beyond produced bytes')
+  const metadata = jobMetadata(job)
+  let outputBytes = Math.max(0, Math.floor((maxBytes - REPLY_META_RESERVE_BYTES - 2048) / 2))
+  for (;;) {
+    const stdoutAvailable = Math.max(
+      0,
+      job.stdout.totalBytes - Math.max(cursor.stdoutOffset, job.stdout.totalBytes - job.stdout.length),
+    )
+    const stderrAvailable = Math.max(
+      0,
+      job.stderr.totalBytes - Math.max(cursor.stderrOffset, job.stderr.totalBytes - job.stderr.length),
+    )
+    const stdoutBudget = stderrAvailable === 0 ? outputBytes : Math.min(stdoutAvailable, Math.ceil(outputBytes / 2))
+    const stdout = outputFromOffset(
+      job.stdout,
+      cursor.stdoutOffset,
+      stdoutBudget,
+      cursor.outputEncoding,
+      job.kind === 'completed',
+    )
+    const stderr = outputFromOffset(
+      job.stderr,
+      cursor.stderrOffset,
+      Math.max(0, outputBytes - (stdout.nextOffset - stdout.startOffset)),
+      cursor.outputEncoding,
+      job.kind === 'completed',
+    )
+    const result = {
+      ...metadata,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      stdoutStartOffset: stdout.startOffset,
+      stderrStartOffset: stderr.startOffset,
+      stdoutNextOffset: stdout.nextOffset,
+      stderrNextOffset: stderr.nextOffset,
+      stdoutHasMore: stdout.hasMore,
+      stderrHasMore: stderr.hasMore,
+      stdoutTruncated: stdout.truncatedBeforeOffset,
+      stderrTruncated: stderr.truncatedBeforeOffset,
+      cursor: encodeOutputCursor({
+        jobId: job.id,
+        stdoutOffset: stdout.nextOffset,
+        stderrOffset: stderr.nextOffset,
+        outputEncoding: cursor.outputEncoding,
+      }),
+      outputEncoding: cursor.outputEncoding,
+      maxBytes,
+    }
+    const wireBytes = Buffer.byteLength(JSON.stringify(jsonTextResult(result))) + REPLY_META_RESERVE_BYTES
+    if (wireBytes <= maxBytes) return result
+    if (outputBytes === 0) throw new Error('reply budget is too small for job metadata')
+    outputBytes = Math.floor(outputBytes / 2)
+  }
+}
+
+export const listJobMetadata = (jobs: ShellJob[], cursor: string | undefined, limit: number) => {
+  let after: { startedAt: string; id: string } | undefined
+  if (cursor) {
+    let decoded: unknown
+    try {
+      decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    } catch {
+      throw new Error('invalid status cursor')
+    }
+    if (
+      typeof decoded !== 'object' ||
+      decoded === null ||
+      !('startedAt' in decoded) ||
+      typeof decoded.startedAt !== 'string' ||
+      !('id' in decoded) ||
+      typeof decoded.id !== 'string'
+    )
+      throw new Error('invalid status cursor')
+    after = { startedAt: decoded.startedAt, id: decoded.id }
+  }
+  const sorted = jobs
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id))
+    .filter(
+      (job) => !after || job.startedAt < after.startedAt || (job.startedAt === after.startedAt && job.id < after.id),
+    )
+  const page: ReturnType<typeof jobMetadata>[] = []
+  let result = { jobs: page, cursor: null as string | null, hasMore: false }
+  for (const job of sorted.slice(0, limit)) {
+    const hasMore = page.length + 1 < sorted.length
+    const next = {
+      jobs: [...page, jobMetadata(job)],
+      cursor: hasMore
+        ? Buffer.from(JSON.stringify({ startedAt: job.startedAt, id: job.id })).toString('base64url')
+        : null,
+      hasMore,
+    }
+    if (Buffer.byteLength(JSON.stringify(jsonTextResult(next))) + REPLY_META_RESERVE_BYTES > STATUS_REPLY_BYTES) {
+      if (page.length === 0) throw new Error('job metadata exceeds status reply budget')
+      break
+    }
+    page.push(next.jobs[next.jobs.length - 1])
+    result = { ...next, jobs: page }
+  }
+  return result
 }

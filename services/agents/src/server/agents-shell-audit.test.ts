@@ -1,3 +1,4 @@
+import { encodeOutputCursor, jobMetadata } from './agents-shell/jobs'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -196,8 +197,8 @@ describe('complete operational activity export', () => {
         const stderr = `${agentId}:diagnostic\n`.repeat(20_000)
         const command = `node -e ${JSON.stringify(`process.stdout.write(${JSON.stringify(`${agentId}:雪😀\n`)}.repeat(30000)); process.stderr.write(${JSON.stringify(`${agentId}:diagnostic\n`)}.repeat(20000))`)}`
         const result = await client.callTool({
-          name: 'shell_start',
-          arguments: { command, agentId, maxOutputBytes: 1024 },
+          name: 'exec',
+          arguments: { command, agentId, requestKey: crypto.randomUUID(), waitMs: 0, maxBytes: 8192 },
         })
         const jobId = String(data(result).jobId)
         expected.set(jobId, { stdout, stderr })
@@ -210,8 +211,15 @@ describe('complete operational activity export', () => {
       },
       { timeout: 8000 },
     )
-    const listed = await client.callTool({ name: 'shell_status', arguments: {} })
+    const listed = await client.callTool({ name: 'status', arguments: {} })
     expect((data(listed).jobs as any[]).map((job) => job.agentId).sort()).toEqual(['agent-a', 'agent-b'])
+    for (const frame of records().filter(
+      (event) => event.event === 'shell_job_started' || event.event === 'process_output',
+    )) {
+      expect(frame.taskId).toBe(frame.payload.taskId)
+      expect(frame.taskId).toBe(frame.payload.agentId)
+      if (frame.event === 'shell_job_started') expect(frame.requestKey).toBe(frame.payload.requestKey)
+    }
     for (const jobId of jobs) {
       for (const stream of ['stdout', 'stderr'] as const) {
         const chunks = records()
@@ -245,19 +253,25 @@ describe('complete operational activity export', () => {
         })
       }
       let offset = 0
+      let cursor = encodeOutputCursor({
+        jobId,
+        stdoutOffset: 0,
+        stderrOffset: Buffer.byteLength(expected.get(jobId)!.stderr),
+        outputEncoding: 'utf8',
+      })
       let text = ''
       do {
         const read = await client.callTool({
-          name: 'shell_read',
+          name: 'read',
           arguments: {
             jobId,
-            stdoutOffset: offset,
-            stderrOffset: expected.get(jobId)!.stderr.length,
-            maxOutputBytes: 20_000,
+            cursor,
+            maxBytes: 20_000,
           },
         })
         text += data(read).stdout
         offset = Number(data(read).stdoutNextOffset)
+        cursor = String(data(read).cursor)
       } while (offset < Buffer.byteLength(expected.get(jobId)!.stdout))
       expect(text).toBe(expected.get(jobId)!.stdout)
     }
@@ -267,15 +281,19 @@ describe('complete operational activity export', () => {
     captureAudit()
     const { client, runner } = await connect()
     const second = await connect(runner, authFixture('owner-b'))
-    const start = await client.callTool({ name: 'shell_start', arguments: { command: 'sleep 3', agentId: 'owner-b' } })
+    const start = await client.callTool({
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'sleep 3', agentId: 'owner-b', waitMs: 0 },
+    })
     const jobId = data(start).jobId
-    expect(data(await second.client.callTool({ name: 'shell_status', arguments: {} })).jobs).toEqual([])
-    for (const name of ['shell_read', 'shell_kill', 'shell_status'])
-      expect((await second.client.callTool({ name, arguments: { jobId } })).isError).toBe(true)
-    expect(runner.requireJob(String(jobId), authFixture()).status).toBe('running')
-    await client.callTool({ name: 'shell_kill', arguments: { jobId } })
+    const cursor = data(start).cursor
+    expect(data(await second.client.callTool({ name: 'status', arguments: {} })).jobs).toEqual([])
+    for (const name of ['read', 'cancel', 'status'])
+      expect((await second.client.callTool({ name, arguments: { jobId, cursor } })).isError).toBe(true)
+    expect(jobMetadata(runner.requireJob(String(jobId), authFixture())).state).toBe('running')
+    await client.callTool({ name: 'cancel', arguments: { jobId } })
     await vi.waitFor(() => expect(runner.requireJob(String(jobId), authFixture()).finishedAt).not.toBeNull())
-    expect(runner.requireJob(String(jobId), authFixture()).status).toBe('killed')
+    expect(jobMetadata(runner.requireJob(String(jobId), authFixture())).state).toBe('cancelled')
   })
 
   it('mirrors CLI tools and retains raw argv with exact failure details', async () => {
@@ -312,8 +330,13 @@ describe('complete operational activity export', () => {
     const { client, config } = await connect()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
     const response = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: `timeout 1 tail -n +1 -f ${config.auditLogPath}`, maxOutputBytes: 20_000 },
+      name: 'exec',
+      arguments: {
+        requestKey: crypto.randomUUID(),
+        command: `timeout 1 tail -n +1 -f ${config.auditLogPath}`,
+        maxBytes: 20_000,
+        waitMs: 3000,
+      },
     })
     expect(data(response).stdout).toContain('agents-shell audit')
     expect(records().filter((event) => event.event === 'process_output')).toHaveLength(0)
@@ -338,13 +361,16 @@ describe('complete operational activity export', () => {
   it('records useful tool errors while withholding unauthenticated arguments', async () => {
     const { records } = captureAudit()
     const { client } = await connect()
-    const response = await client.callTool({ name: 'shell_read', arguments: { jobId: 'missing-job' } })
+    const response = await client.callTool({ name: 'status', arguments: { jobId: 'missing-job' } })
     expect(response.isError).toBe(true)
     expect(JSON.stringify(records())).toContain('unknown or expired jobId: missing-job')
     const auth = authFixture('unauthenticated')
     auth.scopes.clear()
     const denied = await connect(undefined, auth)
-    await denied.client.callTool({ name: 'shell_run', arguments: { command: 'sensitive-denied-input' } })
+    await denied.client.callTool({
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'sensitive-denied-input' },
+    })
     expect(JSON.stringify(records())).not.toContain('sensitive-denied-input')
   })
 })

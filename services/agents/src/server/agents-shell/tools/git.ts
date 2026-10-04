@@ -5,7 +5,7 @@ import { normalizeCliArgs, requireReadOnlyGitArgs } from '../cli-policy'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
-import { CliInputSchema, CommandResultSchema, type CliInput } from '../schemas'
+import { CliInputSchema, GitWriteInputSchema, CommandResultSchema, type CliInput, type GitWriteInput } from '../schemas'
 
 export const createGitTools = (): EffectTool[] => [
   {
@@ -41,13 +41,14 @@ export const createGitTools = (): EffectTool[] => [
   {
     name: 'git_write',
     title: 'Run mutating git',
-    description: 'Run repository-changing git commands under /workspace. Pass argv after git.',
-    inputSchema: CliInputSchema,
+    description:
+      'Run repository-changing git commands in an owned repo session. Pass argv after git and its sessionId.',
+    inputSchema: GitWriteInputSchema,
     outputSchema: CommandResultSchema,
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: CliInput, { runner, auth }) =>
+    handler: (args: GitWriteInput, { runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
           const gitArgs = normalizeCliArgs('git_write', args.args)

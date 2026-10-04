@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
@@ -15,7 +15,7 @@ import { AuthChallengeError, buildBearerChallenge, requireScopes, type AuthConte
 import { toolAuditContext } from './audit'
 import { CONNECTOR_LINK_SCOPES } from './constants'
 import type { AgentsShellConfig } from './config'
-import { errorMessage } from './errors'
+import { AgentsShellRuntimeError, errorMessage } from './errors'
 import { effectSchemaToJsonSchema } from './json-schema'
 import { errorResult } from './results'
 import type { AgentsShellRunner } from './runner'
@@ -86,8 +86,7 @@ const decodeInput = async <I>(tool: EffectTool<I>, value: unknown): Promise<I> =
 
 const toolOutcome = (name: string | undefined, result: CallToolResult) => {
   if (result.isError) return 'error'
-  if (name === 'shell_start' && result.structuredContent?.status === 'running') return 'running'
-  if (name === 'shell_read' || name === 'shell_status' || name === 'shell_kill') return 'succeeded'
+  if ((name === 'exec' || name === 'read') && result.structuredContent?.state === 'running') return 'running'
   return result.structuredContent?.ok === false ? 'failed' : 'succeeded'
 }
 
@@ -119,6 +118,16 @@ const mapToolError = (config: AgentsShellConfig, error: unknown): CallToolResult
   if (error instanceof AuthChallengeError) {
     return errorResult(error.message, buildBearerChallenge(config, error.oauthError, error.oauthDescription))
   }
+  if (error instanceof AgentsShellRuntimeError && error.code) {
+    return {
+      ...errorResult(error.message),
+      structuredContent: {
+        code: error.code,
+        message: error.message,
+        ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }),
+      },
+    }
+  }
   return errorResult(errorMessage(error))
 }
 
@@ -139,17 +148,23 @@ export const installEffectToolHandlers = (
 ) => {
   const toolByName = new Map(tools.map((tool) => [tool.name, tool]))
   const toolLayer = makeAgentsShellServicesLayer(context)
+  const catalog = tools.map((tool) => ({
+    name: tool.name,
+    title: tool.title,
+    description: tool.description,
+    inputSchema: effectSchemaToJsonSchema(tool.inputSchema),
+    annotations: tool.annotations,
+    securitySchemes: tool.securitySchemes,
+    _meta: tool._meta,
+  }))
+  const catalogReceipt = {
+    version: context.config.version,
+    sha256: createHash('sha256').update(JSON.stringify(catalog)).digest('hex'),
+  }
 
   server.server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: tools.map((tool) => ({
-      name: tool.name,
-      title: tool.title,
-      description: tool.description,
-      inputSchema: effectSchemaToJsonSchema(tool.inputSchema),
-      annotations: tool.annotations,
-      securitySchemes: tool.securitySchemes,
-      _meta: tool._meta,
-    })),
+    tools: catalog,
+    _meta: { 'agents-shell/catalog': catalogReceipt },
   }))
 
   server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -202,6 +217,7 @@ export const installEffectToolHandlers = (
           _meta: {
             ...result._meta,
             'agents-shell/trace': toolAuditContext.getStore(),
+            'agents-shell/catalog': catalogReceipt,
             'agents-shell/audit': { rejectedCallFrames: startedAuditErrors + finishedAuditErrors, ...auditSink },
           },
         }

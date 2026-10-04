@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 
 import { Effect } from 'effect'
 
@@ -10,7 +11,20 @@ import type { AuthContext } from './auth'
 import type { AgentsShellConfig } from './config'
 import { OUTPUT_RETENTION_BYTES } from './constants'
 import { OutputAudit } from './output-audit'
-import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
+import {
+  ShellJobStore,
+  appendTail,
+  tail,
+  previewCommand,
+  readJobOutput,
+  listJobMetadata,
+  outputFromOffset,
+  type CommandInput,
+  type RunningShellJob,
+  type OutputCursor,
+} from './jobs'
+import { AgentsShellRuntimeError } from './errors'
+import type { ExecInput } from './schemas'
 import { asPositiveInteger } from './limits'
 import { formatCommand, toProcessResult, type ProcessResult } from './process-runner'
 import { createRepoSessionIdentity, RepoSessionStore } from './repo-sessions'
@@ -20,6 +34,13 @@ export class AgentsShellRunner {
   readonly config: AgentsShellConfig
   readonly jobs = new ShellJobStore()
   readonly repoSessions: RepoSessionStore
+  private readonly changes = new EventEmitter().setMaxListeners(0)
+  private pendingSubmissions = 0
+  private readonly submissions = new Map<
+    string,
+    | { kind: 'pending'; fingerprint: string; launch: Promise<RunningShellJob> }
+    | { kind: 'started'; fingerprint: string; jobId: string }
+  >()
 
   constructor(config: AgentsShellConfig) {
     this.config = config
@@ -34,7 +55,9 @@ export class AgentsShellRunner {
       sessionId?: string
       agentId?: string
       timeoutSeconds?: number
-      maxOutputBytes?: number
+      maxBytes?: number
+      waitMs?: number
+      requestKey: string
     },
     auth: AuthContext,
   ): CommandInput {
@@ -49,12 +72,14 @@ export class AgentsShellRunner {
         this.config.defaultTimeoutSeconds,
         this.config.maxTimeoutSeconds,
       ),
-      maxOutputBytes: asPositiveInteger(
-        args.maxOutputBytes,
-        'maxOutputBytes',
+      requestKey: args.requestKey,
+      waitMs: args.waitMs ?? 1000,
+      maxBytes: asPositiveInteger(
+        args.maxBytes,
+        'maxBytes',
         this.config.defaultOutputBytes,
         this.config.maxOutputBytes,
-        1024,
+        4096,
       ),
     }
   }
@@ -150,6 +175,7 @@ export class AgentsShellRunner {
     }
     this.audit('repo_session_opened', auth, {
       sessionId: session.id,
+      taskId: session.id,
       branch: session.branch,
       baseBranch,
       baseSha,
@@ -193,6 +219,7 @@ export class AgentsShellRunner {
       sessionId: session.id,
       branch: session.branch,
       baseBranch: session.baseBranch,
+      taskId: session.id,
       baseSha: session.baseSha,
       headSha: head.stdout.trim(),
       worktree: session.worktree,
@@ -251,43 +278,70 @@ export class AgentsShellRunner {
   }
 
   runningJobs() {
-    return Array.from(this.jobs.values()).filter((job) => job.finishedAt === null)
+    return Array.from(this.jobs.running())
   }
 
-  start(input: CommandInput, auth: AuthContext): ShellJob {
+  private start(input: CommandInput, auth: AuthContext): RunningShellJob {
+    this.jobs.ensureCapacity()
     if (this.runningJobs().length >= this.config.maxConcurrentJobs) {
-      throw new Error(`max concurrent jobs reached: ${this.config.maxConcurrentJobs}`)
+      throw new AgentsShellRuntimeError({
+        message: `execution capacity busy: ${this.config.maxConcurrentJobs} running jobs`,
+        code: 'CAPACITY_BUSY',
+        retryAfterMs: 250,
+      })
     }
 
+    this.resolveCwd(input.cwd, input.sessionId, auth)
+    const session = input.sessionId
+      ? this.repoSessions.require(input.sessionId, auth)
+      : this.repoSessions.requireForPath(input.cwd, auth)
+    if (!session && isInsidePath(resolve(this.config.workspaceRoot, 'lab'), input.cwd))
+      throw new Error('repository execution requires repo_session_open and its sessionId')
+    const id = randomUUID()
     const auditContext = toolAuditContext.getStore() ?? null
     const startedAt = performance.now()
+    const identity = {
+      id,
+      ownerSubject: auth.subject,
+      sessionId: session?.id ?? null,
+      taskId: session?.id ?? input.agentId ?? id,
+      requestKey: input.requestKey,
+      agentId: input.agentId ?? null,
+      requestId: auditContext?.requestId ?? null,
+      toolCallId: auditContext?.toolCallId ?? null,
+      commandPreview: previewCommand(input.command),
+      commandHash: createHash('sha256').update(input.command).digest('hex'),
+      cwd: input.cwd,
+      startedAt: new Date().toISOString(),
+      stdout: tail(),
+      stderr: tail(),
+      outputCaptureError: null,
+      auditErrors: 0,
+    }
+
+    const receipt = {
+      ...identity,
+      kind: 'completed' as const,
+      status: 'cancelled' as const,
+      finishedAt: identity.startedAt,
+      exitCode: -1,
+      signal: 'SIGKILL',
+    }
+    readJobOutput(receipt, { jobId: id, stdoutOffset: 0, stderrOffset: 0, outputEncoding: 'utf8' }, input.maxBytes)
+    listJobMetadata([receipt], undefined, 1)
     const child = spawn('/bin/bash', ['-lc', input.command], {
       cwd: input.cwd,
       env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    const job: ShellJob = {
-      id: randomUUID(),
-      ownerSubject: auth.subject,
-      sessionId: input.sessionId ?? this.repoSessions.requireForPath(input.cwd, auth)?.id ?? null,
-      agentId: input.agentId ?? null,
-      requestId: auditContext?.requestId ?? null,
-      toolCallId: auditContext?.toolCallId ?? null,
-      command: input.command,
-      cwd: input.cwd,
+    const job: RunningShellJob = {
+      ...identity,
+      kind: 'running',
       process: child,
-      startedAt: new Date().toISOString(),
       finishedAt: null,
-      status: 'running',
-      exitCode: null,
-      signal: null,
-      timedOut: false,
+      termination: null,
       timeout: null,
-      stdout: tail(),
-      stderr: tail(),
-      outputCaptureError: null,
-      auditErrors: 0,
     }
 
     const outputAudit = (stream: 'stdout' | 'stderr') =>
@@ -299,6 +353,7 @@ export class AgentsShellRunner {
             jobId: job.id,
             sessionId: job.sessionId,
             agentId: job.agentId,
+            taskId: job.taskId,
             ...payload,
           },
           auditContext,
@@ -310,18 +365,21 @@ export class AgentsShellRunner {
     const onAuditFailure = () => {
       job.outputCaptureError =
         stdoutAudit.captureError ?? stderrAudit.captureError ?? 'audit output capture failed; command stopped'
-      job.status = 'killed'
-      this.killProcessGroup(job, 'SIGKILL')
+      this.killProcessGroup(job.process, 'SIGKILL')
     }
     child.stdout.on('data', (chunk: Buffer) => {
       lastOutputAt = performance.now()
       appendTail(job.stdout, Buffer.from(chunk), OUTPUT_RETENTION_BYTES)
+      this.jobs.prune()
       stdoutAudit.write(Buffer.from(chunk), child.stdout, onAuditFailure)
+      this.changes.emit(job.id)
     })
     child.stderr.on('data', (chunk: Buffer) => {
       lastOutputAt = performance.now()
       appendTail(job.stderr, Buffer.from(chunk), OUTPUT_RETENTION_BYTES)
+      this.jobs.prune()
       stderrAudit.write(Buffer.from(chunk), child.stderr, onAuditFailure)
+      this.changes.emit(job.id)
     })
     let drainTimeout: ReturnType<typeof setTimeout> | undefined
     let killTimeout: ReturnType<typeof setTimeout> | undefined
@@ -340,7 +398,7 @@ export class AgentsShellRunner {
           return
         }
         job.outputCaptureError = 'descendant pipes remained open 250ms after parent exit; capture closed'
-        this.killProcessGroup(job, 'SIGKILL')
+        this.killProcessGroup(job.process, 'SIGKILL')
         child.stdout.destroy()
         child.stderr.destroy()
       }
@@ -357,10 +415,18 @@ export class AgentsShellRunner {
         clearTimeout(job.timeout)
         job.timeout = null
       }
-      if (job.status === 'running') job.status = 'exited'
-      job.exitCode = code
-      job.signal = signal
-      job.finishedAt = new Date().toISOString()
+      const { process: _process, timeout: _timeout, termination, ...identity } = job
+      const completed = {
+        ...identity,
+        kind: 'completed' as const,
+        status: termination ?? ('exited' as const),
+        finishedAt: new Date().toISOString(),
+        exitCode: code,
+        signal,
+      }
+      this.jobs.set(job.id, completed)
+      this.changes.emit(job.id)
+      this.changes.emit('capacity')
       this.audit(
         'shell_job_finished',
         auth,
@@ -368,13 +434,15 @@ export class AgentsShellRunner {
           jobId: job.id,
           sessionId: job.sessionId,
           agentId: job.agentId,
+          taskId: job.taskId,
+          requestKey: job.requestKey,
           outputCaptureError: job.outputCaptureError,
           auditErrors: job.auditErrors,
           command: input.command,
-          status: job.status,
+          status: completed.status,
           exitCode: code,
           signal,
-          timedOut: job.timedOut,
+          timedOut: completed.status === 'timed_out',
           durationMs: performance.now() - startedAt,
           stdoutBytes: job.stdout.totalBytes,
           stderrBytes: job.stderr.totalBytes,
@@ -386,11 +454,10 @@ export class AgentsShellRunner {
     })
     child.on('error', (error) => appendTail(job.stderr, Buffer.from(String(error)), OUTPUT_RETENTION_BYTES))
     job.timeout = setTimeout(() => {
-      if (job.status !== 'running') return
-      job.timedOut = true
-      job.status = 'timed_out'
-      this.killProcessGroup(job, 'SIGTERM')
-      killTimeout = setTimeout(() => this.killProcessGroup(job, 'SIGKILL'), 1_000)
+      if (this.jobs.get(job.id)?.kind !== 'running') return
+      job.termination ??= 'timed_out'
+      this.killProcessGroup(job.process, 'SIGTERM')
+      killTimeout = setTimeout(() => this.killProcessGroup(job.process, 'SIGKILL'), 1_000)
     }, input.timeoutSeconds * 1000)
 
     this.jobs.set(job.id, job)
@@ -398,6 +465,8 @@ export class AgentsShellRunner {
       jobId: job.id,
       sessionId: job.sessionId,
       agentId: job.agentId,
+      taskId: job.taskId,
+      requestKey: job.requestKey,
       command: input.command,
       cwd: input.cwd,
       timeoutSeconds: input.timeoutSeconds,
@@ -405,37 +474,166 @@ export class AgentsShellRunner {
     return job
   }
 
-  async run(input: CommandInput, auth: AuthContext) {
-    const job = this.start(input, auth)
-    await new Promise<void>((resolvePromise) => job.process.once('close', () => resolvePromise()))
-    return job
+  async execute(args: ExecInput, auth: AuthContext) {
+    const deadline = performance.now() + (args.waitMs ?? 1000)
+    this.jobs.prune()
+    for (const [key, submission] of this.submissions) {
+      if (submission.kind === 'started' && !this.jobs.has(submission.jobId)) this.submissions.delete(key)
+    }
+    const key = JSON.stringify([auth.subject, args.sessionId ?? '', args.requestKey])
+    const fingerprint = createHash('sha256')
+      .update(
+        JSON.stringify([
+          args.command,
+          args.cwd ?? null,
+          asPositiveInteger(
+            args.timeoutSeconds,
+            'timeoutSeconds',
+            this.config.defaultTimeoutSeconds,
+            this.config.maxTimeoutSeconds,
+          ),
+          args.agentId ?? null,
+        ]),
+      )
+      .digest('hex')
+    let submission = this.submissions.get(key)
+    if (submission && submission.fingerprint !== fingerprint)
+      throw new AgentsShellRuntimeError({
+        message: 'requestKey is already bound to a different execution',
+        code: 'IDEMPOTENCY_CONFLICT',
+      })
+    if (!submission) {
+      const input = this.parseCommandInput(args, auth)
+      if (this.pendingSubmissions >= this.config.maxConcurrentJobs)
+        throw new AgentsShellRuntimeError({
+          message: 'execution admission capacity busy; retry the same requestKey',
+          code: 'CAPACITY_BUSY',
+          retryAfterMs: 250,
+        })
+      this.pendingSubmissions += 1
+      const launch = Promise.resolve()
+        .then(async () => {
+          while (this.runningJobs().length >= this.config.maxConcurrentJobs) {
+            const remaining = deadline - performance.now()
+            if (remaining <= 0)
+              throw new AgentsShellRuntimeError({
+                message: 'execution capacity busy; retry the same requestKey',
+                code: 'CAPACITY_BUSY',
+                retryAfterMs: 250,
+              })
+            await this.waitForChange(
+              'capacity',
+              remaining,
+              () => this.runningJobs().length < this.config.maxConcurrentJobs,
+            )
+          }
+          const job = this.start(input, auth)
+          this.submissions.set(key, { kind: 'started', fingerprint, jobId: job.id })
+          return job
+        })
+        .catch((error: unknown) => {
+          this.submissions.delete(key)
+          throw error
+        })
+        .finally(() => {
+          this.pendingSubmissions -= 1
+        })
+      submission = { kind: 'pending', fingerprint, launch }
+      this.submissions.set(key, submission)
+    }
+    const job =
+      submission.kind === 'pending'
+        ? await this.waitForLaunch(submission.launch, Math.max(0, deadline - performance.now()))
+        : this.requireJob(submission.jobId, auth)
+    await this.waitForChange(
+      job.id,
+      Math.max(0, deadline - performance.now()),
+      () => this.requireJob(job.id, auth).kind === 'completed',
+    )
+    return this.requireJob(job.id, auth)
   }
 
-  killProcessGroup(job: ShellJob, signal = 'SIGTERM') {
-    const pid = job.process.pid
+  private waitForLaunch(launch: Promise<RunningShellJob>, waitMs: number) {
+    return new Promise<RunningShellJob>((resolvePromise, reject) => {
+      const timeout = setTimeout(
+        () =>
+          reject(
+            new AgentsShellRuntimeError({
+              message: 'execution admission pending; retry the same requestKey',
+              code: 'CAPACITY_BUSY',
+              retryAfterMs: 250,
+            }),
+          ),
+        waitMs,
+      )
+      launch.then(
+        (job) => {
+          clearTimeout(timeout)
+          resolvePromise(job)
+        },
+        (error: unknown) => {
+          clearTimeout(timeout)
+          reject(error)
+        },
+      )
+    })
+  }
+
+  private waitForChange(event: string, waitMs: number, ready: () => boolean) {
+    if (ready() || waitMs <= 0) return Promise.resolve()
+    return new Promise<void>((resolvePromise) => {
+      const finish = () => {
+        clearTimeout(timeout)
+        this.changes.off(event, onChange)
+        resolvePromise()
+      }
+      const onChange = () => {
+        if (ready()) finish()
+      }
+      const timeout = setTimeout(finish, waitMs)
+      this.changes.on(event, onChange)
+      onChange()
+    })
+  }
+
+  async waitForOutput(jobId: string, auth: AuthContext, cursor: OutputCursor, waitMs: number) {
+    await this.waitForChange(jobId, waitMs, () => {
+      const job = this.requireJob(jobId, auth)
+      if (cursor.stdoutOffset > job.stdout.totalBytes || cursor.stderrOffset > job.stderr.totalBytes)
+        throw new Error('output cursor is beyond produced bytes')
+      if (job.kind === 'completed') return true
+      return (
+        [
+          ['stdout', cursor.stdoutOffset],
+          ['stderr', cursor.stderrOffset],
+        ] as const
+      ).some(([stream, offset]) => {
+        const page = outputFromOffset(job[stream], offset, 8, cursor.outputEncoding, false)
+        return page.nextOffset > offset || page.truncatedBeforeOffset
+      })
+    })
+    return this.requireJob(jobId, auth)
+  }
+
+  private killProcessGroup(child: ChildProcess, signal: NodeJS.Signals = 'SIGTERM') {
+    const pid = child.pid
     if (!pid) return false
     try {
-      process.kill(-pid, signal as NodeJS.Signals)
+      process.kill(-pid, signal)
       return true
     } catch {
-      return job.process.kill(signal as NodeJS.Signals)
+      return child.kill(signal)
     }
   }
 
-  kill(jobId: string, auth: AuthContext, signal = 'SIGTERM') {
+  async cancel(jobId: string, auth: AuthContext) {
     const job = this.requireJob(jobId, auth)
-    if (job.finishedAt !== null) return job
-    const killed = this.killProcessGroup(job, signal)
-    if (killed) {
-      job.status = 'killed'
-      job.signal = signal
-      this.audit('shell_job_killed', auth, { jobId: job.id, signal })
-    }
-    return job
+    if (job.kind === 'running') await this.terminateJob(job, auth)
+    return this.requireJob(jobId, auth)
   }
 
-  private waitForJobClose(job: ShellJob, timeoutMs: number) {
-    if (job.finishedAt !== null) return Promise.resolve(true)
+  private waitForJobClose(job: RunningShellJob, timeoutMs: number) {
+    if (this.jobs.get(job.id)?.kind === 'completed') return Promise.resolve(true)
     return new Promise<boolean>((resolvePromise) => {
       let settled = false
       const finish = (closed: boolean) => {
@@ -451,13 +649,15 @@ export class AgentsShellRunner {
     })
   }
 
-  private async terminateJob(job: ShellJob, auth: AuthContext) {
-    if (job.finishedAt !== null) return
-    this.kill(job.id, auth, 'SIGTERM')
+  private async terminateJob(job: RunningShellJob, auth: AuthContext) {
+    if (this.jobs.get(job.id)?.kind === 'completed') return
+    job.termination ??= 'cancelled'
+    this.killProcessGroup(job.process, 'SIGTERM')
+    this.audit('shell_job_cancelled', auth, { jobId: job.id, taskId: job.taskId })
     if (await this.waitForJobClose(job, 1_000)) return
 
     this.audit('shell_job_kill_escalated', auth, { jobId: job.id, signal: 'SIGKILL' })
-    this.killProcessGroup(job, 'SIGKILL')
+    this.killProcessGroup(job.process, 'SIGKILL')
     if (!(await this.waitForJobClose(job, 1_000))) {
       throw new Error(`shell job did not terminate after SIGKILL: ${job.id}`)
     }
@@ -514,7 +714,12 @@ export class AgentsShellRunner {
             new OutputAudit(stream, (event, payload) =>
               auditContext?.tool.startsWith('agent_')
                 ? 0
-                : this.audit(event, options.auth, { jobId, sessionId: session?.id ?? null, ...payload }, auditContext),
+                : this.audit(
+                    event,
+                    options.auth,
+                    { jobId, sessionId: session?.id ?? null, taskId: session?.id ?? jobId, ...payload },
+                    auditContext,
+                  ),
             )
           const stdoutAudit = outputAudit('stdout')
           const stderrAudit = outputAudit('stderr')
@@ -531,19 +736,21 @@ export class AgentsShellRunner {
             args: options.args,
             cwd,
             sessionId: session?.id ?? null,
+            taskId: session?.id ?? jobId,
             timeoutSeconds,
           })
 
           const child = spawn(options.command, options.args, {
             cwd,
             env: { ...process.env, TERM: process.env.TERM ?? 'dumb' },
+            detached: true,
             stdio: ['pipe', 'pipe', 'pipe'],
           })
 
           const onAuditFailure = () => {
             outputCaptureError =
               stdoutAudit.captureError ?? stderrAudit.captureError ?? 'audit output capture failed; command stopped'
-            child.kill('SIGKILL')
+            this.killProcessGroup(child, 'SIGKILL')
           }
           child.stdout.on('data', (chunk: Buffer) => {
             lastOutputAt = performance.now()
@@ -563,8 +770,8 @@ export class AgentsShellRunner {
 
           const timeout = setTimeout(() => {
             timedOut = true
-            child.kill('SIGTERM')
-            killTimeout = setTimeout(() => child.kill('SIGKILL'), 1_000)
+            this.killProcessGroup(child, 'SIGTERM')
+            killTimeout = setTimeout(() => this.killProcessGroup(child, 'SIGKILL'), 1_000)
           }, timeoutSeconds * 1000)
 
           const result = await new Promise<{ exitCode: number | null; signal: string | null }>(
@@ -576,8 +783,10 @@ export class AgentsShellRunner {
                 settled = true
                 clearTimeout(drainTimeout)
                 clearTimeout(killTimeout)
-                if (!child.stdout.readableEnded || !child.stderr.readableEnded)
+                if (!child.stdout.readableEnded || !child.stderr.readableEnded) {
                   outputCaptureError ??= 'descendant pipes remained open 250ms after parent exit; capture closed'
+                  this.killProcessGroup(child, 'SIGKILL')
+                }
                 child.stdout.destroy()
                 child.stderr.destroy()
                 stdoutAudit.finish(outputCaptureError)
@@ -620,6 +829,12 @@ export class AgentsShellRunner {
             stdout,
             stderr,
             maxOutputBytes,
+            {
+              jobId,
+              sessionId: session?.id ?? null,
+              outputCaptureError,
+              auditErrors: stdoutAudit.sinkErrors + stderrAudit.sinkErrors,
+            },
             new Set(options.okExitCodes ?? [0]),
           )
           this.audit(`${options.auditEvent}_finished`, options.auth, {
@@ -647,8 +862,8 @@ export class AgentsShellRunner {
 
   shutdown() {
     for (const job of this.runningJobs()) {
-      job.status = 'killed'
-      this.killProcessGroup(job, 'SIGTERM')
+      job.termination ??= 'cancelled'
+      this.killProcessGroup(job.process, 'SIGKILL')
     }
   }
 }
