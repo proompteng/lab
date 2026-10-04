@@ -1,5 +1,7 @@
 import 'server-only'
 
+import type { TengriCodexImage } from './codex-images'
+
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -366,14 +368,46 @@ export async function sendCodexTurn(
   threadId: string,
   text: string,
   options: TengriCodexOptions = {},
+  images: readonly TengriCodexImage[] = [],
 ) {
   return normalizeTurn(
-    await unary<RawRecord>('sendCodexTurn', { agentId, threadId, text, ...options }, subject, 130_000),
+    await unary<RawRecord>(
+      'sendCodexTurn',
+      {
+        agentId,
+        threadId,
+        text,
+        ...options,
+        images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
+      },
+      subject,
+      130_000,
+    ),
   )
 }
 
-export async function steerCodexTurn(subject: string, agentId: string, threadId: string, turnId: string, text: string) {
-  return normalizeTurn(await unary<RawRecord>('steerCodexTurn', { agentId, threadId, turnId, text }, subject, 130_000))
+export async function steerCodexTurn(
+  subject: string,
+  agentId: string,
+  threadId: string,
+  turnId: string,
+  text: string,
+  images: readonly TengriCodexImage[] = [],
+) {
+  return normalizeTurn(
+    await unary<RawRecord>(
+      'steerCodexTurn',
+      {
+        agentId,
+        threadId,
+        turnId,
+        text,
+        images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
+      },
+      subject,
+      130_000,
+    ),
+  )
 }
 
 export async function interruptCodexTurn(subject: string, agentId: string, threadId: string, turnId: string) {

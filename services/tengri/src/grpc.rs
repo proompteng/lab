@@ -45,7 +45,7 @@ pub mod proto {
 
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
-    CodexEvent, CodexEventKind, CodexLogin, CodexModels, CodexThread, CodexTurn,
+    CodexEvent, CodexEventKind, CodexImage, CodexLogin, CodexModels, CodexThread, CodexTurn,
     CreateAgentRequest, CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest,
     DeleteAgentRequest, DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind,
     GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
@@ -901,19 +901,19 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "SendCodexTurn").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
-        let text = validate_prompt(&request.text)?;
+        validate_codex_message(&request.text, &request.images)?;
         let options = CodexOptions::parse(request.model, request.reasoning_effort)
             .map_err(Status::invalid_argument)?;
-        let value = self
-            .guest(&principal, &request.agent_id)
-            .await?
+        let guest = self.guest(&principal, &request.agent_id).await?;
+        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
+        let value = guest
             .codex_call(
                 "turn/start",
                 json!({
                     "threadId": request.thread_id,
                     "model": options.model,
                     "effort": options.reasoning_effort,
-                    "input": [{"type": "text", "text": text, "text_elements": []}],
+                    "input": input,
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
                     "approvalPolicy": "on-request",
@@ -937,16 +937,16 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         validate_codex_id(&request.turn_id)?;
-        let text = validate_prompt(&request.text)?;
-        let value = self
-            .guest(&principal, &request.agent_id)
-            .await?
+        validate_codex_message(&request.text, &request.images)?;
+        let guest = self.guest(&principal, &request.agent_id).await?;
+        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
+        let value = guest
             .codex_call(
                 "turn/steer",
                 json!({
                     "threadId": request.thread_id,
                     "expectedTurnId": request.turn_id,
-                    "input": [{"type": "text", "text": text, "text_elements": []}],
+                    "input": input,
                 }),
             )
             .await
@@ -2158,14 +2158,74 @@ fn validate_codex_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
-fn validate_prompt(value: &str) -> Result<String, Status> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > 64 << 10 {
+fn validate_codex_message(text: &str, images: &[CodexImage]) -> Result<(), Status> {
+    if (text.trim().is_empty() && images.is_empty()) || text.trim().len() > 64 << 10 {
         return Err(Status::invalid_argument(
-            "message must contain between 1 byte and 64 KiB",
+            "add a message or image; message text must not exceed 64 KiB",
         ));
     }
-    Ok(value.to_owned())
+    if images.len() > 4
+        || images
+            .iter()
+            .map(|image| image.content.len())
+            .sum::<usize>()
+            > 8 << 20
+    {
+        return Err(Status::invalid_argument(
+            "attach at most 4 images and 8 MiB total",
+        ));
+    }
+    for image in images {
+        if image.content.is_empty() || image.content.len() > 4 << 20 {
+            return Err(Status::invalid_argument("each image must be at most 4 MiB"));
+        }
+        image_extension(image)?;
+    }
+    Ok(())
+}
+
+fn image_extension(image: &CodexImage) -> Result<&'static str, Status> {
+    match image.media_type.as_str() {
+        "image/png" if image.content.starts_with(b"\x89PNG\r\n\x1a\n") => Ok("png"),
+        "image/jpeg" if image.content.starts_with(b"\xff\xd8\xff") => Ok("jpg"),
+        "image/webp"
+            if image.content.starts_with(b"RIFF") && image.content.get(8..12) == Some(b"WEBP") =>
+        {
+            Ok("webp")
+        }
+        _ => Err(Status::invalid_argument(
+            "attach a valid PNG, JPEG, or WebP image",
+        )),
+    }
+}
+
+pub(crate) async fn codex_turn_input(
+    guest: &GuestClient,
+    text: &str,
+    images: &[CodexImage],
+) -> Result<Vec<Value>, Status> {
+    validate_codex_message(text, images)?;
+    let mut input = Vec::new();
+    if !text.trim().is_empty() {
+        input.push(json!({"type": "text", "text": text.trim(), "text_elements": []}));
+    }
+    if !images.is_empty() {
+        let directory = "/workspace/.tengri-attachments";
+        if let Err(error) = guest.create_directory(directory).await
+            && !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
+        {
+            return Err(map_guest_error(error));
+        }
+        for image in images {
+            let path = format!("{directory}/{}.{}", Uuid::new_v4(), image_extension(image)?);
+            guest
+                .write_file(&path, &image.content, "missing")
+                .await
+                .map_err(map_guest_error)?;
+            input.push(json!({"type": "localImage", "path": path}));
+        }
+    }
+    Ok(input)
 }
 
 fn validate_preview_port(value: u32) -> Result<u16, Status> {
@@ -2368,6 +2428,34 @@ fn map_guest_error(error: GuestError) -> Status {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn validates_codex_images_and_image_only_messages() {
+        let png = CodexImage {
+            media_type: "image/png".into(),
+            content: b"\x89PNG\r\n\x1a\n".to_vec(),
+        };
+        assert!(validate_codex_message("", std::slice::from_ref(&png)).is_ok());
+        assert!(validate_codex_message("Inspect this", std::slice::from_ref(&png)).is_ok());
+        assert!(validate_codex_message("", &[]).is_err());
+        assert!(
+            validate_codex_message(
+                "",
+                &[CodexImage {
+                    media_type: "image/jpeg".into(),
+                    ..png.clone()
+                }]
+            )
+            .is_err()
+        );
+        assert!(validate_codex_message("", &vec![png.clone(); 5]).is_err());
+        let mut exact = png.clone();
+        exact.content.resize(4 << 20, 0);
+        assert!(validate_codex_message("", &[exact.clone(), exact.clone()]).is_ok());
+        assert!(validate_codex_message("", &[exact.clone(), exact.clone(), png]).is_err());
+        exact.content.push(0);
+        assert!(validate_codex_message("", &[exact]).is_err());
+    }
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

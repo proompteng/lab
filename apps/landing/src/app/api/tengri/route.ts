@@ -178,13 +178,27 @@ export async function POST(request: Request) {
         })
         break
       case 'send-turn':
-        result = await sendCodexTurn(identity.subject, action.agentId, action.threadId, action.text, {
-          model: action.model,
-          reasoningEffort: action.reasoningEffort,
-        })
+        result = await sendCodexTurn(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          action.text,
+          {
+            model: action.model,
+            reasoningEffort: action.reasoningEffort,
+          },
+          action.images,
+        )
         break
       case 'steer-turn':
-        result = await steerCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId, action.text)
+        result = await steerCodexTurn(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          action.turnId,
+          action.text,
+          action.images,
+        )
         break
       case 'interrupt-turn':
         await interruptCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId)

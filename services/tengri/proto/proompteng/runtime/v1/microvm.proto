@@ -207,8 +207,10 @@ message SendCodexTurnRequest {
   string text = 3;
   string model = 4;
   string reasoning_effort = 5;
+  repeated CodexImage images = 6;
 }
-message SteerCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; }
+message CodexImage { string media_type = 1; bytes content = 2; }
+message SteerCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; repeated CodexImage images = 5; }
 message InterruptCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; }
 message WatchCodexEventsRequest { string agent_id = 1; uint64 after_sequence = 2; }
 

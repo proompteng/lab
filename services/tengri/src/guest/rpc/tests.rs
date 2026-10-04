@@ -1,3 +1,4 @@
+use super::test_server::{TestServer, TestService};
 use super::*;
 use axum::Router;
 use futures::StreamExt;
@@ -647,4 +648,70 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
             ..
         })
     ));
+}
+
+#[tokio::test]
+async fn codex_images_are_written_before_use_as_persistent_local_inputs() {
+    use std::sync::{Arc, Mutex};
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let observed = writes.clone();
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(Arc::new(|request| {
+            assert_eq!(request.get_ref().path, "/workspace/.tengri-attachments");
+            Err(tonic::Status::aborted("path already exists"))
+        })),
+        write_file: Some(Arc::new(move |request| {
+            let file = request.into_inner();
+            assert_eq!(file.expected_revision, "missing");
+            observed
+                .lock()
+                .unwrap()
+                .push((file.path.clone(), file.content.clone()));
+            Ok(proto::FileWriteResult {
+                path: file.path,
+                size: file.content.len() as i64,
+                revision: revision_for_content(&file.content),
+            })
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    let input =
+        crate::grpc::codex_turn_input(&fixture.guest, "Inspect this", std::slice::from_ref(&image))
+            .await
+            .unwrap();
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].1, image.content);
+    assert!(writes[0].0.starts_with("/workspace/.tengri-attachments/"));
+    assert!(writes[0].0.ends_with(".png"));
+    assert_eq!(input[0]["type"], "text");
+    assert_eq!(
+        input[1],
+        serde_json::json!({"type":"localImage","path":writes[0].0})
+    );
+}
+
+#[tokio::test]
+async fn codex_image_storage_failure_does_not_produce_an_input() {
+    let fixture = TestServer::start(TestService {
+        create_directory: Some(std::sync::Arc::new(|_| {
+            Err(tonic::Status::permission_denied("read-only workspace"))
+        })),
+        ..Default::default()
+    })
+    .await;
+    let image = crate::grpc::proto::CodexImage {
+        media_type: "image/png".into(),
+        content: b"\x89PNG\r\n\x1a\n".to_vec(),
+    };
+    assert!(
+        crate::grpc::codex_turn_input(&fixture.guest, "", &[image])
+            .await
+            .is_err()
+    );
 }

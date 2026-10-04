@@ -158,6 +158,14 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, { id: 'turn-selected', threadId: call.request.threadId })
     },
+    steerCodexTurn(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, { id: 'turn-selected', threadId: call.request.threadId })
+    },
     getCodexAccount(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -435,6 +443,25 @@ describe('Tengri gRPC BFF transport', () => {
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', ...options })
     await sendCodexTurn('github:42', 'agent-test', 'thread-selected', 'Read the workspace', options)
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
+  })
+
+  test('carries binary images through owner-signed mTLS for sends and steering', async () => {
+    const { sendCodexTurn, steerCodexTurn } = await import('./grpc')
+    const content = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0])
+    const images = [{ mediaType: 'image/png' as const, data: content.toString('base64') }]
+    await sendCodexTurn('github:42', 'agent-test', 'thread-selected', '', {}, images)
+    expect(receivedRequest).toMatchObject({
+      agentId: 'agent-test',
+      text: '',
+      images: [{ mediaType: 'image/png', content }],
+    })
+    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
+    await steerCodexTurn('github:42', 'agent-test', 'thread-selected', 'turn-selected', 'Inspect this', images)
+    expect(receivedRequest).toMatchObject({
+      turnId: 'turn-selected',
+      text: 'Inspect this',
+      images: [{ mediaType: 'image/png', content }],
+    })
   })
 
   test('identifies unsupported model selection without disguising other catalog failures', async () => {
