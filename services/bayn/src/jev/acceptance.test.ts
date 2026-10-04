@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
+import fc from 'fast-check'
+
+import { checkProperty } from '../testing/property-test-support'
 
 import {
   evaluateJevAcceptance,
@@ -87,7 +90,231 @@ const changeCandidate = (
   ),
 })
 
+const numerical = (input: unknown) => {
+  const report = Result.getOrThrow(evaluateJevAcceptance(input))
+  if (!('checks' in report)) throw new Error('Expected a complete numerical report')
+  return report
+}
+
+const sampledTotals = (microDollars: ReadonlyArray<bigint>) => {
+  let state = 20260921
+  const totals: bigint[] = []
+  for (let replicate = 0; replicate < 10_000; replicate += 1) {
+    let total = 0n
+    for (let block = 0; block < 10; block += 1) {
+      state ^= state << 13
+      state ^= state >>> 17
+      state ^= state << 5
+      const start = Math.floor(((state >>> 0) * 20) / 4294967296)
+      const first = microDollars[start]
+      const second = microDollars[(start + 1) % 20]
+      if (first === undefined || second === undefined) throw new Error('Oracle requires twenty observations')
+      total += first + second
+    }
+    totals.push(total)
+  }
+  return totals.toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+}
+
 describe('Jev frozen numerical acceptance', () => {
+  test('rejects an exact $50 paired bootstrap lower bound with fractional-dollar inputs', () => {
+    const report = Result.getOrThrow(
+      evaluateJevAcceptance(
+        inputFixture(
+          () => 300.000005,
+          (index) => (index < 10 ? 256.000005 : 216.000005),
+        ),
+      ),
+    )
+    expect(report.verdict).toBe(JevNumericalVerdict.Missed)
+    if (!('checks' in report)) throw new Error('Expected a complete numerical report')
+    expect(report.checks.pairedIncrementalLowerBounds).toBe(false)
+    expect(report.confidence.paired.map((comparison) => comparison.meanIncrementalNetPnlUsdLowerBound)).toEqual([
+      50, 50, 50,
+    ])
+  })
+
+  test('accepts an exact $5,000 total without losing fractional dollars during summation', () => {
+    const report = Result.getOrThrow(
+      evaluateJevAcceptance(inputFixture((index) => (index < 19 ? 249.999997 : 250.000057))),
+    )
+    expect(report.verdict).toBe(JevNumericalVerdict.Passed)
+    if (!('checks' in report)) throw new Error('Expected a complete numerical report')
+    expect(report.checks.netProfit).toBe(true)
+    expect(report.metrics.netPnlUsd).toBe(5000)
+  })
+
+  test('rounds a mixed-scale mean only once when its exact value exceeds a binary64 midpoint', () => {
+    const values = [6000, 5.684341886080801e-13, 4.86968994140625e-29, Number.MIN_VALUE]
+    const report = numerical(
+      inputFixture(
+        (index) => values[index] ?? 0,
+        () => 0,
+      ),
+    )
+    expect(report.confidence.paired.map((comparison) => comparison.meanIncrementalNetPnlUsd)).toEqual([
+      300.00000000000006, 300.00000000000006, 300.00000000000006,
+    ])
+  })
+
+  test.each([-1, 0, 1])('keeps submicro strict gate direction for decimal offset %s', (direction) => {
+    const epsilon = direction / 10_000_000
+    const paired = numerical(
+      inputFixture(
+        () => 300 + epsilon,
+        (index) => (index < 10 ? 256 : 216),
+      ),
+    )
+    expect(paired.checks.pairedIncrementalLowerBounds).toBe(direction > 0)
+    expect(paired.confidence.paired[0]?.meanIncrementalNetPnlUsdLowerBound).toBe(50 + epsilon)
+
+    const cost = numerical(
+      changeCandidate(
+        inputFixture(() => 300 + epsilon),
+        (session) => ({ ...session, filledNotionalUsd: 300_000 }),
+      ),
+    )
+    expect(cost.checks.additionalExecutionCost).toBe(direction > 0)
+    expect(cost.metrics.netAfterAdditionalCostUsd).toBe(direction / 500_000)
+  })
+
+  test.each([Number.MIN_VALUE, 1e-100, 1e-7, -Number.MIN_VALUE, -1e-100, -1e-7, -0])(
+    'preserves exponent and signed-zero inputs at strict zero gates for %s',
+    (value) => {
+      const report = numerical(
+        changeCandidate(
+          inputFixture(
+            () => value,
+            () => 0,
+          ),
+          (session) => ({
+            ...session,
+            p95LatencyStress: { status: 'COMPLETE', netPnlUsd: value, evidenceHash: 'f'.repeat(64) },
+          }),
+        ),
+      )
+      expect(report.checks.positiveProfitLowerBound).toBe(value > 0)
+      expect(report.checks.p95BatchLatency).toBe(value > 0)
+      expect(report.checks.profitWithoutBestSession).toBe(value > 0)
+      expect(report.confidence.meanNetPnlUsdLowerBound).toBe(value === 0 ? 0 : value)
+      expect(report.metrics.p95LatencyStressNetPnlUsd).toBe(value === 0 ? 0 : value * 20)
+      expect(report.verdict).toBe(JevNumericalVerdict.Missed)
+    },
+  )
+
+  test.each([-1_000_000_000, 1_000_000_000])('retains the accepted money schema endpoint %s', (value) => {
+    const report = numerical(
+      changeCandidate(inputFixture(), (session) => ({
+        ...session,
+        filledNotionalUsd: 1_000_000_000,
+        p95LatencyStress: { status: 'COMPLETE', netPnlUsd: value, evidenceHash: 'f'.repeat(64) },
+      })),
+    )
+    expect(report.metrics.filledNotionalUsd).toBe(20_000_000_000)
+    expect(report.metrics.p95LatencyStressNetPnlUsd).toBe(value * 20)
+    expect(report.checks.p95BatchLatency).toBe(value > 0)
+  })
+
+  test('keeps exact inclusive volume, multiplier and risk thresholds', () => {
+    for (const direction of [-1, 0, 1]) {
+      const report = numerical(
+        changeCandidate(
+          inputFixture(
+            () => 250.0000005 + direction / 10_000_000,
+            () => 200.0000004,
+          ),
+          (session) => ({ ...session, filledNotionalUsd: 100_000 + direction / 10_000_000 }),
+        ),
+      )
+      expect(report.checks.observedControlAdvantage).toBe(direction >= 0)
+      expect(report.checks.volume).toBe(direction >= 0)
+    }
+    for (const loss of [1000, 1000.000001]) {
+      const report = numerical(
+        changeCandidate(inputFixture(), (session) =>
+          session.status === 'COMPLETE'
+            ? { ...session, minimumEquityUsd: session.openingEquityUsd - loss, maximumDrawdownUsd: loss }
+            : session,
+        ),
+      )
+      expect(report.checks.sessionLoss).toBe(loss <= 1000)
+    }
+  })
+
+  test('property: exact totals retain boundary direction under session permutations', () => {
+    checkProperty(
+      'jev-acceptance-decimal-totals',
+      fc.property(
+        fc.array(fc.integer({ min: -1_000_000, max: 1_000_000 }), { minLength: 19, maxLength: 19 }),
+        fc.integer({ min: -1, max: 1 }),
+        (offsets, direction) => {
+          const totalOffset = offsets.reduce((total, value) => total + value, 0)
+          const values = [...offsets, direction - totalOffset].map((value) => (250_000_000 + value) / 1_000_000)
+          for (const ordered of [values, values.toReversed()]) {
+            const report = numerical(inputFixture((index) => ordered[index] ?? 0))
+            expect(report.checks.netProfit).toBe(direction >= 0)
+            expect(report.metrics.netPnlUsd).toBe((5_000_000_000 + direction) / 1_000_000)
+          }
+        },
+      ),
+      20,
+    )
+  })
+
+  test('property: a common decimal shift cannot pass an exact $50 paired lower bound', () => {
+    checkProperty(
+      'jev-acceptance-paired-equality',
+      fc.property(fc.integer({ min: 1, max: 999_999 }), (shift) => {
+        const report = numerical(
+          inputFixture(
+            () => (300_000_000 + shift) / 1_000_000,
+            (index) => ((index < 10 ? 256_000_000 : 216_000_000) + shift) / 1_000_000,
+          ),
+        )
+        expect(report.confidence.paired.map((comparison) => comparison.meanIncrementalNetPnlUsdLowerBound)).toEqual([
+          50, 50, 50,
+        ])
+        expect(report.checks.pairedIncrementalLowerBounds).toBe(false)
+        expect(report.verdict).toBe(JevNumericalVerdict.Missed)
+      }),
+      20,
+    )
+  })
+
+  test('property: frozen resampling agrees with an independent micro-dollar oracle', () => {
+    checkProperty(
+      'jev-acceptance-resampling-oracle',
+      fc.property(
+        fc.array(fc.integer({ min: -40_000_000, max: 40_000_000 }), { minLength: 20, maxLength: 20 }),
+        fc.integer({ min: 1, max: 12 }),
+        (offsets, attemptIndex) => {
+          const candidate = offsets.map((offset) => BigInt(300_000_000 + offset))
+          const differences = candidate.map((value, index) => value - BigInt(index < 10 ? 256_000_005 : 216_000_005))
+          const candidateLower = sampledTotals(candidate)[499]
+          const pairedLower = sampledTotals(differences)[Math.floor(9999 / (60 * attemptIndex * (attemptIndex + 1)))]
+          if (candidateLower === undefined || pairedLower === undefined) throw new Error('Oracle percentile is missing')
+          const input = inputFixture(
+            (index) => Number(candidate[index]) / 1_000_000,
+            (index) => (index < 10 ? 256.000005 : 216.000005),
+          )
+          const report = numerical({
+            ...input,
+            registration: { ...input.registration, attemptIndex },
+            policies: input.policies.toReversed(),
+          })
+          expect(report.confidence.meanNetPnlUsdLowerBound).toBe(Number(candidateLower) / 20_000_000)
+          expect(report.confidence.paired.map((comparison) => comparison.meanIncrementalNetPnlUsdLowerBound)).toEqual([
+            Number(pairedLower) / 20_000_000,
+            Number(pairedLower) / 20_000_000,
+            Number(pairedLower) / 20_000_000,
+          ])
+          expect(report.checks.pairedIncrementalLowerBounds).toBe(pairedLower > 1_000_000_000n)
+        },
+      ),
+      20,
+    )
+  })
+
   test('requires all numerical outcomes and retains reproducible identity without granting authority', () => {
     const input = inputFixture()
     const report = Result.getOrThrow(evaluateJevAcceptance(input))
