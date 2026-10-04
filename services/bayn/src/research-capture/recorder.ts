@@ -208,19 +208,31 @@ export const makeResearchCaptureRecorder = (
       })
       if (Result.isFailure(result)) invalidate(CaptureInvalidation.InvalidEvent)
     }
+    let claiming = false
     const boundedWrite = (write: () => Effect.Effect<void, ResearchCaptureFailure>) =>
-      Effect.suspend(write).pipe(
-        Effect.timeoutOrElse({
-          duration: options.writeTimeoutMs,
-          orElse: () => Effect.fail(new ResearchCaptureFailure({ message: 'Capture write outcome is unknown' })),
-        }),
+      Effect.suspend(() => {
+        const remaining =
+          claiming && options.session !== undefined
+            ? options.session.bootstrapDeadlineMs - clock.currentTimeMillisUnsafe()
+            : Number.POSITIVE_INFINITY
+        const expired = () => {
+          if (remaining <= options.writeTimeoutMs) invalidate(CaptureInvalidation.MissedBootstrap)
+          return Effect.fail(new ResearchCaptureFailure({ message: 'Capture write outcome is unknown' }))
+        }
+        if (remaining <= 0) return expired()
+        return Effect.suspend(write).pipe(
+          Effect.timeoutOrElse({
+            duration: Math.min(options.writeTimeoutMs, remaining),
+            orElse: expired,
+          }),
+        )
+      }).pipe(
         Effect.catchCause(() =>
           Effect.sync(() => {
             invalidate(CaptureInvalidation.Persistence)
           }),
         ),
       )
-    let claiming = false
     const drain = Effect.gen(function* () {
       const entries = yield* Queue.clear(queue)
       if (entries.length === 0) return

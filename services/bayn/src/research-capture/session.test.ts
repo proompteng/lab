@@ -288,6 +288,56 @@ test('S3 acquisition that crosses the bootstrap deadline cannot claim or export 
     }),
   ))
 
+test.each(['before-commit', 'unknown-acknowledgement'] as const)(
+  'the admission deadline cancels a blocked SQL claim with %s and never exports its tail',
+  (outcome) =>
+    run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(sessionStart)
+        const saved = sessionMemory()
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        let cancelled = 0
+        const session = yield* makeResearchCaptureSession(
+          { ...sessionConfig, bootstrapDeadlineMs: sessionStart + 100 },
+          'a'.repeat(40),
+        )
+        const acquiring = yield* session
+          .start(
+            {
+              ...saved.store,
+              append: (bytes) =>
+                Effect.gen(function* () {
+                  if (outcome === 'unknown-acknowledgement') yield* saved.store.append(bytes)
+                  yield* Deferred.succeed(entered, undefined)
+                  yield* Deferred.await(release).pipe(
+                    Effect.onInterrupt(() =>
+                      Effect.sync(() => {
+                        cancelled++
+                      }),
+                    ),
+                  )
+                  if (outcome === 'before-commit') yield* saved.store.append(bytes)
+                }),
+            },
+            Effect.succeed(saved.objectStore),
+            sessionUniverse,
+          )
+          .pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(150)
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(acquiring)
+        expect(cancelled).toBe(1)
+        expect(saved.writes).toEqual(outcome === 'before-commit' ? [] : ['sql-chunk'])
+        expect(saved.objects).toEqual([])
+        expect(saved.seals).toEqual([])
+        expect(session.workerObserver).toBeUndefined()
+        expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.MissedBootstrap })
+      }),
+    ),
+)
+
 test.each(['before-claim', 'lost-claim-ack', 'after-claim'] as const)(
   '%s cannot acquire raw evidence or restart the fixed capture identity',
   (failure) =>

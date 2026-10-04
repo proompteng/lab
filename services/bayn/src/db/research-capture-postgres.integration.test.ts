@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Redacted, Result, Schema, type Scope } from 'effect'
+import { Clock, Effect, Exit, Redacted, Result, Schema, type Scope } from 'effect'
 
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -91,6 +91,7 @@ postgresTest('a session claim commits before objects and a fresh attempt cannot 
     Effect.gen(function* () {
       const { sql, store, chunk } = yield* fixture
       const { captureId: _captureId, calendar: _calendar, sessionDate: _sessionDate, ...session } = sessionConfig
+      const now = yield* Clock.currentTimeMillis
       const options = {
         captureId: chunk.captureId,
         sourceRevision: chunk.sourceRevision,
@@ -101,7 +102,14 @@ postgresTest('a session claim commits before objects and a fresh attempt cannot 
         writeTimeoutMs: 1000,
         maximumObjectBytes: session.maximumObjectBytes,
         maximumSqlBytes: session.maximumSqlBytes,
-        session,
+        session: {
+          ...session,
+          startAtMs: now,
+          bootstrapDeadlineMs: now + 10_000,
+          coverageStartMs: now + 20_000,
+          coverageEndMs: now + 30_000,
+          stopAtMs: now + 31_000,
+        },
       }
       let objects = 0
       const first = yield* makeResearchCaptureRecorder(store, options, {

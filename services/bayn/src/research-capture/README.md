@@ -36,6 +36,10 @@ It is the only chunk whose SQL write precedes object export. SQL must acknowledg
 metadata, and index can be exported, and all must acknowledge before raw admission begins. The marker participates in
 the ordinary hash and export chains but represents no consumer start or market delivery. Readers reject a marker in
 any other position. Normal data chunks retain object-readback-before-SQL ordering.
+The claim's complete SQL-and-export operation uses the smaller of the one-second write timeout and the remaining
+admission window. At that deadline the recorder cancels the operation and retains incomplete evidence. Cancellation
+does not prove that a remote SQL commit rolled back. An unknown committed claim still consumes the fixed ID and cannot
+authorize an export, raw admission, or a replacement attempt.
 An attempt begins when its SQL claim commits. A restart uses a new nonce and conflicts with that claim, even when its
 acknowledgement was lost. Before the first claim commits there is no retained capture progress to resume. The same
 process never retries the claim, selects a new ID, or repairs it. Every process rejects startup outside the frozen
