@@ -1,7 +1,8 @@
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not vim.uv.fs_stat(lazypath) then
-  local staging = lazypath .. ".install-" .. vim.fn.getpid()
   vim.fn.mkdir(vim.fn.fnamemodify(lazypath, ":h"), "p")
+  local staging = vim.fn.trim(vim.fn.system({ "mktemp", "-d", lazypath .. ".install-XXXXXX" }))
+  assert(vim.v.shell_error == 0 and staging ~= "", "create Lazy staging directory: " .. staging)
   local output = vim.fn.system({
     "git", "clone", "--filter=blob:none", "--branch=stable",
     "https://github.com/folke/lazy.nvim.git", staging,
