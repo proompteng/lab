@@ -59,6 +59,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { reconcileRecoveryFixture } from './recovery-clock.test-support'
 import { BrokerRead } from '../broker/alpaca'
 import {
   AuthorityGenerationStore,
@@ -897,12 +898,11 @@ durableTest.each(
               message: 'Recovery proof operation failed',
               cause,
             })
-          const reconcile = advanceBy(1).pipe(
-            Effect.andThen(runtime.reconcile),
-            Effect.andThen(advanceBy(1)),
-            Effect.asVoid,
-            Effect.mapError(asOperational),
-          )
+          const reconcile = reconcileRecoveryFixture({
+            writerFence: fence,
+            advanceClock: advanceBy(1),
+            reconcile: runtime.reconcile,
+          }).pipe(Effect.mapError(asOperational))
           const settle = recoverTerminalGenerationToObserve({
             accountId,
             blockedIntents,

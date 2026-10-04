@@ -1,0 +1,133 @@
+import { expect, test } from 'bun:test'
+import { Clock, Context, Deferred, Effect, Fiber, Option, Semaphore } from 'effect'
+import { TestClock } from 'effect/testing'
+import type { WriterFenceService } from '../execution/writer-fence'
+import { reconcileRecoveryFixture } from './recovery-clock.test-support'
+
+class FixtureTransaction extends Context.Service<FixtureTransaction, boolean>()('FixtureTransaction') {}
+
+const initial = Date.parse('2026-09-04T19:59:03.010Z')
+const timestamp = (millis: number) => new Date(millis).toISOString()
+
+const makeFixtureFence = (requested = Effect.void) =>
+  Effect.gen(function* () {
+    const permit = yield* Semaphore.make(1)
+    return {
+      check: Effect.void,
+      transaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.serviceOption(FixtureTransaction).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                requested.pipe(
+                  Effect.andThen(permit.withPermit(effect.pipe(Effect.provideService(FixtureTransaction, true)))),
+                ),
+              onSome: () => effect,
+            }),
+          ),
+        ),
+    } satisfies WriterFenceService
+  })
+
+const advanceClock = Clock.currentTimeMillis.pipe(Effect.flatMap((now) => TestClock.setTime(now + 1)))
+
+test('concurrent recovery cannot advance the clock inside another reconciliation transaction', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(initial)
+      const firstReconciliation = yield* Deferred.make<void>()
+      const releaseFirst = yield* Deferred.make<void>()
+      const secondTransaction = yield* Deferred.make<void>()
+      let requests = 0
+      const fence = yield* makeFixtureFence(
+        Effect.suspend(() => {
+          requests += 1
+          return requests === 2 ? Deferred.succeed(secondTransaction, undefined).pipe(Effect.asVoid) : Effect.void
+        }),
+      )
+      let reconciledAt = initial
+      const persisted: number[] = []
+      const authority: { activatedAt: string; reconciledAt: string }[] = []
+      const reconcile = fence.transaction(
+        Effect.gen(function* () {
+          reconciledAt = yield* Clock.currentTimeMillis
+          persisted.push(reconciledAt)
+        }),
+      )
+      const owner = (reconciliation: Effect.Effect<void>) =>
+        reconcileRecoveryFixture({ writerFence: fence, advanceClock, reconcile: reconciliation }).pipe(
+          Effect.andThen(
+            fence.transaction(
+              Effect.gen(function* () {
+                const activatedAt = yield* Clock.currentTimeMillis
+                const evidence = { activatedAt: timestamp(activatedAt), reconciledAt: timestamp(reconciledAt) }
+                authority.push(evidence)
+                expect(reconciledAt, JSON.stringify(evidence)).toBeLessThan(activatedAt)
+              }),
+            ),
+          ),
+        )
+      const first = yield* owner(
+        fence.transaction(
+          Deferred.succeed(firstReconciliation, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirst)),
+            Effect.andThen(reconcile),
+          ),
+        ),
+      ).pipe(Effect.forkChild)
+      yield* Deferred.await(firstReconciliation)
+      const second = yield* owner(reconcile).pipe(Effect.forkChild)
+      yield* Deferred.await(secondTransaction)
+      expect(timestamp(yield* Clock.currentTimeMillis)).toBe('2026-09-04T19:59:03.011Z')
+      yield* Deferred.succeed(releaseFirst, undefined)
+      yield* Effect.all([Fiber.join(first), Fiber.join(second)])
+      expect(persisted.map(timestamp)).toEqual(['2026-09-04T19:59:03.011Z', '2026-09-04T19:59:03.013Z'])
+      expect(authority).toHaveLength(2)
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  )
+})
+
+test.each(
+  [
+    ['AC', 'AG', 'BC', 'BG'],
+    ['AC', 'BC', 'AG', 'BG'],
+    ['AC', 'BC', 'BG', 'AG'],
+    ['BC', 'BG', 'AC', 'AG'],
+    ['BC', 'AC', 'BG', 'AG'],
+    ['BC', 'AC', 'AG', 'BG'],
+  ].map((order) => ({ order, label: order.join(' ') })),
+)('recovery clock stays later than reconciliation in writer order $label', async ({ order }) => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(initial)
+      const fence = yield* makeFixtureFence()
+      let reconciledAt = initial
+      for (const action of order) {
+        if (action.endsWith('C')) {
+          yield* reconcileRecoveryFixture({
+            writerFence: fence,
+            advanceClock,
+            reconcile: fence.transaction(
+              Clock.currentTimeMillis.pipe(
+                Effect.tap((now) =>
+                  Effect.sync(() => {
+                    reconciledAt = now
+                  }),
+                ),
+              ),
+            ),
+          })
+        } else {
+          yield* fence.transaction(
+            Effect.gen(function* () {
+              const activatedAt = yield* Clock.currentTimeMillis
+              expect(reconciledAt, JSON.stringify({ order, action, activatedAt, reconciledAt })).toBeLessThan(
+                activatedAt,
+              )
+            }),
+          )
+        }
+      }
+    }).pipe(Effect.provide(TestClock.layer())),
+  )
+})
