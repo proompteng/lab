@@ -18,8 +18,9 @@ study. It writes `bayn.control-input-preflight.v1` to the new `--output` path wi
 a portfolio, computing returns, calling Jev or opening a broker or database connection. This also works for a `JEV`
 study input without an API key. Do not supply `--evidence-directory` in preflight mode.
 
-The checker consumes and verifies the frozen source once. It uses the control runner's entry query and native
-snapshot constructor for every session-anchored entry-eligible poll across the complete candidate universe. It
+The checker uses one source cursor across sessions and retains the source reader's whole-file verification and
+replay checks. It uses the control runner's entry query and native snapshot constructor for every session-anchored
+entry-eligible poll across the complete candidate universe. It
 does not skip a repeated minute window after a successful observation or model a held position. Warmup and cutoff
 polls remain in the denominator. Per-session counts distinguish unavailable snapshots from candidate-local
 exclusions, and retain the first native failure message and observation time for each failure reason.

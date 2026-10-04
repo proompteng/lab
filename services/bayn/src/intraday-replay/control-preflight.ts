@@ -25,7 +25,7 @@ const definition = {
   coverage:
     'COMPLETE requires at least one eligible poll and no unavailable snapshot or candidate exclusion. This strict input-coverage result is not the production admission policy. Candidate exclusions remain distinct from whole-snapshot failures.',
   source:
-    'Consume and verify the complete frozen source once. Preserve the original receipt without upgrading its availability or completeness claims.',
+    "Use one shared source cursor across sessions, retaining the source reader's whole-file verification and replay checks. Preserve the original receipt without upgrading its availability or completeness claims.",
   limitations:
     'Input compatibility only. No execution, capacity, latency, costs, profitability, prospective qualification or capital authority is established.',
 } as const
