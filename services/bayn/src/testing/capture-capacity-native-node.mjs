@@ -242,8 +242,10 @@ let totalRecords = 0
 const program = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   yield* sql`SELECT 1 FROM research_capture_chunks LIMIT 0`
-  const runArm = (name, enabled, data, rate, batchSize, fault) =>
-    Effect.scoped(
+  const runArm = (name, enabled, data, rate, batchSize, fault) => {
+    let reported = false
+    let snapshot = () => ({ name, phase: 'setup' })
+    return Effect.scoped(
       Effect.gen(function* () {
         totalRecords += data.length
         assert.ok(totalRecords <= plan.limits.maximumTotalRecords)
@@ -310,19 +312,56 @@ const program = Effect.gen(function* () {
           arm.chargedBytes += bytes
           assert.ok(arm.chargedBytes <= plan.limits.maximumCombinedAttemptedSinkBytesPerArm)
         }
+        const sinkTimings = {}
+        let activeSink = null
+        let lastChunk = null
+        const timedSink = (stage, bytes, operation) =>
+          Effect.suspend(() => {
+            const began = performance.now()
+            activeSink = { stage, bytes, began }
+            return operation.pipe(
+              Effect.onExit((exit) =>
+                Effect.sync(() => {
+                  const ms = performance.now() - began
+                  const value = (sinkTimings[stage] ??= { calls: 0, failed: 0, bytes: 0, totalMs: 0, maximumMs: 0 })
+                  value.calls++
+                  value.failed += Exit.isFailure(exit) ? 1 : 0
+                  value.bytes += bytes
+                  value.totalMs += ms
+                  value.maximumMs = Math.max(value.maximumMs, ms)
+                  activeSink = null
+                }),
+              ),
+            )
+          })
         const appendAttempts = new Map()
         const store = {
           append: (bytes) =>
             Effect.sync(() => {
               charge(Buffer.byteLength(bytes.payload))
-              const ordinal = JSON.parse(bytes.payload).chunkOrdinal
+              const chunk = JSON.parse(bytes.payload)
+              const ordinal = chunk.chunkOrdinal
+              const receiptBytes =
+                Buffer.byteLength(bytes.payload) -
+                Buffer.byteLength(JSON.stringify({ ...chunk, receipts: [] })) -
+                Math.max(0, chunk.receipts.length - 1)
+              const markets = chunk.receipts.filter((receipt) => receipt.event.kind === 'market-record')
+              const rawBytes = markets.reduce((sum, receipt) => sum + (receipt.event.rawByteLength ?? 0), 0)
+              lastChunk = {
+                ordinal,
+                receipts: chunk.receipts.length,
+                marketRecords: markets.length,
+                metadataBytes: Buffer.byteLength(bytes.payload),
+                rawBytes,
+                entryReservationBytes: 4 * receiptBytes + 3 * rawBytes + 512 * chunk.receipts.length,
+              }
               appendAttempts.set(ordinal, (appendAttempts.get(ordinal) ?? 0) + 1)
               assert.equal(appendAttempts.get(ordinal), 1)
             }).pipe(
               Effect.andThen(() => {
                 const started = performance.now()
                 if (fault === 'postgres-table-lock-delay' && arm.injected) arm.faultAppendStarted = started
-                return nativeStore.append(bytes).pipe(
+                return timedSink('sql.append', Buffer.byteLength(bytes.payload), nativeStore.append(bytes)).pipe(
                   Effect.onExit((exit) =>
                     Effect.sync(() => {
                       if (fault === 'postgres-table-lock-delay' && arm.injected && Exit.isFailure(exit))
@@ -334,7 +373,7 @@ const program = Effect.gen(function* () {
             ),
           seal: (bytes) =>
             Effect.sync(() => charge(Buffer.byteLength(bytes.payload))).pipe(
-              Effect.andThen(() => nativeStore.seal(bytes)),
+              Effect.andThen(() => timedSink('sql.seal', Buffer.byteLength(bytes.payload), nativeStore.seal(bytes))),
             ),
         }
         const objects = enabled
@@ -367,7 +406,23 @@ const program = Effect.gen(function* () {
                     charge(object.payload.byteLength)
                     arm.pendingObject = object
                   }).pipe(
-                    Effect.andThen(() => objects.putVerified(object)),
+                    Effect.andThen(() => {
+                      const prefix = Buffer.from(
+                        object.payload.buffer,
+                        object.payload.byteOffset,
+                        Math.min(96, object.payload.byteLength),
+                      ).toString('utf8')
+                      const stage = prefix.startsWith('{"schemaVersion":"bayn.research-capture-chunk.v1"')
+                        ? 'metadata'
+                        : prefix.startsWith('{"schemaVersion":"bayn.research-capture-byte-index.v1"')
+                          ? 'index'
+                          : prefix.startsWith('{"schemaVersion":"bayn.research-capture-seal.v1"')
+                            ? 'seal'
+                            : prefix.startsWith('{"schemaVersion":"bayn.research-capture-export.v1"')
+                              ? 'manifest'
+                              : 'raw'
+                      return timedSink(`object.${stage}`, object.payload.byteLength, objects.putVerified(object))
+                    }),
                     Effect.onExit((exit) =>
                       Effect.sync(() => {
                         if (fault === 's3-put-committed-connection-drop' && arm.injected && Exit.isFailure(exit))
@@ -391,6 +446,78 @@ const program = Effect.gen(function* () {
         let peakPayload = 0
         let progressAfterFailure = 0
         let invalidatedAtCount
+        let started
+        let cpuStart
+        let firstInvalidation = null
+        let latestCaptureStatus = null
+        const heartbeat = []
+        let lastBeat = performance.now()
+        const arrivals = [20, 200].map((widthMs) => ({ widthMs, window: -1, count: 0, maximumRecords: 0 }))
+        const producerTiming = {
+          batches: 0,
+          maximumLatenessMs: 0,
+          minimumGapMs: null,
+          maximumGapMs: 0,
+          catchUpBatches: 0,
+        }
+        let lastBatchStarted
+        snapshot = () => {
+          const now = performance.now()
+          const elapsedMs = started === undefined ? null : now - started
+          return {
+            name,
+            phase: started === undefined ? 'setup' : 'input',
+            elapsedMs,
+            accepted,
+            published,
+            cpuCores: elapsedMs === null || elapsedMs <= 0 ? null : (cpuMicros() - cpuStart) / 1000 / elapsedMs,
+            memoryPeakBytes: memoryPeak(),
+            heartbeatP99Ms: percentile(heartbeat, 0.99),
+            heartbeatMaxMs: Math.max(0, ...heartbeat),
+            pendingHeartbeatLatenessMs: started === undefined ? null : Math.max(0, now - lastBeat - 10),
+            peakBacklog,
+            peakQueued,
+            peakRetained,
+            peakPayload,
+            recorderEnvelopeBytes: enabled ? 65536 : 0,
+            captureStatus: latestCaptureStatus,
+            sinkTimings,
+            activeSink:
+              activeSink === null
+                ? null
+                : { stage: activeSink.stage, bytes: activeSink.bytes, elapsedMs: now - activeSink.began },
+            lastChunk,
+            arrivalWindows: arrivals,
+            producerTiming,
+          }
+        }
+        const sampleCapture = (state, recordCount = accepted) => {
+          latestCaptureStatus = state
+          peakRetained = Math.max(peakRetained, state.retainedReceipts)
+          peakPayload = Math.max(peakPayload, state.retainedPayloadBytes)
+          assert.ok(state.retainedReceipts <= 1024 && state.retainedPayloadBytes <= 4 * 1024 ** 2)
+          if (state.invalidations.length && firstInvalidation === null) {
+            invalidatedAtCount = recordCount
+            firstInvalidation = structuredClone({ ...snapshot(), observedAtMs: Date.now(), recordCount })
+            console.log(JSON.stringify({ captureFirstInvalidation: firstInvalidation }))
+          }
+        }
+        const capture = recorder
+          ? {
+              rawValues: recorder.rawValues,
+              record: (event, at, raw) => {
+                recorder.record(event, at, raw)
+                sampleCapture(
+                  Effect.runSync(recorder.status),
+                  event.kind === 'market-record' ? event.consumerSequence : accepted,
+                )
+              },
+              invalidate: (reason) => {
+                recorder.invalidate(reason)
+                sampleCapture(Effect.runSync(recorder.status))
+              },
+            }
+          : undefined
         const seenOffsets = new Map()
         const measuredTransport = (...args) => {
           const transport = platformaticProjectionTransport(...args)
@@ -412,6 +539,15 @@ const program = Effect.gen(function* () {
                 assert.ok(current.availableAtMs >= arrivalMaxMs)
                 arrivalMinMs = Math.min(arrivalMinMs, current.availableAtMs)
                 arrivalMaxMs = current.availableAtMs
+                for (const bin of arrivals) {
+                  const window = Math.floor(current.availableAtMs / bin.widthMs)
+                  if (bin.window !== window) {
+                    bin.window = window
+                    bin.count = 0
+                  }
+                  bin.count++
+                  bin.maximumRecords = Math.max(bin.maximumRecords, bin.count)
+                }
                 assert.equal(current.value.sourcePartition, record.partition)
                 assert.equal(current.value.sourceOffset, record.offset)
                 assert.equal(current.recordHash, sha256(record.value))
@@ -419,14 +555,7 @@ const program = Effect.gen(function* () {
                 assert.equal(projection.sequence, accepted)
                 peakBacklog = Math.max(peakBacklog, published - accepted)
                 peakQueued = Math.max(peakQueued, source.queuedRecords())
-                if (recorder) {
-                  const state = Effect.runSync(recorder.status)
-                  peakRetained = Math.max(peakRetained, state.retainedReceipts)
-                  peakPayload = Math.max(peakPayload, state.retainedPayloadBytes)
-                  assert.ok(state.retainedReceipts <= 1024 && state.retainedPayloadBytes <= 4 * 1024 ** 2)
-                  if (state.invalidations.length && invalidatedAtCount === undefined) invalidatedAtCount = accepted
-                  if (invalidatedAtCount !== undefined) progressAfterFailure = accepted - invalidatedAtCount
-                }
+                if (invalidatedAtCount !== undefined) progressAfterFailure = accepted - invalidatedAtCount
                 if (accepted >= plan.faults.triggerAfterRecords) arm.inject = true
               })
               return {
@@ -450,7 +579,7 @@ const program = Effect.gen(function* () {
           universe,
           measuredTransport,
           undefined,
-          recorder,
+          capture,
         )
         const readyDeadline = performance.now() + 15000
         while (!(yield* market.status).ready) {
@@ -467,6 +596,7 @@ const program = Effect.gen(function* () {
         const watch = yield* Effect.gen(function* () {
           while (running) {
             if (recorder && !finishStarted && (yield* recorder.status).invalidations.length) {
+              sampleCapture(yield* recorder.status)
               finishStarted = true
               yield* recorder.finish
               finishDone = true
@@ -512,10 +642,9 @@ const program = Effect.gen(function* () {
                 )
               }).pipe(Effect.forkChild)
             : undefined
-        const heartbeat = []
         const sqlLatency = []
         let probeFailed = false
-        let lastBeat = performance.now()
+        lastBeat = performance.now()
         const timer = yield* Effect.acquireRelease(
           Effect.sync(() =>
             setInterval(() => {
@@ -544,12 +673,26 @@ const program = Effect.gen(function* () {
           ),
           Effect.forkChild,
         )
-        const cpuStart = cpuMicros()
-        const started = performance.now()
+        cpuStart = cpuMicros()
+        started = performance.now()
         let publishFinished
         yield* Effect.promise(async () => {
           for (let index = 0; index < data.length; index += batchSize) {
             if (rate) await delay(Math.max(0, started + (index / rate) * 1000 - performance.now()))
+            const batchStarted = performance.now()
+            producerTiming.batches++
+            if (rate)
+              producerTiming.maximumLatenessMs = Math.max(
+                producerTiming.maximumLatenessMs,
+                batchStarted - started - (index / rate) * 1000,
+              )
+            if (lastBatchStarted !== undefined) {
+              const gap = batchStarted - lastBatchStarted
+              producerTiming.minimumGapMs = Math.min(producerTiming.minimumGapMs ?? gap, gap)
+              producerTiming.maximumGapMs = Math.max(producerTiming.maximumGapMs, gap)
+              if (rate && gap < (batchSize / rate) * 500) producerTiming.catchUpBatches++
+            }
+            lastBatchStarted = batchStarted
             const batch = data.slice(index, index + batchSize)
             await producer.send({
               messages: batch.map((item) => ({
@@ -596,6 +739,7 @@ const program = Effect.gen(function* () {
         const drainedAt = performance.now()
         const measuredMs = drainedAt - started
         const cpuCores = (cpuMicros() - cpuStart) / 1000 / measuredMs
+        const wholeArmDiagnostics = structuredClone(snapshot())
         assert.equal(probeFailed, false)
         assert.ok(sqlLatency.length > 0)
         running = false
@@ -614,15 +758,6 @@ const program = Effect.gen(function* () {
         const stateHash = canonicalHashV1(deterministicState(state.projection, topics))
         assert.equal(stateHash, expectedStateHash)
         const captureStatus = recorder ? yield* recorder.status : undefined
-        if (enabled && !fault && rate) assert.deepEqual(captureStatus.invalidations, [])
-        if (fault) {
-          assert.ok(arm.injected)
-          assert.ok(captureStatus.invalidations.includes(CaptureInvalidation.Persistence))
-          assert.ok(progressAfterFailure > 0)
-          assert.ok(Number.isFinite(arm.faultAbortedMs) && arm.faultAbortedMs <= 1100)
-          if (arm.faultRequest) assert.equal(arm.requests.get(arm.faultRequest), 1)
-        }
-        assert.equal(arm.serverError, undefined)
         const report = {
           name,
           enabled,
@@ -655,10 +790,26 @@ const program = Effect.gen(function* () {
           progressAfterFailure,
           faultAbortedMs: arm.faultAbortedMs ?? null,
           attemptedSinkBytes: arm.chargedBytes,
+          captureActive: {
+            endReason: firstInvalidation === null ? 'finish' : 'invalidation',
+            metrics: firstInvalidation ?? wholeArmDiagnostics,
+          },
+          wholeArmDiagnostics,
+          finalCaptureStatus: captureStatus ?? null,
           invalidations: captureStatus?.invalidations ?? [],
         }
         reports.push(report)
         console.log(JSON.stringify({ capacityArm: report }))
+        reported = true
+        if (enabled && !fault && rate) assert.deepEqual(captureStatus.invalidations, [])
+        if (fault) {
+          assert.ok(arm.injected)
+          assert.ok(captureStatus.invalidations.includes(CaptureInvalidation.Persistence))
+          assert.ok(progressAfterFailure > 0)
+          assert.ok(Number.isFinite(arm.faultAbortedMs) && arm.faultAbortedMs <= 1100)
+          if (arm.faultRequest) assert.equal(arm.requests.get(arm.faultRequest), 1)
+        }
+        assert.equal(arm.serverError, undefined)
         assert.ok(
           report.memoryPeakBytes <= plan.performancePass.maximumCgroupMemoryPeakBytes,
           'PERFORMANCE: cgroup memory peak',
@@ -682,8 +833,15 @@ const program = Effect.gen(function* () {
             'INCONCLUSIVE: offered rate below frozen floor',
           )
         return { report, captureId, recorder, arm, inputByPartition, topics }
-      }),
+      }).pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (Exit.isFailure(exit) && !reported) console.log(JSON.stringify({ capacityFailure: snapshot() }))
+          }),
+        ),
+      ),
     )
+  }
   const validateClosed = (result) =>
     Effect.gen(function* () {
       if (!result.recorder) return
