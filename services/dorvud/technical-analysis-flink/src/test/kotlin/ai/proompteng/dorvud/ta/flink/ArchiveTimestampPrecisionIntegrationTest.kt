@@ -87,6 +87,7 @@ class ArchiveTimestampPrecisionIntegrationTest {
               ),
               List(6) { 1.0 },
             )
+          var negativeZeroRow: IntradayBarRecord? = null
           samples.forEachIndexed { index, prices ->
             val nanos = fractions[index % fractions.size]
             val vwap = if (index == samples.lastIndex) null else prices[5]
@@ -108,6 +109,7 @@ class ArchiveTimestampPrecisionIntegrationTest {
               )
             val row = decodeArchiveBar(ArchiveKafkaRecord(topic, 0, index + 2L, Json.encodeToString(envelope)), routes)
             assertEquals(prices[4].toRawBits(), row.volume.toRawBits(), "decoded volume")
+            if (index == 5) negativeZeroRow = row
             connection.prepareStatement(archiveBarInsertSql()).use { prepared ->
               archiveBarStatement().accept(prepared, row)
               prepared.addBatch()
@@ -158,7 +160,32 @@ class ArchiveTimestampPrecisionIntegrationTest {
                 assertTrue(result.next())
                 (1..3).map(result::getString)
               }
-          assertEquals(emptyList(), numericMismatches, "JDBC binary64 parity; signed-zero expressions=$zeroExpressions")
+          val serializationKinds =
+            statement
+              .executeQuery(
+                "SELECT toString(groupUniqArray(serialization_kind)) FROM system.parts_columns " +
+                  "WHERE database = 'signal' AND table = 'intraday_bars_1m_v2' AND column = 'volume' AND active",
+              ).use { result ->
+                assertTrue(result.next())
+                result.getString(1)
+              }
+          statement.execute("ALTER TABLE signal.intraday_bars_1m_v2 MODIFY SETTING ratio_of_defaults_for_sparse_serialization = 1")
+          connection.prepareStatement(archiveBarInsertSql()).use { prepared ->
+            archiveBarStatement().accept(prepared, requireNotNull(negativeZeroRow).copy(sourceOffset = 1000))
+            prepared.addBatch()
+            prepared.executeBatch()
+          }
+          val fullSerializationZero =
+            statement
+              .executeQuery("SELECT toString(reinterpretAsUInt64(volume)) FROM signal.intraday_bars_1m_v2 WHERE source_offset = 1000")
+              .use { result ->
+                assertTrue(result.next())
+                result.getString(1)
+              }
+          assertEquals(
+            emptyList(), numericMismatches,
+            "JDBC binary64 parity; zeroExpressions=$zeroExpressions kinds=$serializationKinds fullZero=$fullSerializationZero",
+          )
           verified = true
         } finally {
           if (!verified || System.getenv("BAYN_TEST_JDBC_RETAIN_ARCHIVE") != "true") {
