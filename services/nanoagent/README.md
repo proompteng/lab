@@ -151,8 +151,8 @@ Linux container with the guest capability and seccomp settings to also exercise 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
-Codex app server is available, and the `MicroVM` startup probe allows 22.5 minutes for SPIRE, language-toolchain,
-developer-tool, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools five
+Codex app server is available, and the `MicroVM` startup probe allows 35 minutes for SPIRE, language-toolchain,
+developer-tool, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools fifteen
 minutes, and Codex nine minutes. Image builds run
 the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
 CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
