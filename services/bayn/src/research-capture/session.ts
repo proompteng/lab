@@ -141,6 +141,9 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
     yield* Effect.addFinalizer(() => finish(CaptureInvalidation.Interrupted))
     return {
       observer,
+      get workerObserver(): ResearchCaptureObserver | undefined {
+        return state.phase === 'recording' ? observer : undefined
+      },
       status: Effect.sync(() => (state.phase === 'finished' ? state : { phase: state.phase })),
       start: <E>(
         store: ResearchCaptureStore,
@@ -149,8 +152,9 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
       ) =>
         Effect.suspend(() => {
           if (state.phase !== 'waiting') return finish(CaptureInvalidation.WorkerReplaced)
-          if (clock.currentTimeMillisUnsafe() >= config.bootstrapDeadlineMs)
-            return finish(CaptureInvalidation.MissedBootstrap)
+          const now = clock.currentTimeMillisUnsafe()
+          if (now < config.startAtMs) return finish(CaptureInvalidation.OutsideWindow)
+          if (now >= config.bootstrapDeadlineMs) return finish(CaptureInvalidation.MissedBootstrap)
           if (canonicalHashV1(universe) !== config.universeHash) return finish(CaptureInvalidation.InvalidEvent)
           state = { phase: 'acquiring' }
           return Effect.gen(function* () {
@@ -177,6 +181,9 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
               return
             }
             state = { phase: 'recording', recorder, bootstrapped: false }
+            const status = yield* recorder.status
+            if (!status.accepting || status.invalidations.length !== 0)
+              return yield* finish(status.invalidations[0] ?? CaptureInvalidation.Finalization)
             yield* Effect.addFinalizer(() => finish(CaptureInvalidation.Interrupted))
           })
         }).pipe(

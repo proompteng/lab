@@ -38,8 +38,9 @@ export const ResearchCaptureSessionConfigSchema = Schema.Struct({
         Date.parse(value.calendarObservedAt) < value.bootstrapDeadlineMs &&
         value.coverageStartMs === Date.parse(selected.openAt) &&
         value.coverageEndMs === Date.parse(selected.closeAt) &&
+        value.startAtMs < value.bootstrapDeadlineMs &&
         value.bootstrapDeadlineMs < value.coverageStartMs &&
-        value.coverageStartMs - value.bootstrapDeadlineMs <= 60 * 60 * 1000 &&
+        value.startAtMs >= Date.parse(`${value.sessionDate}T00:00:00.000Z`) &&
         value.stopAtMs > value.coverageEndMs &&
         value.stopAtMs - value.coverageEndMs <= 5 * 60 * 1000 &&
         new Set(partitions).size === partitions.length &&

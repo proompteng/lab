@@ -13,8 +13,12 @@ Supply the retained calendar observation, snapshot ID, observation timestamp, no
 Validation recomputes the calendar hash and requires the interval to match that session's exact open and close.
 The calendar is supplied evidence; the worker does not fetch a calendar or choose another date.
 
-`bootstrapDeadlineMs` is the latest time at which the existing lazy worker may begin the attempt. Set it before the
-session open, with enough time for native bootstrap. The worker must finish bootstrap by `coverageStartMs`.
+`startAtMs` is the earliest admission time on the selected UTC session date. `bootstrapDeadlineMs` is the latest time
+at which the existing lazy worker may begin the attempt. Both precede the session open. The worker must finish bootstrap
+by `coverageStartMs`. Before `startAtMs`, the session timer acquires no client and writes no evidence. If the worker
+acquires early, the attempt ends incomplete and the worker starts without capture or raw mode. Activate capture inside
+the declared window. The observer cannot attach later to an existing consumer without losing its original assignment
+and deliveries.
 `stopAtMs` must be after the close and no more than five minutes later. No timer acquires trading resources, starts
 another Kafka consumer, or changes native bootstrap timestamps. If the worker never acquires, the attempt ends
 incomplete at its bootstrap deadline. A missed bootstrap, changed assignment, replacement worker, reversed clock,
@@ -34,8 +38,8 @@ the ordinary hash and export chains but represents no consumer start or market d
 any other position. Normal data chunks retain object-readback-before-SQL ordering.
 An attempt begins when its SQL claim commits. A restart uses a new nonce and conflicts with that claim, even when its
 acknowledgement was lost. Before the first claim commits there is no retained capture progress to resume. The same
-process never retries the claim, selects a new ID, or repairs it. Every process rejects startup at or after the frozen
-bootstrap deadline. A failed claim or its export leaves no qualified seal and does not change native work.
+process never retries the claim, selects a new ID, or repairs it. Every process rejects startup outside the frozen
+start and bootstrap-deadline window. A failed claim or its export leaves no qualified seal and does not change native work.
 
 The configured `maximumObjectBytes` and `maximumSqlBytes` are cumulative logical-payload ceilings. They must not exceed
 24 GiB and 10 GiB respectively. Every attempted raw, metadata, index, seal, and manifest object is charged before its

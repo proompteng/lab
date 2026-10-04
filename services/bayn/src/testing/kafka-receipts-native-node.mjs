@@ -262,6 +262,7 @@ try {
             maximumSqlBytes: 4 * 1024 * 1024,
             session: {
               ...request,
+              startAtMs: intervalStart,
               bootstrapDeadlineMs: intervalStart + 3000,
               stopAtMs: intervalStart + 44000,
               calendarSnapshotId: 'b'.repeat(64),

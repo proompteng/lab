@@ -42,6 +42,7 @@ export enum CaptureInvalidation {
   MissedBootstrap = 'SESSION_BOOTSTRAP_MISSED',
   Deadline = 'SESSION_DEADLINE_WITHOUT_CUT',
   WorkerReplaced = 'SESSION_WORKER_REPLACED',
+  OutsideWindow = 'SESSION_START_OUTSIDE_WINDOW',
 }
 
 const PositionSchema = Schema.Struct({
@@ -66,6 +67,7 @@ export type CaptureIntervalRequest = typeof CaptureIntervalRequestSchema.Type
 
 export const CaptureSessionDeclarationSchema = Schema.Struct({
   ...CaptureIntervalRequestSchema.fields,
+  startAtMs: NonNegativeIntegerSchema,
   bootstrapDeadlineMs: NonNegativeIntegerSchema,
   stopAtMs: NonNegativeIntegerSchema,
   calendarSnapshotId: Sha256Schema,
@@ -347,6 +349,8 @@ export const verifyResearchCapturePrefix = (
             ordinal !== 0 ||
             receipt.sequence !== 1 ||
             chunk.receipts.length !== 1 ||
+            receipt.observedAtMs < event.session.startAtMs ||
+            event.session.startAtMs >= event.session.bootstrapDeadlineMs ||
             receipt.observedAtMs >= event.session.bootstrapDeadlineMs ||
             event.session.bootstrapDeadlineMs >= event.session.coverageStartMs ||
             event.session.coverageStartMs >= event.session.coverageEndMs ||

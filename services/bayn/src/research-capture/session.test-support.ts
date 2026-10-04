@@ -23,6 +23,7 @@ const calendar = {
 export const sessionConfig: ResearchCaptureSessionConfig = {
   captureId: 'one-session',
   intervalId: 'regular-session',
+  startAtMs: sessionStart,
   coverageStartMs: sessionStart + 10_000,
   coverageEndMs: sessionStart + 20_000,
   bootstrapDeadlineMs: sessionStart + 5000,

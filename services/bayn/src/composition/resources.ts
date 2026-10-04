@@ -155,7 +155,13 @@ const WorkerMarketDataLive = (
               researchCaptureS3Config.pipe(Effect.flatMap(makeS3ResearchCaptureObjectStore)),
               universe,
             )
-            const market = yield* makeKafkaMarketProjection(config, universe, undefined, undefined, capture.observer)
+            const market = yield* makeKafkaMarketProjection(
+              config,
+              universe,
+              undefined,
+              undefined,
+              capture.workerObserver,
+            )
             capture.bind(market)
             return market
           }),

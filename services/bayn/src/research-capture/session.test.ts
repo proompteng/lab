@@ -43,6 +43,8 @@ test('default configuration is dormant without any S3 configuration; one explici
     { coverageStartMs: sessionConfig.coverageStartMs - 1 },
     { calendarHash: '0'.repeat(64) },
     { bootstrapDeadlineMs: sessionConfig.coverageStartMs },
+    { startAtMs: sessionConfig.bootstrapDeadlineMs },
+    { startAtMs: Date.parse('2026-10-04T23:59:59.999Z') },
     { stopAtMs: sessionConfig.coverageEndMs + 300_001 },
     { expectedPartitions: [...sessionConfig.expectedPartitions].reverse() },
     { maximumSqlBytes: 10 * 1024 ** 3 + 1 },
@@ -65,6 +67,30 @@ test('an unacquired worker finishes incomplete at the fixed bootstrap deadline a
       yield* TestClock.adjust(86_400_000)
       expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.MissedBootstrap })
       expect(saved.writes).toEqual([])
+    }),
+  ))
+
+test('a future session has no early claim, object acquisition, raw mode, or delayed attachment to an existing worker', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(sessionStart - 86_400_000)
+      const saved = sessionMemory()
+      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+      expect(yield* session.status).toEqual({ phase: 'waiting' })
+      expect(session.workerObserver).toBeUndefined()
+      yield* TestClock.adjust(1000)
+      expect(saved.writes).toEqual([])
+      yield* session.start(
+        saved.store,
+        Effect.die('early acquisition must not read S3 config or create a client'),
+        sessionUniverse,
+      )
+      expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.OutsideWindow })
+      expect(session.workerObserver).toBeUndefined()
+      yield* TestClock.adjust(86_400_000)
+      yield* session.start(saved.store, Effect.die('no delayed attachment'), sessionUniverse)
+      expect(saved.writes).toEqual([])
+      expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.OutsideWindow })
     }),
   ))
 
