@@ -252,8 +252,17 @@ export const verifyResearchCapture = (
   })
 
 export interface ResearchCaptureObserver {
-  readonly record: (event: ResearchCaptureEvent, observedAtMs?: number) => void
+  readonly rawValues?: boolean
+  readonly record: (event: ResearchCaptureEvent, observedAtMs?: number, rawValue?: Uint8Array | null) => void
   readonly invalidate: (reason: CaptureInvalidation) => void
+}
+
+export const capturesResearchRawValues = (observer: ResearchCaptureObserver | undefined): boolean => {
+  if (observer === undefined) return false
+  const result = Result.try(() => observer.rawValues === true)
+  if (Result.isSuccess(result)) return result.success
+  invalidateResearchCapture(observer, CaptureInvalidation.InvalidEvent)
+  return false
 }
 
 const freezeCaptureMetadata = (value: unknown): void => {
@@ -267,12 +276,13 @@ export const recordResearchCapture = (
   observer: ResearchCaptureObserver | undefined,
   event: ResearchCaptureEvent,
   observedAtMs?: number,
+  rawValue?: Uint8Array | null,
 ): void => {
   if (observer === undefined) return
   const result = Result.try(() => {
     const detached = structuredClone(event)
     freezeCaptureMetadata(detached)
-    observer.record(detached, observedAtMs)
+    observer.record(detached, observedAtMs, rawValue)
   })
   if (Result.isFailure(result)) Result.try(() => observer.invalidate(CaptureInvalidation.InvalidEvent))
 }
