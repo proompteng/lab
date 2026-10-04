@@ -2261,6 +2261,7 @@ test('shows a text highlight while thinking and keeps reduced-motion status read
       positions: frames.map((frame) => Number.parseFloat(String(frame.backgroundPositionX))),
     }
   })
+  await expect(label).toHaveCSS('animation-duration', '1s')
   expect(sweep.backgroundSize).toBeGreaterThan(100)
   expect(sweep.positions).toHaveLength(2)
   expect(sweep.positions[0]).toBeGreaterThan(sweep.positions[1])
@@ -2597,7 +2598,7 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   const conversation = chrome.getByRole('log', { name: 'Conversation' })
   await expect(conversation.getByText('You', { exact: true })).toHaveCount(0)
   await expect(conversation.getByText('Codex', { exact: true })).toHaveCount(0)
-  await expect(user).toHaveCSS('text-align', 'right')
+  await expect(user).toHaveCSS('text-align', 'left')
   await expect(response).toHaveCSS('text-align', 'left')
   await expect(user).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   await expect(response).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')

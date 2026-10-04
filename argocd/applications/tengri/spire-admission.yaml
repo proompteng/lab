@@ -21,9 +21,9 @@ spec:
   validations:
     - expression: "variables.entry.metadata.name.matches('^nanoagent-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')"
       message: Tengri may manage only guest Pod identity entries.
-    - expression: "variables.entry.spec.className == 'spire-server-spire' && variables.entry.spec.spiffeID == 'spiffe://galactic.proompteng.ai/ns/tengri/nanoagent/pod/' + variables.entry.metadata.name.substring(10)"
+    - expression: "variables.entry.spec.className == 'spire-server-spire' && (request.operation == 'DELETE' || variables.entry.spec.spiffeID == 'spiffe://proompteng.ai/ns/tengri/nanoagent/pod/' + variables.entry.metadata.name.substring(10))"
       message: Guest identity must match the entry's Pod UID.
-    - expression: "variables.entry.spec.parentID == 'spiffe://galactic.proompteng.ai/spire/agent/k8s_psat/galactic-guests/pod/' + variables.entry.metadata.name.substring(10) && variables.entry.spec.selectors == ['unix:uid:1000']"
+    - expression: "(request.operation == 'DELETE' || variables.entry.spec.parentID == 'spiffe://proompteng.ai/spire/agent/k8s_psat/galactic-guests/pod/' + variables.entry.metadata.name.substring(10)) && variables.entry.spec.selectors == ['unix:uid:1000']"
       message: Guest identity requires its attested Pod agent and guest user.
     - expression: "(!has(variables.entry.spec.admin) || !variables.entry.spec.admin) && (!has(variables.entry.spec.downstream) || !variables.entry.spec.downstream) && (!has(variables.entry.spec.storeSVID) || !variables.entry.spec.storeSVID)"
       message: Guest entries cannot grant SPIRE administration or delegation.

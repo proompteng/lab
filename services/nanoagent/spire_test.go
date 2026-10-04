@@ -35,7 +35,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-const fixtureDomain = "galactic.proompteng.ai"
+const fixtureDomain = "proompteng.ai"
 const controllerID = "spiffe://" + fixtureDomain + "/ns/tengri/sa/tengri"
 const bffID = "spiffe://" + fixtureDomain + "/ns/proompteng/sa/proompteng"
 const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/nanoagent/pod/interop-agent"

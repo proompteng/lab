@@ -81,8 +81,8 @@ export async function createSpiffeFixture() {
       },
     }
   }
-  const ownId = 'spiffe://galactic.proompteng.ai/ns/proompteng/sa/proompteng'
-  const peerId = 'spiffe://galactic.proompteng.ai/ns/tengri/sa/tengri'
+  const ownId = 'spiffe://proompteng.ai/ns/proompteng/sa/proompteng'
+  const peerId = 'spiffe://proompteng.ai/ns/tengri/sa/tengri'
   const own = certificate('bff', ownId)
   const peer = certificate('controller', peerId)
   let current = own.svid
