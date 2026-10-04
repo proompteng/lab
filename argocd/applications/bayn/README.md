@@ -107,9 +107,13 @@ out after that verified native binding. The worker advertises exactly `BaynExecu
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
 `activate`, `deactivate`, `tick` and `status`, and every broker-observation handler, remain private. The activation
-result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job's
-verified log includes `activationInvocationId`, allowing
-the handoff and its completed successor proof to be inspected after the successful hook is removed.
+result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
+`BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
+and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait
+expires. Missing or invalid Job identity fails before invocation. A recreated Job has a new UID and can retry a retained
+terminal failure after its dependency recovers. This identity does not deduplicate separate Job incarnations.
+The acceptance log records the attempt UID, `activationInvocationId`, source revision and receipt status before waiting.
+The verified log retains the completed successor proof after the successful hook is removed.
 
 The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the
 operator-added `pod-template-hash`, so retained draining ReplicaSets cannot satisfy spreading for the current revision and
