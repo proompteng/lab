@@ -3575,6 +3575,7 @@ export const activities = {
         }
       }
 
+      await sendHeartbeat()
       assertHeartbeatHealthy()
       const result = await applyAtlasReconciliation({
         db,

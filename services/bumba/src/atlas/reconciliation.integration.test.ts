@@ -519,8 +519,9 @@ integrationTest(
 )
 
 integrationTest(
-  'reconciliation completes multiple batches without waiting for throttled progress heartbeats',
+  'reconciliation prepares every batch before waiting for the final heartbeat acknowledgement',
   async () => {
+    if (!db) throw new Error('integration database was not initialized')
     await mkdir(join(checkout, 'heartbeat-pacing'), { recursive: true })
     for (let index = 0; index < 6; index += 1) {
       await writeFile(join(checkout, 'heartbeat-pacing', `${index}.ts`), `export const pacing${index} = ${index}\n`)
@@ -529,6 +530,10 @@ integrationTest(
     let releaseHeartbeat = () => {}
     const blockedHeartbeat = new Promise<void>((resolve) => {
       releaseHeartbeat = resolve
+    })
+    let observeFinalHeartbeat = (_details: unknown) => {}
+    const finalHeartbeat = new Promise<unknown>((resolve) => {
+      observeFinalHeartbeat = resolve
     })
     let heartbeatCount = 0
     const context: ActivityContext = {
@@ -546,9 +551,12 @@ integrationTest(
       },
       cancellationSignal: new AbortController().signal,
       isCancellationRequested: false,
-      heartbeat: async () => {
+      heartbeat: async (...details: unknown[]) => {
         heartbeatCount += 1
-        if (heartbeatCount > 1) await blockedHeartbeat
+        if (heartbeatCount > 1) {
+          observeFinalHeartbeat(details[0])
+          await blockedHeartbeat
+        }
       },
       throwIfCancelled: () => undefined,
     }
@@ -562,16 +570,26 @@ integrationTest(
     let timeout: ReturnType<typeof setTimeout> | undefined
     try {
       const outcome = await Promise.race([
-        reconciliation.then((result) => ({ kind: 'completed' as const, result })),
+        finalHeartbeat.then((details) => ({ kind: 'prepared' as const, details })),
         new Promise<{ kind: 'blocked' }>((resolve) => {
           timeout = setTimeout(() => resolve({ kind: 'blocked' }), 5_000)
         }),
       ])
-      expect(outcome.kind).toBe('completed')
-      if (outcome.kind === 'completed') {
-        expect(outcome.result.changedFiles).toBeGreaterThan(2)
-        expect(outcome.result.indexedFiles).toBe(outcome.result.expectedFiles)
-        expect(outcome.result.embeddings).toBe(outcome.result.chunks)
+      expect(outcome.kind).toBe('prepared')
+      if (outcome.kind === 'prepared') {
+        const progress = outcome.details as { preparedFiles: number; changedFiles: number }
+        expect(progress.changedFiles).toBeGreaterThan(2)
+        expect(progress.preparedFiles).toBe(progress.changedFiles)
+        const rows = (await db`
+          SELECT metadata FROM atlas.repositories WHERE name = 'proompteng/heartbeat-pacing';
+        `) as Array<{ metadata: Record<string, unknown> }>
+        expect(rows[0]?.metadata.indexStatus).toBe('building')
+        expect(rows[0]?.metadata.preparedFiles).toBe(progress.changedFiles)
+        releaseHeartbeat()
+        const result = await reconciliation
+        expect(result.indexedFiles).toBe(result.expectedFiles)
+        expect(result.embeddings).toBe(result.chunks)
+        expect(heartbeatCount).toBe(2)
       }
     } finally {
       clearTimeout(timeout)
@@ -581,6 +599,54 @@ integrationTest(
   },
   120_000,
 )
+
+integrationTest('final heartbeat cancellation prevents publishing repository readiness', async () => {
+  if (!db) throw new Error('integration database was not initialized')
+  await writeFile(join(checkout, 'heartbeat-cancellation.ts'), 'export const cancellationFixture = true\n')
+  await commitAndPush('heartbeat cancellation fixture')
+  let heartbeatCount = 0
+  let cancelled = false
+  const context: ActivityContext = {
+    info: {
+      activityId: 'heartbeat-cancellation',
+      activityType: 'reconcileAtlasRepository',
+      workflowNamespace: 'default',
+      workflowType: 'reconcileAtlasRepository',
+      workflowId: 'heartbeat-cancellation',
+      runId: 'heartbeat-cancellation',
+      taskQueue: 'bumba',
+      attempt: 1,
+      isLocal: false,
+      lastHeartbeatDetails: [],
+    },
+    cancellationSignal: new AbortController().signal,
+    isCancellationRequested: false,
+    heartbeat: async () => {
+      heartbeatCount += 1
+      if (heartbeatCount === 2) cancelled = true
+    },
+    throwIfCancelled: () => {
+      if (cancelled) throw new Error('final heartbeat cancellation')
+    },
+  }
+  const failure = await runWithActivityContext(context, () =>
+    activities.reconcileAtlasRepository({
+      repoRoot: checkout,
+      repository: 'proompteng/heartbeat-cancellation',
+      ref: 'main',
+    }),
+  ).then(
+    () => null,
+    (error: unknown) => error,
+  )
+  expect(failure).toEqual(new Error('final heartbeat cancellation'))
+  const rows = (await db`
+    SELECT metadata FROM atlas.repositories WHERE name = 'proompteng/heartbeat-cancellation';
+  `) as Array<{ metadata: Record<string, unknown> }>
+  expect(rows[0]?.metadata.indexStatus).toBe('failed')
+  expect(rows[0]?.metadata.indexedCommit).toBeUndefined()
+  expect(heartbeatCount).toBe(2)
+})
 
 integrationTest(
   'reconciliation persists bounded batches and resumes after an embedding failure',

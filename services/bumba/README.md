@@ -20,7 +20,7 @@ The production contract and acceptance gates are in `../../docs/atlas/production
 - The activity has a 90-second Temporal heartbeat timeout and sends progress every 15 seconds. A worker crash therefore
   becomes a retry instead of leaving a dead 24-hour activity. Retries reuse heartbeat state and already committed batches.
 - Progress heartbeats run independently of batch preparation. The indexing loop does not wait for the SDK's heartbeat
-  throttle after each committed batch.
+  throttle after each committed batch. One final acknowledged heartbeat checks cancellation before publishing readiness.
 - The final transaction verifies every path, Git object ID, commit, chunk, and configured embedding before changing the
   repository to `ready`. Any failure leaves Atlas unavailable with an explicit error; there is no fallback corpus.
 
