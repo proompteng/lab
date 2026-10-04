@@ -88,6 +88,33 @@ const changeCandidate = (
 })
 
 describe('Jev frozen numerical acceptance', () => {
+  test('rejects an exact $50 paired bootstrap lower bound with fractional-dollar inputs', () => {
+    const report = Result.getOrThrow(
+      evaluateJevAcceptance(
+        inputFixture(
+          () => 300.000005,
+          (index) => (index < 10 ? 256.000005 : 216.000005),
+        ),
+      ),
+    )
+    expect(report.verdict).toBe(JevNumericalVerdict.Missed)
+    if (!('checks' in report)) throw new Error('Expected a complete numerical report')
+    expect(report.checks.pairedIncrementalLowerBounds).toBe(false)
+    expect(report.confidence.paired.map((comparison) => comparison.meanIncrementalNetPnlUsdLowerBound)).toEqual([
+      50, 50, 50,
+    ])
+  })
+
+  test('accepts an exact $5,000 total without losing fractional dollars during summation', () => {
+    const report = Result.getOrThrow(
+      evaluateJevAcceptance(inputFixture((index) => (index < 19 ? 249.999997 : 250.000057))),
+    )
+    expect(report.verdict).toBe(JevNumericalVerdict.Passed)
+    if (!('checks' in report)) throw new Error('Expected a complete numerical report')
+    expect(report.checks.netProfit).toBe(true)
+    expect(report.metrics.netPnlUsd).toBe(5000)
+  })
+
   test('requires all numerical outcomes and retains reproducible identity without granting authority', () => {
     const input = inputFixture()
     const report = Result.getOrThrow(evaluateJevAcceptance(input))
