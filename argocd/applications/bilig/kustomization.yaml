@@ -24,4 +24,4 @@ resources:
 - alloy-rbac.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/bilig-app
-  digest: sha256:a8ff5cd5425e0794f03c14bd9b7fac8a8ac67bc8f3b0c27564802b5973b31f2b
+  digest: sha256:fa3f17b668b7063bb40039e53cd8112dca63ab6832573a04d6ff43029547faa8
