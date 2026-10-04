@@ -3,10 +3,12 @@ package sdk
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/mem"
 	namespacepb "go.temporal.io/api/namespace/v1"
 	workerpb "go.temporal.io/api/worker/v1"
 	"go.temporal.io/api/workflowservice/v1"
@@ -147,6 +149,13 @@ func TestHostResourcesReachSDKHeartbeat(t *testing.T) {
 		}
 		if cpu := host.GetCurrentHostCpuUsage(); cpu < 0 || cpu > 1 {
 			t.Fatalf("invalid CPU in real SDK heartbeat: %f", cpu)
+		}
+		memory, err := mem.VirtualMemory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if math.Abs(float64(host.GetCurrentHostMemUsage())-memory.UsedPercent/100) > 0.01 {
+			t.Fatalf("heartbeat memory %f does not match host usage %f", host.GetCurrentHostMemUsage(), memory.UsedPercent/100)
 		}
 		t.Logf("SDK heartbeat CPU %.2f%%, memory %.2f%%", host.GetCurrentHostCpuUsage()*100, host.GetCurrentHostMemUsage()*100)
 	case <-time.After(10 * time.Second):

@@ -1,9 +1,58 @@
 package sdk
 
 import (
-	"go.temporal.io/sdk/contrib/sysinfo"
+	"context"
+	"sync"
+	"time"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 	"go.temporal.io/sdk/worker"
 )
+
+type hostUsage struct {
+	cpu    float64
+	memory float64
+}
+
+type hostResources struct {
+	mu        sync.Mutex
+	refreshed time.Time
+	last      hostUsage
+}
+
+var systemResources = &hostResources{}
+
+func (h *hostResources) sample() (hostUsage, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if time.Since(h.refreshed) < 100*time.Millisecond {
+		return h.last, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cpuUsage, err := cpu.PercentWithContext(ctx, 0, false)
+	if err != nil {
+		return hostUsage{}, err
+	}
+	memory, err := mem.VirtualMemoryWithContext(ctx)
+	if err != nil {
+		return hostUsage{}, err
+	}
+	h.last = hostUsage{cpu: cpuUsage[0] / 100, memory: memory.UsedPercent / 100}
+	h.refreshed = time.Now()
+	return h.last, nil
+}
+
+func (h *hostResources) CpuUsage(*worker.SysInfoContext) (float64, error) {
+	usage, err := h.sample()
+	return usage.cpu, err
+}
+
+func (h *hostResources) MemoryUsage(*worker.SysInfoContext) (float64, error) {
+	usage, err := h.sample()
+	return usage.memory, err
+}
 
 type reportingTuner struct {
 	worker.WorkerTuner
@@ -38,6 +87,6 @@ func withHostResources(options worker.Options) (worker.Options, error) {
 		options.MaxConcurrentLocalActivityExecutionSize = 0
 		options.MaxConcurrentNexusTaskExecutionSize = 0
 	}
-	options.Tuner = reportingTuner{WorkerTuner: options.Tuner, provider: sysinfo.SysInfoProvider()}
+	options.Tuner = reportingTuner{WorkerTuner: options.Tuner, provider: systemResources}
 	return options, nil
 }
