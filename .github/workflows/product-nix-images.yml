@@ -101,7 +101,7 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: arc-amd64
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read

@@ -170,8 +170,21 @@ export type TengriAction =
   | { action: 'codex-models'; agentId: string; cursor?: string }
   | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
   | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
-  | ({ action: 'send-turn'; agentId: string; threadId: string; text: string } & TengriCodexOptions)
-  | { action: 'steer-turn'; agentId: string; threadId: string; turnId: string; text: string }
+  | ({
+      action: 'send-turn'
+      agentId: string
+      threadId: string
+      text: string
+      images: import('./codex-images').TengriCodexImage[]
+    } & TengriCodexOptions)
+  | {
+      action: 'steer-turn'
+      agentId: string
+      threadId: string
+      turnId: string
+      text: string
+      images: import('./codex-images').TengriCodexImage[]
+    }
   | { action: 'interrupt-turn'; agentId: string; threadId: string; turnId: string }
   | {
       action: 'resolve-approval'
