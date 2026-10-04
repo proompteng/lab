@@ -30,7 +30,8 @@ class ArchiveTimestampPrecisionIntegrationTest {
     val columns = schema.substringAfter(createPrefix).substringBefore("ENGINE =")
     val migration =
       requireNotNull(Regex("ALTER TABLE signal\\.intraday_bars_1m_v2 ON CLUSTER default[\\s\\S]+?;").find(schema))
-        .value.replace(" ON CLUSTER default", "")
+        .value
+        .replace(" ON CLUSTER default", "")
     DriverManager.getConnection("jdbc:clickhouse:$endpoint/default", "default", "").use { connection ->
       connection.createStatement().use { statement ->
         statement.executeQuery("SELECT toString(token) FROM bayn_ci_guard.endpoint_identity").use { result ->
@@ -51,16 +52,18 @@ class ArchiveTimestampPrecisionIntegrationTest {
           )
           statement.execute(migration)
           statement.execute(migration)
-          statement.executeQuery(
-            "SELECT toString(event_ts), toString(ingest_ts), event_ts_exact, ingest_ts_exact " +
-              "FROM signal.intraday_bars_1m_v2 WHERE source_offset = 1",
-          ).use { result ->
-            assertTrue(result.next())
-            assertEquals("2026-10-01 13:30:00.123", result.getString(1))
-            assertEquals("2026-10-01 13:31:00.321", result.getString(2))
-            assertEquals(null, result.getObject(3))
-            assertEquals(null, result.getObject(4))
-          }
+          statement
+            .executeQuery(
+              "SELECT toString(event_ts), toString(ingest_ts), event_ts_exact, ingest_ts_exact " +
+                "FROM signal.intraday_bars_1m_v2 WHERE source_offset = 1",
+            )
+            .use { result ->
+              assertTrue(result.next())
+              assertEquals("2026-10-01 13:30:00.123", result.getString(1))
+              assertEquals("2026-10-01 13:31:00.321", result.getString(2))
+              assertEquals(null, result.getObject(3))
+              assertEquals(null, result.getObject(4))
+            }
           val universe = ArchiveUniverse("archive-precision-v1", "a".repeat(64), setOf("SPY"))
           val topic = "archive-precision-bars"
           val routes = mapOf(topic to ArchiveRoute("sip", universe))
@@ -94,20 +97,22 @@ class ArchiveTimestampPrecisionIntegrationTest {
               prepared.addBatch()
               prepared.executeBatch()
             }
-            statement.executeQuery(
-              "SELECT toUnixTimestamp64Nano(event_ts_exact), toUnixTimestamp64Nano(ingest_ts_exact), " +
-                "open, high, low, close, volume, vwap, toString(vwap) " +
-                "FROM signal.intraday_bars_1m_v2 WHERE source_topic = '$topic' AND source_offset = ${index + 2}",
-            ).use { result ->
-              assertTrue(result.next())
-              assertEquals(1_790_861_400_000_000_000L + nanos, result.getLong(1))
-              assertEquals(1_790_861_460_000_000_000L + nanos, result.getLong(2))
-              prices.forEachIndexed { field, expected ->
-                assertEquals(expected.toBits(), result.getDouble(field + 3).toBits(), "binary64 field $field")
+            statement
+              .executeQuery(
+                "SELECT toUnixTimestamp64Nano(event_ts_exact), toUnixTimestamp64Nano(ingest_ts_exact), " +
+                  "open, high, low, close, volume, vwap, toString(vwap) " +
+                  "FROM signal.intraday_bars_1m_v2 WHERE source_topic = '$topic' AND source_offset = ${index + 2}",
+              )
+              .use { result ->
+                assertTrue(result.next())
+                assertEquals(1_790_861_400_000_000_000L + nanos, result.getLong(1))
+                assertEquals(1_790_861_460_000_000_000L + nanos, result.getLong(2))
+                prices.forEachIndexed { field, expected ->
+                  assertEquals(expected.toBits(), result.getDouble(field + 3).toBits(), "binary64 field $field")
+                }
+                assertEquals(prices[5].toBits(), result.getString(9).toDouble().toBits(), "archive VWAP text")
+                assertEquals(false, result.next())
               }
-              assertEquals(prices[5].toBits(), result.getString(9).toDouble().toBits(), "archive VWAP text")
-              assertEquals(false, result.next())
-            }
           }
         } finally {
           statement.execute("DROP TABLE signal.intraday_bars_1m_v2")

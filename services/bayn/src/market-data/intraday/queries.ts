@@ -51,7 +51,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     const sourceTopic = sql.param('String', cursor.sourceTopic)
     const sourcePartition = sql.param('String', String(cursor.sourcePartition))
     const sourceOffset = sql.param('String', cursor.sourceOffset)
-    return sql`WHERE tuple(${eventTime}, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort(${eventAt}, 9, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
+    return sql`WHERE tuple(${eventTime}, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(parseDateTime64BestEffort(${eventAt}, 9, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
   }
 
   const captureIntradayArchiveWatermarks = (request: IntradaySnapshotQuery) => {
@@ -151,7 +151,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         LIMIT 1 BY universe_id, feed, symbol, ${barEventTime}
       )
       ${afterCursorWhere(after, barEventTime)}
-      ORDER BY ${barEventTime}, symbol, source_topic, source_partition, source_offset
+      ORDER BY ${barEventTime}, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }
@@ -214,7 +214,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         WHERE latest_candidate_rank = 1
       )
       ${afterCursorWhere(after)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ORDER BY event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }
@@ -273,7 +273,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         WHERE latest_candidate_rank = 1
       )
       ${afterCursorWhere(after)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ORDER BY event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }

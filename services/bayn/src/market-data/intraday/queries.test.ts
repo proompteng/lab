@@ -176,11 +176,11 @@ describe('intraday archive queries', () => {
     const trades = String(queries.loadIntradayTrades(request, cursor))
 
     expect(bars).toContain(
-      `WHERE tuple(coalesce(event_ts_exact, event_ts), symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`,
+      `WHERE tuple(coalesce(event_ts_exact, event_ts), symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`,
     )
     for (const query of [quotes, trades]) {
       expect(query).toContain(
-        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(`,
+        `WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(`,
       )
       expect(query).toContain(`parseDateTime64BestEffort("${cursor.eventAt}", 9, 'UTC')`)
       expect(query).toContain(`toUInt64("${cursor.sourcePartition}")`)

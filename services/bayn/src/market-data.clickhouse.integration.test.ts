@@ -487,13 +487,18 @@ describeClickhouse('Bayn ClickHouse market-data query contract', () => {
           yield* sql.asCommand(sql`
           INSERT INTO signal.intraday_bars_1m_v2
             (universe_id, universe_symbol_hash, feed, source_topic, source_partition, source_offset,
-              event_ts, ingest_ts, event_ts_exact, ingest_ts_exact, vwap)
+              event_ts, ingest_ts, event_ts_exact, ingest_ts_exact, open, high, low, close, vwap)
           VALUES (${sql.param('String', request.universeId)}, ${sql.param('String', request.universeSymbolHash)},
             'sip', ${sql.param('String', sourceTopic)}, 0, ${sql.param('UInt64', String(index + 1))},
             parseDateTime64BestEffort(${sql.param('String', `2026-03-06T13:4${index}:00.000Z`)}, 3, 'UTC'),
             '2026-03-06 13:45:00.321',
             parseDateTime64BestEffort(${sql.param('String', `2026-03-06T13:4${index}:00.000000000Z`)}, 9, 'UTC'),
-            '2026-03-06 13:45:00.321780322', reinterpretAsFloat64(${sql.param('UInt64', String(bits))}))
+            '2026-03-06 13:45:00.321780322',
+              ${sql.param('Float64', index < 2 ? 248.51 : 346.45)},
+              ${sql.param('Float64', index < 2 ? 248.605 : 346.55)},
+              ${sql.param('Float64', index < 2 ? 248.44 : 346.39)},
+              ${sql.param('Float64', index < 2 ? 248.44 : 346.44)},
+              reinterpretAsFloat64(${sql.param('UInt64', String(bits))}))
         `)
         }
         return yield* makeIntradayMarketDataQueries(sql).loadIntradayBars(request)
