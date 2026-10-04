@@ -8,6 +8,7 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Option,
   Redacted,
   Ref,
   Result,
@@ -32,6 +33,9 @@ import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../exec
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import type { RecoveryFirstRuntime } from '../observe-composition'
 import type { CycleRunnerError } from '../cycle/runner'
+import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
+import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
+import { operationalError } from '../errors'
 import {
   awaitNativeExecutionRuntimeDriver,
   captureRecoveryFirstCycleDriver,
@@ -195,6 +199,108 @@ const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousServ
 }
 
 describe('native execution runtime', () => {
+  test('retains exact Jev observation references across stores, waiting, recovery and subsequent passes', async () => {
+    const firstHash = hash('b')
+    const recoveredHash = hash('a')
+    const candidate = { contentHash: firstHash } as CandidateObservation
+    const batch = { plan: { observationHash: recoveredHash }, result: null } as JevBatchEvidence
+    let advances = 0
+    const currentDriver = {
+      ...driver,
+      advance: Effect.gen(function* () {
+        if (++advances === 1) {
+          yield* (yield* CandidateObservationStore).record(candidate)
+          yield* (yield* CandidateObservationStore).record(candidate)
+          yield* (yield* JevBatchStore).finish(hash('c'))
+        }
+        return { observation: windowClosedObservation }
+      }),
+    }
+    const context = Context.make(CandidateObservationStore, {
+      record: () => Effect.void,
+      latestJevWindowEnd: () => Effect.succeed(Option.none()),
+    }).pipe(
+      Context.add(JevBatchStore, {
+        read: () => Effect.succeed(batch),
+        pending: () => Effect.succeed([]),
+        begin: () => Effect.succeed(batch),
+        finish: () => Effect.succeed(batch),
+      }),
+    ) as Context.Context<RecoveryFirstRuntime>
+    const results = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const slot = {
+            state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
+            ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+          }
+          yield* captureRecoveryFirstCycleDriver(slot)(currentDriver).pipe(
+            Effect.provideContext(context),
+            Effect.forkScoped,
+          )
+          yield* Deferred.await(slot.ready)
+          const bound = yield* readRecoveryFirstCycleDriverSlot(slot)
+          return [yield* bound.advance, yield* bound.advance]
+        }),
+      ),
+    )
+    expect(results[0]?.observation).toEqual({
+      ...windowClosedObservation,
+      jevObservationReferences: { hashes: [recoveredHash, firstHash], complete: true },
+    })
+    expect(results[1]?.observation).toEqual({
+      ...windowClosedObservation,
+      jevObservationReferences: { hashes: [], complete: true },
+    })
+  })
+
+  test('failed Jev store access cannot advertise an empty complete reference collection', async () => {
+    const failure = operationalError({ component: 'database', operation: 'fixture', message: 'record failed' })
+    const candidate = { contentHash: hash('a') } as CandidateObservation
+    const context = Context.make(CandidateObservationStore, {
+      record: () => Effect.fail(failure),
+      latestJevWindowEnd: () => Effect.succeed(Option.none()),
+    }).pipe(
+      Context.add(JevBatchStore, {
+        read: () => Effect.succeed(null),
+        pending: () => Effect.succeed([]),
+        begin: () => Effect.fail(failure),
+        finish: () => Effect.fail(failure),
+      }),
+    ) as Context.Context<RecoveryFirstRuntime>
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const slot = {
+            state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
+            ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+          }
+          yield* captureRecoveryFirstCycleDriver(slot)({
+            ...driver,
+            advance: Effect.gen(function* () {
+              yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.catch(() => Effect.void))
+              return {
+                observation: {
+                  result: 'FAILURE' as const,
+                  observedAt: completedAt,
+                  operation: 'build-decision' as const,
+                  failure: 'database' as const,
+                  message: 'record failed',
+                },
+              }
+            }),
+          }).pipe(Effect.provideContext(context), Effect.forkScoped)
+          yield* Deferred.await(slot.ready)
+          return yield* (yield* readRecoveryFirstCycleDriverSlot(slot)).advance
+        }),
+      ),
+    )
+    expect(result.observation).toMatchObject({
+      result: 'FAILURE',
+      jevObservationReferences: { hashes: [], complete: false },
+    })
+  })
+
   test('bootstraps controller persistence before exposing the projection runtime and fails closed on acquisition error', async () => {
     let acquired = 0
     let released = 0
