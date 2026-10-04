@@ -42,7 +42,7 @@ spec:
       autoPromotionEnabled: true
     - stageSelector:
         name: hermes-toolchain
-      autoPromotionEnabled: false
+      autoPromotionEnabled: true
     - stageSelector:
         name: jangar
       autoPromotionEnabled: true

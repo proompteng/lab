@@ -250,7 +250,7 @@ images:
   digest: sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932
 - name: temporal-worker-runtime
   newName: registry.ide-newton.ts.net/lab/temporal-worker
-  digest: sha256:ad633967eb6cd1d6dee2759f915c0d9aad8a6c07c6f927d9e1ecc4d09c308cf8
+  digest: sha256:674decf64eb78144ea61392384d989b29e5e87bafa273e99073fe8d389f884bf
 configMapGenerator:
 - name: temporal-cassandra-upgrade-scripts
   files:

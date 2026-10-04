@@ -75,8 +75,8 @@ The public browser surface uses strict action schemas rather than exposing arbit
 | `codex-models`       | `ListCodexModels`      | `model/list`                        |
 | `create-thread`      | `CreateCodexThread`    | `thread/start`                      |
 | `resume-thread`      | `ResumeCodexThread`    | `thread/resume`                     |
-| `send-turn`          | `SendCodexTurn`        | `turn/start`                        |
-| `steer-turn`         | `SteerCodexTurn`       | `turn/steer`                        |
+| `send-turn`          | `SendCodexInput`       | `turn/start`                        |
+| `steer-turn`         | `SteerCodexInput`      | `turn/steer`                        |
 | `interrupt-turn`     | `InterruptCodexTurn`   | `turn/interrupt`                    |
 | `resolve-approval`   | `ResolveCodexApproval` | pending server-request response     |
 | event stream         | `WatchCodexEvents`     | replayable app-server notifications |
