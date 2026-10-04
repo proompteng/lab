@@ -34,6 +34,8 @@ const transactional = new Producer({
   clientId: `${prefix}-transactional`,
   transactionalId: `${prefix}-transaction`,
   idempotent: true,
+  // The SDK sends this as the transaction TTL; the fixture waits for the 30-second telemetry sample.
+  timeout: 60_000,
 })
 let openTransaction
 try {
