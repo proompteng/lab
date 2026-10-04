@@ -1514,6 +1514,15 @@ test('rejects removing Hermes surfaces from production validation routing', asyn
   )
 })
 
+test('rejects removing Kargo Stage edits from Hermes production validation routing', async () => {
+  const files = await loadProductionFiles()
+  files.impactMap = files.impactMap.replace('      - argocd/applications/kargo/stages.yaml\n', '')
+
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.impactMap}: missing production invariant "- argocd/applications/kargo/stages.yaml"`,
+  )
+})
+
 test('rejects a PR workflow that omits migration audit tests', async () => {
   const files = await loadProductionFiles()
   files.pullRequestWorkflow = files.pullRequestWorkflow.replace(

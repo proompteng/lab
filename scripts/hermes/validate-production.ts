@@ -1812,10 +1812,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '        - list\n        - watch',
   ])
 
-  requireTerms(failures, productionPaths.impactMap, files.impactMap, [
+  const rootScriptsImpact = sectionBetween(files.impactMap, '  root-scripts:\n', '\n  sag:\n')
+  requireTerms(failures, productionPaths.impactMap, rootScriptsImpact, [
     '- .github/ci/impact-map.yml',
     '- .github/workflows/pull-request.yml',
     '- argocd/applications/hermes/**',
+    '- argocd/applications/kargo/stages.yaml',
     '- argocd/applications/observability/cluster-metrics-alloy-config.river',
     '- argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
     '- argocd/applications/observability/graf-mimir-rules.yaml',
