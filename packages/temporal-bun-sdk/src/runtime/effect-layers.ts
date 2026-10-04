@@ -19,37 +19,32 @@ import { buildTemporalConfigEffect, type TemporalConfigLayerOptions } from './co
 type ClosableTransport = Transport & { close?: () => void | Promise<void> }
 type WorkflowServiceClient = ReturnType<typeof createClient<typeof WorkflowService>>
 
-export class TemporalConfigService extends Context.Tag('@proompteng/temporal-bun-sdk/TemporalConfig')<
-  TemporalConfigService,
-  TemporalConfig
->() {}
+export class TemporalConfigService extends Context.Service<TemporalConfigService, TemporalConfig>()(
+  '@proompteng/temporal-bun-sdk/TemporalConfig',
+) {}
 
-export class LoggerService extends Context.Tag('@proompteng/temporal-bun-sdk/Logger')<LoggerService, Logger>() {}
+export class LoggerService extends Context.Service<LoggerService, Logger>()('@proompteng/temporal-bun-sdk/Logger') {}
 
-export class MetricsService extends Context.Tag('@proompteng/temporal-bun-sdk/Metrics')<
-  MetricsService,
-  MetricsRegistry
->() {}
+export class MetricsService extends Context.Service<MetricsService, MetricsRegistry>()(
+  '@proompteng/temporal-bun-sdk/Metrics',
+) {}
 
-export class MetricsExporterService extends Context.Tag('@proompteng/temporal-bun-sdk/MetricsExporter')<
-  MetricsExporterService,
-  MetricsExporter
->() {}
+export class MetricsExporterService extends Context.Service<MetricsExporterService, MetricsExporter>()(
+  '@proompteng/temporal-bun-sdk/MetricsExporter',
+) {}
 
-export class ObservabilityService extends Context.Tag('@proompteng/temporal-bun-sdk/ObservabilityServices')<
-  ObservabilityService,
-  ObservabilityServices
->() {}
+export class ObservabilityService extends Context.Service<ObservabilityService, ObservabilityServices>()(
+  '@proompteng/temporal-bun-sdk/ObservabilityServices',
+) {}
 
-export class DataConverterService extends Context.Tag('@proompteng/temporal-bun-sdk/DataConverter')<
-  DataConverterService,
-  DataConverter
->() {}
+export class DataConverterService extends Context.Service<DataConverterService, DataConverter>()(
+  '@proompteng/temporal-bun-sdk/DataConverter',
+) {}
 
-export class WorkflowServiceClientService extends Context.Tag('@proompteng/temporal-bun-sdk/WorkflowServiceClient')<
+export class WorkflowServiceClientService extends Context.Service<
   WorkflowServiceClientService,
   WorkflowServiceClient
->() {}
+>()('@proompteng/temporal-bun-sdk/WorkflowServiceClient') {}
 
 export interface WorkflowServiceLayerOptions {
   interceptors?: TemporalInterceptor[]
@@ -66,7 +61,7 @@ const closeTransport = (transport: ClosableTransport | undefined) =>
   transport?.close
     ? Effect.tryPromise(async () => {
         await transport.close?.()
-      }).pipe(Effect.catchAll(() => Effect.void))
+      }).pipe(Effect.catch(() => Effect.void))
     : Effect.void
 
 export const createWorkflowServiceLayer = (
@@ -76,7 +71,7 @@ export const createWorkflowServiceLayer = (
   unknown,
   TemporalConfigService | LoggerService | MetricsService | MetricsExporterService
 > =>
-  Layer.scoped(
+  Layer.effect(
     WorkflowServiceClientService,
     Effect.acquireRelease(
       Effect.gen(function* () {
@@ -114,7 +109,7 @@ export const ConfigLayer = createConfigLayer()
 export interface ObservabilityLayerOptions extends ObservabilityOverrides {}
 
 const buildObservabilityContext = (options: ObservabilityLayerOptions = {}) =>
-  Layer.scopedContext(
+  Layer.effectContext(
     Effect.gen(function* () {
       const config = yield* TemporalConfigService
       const services = yield* createObservabilityServices(

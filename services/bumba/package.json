@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@effect/schema": "^0.75.5",
-    "@proompteng/temporal-bun-sdk": "workspace:*",
+    "@proompteng/temporal-bun-sdk": "https://registry.npmjs.org/@proompteng/temporal-bun-sdk/-/temporal-bun-sdk-0.11.5.tgz",
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
     "@tree-sitter-grammars/tree-sitter-kotlin": "^1.1.0",
     "@tree-sitter-grammars/tree-sitter-toml": "^0.7.0",

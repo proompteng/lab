@@ -12,24 +12,24 @@ test('mailboxes suspend, deliver a batch in order, and unregister interrupted co
   try {
     const cancelled = runtime.fork(mailbox.take('signal'))
     await runtime.drain(settle)
-    expect(cancelled.unsafePoll()).toBeNull()
+    expect(cancelled.pollUnsafe()).toBeUndefined()
     runtime.fork(Fiber.interrupt(cancelled))
     await runtime.drain(settle)
-    expect(cancelled.unsafePoll()?._tag).toBe('Failure')
+    expect(cancelled.pollUnsafe()?._tag).toBe('Failure')
 
     const batch = runtime.fork(mailbox.takeAll('signal'))
     await runtime.drain(settle)
     mailbox.deliver('signal', 'first')
     mailbox.deliver('signal', 'second')
     await runtime.drain(settle)
-    expect(batch.unsafePoll()).toEqual(Exit.succeed(['first', 'second']))
+    expect(batch.pollUnsafe()).toEqual(Exit.succeed(['first', 'second']))
 
     const next = runtime.fork(mailbox.take('signal'))
     await runtime.drain(settle)
-    expect(next.unsafePoll()).toBeNull()
+    expect(next.pollUnsafe()).toBeUndefined()
     mailbox.deliver('signal', 'third')
     await runtime.drain(settle)
-    expect(next.unsafePoll()).toEqual(Exit.succeed('third'))
+    expect(next.pollUnsafe()).toEqual(Exit.succeed('third'))
   } finally {
     runtime.dispose()
   }
@@ -64,7 +64,7 @@ test('real Effect interruption runs finalizers while task disposal does not', as
 })
 
 test('discarded durable fibers and daemon children are collectible without touching other Effect roots', async () => {
-  const unrelated = Effect.runFork(Effect.async<never>(() => undefined))
+  const unrelated = Effect.runFork(Effect.callback<never>(() => undefined))
   let finalized = 0
   const references: WeakRef<object>[] = []
   const discard = async () => {
@@ -80,7 +80,7 @@ test('discarded durable fibers and daemon children are collectible without touch
     )
     const parent = runtime.fork(
       Effect.gen(function* () {
-        const child = yield* Effect.forkDaemon(waiting)
+        const child = yield* Effect.forkDetach(waiting)
         references.push(new WeakRef(child))
         yield* waiting
       }),
@@ -91,7 +91,7 @@ test('discarded durable fibers and daemon children are collectible without touch
   }
   try {
     for (let index = 0; index < 20; index += 1) await discard()
-    expect(Fiber.unsafeRoots(undefined)).toContain(unrelated)
+    expect(unrelated.pollUnsafe()).toBeUndefined()
     let retained = references.length
     for (let attempt = 0; attempt < 10 && retained > 0; attempt += 1) {
       // Collect on a fresh callback stack; deref() also protects targets within a job.
@@ -106,7 +106,7 @@ test('discarded durable fibers and daemon children are collectible without touch
     }
     expect(retained).toBe(0)
     expect(finalized).toBe(0)
-    expect(unrelated.unsafePoll()).toBeNull()
+    expect(unrelated.pollUnsafe()).toBeUndefined()
   } finally {
     await Effect.runPromise(Fiber.interrupt(unrelated))
   }

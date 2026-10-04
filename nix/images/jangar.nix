@@ -164,8 +164,6 @@ import ./bun-workspace-service.nix {
     cp -R "$TMPDIR/work/services/jangar/src/server/runtime-tooling-config.ts" "$out/app/services/jangar/src/server/runtime-tooling-config.ts"
 
     cp -R "$TMPDIR/work/services/bumba" "$out/app/services/bumba"
-    rm -rf "$out/app/services/bumba/node_modules"
-    ln -s /app/node_modules "$out/app/services/bumba/node_modules"
 
     chmod +x "$out/app/packages/cx-tools/dist/"*.js
   '';

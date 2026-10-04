@@ -1,6 +1,5 @@
 import { Cause, Context, Effect, Exit, Fiber, Layer } from 'effect'
 import * as Deferred from 'effect/Deferred'
-import type { Scope as ScopeTypes } from 'effect/Scope'
 import * as Scope from 'effect/Scope'
 
 import {
@@ -14,15 +13,14 @@ import { resolveWorkerActivities, resolveWorkerWorkflowsPath } from './defaults'
 import type { WorkerRuntimeOptions } from './runtime'
 import { WorkerRuntime } from './runtime'
 
-export class WorkerRuntimeService extends Context.Tag('@proompteng/temporal-bun-sdk/WorkerRuntime')<
-  WorkerRuntimeService,
-  WorkerRuntime
->() {}
+export class WorkerRuntimeService extends Context.Service<WorkerRuntimeService, WorkerRuntime>()(
+  '@proompteng/temporal-bun-sdk/WorkerRuntime',
+) {}
 
-export class WorkerRuntimeFailureSignal extends Context.Tag('@proompteng/temporal-bun-sdk/WorkerRuntimeFailureSignal')<
+export class WorkerRuntimeFailureSignal extends Context.Service<
   WorkerRuntimeFailureSignal,
   Deferred.Deferred<never, unknown>
->() {}
+>()('@proompteng/temporal-bun-sdk/WorkerRuntimeFailureSignal') {}
 
 export const makeWorkerRuntimeEffect = (options: WorkerRuntimeOptions = {}) =>
   Effect.gen(function* () {
@@ -60,12 +58,15 @@ export const runWorkerEffect = (
 ) =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      const scope = (yield* Effect.scope) as ScopeTypes.Closeable
+      const scope = (yield* Effect.scope) as Scope.Closeable
       const signal = failureSignal ?? (yield* Deferred.make<never, unknown>())
       const resolvedOptions = resolveWorkerLayerOptions(options)
       const runtime = yield* makeWorkerRuntimeEffect(resolvedOptions)
-      const runFiber = yield* Effect.forkDaemon(Effect.promise(() => runtime.run()))
-      yield* Effect.addFinalizer(() => Fiber.interruptFork(runFiber))
+      const runFiber = yield* Effect.forkDetach(
+        Effect.promise(() => runtime.run()),
+        { startImmediately: true },
+      )
+      yield* Effect.addFinalizer(() => Effect.sync(() => runFiber.interruptUnsafe()))
       yield* Effect.addFinalizer(() => Deferred.interrupt(signal))
       yield* Effect.sync(() => {
         runFiber.addObserver((exit) => {
@@ -73,8 +74,8 @@ export const runWorkerEffect = (
             const error = Cause.pretty(exit.cause)
             Effect.runFork(
               Effect.logError('temporal worker runtime failed', error).pipe(
-                Effect.zipRight(Deferred.failCause(signal, exit.cause)),
-                Effect.zipRight(Scope.close(scope, exit)),
+                Effect.andThen(Deferred.failCause(signal, exit.cause)),
+                Effect.andThen(Scope.close(scope, exit)),
               ),
             )
           } else {
@@ -88,7 +89,7 @@ export const runWorkerEffect = (
   )
 
 export const createWorkerRuntimeLayer = (options: WorkerRuntimeOptions = {}) =>
-  Layer.scopedContext(
+  Layer.effectContext(
     Effect.gen(function* () {
       const failureSignal = yield* Deferred.make<never, unknown>()
       const runtime = yield* runWorkerEffect(options, failureSignal)

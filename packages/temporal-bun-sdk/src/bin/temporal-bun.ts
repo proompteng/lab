@@ -427,7 +427,7 @@ export function projectTemplates(name: string): Template[] {
           },
           dependencies: {
             '@proompteng/temporal-bun-sdk': SCAFFOLD_SDK_VERSION,
-            effect: '^3.2.0',
+            effect: '4.0.0',
           },
           devDependencies: {
             'bun-types': '^1.4.2',
