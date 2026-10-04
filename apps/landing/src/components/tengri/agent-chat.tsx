@@ -846,7 +846,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <form
             aria-label="Message composer"
             aria-busy={replayRecovering}
-            className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 shadow-sm transition-colors focus-within:border-zinc-500 motion-reduce:transition-none"
+            className="w-full rounded-2xl border border-white/[0.06] bg-zinc-900/60 shadow-sm transition-colors focus-within:border-white/15 motion-reduce:transition-none"
             onSubmit={(event) => {
               event.preventDefault()
               void send()

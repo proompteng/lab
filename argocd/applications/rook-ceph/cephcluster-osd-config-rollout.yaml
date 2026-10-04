@@ -9,4 +9,4 @@ metadata:
 spec:
   annotations:
     osd:
-      ops.proompteng.ai/osd-config-revision: scrub-window-v2
+      ops.proompteng.ai/osd-config-revision: scrub-catchup-v1

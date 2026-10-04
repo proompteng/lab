@@ -3,6 +3,7 @@ import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
 import {
   NonNegativeIntegerSchema,
+  PositiveIntegerSchema,
   Sha256Schema,
   StrictNonEmptyStringSchema,
   UnsignedMicrosSchema,
@@ -11,7 +12,7 @@ import {
 import { emptyStreamingProjection, incorporateSimulatedMarketRecord, topicPartitionKey } from './projection'
 import type { StreamingUniverse } from './raw-events'
 
-export const HistoricalMarketArrivalSchema = Schema.Struct({
+const ArrivalFields = {
   availableAtMs: NonNegativeIntegerSchema,
   record: Schema.Struct({
     topic: StrictNonEmptyStringSchema,
@@ -20,7 +21,19 @@ export const HistoricalMarketArrivalSchema = Schema.Struct({
     value: Schema.String,
     timestampMs: Schema.optionalKey(NonNegativeIntegerSchema),
   }),
-})
+}
+export const HistoricalMarketArrivalSchema = Schema.Union([
+  Schema.Struct(ArrivalFields),
+  Schema.Struct({
+    schemaVersion: Schema.Literal('bayn.original-market-arrival.v1'),
+    ...ArrivalFields,
+    receipt: Schema.Struct({
+      captureId: StrictNonEmptyStringSchema,
+      consumerEpoch: StrictNonEmptyStringSchema,
+      sequence: PositiveIntegerSchema,
+    }),
+  }),
+])
 export type HistoricalMarketArrival = typeof HistoricalMarketArrivalSchema.Type
 
 /** Explicit counterfactual delivery; computedAt and the published payload are never rewritten. */
@@ -52,6 +65,16 @@ export class HistoricalMarketArrivalFailure extends Data.TaggedError('Historical
 export const replayHistoricalMarketArrivals = (input: unknown, universe: StreamingUniverse) =>
   Result.gen(function* () {
     const decoded = yield* Schema.decodeUnknownResult(HistoricalStreamingInputSchema, strictParseOptions)(input)
+    const original = decoded.events.find((event) => 'receipt' in event)
+    if (original !== undefined)
+      return yield* Result.fail(
+        new HistoricalMarketArrivalFailure({
+          message: 'Original receipts require the ordered cursor and cannot claim the legacy delivery model',
+          topic: original.record.topic,
+          partition: original.record.partition,
+          offset: original.record.offset,
+        }),
+      )
     const inputHash = yield* canonicalHashV1Result({ input: decoded, universe })
     const events = [...decoded.events].sort((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
     const cursor = yield* createHistoricalMarketCursor(
@@ -95,17 +118,22 @@ export const replayHistoricalMarketArrivals = (input: unknown, universe: Streami
     }
   })
 
+type OriginalArrival = Extract<HistoricalMarketArrival, { readonly schemaVersion: string }>
 type HistoricalArrivalPosition = Pick<HistoricalMarketArrival, 'availableAtMs'> &
-  Pick<HistoricalMarketArrival['record'], 'topic' | 'partition' | 'offset'>
+  Pick<HistoricalMarketArrival['record'], 'topic' | 'partition' | 'offset'> & {
+    readonly receipt?: OriginalArrival['receipt']
+  }
 
 export const arrivalPosition = (event: HistoricalMarketArrival): HistoricalArrivalPosition => ({
   availableAtMs: event.availableAtMs,
   topic: event.record.topic,
   partition: event.record.partition,
   offset: event.record.offset,
+  ...('receipt' in event ? { receipt: event.receipt } : {}),
 })
 export const compareArrivalPositions = (a: HistoricalArrivalPosition, b: HistoricalArrivalPosition): number => {
   if (a.availableAtMs !== b.availableAtMs) return a.availableAtMs - b.availableAtMs
+  if (a.receipt !== undefined && b.receipt !== undefined) return a.receipt.sequence - b.receipt.sequence
   if (a.topic !== b.topic) return a.topic < b.topic ? -1 : 1
   if (a.partition !== b.partition) return a.partition - b.partition
   return BigInt(a.offset) < BigInt(b.offset) ? -1 : BigInt(a.offset) > BigInt(b.offset) ? 1 : 0
@@ -174,6 +202,25 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
     const event = yield* Schema.decodeUnknownResult(HistoricalMarketArrivalSchema, strictParseOptions)(input)
     const { record } = event
     const last = cursor.lastArrival
+    const receipt = 'receipt' in event ? event.receipt : undefined
+    if (
+      (receipt !== undefined && cursor.source !== undefined) ||
+      (last !== null &&
+        ((receipt === undefined) !== (last.receipt === undefined) ||
+          (receipt !== undefined &&
+            last.receipt !== undefined &&
+            (receipt.captureId !== last.receipt.captureId ||
+              receipt.consumerEpoch !== last.receipt.consumerEpoch ||
+              receipt.sequence <= last.receipt.sequence))))
+    )
+      return yield* Result.fail(
+        new HistoricalMarketArrivalFailure({
+          message: 'Original receipt order cannot mix captures, consumer epochs, or legacy delivery models',
+          topic: record.topic,
+          partition: record.partition,
+          offset: record.offset,
+        }),
+      )
     const partitionKey = topicPartitionKey(record.topic, record.partition)
     const offset = cursor.suppliedOffsets.get(partitionKey)
     const order = last === null ? 1 : compareArrivalPositions(arrivalPosition(event), last)
@@ -198,11 +245,6 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
       ),
       processedRecords: cursor.processedRecords + 1,
       suppliedOffsets: new Map(cursor.suppliedOffsets).set(partitionKey, record.offset),
-      lastArrival: {
-        availableAtMs: event.availableAtMs,
-        topic: record.topic,
-        partition: record.partition,
-        offset: record.offset,
-      },
+      lastArrival: arrivalPosition(event),
     } satisfies HistoricalMarketCursor
   })

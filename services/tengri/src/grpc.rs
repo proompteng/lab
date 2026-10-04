@@ -2432,8 +2432,8 @@ mod tests {
             display_name: "My agent".to_owned(),
         };
         assert_eq!(request.display_name, "My agent");
-        assert_eq!(MicroVMResources::default().cpu_millis, 2_000);
-        assert_eq!(MicroVMResources::default().memory_mib, 4_096);
+        assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
+        assert_eq!(MicroVMResources::default().memory_mib, 8_192);
         assert_eq!(MicroVMResources::default().workspace_gib, 16);
     }
 

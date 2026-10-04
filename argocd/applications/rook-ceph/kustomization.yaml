@@ -8,6 +8,8 @@ configMapGenerator:
       - config.river=host-metrics-alloy-config.river
 
 resources:
+  - bayn-research-storage.yaml
+  - bayn-research-objectbucket.yaml
   - host-metrics-alloy-daemonset.yaml
   - storageclasses.yaml
   - tailscale-service-dashboard.yaml

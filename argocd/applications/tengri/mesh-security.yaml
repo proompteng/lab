@@ -1,0 +1,37 @@
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: tengri
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tengri
+      app.kubernetes.io/component: control-plane
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    "8080":
+      mode: DISABLE
+    "8081":
+      mode: DISABLE
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tengri
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tengri
+      app.kubernetes.io/component: control-plane
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [proompteng.ai/ns/proompteng/sa/proompteng]
+      to:
+        - operation:
+            ports: ["50051"]
+    - to:
+        - operation:
+            ports: ["8080", "8081"]
