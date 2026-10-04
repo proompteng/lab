@@ -348,6 +348,7 @@ const program = Effect.gen(function* () {
               const markets = chunk.receipts.filter((receipt) => receipt.event.kind === 'market-record')
               const rawBytes = markets.reduce((sum, receipt) => sum + (receipt.event.rawByteLength ?? 0), 0)
               lastChunk = {
+                observedAtStage: 'sql-append-start',
                 ordinal,
                 receipts: chunk.receipts.length,
                 marketRecords: markets.length,
@@ -421,7 +422,11 @@ const program = Effect.gen(function* () {
                             : prefix.startsWith('{"schemaVersion":"bayn.research-capture-export.v1"')
                               ? 'manifest'
                               : 'raw'
-                      return timedSink(`object.${stage}`, object.payload.byteLength, objects.putVerified(object))
+                      return timedSink(
+                        `object.${stage}.putAndVerifiedGet`,
+                        object.payload.byteLength,
+                        objects.putVerified(object),
+                      )
                     }),
                     Effect.onExit((exit) =>
                       Effect.sync(() => {
@@ -449,7 +454,11 @@ const program = Effect.gen(function* () {
         let started
         let cpuStart
         let firstInvalidation = null
+        let diagnosticFailure
+        let inputStartSinkBaseline = null
         let latestCaptureStatus = null
+        let admittedReceipts = 0
+        let admittedMarketRecords = 0
         const heartbeat = []
         let lastBeat = performance.now()
         const arrivals = [20, 200].map((widthMs) => ({ widthMs, window: -1, count: 0, maximumRecords: 0 }))
@@ -468,8 +477,10 @@ const program = Effect.gen(function* () {
             name,
             phase: started === undefined ? 'setup' : 'input',
             elapsedMs,
-            accepted,
+            verifiedNativeRecords: accepted,
             published,
+            admittedReceipts,
+            admittedMarketRecords,
             cpuCores: elapsedMs === null || elapsedMs <= 0 ? null : (cpuMicros() - cpuStart) / 1000 / elapsedMs,
             memoryPeakBytes: memoryPeak(),
             heartbeatP99Ms: percentile(heartbeat, 0.99),
@@ -481,25 +492,36 @@ const program = Effect.gen(function* () {
             peakPayload,
             recorderEnvelopeBytes: enabled ? 65536 : 0,
             captureStatus: latestCaptureStatus,
-            sinkTimings,
+            diagnosticFailure: diagnosticFailure === undefined ? null : String(diagnosticFailure),
+            sinkTimingsSinceRecorderConstruction: sinkTimings,
+            inputStartSinkBaseline,
             activeSink:
               activeSink === null
                 ? null
                 : { stage: activeSink.stage, bytes: activeSink.bytes, elapsedMs: now - activeSink.began },
             lastChunk,
-            arrivalWindows: arrivals,
+            alignedArrivalBinsOfVerifiedRecords: arrivals,
             producerTiming,
           }
         }
-        const sampleCapture = (state, recordCount = accepted) => {
-          latestCaptureStatus = state
-          peakRetained = Math.max(peakRetained, state.retainedReceipts)
-          peakPayload = Math.max(peakPayload, state.retainedPayloadBytes)
-          assert.ok(state.retainedReceipts <= 1024 && state.retainedPayloadBytes <= 4 * 1024 ** 2)
-          if (state.invalidations.length && firstInvalidation === null) {
-            invalidatedAtCount = recordCount
-            firstInvalidation = structuredClone({ ...snapshot(), observedAtMs: Date.now(), recordCount })
-            console.log(JSON.stringify({ captureFirstInvalidation: firstInvalidation }))
+        const sampleCapture = (event) => {
+          try {
+            const state = Effect.runSync(recorder.status)
+            if (event !== undefined && state.accepting && state.invalidations.length === 0) {
+              admittedReceipts++
+              if (event.kind === 'market-record') admittedMarketRecords++
+            }
+            latestCaptureStatus = state
+            peakRetained = Math.max(peakRetained, state.retainedReceipts)
+            peakPayload = Math.max(peakPayload, state.retainedPayloadBytes)
+            if (state.invalidations.length && firstInvalidation === null) {
+              const recordCount = event?.kind === 'market-record' ? event.consumerSequence : accepted
+              invalidatedAtCount = recordCount
+              firstInvalidation = structuredClone({ ...snapshot(), observedAtMs: Date.now(), recordCount })
+              console.log(JSON.stringify({ captureFirstInvalidation: firstInvalidation }))
+            }
+          } catch (error) {
+            diagnosticFailure = error
           }
         }
         const capture = recorder
@@ -507,14 +529,11 @@ const program = Effect.gen(function* () {
               rawValues: recorder.rawValues,
               record: (event, at, raw) => {
                 recorder.record(event, at, raw)
-                sampleCapture(
-                  Effect.runSync(recorder.status),
-                  event.kind === 'market-record' ? event.consumerSequence : accepted,
-                )
+                sampleCapture(event)
               },
               invalidate: (reason) => {
                 recorder.invalidate(reason)
-                sampleCapture(Effect.runSync(recorder.status))
+                sampleCapture()
               },
             }
           : undefined
@@ -555,6 +574,11 @@ const program = Effect.gen(function* () {
                 assert.equal(projection.sequence, accepted)
                 peakBacklog = Math.max(peakBacklog, published - accepted)
                 peakQueued = Math.max(peakQueued, source.queuedRecords())
+                assert.equal(diagnosticFailure, undefined)
+                assert.ok(
+                  peakRetained <= 1024 && peakPayload <= 4 * 1024 ** 2,
+                  'Capture retention exceeded its frozen bound',
+                )
                 if (invalidatedAtCount !== undefined) progressAfterFailure = accepted - invalidatedAtCount
                 if (accepted >= plan.faults.triggerAfterRecords) arm.inject = true
               })
@@ -596,7 +620,7 @@ const program = Effect.gen(function* () {
         const watch = yield* Effect.gen(function* () {
           while (running) {
             if (recorder && !finishStarted && (yield* recorder.status).invalidations.length) {
-              sampleCapture(yield* recorder.status)
+              sampleCapture()
               finishStarted = true
               yield* recorder.finish
               finishDone = true
@@ -675,6 +699,13 @@ const program = Effect.gen(function* () {
         )
         cpuStart = cpuMicros()
         started = performance.now()
+        inputStartSinkBaseline = structuredClone({
+          completedOperations: sinkTimings,
+          activeOperation:
+            activeSink === null
+              ? null
+              : { stage: activeSink.stage, bytes: activeSink.bytes, elapsedBeforeInputMs: started - activeSink.began },
+        })
         let publishFinished
         yield* Effect.promise(async () => {
           for (let index = 0; index < data.length; index += batchSize) {
@@ -801,6 +832,8 @@ const program = Effect.gen(function* () {
         reports.push(report)
         console.log(JSON.stringify({ capacityArm: report }))
         reported = true
+        assert.equal(diagnosticFailure, undefined)
+        assert.ok(peakRetained <= 1024 && peakPayload <= 4 * 1024 ** 2, 'Capture retention exceeded its frozen bound')
         if (enabled && !fault && rate) assert.deepEqual(captureStatus.invalidations, [])
         if (fault) {
           assert.ok(arm.injected)

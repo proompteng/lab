@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 
+import { CaptureInvalidation, recordResearchCapture } from '../research-capture/capture'
 import { observeConsumedRecords } from './capture-capacity-iterator'
 
 test('a pending native pull forwards close immediately without inventing another observation', async () => {
@@ -8,6 +9,7 @@ test('a pending native pull forwards close immediately without inventing another
   const pendingReadStarted = new Promise<void>((resolve) => {
     beganPendingRead = resolve
   })
+
   let closes = 0
   let pulls = 0
   const pending = new Promise<IteratorResult<number>>((resolve) => {
@@ -41,4 +43,33 @@ test('a pending native pull forwards close immediately without inventing another
   expect(closedWithoutResolvingRead).toBe(1)
   expect(closes).toBe(1)
   expect(observed).toEqual([1])
+})
+
+test('native diagnostic guards escape capture observer exception isolation', async () => {
+  let peakRetained = 0
+  const invalidations: CaptureInvalidation[] = []
+  const exceeded = new Error('Capture retention exceeded its frozen bound')
+  const source: AsyncIterable<number> = {
+    async *[Symbol.asyncIterator]() {
+      recordResearchCapture(
+        {
+          record: () => {
+            peakRetained = 1025
+            throw new Error('Optional observer failed')
+          },
+          invalidate: (reason) => invalidations.push(reason),
+        },
+        { kind: 'consumer-boundary', consumerEpoch: 'fixture', phase: 'STARTED', positions: [] },
+        0,
+      )
+      yield 1
+    },
+  }
+  const iterator = observeConsumedRecords(source, () => {
+    if (peakRetained > 1024) throw exceeded
+  })[Symbol.asyncIterator]()
+  expect(await iterator.next()).toEqual({ done: false, value: 1 })
+  expect(invalidations).toEqual([CaptureInvalidation.InvalidEvent])
+  await expect(iterator.next()).rejects.toBe(exceeded)
+  await iterator.return?.()
 })
