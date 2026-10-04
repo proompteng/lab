@@ -16,3 +16,7 @@ spec:
       port: 8642
       targetPort: api
       protocol: TCP
+    - name: dashboard
+      port: 9119
+      targetPort: dashboard
+      protocol: TCP

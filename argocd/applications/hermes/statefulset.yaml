@@ -111,6 +111,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /opt/data
+            - name: bootstrap
+              mountPath: /opt/data/.env
+              subPath: runtime.env
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
@@ -269,6 +273,10 @@ spec:
               readOnly: true
             - name: data
               mountPath: /opt/data
+            - name: bootstrap
+              mountPath: /opt/data/.env
+              subPath: runtime.env
+              readOnly: true
             - name: config
               mountPath: /opt/data/config.yaml
               subPath: config.yaml
@@ -295,6 +303,174 @@ spec:
               readOnly: true
             - name: backups
               mountPath: /opt/backups
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: shm
+              mountPath: /dev/shm
+            - name: tools
+              mountPath: /opt/tools
+              readOnly: true
+            - name: lab-toolchain-image
+              mountPath: /opt/lab-toolchain/bin
+              subPath: bin
+              readOnly: true
+            - name: lab-toolchain-image
+              mountPath: /nix/store
+              subPath: nix/store
+              readOnly: true
+            - name: github-auth
+              mountPath: /opt/github-auth
+              readOnly: true
+        - name: dashboard
+          image: registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+          imagePullPolicy: IfNotPresent
+          workingDir: /opt/data/workspace/tuslagch/lab
+          command:
+            - /opt/hermes/.venv/bin/hermes
+          args:
+            - dashboard
+            - --host
+            - 0.0.0.0
+            - --port
+            - "9119"
+            - --no-open
+            - --skip-build
+          env:
+            - name: GATEWAY_HEALTH_URL
+              value: http://127.0.0.1:8642
+            - name: HERMES_HOME
+              value: /opt/data
+            - name: HERMES_WRITE_SAFE_ROOT
+              value: /opt/data/workspace/tuslagch:/opt/data/memories:/opt/data/skills
+            - name: HERMES_DISABLE_LAZY_INSTALLS
+              value: "1"
+            - name: HOME
+              value: /opt/data/home
+            - name: KUBECONFIG
+              value: /opt/data/home/.kube/config
+            - name: XDG_CACHE_HOME
+              value: /opt/data/home/.cache
+            - name: GH_CONFIG_DIR
+              value: /opt/github-auth
+            - name: GH_PROMPT_DISABLED
+              value: "1"
+            - name: GH_PAGER
+              value: cat
+            - name: GIT_CONFIG_NOSYSTEM
+              value: "1"
+            - name: GIT_CONFIG_GLOBAL
+              value: /opt/data/home/.gitconfig
+            - name: GIT_TERMINAL_PROMPT
+              value: "0"
+            - name: PATH
+              value: /opt/tools:/opt/hermes/bin:/opt/hermes/.venv/bin:/opt/data/.local/bin:/usr/local/sbin:/usr/local/bin:/opt/lab-toolchain/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            - name: HERMES_WEB_DIST
+              value: /opt/hermes/hermes_cli/web_dist
+            - name: HERMES_DASHBOARD_BASIC_AUTH_USERNAME
+              value: tuslagch
+            - name: HERMES_DASHBOARD_BASIC_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-api-auth
+                  key: API_SERVER_KEY
+            - name: EXA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-exa-auth
+                  key: EXA_API_KEY
+            - name: HTTP_PROXY
+              value: http://hermes-egress-proxy.hermes.svc.cluster.local:3128
+            - name: HTTPS_PROXY
+              value: http://hermes-egress-proxy.hermes.svc.cluster.local:3128
+            - name: NO_PROXY
+              value: localhost,127.0.0.1,.svc,.svc.cluster.local,10.96.0.1,flamingo.flamingo.svc.cluster.local
+            - name: TZ
+              value: America/Los_Angeles
+          ports:
+            - name: dashboard
+              containerPort: 9119
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+              ephemeral-storage: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+              ephemeral-storage: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            httpGet:
+              path: /api/status
+              port: dashboard
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 90
+          readinessProbe:
+            exec:
+              command:
+                - /opt/hermes/.venv/bin/python
+                - -c
+                - >-
+                  import json, urllib.request;
+                  d=json.load(urllib.request.urlopen('http://127.0.0.1:9119/api/status',timeout=3));
+                  raise SystemExit(0 if d.get('auth_required') is True and 'basic' in d.get('auth_providers', []) else 1)
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: dashboard
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /etc/profile.d/hermes-tools.sh
+              subPath: terminal-profile.sh
+              readOnly: true
+            - name: data
+              mountPath: /opt/data
+            - name: bootstrap
+              mountPath: /opt/data/.env
+              subPath: runtime.env
+              readOnly: true
+            - name: config
+              mountPath: /opt/data/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/SOUL.md
+              subPath: SOUL.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/IDENTITY.md
+              subPath: IDENTITY.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/TOOLS.md
+              subPath: TOOLS.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/HEARTBEAT.md
+              subPath: HEARTBEAT.md
+              readOnly: true
+            - name: bootstrap
+              mountPath: /opt/data/workspace/tuslagch/AGENTS.md
+              subPath: AGENTS.md
               readOnly: true
             - name: tmp
               mountPath: /tmp

@@ -1,7 +1,7 @@
 # Hermes production
 
-Hermes serves the Tuslagch assistant through an authenticated cluster-local Service and private Tailscale Ingress.
-GitOps enables one gateway, one egress proxy, daily backups, and rollout alerts. Before restoring service, pass the live
+Hermes serves the Tuslagch assistant through its native web dashboard, authenticated cluster-local API, and private Tailscale Ingress.
+GitOps enables one gateway, one dashboard, one egress proxy, daily backups, and rollout alerts. Before restoring service, pass the live
 NetworkPolicy enforcement probe. Hermes and OpenClaw must never use the Discord token concurrently.
 
 ## Release and supply chain
@@ -37,7 +37,7 @@ validating a rollout.
 
 ## Runtime boundaries
 
-- The gateway and independent backup CronJob run as UID/GID `10000`; Squid runs as UID/GID `13`.
+- The gateway, dashboard, and independent backup CronJob run as UID/GID `10000`; Squid runs as UID/GID `13`.
 - Root filesystems are read-only, all Linux capabilities are dropped, and seccomp is `RuntimeDefault`. Only the gateway Pod
   receives a rotating Kubernetes service-account token; backup, migration, restore, and egress-proxy Pods explicitly disable
   token mounting.
@@ -58,7 +58,7 @@ validating a rollout.
   secret is committed to Git.
 - The `tuslagch` GitHub OAuth token is committed only as a namespace-scoped SealedSecret ciphertext. Only the bootstrap init
   container receives `GH_TOKEN`; it creates mode-`0600` GitHub CLI auth files in a per-Pod `emptyDir` shared read-only with
-  the gateway. The pinned Hermes runtime intentionally strips `GH_TOKEN` and `GITHUB_TOKEN` from model-authored terminal
+  the gateway and dashboard. The pinned Hermes runtime intentionally strips `GH_TOKEN` and `GITHUB_TOKEN` from model-authored terminal
   subprocesses, so environment-only authentication is insufficient. The token never enters the gateway environment, data
   PVC, backups, Git config, or a rendered manifest.
 - GitHub token rotation must reseal `hermes-github-auth` and increment the StatefulSet's
@@ -76,8 +76,8 @@ validating a rollout.
 - The API is available through the cluster-local Service and the private tailnet URL
   `https://hermes.ide-newton.ts.net`; both require bearer authentication for model requests and detailed health.
 - Native Exa-backed `web_search` and `web_extract` are enabled for CLI, authenticated API, and Discord sessions. The
-  authenticated Exa MCP server is restricted to its read-only `web_search_exa` and `web_fetch_exa` tools. Plugins,
-  delegation, cron, hooks, and speech-to-text remain disabled; manual approvals and unconditional deny rules remain
+  authenticated Exa MCP server is restricted to its read-only `web_search_exa` and `web_fetch_exa` tools. Agent plugins,
+  delegation, cron, hooks, and speech-to-text remain disabled; the bundled dashboard password provider is enabled; manual approvals and unconditional deny rules remain
   enabled.
 - Only `/opt/data/workspace/tuslagch`, Hermes-managed memory, and Hermes-managed skills are writable agent surfaces.
 - Bootstrap maintains `proompteng/lab` at `/opt/data/workspace/tuslagch/lab`. Initial clone and clean-main refresh remain
@@ -86,22 +86,30 @@ validating a rollout.
   branches are preserved. Both the gateway's documented `terminal.cwd` and the container working directory point at this
   repository root.
 
-## Private tailnet API
+## Private tailnet dashboard and API
 
-The `hermes-tailscale` layer-7 Ingress exposes the gateway only to authorized tailnet clients. The Tailscale operator
-terminates TLS for `https://hermes.ide-newton.ts.net` and forwards HTTP to the cluster-internal `hermes` Service on named
-port `api` / `8642`. It does not enable Funnel or create a public Ingress. The gateway's existing bearer authentication
-remains mandatory after Tailscale has authorized network access.
+Open `https://hermes.ide-newton.ts.net` to use the built-in Hermes dashboard and chat. Sign in as `tuslagch` with the
+`API_SERVER_KEY` field from the existing `infra/hermes-runtime` 1Password item. The dashboard hashes that Secret-backed
+password in memory. Its session-signing key is process-local, so sign in again after a dashboard restart. API key rotation
+also rotates the dashboard password and requires a Pod restart.
 
-- Canonical URL: `https://hermes.ide-newton.ts.net`
-- MagicDNS hostname: `hermes`
-- Kubernetes Ingress: `hermes-tailscale`
-- Backend: `hermes.hermes.svc.cluster.local:8642`
+The dashboard runs `hermes dashboard --host 0.0.0.0 --port 9119 --no-open --skip-build` using the frontend bundled in the
+same pinned Hermes image as the gateway. Kubernetes supervises both containers independently. They share `/opt/data`,
+the terminal toolchain, read-only GitHub CLI authentication, and the native HTTP gateway health probe. Their process namespaces remain separate. The dashboard has no Discord token and does not start a second gateway.
 
-The gateway NetworkPolicy admits port `8642` only from the exact operator-managed proxy labeled for
-`hermes/hermes-tailscale` and from existing same-namespace callers. Ordinary Pods in other namespaces remain denied.
-Use the fully qualified URL so TLS validates against the tailnet certificate; an unauthenticated request to
-`/health/detailed` must return `401`.
+Configuration, identity files, and an empty runtime `.env` remain read-only GitOps mounts. Manage credentials through the existing External Secrets and sealed identity paths. Edit configuration through the repository. Dashboard chat,
+session history, memory, and skills use the retained Hermes data PVC. Use GitOps for gateway lifecycle changes.
+
+The `hermes-tailscale` Ingress terminates TLS and routes `/` to named port `dashboard` / `9119`. The more specific `/v1`
+and `/health` prefixes retain the gateway API on named port `api` / `8642` and require its existing bearer authentication.
+The dashboard owns the tailnet `/api` routes. The cluster-local API at `http://hermes.hermes.svc.cluster.local:8642` retains
+all gateway routes, including its `/api` endpoints. There is no Funnel or public Ingress.
+
+The gateway NetworkPolicy admits API traffic from the exact operator-managed proxy labeled for `hermes/hermes-tailscale`
+and existing same-namespace callers. Only that exact Tailscale proxy may reach the dashboard port. The dashboard trusts
+forwarding headers from the bounded cluster Pod CIDR `10.244.0.0/16`; NetworkPolicy restricts those incoming connections
+to the selected proxy. The canonical public URL enables the native remote authentication gate and HTTPS WebSocket flow.
+An unauthenticated dashboard `/api/sessions` or gateway `/health/detailed` request must return `401`.
 
 ## State and recovery
 
@@ -110,6 +118,7 @@ Use the fully qualified URL so TLS validates against the tailnet certificate; an
 - StatefulSet PVC retention is `Retain` on delete and scale-down.
 - Migration Jobs mount the stable, read-only `hermes-operation-config` generated from the same production `config.yaml` as
   the gateway, so previews, memory limits, reports, and restore points use production settings rather than Hermes defaults.
+- The backup wrapper refuses to publish an archive containing any nonempty `.env` credential file. Failed pending archives are removed.
 - The daily backup CronJob retains the latest 14 verified archives and retries failures independently from the gateway. Its
   first scheduled success and subsequent last-success timestamp are monitored on a 26-hour window without removing a
   healthy API endpoint.

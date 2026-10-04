@@ -1,5 +1,10 @@
 _config_version: 39
 
+dashboard:
+  public_url: https://hermes.ide-newton.ts.net
+  trusted_proxies:
+    - 10.244.0.0/16
+
 model:
   default: qwen36-flamingo
   provider: custom
