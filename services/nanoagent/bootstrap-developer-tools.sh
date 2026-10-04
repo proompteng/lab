@@ -70,7 +70,8 @@ install_tools() {
   for command in nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
   done
-  "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' +qa
+  "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
+    '+if v:errmsg != "" | cquit 1 | endif' +qa
   local config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
   mkdir -p "$config"
   if [[ ! -e "$config/init.lua" && ! -e "$config/init.vim" ]]; then
@@ -82,7 +83,8 @@ install_tools() {
   if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
     "$prefix/bin/nvim" --headless \
       "+lua require('lazy').install({wait=true,show=false}); for name,plugin in pairs(require('lazy.core.config').plugins) do assert(plugin._.installed,name .. ' is missing'); for _,task in ipairs(plugin._.tasks or {}) do assert(not task:has_errors(),name .. ' failed installation') end end" \
-      "+lua assert(require('astronvim').version() == 'v6.1.0'); assert(vim.v.errmsg == '',vim.v.errmsg)" +qa
+      "+lua assert(require('astronvim').version() == 'v6.1.0'); assert(vim.v.errmsg == '',vim.v.errmsg)" \
+      '+if v:errmsg != "" | cquit 1 | endif' +qa
   fi
 }
 

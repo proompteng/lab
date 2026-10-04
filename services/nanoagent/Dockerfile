@@ -404,7 +404,7 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     brew config > /tmp/developer-tools-version && \
     brew list --versions >> /tmp/developer-tools-version && \
     brew doctor && \
-    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled == false)' +qa && \
+    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled == false)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
     tree-sitter --version && \
     test "$EDITOR" = nvim && test "$VISUAL" = nvim && \
     test "$(node --version)" = v24.11.1 && \
@@ -420,7 +420,7 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     mkdir -p "$HOME/.custom-config/nvim" && \
     printf 'vim.g.user_config_preserved = true\n' > "$HOME/.custom-config/nvim/init.lua" && \
     XDG_CONFIG_HOME="$HOME/.custom-config" bootstrap-developer-tools --install-only && \
-    XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' +qa
+    XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
 
 FROM runtime-with-toolchain AS guest-rootfs
 
