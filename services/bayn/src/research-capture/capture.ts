@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { ExecutionControllerTickSchema } from '../execution/controller'
+import { JevObservationReferencesSchema } from '../cycle/runner/pass-observation'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import { sha256 } from '../hash'
 import {
@@ -223,6 +224,7 @@ export const ResearchCaptureEventSchema = Schema.Union([
     delayMs: Schema.optionalKey(NonNegativeIntegerSchema),
     completedAt: Schema.optionalKey(UtcInstantSchema),
     receiptHash: Schema.optionalKey(Sha256Schema),
+    jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     runtimeAttempted: Schema.optionalKey(Schema.Boolean),
     reason: Schema.optionalKey(StrictNonEmptyStringSchema),
   }),

@@ -322,6 +322,27 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 
 ## Runtime architecture
 
+Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL
+`last_pass` projection. The sorted, deduplicated hashes come only from successful Jev observation persistence or
+successful batch-store results, including recovered batches. The journaled advance result binds these references
+into its version-two execution receipt; a completed research-capture event carries the same references alongside
+the controller invocation ID. Each hash resolves the exact persisted observation, whose manifest identifies its
+snapshot and whose existing batch plans identify candidate requests and terminal receipts. Store access does not
+prove that an observation was selected, submitted, traded, or profitable.
+
+The `complete` flag describes only this pass's reference collection, not complete controller knowledge or capture
+coverage. Ordinary passes can create entry and management observations; pending-batch recovery has no fixed count.
+The collection retains at most sixteen unique hashes (about one KiB of hash data). A legitimate recovery touching
+more becomes explicitly incomplete rather than changing trading behavior. A failed store operation, unavailable
+store instrumentation, or invalid reference also marks the collection incomplete. Waiting and expected failure
+results keep references already collected; an aborted action without a returned result has no reference claim.
+An empty complete collection means no Jev observation references were returned by these instrumented operations.
+It does not rule out reuse of a previously bound decision or access to other evidence.
+
+Legacy journal and projection results keep the field absent, with unknown reference coverage and byte-identical
+version-one receipt hashes. Replays retain only their original references and do not rerun evaluation or fabricate
+a fresh capture. This linkage does not prove full-session capture completeness or repair missing historical links.
+
 - `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker

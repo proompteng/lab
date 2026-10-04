@@ -100,7 +100,13 @@ const hashOutcome = (
 ): Effect.Effect<string, TransientExecutionFailure> => {
   const { observation, result } = advance
   const material = {
-    schemaVersion: 'bayn.execution-advance-receipt.v1',
+    schemaVersion:
+      observation.jevObservationReferences === undefined
+        ? 'bayn.execution-advance-receipt.v1'
+        : 'bayn.execution-advance-receipt.v2',
+    ...(observation.jevObservationReferences === undefined
+      ? {}
+      : { jevObservationReferences: observation.jevObservationReferences }),
     controllerKey: command.controllerKey,
     epoch: command.epoch,
     sequence: command.sequence,
