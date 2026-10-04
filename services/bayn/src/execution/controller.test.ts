@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import { maximumRetainedJevObservationReferences } from '../cycle/runner/pass-observation'
 
 import {
   completeExecutionControllerTick,
@@ -49,6 +50,28 @@ const completedResult: ExecutionAdvanceStepResult = {
 }
 
 describe('execution controller decisions', () => {
+  test('decodes bounded canonical Jev references while preserving unknown legacy evidence', () => {
+    const observation = { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: completedResult.completedAt }
+    expect(Result.isSuccess(decodeExecutionAdvanceStepResult({ ...completedResult, observation }))).toBe(true)
+    const decode = (hashes: readonly string[]) =>
+      decodeExecutionAdvanceStepResult({
+        ...completedResult,
+        observation: { ...observation, jevObservationReferences: { hashes, complete: true } },
+      })
+    expect(Result.isSuccess(decode([]))).toBe(true)
+    expect(Result.isSuccess(decode(['a'.repeat(64), 'b'.repeat(64)]))).toBe(true)
+    for (const hashes of [
+      ['invalid'],
+      ['b'.repeat(64), 'a'.repeat(64)],
+      ['a'.repeat(64), 'a'.repeat(64)],
+      Array.from({ length: maximumRetainedJevObservationReferences + 1 }, (_, index) =>
+        index.toString(16).padStart(64, '0'),
+      ),
+    ]) {
+      expect(Result.isFailure(decode(hashes))).toBe(true)
+    }
+  })
+
   test('activates once and treats the same controller plan across worker revisions as idempotent', () => {
     const state = activated()
 

@@ -202,16 +202,19 @@ describe('native execution runtime', () => {
   test('retains exact Jev observation references across stores, waiting, recovery and subsequent passes', async () => {
     const firstHash = hash('b')
     const recoveredHash = hash('a')
-    const candidate = { contentHash: firstHash } as CandidateObservation
+    const candidate = {
+      contentHash: firstHash,
+      payload: { schemaVersion: 'bayn.jev-observation.v1' },
+    } as CandidateObservation
     const batch = { plan: { observationHash: recoveredHash }, result: null } as JevBatchEvidence
     let advances = 0
     const currentDriver = {
       ...driver,
       advance: Effect.gen(function* () {
         if (++advances === 1) {
-          yield* (yield* CandidateObservationStore).record(candidate)
-          yield* (yield* CandidateObservationStore).record(candidate)
-          yield* (yield* JevBatchStore).finish(hash('c'))
+          yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
+          yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.orDie)
+          yield* (yield* JevBatchStore).finish(hash('c')).pipe(Effect.orDie)
         }
         return { observation: windowClosedObservation }
       }),
@@ -256,7 +259,10 @@ describe('native execution runtime', () => {
 
   test('failed Jev store access cannot advertise an empty complete reference collection', async () => {
     const failure = operationalError({ component: 'database', operation: 'fixture', message: 'record failed' })
-    const candidate = { contentHash: hash('a') } as CandidateObservation
+    const candidate = {
+      contentHash: hash('a'),
+      payload: { schemaVersion: 'bayn.jev-observation.v1' },
+    } as CandidateObservation
     const context = Context.make(CandidateObservationStore, {
       record: () => Effect.fail(failure),
       latestJevWindowEnd: () => Effect.succeed(Option.none()),
@@ -278,7 +284,7 @@ describe('native execution runtime', () => {
           yield* captureRecoveryFirstCycleDriver(slot)({
             ...driver,
             advance: Effect.gen(function* () {
-              yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.catch(() => Effect.void))
+              yield* (yield* CandidateObservationStore).record(candidate).pipe(Effect.ignore)
               return {
                 observation: {
                   result: 'FAILURE' as const,
@@ -300,6 +306,66 @@ describe('native execution runtime', () => {
       jevObservationReferences: { hashes: [], complete: false },
     })
   })
+
+  test.each(['overflow', 'malformed', 'instrumentation-failure'] as const)(
+    'Jev reference %s does not change pass results',
+    async (mode) => {
+      const context = Context.make(CandidateObservationStore, {
+        record: () => Effect.void,
+        latestJevWindowEnd: () => Effect.succeed(Option.none()),
+      }).pipe(
+        Context.add(JevBatchStore, {
+          read: () => Effect.succeed(null),
+          pending: () => Effect.succeed([]),
+          begin: () => Effect.die('unused'),
+          finish: () => Effect.die('unused'),
+        }),
+      ) as Context.Context<RecoveryFirstRuntime>
+      let writes = 0
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const slot = {
+              state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Pending' }),
+              ready: yield* Deferred.make<void, NativeExecutionRuntimeError>(),
+            }
+            yield* captureRecoveryFirstCycleDriver(slot)({
+              ...driver,
+              advance: Effect.gen(function* () {
+                const store = yield* CandidateObservationStore
+                for (let index = 20; index > 0; index--) {
+                  const candidate = {
+                    get contentHash() {
+                      if (mode === 'instrumentation-failure') throw new Error('evidence unavailable')
+                      return mode === 'malformed' ? 'invalid' : index.toString(16).padStart(64, '0')
+                    },
+                    payload: { schemaVersion: 'bayn.jev-observation.v1' },
+                  } as CandidateObservation
+                  yield* store.record(candidate).pipe(Effect.orDie)
+                  writes++
+                }
+                return { observation: windowClosedObservation, nextDelayMs: 1_000 }
+              }),
+            }).pipe(Effect.provideContext(context), Effect.forkScoped)
+            yield* Deferred.await(slot.ready)
+            return yield* (yield* readRecoveryFirstCycleDriverSlot(slot)).advance
+          }),
+        ),
+      )
+      expect(writes).toBe(20)
+      expect(result.nextDelayMs).toBe(1_000)
+      expect(result.observation).toEqual({
+        ...windowClosedObservation,
+        jevObservationReferences: {
+          hashes:
+            mode === 'overflow'
+              ? Array.from({ length: 16 }, (_, index) => (index + 5).toString(16).padStart(64, '0'))
+              : [],
+          complete: false,
+        },
+      })
+    },
+  )
 
   test('bootstraps controller persistence before exposing the projection runtime and fails closed on acquisition error', async () => {
     let acquired = 0
@@ -1028,61 +1094,68 @@ describe('native execution runtime', () => {
     expect(failure.message).toBe('execution controller status projection did not complete')
   })
 
-  test('replays a duplicate Restate delivery after an ambiguous commit without another aggregate advance', async () => {
-    let advanceCount = 0
-    let projectCount = 0
-    const persistence: { current: ExecutionControllerStatus | null } = { current: null }
-    const replayDriver = {
-      ...windowClosedDriver,
-      advance: Effect.sync(() => {
-        advanceCount += 1
-        return { observation: windowClosedObservation }
-      }),
-    }
-    const uncertainStore: ExecutionControllerStatusStoreShape = {
-      read: () => Effect.succeed(persistence.current),
-      project: (candidate) =>
-        Effect.sync(() => {
-          projectCount += 1
-          persistence.current = candidate
-        }).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new ExecutionControllerStatusStoreError({
-                operation: 'project',
-                failure: 'query',
-                message: 'connection failed after commit',
-              }),
+  test.each([undefined, { hashes: [hash('a')], complete: true }])(
+    'replays a duplicate Restate delivery after an ambiguous commit without another aggregate advance (%j)',
+    async (jevObservationReferences) => {
+      let advanceCount = 0
+      let projectCount = 0
+      const persistence: { current: ExecutionControllerStatus | null } = { current: null }
+      const retainedObservation = {
+        ...windowClosedObservation,
+        ...(jevObservationReferences === undefined ? {} : { jevObservationReferences }),
+      }
+      const replayDriver = {
+        ...windowClosedDriver,
+        advance: Effect.sync(() => {
+          advanceCount += 1
+          return { observation: retainedObservation }
+        }),
+      }
+      const uncertainStore: ExecutionControllerStatusStoreShape = {
+        read: () => Effect.succeed(persistence.current),
+        project: (candidate) =>
+          Effect.sync(() => {
+            projectCount += 1
+            persistence.current = candidate
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ExecutionControllerStatusStoreError({
+                  operation: 'project',
+                  failure: 'query',
+                  message: 'connection failed after commit',
+                }),
+              ),
             ),
           ),
-        ),
-    }
+      }
 
-    const first = await Effect.runPromise(
-      executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
-    )
-    const replay = await Effect.runPromise(
-      executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
-    )
+      const first = await Effect.runPromise(
+        executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
+      )
+      const replay = await Effect.runPromise(
+        executeNativeExecutionAdvance(command, replayDriver, uncertainStore, controllerPlanHash),
+      )
 
-    expect(advanceCount).toBe(1)
-    expect(projectCount).toBe(1)
-    const committed = persistence.current
-    if (committed === null) throw new Error('ambiguous projection did not persist its status')
-    if (!executionControllerStatusHasCompletion(committed)) {
-      throw new Error('ambiguous completion projection lost its completion evidence')
-    }
-    expect(replay).toEqual({
-      completedAt: committed.completedAt,
-      observation: windowClosedObservation,
-      outcome: {
-        _tag: committed.lastOutcome,
-        receiptHash: committed.lastReceiptHash,
-        nextDelayMs: 30_000,
-      },
-    })
-    expect(first).toEqual(replay)
-  })
+      expect(advanceCount).toBe(1)
+      expect(projectCount).toBe(1)
+      const committed = persistence.current
+      if (committed === null) throw new Error('ambiguous projection did not persist its status')
+      if (!executionControllerStatusHasCompletion(committed)) {
+        throw new Error('ambiguous completion projection lost its completion evidence')
+      }
+      expect(replay).toEqual({
+        completedAt: committed.completedAt,
+        observation: retainedObservation,
+        outcome: {
+          _tag: committed.lastOutcome,
+          receiptHash: committed.lastReceiptHash,
+          nextDelayMs: 30_000,
+        },
+      })
+      expect(first).toEqual(replay)
+    },
+  )
 
   test('adopts the persisted winner when a replay loses the same-command projection race', async () => {
     let advanceCount = 0
