@@ -107,6 +107,7 @@ class ArchiveTimestampPrecisionIntegrationTest {
                 version = 2,
               )
             val row = decodeArchiveBar(ArchiveKafkaRecord(topic, 0, index + 2L, Json.encodeToString(envelope)), routes)
+            assertEquals(prices[4].toRawBits(), row.volume.toRawBits(), "decoded volume")
             connection.prepareStatement(archiveBarInsertSql()).use { prepared ->
               archiveBarStatement().accept(prepared, row)
               prepared.addBatch()
@@ -146,7 +147,18 @@ class ArchiveTimestampPrecisionIntegrationTest {
                 assertEquals(false, result.next())
               }
           }
-          assertEquals(emptyList(), numericMismatches, "JDBC binary64 parity")
+          val zeroExpressions =
+            statement
+              .executeQuery(
+                "SELECT " +
+                  "toString(reinterpretAsUInt64(reinterpretAsFloat64(CAST(-9223372036854775808 AS Int64)))), " +
+                  "toString(reinterpretAsUInt64(reinterpretAsFloat64(CAST('-9223372036854775808' AS Int64)))), " +
+                  "toString(reinterpretAsUInt64(reinterpretAsFloat64(CAST('9223372036854775808' AS UInt64))))",
+              ).use { result ->
+                assertTrue(result.next())
+                (1..3).map(result::getString)
+              }
+          assertEquals(emptyList(), numericMismatches, "JDBC binary64 parity; signed-zero expressions=$zeroExpressions")
           verified = true
         } finally {
           if (!verified || System.getenv("BAYN_TEST_JDBC_RETAIN_ARCHIVE") != "true") {
