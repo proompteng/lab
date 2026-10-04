@@ -9,4 +9,4 @@ resources:
 images:
 - name: registry.ide-newton.ts.net/lab/rune
   newName: registry.ide-newton.ts.net/lab/rune
-  digest: sha256:003e0961ccfa9f64956f3d31fd46822eb0b7952306a8dbc0e143a104803704b5
+  digest: sha256:4a6cdc9e4c79c8ea7df5aa3d8c3fbbe673ff7b5cd852670d15bd27a498b6889e
