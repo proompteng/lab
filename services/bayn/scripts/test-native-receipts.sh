@@ -2,6 +2,8 @@
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
+mode=${1:-receipts}
+[[ "$mode" == receipts || "$mode" == --capture-capacity ]] || { echo 'Unknown native fixture mode' >&2; exit 2; }
 run_id=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(8).toString("hex"))')
 export BAYN_TEST_KAFKA_USERNAME="bayn-fixture-${run_id}"
 export BAYN_TEST_KAFKA_PASSWORD
@@ -10,10 +12,11 @@ if [[ "${GITHUB_ACTIONS:-}" == true ]]; then printf '::add-mask::%s\n' "$BAYN_TE
 directory=$(mktemp -d "${root}/services/bayn/.native-receipts.XXXXXX")
 kafka_name="bayn-receipts-kafka-${run_id}"
 restate_name="bayn-receipts-restate-${run_id}"
+capacity_name="bayn-receipts-capacity-${run_id}"
 kafka_id=
 cleanup() {
   status=$?
-  for name in "$kafka_name" "$restate_name"; do
+  for name in "$capacity_name" "$kafka_name" "$restate_name"; do
     identity=$(docker inspect --format '{{.Id}} {{index .Config.Labels "bayn-receipt-fixture"}}' "$name" 2>/dev/null) || continue
     read -r id owner <<< "$identity"
     if [[ "$owner" != "$run_id" || ! "$id" =~ ^[0-9a-f]{64}$ ]]; then continue; fi
@@ -72,6 +75,26 @@ bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.Y
   "$root/argocd/applications/kafka/torghut-topics.yaml" > "$directory/source-topics.json"
 bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
   "$root/argocd/applications/bayn/execution-controller.yaml" > "$directory/execution-controller.json"
+
+if [[ "$mode" == --capture-capacity ]]; then
+  plan="$root/services/bayn/src/testing/capture-capacity-plan.json"
+  node_image=$(node -e 'process.stdout.write(require(process.argv[1]).worker.image)' "$plan")
+  plan_hash=$(sha256sum "$plan" | cut -d ' ' -f 1)
+  printf 'Frozen capture capacity plan: %s\n' "$plan_hash"
+  timeout 120s docker pull "$node_image" >/dev/null
+  bun build "$root/services/bayn/src/testing/capture-capacity-native-node.mjs" --target=node \
+    --external @platformatic/kafka --outdir "$directory"
+  timeout 250s docker run --name "$capacity_name" --network host --read-only \
+    --memory 1g --memory-swap 1g --cpus 2 --pids-limit 128 \
+    --tmpfs /tmp:rw,noexec,nosuid,size=64m --label "bayn-receipt-fixture=$run_id" \
+    --env BAYN_TEST_KAFKA_USERNAME --env BAYN_TEST_KAFKA_PASSWORD --env BAYN_TEST_POSTGRES_URL \
+    --volume "$root:$root:ro" --workdir "$root" "$node_image" \
+    node "$directory/capture-capacity-native-node.js" "$plan" \
+    "$directory/source-topics.json" "$directory/execution-controller.json" "$plan_hash"
+  state=$(docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}} {{.RestartCount}}' "$capacity_name")
+  [[ "$state" == 'false 0 0' ]] || { echo "Capacity container failed: $state" >&2; exit 1; }
+  exit 0
+fi
 
 bun build "$root/services/bayn/src/testing/kafka-receipts-native-node.mjs" --target=node \
   --external @platformatic/kafka --outdir "$directory"

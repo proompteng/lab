@@ -265,6 +265,11 @@ jobs:
         run: bun test services/bayn/src/market-data/archive-jdbc-readback.integration.test.ts
       - name: Verify complete Bayn PostgreSQL persistence workflows
         run: bun run --cwd services/bayn test:postgres
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+      - name: Verify bounded capture capacity with isolated native transports
+        run: timeout 8m bash services/bayn/scripts/test-native-receipts.sh --capture-capacity
       - name: Start isolated TigerBeetle for durable replay acceptance
         run: |
           set -euo pipefail
