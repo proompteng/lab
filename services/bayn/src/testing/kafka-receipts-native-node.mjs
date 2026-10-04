@@ -33,6 +33,7 @@ const transactional = new Producer({
   ...connection,
   clientId: `${prefix}-transactional`,
   transactionalId: `${prefix}-transaction`,
+  idempotent: true,
 })
 let openTransaction
 try {
