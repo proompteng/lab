@@ -61,21 +61,29 @@ const ControlStudyInputV2Schema = Schema.Struct({
   repeatedTargetWeightPpm: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(200_000)),
 })
 
+const ControlStudyInputV3Schema = Schema.Struct({
+  ...ControlStudyInputV2Schema.fields,
+  schemaVersion: Schema.Literal('bayn.control-study-input.v3'),
+  turnoverPolicy: Schema.Enum(EntryTurnoverPolicy),
+})
+const ControlStudyInputV4Schema = Schema.Struct({
+  ...ControlStudyInputV3Schema.fields,
+  schemaVersion: Schema.Literal('bayn.control-study-input.v4'),
+  management: Schema.Literal(ControlManagementMode.Mechanical),
+  repeatedTargetWeightPpm: Schema.Literal(residualShockDefinition.targetWeightPpm),
+  falsificationCandidate: Schema.Literal(residualShockDefinition.id),
+})
+
 export const ControlStudyInputSchema = Schema.Union([
   ControlStudyInputV2Schema,
+  ControlStudyInputV3Schema,
+  ControlStudyInputV4Schema,
   Schema.Struct({
-    ...ControlStudyInputV2Schema.fields,
-    schemaVersion: Schema.Literal('bayn.control-study-input.v3'),
-    turnoverPolicy: Schema.Enum(EntryTurnoverPolicy),
+    ...ControlStudyInputV3Schema.fields,
+    schemaVersion: Schema.Literal('bayn.control-study-input.v5'),
+    falsificationCandidate: Schema.Null,
   }),
-  Schema.Struct({
-    ...ControlStudyInputV2Schema.fields,
-    schemaVersion: Schema.Literal('bayn.control-study-input.v4'),
-    management: Schema.Literal(ControlManagementMode.Mechanical),
-    repeatedTargetWeightPpm: Schema.Literal(residualShockDefinition.targetWeightPpm),
-    turnoverPolicy: Schema.Enum(EntryTurnoverPolicy),
-    falsificationCandidate: Schema.Literal(residualShockDefinition.id),
-  }),
+  Schema.Struct({ ...ControlStudyInputV4Schema.fields, schemaVersion: Schema.Literal('bayn.control-study-input.v5') }),
 ])
 
 export const controlStudyDefinition = {
@@ -124,6 +132,30 @@ export const residualShockControlStudyDefinition = {
   falsificationCandidate: residualShockDefinition,
 } as const
 
+enum ControlPollDisposition {
+  Warmup = 'WARMUP',
+  Holding = 'HOLDING',
+  Exiting = 'EXITING',
+  EntryCutoff = 'ENTRY_CUTOFF',
+  WindowAlreadyConsumed = 'WINDOW_ALREADY_CONSUMED',
+  InputUnavailable = 'INPUT_UNAVAILABLE',
+  SelectionUnavailable = 'SELECTION_UNAVAILABLE',
+  NoSignal = 'NO_SIGNAL',
+  Selected = 'SELECTED',
+  SkippedWhileBusy = 'SKIPPED_WHILE_BUSY',
+}
+
+const opportunityAccountingDefinition = {
+  schemaVersion: 'bayn.simulated-opportunity-accounting.v1',
+  schedule: 'Session-open anchored polls before session close, including warmup and cutoff. Close is excluded.',
+  coverage: 'Each scheduled ordinal is accounted exactly once. Busy ranges cover skipped polls without executing them.',
+  disposition:
+    'Use the post-management entry branch: exiting, holding, then flat warmup, cutoff, consumed window, or the observed entry result. Selected includes later expiry, pricing, risk and execution outcomes retained in decisions and orders.',
+  exclusions:
+    'Count available entry snapshots with candidate exclusions separately. These counts overlap dispositions.',
+  runtimeEvidence: 'Simulated engine schedule only. Captured production controller starts and terminals are unknown.',
+} as const
+
 export interface ControlMarket {
   readonly advanceTo: (atMs: number) => Effect.Effect<void, ControlStudyFailure>
   readonly quoteAt: (symbol: string, atMs: number) => Effect.Effect<ControlQuote, ControlStudyFailure>
@@ -167,6 +199,7 @@ export const runControlSession = (input: {
   readonly turnoverPolicy?: EntryTurnoverPolicy
   readonly decisionLatencyMs: number
   readonly pollIntervalMs: number
+  readonly accountScheduledOpportunities?: boolean
   readonly assumptions: typeof BacktestInputSchema.Type.assumptions
   readonly eligibleSymbols: ReadonlySet<string>
   readonly market: ControlMarket
@@ -183,6 +216,55 @@ export const runControlSession = (input: {
     const closeMs = Date.parse(session.closeAt)
     const cutoffMs = closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
     const warmupMs = openMs + protocol.lookbackMinutes * 60_000 + protocol.decisionDelaySeconds * 1000
+    const opportunities =
+      input.accountScheduledOpportunities === true
+        ? {
+            schemaVersion: opportunityAccountingDefinition.schemaVersion,
+            schedule: {
+              openAt: session.openAt,
+              closeAtExclusive: session.closeAt,
+              pollIntervalMs: input.pollIntervalMs,
+            },
+            scheduledPollCount: Math.ceil((closeMs - openMs) / input.pollIntervalMs),
+            accountedPollCount: 0,
+            engineStartedPollCount: 0,
+            dispositionCounts: {
+              [ControlPollDisposition.Warmup]: 0,
+              [ControlPollDisposition.Holding]: 0,
+              [ControlPollDisposition.Exiting]: 0,
+              [ControlPollDisposition.EntryCutoff]: 0,
+              [ControlPollDisposition.WindowAlreadyConsumed]: 0,
+              [ControlPollDisposition.InputUnavailable]: 0,
+              [ControlPollDisposition.SelectionUnavailable]: 0,
+              [ControlPollDisposition.NoSignal]: 0,
+              [ControlPollDisposition.Selected]: 0,
+              [ControlPollDisposition.SkippedWhileBusy]: 0,
+            },
+            entrySnapshotsWithCandidateExclusions: 0,
+            excludedCandidateObservationCount: 0,
+            capturedControllerStarts: null,
+            capturedControllerTerminals: null,
+          }
+        : null
+    const accountPollRange = (first: number, end: number, disposition: ControlPollDisposition) => {
+      if (opportunities === null) return Result.succeed(undefined)
+      if (
+        !Number.isSafeInteger(first) ||
+        !Number.isSafeInteger(end) ||
+        first !== opportunities.accountedPollCount ||
+        end < first ||
+        end > opportunities.scheduledPollCount
+      )
+        return Result.fail(
+          new ControlStudyFailure({
+            message: 'Control opportunity ordinals are not contiguous',
+            cause: { first, end, accounted: opportunities.accountedPollCount, total: opportunities.scheduledPollCount },
+          }),
+        )
+      opportunities.dispositionCounts[disposition] += end - first
+      opportunities.accountedPollCount = end
+      return Result.succeed(undefined)
+    }
     const openingCash = BigInt(input.openingCapital.cashMicros)
     const dataCost = BigInt(input.dataCostMicros)
     const openingNetEquity = openingCash - BigInt(input.openingCapital.accruedExternalCostMicros)
@@ -301,6 +383,7 @@ export const runControlSession = (input: {
     let atMs = openMs
     let nextPollMs = openMs
     while (atMs < closeMs) {
+      const pollOrdinal = (atMs - openMs) / input.pollIntervalMs
       yield* advanceTo(atMs)
       const held = portfolio.ledger.positions[0]
       portfolio = yield* Effect.fromResult(
@@ -393,10 +476,13 @@ export const runControlSession = (input: {
       }
       let symbol: string | null = null
       let side = OrderSide.Buy
+      let disposition: ControlPollDisposition
       if (portfolio.inventory.status === 'EXITING') {
+        disposition = ControlPollDisposition.Exiting
         symbol = held?.symbol ?? null
         side = OrderSide.Sell
       } else if (portfolio.inventory.status === 'FLAT' && atMs >= warmupMs && atMs < cutoffMs) {
+        disposition = ControlPollDisposition.WindowAlreadyConsumed
         const rangeEndMs = Math.floor((atMs - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
         if (rangeEndMs > lastWindow) {
           const observedAt = utcInstantFromEpochMillis(atMs)
@@ -422,6 +508,7 @@ export const runControlSession = (input: {
             minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
           })
           if (observed.status === 'UNAVAILABLE') {
+            disposition = ControlPollDisposition.InputUnavailable
             missingDecisions += 1
             decisions.push({
               observedAt,
@@ -429,6 +516,11 @@ export const runControlSession = (input: {
               cause: yield* Effect.fromResult(failureDetails(observed.cause)),
             })
           } else {
+            if (opportunities !== null && (observed.snapshot.manifest.candidateExclusions?.length ?? 0) > 0) {
+              opportunities.entrySnapshotsWithCandidateExclusions++
+              opportunities.excludedCandidateObservationCount +=
+                observed.snapshot.manifest.candidateExclusions?.length ?? 0
+            }
             lastWindow = rangeEndMs
             const selected: Result.Result<
               { symbol: string | null; evidence: Result.Result.Success<ReturnType<typeof selectResidualShock>> | null },
@@ -445,6 +537,7 @@ export const runControlSession = (input: {
                     Result.map((symbol) => ({ symbol, evidence: null })),
                   )
             if (Result.isFailure(selected)) {
+              disposition = ControlPollDisposition.SelectionUnavailable
               missingDecisions += 1
               decisions.push({
                 observedAt,
@@ -453,6 +546,7 @@ export const runControlSession = (input: {
               })
             } else {
               symbol = selected.success.symbol
+              disposition = symbol === null ? ControlPollDisposition.NoSignal : ControlPollDisposition.Selected
               lastEntryDecisionHash = yield* Effect.fromResult(
                 canonicalHashV1Result({
                   policy: input.policy,
@@ -478,7 +572,13 @@ export const runControlSession = (input: {
             }
           }
         }
-      }
+      } else
+        disposition =
+          portfolio.inventory.status === 'HOLDING'
+            ? ControlPollDisposition.Holding
+            : atMs < warmupMs
+              ? ControlPollDisposition.Warmup
+              : ControlPollDisposition.EntryCutoff
       if (symbol !== null && atMs + assumptions.latencyMs < closeMs) {
         const decisionQuote = yield* market.quoteAt(symbol, atMs)
         const rejection = replayQuoteRejection(decisionQuote, symbol, atMs, protocol)
@@ -550,8 +650,21 @@ export const runControlSession = (input: {
         }
       }
       nextPollMs += Math.max(1, Math.ceil((atMs - nextPollMs) / input.pollIntervalMs)) * input.pollIntervalMs
+      if (opportunities !== null) {
+        yield* Effect.fromResult(accountPollRange(pollOrdinal, pollOrdinal + 1, disposition))
+        opportunities.engineStartedPollCount++
+        yield* Effect.fromResult(
+          accountPollRange(
+            pollOrdinal + 1,
+            Math.min((nextPollMs - openMs) / input.pollIntervalMs, opportunities.scheduledPollCount),
+            ControlPollDisposition.SkippedWhileBusy,
+          ),
+        )
+      }
       atMs = Math.max(atMs, Math.min(nextPollMs, closeMs))
     }
+    if (opportunities !== null && opportunities.accountedPollCount !== opportunities.scheduledPollCount)
+      return yield* new ControlStudyFailure({ message: 'Control opportunity coverage does not reach session close' })
     yield* advanceTo(Math.max(atMs, closeMs))
     const sessionModelCosts = yield* modelCosts(Number.POSITIVE_INFINITY)
     const totalExternalCost = accruedExternalCost + BigInt(sessionModelCosts.knownCostMicros)
@@ -602,6 +715,7 @@ export const runControlSession = (input: {
       decisions,
       orders,
       marks,
+      ...(opportunities === null ? {} : { simulatedOpportunityAccounting: opportunities }),
     }
   }).pipe(Effect.mapError((cause) => new ControlStudyFailure({ message: 'Control session failed', cause })))
 
@@ -616,7 +730,8 @@ export const runControlStudy = (
     if (input.management !== management.mode)
       return yield* new ControlStudyFailure({ message: 'Control management binding differs from its frozen input' })
     const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
-    const falsification = input.schemaVersion === 'bayn.control-study-input.v4'
+    const falsification = 'falsificationCandidate' in input && input.falsificationCandidate !== null
+    const accountScheduledOpportunities = input.schemaVersion === 'bayn.control-study-input.v5'
     if (
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
@@ -628,7 +743,14 @@ export const runControlStudy = (
       return yield* new ControlStudyFailure({
         message: 'Frozen residual shock cadence or native protective rules differ',
       })
-    const definition = falsification ? residualShockControlStudyDefinition : controlStudyDefinition
+    const policyDefinition = falsification ? residualShockControlStudyDefinition : controlStudyDefinition
+    const definition = accountScheduledOpportunities
+      ? {
+          ...policyDefinition,
+          schemaVersion: 'bayn.control-study-definition.v7',
+          opportunityAccounting: opportunityAccountingDefinition,
+        }
+      : policyDefinition
     if (prepared.input.cadence.pollIntervalMs > 60_000 || prepared.input.assumptions.latencyMs > 60_000)
       return yield* new ControlStudyFailure({
         message: 'Control polling and routing latency must each be at most one minute',
@@ -723,6 +845,7 @@ export const runControlStudy = (
                 ? input.turnoverPolicy
                 : EntryTurnoverPolicy.ImmediateAdjustment,
             pollIntervalMs: prepared.input.cadence.pollIntervalMs,
+            ...(accountScheduledOpportunities ? { accountScheduledOpportunities: true } : {}),
             assumptions: prepared.input.assumptions,
             eligibleSymbols: new Set(
               prepared.assets
@@ -745,7 +868,7 @@ export const runControlStudy = (
       sessions.push(...results)
     }
     const report = {
-      schemaVersion: 'bayn.control-study-report.v3',
+      schemaVersion: accountScheduledOpportunities ? 'bayn.control-study-report.v4' : 'bayn.control-study-report.v3',
       classification: 'DEVELOPMENT_CONTROL_PORTFOLIOS',
       runId,
       definition,

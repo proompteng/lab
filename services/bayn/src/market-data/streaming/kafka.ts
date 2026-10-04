@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
 import {
   CaptureDisposition,
+  captureKafkaTransport,
+  capturesResearchRawValues,
   CaptureInvalidation,
   invalidateResearchCapture,
   recordResearchCapture,
@@ -79,6 +81,7 @@ export interface KafkaConsumedRecord extends KafkaMarketRecord {
   readonly rawValueSha256?: string | null
   readonly rawByteLength?: number | null
   readonly tombstone?: boolean
+  readonly rawValue?: Uint8Array | null
 }
 export interface KafkaProjectionStream extends AsyncIterable<KafkaConsumedRecord> {
   readonly queuedRecords: () => number
@@ -97,16 +100,27 @@ export type KafkaProjectionTransportFactory = (
   config: KafkaMarketConfig,
   epoch: string,
   captureRawIdentity?: boolean,
+  captureRawValues?: boolean,
 ) => KafkaProjectionTransport
 
-export const decodeKafkaTransportValue = (value: Buffer | string | undefined, captureRawIdentity = false) => {
+export const decodeKafkaTransportValue = (
+  value: Buffer | string | undefined,
+  captureRawIdentity = false,
+  captureRawValues = false,
+) => {
   if (value === undefined) {
     if (!captureRawIdentity) throw new Error('Kafka market message has no payload')
-    return { value: '', rawValueSha256: null, rawByteLength: null, tombstone: true }
+    return {
+      value: '',
+      rawValueSha256: null,
+      rawByteLength: null,
+      tombstone: true,
+      ...(captureRawValues ? { rawValue: null } : {}),
+    }
   }
   if (typeof value === 'string') return { value }
   const rawIdentity = captureRawIdentity ? { rawValueSha256: sha256(value), rawByteLength: value.byteLength } : {}
-  return { ...rawIdentity, value: value.toString('utf-8') }
+  return { ...rawIdentity, ...(captureRawValues ? { rawValue: value } : {}), value: value.toString('utf-8') }
 }
 
 export const kafkaCaptureDisposition = (previous: StreamingProjection, next: StreamingProjection) => {
@@ -130,6 +144,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
   config,
   epoch,
   captureRawIdentity = false,
+  captureRawValues = false,
 ) => {
   const consumer = new Consumer<string, string | Buffer, string, string>({
     clientId: `bayn-market-${epoch}`,
@@ -236,7 +251,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
               if (result.done === true) return { done: true, value: undefined }
               pending = true
               const message = result.value
-              const payload = decodeKafkaTransportValue(message.value, captureRawIdentity)
+              const payload = decodeKafkaTransportValue(message.value, captureRawIdentity, captureRawValues)
               return {
                 done: false,
                 value: {
@@ -316,9 +331,10 @@ export const makeKafkaMarketProjection = (
           phase: 'STARTED',
           positions: [],
         })
+        const captureRawValues = capturesResearchRawValues(capture)
         const transport = yield* Effect.acquireRelease(
           Effect.try({
-            try: () => factory(config, epoch, capture !== undefined),
+            try: () => factory(config, epoch, capture !== undefined, captureRawValues),
             catch: (cause) => failure('connect', 'Kafka client acquisition failed', cause),
           }),
           (resource) =>
@@ -419,7 +435,7 @@ export const makeKafkaMarketProjection = (
             },
           ),
         )
-        const terminals = new Map<string, KafkaConsumedRecord>()
+        const terminals = new Map<string, KafkaPartitionPosition>()
         let recordsSinceYield = 0
         const consume = Stream.fromAsyncIterable(source, (cause) =>
           failure('consume', 'Kafka consumption failed', cause),
@@ -448,6 +464,7 @@ export const makeKafkaMarketProjection = (
                     topic: record.topic,
                     partition: record.partition,
                     offset: record.offset,
+                    ...(captureRawValues ? { originalTransport: captureKafkaTransport(record.timestampMs) } : {}),
                     rawValueSha256: record.rawValueSha256 ?? null,
                     rawByteLength: record.rawByteLength ?? null,
                     tombstone: record.tombstone === true,
@@ -465,6 +482,7 @@ export const makeKafkaMarketProjection = (
                         : {}),
                   },
                   availableAtMs,
+                  record.rawValue,
                 )
                 if (
                   record.tombstone !== true &&
@@ -479,7 +497,11 @@ export const makeKafkaMarketProjection = (
                   'Kafka consumption failed',
                   new Error('Kafka market message has no payload'),
                 )
-              terminals.set(topicPartitionKey(record.topic, record.partition), record)
+              terminals.set(topicPartitionKey(record.topic, record.partition), {
+                topic: record.topic,
+                partition: record.partition,
+                offset: record.offset,
+              })
               if (projection.technicalFeatureArrival !== null && projection.sequence !== previousSequence)
                 yield* Effect.logInfo('Kafka technical feature incorporated', {
                   ...featureAvailabilityMeasurement(
