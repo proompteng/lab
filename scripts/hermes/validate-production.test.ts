@@ -1488,6 +1488,25 @@ test('rejects Exa key rotation without the dedicated restart and canary procedur
   )
 })
 
+test('rejects rollback through an unpromoted main revision', async () => {
+  const files = await loadProductionFiles()
+  files.runbook += "\nargocd app sync hermes --revision '<last-known-good-main-sha>' --prune=false\n"
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: contains forbidden production term "<last-known-good-main-sha>"`,
+  )
+})
+
+test('rejects rollback without selecting verified Hermes Freight', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`.',
+    'Sync the prior source revision.',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "Re-promote a previously verified Hermes Freight through Stage \u0060lab-delivery/hermes-toolchain\u0060."`,
+  )
+})
+
 test('rejects removing Hermes surfaces from production validation routing', async () => {
   const files = await loadProductionFiles()
   files.impactMap = files.impactMap.replace('      - docs/runbooks/hermes-production-rollout.md\n', '')

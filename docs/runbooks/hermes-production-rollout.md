@@ -1171,10 +1171,17 @@ state, backup verification failure, or repeated gateway restarts.
 
 ### Before Discord cutover
 
+Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`. Kargo must generate and
+sync the rollback commit on `kargo/hermes-toolchain`; do not sync a `main` SHA or hand-edit an image reference. Verify the
+selected Freight, successful promotion, generated commit, and exact Argo revision before the authenticated API canary.
+
 ```bash
 set -euo pipefail
-argocd app sync hermes --revision '<last-known-good-main-sha>' --prune=false
-kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+kubectl --context galactic-tailscale -n lab-delivery get stage hermes-toolchain -o json | jq -e \
+  '.status.lastPromotion.status.phase == "Succeeded"'
+kubectl --context galactic-tailscale -n argocd get application hermes -o json | jq \
+  '{source: .spec.source.targetRevision, deployedCommit: .status.sync.revision}'
+kubectl --context galactic-tailscale -n hermes rollout status statefulset/hermes --timeout=15m
 ```
 
 The OpenClaw runtime remains unchanged and authoritative.

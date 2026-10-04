@@ -1186,6 +1186,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
 
   requireTerms(failures, productionPaths.runbook, files.runbook, [
+    'Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`.',
     'Never run OpenClaw and Hermes with the same Discord token at the same time.',
     'Never pass `--migrate-secrets`',
     'Never run `hermes claw cleanup`',
@@ -1442,6 +1443,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'cleanup_exa_rotation',
   ])
   forbidTerms(failures, productionPaths.runbook, files.runbook, [
+    '<last-known-good-main-sha>',
     '--ignore-failed-read',
     'API_SERVER_KEY[password]=',
     'DISCORD_BOT_TOKEN[password]=',
