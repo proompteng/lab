@@ -19,6 +19,8 @@ The production contract and acceptance gates are in `../../docs/atlas/production
   repository-scoped Temporal workflow ID, and GitHub events are serialized per repository.
 - The activity has a 90-second Temporal heartbeat timeout and sends progress every 15 seconds. A worker crash therefore
   becomes a retry instead of leaving a dead 24-hour activity. Retries reuse heartbeat state and already committed batches.
+- Progress heartbeats run independently of batch preparation. The indexing loop does not wait for the SDK's heartbeat
+  throttle after each committed batch.
 - The final transaction verifies every path, Git object ID, commit, chunk, and configured embedding before changing the
   repository to `ready`. Any failure leaves Atlas unavailable with an explicit error; there is no fallback corpus.
 
