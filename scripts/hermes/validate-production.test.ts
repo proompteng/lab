@@ -854,34 +854,21 @@ test('allows manual Hermes reconciliation for a reviewed maintenance phase', asy
   expect(validateProductionContent(files)).toEqual([])
 })
 
-test.each(['auto', 'manual'])('keeps disabled Hermes on main in %s mode', async (mode) => {
+test.each(['auto', 'manual'])('rejects %s Hermes reconciliation from an unpromoted source', async (mode) => {
   const files = await loadProductionFiles()
   files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
-  files.platform = files.platform.replace(
-    /(\n\s+- name: hermes\n[\s\S]*?targetRevision:) main/,
-    '$1 kargo/hermes-toolchain',
-  )
+  files.platform = files.platform.replace('targetRevision: kargo/hermes-toolchain', 'targetRevision: main')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.platform}: missing production invariant "targetRevision: main"`,
+    `${productionPaths.platform}: missing production invariant "targetRevision: kargo/hermes-toolchain"`,
   )
 })
 
-test('rejects reauthorizing promotion into disabled Hermes', async () => {
+test.each(['auto', 'manual'])('rejects %s Hermes reconciliation without the authorized Stage', async (mode) => {
   const files = await loadProductionFiles()
-  files.platform = files.platform.replace(
-    /(\n\s+- name: hermes\n[\s\S]*?annotations:)/,
-    '$1\n                  kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
-  )
+  files.platform = files.platform.replace(/(\n\s+- name: hermes\n[\s\S]*?automation:) (?:auto|manual)/, `$1 ${mode}`)
+  files.platform = files.platform.replace('kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain', '')
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.platform}: contains forbidden production term "kargo.akuity.io/authorized-stage:"`,
-  )
-})
-
-test.each(['statefulSet', 'egressProxy'] as const)('rejects restarting disabled Hermes %s', async (path) => {
-  const files = await loadProductionFiles()
-  files[path] = files[path].replace('  replicas: 0\n', '  replicas: 1\n')
-  expect(validateProductionContent(files)).toContain(
-    `${productionPaths[path]}: missing production invariant ${JSON.stringify('  replicas: 0\n')}`,
+    `${productionPaths.platform}: missing production invariant "kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain"`,
   )
 })
 
@@ -953,12 +940,12 @@ test('rejects a backup CronJob without independent retry behavior', async () => 
   )
 })
 
-test('rejects restarting scheduled backups for disabled Hermes', async () => {
+test('rejects suspended production backups', async () => {
   const files = await loadProductionFiles()
-  files.backupCronJob = files.backupCronJob.replace('suspend: true', 'suspend: false')
+  files.backupCronJob = files.backupCronJob.replace('suspend: false', 'suspend: true')
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.backupCronJob}: missing production invariant "suspend: true"`,
+    `${productionPaths.backupCronJob}: missing production invariant "suspend: false"`,
   )
 })
 
@@ -1082,15 +1069,15 @@ test('rejects absent-series alerts that fire before rollout enablement', async (
   )
 })
 
-test('rejects enabling outage alerts while Hermes is intentionally stopped', async () => {
+test('rejects rollout enablement derived from ephemeral Hermes namespace state', async () => {
   const files = await loadProductionFiles()
-  files.mimirRules = files.mimirRules.replace(
-    'record: hermes_rollout_enabled\n            expr: vector(0)',
-    'record: hermes_rollout_enabled\n            expr: max(kube_argocd_application_deployment_history_info{application="hermes"})',
+  files.mimirRules = files.mimirRules.replaceAll(
+    'kube_argocd_application_deployment_history_info{',
+    'kube_namespace_labels{',
   )
 
   expect(validateProductionContent(files)).toContain(
-    `${productionPaths.mimirRules}: missing production invariant ${JSON.stringify('record: hermes_rollout_enabled\n            expr: vector(0)')}`,
+    `${productionPaths.mimirRules}: missing production invariant "kube_argocd_application_deployment_history_info{"`,
   )
 })
 
@@ -1498,6 +1485,25 @@ test('rejects Exa key rotation without the dedicated restart and canary procedur
 
   expect(validateProductionContent(files)).toContain(
     `${productionPaths.runbook}: missing production invariant "## Exa API key rotation"`,
+  )
+})
+
+test('rejects rollback through an unpromoted main revision', async () => {
+  const files = await loadProductionFiles()
+  files.runbook += "\nargocd app sync hermes --revision '<last-known-good-main-sha>' --prune=false\n"
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: contains forbidden production term "<last-known-good-main-sha>"`,
+  )
+})
+
+test('rejects rollback without selecting verified Hermes Freight', async () => {
+  const files = await loadProductionFiles()
+  files.runbook = files.runbook.replace(
+    'Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`.',
+    'Sync the prior source revision.',
+  )
+  expect(validateProductionContent(files)).toContain(
+    `${productionPaths.runbook}: missing production invariant "Re-promote a previously verified Hermes Freight through Stage \u0060lab-delivery/hermes-toolchain\u0060."`,
   )
 })
 
