@@ -270,3 +270,13 @@ webviews retain their own HTML and CSP; editor frame ancestors allow both the is
 Packaged assets under an exact upstream revision are compressed and privately cached. Workspace resources, HTML,
 tickets, and integration scripts remain uncached. The private extension bridge binds its session query to the
 cookie-authenticated preview origin. Ordinary preview sessions cannot select either reserved editor port.
+
+Codex `SendCodexInput` and `SteerCodexInput` RPCs accept text, PNG/JPEG/WebP image bytes, or both.
+These replace the former turn-input RPCs. A controller with the old contract rejects the new RPCs before
+starting or steering a turn, preventing silent image loss during a mismatched release. Image inputs are limited to four,
+4 MiB each, and 8 MiB total. Tengri verifies media signatures, writes the images into the owned retained guest
+under `/workspace/.tengri-attachments` through gRPC, and submits Codex `localImage` inputs. A failed image write
+fails the request before Codex starts or steers a turn. Attachments remain with the persistent workspace so saved
+conversation references remain valid.
+If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
+Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.

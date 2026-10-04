@@ -12,6 +12,7 @@ import { sha256 } from '../hash'
 import {
   CaptureInvalidation,
   CaptureQualification,
+  captureKafkaTransport,
   ResearchCaptureFailure,
   encodeResearchCapture,
   maximumResearchCaptureChunkBytes,
@@ -19,7 +20,13 @@ import {
   type ResearchCaptureChunk,
   type ResearchCaptureSeal,
 } from '../research-capture/capture'
-import { captureEvent, fullCaptureBufferEvents, marketEvent } from '../research-capture/capture.test-support'
+import {
+  captureEvent,
+  fullCaptureBufferEvents,
+  marketEvent,
+  recoverCaptureFromStoredObjects,
+} from '../research-capture/capture.test-support'
+import { researchCaptureObjectKey, type ResearchCaptureObject } from '../research-capture/export'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder'
 
 const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
@@ -145,6 +152,80 @@ postgresTest('exact-byte retries and concurrent lost-ack recovery are idempotent
       const verified = Result.getOrThrow(verifyResearchCapture([bytes], encodeResearchCapture(seal)))
       expect(verified.structurallyClosed).toBe(true)
       expect(verified.complete).toBe(false)
+    }),
+  ),
+)
+
+postgresTest('durable SQL seal recovers raw objects after process state and seal acknowledgement are lost', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk } = yield* fixture
+      const bucket = new Map<string, ResearchCaptureObject>()
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const recorder = yield* makeResearchCaptureRecorder(
+            {
+              ...store,
+              seal: (bytes) =>
+                store
+                  .seal(bytes)
+                  .pipe(
+                    Effect.andThen(
+                      Effect.fail(new ResearchCaptureFailure({ message: 'Seal committed; acknowledgement lost' })),
+                    ),
+                  ),
+            },
+            {
+              captureId: chunk.captureId,
+              sourceRevision: chunk.sourceRevision,
+              maximumQueuedReceipts: 16,
+              maximumQueuedBytes: 256 * 1024,
+              maximumReceiptBytes: 4096,
+              flushIntervalMs: 1000,
+              writeTimeoutMs: 1000,
+            },
+            {
+              putVerified: (object) =>
+                Effect.sync(() => {
+                  bucket.set(researchCaptureObjectKey(object.contentHash), {
+                    ...object,
+                    payload: Buffer.from(object.payload),
+                  })
+                }),
+            },
+          )
+          recorder.record(captureEvent('STARTED'), 100)
+          recorder.record({ ...marketEvent, originalTransport: captureKafkaTransport(NaN) }, 100, Buffer.from('é'))
+          recorder.record(captureEvent('STOPPED'), 100)
+        }),
+      )
+      const decode = Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ content_hash: Schema.String, payload: Schema.String })),
+      )
+      const chunks =
+        yield* sql`SELECT content_hash, payload FROM research_capture_chunks WHERE capture_id = ${chunk.captureId} ORDER BY chunk_ordinal`.pipe(
+          Effect.flatMap(decode),
+        )
+      const seals =
+        yield* sql`SELECT content_hash, payload FROM research_capture_seals WHERE capture_id = ${chunk.captureId}`.pipe(
+          Effect.flatMap(decode),
+        )
+      expect(seals).toHaveLength(1)
+      const asBytes = (row: (typeof chunks)[number]) => ({ contentHash: row.content_hash, payload: row.payload })
+      const seal = seals[0]
+      const reads: string[] = []
+      const recovered = Result.getOrThrow(
+        recoverCaptureFromStoredObjects(chunks.map(asBytes), seal === undefined ? undefined : asBytes(seal), (key) => {
+          reads.push(key)
+          return bucket.get(key)
+        }),
+      )
+      expect(reads).toHaveLength(4)
+      expect(recovered.seal.exportRoot?.exportedChunks).toBe(1)
+      expect(recovered.exportVerified).toBe(true)
+      expect(recovered.structurallyClosed).toBe(true)
+      expect(recovered.complete).toBe(false)
+      expect(recovered.seal.qualification).toBe(CaptureQualification.Unqualified)
     }),
   ),
 )
