@@ -170,6 +170,7 @@ jobs:
             packages/scripts/src/agents/__tests__/resolve-published-agents-images.test.ts \
             packages/scripts/src/agents/__tests__/agentrun-ingestion-mitigation.test.ts \
             packages/scripts/src/agents/__tests__/smoke-agents.test.ts \
+            packages/scripts/src/agents/__tests__/collect-smoke-diagnostics.test.ts \
             packages/scripts/src/agents/__tests__/deploy-service.test.ts \
             packages/scripts/src/shared/__tests__/docker.test.ts
 
@@ -547,6 +548,29 @@ jobs:
         run: |
           set -euo pipefail
           timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts
+
+      - name: Collect sanitized Agents fixture diagnostics
+        if: always()
+        timeout-minutes: 2
+        env:
+          AGENTS_DIAGNOSTICS_DIR: ${{ runner.temp }}/agents-fixture-diagnostics
+        run: |
+          mkdir -p "${AGENTS_DIAGNOSTICS_DIR}"
+          if command -v bun >/dev/null 2>&1 && [ -f packages/scripts/src/agents/collect-smoke-diagnostics.ts ]; then
+            bun run packages/scripts/src/agents/collect-smoke-diagnostics.ts || \
+              printf '{"collection":"unavailable"}\n' > "${AGENTS_DIAGNOSTICS_DIR}/collection-status.json"
+          else
+            printf '{"collection":"tooling_unavailable"}\n' > "${AGENTS_DIAGNOSTICS_DIR}/collection-status.json"
+          fi
+
+      - name: Upload sanitized Agents fixture diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agents-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agents-fixture-diagnostics
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Cleanup Agents integration resources
         if: always()
