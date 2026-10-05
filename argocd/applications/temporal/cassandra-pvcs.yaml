@@ -1,0 +1,60 @@
+# Manage the existing ordinal claims without changing the immutable StatefulSet template.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-temporal-cassandra-0
+  namespace: temporal
+  labels:
+    app: cassandra
+    release: temporal
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 30Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-temporal-cassandra-1
+  namespace: temporal
+  labels:
+    app: cassandra
+    release: temporal
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 30Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-temporal-cassandra-2
+  namespace: temporal
+  labels:
+    app: cassandra
+    release: temporal
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: rook-ceph-block
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 30Gi
