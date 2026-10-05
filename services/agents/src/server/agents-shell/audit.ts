@@ -104,7 +104,7 @@ export const writeAuditLog = (
     ...context,
     subjectHash: auth?.subject ? createHash('sha256').update(auth.subject).digest('hex') : null,
     ...Object.fromEntries(
-      ['jobId', 'sessionId', 'agentId', 'stream', 'sequence', 'byteStart', 'byteEnd']
+      ['jobId', 'sessionId', 'taskId', 'agentId', 'requestKey', 'stream', 'sequence', 'byteStart', 'byteEnd']
         .filter((key) => {
           const value = prepared.payload[key]
           return typeof value === 'string' ? value.length <= 256 : typeof value === 'number' && Number.isFinite(value)

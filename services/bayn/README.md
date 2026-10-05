@@ -322,6 +322,27 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 
 ## Runtime architecture
 
+Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL
+`last_pass` projection. The sorted, deduplicated hashes come only from successful Jev observation persistence or
+successful batch-store results, including recovered batches. The journaled advance result binds these references
+into its version-two execution receipt; a completed research-capture event carries the same references alongside
+the controller invocation ID. Each hash resolves the exact persisted observation, whose manifest identifies its
+snapshot and whose existing batch plans identify candidate requests and terminal receipts. Store access does not
+prove that an observation was selected, submitted, traded, or profitable.
+
+The `complete` flag describes only this pass's reference collection, not complete controller knowledge or capture
+coverage. Ordinary passes can create entry and management observations; pending-batch recovery has no fixed count.
+The collection retains at most sixteen unique hashes (about one KiB of hash data). A legitimate recovery touching
+more becomes explicitly incomplete rather than changing trading behavior. A failed store operation, unavailable
+store instrumentation, or invalid reference also marks the collection incomplete. Waiting and expected failure
+results keep references already collected; an aborted action without a returned result has no reference claim.
+An empty complete collection means no Jev observation references were returned by these instrumented operations.
+It does not rule out reuse of a previously bound decision or access to other evidence.
+
+Legacy journal and projection results keep the field absent, with unknown reference coverage and byte-identical
+version-one receipt hashes. Replays retain only their original references and do not rerun evaluation or fabricate
+a fresh capture. This linkage does not prove full-session capture completeness or repair missing historical links.
+
 - `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
@@ -690,6 +711,12 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+`bayn-gap-recovery` is an offline, original-receipt decision replay command in the
+service image. It implements the fixed gap-recovery entry rule, with a separate
+pure position-exit evaluator, but does not replace the active strategy or submit
+orders. See [the gap-recovery contract](../../docs/bayn/gap-recovery.md) for exact
+inputs, limitations, and the command.
+
 `src/intraday-replay/six-bar-features.ts` extracts a separate offline research observation from an original-capture
 cursor. Each candidate and SPY require six exact consecutive completed regular-session minute bars. The seven
 ordered values are the candidate's one-minute close return, five-minute return relative to SPY, SPY's five-minute
@@ -710,6 +737,13 @@ capture interval and source bytes through `replayResearchCaptureInterval` and `o
 Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
 It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
 contract. Capture interval verification remains the caller's responsibility before economic research.
+
+The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
+control-study input v6 and artifact v2. It compares the seven-feature score with the genuine training-only
+day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
+30-minute-plus-two-second eligibility is unchanged. It uses original-capture six-bar observations and the
+existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
+no production registration, qualification or capital authority.
 
 ### Bounded mechanical control and turnover comparison
 

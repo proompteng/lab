@@ -279,8 +279,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-UWRGuYz1BvRO9oOfal83Cmuc2cFNmYXqdia2zdo4BWc=";
-    aarch64-linux = "sha256-09vbtE1Q3IkbOErjZGDlQ4PGqUa166xZGfjyNfiUMDg=";
+    x86_64-linux = "sha256-vV22nCwUWgyzccYnpwfHO6hgjZ3LrGU9f1zcOjENf+s=";
+    aarch64-linux = "sha256-Z6jMDdt9t9e9HJVMm0GgH7k9sM+kxDO90OAxEp1gKxg=";
   };
 
   installFilters = [
@@ -452,6 +452,7 @@ let
     pkgs.procps
     pkgs.python3
     pkgs.ripgrep
+    pkgs.tini
     pkgs.uv
     pkgs.wget
   ];
@@ -669,6 +670,9 @@ in
     serviceName = "agents-shell";
     imageName = "agents-shell";
     command = [
+      "tini"
+      "-g"
+      "--"
       "bash"
       "./scripts/agents-shell-entrypoint.sh"
     ];

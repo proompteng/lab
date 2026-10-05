@@ -38,6 +38,14 @@ import {
 } from './control-portfolio'
 import { openBacktestSource, type BacktestSourceReceipt } from './source'
 import { residualShockDefinition, selectResidualShock } from './residual-shock'
+import {
+  BoundRidgeInputSchema,
+  prepareBoundRidge,
+  RidgeControlPolicy,
+  ridgeExecutionLabelDefinition,
+  selectBoundRidge,
+  type BoundRidge,
+} from './control-ridge'
 
 export enum ControlManagementMode {
   Mechanical = 'MECHANICAL',
@@ -74,7 +82,17 @@ const ControlStudyInputV4Schema = Schema.Struct({
   falsificationCandidate: Schema.Literal(residualShockDefinition.id),
 })
 
+const ControlStudyInputV6Schema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.control-study-input.v6'),
+  management: Schema.Literal(ControlManagementMode.Mechanical),
+  backtest: BacktestInputSchema,
+  decisionLatencyMs: ControlStudyInputV3Schema.fields.decisionLatencyMs,
+  turnoverPolicy: Schema.Enum(EntryTurnoverPolicy),
+  ridge: BoundRidgeInputSchema,
+})
+
 export const ControlStudyInputSchema = Schema.Union([
+  ControlStudyInputV6Schema,
   ControlStudyInputV2Schema,
   ControlStudyInputV3Schema,
   ControlStudyInputV4Schema,
@@ -156,6 +174,28 @@ const opportunityAccountingDefinition = {
   runtimeEvidence: 'Simulated engine schedule only. Captured production controller starts and terminals are unknown.',
 } as const
 
+const ridgeControlStudyDefinition = {
+  schemaVersion: 'bayn.control-study-definition.v8',
+  policies: [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean],
+  qualification: 'UNQUALIFIED',
+  controllerCoverage: 'UNKNOWN',
+  featureWindow: 'Six completed minutes at the unchanged native 30-minute-plus-two-second entry eligibility.',
+  comparison:
+    'Independent portfolios with identical initial capital and rules. This is a policy comparison, not exposure-matched alpha.',
+  baseline:
+    'The artifact-v2 day-weighted training target mean is the best constant under the frozen training objective.',
+  sizing:
+    'Fixed principal budget, whole shares, cash including fees and native risk/turnover limits. Actual fills can be smaller.',
+  coverage:
+    'Candidate-local gaps are evidenced zero-allocation exclusions; required benchmark and global failures make both policies unavailable, even if a frozen score would choose cash.',
+  exclusions:
+    'Entry exclusion counters count available six-bar decisions and their excluded candidates. Each exclusion retains the actual input symbol, reason and evidence hash.',
+  opportunityAccounting: opportunityAccountingDefinition,
+  execution: controlStudyDefinition.execution,
+  valuation: controlStudyDefinition.valuation,
+  limitations: controlStudyDefinition.limitations,
+} as const
+
 export interface ControlMarket {
   readonly advanceTo: (atMs: number) => Effect.Effect<void, ControlStudyFailure>
   readonly quoteAt: (symbol: string, atMs: number) => Effect.Effect<ControlQuote, ControlStudyFailure>
@@ -220,6 +260,12 @@ const failureDetails = (cause: unknown) =>
 
 export const runControlSession = (input: {
   readonly policy: ControlPolicy
+  readonly ridge?: {
+    readonly bound: BoundRidge
+    readonly select: (
+      query: IntradaySnapshotQuery,
+    ) => Effect.Effect<Result.Result.Success<ReturnType<typeof selectBoundRidge>>, ControlStudyFailure>
+  }
   readonly protocol: JevProtocol
   readonly risk: Policy
   readonly session: MarketCalendarSession
@@ -242,6 +288,41 @@ export const runControlSession = (input: {
 }) =>
   Effect.gen(function* () {
     const { market, protocol, risk, session, assumptions } = input
+    const ridgePolicy = input.policy === ControlPolicy.Ridge || input.policy === ControlPolicy.TrainingMean
+    if (
+      ridgePolicy !== (input.ridge !== undefined) ||
+      (ridgePolicy &&
+        (input.management !== null || input.targetWeight !== 1 || input.accountScheduledOpportunities !== true))
+    )
+      return yield* new ControlStudyFailure({
+        message: 'Ridge sessions require bound mechanical fixed-budget entry and opportunity accounting',
+      })
+    if (input.ridge !== undefined) {
+      const labelHash = yield* Effect.fromResult(
+        canonicalHashV1Result(
+          ridgeExecutionLabelDefinition(
+            {
+              protocol,
+              risk,
+              pollIntervalMs: input.pollIntervalMs,
+              decisionLatencyMs: input.decisionLatencyMs,
+              turnoverPolicy: input.turnoverPolicy ?? EntryTurnoverPolicy.ImmediateAdjustment,
+              assumptions,
+            },
+            input.ridge.bound.artifact.allocationBudgetMicros,
+          ),
+        ),
+      )
+      const declared = input.ridge.bound.artifact.evaluationSessions.find((entry) => entry.date === session.date)
+      if (
+        labelHash !== input.ridge.bound.artifact.provenance.labelDefinitionHash ||
+        declared === undefined ||
+        declared.partition !== input.ridge.bound.partition ||
+        declared.openAt !== session.openAt ||
+        declared.closeAt !== session.closeAt
+      )
+        return yield* new ControlStudyFailure({ message: 'Ridge session differs from its admitted execution contract' })
+    }
     const sessionDate = yield* Schema.decodeUnknownEffect(IsoDateSchema)(session.date)
     const openMs = Date.parse(session.openAt)
     const closeMs = Date.parse(session.closeAt)
@@ -328,7 +409,13 @@ export const runControlSession = (input: {
       status: string
       symbol?: string
       snapshotHash?: string
-      exclusions?: StrategyMarketSnapshot['manifest']['candidateExclusions']
+      selectionHash?: string
+      exclusions?:
+        | StrategyMarketSnapshot['manifest']['candidateExclusions']
+        | Extract<
+            Result.Result.Success<ReturnType<typeof selectBoundRidge>>,
+            { status: 'AVAILABLE' }
+          >['evidence']['exclusions']
       cause?: unknown
       management?: { batchId: string; decisionHash: string; decidedAt: string; committedAt: string }
     }[] = []
@@ -518,9 +605,25 @@ export const runControlSession = (input: {
         if (rangeEndMs > lastWindow) {
           const observedAt = utcInstantFromEpochMillis(atMs)
           const candidates = controlCandidates(input.policy, protocol)
-          const observed = yield* market.snapshot(
-            makeControlEntryQuery({ protocol, sessionDate, calendar: input.calendar, observedAtMs: atMs, candidates }),
-          )
+          const query = makeControlEntryQuery({
+            protocol,
+            sessionDate,
+            calendar: input.calendar,
+            observedAtMs: atMs,
+            candidates,
+          })
+          const observed =
+            input.ridge === undefined
+              ? yield* market.snapshot(query)
+              : yield* input.ridge
+                  .select(query)
+                  .pipe(
+                    Effect.map((selection) =>
+                      selection.status === 'UNAVAILABLE'
+                        ? { status: 'UNAVAILABLE' as const, cause: selection.observations }
+                        : { status: 'AVAILABLE' as const, ridge: selection },
+                    ),
+                  )
           if (observed.status === 'UNAVAILABLE') {
             disposition = ControlPollDisposition.InputUnavailable
             missingDecisions += 1
@@ -530,26 +633,40 @@ export const runControlSession = (input: {
               cause: yield* Effect.fromResult(failureDetails(observed.cause)),
             })
           } else {
-            if (opportunities !== null && (observed.snapshot.manifest.candidateExclusions?.length ?? 0) > 0) {
+            const exclusions =
+              'snapshot' in observed
+                ? (observed.snapshot.manifest.candidateExclusions ?? [])
+                : observed.ridge.evidence.exclusions
+            if (opportunities !== null && exclusions.length > 0) {
               opportunities.entrySnapshotsWithCandidateExclusions++
-              opportunities.excludedCandidateObservationCount +=
-                observed.snapshot.manifest.candidateExclusions?.length ?? 0
+              opportunities.excludedCandidateObservationCount += exclusions.length
             }
             lastWindow = rangeEndMs
             const selected: Result.Result<
-              { symbol: string | null; evidence: Result.Result.Success<ReturnType<typeof selectResidualShock>> | null },
+              {
+                symbol: string | null
+                evidence:
+                  | Result.Result.Success<ReturnType<typeof selectResidualShock>>
+                  | Extract<
+                      Result.Result.Success<ReturnType<typeof selectBoundRidge>>,
+                      { status: 'AVAILABLE' }
+                    >['evidence']
+                  | null
+              },
               ControlStudyFailure
             > =
-              input.policy === ControlPolicy.ResidualShock
-                ? selectResidualShock(observed.snapshot, protocol).pipe(
-                    Result.map((evidence) => ({ symbol: evidence.selectedSymbol, evidence })),
-                    Result.mapError(
-                      (cause) => new ControlStudyFailure({ message: 'Cannot select residual shock', cause }),
-                    ),
-                  )
-                : selectControlSymbol(observed.snapshot, input.policy, protocol).pipe(
-                    Result.map((symbol) => ({ symbol, evidence: null })),
-                  )
+              'ridge' in observed
+                ? Result.succeed({ symbol: observed.ridge.evidence.selectedSymbol, evidence: observed.ridge.evidence })
+                : input.policy === ControlPolicy.ResidualShock
+                  ? selectResidualShock(observed.snapshot, protocol).pipe(
+                      Result.map((evidence) => ({ symbol: evidence.selectedSymbol, evidence })),
+                      Result.mapError(
+                        (cause) => new ControlStudyFailure({ message: 'Cannot select residual shock', cause }),
+                      ),
+                    )
+                  : selectControlSymbol(observed.snapshot, input.policy, protocol).pipe(
+                      Result.map((symbol) => ({ symbol, evidence: null })),
+                    )
             if (Result.isFailure(selected)) {
               disposition = ControlPollDisposition.SelectionUnavailable
               missingDecisions += 1
@@ -561,20 +678,24 @@ export const runControlSession = (input: {
             } else {
               symbol = selected.success.symbol
               disposition = symbol === null ? ControlPollDisposition.NoSignal : ControlPollDisposition.Selected
+              const selectionIdentity =
+                'snapshot' in observed
+                  ? { snapshotHash: observed.snapshot.manifest.contentHash }
+                  : { selectionHash: observed.ridge.evidenceHash }
               lastEntryDecisionHash = yield* Effect.fromResult(
                 canonicalHashV1Result({
                   policy: input.policy,
                   observedAt,
                   symbol,
-                  snapshotHash: observed.snapshot.manifest.contentHash,
+                  ...selectionIdentity,
                 }),
               )
               decisions.push({
                 observedAt,
                 status: symbol === null ? 'NO_SIGNAL' : 'SELECTED',
                 ...(symbol === null ? {} : { symbol }),
-                snapshotHash: observed.snapshot.manifest.contentHash,
-                exclusions: observed.snapshot.manifest.candidateExclusions ?? [],
+                ...selectionIdentity,
+                exclusions,
                 ...(selected.success.evidence === null ? {} : { signal: selected.success.evidence }),
               })
               atMs = Math.min(atMs + input.decisionLatencyMs, closeMs)
@@ -625,6 +746,9 @@ export const runControlSession = (input: {
                     atMs,
                     feeMultiplierPpm: assumptions.feeMultiplierPpm,
                     ...(input.turnoverPolicy === undefined ? {} : { turnoverPolicy: input.turnoverPolicy }),
+                    ...(input.ridge === undefined
+                      ? {}
+                      : { allocationBudgetMicros: BigInt(input.ridge.bound.artifact.allocationBudgetMicros) }),
                   }),
                 )
           if (quantity > 0n) {
@@ -700,7 +824,14 @@ export const runControlSession = (input: {
       policy: input.policy,
       completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
       issues,
-      targetWeight: input.targetWeight,
+      ...(input.ridge === undefined
+        ? { targetWeight: input.targetWeight }
+        : {
+            sizing: {
+              mode: 'FIXED_PRINCIPAL_BUDGET' as const,
+              allocationBudgetMicros: input.ridge.bound.artifact.allocationBudgetMicros,
+            },
+          }),
       completedEpisodes: portfolio.episodes.length,
       filledNotionalMicros: String(portfolio.tradedNotionalMicros),
       netPnlAfterKnownCostsMicros: netPnl,
@@ -738,7 +869,8 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
     const input = yield* Schema.decodeUnknownResult(ControlStudyInputSchema, strictParseOptions)(raw)
     const prepared = yield* prepareBacktest(input.backtest, receipt)
     const falsification = 'falsificationCandidate' in input && input.falsificationCandidate !== null
-    const accountScheduledOpportunities = input.schemaVersion === 'bayn.control-study-input.v5'
+    const accountScheduledOpportunities =
+      input.schemaVersion === 'bayn.control-study-input.v5' || input.schemaVersion === 'bayn.control-study-input.v6'
     if (
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
@@ -751,13 +883,16 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
         new ControlStudyFailure({ message: 'Frozen residual shock cadence or native protective rules differ' }),
       )
     const policyDefinition = falsification ? residualShockControlStudyDefinition : controlStudyDefinition
-    const definition = accountScheduledOpportunities
-      ? {
-          ...policyDefinition,
-          schemaVersion: 'bayn.control-study-definition.v7',
-          opportunityAccounting: opportunityAccountingDefinition,
-        }
-      : policyDefinition
+    const definition =
+      input.schemaVersion === 'bayn.control-study-input.v6'
+        ? ridgeControlStudyDefinition
+        : accountScheduledOpportunities
+          ? {
+              ...policyDefinition,
+              schemaVersion: 'bayn.control-study-definition.v7',
+              opportunityAccounting: opportunityAccountingDefinition,
+            }
+          : policyDefinition
     if (prepared.input.cadence.pollIntervalMs > 60_000 || prepared.input.assumptions.latencyMs > 60_000)
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control polling and routing latency must each be at most one minute' }),
@@ -788,6 +923,22 @@ export const runControlStudy = (
         end: lastDate,
       }),
     )
+    const boundRidge =
+      input.schemaVersion === 'bayn.control-study-input.v6'
+        ? yield* Effect.fromResult(
+            prepareBoundRidge(input.ridge, {
+              source: prepared.input.source,
+              calendar,
+              sessions: prepared.sessions,
+              protocol: prepared.protocol,
+              risk,
+              pollIntervalMs: prepared.input.cadence.pollIntervalMs,
+              decisionLatencyMs: input.decisionLatencyMs,
+              turnoverPolicy: input.turnoverPolicy,
+              assumptions: prepared.input.assumptions,
+            }),
+          )
+        : null
     const runId = yield* Effect.fromResult(
       canonicalHashV1Result({ input, receiptHash: receipt.contentHash, definition, risk }),
     )
@@ -807,9 +958,11 @@ export const runControlStudy = (
       }).pipe(Effect.scoped)
     }
     const sessions = []
-    for (const policy of falsification
-      ? [...legacyControlPolicies, ControlPolicy.ResidualShock]
-      : legacyControlPolicies) {
+    for (const policy of boundRidge !== null
+      ? [ControlPolicy.Ridge, ControlPolicy.TrainingMean]
+      : falsification
+        ? [...legacyControlPolicies, ControlPolicy.ResidualShock]
+        : legacyControlPolicies) {
       const results = yield* Effect.gen(function* () {
         yield* TestClock.setTime(prepared.openMs)
         const controlRunId = yield* Effect.fromResult(canonicalHashV1Result({ runId, policy }))
@@ -860,7 +1013,37 @@ export const runControlStudy = (
             calendar,
             openingCapital: capital,
             dataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
-            targetWeight: policy === ControlPolicy.RetainedBreakout ? 0.1 : input.repeatedTargetWeightPpm / 1_000_000,
+            targetWeight:
+              input.schemaVersion === 'bayn.control-study-input.v6'
+                ? 1
+                : policy === ControlPolicy.RetainedBreakout
+                  ? 0.1
+                  : input.repeatedTargetWeightPpm / 1_000_000,
+            ...(boundRidge === null
+              ? {}
+              : {
+                  ridge: {
+                    bound: boundRidge,
+                    select: (query: IntradaySnapshotQuery) =>
+                      source.cursor.pipe(
+                        Effect.flatMap((cursor) =>
+                          Effect.fromResult(
+                            selectBoundRidge(
+                              cursor,
+                              query,
+                              boundRidge,
+                              policy === ControlPolicy.Ridge
+                                ? RidgeControlPolicy.Ridge
+                                : RidgeControlPolicy.TrainingMean,
+                            ),
+                          ),
+                        ),
+                        Effect.mapError(
+                          (cause) => new ControlStudyFailure({ message: 'Cannot read Ridge entry', cause }),
+                        ),
+                      ),
+                  },
+                }),
             decisionLatencyMs: input.decisionLatencyMs,
             turnoverPolicy:
               input.schemaVersion !== 'bayn.control-study-input.v2'
@@ -890,7 +1073,32 @@ export const runControlStudy = (
       sessions.push(...results)
     }
     const report = {
-      schemaVersion: accountScheduledOpportunities ? 'bayn.control-study-report.v4' : 'bayn.control-study-report.v3',
+      schemaVersion:
+        boundRidge !== null
+          ? 'bayn.control-study-report.v5'
+          : accountScheduledOpportunities
+            ? 'bayn.control-study-report.v4'
+            : 'bayn.control-study-report.v3',
+      ...(boundRidge === null
+        ? {}
+        : {
+            qualification: 'UNQUALIFIED',
+            controllerCoverage: 'UNKNOWN',
+            executionLabelDefinition: ridgeExecutionLabelDefinition(
+              {
+                protocol: prepared.protocol,
+                risk,
+                pollIntervalMs: prepared.input.cadence.pollIntervalMs,
+                decisionLatencyMs: input.decisionLatencyMs,
+                turnoverPolicy:
+                  input.schemaVersion === 'bayn.control-study-input.v2'
+                    ? EntryTurnoverPolicy.ImmediateAdjustment
+                    : input.turnoverPolicy,
+                assumptions: prepared.input.assumptions,
+              },
+              boundRidge.artifact.allocationBudgetMicros,
+            ),
+          }),
       classification: 'DEVELOPMENT_CONTROL_PORTFOLIOS',
       runId,
       definition,
