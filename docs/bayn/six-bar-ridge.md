@@ -78,5 +78,59 @@ An eight-row orthogonal design with original slopes 2, 4, ..., 14 yields ridge c
 Seeded property tests cover row permutation and within-day replication.
 
 The solver has four transitive packages, all MIT licensed, with no native or GPU dependency. The scorer does not
-import the fitting module. Existing production entry points do not import either module. No statistical registration,
-real-data fitting, costs, serial portfolio evaluation, or economic qualification is implemented here.
+import the fitting module. Existing production entry points do not import either module. The core does not implement
+statistical registration, real-data fitting, costs, serial portfolio evaluation, or economic qualification.
+
+## Offline paired portfolio
+
+`bayn.control-study-input.v6` opts into `SIX_BAR_RIDGE_V1` versus `SIX_BAR_TRAINING_MEAN_V1` through the
+existing `tools/control-study.ts` command. It requires mechanical management and a v2 artifact. The baseline
+assigns the training-only weighted target mean to every admissible candidate. It does not use the full model
+intercept. Strictly positive scores beat cash; exact ties choose ascending symbol order.
+
+Both policies retain the native 30-minute warmup and two-second delay, with session-open anchored polls. Six
+completed bars determine the feature window, not earlier entry eligibility. They use independent portfolios with
+identical initial capital and rules. Different entries can change subsequent cash, risk and opportunity
+availability. This is a policy-level comparison, not exposure-matched alpha.
+
+The v6 input has `backtest`, `decisionLatencyMs`, `turnoverPolicy`, `management: MECHANICAL`, and `ridge`. Its
+`ridge` object contains `artifact`, `expectedArtifact` with independently pinned `artifactHash`, `manifestHash`
+and `sourceRevision`, the full raw research `calendar`, `expectedCalendarHash`, `evaluationSourceManifestHash`,
+and `partition: VALIDATION | HOLDOUT`. It has no equity-relative repeated target weight. The command retains its
+existing independently pinned input and source-receipt byte hashes.
+
+Admission verifies the artifact and its full normalized calendar. The calendar contains declared training and
+evaluation sessions. The execution calendar must be the exact contiguous subset through the immediate successor
+of its final executed session. The successor supplies calendar context and is not executed. Selected dates,
+partitions, open/close bounds and first eligible polls must match the artifact. Six-bar queries carry the full
+calendar and verify its actual evidence hash; the execution-subset hash cannot stand in for it. The evaluation
+source must be original capture and match the independently admitted manifest hash. Training and evaluation
+sources can differ.
+
+The model's label-definition hash must equal `ridgeExecutionLabelDefinition` for the actual execution settings.
+It binds fixed principal budget, latency, cadence, execution model, IOC/liquidity and fee assumptions, cash and
+whole-share rules, protective exits, turnover policy and economic risk bounds including gross/symbol weight limits.
+An arbitrary caller-supplied artifact is not assumed to match those mechanics.
+
+The fixed allocation budget is an adverse-limit principal cap. Current cash including fees, native risk and
+turnover limits can reduce or block quantity; partial or absent fills never change the model-label denominator.
+Session reports expose `sizing.mode: FIXED_PRINCIPAL_BUDGET` and the budget. Fills, partial exits, quote
+liquidity, fees, marks and cash carry use the existing stateful control engine. Overlapping hypothetical labels
+are never summed into portfolio returns.
+
+Each candidate uses the existing causal six-bar extractor. Full-row content hashes are retained immediately after
+verified extraction, before rows are projected for scoring. Both policies require exact membership and cardinality
+against those original pins. The constant validates those contents without depending on Ridge normalization
+arithmetic. Evidenced spread or size exclusions remain explicit.
+Missing candidate or benchmark input makes the decision unavailable, including for a zero or negative
+training-mean baseline. It makes the session incomplete and leaves the minute window unconsumed so a later
+causal poll can retry. Cash and canceled-entry sessions retain scheduled opportunities and allocated data
+charges. Mechanical mode has no provider client or Jev journal. The legacy snapshot preflight explicitly rejects
+v6 because its native snapshot contract does not establish six-bar input coverage.
+
+Reports remain `UNQUALIFIED` with controller coverage `UNKNOWN`. The simulated poll denominator does not prove
+production controller coverage. Original byte/receipt identity does not prove capture completeness or source
+authenticity. Quote units, capacity, market impact, full latency and operating costs remain uncalibrated.
+Known-cost replay P&L is not fully costed economic P&L. Existing operating-cost composition retains null
+qualification when costs are unknown. No training run, holdout inspection, strategy activation or trading
+authority is added by this adapter.

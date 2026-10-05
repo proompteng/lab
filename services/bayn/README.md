@@ -732,6 +732,13 @@ Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with 
 It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
 contract. Capture interval verification remains the caller's responsibility before economic research.
 
+The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
+control-study input v6 and artifact v2. It compares the seven-feature score with the genuine training-only
+day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
+30-minute-plus-two-second eligibility is unchanged. It uses original-capture six-bar observations and the
+existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
+no production registration, qualification or capital authority.
+
 ### Bounded mechanical control and turnover comparison
 
 The explicitly opted-in `bayn.control-study-input.v4` adds the research-only

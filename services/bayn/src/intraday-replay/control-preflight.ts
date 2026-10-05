@@ -137,6 +137,10 @@ export const scanControlInputs = (input: {
 export const runControlPreflight = (raw: unknown, arrivalsPath: string, receipt: BacktestSourceReceipt) =>
   Effect.gen(function* () {
     const { input, prepared, definition: studyDefinition } = yield* Effect.fromResult(prepareControlStudy(raw, receipt))
+    if (input.schemaVersion === 'bayn.control-study-input.v6')
+      return yield* new ControlStudyFailure({
+        message: 'Native snapshot preflight does not certify Ridge feature coverage',
+      })
     const firstDate = prepared.input.sessionDates[0]
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)
