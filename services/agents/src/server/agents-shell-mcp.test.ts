@@ -1,3 +1,4 @@
+import { encodeOutputCursor } from './agents-shell/jobs'
 import childProcess, { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -89,8 +90,7 @@ const initializeRepoFixture = (config: AgentsShellConfig) => {
   return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
 }
 
-const connectServer = async (config: AgentsShellConfig, auth = makeAuth()) => {
-  const runner = new AgentsShellRunner(config)
+const connectServer = async (config: AgentsShellConfig, auth = makeAuth(), runner = new AgentsShellRunner(config)) => {
   const server = createAgentsShellServer(config, runner, auth)
   const client = new Client({ name: 'agents-shell-test', version: '0.0.0' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -220,7 +220,7 @@ describe('agents-shell MCP OAuth metadata', () => {
 
     expect(response.status).toBe(200)
     const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
-    expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+    expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['exec', 'kubectl']))
   })
 
   it('keeps invalid bearer tokens inside the MCP challenge flow with safe diagnostics', async () => {
@@ -242,8 +242,8 @@ describe('agents-shell MCP OAuth metadata', () => {
             id: 1,
             method: 'tools/call',
             params: {
-              name: 'shell_run',
-              arguments: { command: 'echo should-not-run' },
+              name: 'exec',
+              arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run' },
             },
           }),
         }),
@@ -292,7 +292,7 @@ describe('agents-shell MCP OAuth metadata', () => {
 
         expect(response.status).toBe(200)
         const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
-        expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+        expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['exec', 'kubectl']))
       } finally {
         server.stop(true)
       }
@@ -321,11 +321,10 @@ describe('agents-shell MCP tools', () => {
         'read_file',
         'apply_patch',
         'agent_guide',
-        'shell_run',
-        'shell_start',
-        'shell_read',
-        'shell_kill',
-        'shell_status',
+        'exec',
+        'read',
+        'cancel',
+        'status',
         'git',
         'git_write',
         'kubectl',
@@ -347,7 +346,7 @@ describe('agents-shell MCP tools', () => {
       'openai/toolInvocation/invoked': 'Tool complete',
     })
 
-    const shellRun = tools.tools.find((tool) => tool.name === 'shell_run')
+    const shellRun = tools.tools.find((tool) => tool.name === 'exec')
     expect(shellRun?.annotations?.destructiveHint).toBe(false)
     expect(shellRun?.annotations?.openWorldHint).toBe(true)
 
@@ -361,7 +360,7 @@ describe('agents-shell MCP tools', () => {
     const git = tools.tools.find((tool) => tool.name === 'git')
     expect(git?.annotations?.readOnlyHint).toBe(true)
     expect(git?.annotations?.destructiveHint).toBe(false)
-    expect(git?.annotations?.openWorldHint).toBe(false)
+    expect(git?.annotations?.openWorldHint).toBe(true)
     expect(git?._meta).toMatchObject({
       securitySchemes: linkedOauthScheme,
     })
@@ -414,16 +413,17 @@ describe('agents-shell MCP tools', () => {
     expect(rawSearch?.inputSchema?.$schema).toBeUndefined()
     expect(rawSearch?.inputSchema?.additionalProperties).toBe(false)
 
-    const rawShellRun = rawTools.find((tool) => tool.name === 'shell_run')
+    const rawShellRun = rawTools.find((tool) => tool.name === 'exec')
     expect(rawShellRun).toBeDefined()
     const rawShellRunInputProperties = rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>
     expect(rawShellRunInputProperties.timeoutSeconds.maximum).toBeUndefined()
-    expect(rawShellRunInputProperties.maxOutputBytes.maximum).toBeUndefined()
+    expect(rawShellRunInputProperties.maxBytes.maximum).toBe(1_048_576)
+    expect(rawShellRun?.inputSchema?.required).toContain('sessionId')
     expect(rawShellRunInputProperties.timeoutSeconds.description).toBe(
       'Timeout in seconds. Default: 60. Server cap: 1800.',
     )
-    expect(rawShellRunInputProperties.maxOutputBytes.description).toBe(
-      'Per-stream reply page cap in bytes. Default: 20000. Server cap: 1048576. Retention is independent.',
+    expect(rawShellRunInputProperties.maxBytes.description).toBe(
+      'Total serialized MCP reply budget, including metadata and both streams. Default: 20000.',
     )
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
@@ -465,11 +465,11 @@ describe('agents-shell MCP tools', () => {
     const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth([]))
 
     const tools = await client.listTools()
-    expect(tools.tools.some((tool) => tool.name === 'shell_run')).toBe(true)
+    expect(tools.tools.some((tool) => tool.name === 'exec')).toBe(true)
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run' },
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run' },
     })
     expect(result.isError).toBe(true)
     expect(result._meta?.['mcp/www_authenticate']).toEqual([
@@ -527,7 +527,9 @@ describe('agents-shell MCP tools', () => {
 
   it('finishes process tools when a git descendant keeps stdio open after child exit', async () => {
     const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const session = await runner.openRepoSession({ name: 'drain-test' }, makeAuth())
     const bin = join(config.workspaceRoot, 'bin')
     mkdirSync(bin, { recursive: true })
     writeFileSync(
@@ -546,13 +548,13 @@ printf '%s\\n' "$@"
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(), runner)
 
     try {
       const startedAt = Date.now()
       const result = await client.callTool({
         name: 'git_write',
-        arguments: { args: ['fetch', 'origin', 'main'], cwd: 'lab', timeoutSeconds: 1 },
+        arguments: { args: ['fetch', 'origin', 'main'], sessionId: session.sessionId, timeoutSeconds: 1 },
       })
       const elapsedMs = Date.now() - startedAt
       expect(result.isError).not.toBe(true)
@@ -563,6 +565,10 @@ printf '%s\\n' "$@"
       }
       expect(content.exitCode).toBe(0)
       expect(content.timedOut).toBe(false)
+      expect(result.structuredContent).toMatchObject({
+        captureIncomplete: true,
+        outputCaptureError: expect.stringContaining('descendant pipes'),
+      })
       expect(content.stdout).toContain('fetched origin main')
       expect(elapsedMs).toBeLessThan(2_000)
     } finally {
@@ -581,10 +587,12 @@ printf '%s\\n' "$@"
 
   it('reads files and blocks apply_patch paths outside /workspace', async () => {
     const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
+    initializeRepoFixture(config)
     writeFileSync(join(config.workspaceRoot, 'hello.txt'), 'hello from agents-shell\n')
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
 
+    const opened = await client.callTool({ name: 'repo_session_open', arguments: { name: 'patch-escape-test' } })
+    const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
     const read = await client.callTool({
       name: 'read_file',
       arguments: { path: 'hello.txt' },
@@ -594,6 +602,7 @@ printf '%s\\n' "$@"
     const blocked = await client.callTool({
       name: 'apply_patch',
       arguments: {
+        sessionId,
         patch: '*** Begin Patch\n*** Update File: ../../escape.txt\n@@\n-old\n+new\n*** End Patch\n',
       },
     })
@@ -606,6 +615,80 @@ printf '%s\\n' "$@"
     await serverTransport.close()
     await client.close()
     await server.close()
+  })
+
+  it('requires an owned session for configured Git remote helpers', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const auth = makeAuth()
+    const session = await runner.openRepoSession({ name: 'remote-helper-test' }, auth)
+    const marker = join(config.workspaceRoot, 'remote-helper.called')
+    const helper = join(config.workspaceRoot, 'remote-helper')
+    writeFileSync(
+      helper,
+      `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'invoked')
+const result = require('node:child_process').spawnSync('git-upload-pack', [${JSON.stringify(join(config.workspaceRoot, 'origin.git'))}], { stdio: 'inherit' })
+process.exit(result.status ?? 1)
+`,
+    )
+    chmodSync(helper, 0o700)
+    const helperOperand = helper.replaceAll('%', '%%').replaceAll(' ', '% ')
+    execFileSync('git', [
+      '-C',
+      session.worktree,
+      'config',
+      `url.ext::${helperOperand} .insteadOf`,
+      'https://safe.example/',
+    ])
+    execFileSync('git', ['-C', session.worktree, 'config', 'remote.origin.url', 'https://safe.example/repo'])
+    execFileSync('git', ['-C', session.worktree, 'config', 'protocol.ext.allow', 'always'])
+    const inspector = await connectServer(config, makeAuth(['agents-shell.read']), runner)
+    const writer = await connectServer(config, auth, runner)
+    const foreign = await connectServer(
+      config,
+      { ...auth, subject: 'user-2', payload: { ...auth.payload, sub: 'user-2' } },
+      runner,
+    )
+    try {
+      for (const remote of ['origin', 'https://safe.example/repo']) {
+        const result = await inspector.client.callTool({
+          name: 'git',
+          arguments: { sessionId: session.sessionId, args: ['ls-remote', remote] },
+        })
+        expect(result.isError).toBe(true)
+        expect(JSON.stringify(result.content)).toContain('git_write')
+        expect(existsSync(marker)).toBe(false)
+      }
+      const missingSession = await inspector.client.callTool({
+        name: 'git_write',
+        arguments: { args: ['ls-remote', 'origin'] },
+      })
+      expect(missingSession.isError).toBe(true)
+      expect(existsSync(marker)).toBe(false)
+      const denied = await foreign.client.callTool({
+        name: 'git_write',
+        arguments: { sessionId: session.sessionId, args: ['ls-remote', 'origin'] },
+      })
+      expect(denied.isError).toBe(true)
+      expect(existsSync(marker)).toBe(false)
+      const allowed = await writer.client.callTool({
+        name: 'git_write',
+        arguments: { sessionId: session.sessionId, args: ['ls-remote', 'origin'] },
+      })
+      expect(allowed.isError).not.toBe(true)
+      expect(allowed.structuredContent).toMatchObject({ ok: true, taskId: session.sessionId })
+      expect((allowed.structuredContent as { stdout: string }).stdout).toContain('refs/heads/main')
+      expect(existsSync(marker)).toBe(true)
+    } finally {
+      for (const connection of [inspector, writer, foreign]) {
+        await connection.clientTransport.close()
+        await connection.serverTransport.close()
+        await connection.client.close()
+        await connection.server.close()
+      }
+    }
   })
 
   it('opens an isolated repo session and routes repo tools through its worktree', async () => {
@@ -631,6 +714,7 @@ printf '%s\\n' "$@"
         ahead: number
         behind: number
       }
+      expect(opened.structuredContent).toMatchObject({ taskId: session.sessionId })
       expect(session.sessionId).toMatch(/^repo-session-test-[0-9a-f]{8}$/)
       expect(session.branch).toMatch(/^codex\/session-test-[0-9a-f]{8}$/)
       expect(session.baseBranch).toBe('main')
@@ -642,8 +726,12 @@ printf '%s\\n' "$@"
       expect(session.worktree).toContain(join('worktrees', 'lab', 'session-test-'))
 
       const write = await client.callTool({
-        name: 'shell_run',
-        arguments: { sessionId: session.sessionId, command: "printf '%s\\n' session-data > session.txt" },
+        name: 'exec',
+        arguments: {
+          requestKey: crypto.randomUUID(),
+          sessionId: session.sessionId,
+          command: "printf '%s\\n' session-data > session.txt",
+        },
       })
       expect(write.isError).not.toBe(true)
 
@@ -672,16 +760,17 @@ printf '%s\\n' "$@"
       expect(blockedClose.isError).toBe(true)
       expect(JSON.stringify(blockedClose.content)).toContain('uncommitted changes')
 
-      await client.callTool({
-        name: 'shell_run',
-        arguments: { sessionId: session.sessionId, command: 'rm session.txt' },
-      })
+      const cleanupArgs = { requestKey: 'cleanup', sessionId: session.sessionId, command: 'rm session.txt' }
+      const cleaned = await client.callTool({ name: 'exec', arguments: cleanupArgs })
       const closed = await client.callTool({
         name: 'repo_session_close',
         arguments: { sessionId: session.sessionId },
       })
       expect(closed.isError).not.toBe(true)
       expect((closed.structuredContent as { closedAt?: string }).closedAt).toEqual(expect.any(String))
+      const replay = await client.callTool({ name: 'exec', arguments: cleanupArgs })
+      expect(replay.isError).not.toBe(true)
+      expect(replay.structuredContent).toEqual(cleaned.structuredContent)
     } finally {
       await clientTransport.close()
       await serverTransport.close()
@@ -749,8 +838,8 @@ printf '%s\\n' "$@"
       })
       const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
       await client.callTool({
-        name: 'shell_run',
-        arguments: { sessionId, command: "printf '%s\\n' secret > .env" },
+        name: 'exec',
+        arguments: { requestKey: crypto.randomUUID(), sessionId, command: "printf '%s\\n' secret > .env" },
       })
 
       const ordinaryGitStatus = await client.callTool({
@@ -793,9 +882,9 @@ printf '%s\\n' "$@"
     const opened = await runner.openRepoSession({ name: 'closing-lock-test' }, auth)
 
     const closing = runner.closeRepoSession({ sessionId: opened.sessionId }, auth)
-    expect(() => runner.parseCommandInput({ command: 'pwd', sessionId: opened.sessionId }, auth)).toThrow(
-      `repo session is closing: ${opened.sessionId}`,
-    )
+    expect(() =>
+      runner.parseCommandInput({ requestKey: crypto.randomUUID(), command: 'pwd', sessionId: opened.sessionId }, auth),
+    ).toThrow(`repo session is closing: ${opened.sessionId}`)
     await closing
   })
 
@@ -891,18 +980,21 @@ printf '%s\\n' "$@"
       })
       const sessionId = (opened.structuredContent as { sessionId: string }).sessionId
       const started = await client.callTool({
-        name: 'shell_start',
+        name: 'exec',
         arguments: {
+          requestKey: crypto.randomUUID(),
+          waitMs: 0,
           sessionId,
           command: "trap '' TERM; printf '%s\\n' TRAP_READY; while :; do sleep 1; done",
           timeoutSeconds: 30,
         },
       })
       const jobId = (started.structuredContent as { jobId: string }).jobId
+      const cursor = encodeOutputCursor({ jobId, stdoutOffset: 0, stderrOffset: 0, outputEncoding: 'utf8' })
 
       let trapReady = false
       for (let attempt = 0; attempt < 100; attempt += 1) {
-        const progress = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+        const progress = await client.callTool({ name: 'read', arguments: { jobId, cursor } })
         if ((progress.structuredContent as { stdout?: string }).stdout?.includes('TRAP_READY')) {
           trapReady = true
           break
@@ -917,10 +1009,10 @@ printf '%s\\n' "$@"
       })
       expect(closed.isError).not.toBe(true)
 
-      const job = await client.callTool({ name: 'shell_read', arguments: { jobId } })
+      const job = await client.callTool({ name: 'read', arguments: { jobId, cursor } })
       expect(job.structuredContent).toMatchObject({
         jobId,
-        status: 'killed',
+        state: 'cancelled',
         finishedAt: expect.any(String),
       })
       expect((job.structuredContent as { signal?: string }).signal).toBe('SIGKILL')
@@ -934,7 +1026,9 @@ printf '%s\\n' "$@"
 
   it('applies Codex patch syntax through the apply_patch executable', async () => {
     const config = makeConfig()
-    mkdirSync(join(config.workspaceRoot, 'lab', 'src'), { recursive: true })
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const session = await runner.openRepoSession({ name: 'patch-test' }, makeAuth())
     const bin = join(config.workspaceRoot, 'bin')
     mkdirSync(bin, { recursive: true })
     writeFileSync(
@@ -946,19 +1040,19 @@ printf '%s\\n' "$@"
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(), runner)
 
     try {
       const result = await client.callTool({
         name: 'apply_patch',
         arguments: {
-          cwd: 'lab',
+          sessionId: session.sessionId,
           patch: '*** Begin Patch\n*** Add File: src/example.ts\n+export const value = 1\n*** End Patch\n',
         },
       })
       expect(result.isError).not.toBe(true)
-      const content = result.structuredContent as { command?: string; changedFiles?: string[]; stdout?: string }
-      expect(content.command).toBe('apply_patch')
+      const content = result.structuredContent as { commandPreview?: string; changedFiles?: string[]; stdout?: string }
+      expect(content.commandPreview).toBe('apply_patch')
       expect(content.changedFiles).toEqual(['src/example.ts'])
       expect(content.stdout).toContain('Success. Updated the following files')
     } finally {
@@ -1075,7 +1169,7 @@ fi
     mkdirSync(bin, { recursive: true })
     writeFileSync(
       join(bin, 'rg'),
-      '#!/bin/sh\nprintf "%s\\n" "src/agents-shell.ts:1:export const createAgentsShellServer = true"\n',
+      '#!/bin/sh\nprintf "%s\\n" "$@" > .search-argv\nprintf "%s\\n" "src/agents-shell.ts:1:export const createAgentsShellServer = true"\n',
     )
     chmodSync(join(bin, 'rg'), 0o755)
 
@@ -1090,15 +1184,16 @@ fi
         arguments: { query: 'createAgentsShellServer', path: 'lab', fixedStrings: true },
       })
       const content = result.structuredContent as {
-        command?: string
+        commandPreview?: string
         exitCode?: number
         stdout?: string
       }
-      expect(content.command).toContain('rg --line-number --no-heading --color=never --hidden')
-      expect(content.command).toContain("-g '!.git/**'")
-      expect(content.command).toContain("-g '!node_modules/**'")
-      expect(content.command).toContain("-g '!schemas/custom/**'")
-      expect(content.command).toContain('--fixed-strings createAgentsShellServer .')
+      expect(content.commandPreview).toContain('rg --line-number --no-heading --color=never --hidden')
+      expect(content.commandPreview).toContain("-g '!.git/**'")
+      expect(content.commandPreview).toContain("-g '!node_modules/**'")
+      const argv = readFileSync(join(config.workspaceRoot, 'lab', '.search-argv'), 'utf8').split('\n')
+      expect(argv).toEqual(expect.arrayContaining(['-g', '!schemas/custom/**', '--fixed-strings']))
+      expect(argv.slice(-4)).toEqual(['--', 'createAgentsShellServer', '.', ''])
       expect(content.exitCode).toBe(0)
       expect(content.stdout).toContain('src/agents-shell.ts:1:export const createAgentsShellServer = true')
     } finally {
@@ -1112,6 +1207,44 @@ fi
       } else {
         process.env.PATH = previousPath
       }
+    }
+  })
+
+  it('searches file operands, directories, and dash-leading patterns with real ripgrep', async () => {
+    const config = makeConfig()
+    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
+    writeFileSync(join(config.workspaceRoot, 'lab', 'example.txt'), 'first\n-needle\nlast\n')
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    try {
+      for (const path of ['lab/example.txt', 'lab']) {
+        const result = await client.callTool({
+          name: 'search',
+          arguments: { query: '-needle', path, fixedStrings: true },
+        })
+        expect(result.isError).not.toBe(true)
+        expect(result.structuredContent).toMatchObject({ ok: true, exitCode: 0 })
+        expect((result.structuredContent as { stdout?: string })?.stdout).toContain('-needle')
+      }
+      const empty = await client.callTool({
+        name: 'search',
+        arguments: { query: 'not-present', path: 'lab/example.txt' },
+      })
+      expect(empty.structuredContent).toMatchObject({ ok: true, exitCode: 1, stdout: '' })
+      const missing = await client.callTool({
+        name: 'search',
+        arguments: { query: 'needle', path: 'lab/missing.txt' },
+      })
+      expect(missing.isError).toBe(true)
+      const escape = await client.callTool({
+        name: 'search',
+        arguments: { query: 'needle', path: '../outside' },
+      })
+      expect(escape.isError).toBe(true)
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
     }
   })
 
@@ -1145,8 +1278,8 @@ fi
     const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(['openid']))
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run' },
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run' },
     })
     expect(result.isError).toBe(true)
     expect(result._meta?.['mcp/www_authenticate']).toEqual([
@@ -1161,11 +1294,19 @@ fi
 
   it('does not turn ordinary tool failures into OAuth reconnect challenges', async () => {
     const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const session = await runner.openRepoSession({ name: 'ordinary-failure' }, makeAuth())
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(), runner)
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run', cwd: 'missing-worktree' },
+      name: 'exec',
+      arguments: {
+        sessionId: session.sessionId,
+        requestKey: crypto.randomUUID(),
+        command: 'echo should-not-run',
+        cwd: 'missing-worktree',
+      },
     })
 
     expect(result.isError).toBe(true)
@@ -1183,13 +1324,13 @@ fi
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
 
     const result = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: 'echo should-not-run', timeoutSeconds: 'bad' },
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run', timeoutSeconds: 'bad' },
     })
 
     expect(result.isError).toBe(true)
     expect(JSON.stringify(result.content)).toContain('Input validation error')
-    expect(JSON.stringify(result.content)).toContain('shell_run')
+    expect(JSON.stringify(result.content)).toContain('exec')
     expect(result._meta?.['mcp/www_authenticate']).toBeUndefined()
 
     await clientTransport.close()
