@@ -68,9 +68,14 @@ for ((attempt = 1; attempt <= 60; attempt++)); do
 done
 [[ "$ready" == true ]] || { echo 'Native fixture startup timed out' >&2; exit 1; }
 
+bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
+  "$root/argocd/applications/kafka/torghut-topics.yaml" > "$directory/source-topics.json"
+bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
+  "$root/argocd/applications/bayn/execution-controller.yaml" > "$directory/execution-controller.json"
+
 bun build "$root/services/bayn/src/testing/kafka-receipts-native-node.mjs" --target=node \
   --external @platformatic/kafka --outdir "$directory"
-timeout 90s node "$directory/kafka-receipts-native-node.js"
+timeout 90s node "$directory/kafka-receipts-native-node.js" "$directory/source-topics.json" "$directory/execution-controller.json"
 export BAYN_TEST_RESTATE_ADMIN_URL=http://127.0.0.1:9070
 export BAYN_TEST_RESTATE_INGRESS_URL=http://127.0.0.1:8080
 timeout 150s bun test "$root/services/bayn/src/restate/restate-execution-controller.integration.test.ts"

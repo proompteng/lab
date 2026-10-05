@@ -46,7 +46,7 @@ Do not race a new image promotion with any maintenance operation.
 - Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.
 - Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.
 - Every API key rotation must restart `hermes-0` and prove the old key is rejected and the new key is accepted.
-- Every Exa API key rotation must restart `hermes-0` and repeat both native-web and Exa MCP canaries before acceptance.
+- Every Exa API key rotation must restart `hermes-0` and repeat native-web search/extract canaries before acceptance.
 - A `Synced/Healthy` Argo application is not sufficient proof. Record authenticated inference, persistence, egress, backup,
   migration, and Discord lifecycle evidence.
 - Roll out and cut over only from Kargo's `kargo/hermes-toolchain` branch, which Kargo creates from a published image
@@ -62,7 +62,7 @@ digest bump PR, release PR, or manual SHA change.
 
 Before the first rollout using a new Hermes Agent release, dispatch the repository's `hermes-agent-mirror` workflow and
 wait for its immutable-index, platform, attached SLSA subject, predicate, and source-revision checks to pass. It publishes the exact verified upstream index
-under `registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64`; the manifest below then proves that the private
+under `registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64`; the manifest below then proves that the private
 amd64 digest is the upstream amd64 manifest. The workflow does not publish Kargo tags or alter the Kargo-managed toolchain
 reference.
 
@@ -73,8 +73,8 @@ git fetch --quiet origin kargo/hermes-toolchain
 main_revision=$(git rev-parse origin/main)
 kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)
 test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"
-upstream_ref=docker.io/nousresearch/hermes-agent:v2026.9.7
-mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.7-amd64
+upstream_ref=docker.io/nousresearch/hermes-agent:v2026.9.24
+mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64
 upstream_digest=$(crane digest "$upstream_ref")
 upstream_manifest=$(crane manifest "$upstream_ref")
 upstream_amd64_digest=$(printf '%s' "$upstream_manifest" | jq -er '
@@ -114,13 +114,13 @@ toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/herm
 test -n "$toolchain_ref"
 test "$(printf '%s\n' "$toolchain_ref" | wc -l | tr -d '[:space:]')" -eq 1
 toolchain_digest=$(crane digest "$toolchain_ref")
-test "$upstream_digest" = sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7
-test "$upstream_amd64_digest" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
-test "$upstream_attestation_digest" = sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db
+test "$upstream_digest" = sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+test "$upstream_amd64_digest" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
+test "$upstream_attestation_digest" = sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c
 test "$provenance_subject" = "$upstream_amd64_digest"
-test "$upstream_revision" = 2237be355906fbe6065ce1815711eee52b2d646e
+test "$upstream_revision" = f97608f178d1ffeca59860195ab7da295f7c8e5f
 test "$mirror_index_digest" = "$upstream_digest"
-test "$mirror_digest" = sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b
+test "$mirror_digest" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
 test "$mirror_revision" = "$upstream_revision"
 test "$toolchain_digest" = "${toolchain_ref##*@}"
 toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
@@ -156,13 +156,13 @@ unset upstream_revision mirror_index_digest mirror_manifest mirror_digest mirror
 unset toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
 ```
 
-The expected upstream index digest is `sha256:63bfb6d732f49a55d453e801057273785cc61e0f6ee43db3fa2f2a79846301b7`.
+The expected upstream index digest is `sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7`.
 The expected upstream amd64 manifest digest is
-`sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b`; its attached SLSA provenance manifest is
-`sha256:5fc02b8e0b89c3436a203c3261dd7d9e52e339461edb4d2afaaa87dd3f8d66db` and records source revision
-`2237be355906fbe6065ce1815711eee52b2d646e`.
+`sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283`; its attached SLSA provenance manifest is
+`sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c` and records source revision
+`f97608f178d1ffeca59860195ab7da295f7c8e5f`.
 The expected mirrored amd64 manifest digest is
-`sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b`.
+`sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283`.
 The current Hermes toolchain digest is intentionally not repeated in this runbook. The Kargo-managed StatefulSet on
 `kargo/hermes-toolchain` is the sole committed owner; derive its `reference` as shown above and verify the resolved image
 digest and platform labels from that reference.
@@ -343,7 +343,7 @@ digest and platform labels from that reference.
    Job must complete and its log, archived SQLite integrity checks, and checksum verification must succeed. The data mount
    is write-capable only because SQLite read-only WAL connections require shared-memory sidecar access; the pinned backup
    process still opens each source database in read-only mode and fails closed on any safe-copy fallback.
-   Hermes 0.21.1 runs as PID 1 and may omit the live `gateway.sock` and `state/gateway.loop-tick.1.sock` runtime sockets.
+   Hermes 0.21.5 runs as PID 1 and may omit the live `gateway.sock` and `state/gateway.loop-tick.1.sock` runtime sockets.
    The production wrapper requires every warning to match one of those exact paths and proves each is a Unix socket,
    not a regular file or symlink. It rejects every other skipped file or incomplete database copy and verifies that
    neither transient socket is present in the published archive.
@@ -486,7 +486,7 @@ digest and platform labels from that reference.
    the authenticated tailnet request prove backend reachability. Only curl exit `28` (the bounded connection timeout)
    counts as NetworkPolicy denial.
 
-5. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
+5. Prove native Exa search/extract from the production container:
 
    ```bash
    set -euo pipefail
@@ -517,16 +517,7 @@ digest and platform labels from that reference.
    assert "Web Search MCP" in pages[0].get("content", ""), extract
    print(f"native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}")
    PY
-   kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -lc '
-     set -eu
-     mcp_test=$(hermes mcp test exa 2>&1)
-     printf "%s" "$mcp_test" | grep -F "✓ Connected" >/dev/null
-     printf "%s" "$mcp_test" | grep -F "✓ Tools discovered: 2" >/dev/null
-     printf "%s" "$mcp_test" | grep -F "web_search_exa" >/dev/null
-     printf "%s" "$mcp_test" | grep -F "web_fetch_exa" >/dev/null
-     unset mcp_test
-     printf "exa_mcp_canary=ok tools=2\n"
-   '
+
    ```
 
 6. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
@@ -770,15 +761,7 @@ pages = extract.get("results", [])
 assert len(pages) == 1 and not pages[0].get("error"), extract
 print(f"exa_rotation_native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}")
 PY
-kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -lc '
-  set -eu
-  mcp_test=$(hermes mcp test exa 2>&1)
-  printf "%s" "$mcp_test" | grep -F "✓ Connected" >/dev/null
-  printf "%s" "$mcp_test" | grep -F "✓ Tools discovered: 2" >/dev/null
-  printf "%s" "$mcp_test" | grep -F "web_search_exa" >/dev/null
-  printf "%s" "$mcp_test" | grep -F "web_fetch_exa" >/dev/null
-  printf "exa_rotation_mcp_canary=ok tools=2\n"
-'
+
 cleanup_exa_rotation
 trap - EXIT HUP INT TERM
 ```
@@ -1295,8 +1278,7 @@ The rollout record is complete only when it includes:
 - API and Exa ExternalSecret Ready conditions and secret field lengths/counts without values;
 - pod UID, read-only rootfs, scoped service-account token, NetworkPolicy, PVC, and verified backup evidence;
 - gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA;
-- authenticated API rejection/success, Flamingo model response, native Exa search/extract, the two allowlisted Exa MCP
-  tools, and persistence after restart;
+- authenticated API rejection/success, Flamingo model response, native Exa search/extract, session search, managed configuration, and persistence after restart;
 - migration dry-run/apply Job identities and report counts;
 - single-writer Discord message lifecycle IDs and non-allowlisted-user rejection;
 - retained OpenClaw VM/PVC identities, rollback revision, and rollback-window end timestamp.

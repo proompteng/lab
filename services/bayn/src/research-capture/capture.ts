@@ -38,6 +38,11 @@ export enum CaptureInvalidation {
   ClockReversed = 'CLOCK_REVERSED',
   ControllerReplay = 'CONTROLLER_REPLAY_AMBIGUITY',
   Finalization = 'FINALIZATION_FAILED_OR_UNKNOWN',
+  ByteLimit = 'SESSION_BYTE_LIMIT',
+  MissedBootstrap = 'SESSION_BOOTSTRAP_MISSED',
+  Deadline = 'SESSION_DEADLINE_WITHOUT_CUT',
+  WorkerReplaced = 'SESSION_WORKER_REPLACED',
+  OutsideWindow = 'SESSION_START_OUTSIDE_WINDOW',
 }
 
 const PositionSchema = Schema.Struct({
@@ -45,6 +50,55 @@ const PositionSchema = Schema.Struct({
   partition: NonNegativeIntegerSchema,
   offset: UnsignedMicrosSchema,
 })
+
+export const CaptureIntervalRequestSchema = Schema.Struct({
+  intervalId: ResearchCaptureIdSchema,
+  coverageStartMs: NonNegativeIntegerSchema,
+  coverageEndMs: NonNegativeIntegerSchema,
+  universeHash: Sha256Schema,
+  expectedPartitions: Schema.Array(
+    Schema.Struct({
+      topic: StrictNonEmptyStringSchema,
+      partition: NonNegativeIntegerSchema,
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+})
+export type CaptureIntervalRequest = typeof CaptureIntervalRequestSchema.Type
+
+export const CaptureSessionDeclarationSchema = Schema.Struct({
+  ...CaptureIntervalRequestSchema.fields,
+  startAtMs: NonNegativeIntegerSchema,
+  bootstrapDeadlineMs: NonNegativeIntegerSchema,
+  stopAtMs: NonNegativeIntegerSchema,
+  calendarSnapshotId: Sha256Schema,
+  calendarObservedAt: UtcInstantSchema,
+  calendarHash: Sha256Schema,
+  maximumObjectBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 1024 ** 3)),
+  maximumSqlBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10 * 1024 ** 3)),
+})
+
+export const CaptureIntervalCutSchema = Schema.Struct({
+  kind: Schema.Literal('consumer-interval-cut'),
+  schemaVersion: Schema.Literal('bayn.native-visible-input-cut.v1'),
+  ...CaptureIntervalRequestSchema.fields,
+  consumerEpoch: StrictNonEmptyStringSchema,
+  transport: Schema.Struct({
+    sdk: Schema.Literal('@platformatic/kafka'),
+    version: Schema.Literal('2.12.1'),
+    isolation: Schema.Literal('READ_COMMITTED'),
+    mode: Schema.Literal('MANUAL'),
+    fallback: Schema.Literal('FAIL'),
+    deserializationFailure: Schema.Literal('FAIL'),
+  }),
+  committedFence: Schema.Struct({
+    lookupStartedAtMs: NonNegativeIntegerSchema,
+    lookupCompletedAtMs: NonNegativeIntegerSchema,
+    positions: Schema.Array(PositionSchema).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  }),
+  drainedPositions: Schema.Array(PositionSchema).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  finalConsumerSequence: NonNegativeIntegerSchema,
+})
+export type CaptureIntervalCut = typeof CaptureIntervalCutSchema.Type
 
 export enum CaptureTimestampKind {
   Value = 'VALUE',
@@ -110,6 +164,12 @@ export const restoreKafkaTransportTimestamp = (
 }
 
 export const ResearchCaptureEventSchema = Schema.Union([
+  CaptureIntervalCutSchema,
+  Schema.Struct({
+    kind: Schema.Literal('session-attempt'),
+    attemptId: StrictNonEmptyStringSchema,
+    session: CaptureSessionDeclarationSchema,
+  }),
   Schema.Struct({
     kind: Schema.Literal('market-record'),
     consumerEpoch: StrictNonEmptyStringSchema,
@@ -254,7 +314,7 @@ export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
   })
 
 /** A seal describes one worker's capture. It is never evidence of an unobserved worker or epoch. */
-export const verifyResearchCapture = (
+export const verifyResearchCapturePrefix = (
   chunks: readonly ResearchCaptureBytes[],
   sealBytes: ResearchCaptureBytes | undefined,
 ) =>
@@ -267,6 +327,7 @@ export const verifyResearchCapture = (
     let completeSequence = true
     const consumers = new Map<string, number>()
     let activeEpoch: string | undefined
+    let declaredSession: typeof CaptureSessionDeclarationSchema.Type | undefined
     for (const [ordinal, bytes] of chunks.entries()) {
       const chunk = yield* decodeResearchCaptureChunk(bytes)
       if (
@@ -283,7 +344,31 @@ export const verifyResearchCapture = (
         sequence = receipt.sequence
         lastAtMs = receipt.observedAtMs
         const event = receipt.event
-        if (event.kind === 'consumer-boundary') {
+        if (event.kind === 'session-attempt') {
+          if (
+            ordinal !== 0 ||
+            receipt.sequence !== 1 ||
+            chunk.receipts.length !== 1 ||
+            receipt.observedAtMs < event.session.startAtMs ||
+            event.session.startAtMs >= event.session.bootstrapDeadlineMs ||
+            receipt.observedAtMs >= event.session.bootstrapDeadlineMs ||
+            event.session.bootstrapDeadlineMs >= event.session.coverageStartMs ||
+            event.session.coverageStartMs >= event.session.coverageEndMs ||
+            event.session.coverageEndMs >= event.session.stopAtMs
+          )
+            return yield* Result.fail(fail('A session attempt must be the sole first receipt in its claim chunk'))
+          declaredSession = event.session
+        } else if (event.kind === 'consumer-interval-cut' && declaredSession !== undefined) {
+          if (
+            event.intervalId !== declaredSession.intervalId ||
+            event.coverageStartMs !== declaredSession.coverageStartMs ||
+            event.coverageEndMs !== declaredSession.coverageEndMs ||
+            event.universeHash !== declaredSession.universeHash ||
+            JSON.stringify(event.expectedPartitions) !== JSON.stringify(declaredSession.expectedPartitions) ||
+            receipt.observedAtMs >= declaredSession.stopAtMs
+          )
+            return yield* Result.fail(fail('Capture cut differs from its fixed session declaration or stop deadline'))
+        } else if (event.kind === 'consumer-boundary') {
           if (event.phase === 'STARTED') {
             if (activeEpoch !== undefined || consumers.has(event.consumerEpoch))
               return yield* Result.fail(fail('Capture consumer epochs overlap or restart without a new identity'))
@@ -322,11 +407,25 @@ export const verifyResearchCapture = (
       completeSequence &&
       sequence === seal.observedReceipts &&
       activeEpoch === undefined
-    if (seal.invalidations.length === 0 && !structurallyClosed)
+    return {
+      seal,
+      structurallyClosed,
+      continuous: completeSequence && sequence === seal.observedReceipts,
+      complete: false,
+    }
+  })
+
+export const verifyResearchCapture = (
+  chunks: readonly ResearchCaptureBytes[],
+  sealBytes: ResearchCaptureBytes | undefined,
+) =>
+  Result.gen(function* () {
+    const capture = yield* verifyResearchCapturePrefix(chunks, sealBytes)
+    if (capture.seal.invalidations.length === 0 && !capture.structurallyClosed)
       return yield* Result.fail(
         fail('Capture seal omits an observed tail or leaves an open epoch without invalidation'),
       )
-    return { seal, structurallyClosed, complete: false }
+    return capture
   })
 
 export interface ResearchCaptureObserver {
