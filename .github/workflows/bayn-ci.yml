@@ -328,6 +328,7 @@ jobs:
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bayn
+      verify_image_script: nix/verify-bayn-image-command.sh
       package_attr: bayn-image
       tag: sha-${{ github.event.pull_request.head.sha || github.sha }}
       publish_kargo_tag: false

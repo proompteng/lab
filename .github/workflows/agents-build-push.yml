@@ -22,6 +22,7 @@ on:
       - 'nix/images/agents.nix'
       - 'nix/verify-agents-shell-image-lifecycle.sh'
       - 'nix/images/openai-codex-cli.nix'
+      - '.github/workflows/agents-build-push.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'nix/oci-push.sh'
       - 'argocd/applications/agents/**'
@@ -69,6 +70,7 @@ jobs:
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: agents-shell
+      verify_image_script: nix/verify-agents-shell-image-lifecycle.sh
       package_attr: agents-shell-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: false

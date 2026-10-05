@@ -787,6 +787,7 @@ spec:
           - nix/images/agents.nix
           - nix/verify-agents-shell-image-lifecycle.sh
           - nix/images/openai-codex-cli.nix
+          - .github/workflows/agents-build-push.yml
           - .github/workflows/nix-oci-build-common.yml
           - nix/oci-push.sh
           - argocd/applications/agents
@@ -1013,8 +1014,6 @@ spec:
           - .github/workflows/common-monorepo.yml
           - .github/workflows/nix-oci-build-common.yml
           - argocd/applications/bayn
-          - argocd/applications/kargo
-          - argocd/applicationsets/product.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bayn
         imageSelectionStrategy: NewestBuild
@@ -1058,8 +1057,6 @@ spec:
           - packages/scripts/src/shared/__tests__/restate-resilience-contract.test.ts
           - .github/workflows/restate-images.yml
           - argocd/applications/restate
-          - argocd/applications/kargo
-          - argocd/applicationsets/platform.yaml
           - bun.lock
     - image:
         repoURL: registry.ide-newton.ts.net/lab/restate
@@ -1144,8 +1141,6 @@ spec:
           - services/rune
           - .github/workflows/rune-images.yml
           - argocd/applications/rune
-          - argocd/applications/kargo
-          - argocd/applicationsets/platform.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/rune
         imageSelectionStrategy: NewestBuild
@@ -1185,9 +1180,6 @@ spec:
           - services/temporal-worker
           - .github/workflows/temporal-worker-images.yml
           - argocd/applications/temporal
-          - argocd/applications/kargo
-          - argocd/applicationsets/platform.yaml
-          - packages/scripts/src/shared/__tests__/kargo.test.ts
     - image:
         repoURL: registry.ide-newton.ts.net/lab/temporal-worker
         imageSelectionStrategy: NewestBuild
