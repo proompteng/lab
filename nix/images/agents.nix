@@ -407,6 +407,7 @@ let
     bun -e 'const fs = require("node:fs"); const root = process.argv[1]; const expected = JSON.parse(fs.readFileSync(root + "/package.json", "utf8")).dependencies.effect; const actual = JSON.parse(fs.readFileSync(root + "/node_modules/effect/package.json", "utf8")).version; if (actual !== expected) throw new Error("agent-contracts Effect runtime mismatch")' "$out/app/packages/agent-contracts"
     bun "$out/app/packages/temporal-bun-sdk/scripts/verify-promise-consumer.ts" \
       "$out/app/services/agents" --compiled
+    bun "$out/app/services/agents/scripts/verify-built-server.ts" "$out/app/services/agents"
   '';
 
   scriptWrapper =

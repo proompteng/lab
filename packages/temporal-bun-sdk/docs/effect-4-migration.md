@@ -48,6 +48,12 @@ across its API. Do not pass Effect 3 values to an Effect 4 worker. Applications
 that only use the Promise client may keep a separate Effect version behind that
 Promise boundary.
 
+Bundlers must preserve each package's Effect resolution at that boundary. Vite SSR
+externalizes dependencies by default, which can make bundled SDK code resolve an
+application's different Effect major. The repository's Agents build uses the
+documented `ssr.noExternal: ['effect']` option to retain both versions and verifies
+the final Nitro server over HTTP. Test the built artifact, not only source imports.
+
 Common changes include:
 
 - `Effect.catchAll` becomes `Effect.catch`; `catchAllCause` becomes `catchCause`

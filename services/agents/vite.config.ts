@@ -12,6 +12,10 @@ export default defineConfig({
   resolve: {
     tsconfigPaths: true,
   },
+  ssr: {
+    // Keep the app's Effect 3 and the SDK's Effect 4 bound to their own importers.
+    noExternal: ['effect'],
+  },
   plugins: [
     tailwindcss(),
     tanstackStart({
