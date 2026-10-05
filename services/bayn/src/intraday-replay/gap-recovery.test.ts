@@ -213,6 +213,68 @@ describe('original-receipt gap recovery', () => {
 })
 
 describe('gap position lifecycle', () => {
+  test.each([100, 99] as const)('rejects a malformed session record before a valid %s exit quote', (bid) => {
+    const at = gapDecisionMs + 60_000
+    const f = gapFixture({
+      additional: [
+        {
+          availableAtMs: at - 2000,
+          eventAtMs: at - 2000,
+          channel: 'quotes',
+          symbol: 'AAPL',
+          bid: -1,
+          ask: 100,
+          bidSize: 100,
+          askSize: 100,
+        },
+        {
+          availableAtMs: at - 1000,
+          eventAtMs: at - 1000,
+          channel: 'quotes',
+          symbol: 'AAPL',
+          bid,
+          ask: bid,
+          bidSize: 100,
+          askSize: 100,
+        },
+      ],
+    })
+    const cursor = f.cursorAt(at)
+    expect([...cursor.projection.rejections.values()].flat().length).toBeGreaterThan(0)
+    const result = decideGapRecoveryExit(cursor, f.session, new Date(at).toISOString(), position)
+    expect(Result.isFailure(result)).toBeTrue()
+    if (Result.isFailure(result)) expect(JSON.stringify(result.failure)).toContain('rejected records')
+  })
+
+  test('rejects discarded session rejection evidence before evaluating an otherwise valid exit', () => {
+    const at = gapDecisionMs + 60_000
+    const f = gapFixture({
+      additional: [
+        {
+          availableAtMs: at - 1000,
+          eventAtMs: at - 1000,
+          channel: 'quotes',
+          symbol: 'AAPL',
+          bid: 100,
+          ask: 100,
+          bidSize: 100,
+          askSize: 100,
+        },
+      ],
+    })
+    const cursor = f.cursorAt(at)
+    const discarded = {
+      ...cursor,
+      projection: {
+        ...cursor.projection,
+        discardedRejectionsThroughMs: new Map([[`${gapRecoveryDefinition.sourceTopics.quotes}:0`, gapOpenMs + 60_000]]),
+      },
+    }
+    const result = decideGapRecoveryExit(discarded, f.session, new Date(at).toISOString(), position)
+    expect(Result.isFailure(result)).toBeTrue()
+    if (Result.isFailure(result)) expect(JSON.stringify(result.failure)).toContain('discarded rejection evidence')
+  })
+
   const observe = (at: number, bid: number, pendingExit: GapExitReason | null = null) => {
     const f = gapFixture({
       additional: [

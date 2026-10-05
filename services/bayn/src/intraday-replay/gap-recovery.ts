@@ -139,7 +139,7 @@ export enum GapExitAction {
   DeadlinePassed = 'DEADLINE_PASSED',
 }
 
-const originalSource = (cursor: HistoricalMarketCursor, atMs: number) =>
+const originalSource = (cursor: HistoricalMarketCursor, atMs: number, sessionOpenMs: number) =>
   Result.gen(function* () {
     const source = yield* Schema.decodeUnknownResult(SimulatedSnapshotSourceSchema, strictParseOptions)(cursor.source)
     if (
@@ -169,6 +169,11 @@ const originalSource = (cursor: HistoricalMarketCursor, atMs: number) =>
       return yield* Result.fail(
         failure('Gap recovery requires the frozen universe and an original-receipt cursor at the observation cut'),
       )
+    if (discardedRejectionsOverlap(cursor.projection, sessionOpenMs))
+      return yield* Result.fail(failure('Gap source cannot recover discarded rejection evidence'))
+    for (const rejections of cursor.projection.rejections.values())
+      if (rejections.some((entry) => entry.availableAtMs >= sessionOpenMs && entry.availableAtMs <= atMs))
+        return yield* Result.fail(failure('Gap source contains rejected records in the session'))
     return source
   })
 
@@ -244,13 +249,8 @@ export const observeGapRecoveryEndpoint = (
         : kind === GapEndpointKind.Opening
           ? session.openingAtMs
           : session.decisionAtMs
-    const source = yield* originalSource(cursor, atMs)
     const day = kind === GapEndpointKind.PreviousClose ? session.previous : session.session
-    if (discardedRejectionsOverlap(cursor.projection, Date.parse(day.openAt)))
-      return yield* Result.fail(failure('Gap endpoint cannot recover discarded rejection evidence'))
-    for (const rejections of cursor.projection.rejections.values())
-      if (rejections.some((entry) => entry.availableAtMs >= Date.parse(day.openAt) && entry.availableAtMs <= atMs))
-        return yield* Result.fail(failure('Gap endpoint source contains rejected records in the session'))
+    const source = yield* originalSource(cursor, atMs, Date.parse(day.openAt))
     const quotes = yield* Result.all(
       universe.map((symbol) => quoteObservation(cursor, symbol, atMs, Date.parse(day.openAt))),
     )
@@ -442,7 +442,7 @@ export const decideGapRecoveryExit = (
       atMs < entryMs
     )
       return yield* Result.fail(failure('Gap position fill time or observation is outside the lifecycle'))
-    yield* originalSource(cursor, atMs)
+    yield* originalSource(cursor, atMs, session.openMs)
     const quote = yield* quoteObservation(cursor, position.symbol, atMs, session.openMs)
     const fresh = quote.status === GapEndpointStatus.Available && quote.record !== null
     let reason = position.pendingExit
