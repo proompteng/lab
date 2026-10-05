@@ -279,8 +279,9 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-vV22nCwUWgyzccYnpwfHO6hgjZ3LrGU9f1zcOjENf+s=";
-    aarch64-linux = "sha256-Z6jMDdt9t9e9HJVMm0GgH7k9sM+kxDO90OAxEp1gKxg=";
+    # Draft discovery only. Replace both native hashes before review and merge.
+    x86_64-linux = lib.fakeHash;
+    aarch64-linux = lib.fakeHash;
   };
 
   installFilters = [
