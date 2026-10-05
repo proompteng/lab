@@ -66,7 +66,7 @@ export const SixBarRidgeSessionSchema = Schema.Struct({
   partition: Schema.Enum(SixBarRidgePartition),
 })
 export const SixBarRidgeArtifactSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.six-bar-ridge-artifact.v1'),
+  schemaVersion: Schema.Literal('bayn.six-bar-ridge-artifact.v2'),
   qualification: Schema.Literal('UNQUALIFIED'),
   controllerCoverage: Schema.Literal('UNKNOWN'),
   recipeHash: Sha256Schema,
@@ -77,6 +77,7 @@ export const SixBarRidgeArtifactSchema = Schema.Struct({
   allocationBudgetMicros: PositiveMicrosSchema,
   manifestHash: Sha256Schema,
   trainingDataHash: Sha256Schema,
+  trainingTargetMeanBps: Schema.Finite,
   fitCutoffAt: UtcInstantSchema,
   firstEvaluationDecisionAt: UtcInstantSchema,
   evaluationSessions: Schema.Array(SixBarRidgeSessionSchema).check(Schema.isMinLength(1)),
@@ -99,6 +100,7 @@ const ScoringBindingSchema = Schema.Struct({
   evaluation: Schema.Struct({
     sourceManifestHash: Sha256Schema,
     calendarHash: Sha256Schema,
+    requiredFeatureRowHashes: Schema.Array(Sha256Schema).check(Schema.isUnique()),
     sessionDate: IsoDateSchema,
     partition: Schema.Enum(SixBarRidgePartition),
     decisionAt: UtcInstantSchema,
@@ -183,6 +185,8 @@ export const scoreSixBarRidge = (input: unknown, candidatesInput: unknown, expec
       Schema.Array(SixBarRidgeFeatureSchema),
       strictParseOptions,
     )(candidatesInput)
+    if (candidates.length !== evaluation.requiredFeatureRowHashes.length)
+      return yield* Result.fail(fail('Ridge scoring requires every independently pinned candidate row'))
     const symbols = new Set<string>()
     const scores: { symbol: string; scoreBps: number }[] = []
     for (const candidate of candidates) {
@@ -190,6 +194,7 @@ export const scoreSixBarRidge = (input: unknown, candidatesInput: unknown, expec
         symbols.has(candidate.symbol) ||
         candidate.symbol === sixBarResearchDefinition.benchmarkSymbol ||
         candidate.featureDefinitionHash !== artifact.featureDefinitionHash ||
+        !evaluation.requiredFeatureRowHashes.includes(yield* canonicalHashV1Result(candidate)) ||
         candidate.sourceManifestHash !== evaluation.sourceManifestHash ||
         candidate.calendarHash !== evaluation.calendarHash ||
         candidate.availableAt < session.openAt ||

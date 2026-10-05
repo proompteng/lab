@@ -25,7 +25,7 @@ export enum SixBarRidgeLabelStatus {
   NoEntryFill = 'NO_ENTRY_FILL',
 }
 export const SixBarRidgeManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.six-bar-ridge-training-manifest.v1'),
+  schemaVersion: Schema.Literal('bayn.six-bar-ridge-training-manifest.v2'),
   featureDefinitionHash: Sha256Schema,
   recipeHash: Sha256Schema,
   provenance: SixBarRidgeProvenanceSchema,
@@ -34,7 +34,7 @@ export const SixBarRidgeManifestSchema = Schema.Struct({
   sessions: Schema.Array(
     Schema.Struct({
       ...SixBarRidgeSessionSchema.fields,
-      requiredFeatureRowHashes: Schema.Array(Sha256Schema).check(Schema.isUnique()),
+      requiredTrainingRowHashes: Schema.Array(Sha256Schema).check(Schema.isUnique()),
     }),
   ).check(Schema.isMinLength(1)),
 })
@@ -110,7 +110,7 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
           (previous.date >= session.date ||
             previous.closeAt >= session.openAt ||
             ranks[previous.partition] > ranks[session.partition])) ||
-        (session.partition !== SixBarRidgePartition.Training && session.requiredFeatureRowHashes.length > 0) ||
+        (session.partition !== SixBarRidgePartition.Training && session.requiredTrainingRowHashes.length > 0) ||
         (session.partition === SixBarRidgePartition.Training && session.closeAt >= manifest.fitCutoffAt)
       )
         return yield* Result.fail(fail('Ridge sessions must be complete, chronological, disjoint whole-day partitions'))
@@ -120,9 +120,12 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
       return yield* Result.fail(fail('Ridge fitting cutoff must precede a declared evaluation decision'))
     const trainingSessions = sessions.filter((session) => session.partition === SixBarRidgePartition.Training)
     const nonemptyTrainingDays = trainingSessions.filter(
-      (session) => session.requiredFeatureRowHashes.length > 0,
+      (session) => session.requiredTrainingRowHashes.length > 0,
     ).length
-    const requiredRows = trainingSessions.reduce((total, session) => total + session.requiredFeatureRowHashes.length, 0)
+    const requiredRows = trainingSessions.reduce(
+      (total, session) => total + session.requiredTrainingRowHashes.length,
+      0,
+    )
     if (nonemptyTrainingDays === 0 || rows.length !== requiredRows)
       return yield* Result.fail(fail('Ridge fit requires every declared training row and at least one nonempty day'))
     const orderedRows = [...rows].sort(
@@ -140,11 +143,11 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
       const features = row.features,
         label = row.label
       const session = trainingSessions.find((entry) => entry.date === features.sessionDate)
-      const hash = yield* canonicalHashV1Result(features)
+      const hash = yield* canonicalHashV1Result(row)
       const identity = [features.sessionDate, features.decisionAt, features.symbol].join('/')
       if (
         session === undefined ||
-        !session.requiredFeatureRowHashes.includes(hash) ||
+        !session.requiredTrainingRowHashes.includes(hash) ||
         seen.has(hash) ||
         identities.has(identity) ||
         features.symbol === sixBarResearchDefinition.benchmarkSymbol ||
@@ -167,7 +170,7 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
       if (!Number.isSafeInteger(pnl)) return yield* Result.fail(fail('Ridge label must be exact float64 micro-units'))
       seen.add(hash)
       identities.add(identity)
-      weights.push(1 / (nonemptyTrainingDays * session.requiredFeatureRowHashes.length))
+      weights.push(1 / (nonemptyTrainingDays * session.requiredTrainingRowHashes.length))
       targets.push(yield* product(pnl / budget, 10_000))
     }
     const means = [],
@@ -264,7 +267,7 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
         return yield* Result.fail(fail('Ridge solver residual exceeds float64 tolerance'))
     }
     const payload = {
-      schemaVersion: 'bayn.six-bar-ridge-artifact.v1',
+      schemaVersion: 'bayn.six-bar-ridge-artifact.v2',
       qualification: 'UNQUALIFIED',
       controllerCoverage: 'UNKNOWN',
       recipeHash: manifest.recipeHash,
@@ -275,14 +278,15 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
       allocationBudgetMicros: manifest.allocationBudgetMicros,
       manifestHash,
       trainingDataHash: yield* canonicalHashV1Result(orderedRows),
+      trainingTargetMeanBps: targetMean,
       fitCutoffAt: manifest.fitCutoffAt,
       firstEvaluationDecisionAt: evaluation.firstDecisionAt,
       evaluationSessions: sessions
         .filter((session) => session.partition !== SixBarRidgePartition.Training)
-        .map(({ requiredFeatureRowHashes: _, ...session }) => session),
+        .map(({ requiredTrainingRowHashes: _, ...session }) => session),
       trainingSessions: trainingSessions.map((session) => ({
         date: session.date,
-        rowCount: session.requiredFeatureRowHashes.length,
+        rowCount: session.requiredTrainingRowHashes.length,
       })),
       nonemptyTrainingDays,
       trainingRows: rows.length,

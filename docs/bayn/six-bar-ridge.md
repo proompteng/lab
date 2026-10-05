@@ -8,7 +8,10 @@ coverage `UNKNOWN`. A fitted coefficient is not evidence of profitability or per
 
 `fitSixBarRidge` in `services/bayn/src/intraday-replay/six-bar-ridge-fit.ts` accepts a manifest, rows, and an
 independently pinned manifest hash. The manifest binds the seven-feature definition, recipe, source revision,
-source and calendar identities, label definition, fixed allocation budget, complete sessions, and required feature rows.
+source and calendar identities, label definition, fixed allocation budget, complete sessions, and required training rows.
+The v2 manifest uses `requiredTrainingRowHashes` over each complete `{ features, label }` row, including the resolved
+P&L, status, completion time, and label evidence hash. These pins bind resolved material before fitting; they do not
+claim the labels were available when a prospective experiment was registered.
 A hash binds supplied content. It cannot prove source authenticity or that a manifest was frozen before outcomes.
 
 Sessions form chronological, disjoint training, validation, and holdout partitions. Every required training row must
@@ -38,15 +41,22 @@ remain solvable. Weighted centering of both the standardized columns and target 
 
 `decodeSixBarRidgeArtifact` and `scoreSixBarRidge` live in `six-bar-ridge.ts`. They use strict Effect schemas and the
 existing canonical SHA-256 implementation. Callers provide expected artifact and manifest hashes plus the source
-revision. Unknown fields and versions, reordered features, incompatible recipes, malformed dimensions, invalid
+revision. The v2 artifact includes the genuine day-weighted `trainingTargetMeanBps`, which can differ from the
+coordinate-adjusted intercept. Weaker unpublished v1 manifests and artifacts are rejected; there is no compatibility
+path. The numerical recipe remains v1 and unchanged. Unknown fields and versions, reordered features, incompatible recipes, malformed dimensions, invalid
 training counts, and inconsistent zero scales reject the artifact. Zero scale encodes constant status without a
 second flag that could disagree.
 
 The artifact retains the declared evaluation sessions, including dates, open/close bounds, first decisions, and
 validation or holdout partitions. The scorer's third argument contains `artifact` (the expected identities above) and
-`evaluation` (independently pinned source and calendar hashes, session date, partition, and decision time). The evaluation
+`evaluation` (independently pinned source and calendar hashes, session date, partition, decision time, and the unique
+complete `requiredFeatureRowHashes` set). Each pin hashes the full feature row, including its values and evidence ID.
+Candidate count and hash membership must match that set exactly, so omitted, extra, duplicated, or altered rows fail.
+An empty candidate set requires an explicitly empty expected set. The evaluation
 calendar must match the artifact. Its capture source can differ from the training source, allowing a later holdout capture.
-Callers must obtain these expected identities independently of the candidate rows; equality does not prove authenticity.
+Callers must obtain expected content pins independently of the rows being checked, such as from their trusted
+extractor output or a separately pinned manifest. Rehashing an unverified row is not an independent pin. Equality
+binds supplied content; it does not prove original-receipt access or source authenticity.
 
 The scorer applies the frozen training means, scales, intercept, and coefficients. Each candidate must match that
 evaluation source, calendar, date, and decision, carry the matching feature definition, and have a unique symbol.

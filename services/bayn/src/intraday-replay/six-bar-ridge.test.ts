@@ -58,14 +58,14 @@ const input = (
     openAt: `${date}T13:30:00.000Z`,
     closeAt: `${date}T20:00:00.000Z`,
     firstDecisionAt: `${date}T13:31:00.000Z`,
-    requiredFeatureRowHashes: rows
+    requiredTrainingRowHashes: rows
       .filter((entry) => entry.features.sessionDate === date)
-      .map((entry) => hash(entry.features))
+      .map((entry) => hash(entry))
       .sort(),
   })
   return {
     manifest: {
-      schemaVersion: 'bayn.six-bar-ridge-training-manifest.v1',
+      schemaVersion: 'bayn.six-bar-ridge-training-manifest.v2',
       featureDefinitionHash: definitionHash,
       recipeHash: hash(sixBarRidgeRecipe),
       provenance: {
@@ -93,23 +93,26 @@ const binding = (artifact: SixBarRidgeArtifact) => ({
   manifestHash: artifact.manifestHash,
   sourceRevision: artifact.provenance.sourceRevision,
 })
-const scoringBinding = (artifact: SixBarRidgeArtifact, date = '2026-09-04') => ({
+const scoringBinding = (artifact: SixBarRidgeArtifact, candidates = [feature(zeros)], date = '2026-09-04') => ({
   artifact: binding(artifact),
   evaluation: {
     sourceManifestHash: sha256('synthetic-source'),
     calendarHash: sha256('synthetic-calendar'),
+    requiredFeatureRowHashes: candidates.map((candidate) => hash(candidate)).sort(),
     sessionDate: date,
     partition: date === '2026-09-08' ? SixBarRidgePartition.Holdout : SixBarRidgePartition.Validation,
     decisionAt: `${date}T13:31:00.000Z`,
   },
 })
-const score = (artifact: SixBarRidgeArtifact, values: number[], symbol = 'AAPL') =>
-  Result.getOrThrow(scoreSixBarRidge(artifact, [feature(values, '2026-09-04', 0, symbol)], scoringBinding(artifact)))
+const score = (artifact: SixBarRidgeArtifact, values: number[], symbol = 'AAPL') => {
+  const candidates = [feature(values, '2026-09-04', 0, symbol)]
+  return Result.getOrThrow(scoreSixBarRidge(artifact, candidates, scoringBinding(artifact, candidates)))
+}
 const rebindRows = (data: Input) => {
   for (const session of data.manifest.sessions)
-    session.requiredFeatureRowHashes = data.rows
+    session.requiredTrainingRowHashes = data.rows
       .filter((entry) => entry.features.sessionDate === session.date)
-      .map((entry) => hash(entry.features))
+      .map((entry) => hash(entry))
       .sort()
   return data
 }
@@ -132,6 +135,7 @@ describe('offline six-bar ridge numeric oracles', () => {
     ]
     const targets = [61, -3, -11, 5, -27, 5, 5, 5]
     const artifact = fitted(input([{ date: '2026-09-01', rows: values.map((value, i) => row(value, targets[i]!)) }]))
+    expect(artifact.trainingTargetMeanBps).toBeCloseTo(5, 12)
     expect(artifact.intercept).toBeCloseTo(5, 12)
     expect(artifact.means).toEqual(zeros)
     expect(artifact.scales).toEqual([1, 1, 1, 1, 1, 1, 1])
@@ -156,6 +160,8 @@ describe('offline six-bar ridge numeric oracles', () => {
     const artifact = fitted(
       input([{ date: '2026-09-01', rows: [row([left, 0, 0, 0, 0, 0, 0], -1), row([right, 0, 0, 0, 0, 0, 0], 1)] }]),
     )
+    expect(artifact.trainingTargetMeanBps).toBe(0)
+    expect(artifact.intercept).toBeCloseTo(-0.5, 14)
     expect(artifact.scales[0]).toBe(scale)
     expect(artifact.coefficients[0]).toBeCloseTo(0.5, 14)
     expect(score(artifact, [left, 0, 0, 0, 0, 0, 0]).scores[0]!.scoreBps).toBeCloseTo(-0.5, 14)
@@ -173,6 +179,7 @@ describe('offline six-bar ridge numeric oracles', () => {
     expect(artifact.means[0]).toBe(1.5)
     expect(artifact.scales[0]).toBeCloseTo(1.65831239517769992455746636833534334, 13)
     expect(artifact.coefficients[0]).toBeCloseTo(1.73369023132214083021916938507785895, 13)
+    expect(artifact.trainingTargetMeanBps).toBeCloseTo(6.5, 13)
     expect(artifact.intercept).toBeCloseTo(6.5, 13)
     expect(artifact.nonemptyTrainingDays).toBe(2)
     expect(artifact.trainingRows).toBe(3)
@@ -406,7 +413,7 @@ describe('offline six-bar ridge artifact and scoring boundaries', () => {
   ] as const)('rejects invalid artifact %s', (mutation) => {
     const artifact = fitted()
     const changed = structuredClone(artifact) as unknown as Record<string, unknown>
-    if (mutation === 'version') changed['schemaVersion'] = 'bayn.six-bar-ridge-artifact.v2'
+    if (mutation === 'version') changed['schemaVersion'] = 'bayn.six-bar-ridge-artifact.v1'
     if (mutation === 'order') changed['featureOrder'] = [...artifact.featureOrder].reverse()
     if (mutation === 'scale') changed['scales'] = [-1, ...artifact.scales.slice(1)]
     if (mutation === 'constant-coefficient') changed['coefficients'] = [2, 2, 1, 0, 0, 0, 0]
@@ -432,10 +439,10 @@ describe('offline six-bar ridge artifact and scoring boundaries', () => {
     const artifact = fitted()
     const values = [1, 1, 0, 0, 0, 0, 0]
     const candidates = [feature(values, '2026-09-04', 0, 'MSFT'), feature(values, '2026-09-04', 0, 'AAPL')]
-    expect(Result.getOrThrow(scoreSixBarRidge(artifact, candidates, scoringBinding(artifact))).selectedSymbol).toBe(
-      'AAPL',
-    )
-    expect(Result.getOrThrow(scoreSixBarRidge(artifact, [], scoringBinding(artifact))).selectedSymbol).toBeNull()
+    expect(
+      Result.getOrThrow(scoreSixBarRidge(artifact, candidates, scoringBinding(artifact, candidates))).selectedSymbol,
+    ).toBe('AAPL')
+    expect(Result.getOrThrow(scoreSixBarRidge(artifact, [], scoringBinding(artifact, []))).selectedSymbol).toBeNull()
     expect(score(artifact, [-1, -1, 0, 0, 0, 0, 0]).selectedSymbol).toBeNull()
     const zero = fitted(input([{ date: '2026-09-01', rows: [row(zeros, 0)] }]))
     expect(score(zero, zeros).selectedSymbol).toBeNull()
@@ -475,11 +482,11 @@ describe('offline six-bar ridge declared evaluation binding', () => {
     const data = input(),
       artifact = fitted(data)
     expect(artifact.evaluationSessions).toEqual(
-      data.manifest.sessions.slice(1).map(({ requiredFeatureRowHashes: _, ...session }) => session),
+      data.manifest.sessions.slice(1).map(({ requiredTrainingRowHashes: _, ...session }) => session),
     )
-    const expected = scoringBinding(artifact, '2026-09-08')
-    expected.evaluation.sourceManifestHash = sha256('later-holdout-capture')
-    const candidate = { ...feature(zeros, '2026-09-08'), sourceManifestHash: expected.evaluation.sourceManifestHash }
+    const candidate = { ...feature(zeros, '2026-09-08'), sourceManifestHash: sha256('later-holdout-capture') }
+    const expected = scoringBinding(artifact, [candidate], '2026-09-08')
+    expected.evaluation.sourceManifestHash = candidate.sourceManifestHash
     expect(candidate.sourceManifestHash).not.toBe(artifact.provenance.sourceManifestHash)
     expect(Result.getOrThrow(scoreSixBarRidge(artifact, [candidate], expected)).selectedSymbol).toBe('AAPL')
   })
@@ -487,7 +494,7 @@ describe('offline six-bar ridge declared evaluation binding', () => {
   test.each(['sourceManifestHash', 'calendarHash'] as const)('rejects swapped candidate %s', (field) => {
     const artifact = fitted(),
       candidate = { ...feature(zeros), [field]: sha256('foreign') }
-    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], scoringBinding(artifact)))).toBe(true)
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], scoringBinding(artifact, [candidate])))).toBe(true)
   })
 
   test('rejects a foreign calendar even when every candidate agrees with it', () => {
@@ -495,8 +502,10 @@ describe('offline six-bar ridge declared evaluation binding', () => {
       expected = scoringBinding(artifact)
     expected.evaluation.calendarHash = sha256('foreign-calendar')
     const candidate = { ...feature(zeros), calendarHash: expected.evaluation.calendarHash }
-    for (const candidates of [[candidate], []])
+    for (const candidates of [[candidate], []]) {
+      expected.evaluation.requiredFeatureRowHashes = candidates.map((entry) => hash(entry))
       expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, expected))).toBe(true)
+    }
   })
 
   test.each(['partition', 'training', 'undeclared', 'false-date', 'before-first', 'at-close', 'after-close'] as const)(
@@ -519,8 +528,10 @@ describe('offline six-bar ridge declared evaluation binding', () => {
         sessionDate: expected.evaluation.sessionDate,
         decisionAt: expected.evaluation.decisionAt,
       }
-      for (const candidates of [[candidate], []])
+      for (const candidates of [[candidate], []]) {
+        expected.evaluation.requiredFeatureRowHashes = candidates.map((entry) => hash(entry))
         expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, expected))).toBe(true)
+      }
     },
   )
 
@@ -530,9 +541,12 @@ describe('offline six-bar ridge declared evaluation binding', () => {
     expect(Result.isSuccess(scoreSixBarRidge(artifact, [feature(zeros)], expected))).toBe(true)
     expected.evaluation.decisionAt = '2026-09-04T19:59:59.999Z'
     const candidate = { ...feature(zeros), decisionAt: expected.evaluation.decisionAt }
+    expected.evaluation.requiredFeatureRowHashes = [hash(candidate)]
     expect(Result.isSuccess(scoreSixBarRidge(artifact, [candidate], expected))).toBe(true)
+    expected.evaluation.requiredFeatureRowHashes = []
     expect(Result.isSuccess(scoreSixBarRidge(artifact, [], expected))).toBe(true)
     candidate.availableAt = '2026-09-04T13:29:59.999Z'
+    expected.evaluation.requiredFeatureRowHashes = [hash(candidate)]
     expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], expected))).toBe(true)
   })
 
@@ -584,6 +598,97 @@ describe('offline six-bar ridge declared evaluation binding', () => {
       Result.isFailure(
         decodeSixBarRidgeArtifact(changed, { ...binding(artifact), artifactHash: changed['artifactHash'] }),
       ),
+    ).toBe(true)
+  })
+})
+
+describe('offline six-bar ridge content pins', () => {
+  test.each(['pnl', 'status', 'completeAt', 'evidenceHash'] as const)(
+    'rejects changed label %s under the original complete training manifest pin',
+    (mutation) => {
+      const data = input([{ date: '2026-09-01', rows: [row(zeros, 0), row([1, 0, 0, 0, 0, 0, 0], 9)] }])
+      const pinned = hash(data.manifest),
+        originalFeatureHashes = data.rows.map((entry) => hash(entry.features))
+      const label = data.rows[0]!.label
+      if (mutation === 'pnl') label.netExecutionPnlMicros = '70000000'
+      if (mutation === 'status') label.status = SixBarRidgeLabelStatus.NoEntryFill
+      if (mutation === 'completeAt') label.completeAt = '2026-09-01T14:01:00.000Z'
+      if (mutation === 'evidenceHash') label.evidenceHash = sha256('different-label-evidence')
+      expect(data.rows.map((entry) => hash(entry.features))).toEqual(originalFeatureHashes)
+      expect(Result.isFailure(fitSixBarRidge(data.manifest, data.rows, pinned))).toBe(true)
+    },
+  )
+
+  test('rejects changed values even with a newly asserted evidence hash', () => {
+    const artifact = fitted(),
+      expected = scoringBinding(artifact)
+    const candidate = feature([10, 10, 0, 0, 0, 0, 0])
+    candidate.featureEvidenceHash = hash(candidate.values)
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], expected))).toBe(true)
+  })
+})
+
+describe('offline six-bar ridge exact candidate sets', () => {
+  test('rejects changed values under unchanged source, calendar, and evidence IDs', () => {
+    const artifact = fitted(),
+      original = feature(zeros),
+      expected = scoringBinding(artifact, [original])
+    expect(Result.isSuccess(scoreSixBarRidge(artifact, [original], expected))).toBe(true)
+    const changed = { ...original, values: [7, 7, 0, 0, 0, 0, 0] }
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [changed], expected))).toBe(true)
+  })
+
+  test('accepts candidate permutation but rejects missing, extra, duplicate, or substituted rows', () => {
+    const artifact = fitted(),
+      first = feature(zeros),
+      second = feature(zeros, '2026-09-04', 0, 'MSFT')
+    const expected = scoringBinding(artifact, [first, second])
+    expect(Result.getOrThrow(scoreSixBarRidge(artifact, [first, second], expected))).toEqual(
+      Result.getOrThrow(scoreSixBarRidge(artifact, [second, first], expected)),
+    )
+    const extra = feature(zeros, '2026-09-04', 0, 'GOOG')
+    for (const candidates of [[], [first], [first, second, extra], [first, first], [first, extra]])
+      expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, expected))).toBe(true)
+  })
+
+  test('requires an independent unique expected set, including explicit empty pins for cash', () => {
+    const artifact = fitted(),
+      candidate = feature(zeros),
+      expected = scoringBinding(artifact, [candidate])
+    const { requiredFeatureRowHashes: _, ...withoutPins } = expected.evaluation
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], { ...expected, evaluation: withoutPins }))).toBe(
+      true,
+    )
+    expected.evaluation.requiredFeatureRowHashes = [hash(candidate), hash(candidate)]
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate, candidate], expected))).toBe(true)
+    expected.evaluation.requiredFeatureRowHashes = [sha256('different-complete-row')]
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], expected))).toBe(true)
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [], expected))).toBe(true)
+    expected.evaluation.requiredFeatureRowHashes = []
+    expect(Result.getOrThrow(scoreSixBarRidge(artifact, [], expected)).selectedSymbol).toBeNull()
+  })
+
+  test('still rejects scoring overflow after independently pinned content validation', () => {
+    const artifact = fitted(),
+      candidate = feature([Number.MAX_VALUE, Number.MAX_VALUE, 0, 0, 0, 0, 0])
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], scoringBinding(artifact, [candidate])))).toBe(true)
+  })
+
+  test('rejects the weaker unpublished manifest and artifact versions', () => {
+    const data = input()
+    const legacyManifest = { ...data.manifest, schemaVersion: 'bayn.six-bar-ridge-training-manifest.v1' }
+    expect(Result.isFailure(fitSixBarRidge(legacyManifest, data.rows, hash(legacyManifest)))).toBe(true)
+    const artifact = fitted()
+    expect(artifact.schemaVersion).toBe('bayn.six-bar-ridge-artifact.v2')
+    expect(
+      Result.isFailure(
+        decodeSixBarRidgeArtifact({ ...artifact, schemaVersion: 'bayn.six-bar-ridge-artifact.v1' }, binding(artifact)),
+      ),
+    ).toBe(true)
+    const { trainingTargetMeanBps: _, ...withoutMean } = artifact
+    expect(Result.isFailure(decodeSixBarRidgeArtifact(withoutMean, binding(artifact)))).toBe(true)
+    expect(
+      Result.isFailure(decodeSixBarRidgeArtifact({ ...artifact, trainingTargetMeanBps: Infinity }, binding(artifact))),
     ).toBe(true)
   })
 })
