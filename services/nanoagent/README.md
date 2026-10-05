@@ -133,6 +133,8 @@ and undo files survive sleep/resume; only compressed seeds enter the 512 MiB roo
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and offline
 clean-home, existing-home and restart checks before the rootfs check. PR image verification repeats these checks
 with networking disabled and an empty home mount, so baked home files cannot mask a missing seed.
+If the 512 MiB capacity gate fails, a build-only diagnostic measures the minimum ext4 size with the same
+filesystem settings and headroom. The build still fails and produces no final image or validation receipt.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
 `/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
@@ -180,7 +182,7 @@ bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
 bash -n bootstrap-developer-tools.sh install-developer-tools.sh compact-developer-tools.sh test-developer-tools.sh developer-profile.sh
-bash -n validate-rootfs.sh validate-rootfs.test.sh
+bash -n validate-rootfs.sh validate-rootfs.test.sh measure-rootfs-size.sh
 # On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
 bash validate-rootfs.test.sh
 bash bootstrap-codex.sh --validate-manifest

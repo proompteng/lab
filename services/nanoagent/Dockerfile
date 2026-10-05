@@ -465,9 +465,11 @@ RUN apt-get update -o Acquire::Retries=3 && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 COPY --from=guest-rootfs / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
-RUN du --bytes --max-depth=2 /rootfs && \
+RUN --mount=type=bind,source=measure-rootfs-size.sh,target=/tmp/measure-rootfs-size.sh,readonly \
+    du --bytes --max-depth=2 /rootfs && \
     stat --printf='%n_bytes=%s\n' /rootfs/usr/share/nanoagent/* && \
-    validate-rootfs /rootfs /rootfs-validation.txt
+    { validate-rootfs /rootfs /rootfs-validation.txt || \
+      { bash /tmp/measure-rootfs-size.sh /rootfs; exit 1; }; }
 
 FROM guest-rootfs
 
