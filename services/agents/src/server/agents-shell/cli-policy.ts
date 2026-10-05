@@ -74,29 +74,6 @@ const CAT_FILE_FLAGS = new Set([
   '--unordered',
   '--no-unordered',
 ])
-const LS_REMOTE_FLAGS = new Set([
-  '-q',
-  '--quiet',
-  '--no-quiet',
-  '-h',
-  '--heads',
-  '-b',
-  '--branches',
-  '--no-branches',
-  '-t',
-  '--tags',
-  '--no-tags',
-  '--refs',
-  '--no-refs',
-  '--get-url',
-  '--no-get-url',
-  '--exit-code',
-  '--no-exit-code',
-  '--symref',
-  '--no-symref',
-  '--no-sort',
-])
-const LS_REMOTE_SCHEMES = new Set(['https', 'http', 'ssh', 'git', 'file'])
 const KUBECTL_GLOBAL_VALUES = new Set([
   '-n',
   '--namespace',
@@ -185,32 +162,6 @@ export const requireReadOnlyGitArgs = (args: readonly string[]) => {
         continue
       throw new Error(`git cat-file inspection does not allow option ${arg}; use git_write for filter execution`)
     }
-    return
-  }
-  if (command === 'ls-remote') {
-    let literal = false
-    let repository: string | undefined
-    for (let offset = index + 1; offset < args.length; offset += 1) {
-      const arg = args[offset]
-      if (!literal && arg === '--') {
-        literal = true
-        continue
-      }
-      if (!literal && arg.startsWith('-')) {
-        if (LS_REMOTE_FLAGS.has(arg) || arg.startsWith('--sort=')) continue
-        if (arg === '--sort' && offset + 1 < args.length) {
-          offset += 1
-          continue
-        }
-        throw new Error(
-          `git ls-remote inspection does not allow option ${arg}; use git_write for executable or transport overrides`,
-        )
-      }
-      repository ??= arg
-    }
-    const scheme = repository?.match(/^([a-z][a-z0-9+.-]*):\/\//i)?.[1]
-    if (repository && (/^[a-z][a-z0-9+.-]*::/i.test(repository) || (scheme && !LS_REMOTE_SCHEMES.has(scheme))))
-      throw new Error('git ls-remote inspection does not allow remote helpers; use git_write')
     return
   }
   if (READ_ONLY_GIT_COMMANDS.has(command)) return

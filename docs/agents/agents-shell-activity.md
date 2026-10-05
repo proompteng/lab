@@ -37,7 +37,8 @@ native model's thinking or overall lifecycle.
 The server exposes one generated catalog through the direct endpoint and tunnel. `tools/list` and tool replies include
 `_meta["agents-shell/catalog"]` with version `0.2.0` and a SHA-256 fingerprint of the catalog. After an authorized rollout,
 refresh both connector catalogs and compare these receipts; a cached connector catalog is not proof of deployed parity.
-`git ls-remote` permits standard ref-query flags and rejects executable overrides and custom remote-helper URLs.
+Use `git_write` with an owned `sessionId` for `ls-remote`. Git configuration can rewrite URLs and execute configured
+helpers, so remote inspection requires execution authority.
 `git cat-file` permits raw object and batch inspection while rejecting filter and textconv execution.
 `git rev-list` permits explicit commit-listing options and rejects output files, external diff drivers, and alternate-ref commands.
 

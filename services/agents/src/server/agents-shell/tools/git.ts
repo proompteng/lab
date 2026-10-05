@@ -11,7 +11,8 @@ export const createGitTools = (): EffectTool[] => [
   {
     name: 'git',
     title: 'Inspect git repository',
-    description: 'Run read-only git commands under /workspace. Pass argv after git.',
+    description:
+      'Inspect local Git metadata under /workspace. Pass argv after git. Use git_write with an owned session for ls-remote.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
     annotations: openReadOnlyAnnotations,
@@ -40,9 +41,9 @@ export const createGitTools = (): EffectTool[] => [
   },
   {
     name: 'git_write',
-    title: 'Run mutating git',
+    title: 'Execute Git in repo session',
     description:
-      'Run repository-changing git commands in an owned repo session. Pass argv after git and its sessionId.',
+      'Run Git commands that may change files or execute configured helpers. Pass argv after git and an owned sessionId.',
     inputSchema: GitWriteInputSchema,
     outputSchema: CommandResultSchema,
     annotations: destructiveAnnotations,

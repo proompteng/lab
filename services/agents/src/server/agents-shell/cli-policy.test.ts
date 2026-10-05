@@ -9,7 +9,6 @@ describe('read-only CLI inspection', () => {
     ['cat-file', '-t', 'HEAD'],
     ['remote', '-v'],
     ['worktree', 'list'],
-    ['ls-remote', 'origin'],
     ['--no-pager', 'diff'],
   ])('accepts git %j', (...args) => {
     expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
@@ -49,8 +48,9 @@ describe('read-only CLI inspection', () => {
   })
 })
 
-describe('ls-remote executable and transport boundaries', () => {
+describe('remote Git execution requires execution authority', () => {
   it.each([
+    ['ls-remote', 'origin'],
     ['ls-remote', '--upload-pack=touch /tmp/should-not-run', 'origin'],
     ['ls-remote', '--upload-pack', 'touch /tmp/should-not-run', 'origin'],
     ['ls-remote', 'origin', '--upload-p=touch /tmp/should-not-run'],
@@ -58,16 +58,12 @@ describe('ls-remote executable and transport boundaries', () => {
     ['ls-remote', 'custom::repository'],
     ['ls-remote', 'custom://repository'],
     ['ls-remote', 'HTTPS://example.test/repository'],
-  ])('rejects git %j', (...args) => {
-    expect(() => requireReadOnlyGitArgs(args)).toThrow()
-  })
-  it.each([
     ['ls-remote', '--heads', '--tags', 'origin', 'refs/heads/main'],
     ['--no-pager', 'ls-remote', '--symref', '--sort=version:refname', 'https://github.com/example/repo.git'],
     ['ls-remote', '--sort', '-version:refname', '--refs', 'git@example.test:repo.git'],
     ['ls-remote', 'file:///tmp/repository'],
-  ])('retains git %j', (...args) => {
-    expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
+  ])('rejects git %j', (...args) => {
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
   })
 })
 

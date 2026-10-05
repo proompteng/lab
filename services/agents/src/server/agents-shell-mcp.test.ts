@@ -616,6 +616,80 @@ printf '%s\\n' "$@"
     await server.close()
   })
 
+  it('requires an owned session for configured Git remote helpers', async () => {
+    const config = makeConfig()
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const auth = makeAuth()
+    const session = await runner.openRepoSession({ name: 'remote-helper-test' }, auth)
+    const marker = join(config.workspaceRoot, 'remote-helper.called')
+    const helper = join(config.workspaceRoot, 'remote-helper')
+    writeFileSync(
+      helper,
+      `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'invoked')
+const result = require('node:child_process').spawnSync('git-upload-pack', [${JSON.stringify(join(config.workspaceRoot, 'origin.git'))}], { stdio: 'inherit' })
+process.exit(result.status ?? 1)
+`,
+    )
+    chmodSync(helper, 0o700)
+    const helperOperand = helper.replaceAll('%', '%%').replaceAll(' ', '% ')
+    execFileSync('git', [
+      '-C',
+      session.worktree,
+      'config',
+      `url.ext::${helperOperand} .insteadOf`,
+      'https://safe.example/',
+    ])
+    execFileSync('git', ['-C', session.worktree, 'config', 'remote.origin.url', 'https://safe.example/repo'])
+    execFileSync('git', ['-C', session.worktree, 'config', 'protocol.ext.allow', 'always'])
+    const inspector = await connectServer(config, makeAuth(['agents-shell.read']), runner)
+    const writer = await connectServer(config, auth, runner)
+    const foreign = await connectServer(
+      config,
+      { ...auth, subject: 'user-2', payload: { ...auth.payload, sub: 'user-2' } },
+      runner,
+    )
+    try {
+      for (const remote of ['origin', 'https://safe.example/repo']) {
+        const result = await inspector.client.callTool({
+          name: 'git',
+          arguments: { sessionId: session.sessionId, args: ['ls-remote', remote] },
+        })
+        expect(result.isError).toBe(true)
+        expect(JSON.stringify(result.content)).toContain('git_write')
+        expect(existsSync(marker)).toBe(false)
+      }
+      const missingSession = await inspector.client.callTool({
+        name: 'git_write',
+        arguments: { args: ['ls-remote', 'origin'] },
+      })
+      expect(missingSession.isError).toBe(true)
+      expect(existsSync(marker)).toBe(false)
+      const denied = await foreign.client.callTool({
+        name: 'git_write',
+        arguments: { sessionId: session.sessionId, args: ['ls-remote', 'origin'] },
+      })
+      expect(denied.isError).toBe(true)
+      expect(existsSync(marker)).toBe(false)
+      const allowed = await writer.client.callTool({
+        name: 'git_write',
+        arguments: { sessionId: session.sessionId, args: ['ls-remote', 'origin'] },
+      })
+      expect(allowed.isError).not.toBe(true)
+      expect(allowed.structuredContent).toMatchObject({ ok: true, taskId: session.sessionId })
+      expect((allowed.structuredContent as { stdout: string }).stdout).toContain('refs/heads/main')
+      expect(existsSync(marker)).toBe(true)
+    } finally {
+      for (const connection of [inspector, writer, foreign]) {
+        await connection.clientTransport.close()
+        await connection.serverTransport.close()
+        await connection.client.close()
+        await connection.server.close()
+      }
+    }
+  })
+
   it('opens an isolated repo session and routes repo tools through its worktree', async () => {
     const config = makeConfig()
     const baseSha = initializeRepoFixture(config)
