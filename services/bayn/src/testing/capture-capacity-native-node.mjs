@@ -10,6 +10,7 @@ import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 import { canonicalHashV1, sha256 } from '../hash.ts'
 import { observeConsumedRecords } from './capture-capacity-iterator.ts'
 import { observeCapacityIo } from './capture-capacity-io.mjs'
+import { terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
@@ -915,7 +916,7 @@ const program = Effect.gen(function* () {
           cpuCores,
           memoryPeakBytes: memoryPeak(),
           heartbeatP99Ms: percentile(heartbeat, 0.99),
-          heartbeatMaxMs: Math.max(0, ...heartbeat),
+          heartbeatMaxMs: terminalHeartbeatMaximum(wholeArmDiagnostics),
           sqlProbeMaxMs: Math.max(0, ...sqlLatency),
           peakBacklog,
           peakQueued,

@@ -69,8 +69,8 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
   const ended = safe(({ request }) => {
     const row = requests.get(request)
     if (row && !disposed) {
-      row.bodyEndCallbackAt = now()
-      row.completedPhase = phase(row.bodyEndCallbackAt)
+      row.responseFinishDiagnosticCallbackAt = now()
+      row.completedPhase = phase(row.responseFinishDiagnosticCallbackAt)
     }
   })
   const errored = safe(({ request }) => {
@@ -238,7 +238,7 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
         serverSamples,
         stages,
         limitations:
-          'Client/server HTTP timestamps are same-process monotonic callback observations, not physical wire times. PostgreSQL ages are computed solely on the server clock; catalog sampling adds diagnostic load. SQL tags exclude separate BEGIN/COMMIT and pool acquisition; concurrent work can delay all callbacks.',
+          'Client/server HTTP timestamps are same-process monotonic callback observations, not physical wire times. Node 24 response.finish is a response-header parser callback, not body consumption. PostgreSQL ages are computed solely on the server clock; catalog sampling adds diagnostic load. SQL tags exclude separate BEGIN/COMMIT and pool acquisition; concurrent work can delay all callbacks.',
       }
       const text = JSON.stringify({ capacityIoDiagnostics: report })
       if (Buffer.byteLength(text) + 1 <= 128 * 1024) return text

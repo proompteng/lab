@@ -40,9 +40,9 @@ test('correlates same-clock callbacks, preserves server ages, and detaches obser
     now = 8
     response.emit('finish')
     now = 9
-    request.emit('response', { statusCode: 200 })
-    now = 10
     publish('http.client.response.finish', request)
+    now = 10
+    request.emit('response', { statusCode: 200 })
     observer.endSink(stage, true)
     const sql = observer.beginSql('lock')
     now = 11
@@ -63,7 +63,8 @@ test('correlates same-clock callbacks, preserves server ages, and detaches obser
     assert.equal(result.failure, null)
     assert.equal(result.http.length, 1)
     assert.equal(result.http[0].serverRequestAt, 4)
-    assert.equal(result.http[0].bodyEndCallbackAt, 10)
+    assert.equal(result.http[0].responseFinishDiagnosticCallbackAt, 9)
+    assert.equal(result.http[0].headersAt, 10)
     assert.equal(result.http[0].completedPhase, 'input-after-invalidation')
     assert.equal(result.serverSamples[0].rows[0].stateAgeMs, 20)
     assert.equal(result.sql[0].finishedAt, 11)
