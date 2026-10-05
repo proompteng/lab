@@ -711,6 +711,12 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+`bayn-gap-recovery` is an offline, original-receipt decision replay command in the
+service image. It implements the fixed gap-recovery entry rule, with a separate
+pure position-exit evaluator, but does not replace the active strategy or submit
+orders. See [the gap-recovery contract](../../docs/bayn/gap-recovery.md) for exact
+inputs, limitations, and the command.
+
 `src/intraday-replay/six-bar-features.ts` extracts a separate offline research observation from an original-capture
 cursor. Each candidate and SPY require six exact consecutive completed regular-session minute bars. The seven
 ordered values are the candidate's one-minute close return, five-minute return relative to SPY, SPY's five-minute
