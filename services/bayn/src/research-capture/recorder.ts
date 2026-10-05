@@ -317,9 +317,12 @@ export const makeResearchCaptureRecorder = (
       }
     }
     const worker = Effect.gen(function* () {
+      let waitForBatch = true
       while (accepting) {
-        yield* Effect.sleep(options.flushIntervalMs)
+        if (waitForBatch) yield* Effect.sleep(options.flushIntervalMs)
+        else yield* Effect.yieldNow
         yield* serial.withPermit(drain)
+        waitForBatch = (yield* Queue.size(queue)) === 0
       }
     })
     yield* worker.pipe(

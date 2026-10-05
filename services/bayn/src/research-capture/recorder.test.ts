@@ -166,6 +166,110 @@ test('capture admission is synchronous, immutable, and finalized exactly once', 
     }),
   ))
 
+test('a completed write drains waiting receipts immediately while initial and idle batching still wait', () =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(100)
+      const saved = memory()
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      let attempts = 0
+      let activeWrites = 0
+      let maximumActiveWrites = 0
+      const recorder = yield* makeResearchCaptureRecorder(
+        {
+          ...saved.store,
+          append: (bytes) =>
+            Effect.gen(function* () {
+              attempts++
+              activeWrites++
+              maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites)
+              if (attempts === 1) {
+                yield* Deferred.succeed(entered, undefined)
+                yield* Deferred.await(release)
+              }
+              yield* saved.store.append(bytes)
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  activeWrites--
+                }),
+              ),
+            ),
+        },
+        options,
+      )
+      recorder.record(captureEvent('STARTED'), 100)
+      yield* TestClock.adjust(options.flushIntervalMs - 1)
+      expect(attempts).toBe(0)
+      yield* TestClock.adjust(1)
+      yield* Deferred.await(entered)
+      recorder.record(marketEvent, 110)
+      expect(attempts).toBe(1)
+      yield* Deferred.succeed(release, undefined)
+      yield* TestClock.adjust(0)
+      expect(saved.chunks).toHaveLength(2)
+      expect(yield* Clock.currentTimeMillis).toBe(110)
+      expect(maximumActiveWrites).toBe(1)
+      expect((yield* recorder.status).persistedReceipts).toBe(2)
+      recorder.record(captureEvent('STOPPED'), 110)
+      yield* TestClock.adjust(options.flushIntervalMs - 1)
+      expect(saved.chunks).toHaveLength(2)
+      yield* TestClock.adjust(1)
+      expect(saved.chunks).toHaveLength(3)
+      yield* TestClock.adjust(options.flushIntervalMs * 2)
+      expect(attempts).toBe(3)
+      const seal = requireSeal(yield* recorder.finish)
+      expect(yield* recorder.finish).toEqual(seal)
+      expect(saved.seals).toHaveLength(1)
+      expect(seal.persistedReceipts).toBe(3)
+      expect(seal.invalidations).toEqual([])
+      const verified = Result.getOrThrow(verifyResearchCapture(saved.chunks, saved.seals[0]))
+      expect(verified.structurallyClosed).toBe(true)
+    }),
+  ))
+
+test('immediate backlog draining yields to other fibers and stops when admission closes', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const secondWrite = yield* Deferred.make<void>()
+      let attempts = 0
+      let keepRecording = true
+      const recorder = yield* makeResearchCaptureRecorder(
+        {
+          ...saved.store,
+          append: (bytes) =>
+            Effect.gen(function* () {
+              attempts++
+              if (keepRecording) recorder.record(marketEvent)
+              if (attempts === 2) yield* Deferred.succeed(secondWrite, undefined)
+              yield* saved.store.append(bytes)
+            }),
+        },
+        options,
+      )
+      const peer = yield* Effect.gen(function* () {
+        yield* Deferred.await(secondWrite)
+        keepRecording = false
+        return attempts
+      }).pipe(Effect.forkChild)
+      recorder.record(captureEvent('STARTED'))
+      yield* TestClock.adjust(options.flushIntervalMs)
+      expect(yield* Fiber.join(peer)).toBe(2)
+      yield* TestClock.adjust(0)
+      expect(attempts).toBe(3)
+      const seal = requireSeal(yield* recorder.finish)
+      expect(seal.persistedReceipts).toBe(3)
+      recorder.record(marketEvent)
+      yield* TestClock.adjust(options.flushIntervalMs * 2)
+      expect(attempts).toBe(3)
+      expect(yield* recorder.finish).toEqual(seal)
+      expect(saved.seals).toHaveLength(1)
+      expect(seal.invalidations).toEqual([])
+    }),
+  ))
+
 test.each(['candidate', 'serialized'] as const)(
   'receipt admission preserves the %s validation boundary',
   async (boundary) => {
