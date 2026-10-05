@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 
 export const terminalHeartbeatMaximum = ({ heartbeatMaxMs, pendingHeartbeatLatenessMs }) =>
   Math.max(heartbeatMaxMs, pendingHeartbeatLatenessMs ?? 0)
+
+export const capacityCorpusHash = (records) => {
+  const hash = createHash('sha256').update('bayn.capacity-corpus.v1\n')
+  for (const record of records)
+    hash.update(`${record.partition}:${record.timestamp}:${record.value.byteLength}\n`).update(record.value)
+  return hash.digest('hex')
+}
 
 const counterKeys = [
   'threadUserUs',

@@ -10,7 +10,7 @@ import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 import { canonicalHashV1, sha256 } from '../hash.ts'
 import { observeConsumedRecords } from './capture-capacity-iterator.ts'
 import { observeCapacityIo } from './capture-capacity-io.mjs'
-import { terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
+import { capacityCorpusHash, terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
@@ -33,7 +33,16 @@ assert.equal(sha256(planBytes), expectedPlanHash)
 const profileEnabled = process.env.BAYN_TEST_CAPTURE_CPU_PROFILE === '1'
 const ioEnabled = process.env.BAYN_TEST_CAPTURE_IO_DIAGNOSTICS === '1'
 assert.ok(!(profileEnabled && ioEnabled), 'Run one diagnostic mode at a time')
-if (profileEnabled || ioEnabled)
+const attributionMode = process.argv[6] ?? null
+assert.ok(attributionMode === null || attributionMode === 'full' || attributionMode === 'proof-light')
+const proofLight = attributionMode === 'proof-light'
+const attributionAnchor = Number(process.argv[8])
+if (attributionMode !== null) {
+  assert.ok(!profileEnabled && !ioEnabled, 'Attribution uses neither profiler nor I/O probes')
+  assert.match(process.argv[7] ?? '', /^[0-9a-f]{64}$/)
+  assert.ok(Number.isSafeInteger(attributionAnchor) && attributionAnchor >= 0)
+}
+if (profileEnabled || ioEnabled || attributionMode !== null)
   console.log(JSON.stringify({ instrumentedDiagnostic: true, capacityQualification: false }))
 const sourceTopics = JSON.parse(readFileSync(process.argv[3], 'utf8'))
 const execution = JSON.parse(readFileSync(process.argv[4], 'utf8'))
@@ -522,6 +531,7 @@ const program = Effect.gen(function* () {
         let started
         let cpuStart
         let firstInvalidation = null
+        let commonInputCheckpoint = null
         let diagnosticFailure
         let inputStartSinkBaseline = null
         let latestCaptureStatus = null
@@ -545,7 +555,9 @@ const program = Effect.gen(function* () {
             name,
             phase: started === undefined ? 'setup' : 'input',
             elapsedMs,
-            verifiedNativeRecords: accepted,
+            verifiedNativeRecords: proofLight ? null : accepted,
+            deliveredRecords: accepted,
+            perRecordProof: proofLight ? 'OMITTED_NON_QUALIFYING' : 'FULL',
             published,
             admittedReceipts,
             admittedMarketRecords,
@@ -615,33 +627,36 @@ const program = Effect.gen(function* () {
             consume: async (...input) => {
               const source = await transport.consume(...input)
               const observed = observeConsumedRecords(source, (record) => {
-                const key = `${record.topic}:${record.partition}`
-                assert.equal(BigInt(record.offset), BigInt((seenOffsets.get(key) ?? -1) + 1))
-                seenOffsets.set(key, Number(record.offset))
-                const symbol = JSON.parse(record.value).symbol
-                const projection = Effect.runSync(market.readForLiquidation).projection
-                const current = projection.quotes.get(symbol)
-                assert.ok(current)
-                assert.equal(projection.epoch, nativeEpoch)
-                assert.ok(Number.isSafeInteger(current.availableAtMs))
-                assert.ok(current.availableAtMs >= arrivalLowerBound && current.availableAtMs <= Date.now())
-                assert.ok(current.availableAtMs >= arrivalMaxMs)
-                arrivalMinMs = Math.min(arrivalMinMs, current.availableAtMs)
-                arrivalMaxMs = current.availableAtMs
-                for (const bin of arrivals) {
-                  const window = Math.floor(current.availableAtMs / bin.widthMs)
-                  if (bin.window !== window) {
-                    bin.window = window
-                    bin.count = 0
+                let projection
+                if (!proofLight) {
+                  const key = `${record.topic}:${record.partition}`
+                  assert.equal(BigInt(record.offset), BigInt((seenOffsets.get(key) ?? -1) + 1))
+                  seenOffsets.set(key, Number(record.offset))
+                  const symbol = JSON.parse(record.value).symbol
+                  projection = Effect.runSync(market.readForLiquidation).projection
+                  const current = projection.quotes.get(symbol)
+                  assert.ok(current)
+                  assert.equal(projection.epoch, nativeEpoch)
+                  assert.ok(Number.isSafeInteger(current.availableAtMs))
+                  assert.ok(current.availableAtMs >= arrivalLowerBound && current.availableAtMs <= Date.now())
+                  assert.ok(current.availableAtMs >= arrivalMaxMs)
+                  arrivalMinMs = Math.min(arrivalMinMs, current.availableAtMs)
+                  arrivalMaxMs = current.availableAtMs
+                  for (const bin of arrivals) {
+                    const window = Math.floor(current.availableAtMs / bin.widthMs)
+                    if (bin.window !== window) {
+                      bin.window = window
+                      bin.count = 0
+                    }
+                    bin.count++
+                    bin.maximumRecords = Math.max(bin.maximumRecords, bin.count)
                   }
-                  bin.count++
-                  bin.maximumRecords = Math.max(bin.maximumRecords, bin.count)
+                  assert.equal(current.value.sourcePartition, record.partition)
+                  assert.equal(current.value.sourceOffset, record.offset)
+                  assert.equal(current.recordHash, sha256(record.value))
                 }
-                assert.equal(current.value.sourcePartition, record.partition)
-                assert.equal(current.value.sourceOffset, record.offset)
-                assert.equal(current.recordHash, sha256(record.value))
                 accepted++
-                assert.equal(projection.sequence, accepted)
+                if (projection !== undefined) assert.equal(projection.sequence, accepted)
                 peakBacklog = Math.max(peakBacklog, published - accepted)
                 peakQueued = Math.max(peakQueued, source.queuedRecords())
                 assert.equal(diagnosticFailure, undefined)
@@ -651,6 +666,7 @@ const program = Effect.gen(function* () {
                 )
                 if (invalidatedAtCount !== undefined) progressAfterFailure = accepted - invalidatedAtCount
                 if (accepted >= plan.faults.triggerAfterRecords) arm.inject = true
+                if (attributionMode !== null && accepted === 1000) commonInputCheckpoint = structuredClone(snapshot())
               })
               return {
                 queuedRecords: () => source.queuedRecords(),
@@ -892,12 +908,16 @@ const program = Effect.gen(function* () {
         assert.equal(state.bootstrap.epoch, nativeEpoch)
         const stateHash = canonicalHashV1(deterministicState(state.projection, topics))
         assert.equal(stateHash, expectedStateHash)
+        if (proofLight) arrivalMaxMs = Date.now()
         const captureStatus = recorder ? yield* recorder.status : undefined
         const report = {
           name,
           enabled,
           fault,
           accepted,
+          perRecordProof: proofLight ? 'OMITTED_NON_QUALIFYING' : 'FULL',
+          arrivalClockEvidence: proofLight ? 'FINAL_READBACK_BOUND_ONLY' : 'PER_RECORD',
+          commonInputCheckpoint,
           rejected: 0,
           ignored: 0,
           stateHash,
@@ -908,7 +928,7 @@ const program = Effect.gen(function* () {
           nativeEpoch,
           bootstrapEpoch: state.bootstrap.epoch,
           arrivalLowerBound,
-          arrivalMinMs,
+          arrivalMinMs: proofLight ? null : arrivalMinMs,
           arrivalMaxMs,
           pgCancellationMs: arm.pgCancellationMs ?? null,
           pgCancelledQuery: arm.pgCancelledQuery ?? null,
@@ -938,7 +958,12 @@ const program = Effect.gen(function* () {
         reported = true
         assert.equal(diagnosticFailure, undefined)
         assert.ok(peakRetained <= 1024 && peakPayload <= 4 * 1024 ** 2, 'Capture retention exceeded its frozen bound')
-        if (enabled && !fault && rate) assert.deepEqual(captureStatus.invalidations, [])
+        if (enabled && !fault && rate && attributionMode === null) assert.deepEqual(captureStatus.invalidations, [])
+        if (enabled && attributionMode !== null)
+          assert.ok(
+            captureStatus.invalidations.every((reason) => reason === CaptureInvalidation.Overflow),
+            'Attribution stopped on an unrelated capture failure',
+          )
         if (fault) {
           assert.ok(arm.injected)
           assert.ok(captureStatus.invalidations.includes(CaptureInvalidation.Persistence))
@@ -1094,6 +1119,58 @@ const program = Effect.gen(function* () {
       )
       result.arm.objects.clear()
     })
+  if (attributionMode !== null) {
+    const data = dataFor(plan.normal.recordsPerArm, attributionAnchor)
+    const corpusHash = capacityCorpusHash(data)
+    assert.equal(corpusHash, process.argv[7], 'Attribution input must match the frozen corpus')
+    console.log(
+      JSON.stringify({
+        attributionInput: {
+          mode: attributionMode,
+          processId: process.pid,
+          corpusHash,
+          recordsPerArm: data.length,
+          anchor: attributionAnchor,
+        },
+      }),
+    )
+    const base = yield* runArm(
+      `attribution-${attributionMode}-disabled`,
+      false,
+      data,
+      plan.normal.targetRecordsPerSecond,
+      plan.normal.producerBatchSize,
+    )
+    const enabled = yield* runArm(
+      `attribution-${attributionMode}-enabled`,
+      true,
+      data,
+      plan.normal.targetRecordsPerSecond,
+      plan.normal.producerBatchSize,
+    )
+    yield* validateClosed(enabled)
+    assert.equal(base.report.stateHash, enabled.report.stateHash)
+    assert.ok(
+      enabled.report.cpuCores - base.report.cpuCores <= plan.performancePass.maximumNormalEnabledIncrementalCpuCores,
+    )
+    assert.ok(
+      enabled.report.heartbeatP99Ms - base.report.heartbeatP99Ms <=
+        plan.performancePass.maximumNormalEnabledP99IncreaseMs,
+    )
+    assert.equal(totalRecords, 100000)
+    assert.ok(base.report.commonInputCheckpoint && enabled.report.commonInputCheckpoint)
+    console.log(
+      JSON.stringify({
+        attributionPair: {
+          mode: attributionMode,
+          corpusHash,
+          capacityQualification: false,
+          reports: [base.report, enabled.report],
+        },
+      }),
+    )
+    return
+  }
   for (let repeat = 0; repeat < plan.normal.pairedRepetitions; repeat++) {
     const data = dataFor(plan.normal.recordsPerArm, Date.now() - 1000)
     const base = yield* runArm(
@@ -1161,7 +1238,13 @@ try {
   )
   console.log(
     JSON.stringify({
-      capacityResult: profileEnabled || ioEnabled ? 'INSTRUMENTED_DIAGNOSTIC_ONLY' : 'PASS',
+      capacityResult:
+        attributionMode !== null
+          ? 'NON_QUALIFYING_ATTRIBUTION'
+          : profileEnabled || ioEnabled
+            ? 'INSTRUMENTED_DIAGNOSTIC_ONLY'
+            : 'PASS',
+      capacityQualification: attributionMode === null && !profileEnabled && !ioEnabled,
       planHash: sha256(planBytes),
       totalRecords,
       memoryPeakBytes: memoryPeak(),
@@ -1176,3 +1259,4 @@ try {
   objectServer.closeAllConnections()
   await new Promise((resolve) => objectServer.close(resolve))
 }
+if (attributionMode !== null || profileEnabled || ioEnabled) process.exitCode = 42

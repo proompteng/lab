@@ -122,8 +122,11 @@ if [[ "$mode" == --capture-capacity ]]; then
     --env BAYN_TEST_KAFKA_USERNAME --env BAYN_TEST_KAFKA_PASSWORD --env BAYN_TEST_POSTGRES_URL \
     --env BAYN_TEST_CAPTURE_CPU_PROFILE \
     --env BAYN_TEST_CAPTURE_IO_DIAGNOSTICS \
+    --env BAYN_TEST_CAPTURE_ATTRIBUTION \
+    --env BAYN_TEST_CAPTURE_ATTRIBUTION_CORPUS_HASH --env BAYN_TEST_CAPTURE_ATTRIBUTION_ANCHOR \
     --volume "$root:$root:ro" --workdir "$root" "$node_image" \
-    /bin/sh -ec 'timeout --version; exec timeout --signal=KILL 240s node "$@"' capacity-worker \
+    /bin/sh -ec 'timeout --version; exec timeout --signal=KILL 240s /bin/sh "$@"' capacity-worker \
+    "$root/services/bayn/scripts/run-capture-capacity-worker.sh" \
     "$directory/capture-capacity-native-node.js" "$plan" \
     "$directory/source-topics.json" "$directory/execution-controller.json" "$plan_hash"
   state=$(timeout --kill-after=1s 2s docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}} {{.RestartCount}}' "$capacity_name")
