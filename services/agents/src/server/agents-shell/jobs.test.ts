@@ -202,6 +202,24 @@ describe('shell output pages', () => {
 
 describe('execution receipts and bounded replies', () => {
   it.each(['utf8', 'base64'] as const)(
+    'rejects a budget that fits metadata but cannot advance retained %s output',
+    (outputEncoding) => {
+      const job = completedJob('small-budget')
+      appendTail(job.stdout, Buffer.from('雪'), 1024)
+      appendTail(job.stderr, Buffer.from('雪'), 1024)
+      const cursor = { jobId: job.id, stdoutOffset: 0, stderrOffset: 0, outputEncoding }
+      const consumed = readJobOutput(job, { ...cursor, stdoutOffset: 3, stderrOffset: 3 }, 4096)
+      const metadataBytes = Buffer.byteLength(JSON.stringify(jsonTextResult(consumed))) + REPLY_META_RESERVE_BYTES
+      job.cwd += 'x'.repeat(Math.floor((4096 - metadataBytes) / 2))
+      expect(() => readJobOutput(job, cursor, 4096)).toThrow('reply budget is too small for readable output')
+      const page = readJobOutput(job, cursor, 8192)
+      expect(Buffer.from(page.stdout, outputEncoding).toString()).toBe('雪')
+      expect(Buffer.from(page.stderr, outputEncoding).toString()).toBe('雪')
+      expect(page.stdoutNextOffset).toBe(3)
+      expect(page.stderrNextOffset).toBe(3)
+    },
+  )
+  it.each(['utf8', 'base64'] as const)(
     'pages both streams within the whole reply budget using %s',
     (outputEncoding) => {
       const job = completedJob('pages')

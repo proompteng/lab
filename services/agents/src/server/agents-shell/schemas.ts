@@ -128,10 +128,10 @@ export const ExecInputSchema = Schema.Struct({
   }),
   cwd: Schema.optional(
     Schema.String.annotations({
-      description: 'Working directory; relative to the repo session when sessionId is set.',
+      description: 'Working directory relative to the owned repo session.',
     }),
   ),
-  sessionId: Schema.optional(SessionId),
+  sessionId: SessionId,
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   waitMs: Schema.optional(WaitMs),
   maxBytes: Schema.optional(ReplyBytes),

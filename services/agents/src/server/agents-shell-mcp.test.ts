@@ -418,6 +418,7 @@ describe('agents-shell MCP tools', () => {
     const rawShellRunInputProperties = rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>
     expect(rawShellRunInputProperties.timeoutSeconds.maximum).toBeUndefined()
     expect(rawShellRunInputProperties.maxBytes.maximum).toBe(1_048_576)
+    expect(rawShellRun?.inputSchema?.required).toContain('sessionId')
     expect(rawShellRunInputProperties.timeoutSeconds.description).toBe(
       'Timeout in seconds. Default: 60. Server cap: 1800.',
     )
@@ -1293,11 +1294,19 @@ fi
 
   it('does not turn ordinary tool failures into OAuth reconnect challenges', async () => {
     const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    initializeRepoFixture(config)
+    const runner = new AgentsShellRunner(config)
+    const session = await runner.openRepoSession({ name: 'ordinary-failure' }, makeAuth())
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(), runner)
 
     const result = await client.callTool({
       name: 'exec',
-      arguments: { requestKey: crypto.randomUUID(), command: 'echo should-not-run', cwd: 'missing-worktree' },
+      arguments: {
+        sessionId: session.sessionId,
+        requestKey: crypto.randomUUID(),
+        command: 'echo should-not-run',
+        cwd: 'missing-worktree',
+      },
     })
 
     expect(result.isError).toBe(true)

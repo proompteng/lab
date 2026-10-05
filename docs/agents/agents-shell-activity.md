@@ -24,15 +24,15 @@ does not stop a job. `failed` records an exception escaping a handler phase with
 Only fixed methods and paths are recorded; HTTP headers, query strings, bodies and user agents are excluded.
 SDK errors returned as responses are visible through completion status and need not emit an exception receipt.
 
-Shell jobs have generated `jobId`, authenticated owner, an automatic `taskId`, optional `sessionId` and advisory `agentId`. Labels never grant
+Shell jobs have generated `jobId`, authenticated owner, an automatic `taskId`, an owned `sessionId` and advisory `agentId`. Labels never grant
 access. Owners can list all their agents across sessions; optional filters narrow that view. Other subjects cannot
 read, list or cancel those jobs. Direct Git/kubectl processes have generated job IDs too. IDs are JSON fields, not Loki labels.
 
 Native workers use separate repository sessions and pass the returned `sessionId` to every repository tool.
-`exec`, `git_write` and `apply_patch` require an owned session for repository changes. The session ID supplies `taskId`
-automatically; an optional `agentId` labels parallel workers and never grants access. Non-repository execution falls back
-to the agent label or generated job ID for task identity. These records describe tool execution; they do not infer a
-native model's thinking or overall lifecycle.
+`exec` always requires an owned session, including commands whose cwd is outside the seed repository.
+`git_write` and `apply_patch` also require an owned session. The session ID supplies `taskId` automatically; an optional
+`agentId` labels parallel workers and never grants access. Native commands without a repository session use their
+generated job ID for task identity. These records describe tool execution; they do not infer a native model's thinking or overall lifecycle.
 
 The server exposes one generated catalog through the direct endpoint and tunnel. `tools/list` and tool replies include
 `_meta["agents-shell/catalog"]` with version `0.2.0` and a SHA-256 fingerprint of the catalog. After an authorized rollout,
@@ -120,7 +120,8 @@ bytes arrive. Set `outputEncoding: "base64"` on exec or read for exact arbitrary
 page; cursor reads are the continuation mechanism.
 
 `maxBytes` bounds the serialized exec/read MCP result, including structured/text content, metadata and both streams.
-It defaults to 20,000 bytes, accepts 4096–1,048,576, and reserves space for trace and audit receipts. Replies carry a
+It defaults to 20,000 bytes, accepts 4096–1,048,576, and reserves space for trace and audit receipts. A budget that fits
+metadata but cannot advance a readable retained stream fails explicitly; retry with a larger `maxBytes`. Replies carry a
 bounded `commandPreview` and `commandHash` instead of echoing the entire command. Native CLI replies also use these
 fields and report `outputCaptureError`, `auditErrors` and `captureIncomplete`; their `maxOutputBytes` remains a per-stream
 cap. Command success and capture completeness are separate. Capture receipts do not establish end-to-end Loki delivery.

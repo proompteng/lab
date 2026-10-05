@@ -31,7 +31,7 @@ export const createShellTools = (): EffectTool[] => [
     name: 'exec',
     title: 'Execute command',
     description:
-      'Execute once per requestKey; wait briefly, then return a running job or receipt. Continue with read and its cursor.',
+      'Execute in an owned repo session once per requestKey; wait briefly, then return a running job or receipt. Continue with read and its cursor.',
     inputSchema: ExecInputSchema,
     outputSchema: ExecutionOutputSchema,
     annotations: shellAnnotations,

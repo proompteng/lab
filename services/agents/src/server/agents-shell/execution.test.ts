@@ -34,12 +34,24 @@ const connect = async (maxConcurrentJobs = 4) => {
   const config = defaultAgentsShellConfigFromEnv({ AGENTS_SHELL_WORKSPACE_ROOT: root, AGENTS_SHELL_AUDIT_LOG_PATH: '' })
   config.maxConcurrentJobs = maxConcurrentJobs
   const runner = new AgentsShellRunner(config)
+  const sessionId = 'repo-execution-test'
+  const worktree = join(root, 'worktrees', 'lab', 'execution-test')
+  mkdirSync(worktree, { recursive: true })
+  runner.repoSessions.set({
+    id: sessionId,
+    ownerSubject: auth.subject,
+    worktree,
+    baseBranch: 'main',
+    baseSha: 'a'.repeat(40),
+    branch: 'codex/execution-test',
+    createdAt: new Date().toISOString(),
+  })
   const server = createAgentsShellServer(config, runner, auth, 'execution-test')
   const client = new Client({ name: 'execution-test', version: '1' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
   connections.push({ runner, client, server })
-  return { runner, client, root }
+  return { runner, client, root: worktree, workspaceRoot: root, sessionId }
 }
 const output = (result: Awaited<ReturnType<Client['callTool']>>) => {
   expect(result.isError).not.toBe(true)
@@ -60,6 +72,37 @@ afterEach(async () => {
 })
 
 describe('one execution contract', () => {
+  it.each(['lab/seed', 'worktrees/lab/victim/result'])(
+    'rejects sessionless commands that reach %s from the workspace root',
+    async (target) => {
+      const { client, workspaceRoot: root, runner } = await connect()
+      mkdirSync(join(root, target, '..'), { recursive: true })
+      const rejected = await client.callTool({
+        name: 'exec',
+        arguments: { requestKey: 'unscoped-seed', command: `printf changed > ${target}`, waitMs: 3000 },
+      })
+      expect(rejected.isError).toBe(true)
+      expect(existsSync(join(root, target))).toBe(false)
+      expect(runner.jobs.size).toBe(0)
+    },
+  )
+  it('rejects another owner before spawning in a repo session', async () => {
+    const { runner, sessionId, root } = await connect()
+    const foreignAuth = { ...auth, subject: 'foreign-owner' }
+    const server = createAgentsShellServer(runner.config, runner, foreignAuth)
+    const client = new Client({ name: 'foreign-owner', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    connections.push({ runner, client, server })
+    const rejected = await client.callTool({
+      name: 'exec',
+      arguments: { sessionId, requestKey: 'foreign', command: 'printf changed > result', waitMs: 3000 },
+    })
+    expect(rejected.isError).toBe(true)
+    expect(JSON.stringify(rejected.content)).toContain('owned by another subject')
+    expect(existsSync(join(root, 'result'))).toBe(false)
+    expect(runner.jobs.size).toBe(0)
+  })
   it.each([
     ['AGENTS_SHELL_MAX_CONCURRENT_JOBS', '0'],
     ['AGENTS_SHELL_MAX_CONCURRENT_JOBS', '9'],
@@ -90,11 +133,11 @@ describe('one execution contract', () => {
     expect(result._meta?.['agents-shell/catalog']).toEqual(catalog._meta?.['agents-shell/catalog'])
   })
   it('returns a terminal receipt for a quick command and consumes output exactly once', async () => {
-    const { client } = await connect()
+    const { client, sessionId } = await connect()
     const executed = output(
       await client.callTool({
         name: 'exec',
-        arguments: { requestKey: 'quick', command: 'printf hello', waitMs: 3000 },
+        arguments: { sessionId, requestKey: 'quick', command: 'printf hello', waitMs: 3000 },
       }),
     )
     expect(executed).toMatchObject({
@@ -105,7 +148,7 @@ describe('one execution contract', () => {
       captureIncomplete: false,
     })
     expect(executed.commandHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(executed.taskId).toBe(executed.jobId)
+    expect(executed.taskId).toBe(sessionId)
     const read = output(
       await client.callTool({ name: 'read', arguments: { jobId: executed.jobId, cursor: executed.cursor } }),
     )
@@ -114,11 +157,11 @@ describe('one execution contract', () => {
   })
 
   it('waits for readable output, then completion without busy polling', async () => {
-    const { client } = await connect()
+    const { client, sessionId } = await connect()
     const executed = output(
       await client.callTool({
         name: 'exec',
-        arguments: { requestKey: 'wait', command: 'sleep 0.15; printf ready; sleep 0.15', waitMs: 0 },
+        arguments: { sessionId, requestKey: 'wait', command: 'sleep 0.15; printf ready; sleep 0.15', waitMs: 0 },
       }),
     )
     expect(executed).toMatchObject({ state: 'running', ok: null })
@@ -136,8 +179,8 @@ describe('one execution contract', () => {
   })
 
   it('launches concurrent retries once and rejects reuse for different execution input', async () => {
-    const { client, root } = await connect()
-    const args = { requestKey: 'retry', command: 'printf once >> count; sleep 0.15', waitMs: 3000 }
+    const { client, root, sessionId } = await connect()
+    const args = { sessionId, requestKey: 'retry', command: 'printf once >> count; sleep 0.15', waitMs: 3000 }
     const [first, retry] = await Promise.all([
       client.callTool({ name: 'exec', arguments: args }),
       client.callTool({ name: 'exec', arguments: args }),
@@ -153,12 +196,15 @@ describe('one execution contract', () => {
   })
 
   it('waits for capacity and returns actionable pressure without launching twice', async () => {
-    const { client, root } = await connect(1)
+    const { client, root, sessionId } = await connect(1)
     const first = output(
-      await client.callTool({ name: 'exec', arguments: { requestKey: 'occupy', command: 'sleep 0.3', waitMs: 0 } }),
+      await client.callTool({
+        name: 'exec',
+        arguments: { sessionId, requestKey: 'occupy', command: 'sleep 0.3', waitMs: 0 },
+      }),
     )
     expect(first.state).toBe('running')
-    const busyArgs = { requestKey: 'next', command: 'printf admitted > count', waitMs: 0 }
+    const busyArgs = { sessionId, requestKey: 'next', command: 'printf admitted > count', waitMs: 0 }
     const busy = await client.callTool({ name: 'exec', arguments: busyArgs })
     expect(busy.isError).toBe(true)
     expect(busy.structuredContent).toMatchObject({ code: 'CAPACITY_BUSY', retryAfterMs: 250 })
@@ -168,9 +214,12 @@ describe('one execution contract', () => {
   })
 
   it('bounds a duplicate caller wait while another caller waits for admission', async () => {
-    const { client } = await connect(1)
-    await client.callTool({ name: 'exec', arguments: { requestKey: 'occupy', command: 'sleep 0.4', waitMs: 0 } })
-    const args = { requestKey: 'pending', command: 'printf once', waitMs: 3000 }
+    const { client, sessionId } = await connect(1)
+    await client.callTool({
+      name: 'exec',
+      arguments: { sessionId, requestKey: 'occupy', command: 'sleep 0.4', waitMs: 0 },
+    })
+    const args = { sessionId, requestKey: 'pending', command: 'printf once', waitMs: 3000 }
     const pending = client.callTool({ name: 'exec', arguments: args })
     await new Promise<void>((resolve) => setTimeout(resolve, 30))
     const start = performance.now()
@@ -181,11 +230,12 @@ describe('one execution contract', () => {
   })
 
   it('cancels a stubborn process group, escalates, and returns the same terminal receipt', async () => {
-    const { client } = await connect()
+    const { client, sessionId } = await connect()
     const executed = output(
       await client.callTool({
         name: 'exec',
         arguments: {
+          sessionId,
           requestKey: 'cancel',
           command: "trap '' TERM; printf ready; while :; do sleep 1; done",
           waitMs: 0,
@@ -212,29 +262,35 @@ describe('one execution contract', () => {
   })
 
   it('reports timeout and nonzero exit as terminal failures', async () => {
-    const { client } = await connect()
+    const { client, sessionId } = await connect()
     const failed = output(
       await client.callTool({
         name: 'exec',
-        arguments: { requestKey: 'fail', command: 'printf diagnostic >&2; exit 7', waitMs: 3000 },
+        arguments: { sessionId, requestKey: 'fail', command: 'printf diagnostic >&2; exit 7', waitMs: 3000 },
       }),
     )
     expect(failed).toMatchObject({ state: 'exited', ok: false, exitCode: 7, stderr: 'diagnostic' })
     const timeout = output(
       await client.callTool({
         name: 'exec',
-        arguments: { requestKey: 'timeout', command: "trap '' TERM; sleep 30", timeoutSeconds: 1, waitMs: 3000 },
+        arguments: {
+          sessionId,
+          requestKey: 'timeout',
+          command: "trap '' TERM; sleep 30",
+          timeoutSeconds: 1,
+          waitMs: 3000,
+        },
       }),
     )
     expect(timeout).toMatchObject({ state: 'timed_out', ok: false, signal: 'SIGKILL' })
   })
 
   it('bounds the serialized MCP reply for large commands and escaped output', async () => {
-    const { client } = await connect()
+    const { client, sessionId } = await connect()
     const command = "printf '%s' '" + '\u0001"雪😀'.repeat(2000) + "'"
     const result = await client.callTool({
       name: 'exec',
-      arguments: { requestKey: 'bytes', command, waitMs: 3000, maxBytes: 8192 },
+      arguments: { sessionId, requestKey: 'bytes', command, waitMs: 3000, maxBytes: 8192 },
     })
     const page = output(result)
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(8192)
@@ -247,18 +303,18 @@ describe('one execution contract', () => {
   })
 
   it('fits an ordinary complete receipt into the minimum reply budget', async () => {
-    const { client } = await connect()
+    const { client, sessionId } = await connect()
     const result = await client.callTool({
       name: 'exec',
-      arguments: { requestKey: 'minimum', command: 'printf small', waitMs: 3000, maxBytes: 4096 },
+      arguments: { sessionId, requestKey: 'minimum', command: 'printf small', waitMs: 3000, maxBytes: 4096 },
     })
     expect(output(result)).toMatchObject({ state: 'exited', ok: true, stdout: 'small' })
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(4096)
   })
 
   it('retrieves exact arbitrary bytes from the first page and permits encoding changes on retries', async () => {
-    const { client } = await connect()
-    const args = { requestKey: 'binary', command: "printf '\\000\\377\\200'", waitMs: 3000 }
+    const { client, sessionId } = await connect()
+    const args = { sessionId, requestKey: 'binary', command: "printf '\\000\\377\\200'", waitMs: 3000 }
     const first = output(await client.callTool({ name: 'exec', arguments: args }))
     const binary = output(await client.callTool({ name: 'exec', arguments: { ...args, outputEncoding: 'base64' } }))
     expect(binary.jobId).toBe(first.jobId)
@@ -270,8 +326,9 @@ describe('one execution contract', () => {
   })
 
   it('rejects an insufficient metadata budget before launching and allows a larger-budget retry', async () => {
-    const { client, root, runner } = await connect()
+    const { client, root, runner, sessionId } = await connect()
     const args = {
+      sessionId,
       requestKey: 'metadata',
       agentId: 'a'.repeat(128),
       command: '#' + '\u0001'.repeat(200) + '\nprintf happened > touched',
@@ -290,20 +347,20 @@ describe('one execution contract', () => {
   })
 
   it('rejects legacy tools, missing request keys, invalid cursors, and writes without repo sessions', async () => {
-    const { client, root, runner } = await connect()
+    const { client, root, runner, sessionId } = await connect()
     for (const name of ['shell_run', 'shell_start', 'shell_read', 'shell_kill', 'shell_status']) {
       expect((await client.callTool({ name, arguments: { command: 'printf should-not-run' } })).isError).toBe(true)
     }
-    expect((await client.callTool({ name: 'exec', arguments: { command: 'printf should-not-run' } })).isError).toBe(
-      true,
-    )
+    expect(
+      (await client.callTool({ name: 'exec', arguments: { sessionId, command: 'printf should-not-run' } })).isError,
+    ).toBe(true)
     mkdirSync(join(root, 'lab'))
     const seed = await client.callTool({
       name: 'exec',
       arguments: { requestKey: 'seed', cwd: 'lab', command: 'printf should-not-run' },
     })
     expect(seed.isError).toBe(true)
-    expect(JSON.stringify(seed.content)).toContain('requires repo_session_open')
+    expect(JSON.stringify(seed.content)).toContain('Input validation error')
     for (const name of ['apply_patch', 'git_write']) {
       expect(
         (await client.callTool({ name, arguments: { patch: '*** Begin Patch\n*** End Patch', args: ['commit'] } }))

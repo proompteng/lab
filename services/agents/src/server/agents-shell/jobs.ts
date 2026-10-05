@@ -64,7 +64,7 @@ export type CommandInput = {
   maxBytes: number
   waitMs: number
   requestKey: string
-  sessionId?: string
+  sessionId: string
   agentId?: string
 }
 
@@ -396,7 +396,18 @@ export const readJobOutput = (job: ShellJob, cursor: OutputCursor, maxBytes: num
       maxBytes,
     }
     const wireBytes = Buffer.byteLength(JSON.stringify(jsonTextResult(result))) + REPLY_META_RESERVE_BYTES
-    if (wireBytes <= maxBytes) return result
+    if (wireBytes <= maxBytes) {
+      for (const [retained, page] of [
+        [job.stdout, stdout],
+        [job.stderr, stderr],
+      ] as const) {
+        if (page.nextOffset > page.startOffset) continue
+        const readable = outputFromOffset(retained, page.nextOffset, 4, cursor.outputEncoding, job.kind === 'completed')
+        if (readable.nextOffset > readable.startOffset)
+          throw new Error('reply budget is too small for readable output; increase maxBytes')
+      }
+      return result
+    }
     if (outputBytes === 0) throw new Error('reply budget is too small for job metadata')
     outputBytes = Math.floor(outputBytes / 2)
   }

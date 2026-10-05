@@ -1,6 +1,6 @@
 import { encodeOutputCursor, jobMetadata } from './agents-shell/jobs'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -39,12 +39,24 @@ const configFixture = () => {
   })
 }
 const connect = async (runner = new AgentsShellRunner(configFixture()), auth = authFixture()) => {
+  const sessionId = `repo-audit-${auth.subject}`
+  const worktree = join(runner.config.workspaceRoot, 'worktrees', 'lab', auth.subject)
+  mkdirSync(worktree, { recursive: true })
+  runner.repoSessions.set({
+    id: sessionId,
+    ownerSubject: auth.subject,
+    worktree,
+    baseBranch: 'main',
+    baseSha: 'a'.repeat(40),
+    branch: `codex/audit-${auth.subject}`,
+    createdAt: new Date().toISOString(),
+  })
   const server = createAgentsShellServer(runner.config, runner, auth, 'request-fixture')
   const client = new Client({ name: 'audit-test', version: '1' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
   connections.push({ client, server, runner })
-  return { client, runner, config: runner.config }
+  return { client, runner, config: runner.config, sessionId }
 }
 const data = (result: Record<string, unknown>) => result.structuredContent as Record<string, unknown>
 const captureAudit = () => {
@@ -189,7 +201,7 @@ describe('complete operational activity export', () => {
 
   it('exports complete concurrent stdout/stderr past response caps and keeps owned agents discoverable', async () => {
     const { records } = captureAudit()
-    const { client, runner } = await connect()
+    const { client, runner, sessionId } = await connect()
     const expected = new Map<string, { stdout: string; stderr: string }>()
     const jobs = await Promise.all(
       ['agent-a', 'agent-b'].map(async (agentId) => {
@@ -198,7 +210,7 @@ describe('complete operational activity export', () => {
         const command = `node -e ${JSON.stringify(`process.stdout.write(${JSON.stringify(`${agentId}:雪😀\n`)}.repeat(30000)); process.stderr.write(${JSON.stringify(`${agentId}:diagnostic\n`)}.repeat(20000))`)}`
         const result = await client.callTool({
           name: 'exec',
-          arguments: { command, agentId, requestKey: crypto.randomUUID(), waitMs: 0, maxBytes: 8192 },
+          arguments: { sessionId, command, agentId, requestKey: crypto.randomUUID(), waitMs: 0, maxBytes: 8192 },
         })
         const jobId = String(data(result).jobId)
         expected.set(jobId, { stdout, stderr })
@@ -217,7 +229,7 @@ describe('complete operational activity export', () => {
       (event) => event.event === 'shell_job_started' || event.event === 'process_output',
     )) {
       expect(frame.taskId).toBe(frame.payload.taskId)
-      expect(frame.taskId).toBe(frame.payload.agentId)
+      expect(frame.taskId).toBe(sessionId)
       if (frame.event === 'shell_job_started') expect(frame.requestKey).toBe(frame.payload.requestKey)
     }
     for (const jobId of jobs) {
@@ -279,11 +291,11 @@ describe('complete operational activity export', () => {
 
   it('prevents another owner from reading, listing or stopping jobs', async () => {
     const { records } = captureAudit()
-    const { client, runner } = await connect()
+    const { client, runner, sessionId } = await connect()
     const second = await connect(runner, authFixture('owner-b'))
     const start = await client.callTool({
       name: 'exec',
-      arguments: { requestKey: crypto.randomUUID(), command: 'sleep 3', agentId: 'owner-b', waitMs: 0 },
+      arguments: { sessionId, requestKey: crypto.randomUUID(), command: 'sleep 3', agentId: 'owner-b', waitMs: 0 },
     })
     const jobId = data(start).jobId
     const cursor = data(start).cursor
@@ -339,11 +351,12 @@ describe('complete operational activity export', () => {
 
   it('can inspect its growing local log without recursively amplifying it', async () => {
     const { records } = captureAudit()
-    const { client, config } = await connect()
+    const { client, config, sessionId } = await connect()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
     const response = await client.callTool({
       name: 'exec',
       arguments: {
+        sessionId,
         requestKey: crypto.randomUUID(),
         command: `timeout 1 tail -n +1 -f ${config.auditLogPath}`,
         maxBytes: 20_000,

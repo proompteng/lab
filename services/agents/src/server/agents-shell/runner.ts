@@ -52,7 +52,7 @@ export class AgentsShellRunner {
     args: {
       command: string
       cwd?: string
-      sessionId?: string
+      sessionId: string
       agentId?: string
       timeoutSeconds?: number
       maxBytes?: number
@@ -61,6 +61,7 @@ export class AgentsShellRunner {
     },
     auth: AuthContext,
   ): CommandInput {
+    if (!args.sessionId) throw new Error('execution requires repo_session_open and its sessionId')
     return {
       command: args.command,
       sessionId: args.sessionId,
@@ -292,19 +293,15 @@ export class AgentsShellRunner {
     }
 
     this.resolveCwd(input.cwd, input.sessionId, auth)
-    const session = input.sessionId
-      ? this.repoSessions.require(input.sessionId, auth)
-      : this.repoSessions.requireForPath(input.cwd, auth)
-    if (!session && isInsidePath(resolve(this.config.workspaceRoot, 'lab'), input.cwd))
-      throw new Error('repository execution requires repo_session_open and its sessionId')
+    const session = this.repoSessions.require(input.sessionId, auth)
     const id = randomUUID()
     const auditContext = toolAuditContext.getStore() ?? null
     const startedAt = performance.now()
     const identity = {
       id,
       ownerSubject: auth.subject,
-      sessionId: session?.id ?? null,
-      taskId: session?.id ?? input.agentId ?? id,
+      sessionId: session.id,
+      taskId: session.id,
       requestKey: input.requestKey,
       agentId: input.agentId ?? null,
       requestId: auditContext?.requestId ?? null,
@@ -480,7 +477,7 @@ export class AgentsShellRunner {
     for (const [key, submission] of this.submissions) {
       if (submission.kind === 'started' && !this.jobs.has(submission.jobId)) this.submissions.delete(key)
     }
-    const key = JSON.stringify([auth.subject, args.sessionId ?? '', args.requestKey])
+    const key = JSON.stringify([auth.subject, args.sessionId, args.requestKey])
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify([
