@@ -26,7 +26,9 @@ const readLogs = (node: string, since?: string) => {
   const result = spawnSync('docker', ['logs', ...(since === undefined ? [] : ['--since', since]), node], {
     encoding: 'utf8',
     timeout: 10_000,
+    maxBuffer: 16 * 1024 * 1024,
   })
+  assert.ifError(result.error)
   assert.equal(result.status, 0, result.stderr)
   return result.stdout + result.stderr
 }
@@ -226,7 +228,7 @@ try {
       '2g',
       ...env,
       '--env',
-      'RUST_LOG=info,restate_metadata_server=debug',
+      'RUST_LOG=info,restate_metadata_server=debug,restate_core::network::grpc::connector=debug,restate_core::network::connection=debug,restate_core::network::connection_manager=debug,restate_core::network::message_router=trace,restate_core::network::io::egress_stream=trace,restate_core::network::io::reactor=trace',
       '--env',
       'RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE=256 MiB',
       '--env',
