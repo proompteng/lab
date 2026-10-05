@@ -43,6 +43,29 @@ it('shutdown terminates an active native process group', async () => {
 })
 
 describe('command display argument boundaries', () => {
+  it('rejects a native process after shutdown without executing it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agents-shell-native-admission-'))
+    const marker = join(root, 'started-after-shutdown')
+    const runner = new AgentsShellRunner(defaultAgentsShellConfigFromEnv({ AGENTS_SHELL_WORKSPACE_ROOT: root }))
+    const audit = vi.spyOn(auditStdout, 'write').mockImplementation(() => true)
+    try {
+      runner.shutdown()
+      await expect(
+        runner.runProcess({
+          command: '/bin/bash',
+          args: ['-c', 'printf late > "$1"', 'shutdown-test', marker],
+          cwd: root,
+          auditEvent: 'shutdown_test',
+          auth: { subject: 'shutdown-test', email: null, username: null, scopes: new Set(), payload: {} },
+        }),
+      ).rejects.toThrow('shutting down')
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      audit.mockRestore()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('round trips punctuation, whitespace, quotes, expansions and empty argv through shell words', () => {
     const args = [
       'ordinary',
