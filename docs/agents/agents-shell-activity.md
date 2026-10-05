@@ -38,6 +38,7 @@ The server exposes one generated catalog through the direct endpoint and tunnel.
 `_meta["agents-shell/catalog"]` with version `0.2.0` and a SHA-256 fingerprint of the catalog. After an authorized rollout,
 refresh both connector catalogs and compare these receipts; a cached connector catalog is not proof of deployed parity.
 `git ls-remote` permits standard ref-query flags and rejects executable overrides and custom remote-helper URLs.
+`git cat-file` permits raw object and batch inspection while rejecting filter and textconv execution.
 
 The old `shell_run`, `shell_start`, `shell_read`, `shell_kill` and `shell_status` tools are removed.
 

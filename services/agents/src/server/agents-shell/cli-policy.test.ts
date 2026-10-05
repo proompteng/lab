@@ -67,3 +67,25 @@ describe('ls-remote executable and transport boundaries', () => {
     expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
   })
 })
+
+describe('Git object inspection execution boundaries', () => {
+  it.each([
+    ['cat-file', '--filters', 'HEAD:file.txt'],
+    ['cat-file', '--textconv', 'HEAD:file.txt'],
+    ['cat-file', '--fil', 'HEAD:file.txt'],
+    ['cat-file', '--text', 'HEAD:file.txt'],
+    ['cat-file', '--batch', '--filters'],
+    ['cat-file', 'blob', 'HEAD:file.txt', '--textconv'],
+  ])('rejects git %j', (...args) => {
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
+  })
+  it.each([
+    ['cat-file', '-p', 'HEAD:file.txt'],
+    ['cat-file', 'blob', 'HEAD:file.txt'],
+    ['cat-file', '--batch-check=%(objectname) %(objecttype)', '--batch-all-objects', '--buffer', '-Z'],
+    ['cat-file', '--batch-command', '--no-buffer'],
+    ['cat-file', '-p', '--', 'HEAD:file.txt'],
+  ])('retains git %j', (...args) => {
+    expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
+  })
+})

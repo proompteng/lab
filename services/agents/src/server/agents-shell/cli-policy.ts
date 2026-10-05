@@ -7,11 +7,32 @@ const READ_ONLY_GIT_COMMANDS = new Set([
   'rev-list',
   'ls-files',
   'ls-tree',
-  'cat-file',
   'grep',
   'describe',
 ])
 const GIT_GLOBAL_FLAGS = new Set(['--no-pager', '--paginate', '--no-optional-locks', '--literal-pathspecs'])
+const CAT_FILE_FLAGS = new Set([
+  '-e',
+  '-p',
+  '-t',
+  '-s',
+  '-z',
+  '-Z',
+  '--use-mailmap',
+  '--no-use-mailmap',
+  '--mailmap',
+  '--no-mailmap',
+  '--batch',
+  '--batch-check',
+  '--batch-command',
+  '--batch-all-objects',
+  '--buffer',
+  '--no-buffer',
+  '--follow-symlinks',
+  '--no-follow-symlinks',
+  '--unordered',
+  '--no-unordered',
+])
 const LS_REMOTE_FLAGS = new Set([
   '-q',
   '--quiet',
@@ -106,6 +127,15 @@ const commandIndex = (args: readonly string[], values: ReadonlySet<string>, flag
 export const requireReadOnlyGitArgs = (args: readonly string[]) => {
   const index = commandIndex(args, new Set(), GIT_GLOBAL_FLAGS)
   const command = args[index]
+  if (command === 'cat-file') {
+    for (const arg of args.slice(index + 1)) {
+      if (arg === '--') break
+      if (!arg.startsWith('-') || CAT_FILE_FLAGS.has(arg) || /^--(?:batch|batch-check|batch-command)=/.test(arg))
+        continue
+      throw new Error(`git cat-file inspection does not allow option ${arg}; use git_write for filter execution`)
+    }
+    return
+  }
   if (command === 'ls-remote') {
     let literal = false
     let repository: string | undefined
