@@ -3,6 +3,7 @@ import { BigDecimal, Data, Result, Schema } from 'effect'
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { canonicalHashV1Result } from '../hash'
+import { jevEntryQuoteExclusion } from '../jev/trading-signals'
 import type { IntradayQuote, IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
@@ -327,6 +328,11 @@ export const decideGapRecovery = (
       [...complete].map(([s, qs]) => [s, { prior: mid(qs[0]), open: mid(qs[1]), current: mid(qs[2]) }]),
     )
     const spy = values.get(gapRecoveryDefinition.benchmarkSymbol)
+    const benchmarkQuote = complete.get(gapRecoveryDefinition.benchmarkSymbol)?.[2]
+    // Check required benchmark pricing independently: a candidate may be excluded before the six-bar reader reaches SPY.
+    const benchmarkExcluded =
+      benchmarkQuote !== undefined &&
+      (yield* jevEntryQuoteExclusion(benchmarkQuote, sixBarResearchDefinition.maximumSpreadBps)) !== null
     const candidates = []
     const endMs = Math.floor((session.decisionAtMs - 2_000) / 60_000) * 60_000
     for (const symbol of gapRecoveryDefinition.candidates) {
@@ -353,6 +359,7 @@ export const decideGapRecovery = (
       const eligible =
         v !== undefined &&
         spy !== undefined &&
+        !benchmarkExcluded &&
         spy.current > spy.open &&
         feature.status === SixBarResearchStatus.Available &&
         (v.open - v.prior) * 10_000n <= -50n * v.prior &&
@@ -386,9 +393,11 @@ export const decideGapRecovery = (
         return comparison < 0n ? -1 : comparison > 0n ? 1 : a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0
       })
     const inputComplete =
-      exclusions.length === 0 && candidates.every((c) => c.feature.status !== SixBarResearchStatus.Unavailable)
+      !benchmarkExcluded &&
+      exclusions.length === 0 &&
+      candidates.every((c) => c.feature.status !== SixBarResearchStatus.Unavailable)
     const status =
-      spy === undefined
+      spy === undefined || benchmarkExcluded
         ? GapRecoveryDecision.BenchmarkUnavailable
         : spy.current <= spy.open
           ? GapRecoveryDecision.MarketFilter

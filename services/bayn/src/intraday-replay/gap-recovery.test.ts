@@ -120,6 +120,82 @@ describe('original-receipt gap recovery', () => {
     expect(r.selectedSymbol).toBeNull()
   })
 
+  test.each([200, 200.2])('wide benchmark pricing is unavailable even when its midpoint is %s', (price) => {
+    const r = run(
+      gapFixture({
+        prices: { SPY: [200, 200, price] },
+        alter: (kind, inputs) =>
+          kind === 'current'
+            ? inputs.map((x) =>
+                x.symbol === 'SPY' && x.channel === 'quotes' && x.eventAtMs === gapDecisionMs - 5_000
+                  ? { ...x, bid: price - 0.1, ask: price + 0.1 }
+                  : x,
+              )
+            : inputs,
+      }),
+    )
+    expect(r.inputComplete).toBeFalse()
+    expect(r.status).toBe(GapRecoveryDecision.BenchmarkUnavailable)
+    expect(r.selectedSymbol).toBeNull()
+  })
+
+  test('candidate exclusions cannot conceal a wide required benchmark quote', () => {
+    const r = run(
+      gapFixture({
+        alter: (kind, inputs) =>
+          kind === 'current'
+            ? inputs
+                .filter((x) => !(x.symbol === 'WDC' && x.channel === 'bars'))
+                .map((x) =>
+                  x.channel === 'quotes' && x.eventAtMs === gapDecisionMs - 5_000 ? { ...x, bid: 99, ask: 101 } : x,
+                )
+            : inputs,
+      }),
+    )
+    expect(
+      r.candidates.some((c) => c.feature.status === SixBarResearchStatus.Excluded && c.feature.symbol === 'SPY'),
+    ).toBeFalse()
+    expect(r.inputComplete).toBeFalse()
+    expect(r.status).toBe(GapRecoveryDecision.BenchmarkUnavailable)
+    expect(r.selectedSymbol).toBeNull()
+  })
+
+  test('a wide candidate quote remains a valid exclusion with a usable benchmark', () => {
+    const r = run(
+      gapFixture({
+        alter: (kind, inputs) =>
+          kind === 'current'
+            ? inputs.map((x) =>
+                x.symbol === 'AAPL' && x.channel === 'quotes' && x.eventAtMs === gapDecisionMs - 5_000
+                  ? { ...x, bid: 99.2, ask: 99.4 }
+                  : x,
+              )
+            : inputs,
+      }),
+    )
+    expect(r.inputComplete).toBeTrue()
+    expect(r.status).toBe(GapRecoveryDecision.NoSignal)
+    expect(r.selectedSymbol).toBeNull()
+  })
+
+  test.each([20005, 20005.000001])('benchmark spread limit uses the native one-micro price boundary (%s)', (ask) => {
+    const r = run(
+      gapFixture({
+        prices: { SPY: [20000, 19990, 20000] },
+        alter: (kind, inputs) =>
+          kind === 'current'
+            ? inputs.map((x) =>
+                x.symbol === 'SPY' && x.channel === 'quotes' && x.eventAtMs === gapDecisionMs - 5_000
+                  ? { ...x, bid: 19995, ask }
+                  : x,
+              )
+            : inputs,
+      }),
+    )
+    expect(r.inputComplete).toBe(ask === 20005)
+    expect(r.status).toBe(ask === 20005 ? GapRecoveryDecision.Selected : GapRecoveryDecision.BenchmarkUnavailable)
+  })
+
   test('excludes a missing candidate while preserving a valid other candidate', () => {
     const r = run(
       gapFixture({

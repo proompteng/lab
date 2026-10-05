@@ -2,15 +2,32 @@ import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Deferred, Effect, Fiber, FileSystem, Result, Stream } from 'effect'
 import { canonicalHashV1, sha256 } from '../hash'
-import { gapFixture, gapPriorOpenMs, gapPriorCloseMs, gapSourceFixture } from './gap-recovery.test-support'
+import {
+  gapDecisionMs,
+  gapFixture,
+  gapPriorOpenMs,
+  gapPriorCloseMs,
+  gapSourceFixture,
+} from './gap-recovery.test-support'
 import { runGapRecoveryStudy } from './gap-recovery-study'
 import { GapRecoveryDecision } from './gap-recovery'
 
-const prepared = (missingBenchmark = false) => {
+const prepared = (missingBenchmark = false, wideBenchmark = false) => {
   const f = gapFixture(
     missingBenchmark
       ? { alter: (kind, inputs) => (kind === 'prior' ? inputs.filter((x) => x.symbol !== 'SPY') : inputs) }
-      : {},
+      : wideBenchmark
+        ? {
+            alter: (kind, inputs) =>
+              kind === 'current'
+                ? inputs.map((x) =>
+                    x.symbol === 'SPY' && x.channel === 'quotes' && x.eventAtMs === gapDecisionMs - 5_000
+                      ? { ...x, bid: 200.1, ask: 200.3 }
+                      : x,
+                  )
+                : inputs,
+          }
+        : {},
   )
   const previous = gapSourceFixture(f.previous, gapPriorOpenMs, gapPriorCloseMs)
   const current = gapSourceFixture(f.today, f.session.openMs, f.session.closeMs)
@@ -165,14 +182,15 @@ test.each(['oversized', 'utf8', 'hash'] as const)(
   10000,
 )
 
-test.each([false, true])(
-  'command records original-receipt evidence and keeps missing benchmark explicit (%s)',
-  async (missing) => {
+test.each(['complete', 'missing', 'wide'] as const)(
+  'command records original-receipt evidence and keeps benchmark failures explicit (%s)',
+  async (kind) => {
+    const incomplete = kind !== 'complete'
     await local(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
         const dir = yield* fs.makeTempDirectoryScoped()
-        const data = prepared(missing)
+        const data = prepared(kind === 'missing', kind === 'wide')
         const inputText = JSON.stringify(data.input)
         for (const [name, bytes] of [
           ['previous.gz', data.previous.bytes],
@@ -214,14 +232,15 @@ test.each([false, true])(
         const [status, stdout, stderr] = yield* Effect.promise(() =>
           Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]),
         )
-        expect(status).toBe(missing ? 1 : 0)
-        expect(stdout).toContain(missing ? 'BENCHMARK_UNAVAILABLE' : 'SELECTED')
-        if (missing) expect(stderr).toContain('inputs are incomplete')
+        expect(status).toBe(incomplete ? 1 : 0)
+        expect(stdout).toContain(incomplete ? 'BENCHMARK_UNAVAILABLE' : 'SELECTED')
+        if (incomplete) expect(stderr).toContain('inputs are incomplete')
         else expect(stderr).toBe('')
         const report = JSON.parse(yield* fs.readFileString(`${dir}/report.json`))
         const { reportHash, ...material } = report
         expect(canonicalHashV1(material)).toBe(reportHash)
         expect(report.decision.capitalAuthority).toBe('NONE')
+        expect(report.decision.inputComplete).toBe(!incomplete)
         const retry = yield* Effect.acquireRelease(
           Effect.sync(() => Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe' })),
           (p) => Effect.sync(() => p.kill()),
