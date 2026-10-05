@@ -10,6 +10,16 @@ const TimeoutSeconds = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqua
   description: 'Timeout in seconds. Default: 60. Server cap: 1800.',
 })
 const SessionId = NonEmptyString.annotations({ description: 'Repo session id returned by repo_session_open.' })
+const Cursor = NonEmptyString.pipe(Schema.maxLength(512))
+const WaitMs = NonNegativeNumber.pipe(Schema.lessThanOrEqualTo(30_000)).annotations({
+  description: 'Wait for completion or new output, up to 30000 ms. Exec defaults to 1000; read defaults to 0.',
+})
+const ReplyBytes = PositiveNumber.pipe(
+  Schema.greaterThanOrEqualTo(4096),
+  Schema.lessThanOrEqualTo(1_048_576),
+).annotations({
+  description: 'Total serialized MCP reply budget, including metadata and both streams. Default: 20000.',
+})
 
 export const EmptyInputSchema = Schema.Struct({}).annotations({
   jsonSchema: {
@@ -21,7 +31,11 @@ export const EmptyInputSchema = Schema.Struct({}).annotations({
 
 export const CommandResultSchema = Schema.Struct({
   ok: Schema.Boolean,
-  command: Schema.String,
+  commandPreview: Schema.String,
+  commandHash: Schema.String,
+  jobId: Schema.String,
+  taskId: Schema.String,
+  sessionId: Schema.NullOr(Schema.String),
   cwd: Schema.String,
   exitCode: Schema.NullOr(Schema.Number.pipe(Schema.int())),
   signal: Schema.NullOr(Schema.String),
@@ -32,35 +46,77 @@ export const CommandResultSchema = Schema.Struct({
   stderrBytes: Schema.Number.pipe(Schema.int()),
   stdoutTruncated: Schema.Boolean,
   stderrTruncated: Schema.Boolean,
+  outputCaptureError: Schema.NullOr(Schema.String),
+  auditErrors: NonNegativeNumber,
+  captureIncomplete: Schema.Boolean,
 })
 
-export const ShellJobSchema = Schema.extend(
-  CommandResultSchema,
-  Schema.Struct({
-    jobId: Schema.String,
-    outputCaptureError: Schema.NullOr(Schema.String),
-    auditErrors: Schema.Number,
-    sessionId: Schema.NullOr(Schema.String),
-    agentId: Schema.NullOr(Schema.String),
-    requestId: Schema.NullOr(Schema.String),
-    toolCallId: Schema.NullOr(Schema.String),
-    outputEncoding: Schema.Literal('utf8', 'base64'),
-    outputLimitBytes: Schema.Number,
-    stdoutStartOffset: Schema.Number,
-    stderrStartOffset: Schema.Number,
-    stdoutHasMore: Schema.Boolean,
-    stderrHasMore: Schema.Boolean,
-    status: Schema.Literal('running', 'exited', 'killed', 'timed_out'),
-    startedAt: Schema.String,
-    finishedAt: Schema.NullOr(Schema.String),
-    stdoutRetentionStartByte: Schema.Number.pipe(Schema.int()),
-    stderrRetentionStartByte: Schema.Number.pipe(Schema.int()),
-    stdoutNextOffset: Schema.Number.pipe(Schema.int()),
-    stderrNextOffset: Schema.Number.pipe(Schema.int()),
-  }),
+const JobIdentityFields = {
+  jobId: Schema.String,
+  sessionId: Schema.NullOr(Schema.String),
+  taskId: Schema.String,
+  agentId: Schema.NullOr(Schema.String),
+  requestKey: Schema.String,
+  requestId: Schema.NullOr(Schema.String),
+  toolCallId: Schema.NullOr(Schema.String),
+  commandPreview: Schema.String,
+  commandHash: Schema.String,
+  cwd: Schema.String,
+  startedAt: Schema.String,
+  stdoutBytes: NonNegativeNumber,
+  stderrBytes: NonNegativeNumber,
+  stdoutRetentionStartByte: NonNegativeNumber,
+  stderrRetentionStartByte: NonNegativeNumber,
+  outputCaptureError: Schema.NullOr(Schema.String),
+  auditErrors: NonNegativeNumber,
+  captureIncomplete: Schema.Boolean,
+}
+const RunningFields = {
+  state: Schema.Literal('running'),
+  ok: Schema.Null,
+  exitCode: Schema.Null,
+  signal: Schema.Null,
+  finishedAt: Schema.Null,
+  expiresAt: Schema.Null,
+}
+const CompletedFields = {
+  state: Schema.Literal('exited', 'cancelled', 'timed_out'),
+  ok: Schema.Boolean,
+  exitCode: Schema.NullOr(Schema.Number.pipe(Schema.int())),
+  signal: Schema.NullOr(Schema.String),
+  finishedAt: Schema.String,
+  expiresAt: Schema.String,
+}
+const OutputFields = {
+  stdout: Schema.String,
+  stderr: Schema.String,
+  stdoutStartOffset: NonNegativeNumber,
+  stderrStartOffset: NonNegativeNumber,
+  stdoutNextOffset: NonNegativeNumber,
+  stderrNextOffset: NonNegativeNumber,
+  stdoutHasMore: Schema.Boolean,
+  stderrHasMore: Schema.Boolean,
+  stdoutTruncated: Schema.Boolean,
+  stderrTruncated: Schema.Boolean,
+  cursor: Cursor,
+  outputEncoding: Schema.Literal('utf8', 'base64'),
+  maxBytes: ReplyBytes,
+}
+export const JobMetadataSchema = Schema.Union(
+  Schema.Struct({ ...JobIdentityFields, ...RunningFields }),
+  Schema.Struct({ ...JobIdentityFields, ...CompletedFields }),
+)
+export const ExecutionOutputSchema = Schema.Union(
+  Schema.Struct({ ...JobIdentityFields, ...RunningFields, ...OutputFields }),
+  Schema.Struct({ ...JobIdentityFields, ...CompletedFields, ...OutputFields }),
 )
 
-export const ShellInputSchema = Schema.Struct({
+export const ExecInputSchema = Schema.Struct({
+  outputEncoding: Schema.optional(Schema.Literal('utf8', 'base64')),
+  requestKey: NonEmptyString.pipe(Schema.maxLength(128)).annotations({
+    description:
+      'Unique key for this execution. Retry the same key and command after an uncertain response; retries return the same job for one hour after completion.',
+  }),
   agentId: Schema.optional(
     NonEmptyString.pipe(Schema.maxLength(128)).annotations({
       description: 'Advisory agent/task label, not an authorization identity.',
@@ -72,12 +128,13 @@ export const ShellInputSchema = Schema.Struct({
   }),
   cwd: Schema.optional(
     Schema.String.annotations({
-      description: 'Working directory; relative to the repo session when sessionId is set.',
+      description: 'Working directory relative to the owned repo session.',
     }),
   ),
-  sessionId: Schema.optional(SessionId),
+  sessionId: SessionId,
   timeoutSeconds: Schema.optional(TimeoutSeconds),
-  maxOutputBytes: Schema.optional(OutputBytes),
+  waitMs: Schema.optional(WaitMs),
+  maxBytes: Schema.optional(ReplyBytes),
 })
 
 export const SearchInputSchema = Schema.Struct({
@@ -105,9 +162,9 @@ export const ReadFileOutputSchema = Schema.Struct({
 export const ApplyPatchInputSchema = Schema.Struct({
   patch: NonEmptyString,
   cwd: Schema.optional(
-    Schema.String.annotations({ description: 'Working directory under /workspace. Defaults to /workspace/lab.' }),
+    Schema.String.annotations({ description: 'Working directory relative to the owned repo session.' }),
   ),
-  sessionId: Schema.optional(SessionId),
+  sessionId: SessionId,
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   maxOutputBytes: Schema.optional(OutputBytes),
 })
@@ -123,32 +180,39 @@ export const AgentGuideOutputSchema = Schema.Struct({
   guide: Schema.String,
 })
 
-export const ShellReadInputSchema = Schema.Struct({
+export const ReadInputSchema = Schema.Struct({
   outputEncoding: Schema.optional(Schema.Literal('utf8', 'base64')),
-  jobId: NonEmptyString.annotations({ description: 'Job id returned by shell_start.' }),
-  stdoutOffset: Schema.optional(NonNegativeNumber),
-  stderrOffset: Schema.optional(NonNegativeNumber),
-  maxOutputBytes: Schema.optional(OutputBytes),
+  jobId: NonEmptyString.annotations({ description: 'Job id returned by exec.' }),
+  cursor: Cursor.annotations({
+    description: 'Cursor from the last exec/read reply. Continue from both streams without repeating output.',
+  }),
+  waitMs: Schema.optional(WaitMs),
+  maxBytes: Schema.optional(ReplyBytes),
 })
 
-export const ShellKillInputSchema = Schema.Struct({
-  jobId: NonEmptyString.annotations({ description: 'Job id returned by shell_start.' }),
-  signal: Schema.optional(Schema.String),
+export const CancelInputSchema = Schema.Struct({
+  jobId: NonEmptyString.annotations({
+    description:
+      'Job id returned by exec. Sends SIGTERM, then SIGKILL if necessary, and returns the completion receipt.',
+  }),
 })
 
-export const ShellStatusInputSchema = Schema.Struct({
+export const StatusInputSchema = Schema.Struct({
   sessionId: Schema.optional(SessionId),
   agentId: Schema.optional(NonEmptyString),
   jobId: Schema.optional(Schema.String),
   limit: Schema.optional(PositiveNumber.pipe(Schema.lessThanOrEqualTo(100))),
+  cursor: Schema.optional(Cursor),
 })
 
-export const ShellStatusOutputSchema = Schema.Struct({
-  jobs: Schema.Array(ShellJobSchema),
+export const StatusOutputSchema = Schema.Struct({
+  jobs: Schema.Array(JobMetadataSchema),
+  cursor: Schema.NullOr(Cursor),
+  hasMore: Schema.Boolean,
 })
 
 export const CliInputSchema = Schema.Struct({
-  args: Schema.Array(NonEmptyString).pipe(Schema.minItems(1)).annotations({
+  args: Schema.Array(Schema.String).pipe(Schema.minItems(1)).annotations({
     description: 'Arguments passed to the executable, excluding the executable name.',
   }),
   cwd: Schema.optional(Schema.String),
@@ -156,6 +220,8 @@ export const CliInputSchema = Schema.Struct({
   timeoutSeconds: Schema.optional(TimeoutSeconds),
   maxOutputBytes: Schema.optional(OutputBytes),
 })
+
+export const GitWriteInputSchema = Schema.Struct({ ...CliInputSchema.fields, sessionId: SessionId })
 
 export const RepoSessionOpenInputSchema = Schema.Struct({
   name: Schema.optional(
@@ -175,6 +241,7 @@ export const RepoSessionCloseInputSchema = Schema.Struct({
 
 export const RepoSessionStatusSchema = Schema.Struct({
   sessionId: Schema.String,
+  taskId: Schema.String,
   branch: Schema.String,
   baseBranch: Schema.String,
   baseSha: Schema.String,
@@ -248,11 +315,12 @@ export const AgentReadInputSchema = Schema.Struct({
 export type SearchInput = typeof SearchInputSchema.Type
 export type ReadFileInput = typeof ReadFileInputSchema.Type
 export type ApplyPatchInput = typeof ApplyPatchInputSchema.Type
-export type ShellInput = typeof ShellInputSchema.Type
-export type ShellReadInput = typeof ShellReadInputSchema.Type
-export type ShellKillInput = typeof ShellKillInputSchema.Type
-export type ShellStatusInput = typeof ShellStatusInputSchema.Type
+export type ExecInput = typeof ExecInputSchema.Type
+export type ReadInput = typeof ReadInputSchema.Type
+export type CancelInput = typeof CancelInputSchema.Type
+export type StatusInput = typeof StatusInputSchema.Type
 export type CliInput = typeof CliInputSchema.Type
+export type GitWriteInput = typeof GitWriteInputSchema.Type
 export type RepoSessionOpenInput = typeof RepoSessionOpenInputSchema.Type
 export type RepoSessionInput = typeof RepoSessionInputSchema.Type
 export type RepoSessionCloseInput = typeof RepoSessionCloseInputSchema.Type
