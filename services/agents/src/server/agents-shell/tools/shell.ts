@@ -107,7 +107,7 @@ export const createShellTools = (): EffectTool[] => [
     name: 'status',
     title: 'List executions',
     description:
-      'List metadata without output or command bodies, in pages bounded to 8 KiB. Continue with cursor and the same filters.',
+      'List 8 KiB metadata pages with bounded commandPreview and commandHash, without stdout/stderr. Continue with cursor and the same filters.',
     inputSchema: StatusInputSchema,
     outputSchema: StatusOutputSchema,
     annotations: openReadOnlyAnnotations,
