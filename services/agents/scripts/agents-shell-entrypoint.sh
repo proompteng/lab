@@ -19,6 +19,11 @@ if [[ -n "${GH_TOKEN:-}" ]]; then
   gh auth setup-git --hostname github.com
 fi
 
+if [[ -z "${KUBECONFIG:-}" && ! -f "${HOME}/.kube/config" && -n "${KUBERNETES_SERVICE_HOST:-}" ]]; then
+  export KUBECONFIG=/tmp/agents-shell-kubeconfig
+  bun ./scripts/configure-agents-shell-kubeconfig.ts
+fi
+
 ./scripts/install-agents-shell-pstack.sh
 
 exec bun run start:agents-shell

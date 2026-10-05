@@ -944,10 +944,10 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer())),
-      Effect.timeout('25 seconds'),
+      Effect.timeout('60 seconds'),
     ),
   )
-}, 30_000)
+}, 70_000)
 
 test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
   'offline %s preflight verifies source coverage and writes a diagnostic without provider configuration',

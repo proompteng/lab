@@ -35,7 +35,7 @@ Native workers use separate repository sessions and pass the returned `sessionId
 generated job ID for task identity. These records describe tool execution; they do not infer a native model's thinking or overall lifecycle.
 
 The server exposes one generated catalog through the direct endpoint and tunnel. `tools/list` and tool replies include
-`_meta["agents-shell/catalog"]` with version `0.2.0` and a SHA-256 fingerprint of the catalog. After an authorized rollout,
+`_meta["agents-shell/catalog"]` with version `0.2.1` and a SHA-256 fingerprint of the catalog. After an authorized rollout,
 refresh both connector catalogs and compare these receipts; a cached connector catalog is not proof of deployed parity.
 Use `git_write` with an owned `sessionId` for `ls-remote`. Git configuration can rewrite URLs and execute configured
 helpers, so remote inspection requires execution authority.
@@ -108,7 +108,8 @@ Use one execution API:
 for admission and completion, returning a running job (`state: "running"`, `ok: null`) or terminal receipt
 (`state: "exited" | "cancelled" | "timed_out"`, boolean `ok`). The timeout still defaults to 60 seconds and caps at 1800;
 `waitMs` only bounds how long the caller waits. Retry an uncertain call with the same key and execution input to retrieve
-the same job. Changing command, cwd, timeout or agent label returns `IDEMPOTENCY_CONFLICT`. Capacity pressure returns
+the same job. Retain the original execution arguments; previews may be truncated. Completed replay works after session
+close. Changing command, cwd, timeout or agent label returns `IDEMPOTENCY_CONFLICT`. Capacity pressure returns
 `CAPACITY_BUSY` and `retryAfterMs`, with bounded admission waiting and no unbounded queue. A command waiting for capacity
 may start after another retry receives `CAPACITY_BUSY`; retry the same key until the original call resolves.
 
@@ -126,9 +127,14 @@ bounded `commandPreview` and `commandHash` instead of echoing the entire command
 fields and report `outputCaptureError`, `auditErrors` and `captureIncomplete`; their `maxOutputBytes` remains a per-stream
 cap. Command success and capture completeness are separate. Capture receipts do not establish end-to-end Loki delivery.
 
-`status` lists metadata only in pages of at most 8 KiB, with a cursor and `hasMore`. Reuse the same filters for subsequent
+`status` lists metadata including bounded `commandPreview` and `commandHash`, without stdout/stderr, in pages of at most
+8 KiB, with a cursor and `hasMore`. A short command may fit entirely in its preview. Reuse the same filters for subsequent
 pages. `cancel` sends SIGTERM to the process group, escalates to SIGKILL after one second, waits for completion, and returns
 the terminal receipt. Repeated cancellation returns the same receipt.
+
+When running in Kubernetes without an existing kubeconfig, shell startup creates an `in-cluster` context from the mounted
+ServiceAccount namespace, CA and token file. The generated config points at the token file so projected token rotation
+continues to work. Its `KUBECONFIG` is inherited by `exec` and the native Kubernetes tools.
 
 Completion receipts and idempotency keys remain available for one hour after **completion**, independently of output
 history. Up to 10,000 receipts are retained; new executions receive capacity pressure rather than evicting unexpired
