@@ -21,6 +21,7 @@ import { decodeRawMarketRecord, RawMarketEventKind } from '../market-data/stream
 import { CaptureDisposition, CaptureInvalidation, restoreKafkaTransportTimestamp } from '../research-capture/capture.ts'
 import {
   deriveResearchCaptureExportManifest,
+  decodeResearchCaptureExportEnvelope,
   researchCaptureObjectKey,
   verifyResearchCaptureExportPrefix,
 } from '../research-capture/export.ts'
@@ -491,15 +492,17 @@ const program = Effect.gen(function* () {
                         object.payload.byteOffset,
                         Math.min(96, object.payload.byteLength),
                       ).toString('utf8')
-                      const stage = prefix.startsWith('{"schemaVersion":"bayn.research-capture-chunk.v1"')
-                        ? 'metadata'
-                        : prefix.startsWith('{"schemaVersion":"bayn.research-capture-byte-index.v1"')
-                          ? 'index'
-                          : prefix.startsWith('{"schemaVersion":"bayn.research-capture-seal.v1"')
-                            ? 'seal'
-                            : prefix.startsWith('{"schemaVersion":"bayn.research-capture-export.v1"')
-                              ? 'manifest'
-                              : 'raw'
+                      const stage = prefix.startsWith('BAYNCAP2')
+                        ? 'envelope'
+                        : prefix.startsWith('{"schemaVersion":"bayn.research-capture-chunk.v1"')
+                          ? 'metadata'
+                          : prefix.startsWith('{"schemaVersion":"bayn.research-capture-byte-index.v1"')
+                            ? 'index'
+                            : prefix.startsWith('{"schemaVersion":"bayn.research-capture-seal.v1"')
+                              ? 'seal'
+                              : prefix.startsWith('{"schemaVersion":"bayn.research-capture-export.v')
+                                ? 'manifest'
+                                : 'raw'
                       return timedSink(
                         `object.${stage}.putAndVerifiedGet`,
                         object.payload.byteLength,
@@ -1052,6 +1055,24 @@ const program = Effect.gen(function* () {
         let readBytes = 0
         while (indexHash !== null) {
           assert.ok(chunks.length < seal.persistedChunks)
+          if (seal.exportRoot.schemaVersion === 'bayn.research-capture-export-root.v2') {
+            const envelope = { contentHash: indexHash, payload: object(indexHash) }
+            const chunk = Result.getOrThrow(decodeResearchCaptureExportEnvelope(envelope))
+            const index = JSON.parse(chunk.index.payload)
+            const metadata = yield* readResearchCapturePostgresChunk(
+              sql,
+              result.captureId,
+              index.chunkOrdinal,
+              plan.limits.maximumObjectBodyBytes,
+            )
+            assert.equal(chunk.metadata.payload, metadata.payload)
+            assert.equal(chunk.metadata.contentHash, metadata.contentHash)
+            readBytes += envelope.payload.byteLength + Buffer.byteLength(metadata.payload)
+            assert.ok(readBytes <= plan.limits.maximumCombinedAttemptedSinkBytesPerArm)
+            chunks.push(chunk)
+            indexHash = index.previousIndexHash
+            continue
+          }
           const indexBytes = { contentHash: indexHash, payload: object(indexHash).toString('utf8') }
           const index = JSON.parse(indexBytes.payload)
           const metadata = yield* readResearchCapturePostgresChunk(

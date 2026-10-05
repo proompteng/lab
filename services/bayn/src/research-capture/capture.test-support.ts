@@ -9,6 +9,7 @@ import {
 } from './capture'
 import {
   deriveResearchCaptureExportManifest,
+  decodeResearchCaptureExportEnvelope,
   ResearchCaptureByteIndexSchema,
   ResearchCaptureExportManifestSchema,
   researchCaptureObjectKey,
@@ -49,19 +50,29 @@ export const recoverCaptureFromStoredObjects = (
     )
     if (manifest.exportedChunks !== sqlChunks.length)
       return yield* Result.fail(fail('SQL frontier differs from export root'))
-    const chunks: Array<{ metadata: ResearchCaptureBytes; index: ResearchCaptureBytes; raw: Uint8Array }> = []
+    const chunks: Array<{
+      metadata: ResearchCaptureBytes
+      index: ResearchCaptureBytes
+      raw: Uint8Array
+      envelope?: ResearchCaptureObject
+    }> = []
     let hash = manifest.lastIndexHash
     for (let ordinal = sqlChunks.length - 1; ordinal >= 0; ordinal--) {
       if (hash === null) return yield* Result.fail(fail('Missing index tail'))
-      const indexBytes = asText(yield* read(hash))
+      const object = yield* read(hash)
+      const envelope =
+        manifest.schemaVersion === 'bayn.research-capture-export.v2'
+          ? yield* decodeResearchCaptureExportEnvelope(object)
+          : undefined
+      const indexBytes = envelope?.index ?? asText(object)
       const index = yield* Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureByteIndexSchema))(
         indexBytes.payload,
       )
-      const metadata = asText(yield* read(index.metadata.contentHash))
+      const metadata = envelope?.metadata ?? asText(yield* read(index.metadata.contentHash))
       if (metadata.payload !== sqlChunks[ordinal]?.payload || metadata.contentHash !== sqlChunks[ordinal]?.contentHash)
         return yield* Result.fail(fail('SQL and exported metadata differ'))
-      const raw = yield* read(index.raw.contentHash)
-      chunks.unshift({ metadata, index: indexBytes, raw: raw.payload })
+      const raw = envelope?.raw ?? (yield* read(index.raw.contentHash)).payload
+      chunks.unshift({ metadata, index: indexBytes, raw, ...(envelope === undefined ? {} : { envelope: object }) })
       hash = index.previousIndexHash
     }
     if (hash !== null) return yield* Result.fail(fail('Index chain exceeds SQL frontier'))

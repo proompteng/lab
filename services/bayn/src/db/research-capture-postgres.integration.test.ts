@@ -121,7 +121,7 @@ postgresTest('a session claim commits before objects and a fresh attempt cannot 
           }),
       })
       const claimed = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
-      expect(objects).toBe(3)
+      expect(objects).toBe(1)
       const second = yield* makeResearchCaptureRecorder(store, options, {
         putVerified: () => Effect.die('a reused claim must not write objects'),
       })
@@ -422,7 +422,7 @@ postgresTest('durable SQL seal recovers raw objects after process state and seal
           return bucket.get(key)
         }),
       )
-      expect(reads).toHaveLength(4)
+      expect(reads).toHaveLength(2)
       expect(recovered.seal.exportRoot?.exportedChunks).toBe(1)
       expect(recovered.exportVerified).toBe(true)
       expect(recovered.structurallyClosed).toBe(true)

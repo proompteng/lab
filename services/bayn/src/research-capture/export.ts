@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { Effect, Result, Schema } from 'effect'
 
 import { sha256 } from '../hash'
@@ -46,7 +47,10 @@ const ByteRangeSchema = Schema.Struct({
   byteLength: Schema.NullOr(NonNegativeIntegerSchema),
 })
 export const ResearchCaptureByteIndexSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-byte-index.v1'),
+  schemaVersion: Schema.Union([
+    Schema.Literal('bayn.research-capture-byte-index.v1'),
+    Schema.Literal('bayn.research-capture-envelope.v2'),
+  ]),
   qualification: Schema.Enum(CaptureQualification),
   captureId: ResearchCaptureIdSchema,
   sourceRevision: GitSourceRevisionSchema,
@@ -57,7 +61,10 @@ export const ResearchCaptureByteIndexSchema = Schema.Struct({
   ranges: Schema.Array(ByteRangeSchema).check(Schema.isMaxLength(1024)),
 })
 export const ResearchCaptureExportManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-export.v1'),
+  schemaVersion: Schema.Union([
+    Schema.Literal('bayn.research-capture-export.v1'),
+    Schema.Literal('bayn.research-capture-export.v2'),
+  ]),
   qualification: Schema.Enum(CaptureQualification),
   captureId: ResearchCaptureIdSchema,
   sourceRevision: GitSourceRevisionSchema,
@@ -136,6 +143,140 @@ export const persistResearchCaptureExportChunk = (
     return objects.index.contentHash
   })
 
+const envelopeMagic = Buffer.from('BAYNCAP2')
+const envelopePrefixBytes = 12
+const envelopeFixedHeaderBytes = 4096
+const envelopeMaximumHeaderBytes = envelopeFixedHeaderBytes + 128 * 1024
+
+/** One immutable write unit. Its own hash is external, so neither metadata nor predecessor links are circular. */
+export const buildResearchCaptureExportEnvelope = (
+  chunk: ResearchCaptureChunk,
+  metadataBytes: ResearchCaptureBytes,
+  entries: readonly ResearchCaptureExportEntry[],
+  previousIndexHash: string | null,
+): ResearchCaptureObject => {
+  if (entries.length > 1024) throw fail('Envelope exceeds its receipt bound')
+  const parts: Uint8Array[] = []
+  const ranges: Array<typeof ByteRangeSchema.Type> = []
+  const rawDigest = createHash('sha256')
+  let rawLength = 0
+  for (const entry of entries) {
+    if (entry.receipt.event.kind !== 'market-record') continue
+    const raw = entry.rawValue
+    if (raw === undefined) throw fail('Admitted market receipt lost its original bytes')
+    const range = {
+      receiptSequence: entry.receipt.sequence,
+      byteOffset: raw === null ? null : rawLength,
+      byteLength: raw === null ? null : raw.byteLength,
+    }
+    // The comma is charged too; fixed array/header punctuation is charged to the envelope reserve.
+    if (Buffer.byteLength(JSON.stringify(range)) + 1 > 128) throw fail('Byte range exceeds its admission reservation')
+    ranges.push(range)
+    if (raw !== null) {
+      parts.push(raw)
+      rawLength += raw.byteLength
+      if (rawLength > maximumResearchCaptureChunkBytes) throw fail('Envelope raw bytes exceed the object bound')
+      rawDigest.update(raw)
+    }
+  }
+  const metadataLength = Buffer.byteLength(metadataBytes.payload, 'utf8')
+  if (metadataLength > maximumResearchCaptureChunkBytes || sha256(metadataBytes.payload) !== metadataBytes.contentHash)
+    throw fail('Envelope metadata differs from its content address or byte bound')
+  const header = {
+    schemaVersion: 'bayn.research-capture-envelope.v2' as const,
+    qualification: CaptureQualification.Unqualified,
+    captureId: chunk.captureId,
+    sourceRevision: chunk.sourceRevision,
+    chunkOrdinal: chunk.chunkOrdinal,
+    previousIndexHash,
+    metadata: { contentHash: metadataBytes.contentHash, byteLength: metadataLength },
+    raw: { contentHash: rawDigest.digest('hex'), byteLength: rawLength },
+    ranges,
+  } satisfies typeof ResearchCaptureByteIndexSchema.Type
+  const headerText = JSON.stringify(header)
+  const headerLength = Buffer.byteLength(headerText)
+  const fixedHeaderLength = Buffer.byteLength(JSON.stringify({ ...header, ranges: [] })) + envelopePrefixBytes
+  const total = envelopePrefixBytes + headerLength + metadataLength + rawLength
+  if (
+    fixedHeaderLength > envelopeFixedHeaderBytes ||
+    headerLength > envelopeFixedHeaderBytes + 128 * entries.length ||
+    total > maximumResearchCaptureChunkBytes
+  )
+    throw fail('Envelope exceeds its framing or object reservation')
+  // One bounded allocation, with no temporary metadata Buffer or separately concatenated raw buffer.
+  // Construction fits 4M+2R+4I; full readback fits 4M+3R+4I, including admitted bytes.
+  const payload = Buffer.allocUnsafe(total)
+  envelopeMagic.copy(payload)
+  payload.writeUInt32BE(headerLength, envelopeMagic.byteLength)
+  let offset = envelopePrefixBytes
+  offset += payload.write(headerText, offset, headerLength, 'utf8')
+  offset += payload.write(metadataBytes.payload, offset, metadataLength, 'utf8')
+  for (const part of parts) {
+    payload.set(part, offset)
+    offset += part.byteLength
+  }
+  if (offset !== total) throw fail('Envelope assembly did not fill its exact byte bound')
+  return researchCaptureObject(payload)
+}
+
+/** Decode bounded framing without parsing/re-encoding the authoritative metadata bytes. */
+export const decodeResearchCaptureExportEnvelope = (envelope: ResearchCaptureObject) =>
+  Result.gen(function* () {
+    if (
+      !(envelope.payload instanceof Uint8Array) ||
+      envelope.payload.byteLength < envelopePrefixBytes ||
+      envelope.payload.byteLength > maximumResearchCaptureChunkBytes ||
+      sha256(envelope.payload) !== envelope.contentHash
+    )
+      return yield* Result.fail(fail('Envelope exceeds its byte bound or differs from its content address'))
+    const payload = Buffer.from(envelope.payload.buffer, envelope.payload.byteOffset, envelope.payload.byteLength)
+    if (!payload.subarray(0, envelopeMagic.byteLength).equals(envelopeMagic))
+      return yield* Result.fail(fail('Unknown capture envelope framing'))
+    const headerLength = payload.readUInt32BE(envelopeMagic.byteLength)
+    if (
+      headerLength > envelopeMaximumHeaderBytes ||
+      headerLength === 0 ||
+      envelopePrefixBytes + headerLength > payload.byteLength
+    )
+      return yield* Result.fail(fail('Capture envelope has an invalid header length'))
+    const headerText = yield* Result.try({
+      try: () =>
+        new TextDecoder('utf-8', { fatal: true }).decode(
+          payload.subarray(envelopePrefixBytes, envelopePrefixBytes + headerLength),
+        ),
+      catch: () => fail('Capture envelope header is not exact UTF8'),
+    })
+    const header = yield* Schema.decodeUnknownResult(
+      Schema.fromJsonString(ResearchCaptureByteIndexSchema),
+      strictParseOptions,
+    )(headerText)
+    if (header.schemaVersion !== 'bayn.research-capture-envelope.v2')
+      return yield* Result.fail(fail('Capture envelope has the wrong format discriminator'))
+    const metadataStart = envelopePrefixBytes + headerLength
+    const rawStart = metadataStart + header.metadata.byteLength
+    if (rawStart + header.raw.byteLength !== payload.byteLength)
+      return yield* Result.fail(fail('Capture envelope is truncated or has trailing bytes'))
+    const metadataPayload = payload.subarray(metadataStart, rawStart)
+    const raw = payload.subarray(rawStart)
+    if (sha256(metadataPayload) !== header.metadata.contentHash || sha256(raw) !== header.raw.contentHash)
+      return yield* Result.fail(fail('Capture envelope component differs from its exact hash'))
+    const metadataText = yield* Result.try({
+      try: () => new TextDecoder('utf-8', { fatal: true }).decode(metadataPayload),
+      catch: () => fail('Capture envelope metadata is not exact UTF8'),
+    })
+    return {
+      envelope,
+      metadata: { contentHash: header.metadata.contentHash, payload: metadataText },
+      index: { contentHash: sha256(headerText), payload: headerText },
+      raw,
+    }
+  })
+
+export const persistResearchCaptureExportEnvelope = (
+  store: ResearchCaptureObjectStore,
+  envelope: ResearchCaptureObject,
+) => store.putVerified(envelope).pipe(Effect.as(envelope.contentHash))
+
 export const deriveResearchCaptureExportManifest = (sealBytes: ResearchCaptureBytes | undefined) =>
   Result.gen(function* () {
     if (sealBytes === undefined) return yield* Result.fail(fail('Unsealed capture has no durable export root'))
@@ -145,7 +286,10 @@ export const deriveResearchCaptureExportManifest = (sealBytes: ResearchCaptureBy
     const metadataSeal = researchCaptureObject(sealBytes.payload)
     return researchCaptureObject(
       JSON.stringify({
-        schemaVersion: 'bayn.research-capture-export.v1',
+        schemaVersion:
+          root.schemaVersion === 'bayn.research-capture-export-root.v2'
+            ? 'bayn.research-capture-export.v2'
+            : 'bayn.research-capture-export.v1',
         qualification: CaptureQualification.Unqualified,
         captureId: seal.captureId,
         sourceRevision: seal.sourceRevision,
@@ -182,6 +326,7 @@ const verifyExport = (
     readonly index: ResearchCaptureBytes
     readonly metadata: ResearchCaptureBytes
     readonly raw: Uint8Array
+    readonly envelope?: ResearchCaptureObject
   }[],
   sealBytes: ResearchCaptureBytes,
   manifestBytes: ResearchCaptureBytes,
@@ -209,9 +354,27 @@ const verifyExport = (
       return yield* Result.fail(fail('Export manifest does not bind its exact metadata seal'))
     let previousIndexHash: string | null = null
     for (const [ordinal, bytes] of chunks.entries()) {
+      const envelopeFormat = manifest.schemaVersion === 'bayn.research-capture-export.v2'
+      if (envelopeFormat) {
+        if (bytes.envelope === undefined) return yield* Result.fail(fail('Envelope export omits its immutable frame'))
+        const extracted = yield* decodeResearchCaptureExportEnvelope(bytes.envelope)
+        if (
+          !(bytes.raw instanceof Uint8Array) ||
+          extracted.metadata.payload !== bytes.metadata.payload ||
+          extracted.metadata.contentHash !== bytes.metadata.contentHash ||
+          extracted.index.payload !== bytes.index.payload ||
+          extracted.index.contentHash !== bytes.index.contentHash ||
+          !Buffer.from(extracted.raw.buffer, extracted.raw.byteOffset, extracted.raw.byteLength).equals(bytes.raw)
+        )
+          return yield* Result.fail(fail('Export components differ from their immutable envelope'))
+      } else if (bytes.envelope !== undefined) {
+        return yield* Result.fail(fail('Legacy export unexpectedly contains an envelope'))
+      }
       const index = yield* decodeExport(ResearchCaptureByteIndexSchema, bytes.index)
       const metadata = yield* decodeResearchCaptureChunk(bytes.metadata)
       if (
+        index.schemaVersion !==
+          (envelopeFormat ? 'bayn.research-capture-envelope.v2' : 'bayn.research-capture-byte-index.v1') ||
         index.captureId !== manifest.captureId ||
         index.sourceRevision !== manifest.sourceRevision ||
         index.chunkOrdinal !== ordinal ||
@@ -250,7 +413,7 @@ const verifyExport = (
         }
       }
       if (offset !== bytes.raw.byteLength) return yield* Result.fail(fail('Export contains unreferenced raw bytes'))
-      previousIndexHash = bytes.index.contentHash
+      previousIndexHash = bytes.envelope?.contentHash ?? bytes.index.contentHash
     }
     if (manifest.lastIndexHash !== previousIndexHash)
       return yield* Result.fail(fail('Export manifest omits its index tail'))

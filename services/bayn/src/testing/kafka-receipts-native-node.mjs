@@ -9,7 +9,7 @@ import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstra
 import { makeKafkaMarketProjection } from '../market-data/streaming/kafka.ts'
 import { CaptureDisposition, restoreKafkaTransportTimestamp } from '../research-capture/capture.ts'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder.ts'
-import { verifyResearchCaptureExport } from '../research-capture/export.ts'
+import { decodeResearchCaptureExportEnvelope, verifyResearchCaptureExport } from '../research-capture/export.ts'
 import { readResearchCaptureInterval } from '../research-capture/replay.ts'
 
 const username = process.env.BAYN_TEST_KAFKA_USERNAME
@@ -164,11 +164,11 @@ try {
   }
   assert.notEqual(receipts[2].event.rawValueSha256, receipts[3].event.rawValueSha256)
   const objectText = (object) => ({ contentHash: object.contentHash, payload: object.payload.toString('utf8') })
-  const exported = chunks.map((metadata, index) => ({
-    metadata,
-    raw: objects[index * 3].payload,
-    index: objectText(objects[index * 3 + 2]),
-  }))
+  const exported = chunks.map((metadata, index) => {
+    const decoded = Result.getOrThrow(decodeResearchCaptureExportEnvelope(objects[index]))
+    assert.deepEqual(decoded.metadata, metadata)
+    return decoded
+  })
   const verified = Result.getOrThrow(verifyResearchCaptureExport(exported, seals[0], objectText(objects.at(-1))))
   assert.equal(verified.complete, false)
   assert.equal(verified.exportVerified, true)

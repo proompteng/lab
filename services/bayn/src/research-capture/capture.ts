@@ -247,7 +247,10 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
 const ResearchCaptureExportRootSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v1'),
+  schemaVersion: Schema.Union([
+    Schema.Literal('bayn.research-capture-export-root.v1'),
+    Schema.Literal('bayn.research-capture-export-root.v2'),
+  ]),
   lastIndexHash: Schema.NullOr(Sha256Schema),
   exportedChunks: NonNegativeIntegerSchema,
 })

@@ -29,6 +29,8 @@ import {
 } from './capture'
 import {
   buildResearchCaptureExportChunk,
+  buildResearchCaptureExportEnvelope,
+  decodeResearchCaptureExportEnvelope,
   deriveResearchCaptureExportManifest,
   verifyResearchCaptureExport,
   verifyResearchCaptureExportPrefix,
@@ -68,7 +70,10 @@ const quote = Buffer.from(
   }),
 )
 
-const fixture = (mutate?: (receipts: ResearchCaptureReceipt[]) => ResearchCaptureReceipt[]) => {
+const fixture = (
+  mutate?: (receipts: ResearchCaptureReceipt[]) => ResearchCaptureReceipt[],
+  format: 'v1' | 'v2' = 'v1',
+) => {
   let projection = emptyStreamingProjection('consumer-1', universe.topics.technicalFeatures)
   const positions = partitions.map((partition) => ({ ...partition, offset: '0' }))
   const receipts: ResearchCaptureReceipt[] = []
@@ -171,15 +176,30 @@ const fixture = (mutate?: (receipts: ResearchCaptureReceipt[]) => ResearchCaptur
     receipts: selected,
   }
   const metadata = encodeResearchCapture(chunk)
-  const objects = buildResearchCaptureExportChunk(
-    chunk,
-    metadata,
-    selected.map((receipt) => ({
-      receipt,
-      ...(receipt.event.kind === 'market-record' ? { rawValue: raw.get(receipt.sequence) ?? null } : {}),
-    })),
-    null,
-  )
+  const entries = selected.map((receipt) => ({
+    receipt,
+    ...(receipt.event.kind === 'market-record' ? { rawValue: raw.get(receipt.sequence) ?? null } : {}),
+  }))
+  const exported = (() => {
+    if (format === 'v2') {
+      const envelope = buildResearchCaptureExportEnvelope(chunk, metadata, entries, null)
+      return {
+        bytes: Result.getOrThrow(decodeResearchCaptureExportEnvelope(envelope)),
+        objects: [envelope],
+        lastIndexHash: envelope.contentHash,
+      }
+    }
+    const objects = buildResearchCaptureExportChunk(chunk, metadata, entries, null)
+    return {
+      bytes: {
+        metadata,
+        raw: objects.raw.payload,
+        index: { contentHash: objects.index.contentHash, payload: Buffer.from(objects.index.payload).toString('utf8') },
+      },
+      objects: Object.values(objects),
+      lastIndexHash: objects.index.contentHash,
+    }
+  })()
   const seal = encodeResearchCapture({
     schemaVersion: 'bayn.research-capture-seal.v1',
     qualification: CaptureQualification.Unqualified,
@@ -192,149 +212,151 @@ const fixture = (mutate?: (receipts: ResearchCaptureReceipt[]) => ResearchCaptur
     lastContentHash: metadata.contentHash,
     invalidations: [],
     exportRoot: {
-      schemaVersion: 'bayn.research-capture-export-root.v1',
+      schemaVersion: format === 'v2' ? 'bayn.research-capture-export-root.v2' : 'bayn.research-capture-export-root.v1',
       exportedChunks: 1,
-      lastIndexHash: objects.index.contentHash,
+      lastIndexHash: exported.lastIndexHash,
     },
   })
   const manifest = Result.getOrThrow(deriveResearchCaptureExportManifest(seal))
   const manifestBytes = { contentHash: manifest.contentHash, payload: Buffer.from(manifest.payload).toString('utf8') }
-  const chunks = [
-    {
-      metadata,
-      raw: objects.raw.payload,
-      index: { contentHash: objects.index.contentHash, payload: Buffer.from(objects.index.payload).toString('utf8') },
-    },
-  ]
+  const chunks = [exported.bytes]
   const stored = new Map(
-    [
-      objects.raw,
-      objects.metadata,
-      objects.index,
-      manifest,
-      { contentHash: seal.contentHash, payload: Buffer.from(seal.payload) },
-    ].map((object) => [object.contentHash, object.payload]),
+    [...exported.objects, manifest, { contentHash: seal.contentHash, payload: Buffer.from(seal.payload) }].map(
+      (object) => [object.contentHash, object.payload],
+    ),
   )
   return { chunks, seal, manifestBytes, stored, receipts: selected, projection }
 }
 
-test('a sealed active-worker interval replays exact bytes, timestamps, dispositions and receipt order without STOPPED', async () => {
-  const data = fixture()
-  expect(Result.isFailure(verifyResearchCaptureExport(data.chunks, data.seal, data.manifestBytes))).toBe(true)
-  expect(
-    Result.getOrThrow(verifyResearchCaptureExportPrefix(data.chunks, data.seal, data.manifestBytes)).structurallyClosed,
-  ).toBe(false)
-  const replay = Result.getOrThrow(
-    replayResearchCaptureInterval(data.chunks, data.seal, data.manifestBytes, request, universe),
-  )
-  expect(replay.qualification).toBe(CaptureQualification.Unqualified)
-  expect(replay.structurallyClosed).toBe(false)
-  expect(replay.controllerCoverage).toBe('UNKNOWN')
-  expect(replay.manifest.nativeVisiblePartitions).toHaveLength(25)
-  expect(replay.manifest.recordCount).toBe(11)
-  expect(replay.events.map((event) => event.availableAtMs)).toEqual(Array(11).fill(at + 100))
-  expect(replay.cursor.projection.sequence).toBe(data.projection.sequence)
-  expect(replay.cursor.projection.quotes).toEqual(data.projection.quotes)
-  expect(replay.cursor.projection.rejections).toEqual(data.projection.rejections)
-  const original = replay.events.filter(
-    (event) => 'schemaVersion' in event && event.schemaVersion === 'bayn.original-market-arrival.v2',
-  )
-  expect(original.map((event) => event.receipt.disposition)).toEqual([
-    CaptureDisposition.Accepted,
-    CaptureDisposition.Ignored,
-    CaptureDisposition.Rejected,
-    CaptureDisposition.Rejected,
-    CaptureDisposition.Accepted,
-    CaptureDisposition.Rejected,
-    CaptureDisposition.Rejected,
-    CaptureDisposition.Rejected,
-    CaptureDisposition.Rejected,
-    CaptureDisposition.Rejected,
-    CaptureDisposition.Rejected,
-  ])
-  expect(original[2]?.rawValueBase64).toBe('gA==')
-  expect(original[3]?.rawValueBase64).toBe('')
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem
-        const path = yield* fs.makeTempFileScoped()
-        yield* fs.writeFile(path, replay.bytes)
-        const source = yield* openBacktestSource(path, replay.manifest, 'b'.repeat(64), replay.sourceReceipt)
-        yield* source.advanceTo(at + 99)
-        expect((yield* source.cursor).processedRecords).toBe(0)
-        yield* source.finish
-        const cursor = yield* source.cursor
-        expect(cursor.processedRecords).toBe(11)
-        expect(cursor.projection.quotes).toEqual(data.projection.quotes)
-        expect(cursor.projection.rejections).toEqual(data.projection.rejections)
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  )
-})
-
-test('reader follows only the durable root, checks actual objects and exact SQL metadata, and enforces its budget', async () => {
-  const data = fixture()
-  const read = (maximumBytes: number, missing?: string, corruptSql = false) =>
-    readResearchCaptureInterval({
-      seal: data.seal,
-      maximumBytes,
-      request,
-      universe,
-      readObject: (hash, limit) =>
-        Effect.sync(() => {
-          const value = hash === missing ? undefined : data.stored.get(hash)
-          if (value === undefined || value.byteLength > limit) throw new Error('fixture bounded read refused')
-          return value
+test.each(['v1', 'v2'] as const)(
+  'a sealed %s active-worker interval replays exact bytes, timestamps, dispositions and receipt order without STOPPED',
+  async (format) => {
+    const data = fixture(undefined, format)
+    expect(Result.isFailure(verifyResearchCaptureExport(data.chunks, data.seal, data.manifestBytes))).toBe(true)
+    expect(
+      Result.getOrThrow(verifyResearchCaptureExportPrefix(data.chunks, data.seal, data.manifestBytes))
+        .structurallyClosed,
+    ).toBe(false)
+    const replay = Result.getOrThrow(
+      replayResearchCaptureInterval(data.chunks, data.seal, data.manifestBytes, request, universe),
+    )
+    expect(replay.qualification).toBe(CaptureQualification.Unqualified)
+    expect(replay.structurallyClosed).toBe(false)
+    expect(replay.controllerCoverage).toBe('UNKNOWN')
+    expect(replay.manifest.nativeVisiblePartitions).toHaveLength(25)
+    expect(replay.manifest.recordCount).toBe(11)
+    expect(replay.events.map((event) => event.availableAtMs)).toEqual(Array(11).fill(at + 100))
+    expect(replay.cursor.projection.sequence).toBe(data.projection.sequence)
+    expect(replay.cursor.projection.quotes).toEqual(data.projection.quotes)
+    expect(replay.cursor.projection.rejections).toEqual(data.projection.rejections)
+    const original = replay.events.filter(
+      (event) => 'schemaVersion' in event && event.schemaVersion === 'bayn.original-market-arrival.v2',
+    )
+    expect(original.map((event) => event.receipt.disposition)).toEqual([
+      CaptureDisposition.Accepted,
+      CaptureDisposition.Ignored,
+      CaptureDisposition.Rejected,
+      CaptureDisposition.Rejected,
+      CaptureDisposition.Accepted,
+      CaptureDisposition.Rejected,
+      CaptureDisposition.Rejected,
+      CaptureDisposition.Rejected,
+      CaptureDisposition.Rejected,
+      CaptureDisposition.Rejected,
+      CaptureDisposition.Rejected,
+    ])
+    expect(original[2]?.rawValueBase64).toBe('gA==')
+    expect(original[3]?.rawValueBase64).toBe('')
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem
+          const path = yield* fs.makeTempFileScoped()
+          yield* fs.writeFile(path, replay.bytes)
+          const source = yield* openBacktestSource(path, replay.manifest, 'b'.repeat(64), replay.sourceReceipt)
+          yield* source.advanceTo(at + 99)
+          expect((yield* source.cursor).processedRecords).toBe(0)
+          yield* source.finish
+          const cursor = yield* source.cursor
+          expect(cursor.processedRecords).toBe(11)
+          expect(cursor.projection.quotes).toEqual(data.projection.quotes)
+          expect(cursor.projection.rejections).toEqual(data.projection.rejections)
         }),
-      readMetadataChunk: (_ordinal, limit) =>
-        Effect.sync(() => {
-          const chunk = corruptSql ? { ...data.chunks[0].metadata, payload: '{}' } : data.chunks[0].metadata
-          if (Buffer.byteLength(chunk.payload, 'utf8') > limit)
-            throw new Error('Fixture SQL read exceeds its byte limit')
-          return chunk
-        }),
-    })
+      ).pipe(Effect.provide(NodeServices.layer)),
+    )
+  },
+)
 
-  const replay = await Effect.runPromise(read(1024 * 1024))
-  expect(replay.manifest.recordCount).toBe(11)
-  expect(Result.isFailure(await Effect.runPromise(read(10).pipe(Effect.result)))).toBe(true)
-  expect((await Effect.runPromiseExit(read(1024 * 1024, data.manifestBytes.contentHash)))._tag).toBe('Failure')
-  expect(Result.isFailure(await Effect.runPromise(read(1024 * 1024, undefined, true).pipe(Effect.result)))).toBe(true)
-})
+test.each(['v1', 'v2'] as const)(
+  '%s reader follows only the durable root, checks actual objects and exact SQL metadata, and enforces its budget',
+  async (format) => {
+    const data = fixture(undefined, format)
+    const read = (maximumBytes: number, missing?: string, corruptSql = false) =>
+      readResearchCaptureInterval({
+        seal: data.seal,
+        maximumBytes,
+        request,
+        universe,
+        readObject: (hash, limit) =>
+          Effect.sync(() => {
+            const value = hash === missing ? undefined : data.stored.get(hash)
+            if (value === undefined || value.byteLength > limit) throw new Error('fixture bounded read refused')
+            return value
+          }),
+        readMetadataChunk: (_ordinal, limit) =>
+          Effect.sync(() => {
+            const chunk = corruptSql ? { ...data.chunks[0].metadata, payload: '{}' } : data.chunks[0].metadata
+            if (Buffer.byteLength(chunk.payload, 'utf8') > limit)
+              throw new Error('Fixture SQL read exceeds its byte limit')
+            return chunk
+          }),
+      })
 
-test('capture budget charges SQL metadata and passes its exact allowed size to the reader', async () => {
-  const data = fixture()
-  const metadata = data.chunks[0].metadata
-  const sqlBytes = Buffer.byteLength(metadata.payload, 'utf8')
-  const objectBytes = [...data.stored.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0)
-  const totalBytes = Buffer.byteLength(data.seal.payload, 'utf8') + objectBytes + sqlBytes
-  const limits: number[] = []
-  const read = (maximumBytes: number, oversizedSql = false) =>
-    readResearchCaptureInterval({
-      seal: data.seal,
-      maximumBytes,
-      request,
-      universe,
-      readObject: (hash, limit) => {
-        const value = data.stored.get(hash)
-        return value === undefined || value.byteLength > limit
-          ? Effect.fail(new ResearchCaptureFailure({ message: 'Fixture object is missing or exceeds its read limit' }))
-          : Effect.succeed(value)
-      },
-      readMetadataChunk: (_ordinal, limit) => {
-        limits.push(limit)
-        return Effect.succeed(oversizedSql ? { ...metadata, payload: `${metadata.payload}é` } : metadata)
-      },
-    })
-  expect((await Effect.runPromise(read(totalBytes))).manifest.recordCount).toBe(11)
-  expect(limits).toEqual([sqlBytes])
-  expect(Result.isFailure(await Effect.runPromise(read(totalBytes - 1).pipe(Effect.result)))).toBe(true)
-  expect(Result.isFailure(await Effect.runPromise(read(totalBytes - sqlBytes).pipe(Effect.result)))).toBe(true)
-  const oversized = await Effect.runPromise(read(totalBytes, true).pipe(Effect.result))
-  if (Result.isSuccess(oversized)) throw new Error('Oversized SQL response was accepted')
-  expect(oversized.failure.message).toBe('SQL metadata reader exceeded its byte limit')
-})
+    const replay = await Effect.runPromise(read(1024 * 1024))
+    expect(replay.manifest.recordCount).toBe(11)
+    expect(Result.isFailure(await Effect.runPromise(read(10).pipe(Effect.result)))).toBe(true)
+    expect((await Effect.runPromiseExit(read(1024 * 1024, data.manifestBytes.contentHash)))._tag).toBe('Failure')
+    expect(Result.isFailure(await Effect.runPromise(read(1024 * 1024, undefined, true).pipe(Effect.result)))).toBe(true)
+  },
+)
+
+test.each(['v1', 'v2'] as const)(
+  '%s capture budget charges SQL metadata and passes its exact allowed size to the reader',
+  async (format) => {
+    const data = fixture(undefined, format)
+    const metadata = data.chunks[0].metadata
+    const sqlBytes = Buffer.byteLength(metadata.payload, 'utf8')
+    const objectBytes = [...data.stored.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0)
+    const totalBytes = Buffer.byteLength(data.seal.payload, 'utf8') + objectBytes + sqlBytes
+    const limits: number[] = []
+    const read = (maximumBytes: number, oversizedSql = false) =>
+      readResearchCaptureInterval({
+        seal: data.seal,
+        maximumBytes,
+        request,
+        universe,
+        readObject: (hash, limit) => {
+          const value = data.stored.get(hash)
+          return value === undefined || value.byteLength > limit
+            ? Effect.fail(
+                new ResearchCaptureFailure({ message: 'Fixture object is missing or exceeds its read limit' }),
+              )
+            : Effect.succeed(value)
+        },
+        readMetadataChunk: (_ordinal, limit) => {
+          limits.push(limit)
+          return Effect.succeed(oversizedSql ? { ...metadata, payload: `${metadata.payload}é` } : metadata)
+        },
+      })
+    expect((await Effect.runPromise(read(totalBytes))).manifest.recordCount).toBe(11)
+    expect(limits).toEqual([sqlBytes])
+    expect(Result.isFailure(await Effect.runPromise(read(totalBytes - 1).pipe(Effect.result)))).toBe(true)
+    expect(Result.isFailure(await Effect.runPromise(read(totalBytes - sqlBytes).pipe(Effect.result)))).toBe(true)
+    const oversized = await Effect.runPromise(read(totalBytes, true).pipe(Effect.result))
+    if (Result.isSuccess(oversized)) throw new Error('Oversized SQL response was accepted')
+    expect(oversized.failure.message).toBe('SQL metadata reader exceeded its byte limit')
+  },
+)
 
 for (const [name, mutate] of [
   [

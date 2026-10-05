@@ -20,8 +20,8 @@ import {
 import { GitSourceRevisionSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
 import { sha256 } from '../hash'
 import {
-  buildResearchCaptureExportChunk,
-  persistResearchCaptureExportChunk,
+  buildResearchCaptureExportEnvelope,
+  persistResearchCaptureExportEnvelope,
   persistResearchCaptureExportSeal,
   researchCaptureExportEntryReservation,
   researchCaptureExportEnvelopeReservation,
@@ -280,13 +280,13 @@ export const makeResearchCaptureRecorder = (
             Effect.gen(function* () {
               if (claiming) yield* writeSql('append', bytes)
               if (boundedObjects !== undefined) {
-                const objects = buildResearchCaptureExportChunk(
+                const envelope = buildResearchCaptureExportEnvelope(
                   completeChunk,
                   bytes,
                   entries.slice(start, end),
                   previousIndexHash,
                 )
-                verifiedIndexHash = yield* persistResearchCaptureExportChunk(boundedObjects, objects)
+                verifiedIndexHash = yield* persistResearchCaptureExportEnvelope(boundedObjects, envelope)
               }
               if (!claiming) yield* writeSql('append', bytes)
             }),
@@ -355,7 +355,7 @@ export const makeResearchCaptureRecorder = (
               ? {}
               : {
                   exportRoot: {
-                    schemaVersion: 'bayn.research-capture-export-root.v1' as const,
+                    schemaVersion: 'bayn.research-capture-export-root.v2' as const,
                     lastIndexHash: previousIndexHash,
                     exportedChunks: persistedChunks,
                   },
