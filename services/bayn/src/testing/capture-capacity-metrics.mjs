@@ -6,6 +6,15 @@ import { performance } from 'node:perf_hooks'
 export const terminalHeartbeatMaximum = ({ heartbeatMaxMs, pendingHeartbeatLatenessMs }) =>
   Math.max(heartbeatMaxMs, pendingHeartbeatLatenessMs ?? 0)
 
+export const capacityAttributionCase = (mode) => {
+  assert.ok(mode === 'full' || mode === 'proof-light')
+  return {
+    proofLight: mode === 'proof-light',
+    disabledName: 'attribution-disabled',
+    enabledName: 'attribution-enabled',
+  }
+}
+
 export const capacityCorpusHash = (records) => {
   const hash = createHash('sha256').update('bayn.capacity-corpus.v1\n')
   for (const record of records)

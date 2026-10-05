@@ -10,7 +10,7 @@ import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 import { canonicalHashV1, sha256 } from '../hash.ts'
 import { observeConsumedRecords } from './capture-capacity-iterator.ts'
 import { observeCapacityIo } from './capture-capacity-io.mjs'
-import { capacityCorpusHash, terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
+import { capacityAttributionCase, capacityCorpusHash, terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
@@ -34,8 +34,8 @@ const profileEnabled = process.env.BAYN_TEST_CAPTURE_CPU_PROFILE === '1'
 const ioEnabled = process.env.BAYN_TEST_CAPTURE_IO_DIAGNOSTICS === '1'
 assert.ok(!(profileEnabled && ioEnabled), 'Run one diagnostic mode at a time')
 const attributionMode = process.argv[6] ?? null
-assert.ok(attributionMode === null || attributionMode === 'full' || attributionMode === 'proof-light')
-const proofLight = attributionMode === 'proof-light'
+const attributionCase = attributionMode === null ? null : capacityAttributionCase(attributionMode)
+const proofLight = attributionCase?.proofLight ?? false
 const attributionAnchor = Number(process.argv[8])
 if (attributionMode !== null) {
   assert.ok(!profileEnabled && !ioEnabled, 'Attribution uses neither profiler nor I/O probes')
@@ -1135,14 +1135,14 @@ const program = Effect.gen(function* () {
       }),
     )
     const base = yield* runArm(
-      `attribution-${attributionMode}-disabled`,
+      attributionCase.disabledName,
       false,
       data,
       plan.normal.targetRecordsPerSecond,
       plan.normal.producerBatchSize,
     )
     const enabled = yield* runArm(
-      `attribution-${attributionMode}-enabled`,
+      attributionCase.enabledName,
       true,
       data,
       plan.normal.targetRecordsPerSecond,
