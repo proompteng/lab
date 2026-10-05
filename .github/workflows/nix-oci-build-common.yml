@@ -42,6 +42,10 @@ on:
         required: false
         type: string
         default: 8m
+      verify_image_script:
+        required: false
+        type: string
+        default: ''
       publish_on_dispatch:
         required: false
         type: boolean
@@ -207,35 +211,21 @@ jobs:
           bash nix/ci-run-timed.sh "inspect-image-${ARCH}" "${NIX_OCI_LOG_DIR}/inspect-image-${ARCH}.log" \
             bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
-      - name: Verify Agents Shell process lifecycle from image
-        if: inputs.image_name == 'agents-shell'
+      - name: Verify service image contract
+        if: inputs.verify_image_script != ''
         env:
+          IMAGE_NAME: ${{ inputs.image_name }}
+          VERIFY_IMAGE_SCRIPT: ${{ inputs.verify_image_script }}
           IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          bash nix/ci-run-timed.sh "verify-agents-shell-lifecycle-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-agents-shell-lifecycle-${ARCH}.log" \
-            bash nix/verify-agents-shell-image-lifecycle.sh "${IMAGE_TAR}"
-
-      - name: Verify Bayn forward-performance command from image
-        if: inputs.image_name == 'bayn'
-        env:
-          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          bash nix/ci-run-timed.sh "verify-bayn-command-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-bayn-command-${ARCH}.log" \
-            bash nix/verify-bayn-image-command.sh "${IMAGE_TAR}"
-
-      - name: Verify Headlamp frontend assets from image
-        if: inputs.image_name == 'headlamp'
-        env:
-          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          bash nix/ci-run-timed.sh "verify-headlamp-assets-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-headlamp-assets-${ARCH}.log" \
-            bash nix/verify-headlamp-image-assets.sh "${IMAGE_TAR}"
+          case "${IMAGE_NAME}:${VERIFY_IMAGE_SCRIPT}" in
+            agents-shell:nix/verify-agents-shell-image-lifecycle.sh|bayn:nix/verify-bayn-image-command.sh|headlamp:nix/verify-headlamp-image-assets.sh) ;;
+            *) echo "Unsupported image verification script for ${IMAGE_NAME}: ${VERIFY_IMAGE_SCRIPT}" >&2; exit 2 ;;
+          esac
+          bash nix/ci-run-timed.sh "verify-image-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-image-${ARCH}.log" \
+            bash -- "${VERIFY_IMAGE_SCRIPT}" "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
         if: >-

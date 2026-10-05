@@ -62,6 +62,7 @@ jobs:
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: headlamp
+      verify_image_script: nix/verify-headlamp-image-assets.sh
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
@@ -80,6 +81,7 @@ jobs:
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: headlamp
+      verify_image_script: nix/verify-headlamp-image-assets.sh
       package_attr: headlamp-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true

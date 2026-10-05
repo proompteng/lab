@@ -98,6 +98,14 @@ The native hook and trading runtime enforce account, strategy, capital grant, re
 
 ## Application enrollment
 
+Image workflow path filters and Warehouse Git `includePaths` must describe the same service release inputs.
+Shared Kargo resources, ApplicationSet enrollment, and Kargo contract-test edits are validated by the scripts and
+manifest workflows; they do not rebuild unrelated Rune, Restate, Temporal worker, or Bayn images. Each service's own
+deployment manifests remain release inputs. Changes to shared image construction/publication still validate their
+consumers. Service-specific image checks belong in caller-owned scripts selected by `verify_image_script` in the
+reusable Nix image workflow, rather than adding service-specific steps to that shared workflow. The check must pass
+on each architecture before its image can be published.
+
 For a new image-backed application:
 
 1. Make the `main` build publish the verified `kargo-sha-<40>` artifact only after its final multi-architecture index
