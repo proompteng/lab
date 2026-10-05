@@ -459,7 +459,6 @@ RUN --mount=type=cache,id=bun-install-cache-workspace-tools,target=/root/.bun/in
     --filter @proompteng/agent-contracts \
     --filter @proompteng/codex \
     --filter @proompteng/otel \
-    --filter @proompteng/temporal-bun-sdk \
     --filter @proompteng/cx-tools
 
 FROM workspace-tools-deps AS agent-contracts-build
@@ -476,13 +475,6 @@ FROM workspace-tools-deps AS otel-build
 WORKDIR /app
 COPY full/packages/otel ./packages/otel
 RUN bun --cwd=packages/otel run build
-
-FROM workspace-tools-deps AS temporal-bun-sdk-build
-WORKDIR /app
-COPY full/packages/otel ./packages/otel
-COPY full/packages/temporal-bun-sdk ./packages/temporal-bun-sdk
-COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-RUN bun --cwd=packages/temporal-bun-sdk run build
 
 FROM workspace-tools-deps AS cx-tools-build
 WORKDIR /app
@@ -539,7 +531,6 @@ WORKDIR /app
 RUN rm -rf /app/packages /app/services
 COPY full/ .
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 WORKDIR /app/services/jangar
 ARG JANGAR_BUILD_NODE_OPTIONS="--max-old-space-size=2048"
 ARG JANGAR_BUILD_MINIFY=0
@@ -562,7 +553,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY json/ .
 RUN --mount=type=cache,id=bun-install-cache-jangar-deps-prod,target=/root/.bun/install/cache \
-  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar
+  bun install --no-save --ignore-scripts --linker=hoisted --filter @proompteng/jangar \
+  && mkdir -p services/bumba/node_modules services/jangar/node_modules
 
 # Control-plane-only runtime image.
 #
@@ -583,8 +575,6 @@ COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/pac
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 COPY --from=cx-tools-build /app/packages/cx-tools/package.json /app/packages/cx-tools/package.json
 COPY --from=cx-tools-build /app/packages/cx-tools/dist /app/packages/cx-tools/dist
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
@@ -609,8 +599,9 @@ COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/n
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
-RUN rm -rf /app/services/bumba/node_modules \
-  && ln -s /app/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/bumba/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/jangar/node_modules /app/services/jangar/node_modules
+RUN bun /app/services/bumba/scripts/verify-temporal-runtime.ts /app/services/bumba /app/services/jangar
 WORKDIR /app/services/jangar
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
@@ -638,8 +629,6 @@ COPY --from=codex-build /app/packages/codex/package.json /app/packages/codex/pac
 COPY --from=codex-build /app/packages/codex/dist /app/packages/codex/dist
 COPY --from=otel-build /app/packages/otel/package.json /app/packages/otel/package.json
 COPY --from=otel-build /app/packages/otel/dist /app/packages/otel/dist
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/package.json /app/packages/temporal-bun-sdk/package.json
-COPY --from=temporal-bun-sdk-build /app/packages/temporal-bun-sdk/dist /app/packages/temporal-bun-sdk/dist
 COPY --from=cx-tools-build /app/packages/cx-tools/package.json /app/packages/cx-tools/package.json
 COPY --from=cx-tools-build /app/packages/cx-tools/dist /app/packages/cx-tools/dist
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
@@ -666,8 +655,9 @@ COPY --from=jangar-pty /tmp/node-pty/build /app/services/jangar/.output/server/n
 COPY --from=jangar-pty /tmp/node-pty/prebuilds /app/services/jangar/.output/server/node_modules/node-pty/prebuilds
 WORKDIR /app
 COPY --from=jangar-build /app/services/bumba ./services/bumba
-RUN rm -rf /app/services/bumba/node_modules \
-  && ln -s /app/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/bumba/node_modules /app/services/bumba/node_modules
+COPY --from=jangar-deps-prod /app/services/jangar/node_modules /app/services/jangar/node_modules
+RUN bun /app/services/bumba/scripts/verify-temporal-runtime.ts /app/services/bumba /app/services/jangar
 WORKDIR /app/services/jangar
 RUN ln -sf /app/packages/cx-tools/dist/cx-codex-run.js /usr/local/bin/cx-codex-run \
   && ln -sf /app/packages/cx-tools/dist/cx-workflow-start.js /usr/local/bin/cx-workflow-start \
