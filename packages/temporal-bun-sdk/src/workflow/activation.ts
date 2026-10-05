@@ -1,5 +1,4 @@
-import { Effect, Scheduler, Supervisor, type Context, type Exit, type Fiber, type Option } from 'effect'
-import { globalValue } from 'effect/GlobalValue'
+import { Effect, type Fiber, type Scheduler } from 'effect'
 
 import type { ActivityResolution, NexusOperationResolution } from './context'
 import type { WorkflowUpdateInvocation } from './executor'
@@ -35,7 +34,7 @@ export class WorkflowMailbox<A> {
   }
 
   take(key: string): Effect.Effect<A> {
-    return Effect.async<A>((resume) => {
+    return Effect.callback<A>((resume) => {
       const values = this.#values.get(key)
       if (values?.length) {
         resume(Effect.succeed(values.shift()!))
@@ -58,79 +57,74 @@ export class WorkflowMailbox<A> {
   }
 }
 
-class WorkflowFiberOwner extends Supervisor.AbstractSupervisor<void> {
-  readonly value = Effect.void
-  readonly fibers = new Set<Fiber.RuntimeFiber<unknown, unknown>>()
-
-  override onStart<A, E, R>(
-    _context: Context.Context<R>,
-    _effect: Effect.Effect<A, E, R>,
-    _parent: Option.Option<Fiber.RuntimeFiber<unknown, unknown>>,
-    fiber: Fiber.RuntimeFiber<A, E>,
-  ): void {
-    this.fibers.add(fiber)
-  }
-
-  override onEnd<A, E>(_exit: Exit.Exit<A, E>, fiber: Fiber.RuntimeFiber<A, E>): void {
-    this.fibers.delete(fiber)
-  }
-}
-
-class WorkflowScheduler extends Scheduler.ControlledScheduler {
+class WorkflowScheduler implements Scheduler.Scheduler, Scheduler.SchedulerDispatcher {
+  readonly executionMode = 'async' as const
   closed = false
+  #running = false
+  #tasks = new Map<number, Array<() => void>>()
 
-  override scheduleTask(...args: Parameters<Scheduler.ControlledScheduler['scheduleTask']>): void {
-    if (!this.closed) super.scheduleTask(...args)
+  get hasTasks(): boolean {
+    return this.#tasks.size > 0
+  }
+
+  shouldYield(fiber: Fiber.Fiber<unknown, unknown>): boolean {
+    // Effect 4 callbacks resume synchronously. Keep them inside the activation drain,
+    // including late callbacks after disposal, without interrupting durable waits.
+    return this.closed || !this.#running || fiber.currentOpCount >= fiber.cache.maxOpsBeforeYield
+  }
+
+  makeDispatcher(): Scheduler.SchedulerDispatcher {
+    return this
+  }
+
+  scheduleTask(task: () => void, priority: number): void {
+    if (this.closed) return
+    const bucket = this.#tasks.get(priority) ?? []
+    bucket.push(task)
+    this.#tasks.set(priority, bucket)
+  }
+
+  step(): void {
+    const tasks = this.#tasks
+    this.#tasks = new Map()
+    this.#running = true
+    try {
+      for (const priority of [...tasks.keys()].sort((a, b) => a - b)) {
+        for (const task of tasks.get(priority)!) task()
+      }
+    } finally {
+      this.#running = false
+    }
+  }
+
+  flush(): void {
+    while (this.hasTasks) this.step()
+  }
+
+  close(): void {
+    this.closed = true
+    this.#tasks.clear()
   }
 }
 
 export class WorkflowActivationRuntime {
   readonly #scheduler = new WorkflowScheduler()
-  readonly #owner = new WorkflowFiberOwner()
-  readonly #roots: Set<unknown>
 
-  constructor() {
-    // Effect 3 retains root fibers until they exit. Durable task disposal must not
-    // interrupt workflows and run their finalizers. This executor owns those fibers.
-    const scope = globalValue<unknown>(Symbol.for('effect/FiberScope/Global'), () => {
-      throw new Error('Effect global fiber scope is unavailable')
-    })
-    if (typeof scope !== 'object' || scope === null || !('roots' in scope) || !(scope.roots instanceof Set)) {
-      throw new Error('Effect global fiber scope has an unsupported shape')
-    }
-    this.#roots = scope.roots
-  }
-
-  fork<A, E>(effect: Effect.Effect<A, E>): Fiber.RuntimeFiber<A, E> {
+  fork<A, E>(effect: Effect.Effect<A, E>): Fiber.Fiber<A, E> {
     if (this.#scheduler.closed) throw new Error('Workflow activation runtime is disposed')
-    const fiber = Effect.runFork(effect.pipe(Effect.supervised(this.#owner)), {
-      scheduler: this.#scheduler,
-      immediate: false,
-    })
-    this.#owner.fibers.add(fiber)
-    fiber.addObserver(() => this.#owner.fibers.delete(fiber))
-    this.#detachRoots()
-    return fiber
+    return Effect.runFork(effect, { scheduler: this.#scheduler })
   }
 
   async drain(settleLocalActivities: () => Promise<void>): Promise<void> {
     if (this.#scheduler.closed) throw new Error('Workflow activation runtime is disposed')
     do {
-      if (this.#scheduler.tasks.buckets.length) this.#scheduler.step()
-      this.#detachRoots()
+      if (this.#scheduler.hasTasks) this.#scheduler.step()
       await settleLocalActivities()
       await runOutsideWorkflowLogContext(() => new Promise<void>((resolve) => setImmediate(resolve)))
-    } while (this.#scheduler.tasks.buckets.length)
+    } while (this.#scheduler.hasTasks)
   }
 
   dispose(): void {
-    this.#scheduler.closed = true
-    this.#scheduler.tasks.buckets = []
-    this.#detachRoots()
-    this.#owner.fibers.clear()
-  }
-
-  #detachRoots(): void {
-    for (const fiber of this.#owner.fibers) this.#roots.delete(fiber)
+    this.#scheduler.close()
   }
 }

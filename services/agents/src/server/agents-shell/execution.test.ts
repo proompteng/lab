@@ -117,7 +117,7 @@ describe('one execution contract', () => {
     const { client, runner } = await connect()
     const catalog = await client.listTools()
     expect(catalog._meta?.['agents-shell/catalog']).toMatchObject({
-      version: '0.2.1',
+      version: '0.2.2',
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
     const handler = createAgentsShellRequestHandler(runner.config, runner)
@@ -193,6 +193,31 @@ describe('one execution contract', () => {
     expect(conflict.isError).toBe(true)
     expect(conflict.structuredContent).toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' })
     expect(readFileSync(join(root, 'count'), 'utf8')).toBe('once')
+  })
+
+  it('rejects queued and new execution when shutdown frees an occupied slot', async () => {
+    const { runner, root, sessionId } = await connect(1)
+    const blocker = await runner.execute(
+      { sessionId, requestKey: 'shutdown-blocker', command: 'sleep 120', waitMs: 0 },
+      auth,
+    )
+    const marker = join(root, 'started-after-shutdown')
+    const args = { sessionId, requestKey: 'shutdown-queued', command: `printf late > '${marker}'`, waitMs: 3_000 }
+    const queued = runner.execute(args, auth).then(
+      (job) => ({ job }),
+      (error: unknown) => ({ error }),
+    )
+    await Promise.resolve()
+    runner.shutdown()
+    const result = await queued
+    expect(existsSync(marker)).toBe(false)
+    expect(result).toMatchObject({ error: { code: 'SHUTTING_DOWN' } })
+    await expect(runner.execute({ ...args, requestKey: 'shutdown-new' }, auth)).rejects.toMatchObject({
+      code: 'SHUTTING_DOWN',
+    })
+    await vi.waitFor(() =>
+      expect(runner.requireJob(blocker.id, auth)).toMatchObject({ kind: 'completed', status: 'cancelled' }),
+    )
   })
 
   it('waits for capacity and returns actionable pressure without launching twice', async () => {
