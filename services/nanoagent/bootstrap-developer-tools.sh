@@ -50,8 +50,8 @@ if [[ ! -e "$config/init.lua" && ! -L "$config/init.lua" && ! -e "$config/init.v
   mkdir -p "$config" "$data"
   seed_archive "$SEED_ROOT/astronvim.tar.xz" "$data"
   temporary_directory="$(mktemp -d "$config/.developer-seed.XXXXXX")"
-  cp "$SEED_ROOT/astronvim-lazy-lock.json" "$temporary_directory/lazy-lock.json"
-  cp "$SEED_ROOT/astronvim-init.lua" "$temporary_directory/init.lua"
+  install -m 0644 "$SEED_ROOT/astronvim-lazy-lock.json" "$temporary_directory/lazy-lock.json"
+  install -m 0644 "$SEED_ROOT/astronvim-init.lua" "$temporary_directory/init.lua"
   cp -a --link --no-clobber --no-preserve=mode,ownership,timestamps "$temporary_directory/." "$config/"
   cleanup
   temporary_directory=''

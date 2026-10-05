@@ -60,8 +60,14 @@ install_tools() {
   cpp_wrapper="$(mktemp "$HOME/.local/bin/.cpp-wrapper.XXXXXX")"
   {
     printf '#!/usr/bin/env bash\n'
-    printf 'exec %q --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
-      "${cpp_compilers[0]}" "$c_root/sysroot" "$c_root/sysroot/usr/include" \
+    # Existing homes may select a different GCC bottle through opt/gcc.
+    printf 'compilers=(%q/opt/gcc/bin/g++-*)\n' "$prefix"
+    # These expressions are emitted into the generated wrapper.
+    # shellcheck disable=SC2016
+    printf '[[ "${#compilers[@]}" == 1 && -x "${compilers[0]}" ]] || exit 1\n'
+    # shellcheck disable=SC2016
+    printf 'exec "${compilers[0]}" --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
+      "$c_root/sysroot" "$c_root/sysroot/usr/include" \
       "$c_root/sysroot/usr/include/$triplet" "$c_root/sysroot/usr/lib/$triplet/"
   } > "$cpp_wrapper"
   chmod 0700 "$cpp_wrapper"

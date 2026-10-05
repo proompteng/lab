@@ -10,6 +10,8 @@ bootstrap-toolchain --install-only
 toolchain_done="$(date +%s%N)"
 bootstrap-developer-tools --install-only
 seed_done="$(date +%s%N)"
+# Installed by the guest image; the profile itself is linted from the repository.
+# shellcheck source=/dev/null
 . /etc/profile.d/tengri-development.sh
 test "$EDITOR" = nvim
 test "$(node --version)" = v24.11.1
@@ -20,10 +22,25 @@ done
 nvim --headless \
   '+lua assert(require("astronvim").version() == "v6.1.0"); for name,plugin in pairs(require("lazy.core.config").plugins) do assert(plugin._.installed,name .. " is missing") end' \
   '+if v:errmsg != "" | cquit 1 | endif' +qa
-test "$(stat -c %u "$HOME/.linuxbrew" "$HOME/.local/share/nvim" | sort -u)" = 1000
+test "$(stat -c %u "$HOME/.linuxbrew" "$HOME/.local/share/nvim" \
+  "$HOME/.config/nvim/init.lua" "$HOME/.config/nvim/lazy-lock.json" | sort -u)" = 1000
+test -w "$HOME/.config/nvim/init.lua" && test -w "$HOME/.config/nvim/lazy-lock.json"
 printf '#include <iostream>\nint main(){std::cout << "cpp-ok";}\n' > /tmp/seed-cpp.cpp
 g++ /tmp/seed-cpp.cpp -o /tmp/seed-cpp
 test "$(/tmp/seed-cpp)" = cpp-ok
+
+# An existing home can select another GCC version through opt/gcc. Use the real
+# native compiler behind an alternate filename to exercise that path offline.
+gcc_link="$(readlink "$HOME/.linuxbrew/opt/gcc")"
+cpp_compilers=("$HOME"/.linuxbrew/opt/gcc/bin/g++-*)
+real_cpp="$(readlink -f "${cpp_compilers[0]}")"
+mkdir -p "$HOME/.tengri/cpp-compat/bin"
+printf '#!/bin/bash\nexec %q "$@"\n' "$real_cpp" > "$HOME/.tengri/cpp-compat/bin/g++-compat"
+chmod 0700 "$HOME/.tengri/cpp-compat/bin/g++-compat"
+ln -sfn "$HOME/.tengri/cpp-compat" "$HOME/.linuxbrew/opt/gcc"
+g++ /tmp/seed-cpp.cpp -o /tmp/seed-cpp-compat
+test "$(/tmp/seed-cpp-compat)" = cpp-ok
+ln -sfn "$gcc_link" "$HOME/.linuxbrew/opt/gcc"
 
 # Simulate an existing home and an interrupted seed. Preserve files, modes and
 # links while filling a missing tool from the image without running Homebrew.
