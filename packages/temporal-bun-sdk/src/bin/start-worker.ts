@@ -24,7 +24,7 @@ const main = async () => {
   process.on('SIGTERM', () => shutdown('SIGTERM'))
 
   const exitResult = await Effect.runPromise(Fiber.await(appFiber))
-  if (Exit.isFailure(exitResult) && !Cause.isInterruptedOnly(exitResult.cause)) {
+  if (Exit.isFailure(exitResult) && !Cause.hasInterruptsOnly(exitResult.cause)) {
     console.error('Fatal error while running Temporal worker:', Cause.pretty(exitResult.cause))
     process.exit(1)
   }

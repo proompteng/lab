@@ -669,7 +669,7 @@ export class WorkerRuntime {
   #tunerUnsubscribe: (() => void) | null = null
   #tunerUpdateInFlight: Promise<void> | null = null
   #running = false
-  #runFiber: Fiber.RuntimeFiber<void, unknown> | null = null
+  #runFiber: Fiber.Fiber<void, unknown> | null = null
   #schedulerStarted = false
   #schedulerStopPromise: Promise<void> | null = null
 
@@ -988,10 +988,10 @@ export class WorkerRuntime {
     await this.#openTelemetry.shutdown()
   }
 
-  async #awaitRuntimeFiber(fiber: Fiber.RuntimeFiber<void, unknown>): Promise<void> {
+  async #awaitRuntimeFiber(fiber: Fiber.Fiber<void, unknown>): Promise<void> {
     const exit = await Effect.runPromiseExit(Fiber.join(fiber))
     if (Exit.isFailure(exit)) {
-      if (Cause.isInterrupted(exit.cause)) {
+      if (Cause.hasInterrupts(exit.cause)) {
         return
       }
       throw Cause.squash(exit.cause)
@@ -1021,7 +1021,7 @@ export class WorkerRuntime {
     }
     await Effect.runPromise(
       Effect.forEach(effects, (effect) => effect, { concurrency: 'unbounded' }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             this.#log('warn', 'worker plugin hook failed', {
               error: error instanceof Error ? error.message : String(error),
@@ -1129,7 +1129,7 @@ export class WorkerRuntime {
       this.#observeHistogram(this.#metrics.workflowPollLatency, Date.now() - start)
       await this.#enqueueWorkflowTask(response)
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         this.#isRpcAbortError(error) ? Effect.void : this.#handleWorkflowPollerError(queueName, error),
       ),
     )
@@ -1172,7 +1172,7 @@ export class WorkerRuntime {
       this.#observeHistogram(this.#metrics.activityPollLatency, Date.now() - start)
       await this.#enqueueActivityTask(response)
     }).pipe(
-      Effect.catchAll((error) => (this.#isRpcAbortError(error) ? Effect.void : this.#handleActivityPollerError(error))),
+      Effect.catch((error) => (this.#isRpcAbortError(error) ? Effect.void : this.#handleActivityPollerError(error))),
     )
 
     return Effect.forever(pollOnce)
@@ -1219,7 +1219,10 @@ export class WorkerRuntime {
     const exit = await Effect.runPromiseExit(
       remaining === undefined
         ? response
-        : Effect.timeoutFail(response, { duration: Duration.millis(remaining), onTimeout: timeoutError }),
+        : Effect.timeoutOrElse(response, {
+            duration: Duration.millis(remaining),
+            orElse: () => Effect.fail(timeoutError()),
+          }),
     )
     if (Exit.isSuccess(exit)) {
       return exit.value
@@ -1298,7 +1301,7 @@ export class WorkerRuntime {
         error: error instanceof Error ? error.message : String(error),
       })
       await sleep(250)
-    }).pipe(Effect.catchAll(() => Effect.void))
+    }).pipe(Effect.catch(() => Effect.void))
   }
 
   #handleActivityPollerError(error: unknown): Effect.Effect<void, never, never> {
@@ -1317,7 +1320,7 @@ export class WorkerRuntime {
         error: error instanceof Error ? error.message : String(error),
       })
       await sleep(250)
-    }).pipe(Effect.catchAll(() => Effect.void))
+    }).pipe(Effect.catch(() => Effect.void))
   }
 
   async #handleWorkflowTask(response: PollWorkflowTaskQueueResponse, nondeterminismRetry = 0): Promise<void> {
@@ -3611,22 +3614,22 @@ const mergeSchedulerHooks = (
   }
   return {
     onWorkflowStart: (task) =>
-      Effect.zipRight(
+      Effect.andThen(
         first.onWorkflowStart ? first.onWorkflowStart(task) : Effect.void,
         second.onWorkflowStart ? second.onWorkflowStart(task) : Effect.void,
       ),
     onWorkflowComplete: (task) =>
-      Effect.zipRight(
+      Effect.andThen(
         first.onWorkflowComplete ? first.onWorkflowComplete(task) : Effect.void,
         second.onWorkflowComplete ? second.onWorkflowComplete(task) : Effect.void,
       ),
     onActivityStart: (task) =>
-      Effect.zipRight(
+      Effect.andThen(
         first.onActivityStart ? first.onActivityStart(task) : Effect.void,
         second.onActivityStart ? second.onActivityStart(task) : Effect.void,
       ),
     onActivityComplete: (task) =>
-      Effect.zipRight(
+      Effect.andThen(
         first.onActivityComplete ? first.onActivityComplete(task) : Effect.void,
         second.onActivityComplete ? second.onActivityComplete(task) : Effect.void,
       ),
