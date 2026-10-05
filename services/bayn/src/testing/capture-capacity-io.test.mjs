@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { EventEmitter } from 'node:events'
 import { channel } from 'node:diagnostics_channel'
 import { observeCapacityIo } from './capture-capacity-io.mjs'
+import { observeCapacityYields } from './capture-capacity-yields.mjs'
 const requestFor = (bucket, index = 0) =>
   Object.assign(new EventEmitter(), {
     method: 'GET',
@@ -160,12 +161,21 @@ test('bounds encoded output even when bounded strings require JSON escaping', ()
 
 test('limits resource observations to eight input requests and reports unsupported samples', () => {
   let now = 0,
-    samples = 0
+    samples = 0,
+    consumerReads = 0
+  const yields = observeCapacityYields({
+    now: () => now,
+    readConsumer: () => {
+      consumerReads++
+      return { epoch: 'native-test-epoch', consumerSequence: 256, deliveredRecords: 255 }
+    },
+  })
   const observer = observeCapacityIo({
     port: 12345,
     bucket: 'resources',
     sink: () => null,
     now: () => now,
+    yields,
     sampleResources: () => {
       samples++
       return counters(now)
@@ -191,6 +201,14 @@ test('limits resource observations to eight input requests and reports unsupport
     const report = read(observer)
     assert.equal(report.failure, null)
     assert.equal(samples, 32)
+    assert.equal(consumerReads, 32)
+    assert.equal(report.yieldObservation.snapshots, 32)
+    assert.deepEqual(report.http[1].resources.requestStart.consumer, {
+      at: 5,
+      epoch: 'native-test-epoch',
+      consumerSequence: 256,
+      deliveredRecords: 255,
+    })
     assert.deepEqual(report.resourceObservation, {
       maximumRequests: 8,
       maximumSnapshots: 32,

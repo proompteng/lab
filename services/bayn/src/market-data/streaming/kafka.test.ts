@@ -105,6 +105,52 @@ class FakeTransport implements KafkaProjectionTransport {
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
+test('optional yield observer sees the existing 256-record boundaries and actual consumer cursor', async () => {
+  for (const observed of [false, true]) {
+    const transport = new FakeTransport()
+    transport.queue = Array.from({ length: 513 }, (_, offset) => ({
+      topic: 'quotes',
+      partition: 0,
+      offset: String(Math.min(offset, 0)),
+      value: '{}',
+      timestampMs: 0,
+      leaderEpoch: 1,
+    }))
+    const boundaries: Array<{ boundary: string; epoch: string; consumerSequence: number }> = []
+    await program(
+      Effect.gen(function* () {
+        const market = yield* makeKafkaMarketProjection(
+          config,
+          universe,
+          () => transport,
+          undefined,
+          undefined,
+          observed
+            ? (boundary, epoch, consumerSequence) => {
+                boundaries.push({ boundary, epoch, consumerSequence })
+              }
+            : undefined,
+        )
+        yield* TestClock.adjust(1000)
+        const status = yield* market.status
+        expect(status.consumerSequence).toBe(513)
+        expect(status.sequence).toBe(1)
+        expect(boundaries).toEqual(
+          observed
+            ? [
+                { boundary: 'before', epoch: status.epoch, consumerSequence: 255 },
+                { boundary: 'after', epoch: status.epoch, consumerSequence: 255 },
+                { boundary: 'before', epoch: status.epoch, consumerSequence: 511 },
+                { boundary: 'after', epoch: status.epoch, consumerSequence: 511 },
+              ]
+            : [],
+        )
+      }),
+    )
+    expect(transport.closeCount).toBe(1)
+  }
+})
+
 for (const scenario of [
   'ready',
   'queued',

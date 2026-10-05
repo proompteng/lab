@@ -8,6 +8,7 @@ export const observeCapacityIo = ({
   sink,
   now = () => performance.now(),
   sampleResources = sampleCapacityResources,
+  yields,
 }) => {
   const http = [],
     sql = [],
@@ -49,6 +50,7 @@ export const observeCapacityIo = ({
       if (resourceSnapshots >= 32) throw new Error('Resource snapshot count exceeded 32')
       resourceSnapshots++
       row.resources[boundary] = { ...sampleResources(), phase: phase(now()) }
+      if (yields !== undefined) row.resources[boundary].consumer = yields.snapshot(row.resources[boundary].sampledAt)
       const previous =
         boundary === 'serverRequest' ? 'requestStart' : boundary === 'responseCallback' ? 'serverFinish' : null
       if (previous !== null) {
@@ -127,9 +129,11 @@ export const observeCapacityIo = ({
   return {
     startInput: (at) => {
       inputAt = at
+      yields?.startInput(at)
     },
     invalidate: () => {
       invalidatedAt ??= now()
+      yields?.invalidate(invalidatedAt)
     },
     withinWindow,
     serverStart: safe((method, path, response) => {
@@ -256,6 +260,7 @@ export const observeCapacityIo = ({
     }),
     dispose: () => {
       disposed = true
+      yields?.close()
       for (const [source, listener] of subscriptions) source.unsubscribe(listener)
       for (const [request, listener] of pendingHeaders) request.off('response', listener)
       pendingHeaders.clear()
@@ -273,6 +278,7 @@ export const observeCapacityIo = ({
         sql,
         serverSamples,
         stages,
+        ...(yields === undefined ? {} : { yieldObservation: yields.report(http, failure) }),
         resourceObservation: {
           maximumRequests: 8,
           maximumSnapshots: 32,

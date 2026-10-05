@@ -10,6 +10,7 @@ import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 import { canonicalHashV1, sha256 } from '../hash.ts'
 import { observeConsumedRecords } from './capture-capacity-iterator.ts'
 import { observeCapacityIo } from './capture-capacity-io.mjs'
+import { observeCapacityYields, yieldObservationContract } from './capture-capacity-yields.mjs'
 import { capacityAttributionCase, capacityCorpusHash, terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
 import { makeCapacitySqlProbes } from './capture-capacity-sql-probes.ts'
@@ -33,6 +34,7 @@ const expectedPlanHash = process.argv[5]
 assert.equal(sha256(planBytes), expectedPlanHash)
 const profileEnabled = process.env.BAYN_TEST_CAPTURE_CPU_PROFILE === '1'
 const ioEnabled = process.env.BAYN_TEST_CAPTURE_IO_DIAGNOSTICS === '1'
+if (ioEnabled) console.log(JSON.stringify({ capacityYieldObservationContract: yieldObservationContract }))
 assert.ok(!(profileEnabled && ioEnabled), 'Run one diagnostic mode at a time')
 const attributionMode = process.argv[6] ?? null
 const attributionCase = attributionMode === null ? null : capacityAttributionCase(attributionMode)
@@ -340,9 +342,18 @@ const program = Effect.gen(function* () {
         let cpuProfile
         let activeSink = null
         let lastChunk = null
+        const yields =
+          ioEnabled && name === 'normal-0-enabled'
+            ? observeCapacityYields({
+                readConsumer: () => {
+                  const { epoch, consumerSequence } = Effect.runSync(market.status)
+                  return { epoch, consumerSequence, deliveredRecords: accepted }
+                },
+              })
+            : undefined
         const io =
           ioEnabled && name === 'normal-0-enabled'
-            ? observeCapacityIo({ port: objectPort, bucket: arm.bucket, sink: () => activeSink })
+            ? observeCapacityIo({ port: objectPort, bucket: arm.bucket, sink: () => activeSink, yields })
             : undefined
         if (io !== undefined) {
           arm.io = io
@@ -691,6 +702,7 @@ const program = Effect.gen(function* () {
           measuredTransport,
           undefined,
           capture,
+          yields?.boundary,
         )
         const readyDeadline = performance.now() + 15000
         while (!(yield* market.status).ready) {

@@ -299,6 +299,9 @@ export interface KafkaProjectionCut {
   readonly bootstrap: KafkaBootstrapEvidence
   readonly positions: readonly KafkaPartitionPosition[]
 }
+/** Optional synchronous observation of the existing yield only; it must not perform asynchronous work. */
+export type KafkaYieldObserver = (boundary: 'before' | 'after', epoch: string, consumerSequence: number) => void
+
 export class KafkaMarketProjection extends Context.Service<
   KafkaMarketProjection,
   {
@@ -319,6 +322,7 @@ export const makeKafkaMarketProjection = (
   factory: KafkaProjectionTransportFactory = platformaticProjectionTransport,
   diagnosticStartMs?: number,
   capture?: ResearchCaptureObserver,
+  yieldObserver?: KafkaYieldObserver,
 ) =>
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
@@ -329,6 +333,7 @@ export const makeKafkaMarketProjection = (
     let ready = false
     let lastFailure: KafkaMarketFailure | undefined
     let closeFailure: KafkaMarketFailure | undefined
+    let consumerSequence = 0
     let intervalCapture:
       | ((request: CaptureIntervalRequest) => Effect.Effect<CaptureIntervalCut, KafkaMarketFailure>)
       | undefined
@@ -339,7 +344,7 @@ export const makeKafkaMarketProjection = (
       Effect.gen(function* () {
         const epoch = yield* Effect.sync(randomUUID)
         intervalCapture = undefined
-        let consumerSequence = 0
+        consumerSequence = 0
         projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
         ready = false
         bootstrap = undefined
@@ -575,7 +580,9 @@ export const makeKafkaMarketProjection = (
             Effect.gen(function* () {
               if (++recordsSinceYield === 256) {
                 recordsSinceYield = 0
+                yieldObserver?.('before', epoch, consumerSequence)
                 yield* Effect.yieldNow
+                yieldObserver?.('after', epoch, consumerSequence)
               }
               if (invalidation !== undefined && capture === undefined) return
               const availableAtMs = clock.currentTimeMillisUnsafe()
@@ -839,6 +846,7 @@ export const makeKafkaMarketProjection = (
         epoch: projection.epoch,
         ready: ready && lastFailure === undefined,
         sequence: projection.sequence,
+        consumerSequence,
         ...(lastFailure === undefined ? {} : { failure: lastFailure.message }),
       })),
     }
