@@ -22,6 +22,23 @@ const driver = (observation: AutonomousCyclePassObservation, result?: CycleRunRe
 type RecoveredCycle = Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['cycle']
 
 describe('advanceExecutionOnce', () => {
+  test('binds retained Jev references without changing legacy receipt bytes', async () => {
+    const observation = {
+      result: 'SUCCESS' as const,
+      outcome: 'WINDOW_CLOSED' as const,
+      observedAt: '2026-08-13T17:00:01.000Z',
+    }
+    const legacy = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    const retained = await Effect.runPromise(
+      advanceExecutionOnce(
+        command,
+        driver({ ...observation, jevObservationReferences: { hashes: ['a'.repeat(64)], complete: true } }),
+      ),
+    )
+    expect(legacy.receiptHash).toBe('51e21e1ae5fa32e4feee03b56ce8b322ec709c1492956958a9ada7125acb69f0')
+    expect(retained.receiptHash).not.toBe(legacy.receiptHash)
+  })
+
   test('returns a deterministic receipt for a completed pass', async () => {
     const observation = {
       result: 'SUCCESS' as const,

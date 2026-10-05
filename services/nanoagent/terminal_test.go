@@ -982,6 +982,13 @@ func TestDelayedTerminalCleanupRescansForNewSessionMembers(t *testing.T) {
 		procRoot: procRoot,
 		signalProcess: func(procRoot string, identity processIdentity, signal syscall.Signal) error {
 			return signalProcessIdentity(procRoot, identity, signal, func(processID int, signal syscall.Signal) error {
+				if processID == 700 && signal == syscall.SIGTERM {
+					// Add the survivor after initial enumeration, before the delayed rescan can start.
+					if err := os.RemoveAll(filepath.Join(procRoot, "701")); err != nil {
+						t.Fatalf("remove exited child fixture: %v", err)
+					}
+					writeProcStatFixture(t, procRoot, 702, 700, 1702, "late sanitized survivor")
+				}
 				signals <- signalEvent{processID: processID, signal: signal}
 				return nil
 			})
@@ -1007,10 +1014,6 @@ func TestDelayedTerminalCleanupRescansForNewSessionMembers(t *testing.T) {
 		}
 	}
 
-	if err := os.RemoveAll(filepath.Join(procRoot, "701")); err != nil {
-		t.Fatalf("remove exited child fixture: %v", err)
-	}
-	writeProcStatFixture(t, procRoot, 702, 700, 1702, "late sanitized survivor")
 	for _, expectedProcessID := range []int{702, 700} {
 		select {
 		case actual := <-signals:
