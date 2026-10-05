@@ -219,6 +219,15 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       symbol: string | null = null,
       missingBarInstants: readonly string[] = [],
     ) => finish({ status: SixBarResearchStatus.Unavailable, reason, message, symbol, missingBarInstants })
+    const inputIssues: Exclude<Outcome, { status: SixBarResearchStatus.Available }>[] = []
+    const recordUnavailable = (
+      reason: SixBarUnavailableReason,
+      message: string,
+      symbol: string | null = null,
+      missingBarInstants: readonly string[] = [],
+    ) => {
+      inputIssues.push({ status: SixBarResearchStatus.Unavailable, reason, message, symbol, missingBarInstants })
+    }
     if (
       state.minimumObservationMs > observedAtMs ||
       discardedRejectionsOverlap(state, Date.parse(request.rangeStartAt))
@@ -246,7 +255,7 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       for (let at = start; at < end; at += minute)
         if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
       if (input.bars.length !== 6 || missing.length > 0)
-        return yield* unavailable(
+        recordUnavailable(
           SixBarUnavailableReason.Bars,
           'Six exact contiguous completed RTH bars are required',
           input.symbol,
@@ -256,15 +265,16 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       if (quoteReason !== null) {
         if (quoteReason !== ReplayQuoteRejection.Missing && quoteReason !== ReplayQuoteRejection.Stale)
           return yield* Result.fail(fail(`Invalid quote for ${input.symbol}: ${quoteReason}`))
-        return yield* unavailable(SixBarUnavailableReason.Quote, quoteReason, input.symbol)
+        recordUnavailable(SixBarUnavailableReason.Quote, quoteReason, input.symbol)
       }
       if (input.trade === undefined)
-        return yield* unavailable(SixBarUnavailableReason.Trade, 'A real observed trade is required', input.symbol)
+        recordUnavailable(SixBarUnavailableReason.Trade, 'A real observed trade is required', input.symbol)
       if (
         input.symbol === sixBarResearchDefinition.benchmarkSymbol &&
+        input.trade !== undefined &&
         BigInt(observedAtMs) * 1_000_000n - intradayInstantNanos(input.trade.value.eventAt) > 10_000_000_000n
       )
-        return yield* unavailable(
+        recordUnavailable(
           SixBarUnavailableReason.BenchmarkTrade,
           'SPY trade exceeds the ten-second observation-age bound',
           input.symbol,
@@ -284,16 +294,19 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
         cause.reason === 'not-ready' ||
         (cause.reason === 'freshness' && cause.ingestionDelayDirection === IntradayIngestionDelayDirection.AboveMaximum)
       )
-        return yield* unavailable(SixBarUnavailableReason.Freshness, cause.message)
-      return yield* Result.fail(cause)
+        recordUnavailable(SixBarUnavailableReason.Freshness, cause.message)
+      else return yield* Result.fail(cause)
     }
-    const exclusion = availability.success.exclusions[0]
+    const exclusion = Result.isSuccess(availability) ? availability.success.exclusions[0] : undefined
     if (exclusion !== undefined)
-      return yield* unavailable(SixBarUnavailableReason.Freshness, exclusion.message, exclusion.symbol)
+      recordUnavailable(SixBarUnavailableReason.Freshness, exclusion.message, exclusion.symbol)
     for (const quote of quotes) {
       const reason = yield* jevEntryQuoteExclusion(quote, sixBarResearchDefinition.maximumSpreadBps)
-      if (reason !== null) return yield* finish({ status: SixBarResearchStatus.Excluded, symbol: quote.symbol, reason })
+      if (reason !== null) inputIssues.push({ status: SixBarResearchStatus.Excluded, symbol: quote.symbol, reason })
     }
+    // A candidate-local gap must never hide invalid required benchmark evidence.
+    const issue = inputIssues.find((entry) => entry.symbol !== candidate) ?? inputIssues[0]
+    if (issue !== undefined) return yield* finish(issue)
     const candidateInput = selected.find((input) => input.symbol === candidate)
     const benchmarkInput = selected.find((input) => input.symbol === sixBarResearchDefinition.benchmarkSymbol)
     const closes = candidateInput?.bars.map((entry) => entry.value.close) ?? []
