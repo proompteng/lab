@@ -1,7 +1,14 @@
 import { channel } from 'node:diagnostics_channel'
 import { performance } from 'node:perf_hooks'
+import { capacityResourceDelta, sampleCapacityResources } from './capture-capacity-metrics.mjs'
 
-export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.now() }) => {
+export const observeCapacityIo = ({
+  port,
+  bucket,
+  sink,
+  now = () => performance.now(),
+  sampleResources = sampleCapacityResources,
+}) => {
   const http = [],
     sql = [],
     serverSamples = [],
@@ -13,6 +20,8 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
     invalidatedAt = null,
     disposed = false,
     failure = null
+  let resourceRequests = 0,
+    resourceSnapshots = 0
   const fail = (message) => {
     failure ??= String(message).slice(0, 256)
   }
@@ -34,6 +43,23 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
       }
     }
   const pathOf = (path) => new URL(path, 'http://fixture').pathname
+  const resources = (row, boundary) => {
+    if (!row.resources || failure !== null) return
+    try {
+      if (resourceSnapshots >= 32) throw new Error('Resource snapshot count exceeded 32')
+      resourceSnapshots++
+      row.resources[boundary] = { ...sampleResources(), phase: phase(now()) }
+      const previous =
+        boundary === 'serverRequest' ? 'requestStart' : boundary === 'responseCallback' ? 'serverFinish' : null
+      if (previous !== null) {
+        if (!row.resources[previous]) throw new Error('Missing paired resource boundary')
+        row.resourceDeltas ??= {}
+        row.resourceDeltas[boundary] = capacityResourceDelta(row.resources[previous], row.resources[boundary])
+      }
+    } catch (error) {
+      fail(error)
+    }
+  }
   const created = safe(({ request }) => {
     if (!withinWindow() || request.getHeader('host') !== `127.0.0.1:${port}`) return
     const path = pathOf(request.path)
@@ -52,6 +78,10 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
       stageOrdinal: current?.ioOrdinal ?? null,
       stageStartedAt: current?.began ?? null,
     }
+    if (inputAt !== null && at >= inputAt && resourceRequests < 8) {
+      resourceRequests++
+      row.resources = {}
+    }
     http.push(row)
     requests.set(request, row)
     const headers = safe((response) => {
@@ -64,13 +94,17 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
   })
   const started = safe(({ request }) => {
     const row = requests.get(request)
-    if (row && !disposed) row.requestStartCallbackAt = now()
+    if (row && !disposed) {
+      row.requestStartCallbackAt = now()
+      resources(row, 'requestStart')
+    }
   })
   const ended = safe(({ request }) => {
     const row = requests.get(request)
     if (row && !disposed) {
       row.responseFinishDiagnosticCallbackAt = now()
       row.completedPhase = phase(row.responseFinishDiagnosticCallbackAt)
+      resources(row, 'responseCallback')
     }
   })
   const errored = safe(({ request }) => {
@@ -109,6 +143,7 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
         return undefined
       }
       row.serverRequestAt = now()
+      resources(row, 'serverRequest')
       const cleanup = () => {
         response.off('finish', finish)
         response.off('close', close)
@@ -116,6 +151,7 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
       }
       const finish = safe(() => {
         row.serverFinishCallbackAt = now()
+        resources(row, 'serverFinish')
         cleanup()
       })
       const close = safe(() => {
@@ -237,8 +273,14 @@ export const observeCapacityIo = ({ port, bucket, sink, now = () => performance.
         sql,
         serverSamples,
         stages,
+        resourceObservation: {
+          maximumRequests: 8,
+          maximumSnapshots: 32,
+          requests: resourceRequests,
+          snapshots: resourceSnapshots,
+        },
         limitations:
-          'Client/server HTTP timestamps are same-process monotonic callback observations, not physical wire times. Node 24 response.finish is a response-header parser callback, not body consumption. PostgreSQL ages are computed solely on the server clock; catalog sampling adds diagnostic load. SQL tags exclude separate BEGIN/COMMIT and pool acquisition; concurrent work can delay all callbacks.',
+          'Client/server HTTP timestamps are same-process monotonic callback observations, not physical wire times. Node 24 response.finish is a response-header parser callback, not body consumption. CPU counters are microseconds; event-loop counters and snapshot times are milliseconds. Main-thread CPU includes native work in that thread. Cgroup counters include all container threads; throttling is not an exclusive cause. Synchronous counter reads add measured observer overhead and are not simultaneous. PostgreSQL ages are computed solely on the server clock; catalog sampling adds diagnostic load. SQL tags exclude separate BEGIN/COMMIT and pool acquisition; concurrent work can delay all callbacks.',
       }
       const text = JSON.stringify({ capacityIoDiagnostics: report })
       if (Buffer.byteLength(text) + 1 <= 128 * 1024) return text

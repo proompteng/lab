@@ -11,6 +11,18 @@ const requestFor = (bucket, index = 0) =>
   })
 const publish = (name, request) => channel(name).publish({ request })
 const read = (observer) => JSON.parse(observer.encodedReport()).capacityIoDiagnostics
+const counters = (at) => ({
+  sampledAt: at,
+  samplerElapsedMs: 0,
+  threadUserUs: at * 100,
+  threadSystemUs: at * 10,
+  eventLoopActiveMs: at,
+  eventLoopIdleMs: 0,
+  cgroupUsageUs: at * 110,
+  cgroupPeriods: at,
+  cgroupThrottledPeriods: 0,
+  cgroupThrottledUs: 0,
+})
 
 test('correlates same-clock callbacks, preserves server ages, and detaches observers', () => {
   let now = 0
@@ -19,6 +31,7 @@ test('correlates same-clock callbacks, preserves server ages, and detaches obser
     bucket: 'clock',
     sink: () => ({ stage: 'object.raw.putAndVerifiedGet', began: 1 }),
     now: () => now,
+    sampleResources: () => counters(now),
   })
   try {
     observer.startInput(1)
@@ -87,7 +100,13 @@ test('correlates same-clock callbacks, preserves server ages, and detaches obser
 
 test('limits observation count and elapsed admission without throwing through callbacks', () => {
   let now = 0
-  const observer = observeCapacityIo({ port: 12345, bucket: 'count', sink: () => null, now: () => now })
+  const observer = observeCapacityIo({
+    port: 12345,
+    bucket: 'count',
+    sink: () => null,
+    now: () => now,
+    sampleResources: () => counters(now),
+  })
   const requests = []
   const pendingResponse = new EventEmitter()
   try {
@@ -119,6 +138,7 @@ test('limits observation count and elapsed admission without throwing through ca
 
 test('bounds encoded output even when bounded strings require JSON escaping', () => {
   const observer = observeCapacityIo({ port: 12345, bucket: 'bytes', sink: () => null, now: () => 0 })
+
   try {
     const rows = Array.from({ length: 8 }, (_, pid) => ({
       pid,
@@ -135,5 +155,71 @@ test('bounds encoded output even when bounded strings require JSON escaping', ()
     assert.equal(JSON.parse(report).capacityIoDiagnostics.failure, 'Encoded diagnostic exceeded 128 KiB')
   } finally {
     observer.dispose()
+  }
+})
+
+test('limits resource observations to eight input requests and reports unsupported samples', () => {
+  let now = 0,
+    samples = 0
+  const observer = observeCapacityIo({
+    port: 12345,
+    bucket: 'resources',
+    sink: () => null,
+    now: () => now,
+    sampleResources: () => {
+      samples++
+      return counters(now)
+    },
+  })
+  try {
+    const finishRequest = (index) => {
+      const request = requestFor('resources', index),
+        response = new EventEmitter()
+      publish('http.client.request.created', request)
+      now++
+      publish('http.client.request.start', request)
+      now++
+      observer.serverStart('GET', request.path, response)
+      now++
+      response.emit('finish')
+      now++
+      publish('http.client.response.finish', request)
+    }
+    finishRequest(0)
+    observer.startInput(now)
+    for (let index = 1; index <= 9; index++) finishRequest(index)
+    const report = read(observer)
+    assert.equal(report.failure, null)
+    assert.equal(samples, 32)
+    assert.deepEqual(report.resourceObservation, {
+      maximumRequests: 8,
+      maximumSnapshots: 32,
+      requests: 8,
+      snapshots: 32,
+    })
+    assert.equal(report.http[0].resources, undefined)
+    assert.equal(report.http[9].resources, undefined)
+    assert.equal(report.http[1].resourceDeltas.serverRequest.threadUserUs, 100)
+  } finally {
+    observer.dispose()
+  }
+  const unsupported = observeCapacityIo({
+    port: 12345,
+    bucket: 'unsupported',
+    sink: () => null,
+    now: () => 0,
+    sampleResources: () => {
+      throw new Error('Unsupported test counter')
+    },
+  })
+  try {
+    unsupported.startInput(0)
+    const request = requestFor('unsupported')
+    publish('http.client.request.created', request)
+    assert.doesNotThrow(() => publish('http.client.request.start', request))
+    assert.match(read(unsupported).failure, /Unsupported test counter/)
+    assert.equal(read(unsupported).http[0].resources.requestStart, undefined)
+  } finally {
+    unsupported.dispose()
   }
 })
