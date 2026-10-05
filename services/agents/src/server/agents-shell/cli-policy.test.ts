@@ -56,6 +56,8 @@ describe('ls-remote executable and transport boundaries', () => {
     ['ls-remote', 'origin', '--upload-p=touch /tmp/should-not-run'],
     ['ls-remote', 'ext::sh -c touch /tmp/should-not-run'],
     ['ls-remote', 'custom::repository'],
+    ['ls-remote', 'custom://repository'],
+    ['ls-remote', 'HTTPS://example.test/repository'],
   ])('rejects git %j', (...args) => {
     expect(() => requireReadOnlyGitArgs(args)).toThrow()
   })
@@ -63,6 +65,7 @@ describe('ls-remote executable and transport boundaries', () => {
     ['ls-remote', '--heads', '--tags', 'origin', 'refs/heads/main'],
     ['--no-pager', 'ls-remote', '--symref', '--sort=version:refname', 'https://github.com/example/repo.git'],
     ['ls-remote', '--sort', '-version:refname', '--refs', 'git@example.test:repo.git'],
+    ['ls-remote', 'file:///tmp/repository'],
   ])('retains git %j', (...args) => {
     expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
   })
@@ -85,6 +88,29 @@ describe('Git object inspection execution boundaries', () => {
     ['cat-file', '--batch-check=%(objectname) %(objecttype)', '--batch-all-objects', '--buffer', '-Z'],
     ['cat-file', '--batch-command', '--no-buffer'],
     ['cat-file', '-p', '--', 'HEAD:file.txt'],
+  ])('retains git %j', (...args) => {
+    expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
+  })
+})
+
+describe('Git revision inspection execution boundaries', () => {
+  it.each([
+    ['rev-list', '--output=/tmp/should-not-write', 'HEAD'],
+    ['rev-list', '--output', '/tmp/should-not-write', 'HEAD'],
+    ['rev-list', 'HEAD', '--output=/tmp/should-not-write'],
+    ['rev-list', '--out=/tmp/should-not-write', 'HEAD'],
+    ['rev-list', '--ext-diff', 'HEAD'],
+    ['rev-list', '--textconv', 'HEAD'],
+    ['rev-list', '--alternate-refs'],
+  ])('rejects git %j', (...args) => {
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
+  })
+  it.each([
+    ['rev-list', '--count', '--all'],
+    ['rev-list', '--max-count=10', '--first-parent', 'HEAD'],
+    ['rev-list', '-n', '10', '--oneline', 'HEAD', '--', '--output=file.txt'],
+    ['rev-list', '--branches=release/*', '--not', '--tags'],
+    ['rev-list', '--left-right', '--cherry-pick', 'main...feature'],
   ])('retains git %j', (...args) => {
     expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
   })

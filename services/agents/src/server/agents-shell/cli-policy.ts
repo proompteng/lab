@@ -4,13 +4,54 @@ const READ_ONLY_GIT_COMMANDS = new Set([
   'log',
   'show',
   'rev-parse',
-  'rev-list',
   'ls-files',
   'ls-tree',
   'grep',
   'describe',
 ])
 const GIT_GLOBAL_FLAGS = new Set(['--no-pager', '--paginate', '--no-optional-locks', '--literal-pathspecs'])
+const REV_LIST_FLAGS = new Set([
+  '-n',
+  '--max-count',
+  '--parents',
+  '--children',
+  '--count',
+  '--all',
+  '--branches',
+  '--tags',
+  '--remotes',
+  '--glob',
+  '--exclude',
+  '--not',
+  '--first-parent',
+  '--merges',
+  '--no-merges',
+  '--min-parents',
+  '--max-parents',
+  '--reverse',
+  '--topo-order',
+  '--date-order',
+  '--left-right',
+  '--left-only',
+  '--right-only',
+  '--cherry-pick',
+  '--cherry-mark',
+  '--boundary',
+  '--objects',
+  '--object-names',
+  '--no-object-names',
+  '--oneline',
+  '--header',
+  '--timestamp',
+  '--quiet',
+  '--since',
+  '--after',
+  '--until',
+  '--before',
+  '--author',
+  '--committer',
+  '--grep',
+])
 const CAT_FILE_FLAGS = new Set([
   '-e',
   '-p',
@@ -55,6 +96,7 @@ const LS_REMOTE_FLAGS = new Set([
   '--no-symref',
   '--no-sort',
 ])
+const LS_REMOTE_SCHEMES = new Set(['https', 'http', 'ssh', 'git', 'file'])
 const KUBECTL_GLOBAL_VALUES = new Set([
   '-n',
   '--namespace',
@@ -127,6 +169,15 @@ const commandIndex = (args: readonly string[], values: ReadonlySet<string>, flag
 export const requireReadOnlyGitArgs = (args: readonly string[]) => {
   const index = commandIndex(args, new Set(), GIT_GLOBAL_FLAGS)
   const command = args[index]
+  if (command === 'rev-list') {
+    for (const arg of args.slice(index + 1)) {
+      if (arg === '--') break
+      const [option] = arg.split('=', 1)
+      if (!arg.startsWith('-') || REV_LIST_FLAGS.has(option) || /^-(?:n)?\d+$/.test(arg)) continue
+      throw new Error(`git rev-list inspection does not allow option ${arg}; use git_write for other modes`)
+    }
+    return
+  }
   if (command === 'cat-file') {
     for (const arg of args.slice(index + 1)) {
       if (arg === '--') break
@@ -157,7 +208,8 @@ export const requireReadOnlyGitArgs = (args: readonly string[]) => {
       }
       repository ??= arg
     }
-    if (repository && /^[a-z][a-z0-9+.-]*::/i.test(repository))
+    const scheme = repository?.match(/^([a-z][a-z0-9+.-]*):\/\//i)?.[1]
+    if (repository && (/^[a-z][a-z0-9+.-]*::/i.test(repository) || (scheme && !LS_REMOTE_SCHEMES.has(scheme))))
       throw new Error('git ls-remote inspection does not allow remote helpers; use git_write')
     return
   }
