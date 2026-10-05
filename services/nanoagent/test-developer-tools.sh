@@ -49,17 +49,22 @@ printf 'vim.g.user_config_preserved = true\n' > "$HOME/.config/nvim/init.lua"
 printf 'user lockfile\n' > "$HOME/.config/nvim/lazy-lock.json"
 printf 'user plugin data\n' > "$HOME/.local/share/nvim/user-data"
 printf 'user brew settings\n' > "$HOME/.linuxbrew/user-settings"
+printf 'user git settings\n' > "$HOME/.linuxbrew/Homebrew/.git/user-settings"
+# An existing full manager must not acquire the baked shallow-history marker.
+rm "$HOME/.linuxbrew/Homebrew/.git/shallow"
 chmod 0700 "$HOME/.linuxbrew"
 ln -s /tmp/user-link "$HOME/.linuxbrew/user-link"
 sha256sum "$HOME/.bashrc" "$HOME/.config/nvim/"* "$HOME/.local/share/nvim/user-data" \
-  "$HOME/.linuxbrew/user-settings" > /tmp/developer-home.sha256
+  "$HOME/.linuxbrew/user-settings" "$HOME/.linuxbrew/Homebrew/.git/user-settings" > /tmp/developer-home.sha256
 rm "$HOME/.tengri/developer-tools-seed.sha256" "$HOME/.linuxbrew/bin/fd"
 bootstrap-developer-tools --install-only
 test -x "$HOME/.linuxbrew/bin/fd"
+test ! -e "$HOME/.linuxbrew/Homebrew/.git/shallow"
 # A missing command is repaired locally even when the seed receipt exists.
 rm "$HOME/.linuxbrew/bin/fd"
 bootstrap-developer-tools --install-only
 test -x "$HOME/.linuxbrew/bin/fd"
+test ! -e "$HOME/.linuxbrew/Homebrew/.git/shallow"
 test "$(stat -c %a "$HOME/.linuxbrew")" = 700
 test "$(readlink "$HOME/.linuxbrew/user-link")" = /tmp/user-link
 sha256sum --check /tmp/developer-home.sha256

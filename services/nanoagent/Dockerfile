@@ -425,7 +425,9 @@ RUN --mount=type=bind,source=install-developer-tools.sh,target=/tmp/install-deve
     XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
 
 FROM developer-tools-smoke AS developer-tools-bundle
-RUN mkdir -p /tmp/developer-seed && \
+RUN --mount=type=bind,source=compact-developer-tools.sh,target=/tmp/compact-developer-tools.sh,readonly \
+    bash /tmp/compact-developer-tools.sh && \
+    mkdir -p /tmp/developer-seed && \
     XZ_OPT='-T2 -8' tar --create --xz --file /tmp/developer-seed/developer-tools.tar.xz \
       --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
       --directory "$HOME" .linuxbrew .local/bin/g++ .local/bin/c++ && \
@@ -434,7 +436,8 @@ RUN mkdir -p /tmp/developer-seed && \
       --directory "$HOME/.local/share/nvim" . && \
     cp "$HOME/.config/nvim/lazy-lock.json" /tmp/developer-seed/astronvim-lazy-lock.json && \
     cd /tmp/developer-seed && \
-    sha256sum developer-tools.tar.xz astronvim.tar.xz astronvim-lazy-lock.json > developer-tools.tar.xz.sha256
+    sha256sum developer-tools.tar.xz astronvim.tar.xz astronvim-lazy-lock.json > developer-tools.tar.xz.sha256 && \
+    stat --printf='%n_bytes=%s\n' /usr/share/nanoagent/development-toolchain.tar.xz /tmp/developer-seed/*
 
 FROM runtime-with-toolchain AS runtime-with-developer-tools
 COPY --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
@@ -442,7 +445,7 @@ COPY --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
 FROM runtime-with-developer-tools AS developer-seed-smoke
 USER 1000:1000
 RUN --network=none --mount=type=bind,source=test-developer-tools.sh,target=/tmp/test-developer-tools.sh,readonly \
-    bash /tmp/test-developer-tools.sh > /tmp/developer-seed-validation.txt
+    bash /tmp/test-developer-tools.sh > /tmp/developer-seed-validation.txt && cat /tmp/developer-seed-validation.txt
 
 FROM runtime-with-toolchain AS guest-rootfs
 
@@ -462,7 +465,9 @@ RUN apt-get update -o Acquire::Retries=3 && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 COPY --from=guest-rootfs / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
-RUN validate-rootfs /rootfs /rootfs-validation.txt
+RUN du --bytes --max-depth=2 /rootfs && \
+    stat --printf='%n_bytes=%s\n' /rootfs/usr/share/nanoagent/* && \
+    validate-rootfs /rootfs /rootfs-validation.txt
 
 FROM guest-rootfs
 

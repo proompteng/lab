@@ -8,10 +8,16 @@ cleanup() { if [[ -n "$temporary_directory" ]]; then rm -rf -- "$temporary_direc
 
 seed_archive() {
   local archive="$1" destination="$2" staging_root="$2"
+  local exclusions=()
+  if [[ "$destination" == "$HOME" && ( -e "$HOME/.linuxbrew/Homebrew/.git" || -L "$HOME/.linuxbrew/Homebrew/.git" ) ]]; then
+    # An existing manager keeps its own history and update metadata, including
+    # a full repository's absence of the image's shallow-history marker.
+    exclusions+=(--exclude='.linuxbrew/Homebrew/.git')
+  fi
   [[ "$destination" != "$HOME" ]] || staging_root="$HOME/.tengri"
   temporary_directory="$(mktemp -d "$staging_root/.developer-seed.XXXXXX")"
   tar --extract --xz --file "$archive" --directory "$temporary_directory" \
-    --no-same-owner --no-same-permissions
+    --no-same-owner --no-same-permissions "${exclusions[@]}"
   # Link complete staged files atomically, preserving existing files and directory
   # metadata. A killed copy cannot leave a partially written executable in HOME.
   cp -a --link --no-clobber --no-preserve=mode,ownership,timestamps \

@@ -117,6 +117,8 @@ verifies and extracts these local files into the PVC as UID 1000, filling missin
 files, symlinks, ownership, or directory modes. A completed seed receipt avoids repeated Homebrew extraction.
 Boot checks the supplied commands and Neovim's required 0.11 minimum without running Homebrew, Lazy, or Mason installers.
 Incomplete or incompatible tools fail startup; no network installation fallback is attempted.
+The build retains Homebrew's exact manager checkout and current tag in a shallow repository, omitting old history
+and reflogs. It verifies unchanged runtime-file hashes, manager/package versions, and `brew doctor` before packaging.
 
 Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
 `/etc/profile.d/tengri-development.sh`, and newly created shell profiles source it too. Existing user shell profiles
@@ -177,7 +179,7 @@ cd services/nanoagent
 bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
-bash -n bootstrap-developer-tools.sh install-developer-tools.sh test-developer-tools.sh developer-profile.sh
+bash -n bootstrap-developer-tools.sh install-developer-tools.sh compact-developer-tools.sh test-developer-tools.sh developer-profile.sh
 bash -n validate-rootfs.sh validate-rootfs.test.sh
 # On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
 bash validate-rootfs.test.sh
