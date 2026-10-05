@@ -426,9 +426,9 @@ RUN --mount=type=bind,source=install-developer-tools.sh,target=/tmp/install-deve
 
 FROM developer-tools-smoke AS developer-tools-bundle
 RUN --mount=type=bind,source=compact-developer-tools.sh,target=/tmp/compact-developer-tools.sh,readonly \
-    bash /tmp/compact-developer-tools.sh && \
+    . /etc/profile.d/tengri-development.sh && bash /tmp/compact-developer-tools.sh && \
     mkdir -p /tmp/developer-seed && \
-    XZ_OPT='-T2 -8' tar --create --xz --file /tmp/developer-seed/developer-tools.tar.xz \
+    XZ_OPT='-T2 -9' tar --create --xz --file /tmp/developer-seed/developer-tools.tar.xz \
       --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
       --directory "$HOME" .linuxbrew .local/bin/g++ .local/bin/c++ && \
     XZ_OPT='-T2 -8' tar --create --xz --file /tmp/developer-seed/astronvim.tar.xz \

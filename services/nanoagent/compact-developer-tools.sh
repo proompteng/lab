@@ -16,6 +16,24 @@ trap 'rm -rf -- "$temporary"' EXIT
 find "$HOME/.linuxbrew" -name .git -prune -o -type f -print0 | \
   sort -z | xargs -0 sha256sum > "$temporary/runtime.sha256"
 test -s "$temporary/runtime.sha256"
+python3 - "$temporary/runtime.sha256" <<'PY'
+import collections
+import os
+import sys
+
+groups = collections.defaultdict(list)
+with open(sys.argv[1]) as manifest:
+    for line in manifest:
+        digest, path = line.rstrip("\n").split("  ", 1)
+        metadata = os.stat(path)
+        if metadata.st_size >= 1024 * 1024:
+            groups[digest].append((path, metadata.st_size, metadata.st_dev, metadata.st_ino))
+for files in groups.values():
+    if len(files) > 1:
+        inodes = {(item[2], item[3]) for item in files}
+        redundant = (len(inodes) - 1) * files[0][1]
+        print(f"duplicate_runtime_bytes={redundant} paths=" + " | ".join(item[0] for item in files))
+PY
 head="$(git -C "$repository" rev-parse HEAD)"
 branch="$(git -C "$repository" symbolic-ref --quiet --short HEAD || true)"
 tag="$(git -C "$repository" describe --tags --exact-match 2>/dev/null || true)"
@@ -35,7 +53,7 @@ fi
 if [[ -n "$origin_head" ]]; then
   git -C "$temporary/checkout" symbolic-ref refs/remotes/origin/HEAD "$origin_head"
 else
-  git -C "$temporary/checkout" symbolic-ref --delete refs/remotes/origin/HEAD || true
+  git -C "$temporary/checkout" update-ref --no-deref -d refs/remotes/origin/HEAD
 fi
 test "$(git -C "$temporary/checkout" rev-parse HEAD)" = "$head"
 # Preserve the upstream URL, fetch refspec and branch configuration rather than
@@ -50,5 +68,6 @@ git -C "$repository" diff --exit-code --quiet
 sha256sum --check --status "$temporary/runtime.sha256"
 "$HOME/.linuxbrew/bin/brew" --version | cmp - "$temporary/brew-version"
 "$HOME/.linuxbrew/bin/brew" list --versions | cmp - "$temporary/brew-packages"
-"$HOME/.linuxbrew/bin/brew" doctor
 printf 'homebrew_history_after_bytes=%s\n' "$(du -sb "$repository/.git" | cut -f1)"
+du --bytes --summarize "$HOME/.cache/Homebrew"
+"$HOME/.linuxbrew/bin/brew" doctor
