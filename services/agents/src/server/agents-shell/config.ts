@@ -14,6 +14,7 @@ import {
   DEFAULT_RESOURCE,
   DEFAULT_TIMEOUT_SECONDS,
   MAX_OUTPUT_BYTES,
+  MAX_CONCURRENT_JOBS,
   MAX_TIMEOUT_SECONDS,
   SCOPES,
 } from './constants'
@@ -75,9 +76,30 @@ const parseListenPort = (env: NodeJS.ProcessEnv) => {
   return port
 }
 
+const parseBoundedInteger = (env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number) => {
+  const value = Number(env[key] ?? fallback)
+  if (!Number.isSafeInteger(value) || value < min || value > max)
+    throw new Error(`${key} must be an integer between ${min} and ${max}`)
+  return value
+}
+
 export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process.env): AgentsShellConfig => {
   const issuer = env.AGENTS_SHELL_OAUTH_ISSUER ?? DEFAULT_ISSUER
   const resource = env.AGENTS_SHELL_RESOURCE ?? DEFAULT_RESOURCE
+  const maxOutputBytes = parseBoundedInteger(
+    env,
+    'AGENTS_SHELL_MAX_OUTPUT_BYTES',
+    MAX_OUTPUT_BYTES,
+    4096,
+    MAX_OUTPUT_BYTES,
+  )
+  const maxTimeoutSeconds = parseBoundedInteger(
+    env,
+    'AGENTS_SHELL_MAX_TIMEOUT_SECONDS',
+    MAX_TIMEOUT_SECONDS,
+    1,
+    MAX_TIMEOUT_SECONDS,
+  )
 
   return {
     name: 'agents-shell',
@@ -90,11 +112,23 @@ export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process
     allowedUsernames: parseList(env.AGENTS_SHELL_ALLOWED_USERNAMES),
     allowedSubjects: parseList(env.AGENTS_SHELL_ALLOWED_SUBJECTS),
     workspaceRoot: env.AGENTS_SHELL_WORKSPACE_ROOT ?? '/workspace',
-    defaultTimeoutSeconds: Number(env.AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS ?? String(DEFAULT_TIMEOUT_SECONDS)),
-    maxTimeoutSeconds: Number(env.AGENTS_SHELL_MAX_TIMEOUT_SECONDS ?? String(MAX_TIMEOUT_SECONDS)),
-    defaultOutputBytes: Number(env.AGENTS_SHELL_DEFAULT_OUTPUT_BYTES ?? String(DEFAULT_OUTPUT_BYTES)),
-    maxOutputBytes: Number(env.AGENTS_SHELL_MAX_OUTPUT_BYTES ?? String(MAX_OUTPUT_BYTES)),
-    maxConcurrentJobs: Number(env.AGENTS_SHELL_MAX_CONCURRENT_JOBS ?? '4'),
+    defaultTimeoutSeconds: parseBoundedInteger(
+      env,
+      'AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS',
+      Math.min(DEFAULT_TIMEOUT_SECONDS, maxTimeoutSeconds),
+      1,
+      maxTimeoutSeconds,
+    ),
+    maxTimeoutSeconds,
+    defaultOutputBytes: parseBoundedInteger(
+      env,
+      'AGENTS_SHELL_DEFAULT_OUTPUT_BYTES',
+      Math.min(DEFAULT_OUTPUT_BYTES, maxOutputBytes),
+      4096,
+      maxOutputBytes,
+    ),
+    maxOutputBytes,
+    maxConcurrentJobs: parseBoundedInteger(env, 'AGENTS_SHELL_MAX_CONCURRENT_JOBS', 4, 1, MAX_CONCURRENT_JOBS),
     auditLogPath: env.AGENTS_SHELL_AUDIT_LOG_PATH || null,
     allowedK8sNamespaces: parseList(env.AGENTS_SHELL_ALLOWED_K8S_NAMESPACES ?? 'agents'),
     k8sApplyEnabled: env.AGENTS_SHELL_ENABLE_K8S_APPLY === 'true',
