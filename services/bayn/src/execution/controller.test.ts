@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import { maximumRetainedJevObservationReferences } from '../cycle/runner/pass-observation'
 
 import {
   completeExecutionControllerTick,
+  decodeExecutionControllerState,
   decodeExecutionAdvanceStepResult,
   decodeExecutionDeploymentActivation,
   decodeExecutionControllerTick,
@@ -48,6 +50,28 @@ const completedResult: ExecutionAdvanceStepResult = {
 }
 
 describe('execution controller decisions', () => {
+  test('decodes bounded canonical Jev references while preserving unknown legacy evidence', () => {
+    const observation = { result: 'SUCCESS', outcome: 'WINDOW_CLOSED', observedAt: completedResult.completedAt }
+    expect(Result.isSuccess(decodeExecutionAdvanceStepResult({ ...completedResult, observation }))).toBe(true)
+    const decode = (hashes: readonly string[]) =>
+      decodeExecutionAdvanceStepResult({
+        ...completedResult,
+        observation: { ...observation, jevObservationReferences: { hashes, complete: true } },
+      })
+    expect(Result.isSuccess(decode([]))).toBe(true)
+    expect(Result.isSuccess(decode(['a'.repeat(64), 'b'.repeat(64)]))).toBe(true)
+    for (const hashes of [
+      ['invalid'],
+      ['b'.repeat(64), 'a'.repeat(64)],
+      ['a'.repeat(64), 'a'.repeat(64)],
+      Array.from({ length: maximumRetainedJevObservationReferences + 1 }, (_, index) =>
+        index.toString(16).padStart(64, '0'),
+      ),
+    ]) {
+      expect(Result.isFailure(decode(hashes))).toBe(true)
+    }
+  })
+
   test('activates once and treats the same controller plan across worker revisions as idempotent', () => {
     const state = activated()
 
@@ -385,7 +409,7 @@ describe('execution controller decisions', () => {
     ).toBe(true)
   })
 
-  test('persists blocked results as successful business completion', () => {
+  test.each([1_000, 5_000])('persists a %sms continuation across a controller restart', (nextDelayMs) => {
     const state = Result.getOrThrow(
       completeExecutionControllerTick(
         activated(),
@@ -395,7 +419,7 @@ describe('execution controller decisions', () => {
           outcome: {
             _tag: ExecutionControllerOutcome.Blocked,
             receiptHash: '1'.repeat(64),
-            nextDelayMs: 5_000,
+            nextDelayMs,
           },
         },
         nextSourceRevision,
@@ -403,7 +427,25 @@ describe('execution controller decisions', () => {
     )
 
     expect(state.lastCompletion?.outcome).toBe(ExecutionControllerOutcome.Blocked)
-    expect(state.nextDueAt).toBe('2026-08-13T18:00:05.000Z')
+    const nextDueAt = new Date(Date.parse('2026-08-13T18:00:00.000Z') + nextDelayMs).toISOString()
+    expect(state.nextDueAt).toBe(nextDueAt)
+    const resumed = Result.getOrThrow(decodeExecutionControllerState(JSON.parse(JSON.stringify(state))))
+    expect(resumed).toEqual(state)
+    expect(
+      Result.getOrThrow(
+        decideExecutionControllerTick(
+          resumed,
+          {
+            schemaVersion: 'bayn.execution-controller-tick.v1',
+            epoch: 1,
+            sequence: resumed.nextSequence,
+          },
+          controllerKey,
+          nextDueAt,
+          nextSourceRevision,
+        ),
+      ),
+    ).toMatchObject({ _tag: 'Advance' })
   })
 
   test('rejects a computed next due time outside the canonical UTC range', () => {

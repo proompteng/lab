@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Context, Deferred, Effect, Fiber, Layer, Redacted, Ref, Result, Schema } from 'effect'
+import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, Redacted, Ref, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { OperationDeadlineClock } from '../operation-timeout'
 
@@ -23,13 +23,14 @@ import {
   IntentStoreLive,
   BlockedCycleIntentStore,
   BlockedCycleIntentStoreLive,
+  BlockedCycleIntentStoreError,
 } from '../execution/intents'
-import { MutationStore, MutationStoreLive } from '../execution/mutations'
+import { MutationStore, MutationStoreLive, MutationStoreError } from '../execution/mutations'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
-import { JournalLive } from '../ledger'
+import { Journal, JournalLive } from '../ledger'
 import { canonicalHashV1 } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
@@ -58,6 +59,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeRecoveryClockFixture } from './recovery-clock.test-support'
 import { BrokerRead } from '../broker/alpaca'
 import {
   AuthorityGenerationStore,
@@ -68,6 +70,8 @@ import {
   ValuationStore,
 } from '../db/execution-store'
 import { CycleStore } from '../cycle/store'
+import { CycleTerminalReason } from '../cycle'
+import { terminalizeBlockedExecutionCycle } from '../observe-composition/execution-cycle'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
@@ -84,33 +88,46 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
-durableTest.each([
-  'fill',
-  'fallback',
-  'missing-benchmark',
-  'no-trade',
-  'no-trade-finalization',
-  'missing-calendar',
-  'failed-model-response',
-  'failed-management-response',
-  'recovery',
-  'recovery-filled',
-  'early-exit',
-  'partial-exit-reentry',
-  'measured-exit',
-  'measured-bootstrap-delay',
-  'measured-partial-entry-reentry',
-  'measured-clock-delay-reentry',
-  'measured-slipped-exit-reentry',
-  'measured-entry-expired',
-  'measured-zero-fill-reentry',
-  'measured-submit-expired-reentry',
-  'operator-held-replay',
-  'operator-after-system-replay',
-  'reconciliation-idle-recovery',
-] as const)(
-  'native Jev production cycle and durable accounting: %s',
-  async (scenario) => {
+durableTest.each(
+  (
+    [
+      'approved-expiry-recovery',
+      'approved-expiry-manual-hold',
+      'approved-expiry-rollback',
+      'fill',
+      'fallback',
+      'missing-benchmark',
+      'no-trade',
+      'no-trade-finalization',
+      'missing-calendar',
+      'failed-model-response',
+      'failed-management-response',
+      'recovery',
+      'recovery-filled',
+      'early-exit',
+      'partial-exit-reentry',
+      'measured-exit',
+      'measured-bootstrap-delay',
+      'measured-partial-entry-reentry',
+      'measured-clock-delay-reentry',
+      'measured-slipped-exit-reentry',
+      'measured-entry-expired',
+      'measured-zero-fill-reentry',
+      'measured-submit-expired-reentry',
+      'operator-held-replay',
+      'operator-after-system-replay',
+      'reconciliation-idle-recovery',
+    ] as const
+  ).map((scenario) => ({
+    scenario,
+    label: scenario.startsWith('approved-expiry-')
+      ? 'PostgreSQL untouched intent recovery'
+      : 'native Jev production cycle and durable accounting',
+  })),
+)(
+  '$label: $scenario',
+  async ({ scenario }) => {
+    const untouchedExpiry = scenario.startsWith('approved-expiry-')
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -130,6 +147,7 @@ durableTest.each([
     const measuredCalls: ReplayJevCall[] = []
     let measuredProviderClock: TestClock.TestClock | undefined
     let expiredStartedSubmit = false
+    let expiredApprovedIntent = false
     const measured =
       scenario === 'measured-exit' ||
       scenario === 'measured-bootstrap-delay' ||
@@ -143,10 +161,11 @@ durableTest.each([
     const lifecycleObservations =
       scenario === 'partial-exit-reentry'
         ? [
+            { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 40, premium: 0.02 },
             ...Array.from({ length: 25 }, (_, index) => ({
               at: initialAtMs + (index + 1) * 1000,
               fullWindow: false,
-              offset: BigInt((index + 1) * 1000),
+              offset: BigInt((index + 2) * 1000),
               bidSize: 40,
               premium: 0.02,
             })),
@@ -279,9 +298,20 @@ durableTest.each([
         capitalAuthority: noCapitalAuthority,
       },
       postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
-      tigerBeetle: { clusterId: 20912n, ledger: 70912, replicaAddresses: [baynTestTigerBeetleAddress] },
+      tigerBeetle: {
+        clusterId: 20912n,
+        ledger: 70912,
+        replicaAddresses: [baynTestTigerBeetleAddress],
+      },
     }
-    const base = Layer.mergeAll(WriterFenceLive, JournalLive(config)).pipe(
+    const expiryJournal = Layer.succeed(Journal, {
+      post: () => Effect.die('untouched intent recovery must never write accounting'),
+      verifyAccount: () => Effect.succeed(true),
+      journalAndReconcile: () => Effect.die('untouched intent recovery must never write accounting'),
+      check: Effect.void,
+      checkRun: () => Effect.void,
+    })
+    const base = Layer.mergeAll(WriterFenceLive, untouchedExpiry ? expiryJournal : JournalLive(config)).pipe(
       Layer.provideMerge(PostgresClientLive(config)),
       Layer.provide(NodeServices.layer),
     )
@@ -489,7 +519,24 @@ durableTest.each([
                 ? 1000
                 : config.operationTimeoutMs,
         }
+        const mutations = yield* MutationStore
+        const expiryMutations: typeof mutations = {
+          ...mutations,
+          beginSubmit: (...args) =>
+            Effect.gen(function* () {
+              if (!expiredApprovedIntent) {
+                expiredApprovedIntent = true
+                return yield* new MutationStoreError({
+                  operation: 'begin-submit',
+                  failure: 'invariant',
+                  message: 'synthetic no-I/O reservation failure',
+                })
+              }
+              return yield* mutations.beginSubmit(...args)
+            }),
+        }
         const createRuntime = makeReplayExecutionRuntime(runtimeInput).pipe(
+          Effect.provideService(MutationStore, untouchedExpiry ? expiryMutations : mutations),
           Effect.provideService(JevClient, timing?.client ?? provider),
           (operation) => (timing === undefined ? operation : timing.run(operation)),
           Effect.map((engine) => ({
@@ -505,6 +552,89 @@ durableTest.each([
           })),
         )
         const runtime = yield* createRuntime
+        if (untouchedExpiry) {
+          for (let attempt = 0; attempt < 20 && !expiredApprovedIntent; attempt++) {
+            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
+            yield* runtime.advance
+          }
+          expect(expiredApprovedIntent).toBe(true)
+          const before = yield* sql`SELECT state FROM intents`
+          expect(before).toEqual([{ state: 'APPROVED' }])
+          expect(yield* sql`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([{ count: 0 }])
+          const readAuthority = runtime.store.authorityGeneration.readAuthorityState
+          if (readAuthority === undefined) throw new Error('Missing expiry authority reader')
+          expect(yield* readAuthority).toMatchObject({ effective: Authority.Observe, kill: KillState.Active })
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 11_000)
+          if (scenario === 'approved-expiry-manual-hold') {
+            yield* runtime.store.authorityRestriction.restrictAuthority(
+              'operator expiry fixture hold',
+              yield* currentUtcInstant,
+            )
+          }
+          const heldAuthority = yield* readAuthority
+          const cycleStore = runtime.cycleStore
+          const rows = yield* sql<{ cycle_id: string }>`SELECT cycle_id FROM autonomous_cycles`
+          const cycleId = rows[0]?.cycle_id
+          if (cycleId === undefined) throw new Error('Missing bound expiry cycle')
+          const cycle = Option.getOrThrow(yield* cycleStore.read(cycleId))
+          const blocked = yield* BlockedCycleIntentStore
+          const observedAt = yield* currentUtcInstant
+          const finalizeWith = (blockedStore: typeof blocked) =>
+            terminalizeBlockedExecutionCycle(
+              cycle,
+              { _tag: 'Block', reason: CycleTerminalReason.Risk, observedAt },
+              runtime.authorityGenerationHash,
+              blockedStore,
+            ).pipe(
+              Effect.provideService(CycleStore, cycleStore),
+              Effect.provideService(AuthorityRestrictionStore, runtime.store.authorityRestriction),
+            )
+          const retainedState = Effect.all({
+            intents: sql`SELECT * FROM intents ORDER BY intent_id`,
+            cycles: sql`SELECT * FROM autonomous_cycles ORDER BY cycle_id`,
+            authority: readAuthority,
+            mutations: sql`SELECT * FROM mutation_events ORDER BY event_id`,
+            orders: sql`SELECT * FROM orders`,
+            fills: sql`SELECT * FROM fills`,
+          })
+          if (scenario === 'approved-expiry-rollback') {
+            const beforeFinalization = yield* retainedState
+            const failed = yield* finalizeWith({
+              ...blocked,
+              terminalizeUntouchedApproved: (input) =>
+                blocked.terminalizeUntouchedApproved(input).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new BlockedCycleIntentStoreError({
+                        failure: 'query',
+                        message: 'synthetic post-terminalization failure',
+                      }),
+                    ),
+                  ),
+                ),
+            }).pipe(Effect.result)
+            expect(Result.isFailure(failed)).toBe(true)
+            expect(yield* retainedState).toEqual(beforeFinalization)
+          }
+          const finalize = finalizeWith(blocked)
+          expect(yield* finalize).toMatchObject({ outcome: 'RECOVERED', action: 'BLOCKED' })
+          const settled = yield* retainedState
+          expect(yield* finalize).toMatchObject({ outcome: 'RECOVERED', action: 'BLOCKED' })
+          expect(yield* retainedState).toEqual(settled)
+          expect(yield* readAuthority).toEqual(heldAuthority)
+          expect(yield* sql`SELECT state, terminal_outcome FROM intents`).toEqual([
+            { state: 'TERMINAL', terminal_outcome: 'EXPIRED' },
+          ])
+          expect(yield* sql`SELECT state, terminal_reason FROM autonomous_cycles`).toEqual([
+            { state: 'BLOCKED', terminal_reason: CycleTerminalReason.Risk },
+          ])
+          expect(yield* Clock.currentTimeMillis).toBeLessThan(closeAtMs)
+          expect(
+            yield* sql`SELECT (SELECT count(*)::integer FROM mutation_events) AS mutations, (SELECT count(*)::integer FROM orders) AS orders, (SELECT count(*)::integer FROM fills) AS fills`,
+          ).toEqual([{ mutations: 0, orders: 0, fills: 0 }])
+          expect((yield* broker.snapshot).orders).toEqual([])
+          return { _tag: 'Coverage' as const }
+        }
         if (scenario === 'measured-bootstrap-delay') {
           const restarted = yield* createRuntime
           expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
@@ -551,10 +681,14 @@ durableTest.each([
             kill: KillState.Clear,
           })
           expect(recovered.generationHash).not.toBe(runtime.authorityGenerationHash)
-          expect((yield* broker.snapshot).orders).toEqual([])
-          expect(yield* sql`SELECT state, decision_hash FROM autonomous_cycles`).toEqual([
-            { state: 'PENDING', decision_hash: null },
+          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
+            { state: 'ACTIVE', bound: true },
           ])
+          expect(yield* sql`SELECT DISTINCT authority_generation_hash FROM intents`).toEqual([
+            { authority_generation_hash: recovered.generationHash },
+          ])
+          yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
           expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
           return { _tag: 'IdleRecovery' as const }
         }
@@ -764,19 +898,41 @@ durableTest.each([
               message: 'Recovery proof operation failed',
               cause,
             })
-          const reconcile = advanceBy(1).pipe(
-            Effect.andThen(runtime.reconcile),
-            Effect.andThen(advanceBy(1)),
-            Effect.asVoid,
-            Effect.mapError(asOperational),
-          )
+          const recoveryClock = yield* makeRecoveryClockFixture(advanceBy(1))
+          const reconcile = recoveryClock.reconcile(runtime.reconcile).pipe(Effect.mapError(asOperational))
           const settle = recoverTerminalGenerationToObserve({
             accountId,
             blockedIntents,
-            authorityStore: store.authorityGeneration,
+            authorityStore: {
+              ...store.authorityGeneration,
+              ensureAuthorityGeneration: (request) =>
+                recoveryClock.authority(store.authorityGeneration.ensureAuthorityGeneration(request)),
+            },
             writerFence: fence,
             reconcileAfterSettlement: reconcile,
-          })
+          }).pipe(
+            Effect.tapError((error) =>
+              error.message !== 'terminal generation OBSERVE rollover failed'
+                ? Effect.void
+                : sql`SELECT
+                to_char(${clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS database_clock,
+                to_char(state.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS authority_updated_at,
+                to_char(reconciliation.reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS reconciled_at
+              FROM authority_state AS state
+              LEFT JOIN LATERAL (
+                SELECT reconciled_at FROM reconciliations WHERE account_id = ${accountId}
+                ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1
+              ) AS reconciliation ON true
+              WHERE state.singleton`.pipe(
+                    Effect.flatMap((timestamps) =>
+                      Effect.logWarning('Recovery fixture clock evidence sampled after failure').pipe(
+                        Effect.annotateLogs({ scenario, timestamps }),
+                      ),
+                    ),
+                    Effect.ignoreCause,
+                  ),
+            ),
+          )
           let lostResponses = 0
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
             Effect.gen(function* () {

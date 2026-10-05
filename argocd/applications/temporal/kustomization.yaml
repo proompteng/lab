@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - cassandra-pvcs.yaml
   - upgrade/cassandra-509-rollout.yaml
   - upgrade/cassandra-509-backup.yaml
   - upgrade/cassandra-4112-rollout.yaml
@@ -22,6 +23,20 @@ resources:
   - ingressroute-temporal-k8s-private.yaml
 
 patches:
+  - target:
+      kind: Deployment
+      name: temporal-worker
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: temporal-worker
+      spec:
+        template:
+          spec:
+            containers:
+              - name: temporal-worker
+                image: temporal-worker-runtime
   - target:
       kind: StatefulSet
       name: elasticsearch-master
@@ -110,6 +125,8 @@ helmCharts:
         enabled: true
         storageClass: rook-ceph-block
         accessMode: ReadWriteOnce
+        # Immutable live template. Existing ordinal claims are managed at 30Gi in cassandra-pvcs.yaml.
+        # See README.md before changing this value or scaling beyond the three declared claims.
         size: 20Gi
       config:
         cluster_size: 3
@@ -223,6 +240,10 @@ helmCharts:
         elasticsearchTool: false
 
 images:
+  - name: temporal-worker-runtime
+    newName: mirror.gcr.io/temporalio/server
+    newTag: 1.31.2
+    digest: sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da
   - name: docker.elastic.co/elasticsearch/elasticsearch
     newTag: 8.19.21
     digest: sha256:cbf5cd6cfe5532a9c02d510c66d238bf329cd51fe3d57170a2a880aca7d47419

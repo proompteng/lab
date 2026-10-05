@@ -1,16 +1,15 @@
 'use client'
 
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpRight,
-  ChevronDown,
-  Command,
-  ExternalLink,
-  LoaderCircle,
-  Plus,
-  Square,
-} from 'lucide-react'
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@proompteng/design/ui'
+import { ArrowDown, ArrowUp, ArrowUpRight, Command, ExternalLink, LoaderCircle, Plus, Square, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   codexOptionsForSelection,
@@ -29,6 +28,13 @@ import type {
   TengriCodexThread,
   TengriCodexTurn,
 } from '@/lib/tengri/types'
+import {
+  MAX_CODEX_IMAGES,
+  MAX_CODEX_TOTAL_IMAGE_BYTES,
+  codexImageUrl,
+  readCodexImage,
+  type TengriCodexImage,
+} from '@/lib/tengri/codex-images'
 import { CodexEventCard } from './codex-event-card'
 import { CodexCopyButton } from './codex-copy-button'
 import {
@@ -57,6 +63,8 @@ import { runTengriAction, TengriRequestError } from './client'
 
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
+type DraftImage = { id: string; name: string; size: number; input: TengriCodexImage | null }
+
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
   const composerHelpId = useId()
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
@@ -74,6 +82,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [restoredHistorySequence, setRestoredHistorySequence] = useState(0)
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
   const [prompt, setPrompt] = useState('')
+  const [images, setImages] = useState<DraftImage[]>([])
+  const imagesRef = useRef<DraftImage[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
@@ -104,7 +114,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const optionsRef = useRef<TengriCodexOptions>({})
   optionsRef.current = selectedOptions ?? {}
   const accountChecked = account !== null
-  const showStopAction = Boolean(activeTurnId) && !prompt.trim()
+  const showStopAction = Boolean(activeTurnId) && !prompt.trim() && images.length === 0
+  const readingImages = images.some((image) => image.input === null)
   const canStartNewConversation = codexCanStartNewConversation({
     activeTurnId,
     recovering: replayRecovering,
@@ -533,10 +544,52 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     )
   }
 
+  function commitImages(next: DraftImage[]) {
+    imagesRef.current = next
+    setImages(next)
+  }
+
+  async function pasteImages(files: File[]) {
+    if (submitting || replayRecovering || (threadId && !threadReady)) return
+    const pending = files.map((file) => ({
+      id: crypto.randomUUID(),
+      name: file.name || 'Pasted image',
+      size: file.size,
+      input: null,
+    }))
+    const next = [...imagesRef.current, ...pending]
+    if (
+      next.length > MAX_CODEX_IMAGES ||
+      next.reduce((total, image) => total + image.size, 0) > MAX_CODEX_TOTAL_IMAGE_BYTES
+    ) {
+      setError('Attach at most 4 images and 8 MiB total.')
+      return
+    }
+    setError('')
+    commitImages(next)
+    await Promise.all(
+      files.map(async (file, index) => {
+        const id = pending[index].id
+        try {
+          const input = await readCodexImage(file)
+          if (mountedRef.current)
+            commitImages(imagesRef.current.map((image) => (image.id === id ? { ...image, input } : image)))
+        } catch (cause) {
+          if (!mountedRef.current) return
+          commitImages(imagesRef.current.filter((image) => image.id !== id))
+          setError(cause instanceof Error ? cause.message : 'The image could not be read.')
+        }
+      }),
+    )
+  }
+
   async function send() {
     const text = prompt.trim()
+    const draftImages = imagesRef.current
+    const inputImages = draftImages.flatMap((image) => (image.input ? [image.input] : []))
     if (
-      !text ||
+      (!text && !inputImages.length) ||
+      inputImages.length !== draftImages.length ||
       submitting ||
       replayRecovering ||
       replayRecoveryRef.current ||
@@ -548,6 +601,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setFollowingConversation(true)
     setError('')
     setPrompt('')
+    commitImages([])
     try {
       const currentThread = await ensureThread()
       if (currentThread.activeTurnId) {
@@ -557,6 +611,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           threadId: currentThread.id,
           turnId: currentThread.activeTurnId,
           text,
+          images: inputImages,
         })
       } else {
         const turn = await runTengriAction<TengriCodexTurn>({
@@ -564,6 +619,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           agentId,
           threadId: currentThread.id,
           text,
+          images: inputImages,
           ...optionsRef.current,
         })
         if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
@@ -571,6 +627,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Message could not be sent')
       setPrompt(text)
+      commitImages(draftImages)
     } finally {
       setSubmitting(false)
     }
@@ -846,7 +903,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <form
             aria-label="Message composer"
             aria-busy={replayRecovering}
-            className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 shadow-sm transition-colors focus-within:border-zinc-500 motion-reduce:transition-none"
+            className="w-full rounded-2xl border border-white/[0.06] bg-zinc-900/60 shadow-sm transition-colors focus-within:border-white/15 motion-reduce:transition-none"
             onSubmit={(event) => {
               event.preventDefault()
               void send()
@@ -858,9 +915,26 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 data-window-default-focus
                 aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
                 aria-describedby={composerHelpId}
-                disabled={replayRecovering || Boolean(threadId && !threadReady)}
+                disabled={submitting || replayRecovering || Boolean(threadId && !threadReady)}
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.items)
+                    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                    .flatMap((item) => {
+                      const file = item.getAsFile()
+                      return file ? [file] : []
+                    })
+                  if (!files.length) return
+                  event.preventDefault()
+                  const text = event.clipboardData.getData('text/plain')
+                  if (text) {
+                    const start = event.currentTarget.selectionStart
+                    const end = event.currentTarget.selectionEnd
+                    setPrompt((current) => current.slice(0, start) + text + current.slice(end))
+                  }
+                  void pasteImages(files)
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                     event.preventDefault()
@@ -877,6 +951,34 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 }
                 className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
               />
+              {images.length ? (
+                <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
+                  {images.map((image) => (
+                    <li
+                      key={image.id}
+                      className="relative flex h-20 w-24 items-center justify-center overflow-hidden rounded-lg bg-white/5 ring-1 ring-white/10"
+                    >
+                      {image.input ? (
+                        <img alt={image.name} src={codexImageUrl(image.input)} className="h-full w-full object-cover" />
+                      ) : (
+                        <LoaderCircle
+                          aria-label={`Reading ${image.name}`}
+                          className="size-4 animate-spin text-zinc-400"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Remove image ${image.name}`}
+                        disabled={submitting}
+                        onClick={() => commitImages(imagesRef.current.filter((candidate) => candidate.id !== image.id))}
+                        className="absolute top-1 right-1 grid size-6 place-items-center rounded-full bg-zinc-900/85 text-zinc-200 outline-none hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-white/50"
+                      >
+                        <X className="size-3" aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
             <div className="flex items-end gap-2 px-2 pb-2">
               <CodexModelPicker
@@ -891,7 +993,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 type={showStopAction ? 'button' : 'submit'}
                 aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
                 disabled={
-                  (!showStopAction && !prompt.trim()) ||
+                  (!showStopAction && !prompt.trim() && !images.length) ||
+                  readingImages ||
                   submitting ||
                   interrupting ||
                   replayRecovering ||
@@ -914,7 +1017,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <p id={composerHelpId} className="sr-only">
             {activeTurnId
               ? 'Send a message to steer, or stop the response.'
-              : 'Enter to send · Shift + Enter for a new line'}
+              : 'Enter to send · Shift + Enter for a new line · Paste images to attach'}
           </p>
         </div>
       </div>
@@ -1063,90 +1166,105 @@ function CodexModelPicker({
 }) {
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
-  const selectClass =
-    'h-8 min-w-0 max-w-full appearance-none rounded-md bg-transparent py-1 pr-6 pl-2 text-xs text-zinc-300 outline-none transition-colors [field-sizing:content] hover:bg-zinc-700/60 focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 motion-reduce:transition-none [&_option]:bg-zinc-800'
+  const triggerClass =
+    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+  const menuClass =
+    'font-system w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-zinc-900/95 p-1 text-zinc-200 shadow-[0_12px_40px_rgba(0,0,0,0.45)] ring-white/10 backdrop-blur-xl motion-reduce:animate-none'
+  const itemClass =
+    'min-h-10 rounded-lg px-3 py-2 pr-8 text-sm focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
+  const reasoningLabel =
+    selection.reasoningEffort === 'default'
+      ? model
+        ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})`
+        : 'Default'
+      : `${codexReasoningLabels[selection.reasoningEffort]}${model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? '' : ' (unavailable)'}`
   return (
     <div className="min-w-0 flex-1 space-y-1">
       <div className="flex flex-wrap items-center justify-end gap-1">
-        <label
-          className="relative flex min-w-0 max-w-full text-xs text-zinc-400"
-          title={
-            disabled
-              ? 'Model settings are available when the response and conversation recovery finish.'
-              : model?.description
-          }
+        <Select
+          disabled={disabled || !models?.length}
+          onValueChange={(value) => {
+            const next = models?.find((model) => model.model === value)
+            if (!next) return
+            const reasoningEffort =
+              selection.reasoningEffort === 'default' ||
+              next.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort)
+                ? selection.reasoningEffort
+                : 'default'
+            onChange({ model: next.model, reasoningEffort })
+          }}
+          value={selection.model}
         >
-          <span className="sr-only">Model</span>
-          <select
+          <SelectTrigger
             aria-label="Model"
-            className={selectClass}
-            disabled={disabled || !models?.length}
-            onChange={(event) => {
-              const next = models?.find((model) => model.model === event.target.value)
-              if (!next) return
-              const reasoningEffort =
-                selection.reasoningEffort === 'default' ||
-                next.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort)
-                  ? selection.reasoningEffort
-                  : 'default'
-              onChange({ model: next.model, reasoningEffort })
-            }}
-            value={selection.model}
-          >
-            {!model ? (
-              <option value={selection.model} disabled>
-                {models ? `${selection.model} (unavailable)` : error ? 'Models unavailable' : 'Loading models…'}
-              </option>
-            ) : null}
-            {models?.map((model) => (
-              <option key={model.model} value={model.model}>
-                {model.displayName}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute top-2.5 right-1.5 size-3 text-zinc-400"
-            aria-hidden="true"
-          />
-        </label>
-        <label
-          className="relative flex min-w-0 max-w-full items-center text-xs text-zinc-400"
-          title={
-            disabled
-              ? 'Reasoning settings are available when the response and conversation recovery finish.'
-              : 'Reasoning effort'
-          }
-        >
-          <span className="sr-only">Reasoning</span>
-          <select
-            aria-label="Reasoning effort"
-            className={selectClass}
-            disabled={disabled || !model}
-            onChange={(event) =>
-              onChange(codexSelectionSchema.parse({ ...selection, reasoningEffort: event.target.value }))
+            className={triggerClass}
+            title={
+              disabled
+                ? 'Model settings are available when the response and conversation recovery finish.'
+                : model?.description
             }
-            value={selection.reasoningEffort}
           >
-            <option value="default">
-              {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
-            </option>
-            {selection.reasoningEffort !== 'default' &&
-            !model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? (
-              <option value={selection.reasoningEffort} disabled>
-                {codexReasoningLabels[selection.reasoningEffort]} (unavailable)
-              </option>
-            ) : null}
-            {model?.supportedReasoningEfforts.map((effort) => (
-              <option key={effort.reasoningEffort} value={effort.reasoningEffort} title={effort.description}>
-                {codexReasoningLabels[effort.reasoningEffort]}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            className="pointer-events-none absolute top-2.5 right-1.5 size-3 text-zinc-400"
-            aria-hidden="true"
-          />
-        </label>
+            <SelectValue>
+              {model?.displayName ??
+                (models ? `${selection.model} (unavailable)` : error ? 'Models unavailable' : 'Loading models…')}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent side="top" align="end" sideOffset={8} alignItemWithTrigger={false} className={menuClass}>
+            <SelectGroup>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">Model</SelectLabel>
+              {models?.map((model) => (
+                <SelectItem key={model.model} value={model.model} className={itemClass} title={model.description}>
+                  {model.displayName}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select
+          disabled={disabled || !model}
+          onValueChange={(value) => {
+            if (value !== null) onChange(codexSelectionSchema.parse({ ...selection, reasoningEffort: value }))
+          }}
+          value={selection.reasoningEffort}
+        >
+          <SelectTrigger
+            aria-label="Reasoning effort"
+            className={triggerClass}
+            title={
+              disabled
+                ? 'Reasoning settings are available when the response and conversation recovery finish.'
+                : 'Reasoning effort'
+            }
+          >
+            <SelectValue>{reasoningLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent
+            side="top"
+            align="end"
+            sideOffset={8}
+            alignItemWithTrigger={false}
+            className={`${menuClass} w-60`}
+          >
+            <SelectGroup>
+              <SelectLabel className="px-3 pt-2 pb-1.5 text-[11px] font-medium text-zinc-400">
+                Reasoning effort
+              </SelectLabel>
+              <SelectItem value="default" className={itemClass}>
+                {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
+              </SelectItem>
+              {model?.supportedReasoningEfforts.map((effort) => (
+                <SelectItem
+                  key={effort.reasoningEffort}
+                  value={effort.reasoningEffort}
+                  className={itemClass}
+                  title={effort.description}
+                >
+                  {codexReasoningLabels[effort.reasoningEffort]}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
       {error ? (
         <p className="text-xs text-amber-200/80" role="alert">

@@ -1,6 +1,6 @@
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 
-export const AGENTS_SHELL_VERSION = '0.1.0'
+export const AGENTS_SHELL_VERSION = '0.2.2'
 export const DEFAULT_RESOURCE = 'https://agents-shell.proompteng.ai'
 export const DEFAULT_ISSUER = 'https://auth.proompteng.ai/realms/master'
 export const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource'
@@ -16,7 +16,15 @@ export const DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED = 86_400
 export const DEFAULT_TIMEOUT_SECONDS = 60
 export const MAX_TIMEOUT_SECONDS = 1800
 export const DEFAULT_OUTPUT_BYTES = 20_000
-export const MAX_OUTPUT_BYTES = 200_000
+export const MAX_OUTPUT_BYTES = 1_048_576
+export const OUTPUT_RETENTION_BYTES = 4 * 1024 * 1024
+export const OUTPUT_RETENTION_TOTAL_BYTES = 64 * 1024 * 1024
+export const MAX_CONCURRENT_JOBS = OUTPUT_RETENTION_TOTAL_BYTES / (2 * OUTPUT_RETENTION_BYTES)
+export const MAX_RETAINED_OUTPUT_JOBS = 64
+export const MAX_RETAINED_RECEIPTS = 10_000
+export const RECEIPT_TTL_MS = 60 * 60 * 1000
+export const STATUS_REPLY_BYTES = 8 * 1024
+export const REPLY_META_RESERVE_BYTES = 1536
 
 export const DEFAULT_WORKSPACE_SEARCH_EXCLUDES = [
   '.git',
@@ -47,14 +55,14 @@ Operate like Codex:
 
 Default direct ChatGPT repo workflow:
 1. Open a repo session with repo_session_open. It fetches the requested base and creates a unique branch/worktree.
-2. Pass its sessionId to search, read_file, apply_patch, shell, git, tests, and repo-local kubectl or gh commands.
+2. Pass its sessionId to search, read_file, apply_patch, exec, git, tests, and repo-local kubectl or gh commands.
 3. Search with search, inspect with read_file and git, and make scoped edits with apply_patch.
 4. Run focused tests, lint, type checks, or smoke commands that prove the change.
 5. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
 6. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
 7. Close clean sessions when finished. Dirty sessions are preserved unless repo_session_close is explicitly forced.
 
-Use shell_run for short commands. Use shell_start/read/status/kill for longer work. Default tool timeout is 60 seconds and the server cap is 1800 seconds. Git operations should use git or git_write; cluster operations should use kubectl or kubectl_admin. Do not use agent_start/status/read/cancel for direct multi-session ChatGPT work unless the user explicitly requests delegated AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
+Use exec with an owned sessionId and a unique requestKey for every command. Keep the original exec arguments for retries. Reuse the same sessionId and requestKey with the same command, cwd, timeoutSeconds and agentId; it returns the same job. WaitMs, maxBytes and outputEncoding may change. Completed replay still works after the session closes. A commandPreview may be truncated and cannot reconstruct the original command. Exec waits 1000ms by default; use waitMs up to 30000 to wait longer or 0 to return immediately. Continue with read using the returned jobId and cursor; read can wait for new output or completion. Use cancel to stop the entire process group. Status returns metadata in 8KiB pages, including bounded commandPreview and commandHash but no stdout/stderr. A short command can fit entirely in its preview. MaxBytes bounds the whole exec/read MCP reply, including metadata and both streams; default 20000, minimum 4096, cap 1048576. Completion receipts and request keys last one hour after completion in this server process; restarting clears them. Output uses a bounded tail retained independently; inspect truncation and retention offsets for lost prefixes. Running jobs report ok=null; a terminal receipt reports the actual outcome. Capture completeness is separate from command success. Default tool timeout is 60 seconds and the server cap is 1800 seconds. Use git for local inspection. Use git_write with an owned sessionId for remote Git commands such as ls-remote or commands that may change files or execute configured helpers. Cluster operations should use kubectl or kubectl_admin. In Kubernetes, startup configures an in-cluster context using the mounted ServiceAccount when no kubeconfig already exists. Do not use agent_start/status/read/cancel for direct multi-session ChatGPT work unless the user explicitly requests delegated AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
 
 export const SERVER_INSTRUCTIONS =
   'Private Codex-style repo agent for /workspace/lab. Inspect first, respect dirty work, edit with apply_patch, validate, commit as Greg Konush, push, create PRs with gh, monitor CI, and report evidence-backed blockers only.'

@@ -53,7 +53,7 @@ The relevant source paths are:
 - [Raw archive records and Kafka deserialization](../../services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/MarketDataArchiveJob.kt)
 - [TA configuration](../../services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTaConfig.kt)
 - [Bayn resource composition](../../services/bayn/src/composition/resources.ts)
-- [Bayn observation window](../../services/bayn/src/observe-composition/intraday-momentum-decision.ts)
+- [Bayn observation window](../../services/bayn/src/jev/runtime.ts)
 - [Bayn strategy core](../../services/bayn/src/strategy/intraday-momentum/decision-core.ts)
 
 The existing TA output is not sufficient as the new contract. Its keyed state groups by symbol, appends bars, and

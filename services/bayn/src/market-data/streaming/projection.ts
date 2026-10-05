@@ -270,11 +270,13 @@ const incorporateDecodedRecord = (
       const current = state.quotes.get(event.value.symbol)
       if (current !== undefined && compareCurrent(event.value, current.value) <= 0) return state
       const entry = { value: event.value, availableAtMs, sequence, recordHash }
-      const history = [...(state.quoteHistory.get(event.value.symbol) ?? []), entry]
-      const evicted = history.length > 512 ? history[history.length - 513] : undefined
+      const previousHistory = state.quoteHistory.get(event.value.symbol) ?? []
+      const evicted = previousHistory.length >= 512 ? previousHistory[previousHistory.length - 512] : undefined
+      const history = previousHistory.slice(-511)
+      history.push(entry)
       return {
         ...state,
-        quoteHistory: new Map(state.quoteHistory).set(event.value.symbol, history.slice(-512)),
+        quoteHistory: new Map(state.quoteHistory).set(event.value.symbol, history),
         minimumObservationMs: Math.max(state.minimumObservationMs, evicted?.availableAtMs ?? 0),
         minimumQuoteObservationMs:
           evicted === undefined

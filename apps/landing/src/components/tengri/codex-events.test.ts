@@ -139,7 +139,7 @@ describe('Codex event replay', () => {
     expect(updated).toHaveLength(2)
     expect(updated[1]).toEqual(other)
     expect(codexEventDisplayText(updated[0]!)).toBe(
-      '5h window: 12% used · 7d window: 20% used · Credits: 8 · Limit state: rate limit reached',
+      '5h window 88% left · Weekly 80% left · Credits: 8 · Limit state: rate limit reached',
     )
   })
 
@@ -278,6 +278,15 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, approval.threadId, restoredItemIds)).toBe(true)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
+  })
+
+  test('hides token counts during live streaming and replay while keeping account usage visible', () => {
+    const tokenUsage = { ...event, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' }
+    const rateLimits = { ...tokenUsage, method: 'account/rateLimits/updated' }
+    for (const snapshotSequence of [0, event.sequence + 1]) {
+      expect(codexEventShouldRender(tokenUsage, event.threadId, new Set(), snapshotSequence)).toBe(false)
+      expect(codexEventShouldRender(rateLimits, event.threadId, new Set(), snapshotSequence)).toBe(true)
+    }
   })
 
   test('keeps only post-resume item updates plus snapshot-independent events visible', () => {
@@ -760,7 +769,25 @@ describe('Codex event decoding', () => {
           },
         }),
       }),
-    ).toBe('5h window: 12% used · 7d window: 45% used · Credits: 17.50')
+    ).toBe('5h window 88% left · Weekly 55% left · Credits: 18')
+  })
+
+  test.each([
+    [9.1, '62306.900236', 'Weekly 90% left · Credits: 62,307'],
+    [0, 0, 'Weekly 100% left · Credits: 0'],
+    [100, '17', 'Weekly 0% left · Credits: 17'],
+    [110, 'invalid', 'Weekly 0% left'],
+    [12.5, '', 'Weekly 87% left'],
+  ])('formats remaining weekly usage %s and credits %s', (usedPercent, balance, expected) => {
+    expect(
+      codexEventDisplayText({
+        ...event,
+        kind: 'usage',
+        rawJson: JSON.stringify({
+          params: { rateLimits: { secondary: { usedPercent, windowDurationMins: 10_080 }, credits: { balance } } },
+        }),
+      }),
+    ).toBe(expected)
   })
 
   test('extracts a failed device-login completion error', () => {

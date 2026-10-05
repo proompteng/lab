@@ -36,7 +36,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
     },
     storage: {
       storageClass: 'rook-ceph-block',
-      size: '10Gi',
+      size: '100Gi',
       resizeInUseVolumes: true,
     },
     resources: {
@@ -375,14 +375,6 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'BAYN_CYCLE_POLL_INTERVAL_MS',
     'BAYN_RECONCILIATION_INTERVAL_MS',
     'BAYN_OPERATION_TIMEOUT_MS',
-    'BAYN_SIGNAL_SNAPSHOT_ID',
-    'BAYN_SIGNAL_PUBLICATION_ASOF',
-    'BAYN_SIGNAL_CALENDAR_VERSION',
-    'BAYN_SIGNAL_DATA_START',
-    'BAYN_SIGNAL_DATA_END',
-    'BAYN_SIGNAL_LOOKBACK_START',
-    'BAYN_SIGNAL_EVALUATION_START',
-    'BAYN_SIGNAL_EVALUATION_END',
     'BAYN_TIGERBEETLE_CLUSTER_ID',
     'BAYN_TIGERBEETLE_ADDRESSES',
     'BAYN_TIGERBEETLE_LEDGER',
@@ -422,6 +414,25 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
 
   for (const name of sharedPlanEnvironment) {
     expect(controllerEnvironment.get(name)).toEqual(activationEnvironment.get(name))
+  }
+
+  const historicalReportEnvironment = [
+    'BAYN_SIGNAL_SNAPSHOT_ID',
+    'BAYN_SIGNAL_PUBLICATION_ASOF',
+    'BAYN_SIGNAL_CALENDAR_VERSION',
+    'BAYN_SIGNAL_DATA_START',
+    'BAYN_SIGNAL_DATA_END',
+    'BAYN_SIGNAL_LOOKBACK_START',
+    'BAYN_SIGNAL_EVALUATION_START',
+    'BAYN_SIGNAL_EVALUATION_END',
+  ]
+  for (const liveEnvironment of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+    for (const name of historicalReportEnvironment) {
+      expect(liveEnvironment.has(name)).toBe(false)
+    }
+    for (const name of ['BAYN_CLICKHOUSE_URL', 'BAYN_CLICKHOUSE_USERNAME', 'BAYN_CLICKHOUSE_PASSWORD']) {
+      expect(liveEnvironment.has(name)).toBe(true)
+    }
   }
   expect(controllerEnvironment.get('BAYN_CODE_REVISION')?.value).toBe(sourceRevision)
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
@@ -473,8 +484,13 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
-  expect(controller.spec.restate.drainDelaySeconds).toBe(0)
+  expect(controller.spec.restate).not.toHaveProperty('drainDelaySeconds')
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(mandateIdentity.requestHash)
+  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toEqual({
+    name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
+    valueFrom: { fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } },
+  })
+  expect(activation.spec.template.spec.restartPolicy).toBe('OnFailure')
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([

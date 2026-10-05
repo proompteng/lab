@@ -51,6 +51,85 @@ const order = (side: OrderSide, atMs = at, shares = 10n) => ({
 })
 const flat = () => Result.getOrThrow(createControlPortfolio('100000000000'))
 
+test('fixed principal sizing retains one budget across different equity and includes adverse price and cash fees', async () => {
+  const policy = await Effect.runPromise(
+    loadQuoteBoundExecutionRiskPolicy('fixed-budget-test', fixture.protocol.universe),
+  )
+  const quantities = []
+  for (const cashMicros of ['100000000000', '200000000000', '50000000000']) {
+    quantities.push(
+      Result.getOrThrow(
+        controlEntryQuantity({
+          portfolio: Result.getOrThrow(createControlPortfolio(cashMicros)),
+          policy,
+          protocol: fixture.protocol,
+          targetWeight: 1,
+          allocationBudgetMicros: 20_000_000_000n,
+          symbol: 'AAPL',
+          referencePriceMicros: 100_000_000n,
+          atMs: at,
+          feeMultiplierPpm: 1_000_000,
+        }),
+      ),
+    )
+  }
+  expect(quantities).toEqual([199_000_000n, 199_000_000n, 99_000_000n])
+  const limited = Result.getOrThrow(
+    controlEntryQuantity({
+      portfolio: Result.getOrThrow(createControlPortfolio('100000000')),
+      policy,
+      protocol: fixture.protocol,
+      targetWeight: 1,
+      allocationBudgetMicros: 20_000_000_000n,
+      symbol: 'AAPL',
+      referencePriceMicros: 100_000_000n,
+      atMs: at,
+      feeMultiplierPpm: 1_000_000,
+    }),
+  )
+  expect(limited).toBe(0n)
+  for (const cashMicros of ['0', '-1', 'invalid'])
+    expect(
+      Result.isFailure(
+        controlEntryQuantity({
+          portfolio: { ...flat(), ledger: { ...flat().ledger, cashMicros } },
+          policy,
+          protocol: fixture.protocol,
+          targetWeight: 1,
+          allocationBudgetMicros: 20_000_000_000n,
+          symbol: 'AAPL',
+          referencePriceMicros: 100_000_000n,
+          atMs: at,
+          feeMultiplierPpm: 1_000_000,
+        }),
+      ),
+    ).toBeTrue()
+
+  for (const targetWeight of [0.1, 0.2])
+    expect(
+      Result.isFailure(
+        controlEntryQuantity({
+          portfolio: flat(),
+          policy,
+          protocol: fixture.protocol,
+          targetWeight,
+          allocationBudgetMicros: 20_000_000_000n,
+          symbol: 'AAPL',
+          referencePriceMicros: 100_000_000n,
+          atMs: at,
+          feeMultiplierPpm: 1_000_000,
+        }),
+      ),
+    ).toBeTrue()
+})
+
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+  'unbound %s cannot fall through to breakout selection',
+  (policy) => {
+    expect(Result.isFailure(selectControlSymbol(fixture.snapshot, policy, fixture.protocol))).toBeTrue()
+  },
+)
+
 test('the explicit reserve experiment lowers late entry size while the legacy/default path is unchanged', async () => {
   const policy = await Effect.runPromise(
     loadQuoteBoundExecutionRiskPolicy('control-fixture', fixture.protocol.universe),
@@ -207,6 +286,7 @@ test('mechanical stops require fresh quotes and retained policy holds until the 
   expect(
     Result.getOrThrow(triggerControlExit({ ...common, policy: ControlPolicy.RelativeMomentum })).inventory,
   ).toMatchObject({ status: 'EXITING', reason: ControlExit.ProtectiveStop })
+
   expect(
     Result.getOrThrow(
       triggerControlExit({
@@ -224,6 +304,61 @@ test('mechanical stops require fresh quotes and retained policy holds until the 
     Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 2_000_000, policy: ControlPolicy.RetainedBreakout }))
       .inventory,
   ).toMatchObject({ status: 'EXITING', reason: ControlExit.SessionClose })
+})
+
+test('residual shock target starts at first partial fill and follows protective stop and close precedence', () => {
+  const buy = order(OrderSide.Buy)
+  const portfolio = Result.getOrThrow(
+    applyControlOrder(flat(), { ...buy, arrivalQuote: quote(at + 100, { askSize: 4 }) }),
+  ).portfolio
+  const common = {
+    portfolio,
+    protocol: fixture.protocol,
+    policy: ControlPolicy.ResidualShock,
+    cutoffMs: at + 2_000_000,
+  }
+  expect(
+    Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 60_099, quote: quote(at + 60_099) })).inventory.status,
+  ).toBe('HOLDING')
+  const triggered = Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 60_100, quote: quote(at + 60_100) }))
+  expect(triggered.inventory).toMatchObject({
+    status: 'EXITING',
+    reason: ControlExit.SignalHorizon,
+    enteredAtMs: at + 100,
+  })
+  expect(
+    Result.getOrThrow(
+      triggerControlExit({
+        ...common,
+        atMs: at + 60_100,
+        quote: quote(at + 60_100, { bidPrice: 98, askPrice: 98.02 }),
+      }),
+    ).inventory,
+  ).toMatchObject({ reason: ControlExit.ProtectiveStop })
+  expect(
+    Result.getOrThrow(
+      triggerControlExit({
+        ...common,
+        atMs: at + 60_100,
+        cutoffMs: at + 60_100,
+        quote: quote(at + 60_100, { bidPrice: 98, askPrice: 98.02 }),
+      }),
+    ).inventory,
+  ).toMatchObject({ reason: ControlExit.SessionClose })
+  expect(
+    Result.getOrThrow(triggerControlExit({ ...common, portfolio: triggered, atMs: at + 120_100, quote: undefined }))
+      .inventory,
+  ).toEqual(triggered.inventory)
+  expect(
+    Result.getOrThrow(
+      triggerControlExit({
+        ...common,
+        policy: ControlPolicy.RelativeMomentum,
+        atMs: at + 60_100,
+        quote: quote(at + 60_100),
+      }),
+    ).inventory.status,
+  ).toBe('HOLDING')
 })
 
 test('entry sizing obeys order and daily turnover bounds including the adverse limit and fees', async () => {

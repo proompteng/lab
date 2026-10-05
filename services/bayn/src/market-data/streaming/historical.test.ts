@@ -1,9 +1,12 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
+import fc from 'fast-check'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { intradayMomentumFeatureTopic } from '../../strategy/intraday-momentum/protocol'
 import {
   advanceHistoricalMarketCursor,
+  arrivalPosition,
+  compareArrivalPositions,
   createHistoricalMarketCursor,
   replayHistoricalMarketArrivals,
   type HistoricalMarketCursor,
@@ -22,6 +25,7 @@ const fixture = () => {
     symbols: protocol.universe,
     topics: { ...protocol.sourceTopics, features: intradayMomentumFeatureTopic },
   }
+
   const value = JSON.stringify({
     version: 2,
     provider: quote.provider,
@@ -40,6 +44,58 @@ const fixture = () => {
   })
   return { cut, query, universe, observedAtMs, event, symbol: quote.symbol }
 }
+
+test('original receipt version preserves same-millisecond consumer order across topics without invented time', () => {
+  const { universe, observedAtMs, event } = fixture()
+  const ordered = (topic: string, sequence: number) => ({
+    ...event(0),
+    availableAtMs: observedAtMs,
+    schemaVersion: 'bayn.original-market-arrival.v1' as const,
+    record: { ...event(0).record, topic },
+    receipt: { captureId: 'capture-1', consumerEpoch: 'epoch-1', sequence },
+  })
+  const first = ordered('z-first-topic', 1)
+  const second = ordered('a-second-topic', 2)
+  expect(compareArrivalPositions(arrivalPosition(first), arrivalPosition(second))).toBe(-1)
+  let cursor: HistoricalMarketCursor = Result.getOrThrow(createHistoricalMarketCursor('d'.repeat(64), universe))
+  cursor = Result.getOrThrow(advanceHistoricalMarketCursor(cursor, first))
+  cursor = Result.getOrThrow(advanceHistoricalMarketCursor(cursor, second))
+  expect(cursor.processedRecords).toBe(2)
+  expect(cursor.lastArrival?.availableAtMs).toBe(observedAtMs)
+  expect(cursor.lastArrival?.receipt?.sequence).toBe(2)
+  expect(Result.isFailure(advanceHistoricalMarketCursor(cursor, first))).toBe(true)
+  expect(
+    Result.isFailure(
+      advanceHistoricalMarketCursor(cursor, {
+        ...ordered('next', 3),
+        receipt: { ...first.receipt, consumerEpoch: 'epoch-2', sequence: 3 },
+      }),
+    ),
+  ).toBe(true)
+  expect(Result.isFailure(advanceHistoricalMarketCursor(cursor, event(1)))).toBe(true)
+})
+
+test('property: original same-millisecond order never falls back to lexical topic order', () => {
+  const { universe, observedAtMs, event } = fixture()
+  fc.assert(
+    fc.property(fc.array(fc.integer({ min: 0, max: 25 }), { minLength: 2, maxLength: 30 }), (topics) => {
+      let cursor: HistoricalMarketCursor = Result.getOrThrow(createHistoricalMarketCursor('e'.repeat(64), universe))
+      for (const [index, topic] of topics.entries()) {
+        cursor = Result.getOrThrow(
+          advanceHistoricalMarketCursor(cursor, {
+            schemaVersion: 'bayn.original-market-arrival.v1',
+            availableAtMs: observedAtMs,
+            receipt: { captureId: 'capture-1', consumerEpoch: 'epoch-1', sequence: index + 1 },
+            record: { ...event(index).record, topic: `topic-${topic}` },
+          }),
+        )
+      }
+      expect(cursor.processedRecords).toBe(topics.length)
+      expect(cursor.lastArrival?.availableAtMs).toBe(observedAtMs)
+    }),
+    { numRuns: 1000 },
+  )
+})
 
 test('incremental arrivals reproduce the existing replay projection across processing boundaries', () => {
   const { universe, observedAtMs, event } = fixture()
