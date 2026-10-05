@@ -1,5 +1,6 @@
+import { encodeOutputCursor, jobMetadata } from './agents-shell/jobs'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -38,12 +39,24 @@ const configFixture = () => {
   })
 }
 const connect = async (runner = new AgentsShellRunner(configFixture()), auth = authFixture()) => {
+  const sessionId = `repo-audit-${auth.subject}`
+  const worktree = join(runner.config.workspaceRoot, 'worktrees', 'lab', auth.subject)
+  mkdirSync(worktree, { recursive: true })
+  runner.repoSessions.set({
+    id: sessionId,
+    ownerSubject: auth.subject,
+    worktree,
+    baseBranch: 'main',
+    baseSha: 'a'.repeat(40),
+    branch: `codex/audit-${auth.subject}`,
+    createdAt: new Date().toISOString(),
+  })
   const server = createAgentsShellServer(runner.config, runner, auth, 'request-fixture')
   const client = new Client({ name: 'audit-test', version: '1' })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
   connections.push({ client, server, runner })
-  return { client, runner, config: runner.config }
+  return { client, runner, config: runner.config, sessionId }
 }
 const data = (result: Record<string, unknown>) => result.structuredContent as Record<string, unknown>
 const captureAudit = () => {
@@ -188,7 +201,7 @@ describe('complete operational activity export', () => {
 
   it('exports complete concurrent stdout/stderr past response caps and keeps owned agents discoverable', async () => {
     const { records } = captureAudit()
-    const { client, runner } = await connect()
+    const { client, runner, sessionId } = await connect()
     const expected = new Map<string, { stdout: string; stderr: string }>()
     const jobs = await Promise.all(
       ['agent-a', 'agent-b'].map(async (agentId) => {
@@ -196,8 +209,8 @@ describe('complete operational activity export', () => {
         const stderr = `${agentId}:diagnostic\n`.repeat(20_000)
         const command = `node -e ${JSON.stringify(`process.stdout.write(${JSON.stringify(`${agentId}:雪😀\n`)}.repeat(30000)); process.stderr.write(${JSON.stringify(`${agentId}:diagnostic\n`)}.repeat(20000))`)}`
         const result = await client.callTool({
-          name: 'shell_start',
-          arguments: { command, agentId, maxOutputBytes: 1024 },
+          name: 'exec',
+          arguments: { sessionId, command, agentId, requestKey: crypto.randomUUID(), waitMs: 0, maxBytes: 8192 },
         })
         const jobId = String(data(result).jobId)
         expected.set(jobId, { stdout, stderr })
@@ -210,8 +223,15 @@ describe('complete operational activity export', () => {
       },
       { timeout: 8000 },
     )
-    const listed = await client.callTool({ name: 'shell_status', arguments: {} })
+    const listed = await client.callTool({ name: 'status', arguments: {} })
     expect((data(listed).jobs as any[]).map((job) => job.agentId).sort()).toEqual(['agent-a', 'agent-b'])
+    for (const frame of records().filter(
+      (event) => event.event === 'shell_job_started' || event.event === 'process_output',
+    )) {
+      expect(frame.taskId).toBe(frame.payload.taskId)
+      expect(frame.taskId).toBe(sessionId)
+      if (frame.event === 'shell_job_started') expect(frame.requestKey).toBe(frame.payload.requestKey)
+    }
     for (const jobId of jobs) {
       for (const stream of ['stdout', 'stderr'] as const) {
         const chunks = records()
@@ -245,37 +265,59 @@ describe('complete operational activity export', () => {
         })
       }
       let offset = 0
+      let cursor = encodeOutputCursor({
+        jobId,
+        stdoutOffset: 0,
+        stderrOffset: Buffer.byteLength(expected.get(jobId)!.stderr),
+        outputEncoding: 'utf8',
+      })
       let text = ''
       do {
         const read = await client.callTool({
-          name: 'shell_read',
+          name: 'read',
           arguments: {
             jobId,
-            stdoutOffset: offset,
-            stderrOffset: expected.get(jobId)!.stderr.length,
-            maxOutputBytes: 20_000,
+            cursor,
+            maxBytes: 20_000,
           },
         })
         text += data(read).stdout
         offset = Number(data(read).stdoutNextOffset)
+        cursor = String(data(read).cursor)
       } while (offset < Buffer.byteLength(expected.get(jobId)!.stdout))
       expect(text).toBe(expected.get(jobId)!.stdout)
     }
   })
 
   it('prevents another owner from reading, listing or stopping jobs', async () => {
-    captureAudit()
-    const { client, runner } = await connect()
+    const { records } = captureAudit()
+    const { client, runner, sessionId } = await connect()
     const second = await connect(runner, authFixture('owner-b'))
-    const start = await client.callTool({ name: 'shell_start', arguments: { command: 'sleep 3', agentId: 'owner-b' } })
+    const start = await client.callTool({
+      name: 'exec',
+      arguments: { sessionId, requestKey: crypto.randomUUID(), command: 'sleep 3', agentId: 'owner-b', waitMs: 0 },
+    })
     const jobId = data(start).jobId
-    expect(data(await second.client.callTool({ name: 'shell_status', arguments: {} })).jobs).toEqual([])
-    for (const name of ['shell_read', 'shell_kill', 'shell_status'])
-      expect((await second.client.callTool({ name, arguments: { jobId } })).isError).toBe(true)
-    expect(runner.requireJob(String(jobId), authFixture()).status).toBe('running')
-    await client.callTool({ name: 'shell_kill', arguments: { jobId } })
+    const cursor = data(start).cursor
+    expect(data(await second.client.callTool({ name: 'status', arguments: {} })).jobs).toEqual([])
+    for (const name of ['read', 'cancel', 'status'])
+      expect((await second.client.callTool({ name, arguments: { jobId, cursor } })).isError).toBe(true)
+    expect(jobMetadata(runner.requireJob(String(jobId), authFixture())).state).toBe('running')
+    await client.callTool({ name: 'cancel', arguments: { jobId } })
     await vi.waitFor(() => expect(runner.requireJob(String(jobId), authFixture()).finishedAt).not.toBeNull())
-    expect(runner.requireJob(String(jobId), authFixture()).status).toBe('killed')
+    expect(jobMetadata(runner.requireJob(String(jobId), authFixture())).state).toBe('cancelled')
+    expect(
+      records()
+        .filter((event) => event.event === 'tool_call_finished' && event.tool === 'cancel')
+        .at(-1)?.payload.outcome,
+    ).toBe('succeeded')
+    const read = await client.callTool({ name: 'read', arguments: { jobId, cursor } })
+    expect(data(read)).toMatchObject({ state: 'cancelled', ok: false })
+    expect(
+      records()
+        .filter((event) => event.event === 'tool_call_finished' && event.tool === 'read')
+        .at(-1)?.payload.outcome,
+    ).toBe('succeeded')
   })
 
   it('mirrors CLI tools and retains raw argv with exact failure details', async () => {
@@ -309,11 +351,17 @@ describe('complete operational activity export', () => {
 
   it('can inspect its growing local log without recursively amplifying it', async () => {
     const { records } = captureAudit()
-    const { client, config } = await connect()
+    const { client, config, sessionId } = await connect()
     config.auditLogPath = join(config.workspaceRoot, 'audit.jsonl')
     const response = await client.callTool({
-      name: 'shell_run',
-      arguments: { command: `timeout 1 tail -n +1 -f ${config.auditLogPath}`, maxOutputBytes: 20_000 },
+      name: 'exec',
+      arguments: {
+        sessionId,
+        requestKey: crypto.randomUUID(),
+        command: `timeout 1 tail -n +1 -f ${config.auditLogPath}`,
+        maxBytes: 20_000,
+        waitMs: 3000,
+      },
     })
     expect(data(response).stdout).toContain('agents-shell audit')
     expect(records().filter((event) => event.event === 'process_output')).toHaveLength(0)
@@ -338,13 +386,16 @@ describe('complete operational activity export', () => {
   it('records useful tool errors while withholding unauthenticated arguments', async () => {
     const { records } = captureAudit()
     const { client } = await connect()
-    const response = await client.callTool({ name: 'shell_read', arguments: { jobId: 'missing-job' } })
+    const response = await client.callTool({ name: 'status', arguments: { jobId: 'missing-job' } })
     expect(response.isError).toBe(true)
     expect(JSON.stringify(records())).toContain('unknown or expired jobId: missing-job')
     const auth = authFixture('unauthenticated')
     auth.scopes.clear()
     const denied = await connect(undefined, auth)
-    await denied.client.callTool({ name: 'shell_run', arguments: { command: 'sensitive-denied-input' } })
+    await denied.client.callTool({
+      name: 'exec',
+      arguments: { requestKey: crypto.randomUUID(), command: 'sensitive-denied-input' },
+    })
     expect(JSON.stringify(records())).not.toContain('sensitive-denied-input')
   })
 })

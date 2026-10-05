@@ -10,4 +10,4 @@ resources:
 - alloy-deployment.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/oirat
-  digest: sha256:73098639d63680f886d8a5772f14db9eef3271b010093dddc5538a6f2012f2b0
+  digest: sha256:59473490381256f1c72d1dbfddef84245aa062f108078fb83af771dc93d5cdb2
