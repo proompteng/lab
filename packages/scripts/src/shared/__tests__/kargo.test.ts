@@ -107,7 +107,11 @@ const criteriaExpression = (mode: FreightCriteria, images: readonly string[], fr
   return clauses[0] ?? ''
 }
 
-const receiptCriteriaExpression = (images: readonly string[], freightGitRepo = gitRepo): string => {
+const receiptCriteriaExpression = (
+  images: readonly string[],
+  freightGitRepo: string,
+  sourceFromImage: boolean,
+): string => {
   const receiptImage = images.length === 1 ? images[0] : images[1]
   if (!receiptImage) return ''
 
@@ -117,6 +121,13 @@ const receiptCriteriaExpression = (images: readonly string[], freightGitRepo = g
     `${receipt}.Annotations['${buildRunIdAnnotation}'] != ''`,
     `${receipt}.Annotations['${buildConclusionAnnotation}'] == 'success'`,
   ]
+  const source = sourceFromImage
+    ? `${receipt}.Annotations['org.opencontainers.image.revision']`
+    : `commitFrom('${freightGitRepo}').ID`
+  if (sourceFromImage) {
+    clauses.push(`${source} != nil`, `${source} != ''`)
+    clauses.push(`${receipt}.Annotations['org.opencontainers.image.source'] == '${imageSourceRepo}'`)
+  }
   for (const image of images.filter((candidate) => candidate !== receiptImage)) {
     const candidate = `imageFrom('${image}')`
     clauses.push(
@@ -125,7 +136,7 @@ const receiptCriteriaExpression = (images: readonly string[], freightGitRepo = g
     clauses.push(`${candidate}.Annotations['${buildConclusionAnnotation}'] == 'success'`)
   }
   clauses.push(
-    `${receipt}.Tag == 'kargo-sha-' + commitFrom('${freightGitRepo}').ID + '-run-' + ${receipt}.Annotations['${buildRunIdAnnotation}']`,
+    `${receipt}.Tag == 'kargo-sha-' + ${source} + '-run-' + ${receipt}.Annotations['${buildRunIdAnnotation}']`,
   )
   for (const image of images.filter((candidate) => candidate !== receiptImage)) {
     clauses.push(`imageFrom('${image}').Tag == ${receipt}.Tag`)
@@ -183,12 +194,11 @@ const expected = {
     ],
   },
   rune: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     requiresBuildReceipt: true,
     tagRegex: runQualifiedTagRegex,
     images: [imageRepo('rune')],
     apps: ['rune'],
-    includePaths: ['services/rune', '.github/workflows/rune-images.yml', 'argocd/applications/rune'],
   },
   restate: {
     creationCriteria: 'single',
@@ -667,6 +677,68 @@ describe('Kargo direct-push GitOps contract', () => {
     ).toBe(source)
   })
 
+  it('promotes the tested Rune image revision after a stack ends beyond its last owned path', () => {
+    const source = '21c7541cea499b753c4003bab998ac1e2818239b'
+    const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
+    const run = '37271710194'
+    const warehouse = byName(warehouses).get('rune')
+    const expression = warehouse?.spec?.freightCreationCriteria?.expression
+    const image = {
+      Tag: `kargo-sha-${source}-run-${run}`,
+      Annotations: {
+        'org.opencontainers.image.revision': source,
+        'org.opencontainers.image.source': imageSourceRepo,
+        [buildRunIdAnnotation]: run,
+        [buildConclusionAnnotation]: 'success',
+      },
+    }
+    const evaluate = (input: { Tag: string; Annotations: Record<string, string> }) =>
+      runInNewContext(
+        expression,
+        {
+          nil: undefined,
+          imageFrom: () => input,
+          commitFrom: () => ({ ID: filteredAncestor }),
+        },
+        { timeout: 100 },
+      )
+
+    expect(evaluate(image)).toBe(true)
+    expect(evaluate({ ...image, Tag: `kargo-sha-${filteredAncestor}-run-${run}` })).toBe(false)
+    for (const [key, value] of [
+      ['org.opencontainers.image.revision', filteredAncestor],
+      ['org.opencontainers.image.revision', ''],
+      ['org.opencontainers.image.source', 'https://github.com/other/repository'],
+      [buildRunIdAnnotation, '42'],
+      [buildRunIdAnnotation, ''],
+      [buildConclusionAnnotation, 'failure'],
+    ]) {
+      expect(evaluate({ ...image, Annotations: { ...image.Annotations, [key]: value } })).toBe(false)
+    }
+    for (const key of ['org.opencontainers.image.revision', buildRunIdAnnotation]) {
+      const annotations: Record<string, string> = { ...image.Annotations }
+      delete annotations[key]
+      expect(evaluate({ ...image, Annotations: annotations })).toBe(false)
+    }
+
+    const stage = byName(stages).get('rune')
+    const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
+      (step: Record<string, any>) => step.uses === 'git-clone',
+    )
+    const sourceExpression = clone.config.checkout[0].commit.slice(3, -2).trim()
+    expect(
+      runInNewContext(
+        sourceExpression,
+        {
+          vars: { imageRepo: imageRepo('rune'), gitRepo },
+          imageFrom: () => image,
+          commitFrom: () => ({ ID: filteredAncestor }),
+        },
+        { timeout: 100 },
+      ),
+    ).toBe(source)
+  })
+
   it('uses the current Kargo patch and persists Argo resource health for Stage checks', () => {
     expect(kargoHelmElement?.version).toBe('1.11.4')
     expect(argoCDCommandParameters.data?.['controller.resource.health.persist']).toBe('true')
@@ -792,6 +864,7 @@ describe('Kargo direct-push GitOps contract', () => {
       const contract = expected[stageName as keyof typeof expected]
       const freightGitRepo = 'freightGitRepo' in contract ? contract.freightGitRepo : gitRepo
       const warehouse = warehouseMap.get(stageName)
+      const sourceFromImage = contract.creationCriteria === 'image-revision'
       expect(warehouse).toBeDefined()
       expect(warehouse?.metadata?.namespace).toBe('lab-delivery')
       expect(warehouse?.spec?.interval).toBe('1m0s')
@@ -802,14 +875,13 @@ describe('Kargo direct-push GitOps contract', () => {
       } else {
         const baseCriteria = criteriaExpression(contract.creationCriteria, contract.images, freightGitRepo)
         if ('requiresBuildReceipt' in contract && contract.requiresBuildReceipt) {
-          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images, freightGitRepo))
+          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images, freightGitRepo, sourceFromImage))
         } else {
           expect(criteria?.expression).toBe(baseCriteria)
         }
       }
 
       const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
-      const sourceFromImage = contract.creationCriteria === 'image-revision'
       expect(subscriptions).toHaveLength(contract.images.length + (sourceFromImage ? 0 : 1))
       const git = subscriptions.find((subscription) => subscription.git)?.git
       if (sourceFromImage) {
@@ -874,11 +946,11 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it.each(['rune', 'temporal-worker'])('aligns %s source discovery with both image build triggers', (name) => {
-    const warehouse = byName(warehouses).get(name)
+  it('aligns Temporal worker source discovery with both image build triggers', () => {
+    const warehouse = byName(warehouses).get('temporal-worker')
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
       .includePaths
-    const workflow = YAML.parse(readFileSync(`.github/workflows/${name}-images.yml`, 'utf8'))
+    const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
       expect(sourcePaths).toEqual(buildPaths)
@@ -996,10 +1068,10 @@ describe('Kargo direct-push GitOps contract', () => {
       })
       expect(push?.config?.force).toBeUndefined()
 
-      if (['jangar', 'symphony', 'torghut'].includes(stageName)) {
+      if (['jangar', 'symphony', 'torghut', 'rune'].includes(stageName)) {
         const commit = steps.find((step) => step.uses === 'git-commit')
         expect(commit?.config?.message).toContain(
-          stageName === 'torghut'
+          contract.creationCriteria === 'image-revision'
             ? "Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
             : 'Source commit: ${{ commitFrom(vars.gitRepo).ID }}',
         )
@@ -1013,7 +1085,7 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(clone?.config?.checkout).toEqual([
         {
           commit:
-            stageName === 'torghut'
+            contract.creationCriteria === 'image-revision'
               ? "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
               : `\${{ commitFrom(vars.${freightRepoVariable}).ID }}`,
           path: '${{ vars.srcPath }}',
