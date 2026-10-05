@@ -711,6 +711,12 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+`bayn-gap-recovery` is an offline, original-receipt decision replay command in the
+service image. It implements the fixed gap-recovery entry rule, with a separate
+pure position-exit evaluator, but does not replace the active strategy or submit
+orders. See [the gap-recovery contract](../../docs/bayn/gap-recovery.md) for exact
+inputs, limitations, and the command.
+
 `src/intraday-replay/six-bar-features.ts` extracts a separate offline research observation from an original-capture
 cursor. Each candidate and SPY require six exact consecutive completed regular-session minute bars. The seven
 ordered values are the candidate's one-minute close return, five-minute return relative to SPY, SPY's five-minute
@@ -731,6 +737,13 @@ capture interval and source bytes through `replayResearchCaptureInterval` and `o
 Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
 It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
 contract. Capture interval verification remains the caller's responsibility before economic research.
+
+The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
+control-study input v6 and artifact v2. It compares the seven-feature score with the genuine training-only
+day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
+30-minute-plus-two-second eligibility is unchanged. It uses original-capture six-bar observations and the
+existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
+no production registration, qualification or capital authority.
 
 ### Bounded mechanical control and turnover comparison
 

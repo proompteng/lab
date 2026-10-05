@@ -543,6 +543,7 @@ const expected = {
       'services/agents',
       'charts/agents/crds',
       'nix/images/agents.nix',
+      'nix/verify-agents-shell-image-lifecycle.sh',
       'nix/images/openai-codex-cli.nix',
       '.github/workflows/nix-oci-build-common.yml',
       'nix/oci-push.sh',

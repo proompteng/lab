@@ -35,6 +35,8 @@ export class AgentsShellRunner {
   readonly jobs = new ShellJobStore()
   readonly repoSessions: RepoSessionStore
   private readonly changes = new EventEmitter().setMaxListeners(0)
+  private readonly nativeProcesses = new Set<ChildProcess>()
+  private shuttingDown = false
   private pendingSubmissions = 0
   private readonly submissions = new Map<
     string,
@@ -282,7 +284,13 @@ export class AgentsShellRunner {
     return Array.from(this.jobs.running())
   }
 
+  private requireAcceptingWork() {
+    if (this.shuttingDown)
+      throw new AgentsShellRuntimeError({ message: 'agents-shell is shutting down', code: 'SHUTTING_DOWN' })
+  }
+
   private start(input: CommandInput, auth: AuthContext): RunningShellJob {
+    this.requireAcceptingWork()
     this.jobs.ensureCapacity()
     if (this.runningJobs().length >= this.config.maxConcurrentJobs) {
       throw new AgentsShellRuntimeError({
@@ -500,6 +508,7 @@ export class AgentsShellRunner {
         code: 'IDEMPOTENCY_CONFLICT',
       })
     if (!submission) {
+      this.requireAcceptingWork()
       const input = this.parseCommandInput(args, auth)
       if (this.pendingSubmissions >= this.config.maxConcurrentJobs)
         throw new AgentsShellRuntimeError({
@@ -510,7 +519,7 @@ export class AgentsShellRunner {
       this.pendingSubmissions += 1
       const launch = Promise.resolve()
         .then(async () => {
-          while (this.runningJobs().length >= this.config.maxConcurrentJobs) {
+          while (!this.shuttingDown && this.runningJobs().length >= this.config.maxConcurrentJobs) {
             const remaining = deadline - performance.now()
             if (remaining <= 0)
               throw new AgentsShellRuntimeError({
@@ -521,7 +530,7 @@ export class AgentsShellRunner {
             await this.waitForChange(
               'capacity',
               remaining,
-              () => this.runningJobs().length < this.config.maxConcurrentJobs,
+              () => this.shuttingDown || this.runningJobs().length < this.config.maxConcurrentJobs,
             )
           }
           const job = this.start(input, auth)
@@ -681,6 +690,7 @@ export class AgentsShellRunner {
   }): Effect.Effect<ProcessResult, unknown> {
     return Effect.tryPromise({
       try: async () => {
+        this.requireAcceptingWork()
         let session = options.sessionId
           ? this.repoSessions.acquire(options.sessionId, options.auth, { allowClosing: options.allowClosingSession })
           : null
@@ -743,6 +753,8 @@ export class AgentsShellRunner {
             detached: true,
             stdio: ['pipe', 'pipe', 'pipe'],
           })
+          this.nativeProcesses.add(child)
+          child.once('close', () => this.nativeProcesses.delete(child))
 
           const onAuditFailure = () => {
             outputCaptureError =
@@ -858,9 +870,12 @@ export class AgentsShellRunner {
   }
 
   shutdown() {
+    this.shuttingDown = true
+    for (const child of this.nativeProcesses) this.killProcessGroup(child, 'SIGKILL')
     for (const job of this.runningJobs()) {
       job.termination ??= 'cancelled'
       this.killProcessGroup(job.process, 'SIGKILL')
     }
+    this.changes.emit('capacity')
   }
 }
