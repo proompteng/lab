@@ -35,6 +35,7 @@ export class AgentsShellRunner {
   readonly jobs = new ShellJobStore()
   readonly repoSessions: RepoSessionStore
   private readonly changes = new EventEmitter().setMaxListeners(0)
+  private readonly nativeProcesses = new Set<ChildProcess>()
   private pendingSubmissions = 0
   private readonly submissions = new Map<
     string,
@@ -743,6 +744,8 @@ export class AgentsShellRunner {
             detached: true,
             stdio: ['pipe', 'pipe', 'pipe'],
           })
+          this.nativeProcesses.add(child)
+          child.once('close', () => this.nativeProcesses.delete(child))
 
           const onAuditFailure = () => {
             outputCaptureError =
@@ -858,6 +861,7 @@ export class AgentsShellRunner {
   }
 
   shutdown() {
+    for (const child of this.nativeProcesses) this.killProcessGroup(child, 'SIGKILL')
     for (const job of this.runningJobs()) {
       job.termination ??= 'cancelled'
       this.killProcessGroup(job.process, 'SIGKILL')

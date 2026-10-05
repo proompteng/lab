@@ -1,6 +1,6 @@
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 
-export const AGENTS_SHELL_VERSION = '0.2.1'
+export const AGENTS_SHELL_VERSION = '0.2.2'
 export const DEFAULT_RESOURCE = 'https://agents-shell.proompteng.ai'
 export const DEFAULT_ISSUER = 'https://auth.proompteng.ai/realms/master'
 export const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource'

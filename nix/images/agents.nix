@@ -452,6 +452,7 @@ let
     pkgs.procps
     pkgs.python3
     pkgs.ripgrep
+    pkgs.tini
     pkgs.uv
     pkgs.wget
   ];
@@ -669,6 +670,9 @@ in
     serviceName = "agents-shell";
     imageName = "agents-shell";
     command = [
+      "tini"
+      "-g"
+      "--"
       "bash"
       "./scripts/agents-shell-entrypoint.sh"
     ];

@@ -117,7 +117,7 @@ describe('one execution contract', () => {
     const { client, runner } = await connect()
     const catalog = await client.listTools()
     expect(catalog._meta?.['agents-shell/catalog']).toMatchObject({
-      version: '0.2.1',
+      version: '0.2.2',
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
     })
     const handler = createAgentsShellRequestHandler(runner.config, runner)

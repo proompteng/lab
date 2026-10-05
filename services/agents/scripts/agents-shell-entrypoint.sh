@@ -26,4 +26,4 @@ fi
 
 ./scripts/install-agents-shell-pstack.sh
 
-exec bun run start:agents-shell
+exec bun src/server/agents-shell-mcp.ts
