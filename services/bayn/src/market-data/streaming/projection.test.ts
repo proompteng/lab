@@ -453,6 +453,38 @@ describe('streaming raw and rolling feature projection', () => {
     expect(invalid.offsets.size).toBe(0)
   })
 
+  test('raw channels preserve timestamp equality across precision and reject invalid matching timestamps', () => {
+    for (const record of [barRecord(0), quote, trade]) {
+      const envelope = JSON.parse(record.value)
+      const decoded = Result.getOrThrow(decodeRawMarketRecord(record, universe))
+      for (const t of [envelope.eventTs, envelope.eventTs.replace('.000Z', '.000000000Z')]) {
+        const sameInstant = { ...envelope, payload: { ...envelope.payload, t } }
+        expect(
+          Result.getOrThrow(decodeRawMarketRecord({ ...record, value: JSON.stringify(sameInstant) }, universe)),
+        ).toEqual(decoded)
+      }
+      for (const invalid of [
+        'invalid',
+        '2026-02-30T14:30:00.000Z',
+        envelope.eventTs.replace('.000Z', '.0000000000Z'),
+      ]) {
+        for (const eventTs of [envelope.eventTs, invalid]) {
+          const changed = { ...envelope, eventTs, payload: { ...envelope.payload, t: invalid } }
+          expect(
+            Result.isFailure(decodeRawMarketRecord({ ...record, value: JSON.stringify(changed) }, universe)),
+          ).toBeTrue()
+        }
+      }
+      const differentInstant = {
+        ...envelope,
+        payload: { ...envelope.payload, t: new Date(Date.parse(envelope.eventTs) + 1).toISOString() },
+      }
+      expect(
+        Result.isFailure(decodeRawMarketRecord({ ...record, value: JSON.stringify(differentInstant) }, universe)),
+      ).toBeTrue()
+    }
+  })
+
   test('validates off-session payloads before ignoring their market data', () => {
     for (const session of ['pre', 'post', 'overnight']) {
       for (const record of [barRecord(0), quote, trade]) {
