@@ -15,7 +15,12 @@ import type { Policy } from '../risk'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import type { BacktestInputSchema } from './backtest'
-import { extractSixBarResearchObservation, sixBarResearchDefinition, SixBarResearchStatus } from './six-bar-features'
+import {
+  extractSixBarResearchObservation,
+  sixBarResearchDefinition,
+  SixBarResearchStatus,
+  SixBarUnavailableReason,
+} from './six-bar-features'
 import {
   decodeSixBarRidgeArtifact,
   scoreSixBarRidge,
@@ -177,6 +182,14 @@ export const prepareBoundRidge = (
 
 export type BoundRidge = Result.Result.Success<ReturnType<typeof prepareBoundRidge>>
 type Observation = Result.Result.Success<ReturnType<typeof extractSixBarResearchObservation>>
+const isCandidateExclusion = (observation: Observation) =>
+  observation.status !== SixBarResearchStatus.Available &&
+  observation.symbol === observation.candidateSymbol &&
+  (observation.status === SixBarResearchStatus.Excluded ||
+    observation.reason === SixBarUnavailableReason.Bars ||
+    observation.reason === SixBarUnavailableReason.Quote ||
+    observation.reason === SixBarUnavailableReason.Trade ||
+    observation.reason === SixBarUnavailableReason.Freshness)
 const featureRowFromObservation = (observation: Extract<Observation, { status: SixBarResearchStatus.Available }>) => ({
   sessionDate: observation.query.sessionDate,
   symbol: observation.candidateSymbol,
@@ -292,7 +305,11 @@ export const selectBoundRidge = (
         requiredFeatureRowHashes.push(yield* canonicalHashV1Result(featureRowFromObservation(observation)))
       observations.push(observation)
     }
-    if (observations.some((observation) => observation.status === SixBarResearchStatus.Unavailable))
+    if (
+      observations.some(
+        (observation) => observation.status !== SixBarResearchStatus.Available && !isCandidateExclusion(observation),
+      )
+    )
       return { status: 'UNAVAILABLE' as const, observations }
     const candidates = observations.flatMap((observation) =>
       observation.status === SixBarResearchStatus.Available ? [featureRowFromObservation(observation)] : [],
@@ -309,7 +326,7 @@ export const selectBoundRidge = (
       requiredFeatureRowHashes,
       observations,
       exclusions: observations.flatMap((observation) =>
-        observation.status === SixBarResearchStatus.Excluded
+        observation.status !== SixBarResearchStatus.Available && isCandidateExclusion(observation)
           ? [
               {
                 symbol: observation.candidateSymbol,

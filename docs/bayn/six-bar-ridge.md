@@ -121,9 +121,12 @@ are never summed into portfolio returns.
 Each candidate uses the existing causal six-bar extractor. Full-row content hashes are retained immediately after
 verified extraction, before rows are projected for scoring. Both policies require exact membership and cardinality
 against those original pins. The constant validates those contents without depending on Ridge normalization
-arithmetic. Evidenced spread or size exclusions remain explicit.
-Missing candidate or benchmark input makes the decision unavailable, including for a zero or negative
-training-mean baseline. It makes the session incomplete and leaves the minute window unconsumed so a later
+arithmetic. Candidate-local missing, stale or over-late evidence and evidenced spread or size exclusions remain
+explicit, retain their original observation and receipt hashes, and receive no allocation while other candidates
+may proceed. Required benchmark gaps or spread/size exclusions make the whole decision unavailable, even when
+every candidate also has missing evidence and even for a zero or negative training-mean baseline. Malformed,
+premature, mixed-contract, ordering and watermark failures remain global. An unavailable decision makes the
+session incomplete and leaves the minute window unconsumed so a later
 causal poll can retry. Cash and canceled-entry sessions retain scheduled opportunities and allocated data
 charges. Mechanical mode has no provider client or Jev journal. The legacy snapshot preflight explicitly rejects
 v6 because its native snapshot contract does not establish six-bar input coverage.

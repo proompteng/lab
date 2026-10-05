@@ -67,13 +67,14 @@ const fixture = (
     pollIntervalMs?: number
     exclude?: boolean
     exitQuotes?: boolean
+    transformInputs?: (inputs: SixBarFixtureInput[]) => SixBarFixtureInput[]
   } = {},
 ) =>
   Effect.gen(function* () {
     const risk = yield* loadQuoteBoundExecutionRiskPolicy('ridge-control-test', protocol.universe)
     const pollIntervalMs = options.pollIntervalMs ?? 30_000
     const firstDecisionMs = sixBarOpenMs + Math.ceil(1_802_000 / pollIntervalMs) * pollIntervalMs
-    const inputs: SixBarFixtureInput[] = sixBarFixtureInputs()
+    const baseInputs: SixBarFixtureInput[] = sixBarFixtureInputs()
       .flatMap((input) => {
         const symbols = input.symbol === 'SPY' ? ['SPY'] : protocol.candidateSymbols
         return symbols.map((symbol) => ({
@@ -99,6 +100,7 @@ const fixture = (
             input.eventAtMs === sixBarOpenMs + 24 * 60_000
           ),
       )
+    const inputs = options.transformInputs?.(baseInputs) ?? baseInputs
     if (options.exitQuotes === true)
       for (let atMs = firstDecisionMs + 30_000; atMs <= Date.parse(session.closeAt); atMs += 30_000)
         inputs.push({
@@ -230,7 +232,7 @@ test('the pair extracts the same causal features and uses the actual training me
   expect(calendar.normalizedResponseHash).not.toBe(executionCalendar.normalizedResponseHash)
 })
 
-test.each([0, -5])('a %d-bps constant does not mask unavailable candidate inputs', async (mean) => {
+test.each([0, -5])('a %d-bps constant preserves candidate-local gaps as exclusions', async (mean) => {
   const data = await Effect.runPromise(fixture({ missing: true, mean }))
   const decision = Result.getOrThrow(
     selectBoundRidge(
@@ -240,8 +242,98 @@ test.each([0, -5])('a %d-bps constant does not mask unavailable candidate inputs
       RidgeControlPolicy.TrainingMean,
     ),
   )
-  expect(decision.status).toBe('UNAVAILABLE')
+  expect(decision.status).toBe('AVAILABLE')
+  if (decision.status !== 'AVAILABLE') throw new Error('Expected candidate-local exclusion')
+  expect(decision.evidence.selectedSymbol).toBeNull()
+  expect(decision.evidence.exclusions).toMatchObject([{ symbol: 'AAPL', inputSymbol: 'AAPL' }])
+  expect(decision.evidence.scores.map((score) => score.symbol)).toEqual(
+    protocol.candidateSymbols.filter((symbol) => symbol !== 'AAPL'),
+  )
 })
+
+test.each(['missing-bar', 'missing-quote', 'missing-trade', 'late-bar', 'stale-quote'] as const)(
+  '%s excludes only the affected candidate in both policies and retains replay evidence',
+  async (gap) => {
+    const data = await Effect.runPromise(
+      fixture({
+        transformInputs: (inputs) =>
+          inputs
+            .filter((input) => {
+              if (input.symbol !== 'AAPL') return true
+              if (gap === 'missing-quote') return input.channel !== 'quotes'
+              if (gap === 'missing-trade') return input.channel !== 'trades'
+              return !(
+                gap === 'missing-bar' &&
+                input.channel === 'bars' &&
+                input.eventAtMs === sixBarOpenMs + 24 * 60_000
+              )
+            })
+            .map((input) => {
+              if (input.symbol !== 'AAPL') return input
+              if (gap === 'late-bar' && input.channel === 'bars')
+                return { ...input, availableAtMs: firstDecisionMs - 1000 }
+              if (gap === 'stale-quote' && input.channel === 'quotes')
+                return { ...input, eventAtMs: firstDecisionMs - 10_001, availableAtMs: firstDecisionMs - 10_001 }
+              return input
+            }),
+      }),
+    )
+    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+      const select = () =>
+        selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy)
+      const decision = Result.getOrThrow(select())
+      expect(decision.status).toBe('AVAILABLE')
+      if (decision.status !== 'AVAILABLE') throw new Error('Expected candidate-local exclusion')
+      expect(decision.evidence.selectedSymbol).toBe(protocol.candidateSymbols.find((symbol) => symbol !== 'AAPL')!)
+      expect(decision.evidence.exclusions).toMatchObject([{ symbol: 'AAPL', inputSymbol: 'AAPL' }])
+      expect(decision.evidence.scores.some((score) => score.symbol === 'AAPL')).toBeFalse()
+      const excluded = decision.evidence.observations.find((observation) => observation.candidateSymbol === 'AAPL')!
+      expect(excluded.status).toBe(SixBarResearchStatus.Unavailable)
+      expect(excluded.receipts.length).toBeGreaterThan(0)
+      expect(decision.evidence.exclusions[0]?.evidenceHash).toBe(excluded.evidenceHash)
+      expect(Result.getOrThrow(select())).toEqual(decision)
+    }
+  },
+)
+
+test.each(['missing-bar', 'missing-quote', 'missing-trade', 'spread', 'displayed-size'] as const)(
+  'benchmark %s invalidates both policies even when every candidate also lacks a bar',
+  async (gap) => {
+    const data = await Effect.runPromise(
+      fixture({
+        transformInputs: (inputs) =>
+          inputs
+            .filter((input) => {
+              if (input.symbol !== 'SPY')
+                return !(input.channel === 'bars' && input.eventAtMs === sixBarOpenMs + 24 * 60_000)
+              if (gap === 'missing-quote') return input.channel !== 'quotes'
+              if (gap === 'missing-trade') return input.channel !== 'trades'
+              return !(
+                gap === 'missing-bar' &&
+                input.channel === 'bars' &&
+                input.eventAtMs === sixBarOpenMs + 24 * 60_000
+              )
+            })
+            .map((input) => {
+              if (input.symbol !== 'SPY' || input.channel !== 'quotes') return input
+              if (gap === 'spread') return { ...input, ask: 203 }
+              if (gap === 'displayed-size') return { ...input, askSize: 0 }
+              return input
+            }),
+      }),
+    )
+    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+      const decision = Result.getOrThrow(
+        selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
+      )
+      expect(decision.status).toBe('UNAVAILABLE')
+      if (decision.status !== 'UNAVAILABLE') throw new Error('Expected benchmark failure')
+      expect(
+        decision.observations.every((observation) => 'symbol' in observation && observation.symbol === 'SPY'),
+      ).toBeTrue()
+    }
+  },
+)
 
 test('evidenced exclusions retain an available cash decision with empty admissible candidates', async () => {
   const data = await Effect.runPromise(fixture({ exclude: true }))
@@ -258,6 +350,54 @@ test('evidenced exclusions retain an available cash decision with empty admissib
     )
   }
 })
+
+test('candidate gaps can produce evidenced cash only while the benchmark remains valid', async () => {
+  const data = await Effect.runPromise(
+    fixture({
+      transformInputs: (inputs) => inputs.filter((input) => input.symbol === 'SPY' || input.channel !== 'quotes'),
+    }),
+  )
+  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+    const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
+    const decision = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, policy))
+    expect(decision.status).toBe('AVAILABLE')
+    if (decision.status !== 'AVAILABLE') throw new Error('Expected evidenced candidate gaps')
+    expect(decision.evidence.selectedSymbol).toBeNull()
+    expect(decision.evidence.scores).toEqual([])
+    expect(decision.evidence.exclusions.map((entry) => entry.symbol)).toEqual([...protocol.candidateSymbols])
+    const lostCut = {
+      ...cursor,
+      projection: { ...cursor.projection, minimumObservationMs: firstDecisionMs + 1 },
+    }
+    expect(Result.getOrThrow(selectBoundRidge(lostCut, data.query, data.bound, policy)).status).toBe('UNAVAILABLE')
+  }
+})
+
+test.each(['crossed-quote', 'premature-bar', 'nonfinal-bar'] as const)(
+  'a %s remains a global failure alongside candidate gaps',
+  async (defect) => {
+    const data = await Effect.runPromise(
+      fixture({
+        missing: true,
+        transformInputs: (inputs) =>
+          inputs.map((input) => {
+            if (input.symbol !== protocol.candidateSymbols.at(-1)) return input
+            if (defect === 'crossed-quote' && input.channel === 'quotes') return { ...input, bid: 107, ask: 105 }
+            if (defect === 'premature-bar' && input.channel === 'bars')
+              return { ...input, ingestedAtMs: input.eventAtMs + 59_999 }
+            if (defect === 'nonfinal-bar' && input.channel === 'bars') return { ...input, final: false }
+            return input
+          }),
+      }),
+    )
+    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean])
+      expect(
+        Result.isFailure(
+          selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
+        ),
+      ).toBeTrue()
+  },
+)
 
 test('artifact, source, calendar, partition, label and actual successor mismatches reject', async () => {
   const data = await Effect.runPromise(fixture())
@@ -434,6 +574,7 @@ const simulate = (
   options: {
     canceled?: boolean
     missingFirst?: boolean
+    missingCandidate?: boolean
     mean?: number
     exclude?: boolean
     policy?: ControlPolicy.Ridge | ControlPolicy.TrainingMean
@@ -442,6 +583,7 @@ const simulate = (
   Effect.gen(function* () {
     const data = yield* fixture({
       pollIntervalMs: options.missingFirst === true ? 1000 : 30000,
+      missing: options.missingCandidate ?? false,
       mean: options.mean ?? 5,
       exclude: options.exclude ?? false,
     })
@@ -548,6 +690,23 @@ test('canceled entries and cash retain opportunities and their allocated data ch
     if ('canceled' in options) expect(result.orders).toHaveLength(1)
   }
 })
+
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+  '%s keeps a candidate-local gap out of allocations and records it without invalidating the session',
+  async (policy) => {
+    const { result } = await Effect.runPromise(simulate({ policy, missingCandidate: true }))
+    expect(result.completion).toBe('COMPLETE')
+    expect(result.completedEpisodes).toBe(1)
+    expect(result.ledger.fills.every((fill) => fill.symbol !== 'AAPL')).toBeTrue()
+    expect(result.decisions[0]?.exclusions).toMatchObject([{ symbol: 'AAPL', inputSymbol: 'AAPL' }])
+    expect(result.simulatedOpportunityAccounting).toMatchObject({
+      entrySnapshotsWithCandidateExclusions: 1,
+      excludedCandidateObservationCount: 1,
+    })
+    expect(result.missingDecisions).toBe(0)
+    expect(result.dataCostMicros).toBe('1000000')
+  },
+)
 
 test('missing input leaves the same minute window available for a later causal poll', async () => {
   const { result, selectedAt, data } = await Effect.runPromise(simulate({ missingFirst: true }))
