@@ -269,10 +269,6 @@ jobs:
         with:
           node-version: 24.11.1
       - name: Verify bounded capture capacity with isolated native transports
-        env:
-          BAYN_TEST_CAPTURE_ATTRIBUTION: '1'
-          BAYN_TEST_CAPTURE_ATTRIBUTION_CORPUS_HASH: '3698e1e20b6f7316ef36a3eeb358eb102ae1c4d77f92f2c4d0c5a0c17c63f742'
-          BAYN_TEST_CAPTURE_ATTRIBUTION_ANCHOR: '1791165600000'
         run: timeout --kill-after=5s 475s bash services/bayn/scripts/test-native-receipts.sh --capture-capacity
       - name: Start isolated TigerBeetle for durable replay acceptance
         run: |
