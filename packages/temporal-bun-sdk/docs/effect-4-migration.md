@@ -1,6 +1,6 @@
 # Upgrade to Effect 4
 
-The SDK's next major release uses **Effect 4.0.0**. Version **0.11.5 uses
+The SDK's Effect 4 release uses **Effect 4.0.0**. Version **0.11.5 uses
 Effect 3.22.1** and remains available for existing workers. The public Effect,
 Schema, Context and Layer types change with this release. Promise-facing client
 calls keep their existing shapes.

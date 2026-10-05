@@ -14,9 +14,9 @@ import {
 
 describe('cleanup integration workflow retries', () => {
   test('retries transient Temporal batch-start placement failures', () => {
-    expect(isRetryableTemporalCliError('Error: failed starting batch operation: Not enough hosts to serve the request')).toBe(
-      true,
-    )
+    expect(
+      isRetryableTemporalCliError('Error: failed starting batch operation: Not enough hosts to serve the request'),
+    ).toBe(true)
     expect(isRetryableTemporalCliError('Error: failed to describe batch job: Workflow is busy.')).toBe(true)
   })
 
@@ -34,8 +34,12 @@ describe('cleanup integration workflow retries', () => {
   })
 
   test('treats already completed or missing workflow termination as cleanup success', () => {
-    expect(isWorkflowAlreadyCompleted('Error: failed to terminate workflow: workflow execution already completed')).toBe(true)
-    expect(isWorkflowAlreadyCompleted('Error: failed to terminate workflow: workflow not found for ID: worker-load')).toBe(true)
+    expect(
+      isWorkflowAlreadyCompleted('Error: failed to terminate workflow: workflow execution already completed'),
+    ).toBe(true)
+    expect(
+      isWorkflowAlreadyCompleted('Error: failed to terminate workflow: workflow not found for ID: worker-load'),
+    ).toBe(true)
     expect(isWorkflowAlreadyCompleted('Error: failed to terminate workflow: permission denied')).toBe(false)
   })
 
@@ -105,6 +109,55 @@ Status                         WorkflowId                                 Type  
     expect(remaining).toBe(2)
   })
 
+  test('an initially empty list requires a fresh zero count for the identical query', async () => {
+    const query = 'WorkflowType="workerLoadActivityWorkflow" and ExecutionStatus="Running"'
+    const queries: string[] = []
+    const result = await verifyOnlyStaleVisibility(query, 'workerLoadActivityWorkflow', ' \n', {
+      countRunning: async (actualQuery) => {
+        queries.push(actualQuery)
+        return 0
+      },
+      terminateVisibleWorkflows: async () => {
+        throw new Error('An empty list must not attempt termination')
+      },
+    })
+    expect(result).toBe(true)
+    expect(queries).toEqual([query])
+  })
+
+  test('an initially empty list cannot hide a nonzero or malformed follow-up count', async () => {
+    for (const remaining of [3, Number.NaN]) {
+      expect(
+        await verifyOnlyStaleVisibility('WorkflowType="workerLoadActivityWorkflow"', 'workerLoadActivityWorkflow', '', {
+          countRunning: async () => remaining,
+        }),
+      ).toBe(false)
+    }
+  })
+
+  test('an initially empty list propagates count failures', async () => {
+    await expect(
+      verifyOnlyStaleVisibility('WorkflowType="workerLoadActivityWorkflow"', 'workerLoadActivityWorkflow', '', {
+        countRunning: async () => {
+          throw new Error('count command failed')
+        },
+      }),
+    ).rejects.toThrow('count command failed')
+  })
+
+  test('a malformed nonempty list still fails parsing even when the count is zero', async () => {
+    await expect(
+      verifyOnlyStaleVisibility(
+        'WorkflowType="workerLoadActivityWorkflow"',
+        'workerLoadActivityWorkflow',
+        'malformed output',
+        {
+          countRunning: async () => 0,
+        },
+      ),
+    ).rejects.toThrow('Unable to parse')
+  })
+
   test('verify mode accepts stale visibility for already resolved workflows', async () => {
     const workflowId = 'worker-load-update-304-0a9e4910-6ffe-40cd-8194-bca78b94aec1'
     const output = `
@@ -152,8 +205,14 @@ Status                         WorkflowId                                 Type  
       'workerLoadUpdateWorkflow',
       'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
       {
-        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
-        countRunning: async () => { countCalls += 1; return 1 },
+        terminateVisibleWorkflows: async () => ({
+          alreadyResolvedWorkflowIds: ['closed-workflow'],
+          terminatedWorkflowIds: [],
+        }),
+        countRunning: async () => {
+          countCalls += 1
+          return 1
+        },
         listRunning: async () => 'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
       },
     )
@@ -167,9 +226,13 @@ Status                         WorkflowId                                 Type  
       'workerLoadUpdateWorkflow',
       'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
       {
-        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
+        terminateVisibleWorkflows: async () => ({
+          alreadyResolvedWorkflowIds: ['closed-workflow'],
+          terminatedWorkflowIds: [],
+        }),
         countRunning: async () => 2,
-        listRunning: async () => 'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago\nRunning newly-running workerLoadUpdateWorkflow 1 second ago',
+        listRunning: async () =>
+          'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago\nRunning newly-running workerLoadUpdateWorkflow 1 second ago',
       },
     )
     expect(result).toBe(false)
@@ -182,7 +245,10 @@ Status                         WorkflowId                                 Type  
       'workerLoadUpdateWorkflow',
       'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
       {
-        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
+        terminateVisibleWorkflows: async () => ({
+          alreadyResolvedWorkflowIds: ['closed-workflow'],
+          terminatedWorkflowIds: [],
+        }),
         countRunning: async () => counts.shift() ?? 0,
         listRunning: async () => '',
       },
@@ -196,7 +262,10 @@ Status                         WorkflowId                                 Type  
       'workerLoadUpdateWorkflow',
       'Running closed-workflow workerLoadUpdateWorkflow 1 hour ago',
       {
-        terminateVisibleWorkflows: async () => ({ alreadyResolvedWorkflowIds: ['closed-workflow'], terminatedWorkflowIds: [] }),
+        terminateVisibleWorkflows: async () => ({
+          alreadyResolvedWorkflowIds: ['closed-workflow'],
+          terminatedWorkflowIds: [],
+        }),
         countRunning: async () => 1,
         listRunning: async () => '',
       },
