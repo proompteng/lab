@@ -4,6 +4,10 @@ metadata:
   name: platform
   namespace: argocd
 spec:
+  preservedFields:
+    annotations:
+      - argocd.argoproj.io/skip-reconcile
+      - storage.proompteng.ai/ceph-remount-owner
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
@@ -16,6 +20,71 @@ spec:
                   destinationServer: https://kubernetes.default.svc
           - list:
               elements: &platform_elements
+              - name: spire-server
+                path: argocd/applications/spire-server
+                namespace: spire-server
+                renderWithLovely: true
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                  argocd.argoproj.io/compare-options: ServerSideDiff=true
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+                ignoreDifferences:
+                  - group: ""
+                    kind: ConfigMap
+                    name: spire-guest-bundle
+                    namespace: tengri
+                    jsonPointers:
+                      - /data
+                  - group: apps
+                    kind: StatefulSet
+                    name: spire-server
+                    namespace: spire-server
+                    jqPathExpressions:
+                      - .spec.volumeClaimTemplates[].apiVersion
+                      - .spec.volumeClaimTemplates[].kind
+                  - group: admissionregistration.k8s.io
+                    kind: ValidatingWebhookConfiguration
+                    name: spire-server-spire-controller-manager-webhook
+                    jqPathExpressions:
+                      - .webhooks[].clientConfig.caBundle
+              - name: spire-system
+                path: argocd/applications/spire-system
+                namespace: spire-system
+                renderWithLovely: true
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: spire-test
+                path: argocd/applications/spire-test
+                namespace: spire-test
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kargo-delivery
                 path: argocd/applications/kargo
                 namespace: lab-delivery
@@ -58,6 +127,36 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: spicedb-operator
+                path: argocd/applications/spicedb-operator
+                namespace: spicedb-operator
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: ofz
+                path: argocd/applications/ofz
+                namespace: ofz
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "0"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: tigresse
                 path: argocd/applications/tigresse
                 namespace: tigresse-system
@@ -147,6 +246,22 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
+              - name: devbox
+                path: argocd/applications/devbox
+                namespace: codex-devbox
+                targetRevision: kargo/devbox
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:devbox
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: tengri
                 path: argocd/applications/tengri
                 namespace: tengri
@@ -164,7 +279,7 @@ spec:
                       - /data
                 managedNamespaceMetadata:
                   labels:
-                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted
                     external-secrets.proompteng.ai/enabled: "true"
@@ -185,14 +300,6 @@ spec:
                   annotations:
                     # Prevent accidental namespace deletion when an app stops managing the Namespace object.
                     argocd.argoproj.io/sync-options: Prune=false
-              - name: storage-upgrade-acceptance
-                path: argocd/applications/storage-upgrade-acceptance
-                namespace: rook-ceph
-                renderWithLovely: false
-                annotations:
-                  argocd.argoproj.io/sync-wave: "0"
-                automation: manual
-                enabled: "true"
               - name: ryzen-amdgpu
                 path: devices/ryzen/manifests/k8s
                 namespace: kube-system
@@ -218,7 +325,7 @@ spec:
                 namespace: flamingo
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
-                automation: manual
+                automation: auto
                 enabled: "true"
                 managedNamespaceMetadata:
                   labels:
@@ -300,7 +407,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                   kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain
-                automation: manual
+                automation: auto
                 enabled: "true"
                 ignoreDifferences:
                   - group: apps
@@ -555,11 +662,29 @@ spec:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
                 enabled: "false"
+              - name: rune
+                path: argocd/applications/rune
+                namespace: rune
+                targetRevision: kargo/rune
+                annotations:
+                  argocd.argoproj.io/sync-wave: "4"
+                  kargo.akuity.io/authorized-stage: lab-delivery:rune
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: restate
                 path: argocd/applications/restate
                 namespace: restate
+                targetRevision: kargo/restate
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
+                  kargo.akuity.io/authorized-stage: lab-delivery:restate
                 automation: auto
                 enabled: "true"
                 ignoreDifferences:
@@ -596,9 +721,11 @@ spec:
               - name: temporal
                 path: argocd/applications/temporal
                 namespace: temporal
+                targetRevision: kargo/temporal-worker
                 annotations:
                   argocd.argoproj.io/sync-wave: "4"
-                automation: manual
+                  kargo.akuity.io/authorized-stage: lab-delivery:temporal-worker
+                automation: auto
                 enabled: "true"
               - name: inngest
                 path: argocd/applications/inngest
@@ -689,7 +816,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
@@ -713,7 +840,7 @@ spec:
                       - '.spec.template.metadata.annotations["kubectl.kubernetes.io/restartedAt"]'
                       - .spec.template.spec.containers[].terminationMessagePath
                       - .spec.template.spec.containers[].terminationMessagePolicy
-                      - .spec.template.spec.initContainers[].resources
+                      - .spec.template.spec.initContainers[] | select(.name == "register-runner") | .resources
                       - .spec.template.spec.initContainers[].terminationMessagePath
                       - .spec.template.spec.initContainers[].terminationMessagePolicy
                       - .spec.template.spec.dnsPolicy
@@ -722,7 +849,7 @@ spec:
                       - .spec.template.spec.securityContext
                       - .spec.template.spec.serviceAccount
                       - .spec.template.spec.volumes[].configMap.defaultMode
-                automation: manual
+                automation: auto
                 enabled: "true"
               - name: backstage
                 path: argocd/applications/backstage

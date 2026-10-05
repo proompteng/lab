@@ -21,7 +21,7 @@ const RETURN_SCALE = 10n ** BigInt(RETURN_DECIMAL_PLACES)
 
 export interface ForwardPerformanceDomainFailure {
   readonly _tag: 'ForwardPerformanceDomainFailure'
-  readonly operation: 'hash-execution-evidence' | 'hash-receipt'
+  readonly operation: 'hash-execution-evidence' | 'hash-position-episodes' | 'hash-receipt' | 'hash-report'
   readonly cause: unknown
 }
 
@@ -174,6 +174,19 @@ const transactionTotalsMatch = (
     fees = nextFees
     gains = nextGains
     losses = nextLosses
+  }
+  for (const fee of input.brokerFees ?? []) {
+    const net = parseSignedMicros(fee.netAmountMicros)
+    if (net === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    const nextFees = checkedAdd(fees, -net)
+    if (nextFees === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    fees = nextFees
   }
   if (gains !== totals.realizedGains || losses !== totals.realizedLosses || fees !== totals.brokerExecutionFees) {
     reasons.add('LEDGER_MISMATCH')

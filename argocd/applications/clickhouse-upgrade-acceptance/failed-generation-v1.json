@@ -1,0 +1,18 @@
+{
+  "status": "FAILED_BEFORE_NATIVE_START",
+  "reason": "Isolation gate requires DROP timeout and does not classify network policy REJECT",
+  "jobs": {
+    "clickhouse-native-20260910-0": {
+      "jobUID": "ffd219b9-6dfc-45dd-9142-a21b696daa4d",
+      "podUID": "17defd65-9f4b-49af-9b01-017f17e3764f",
+      "nativeEngineStarted": false,
+      "log": "waiting for live endpoint controls: v25_3 replica 0\nIsolation probe did not time out: 10.244.1.215:9000 status 1\n"
+    },
+    "clickhouse-native-20260910-1": {
+      "jobUID": "23e74b95-dd52-4b06-8e24-b27ae8bb7004",
+      "podUID": "222941e3-df20-4dfe-a0ac-8c2f75c5f9b2",
+      "nativeEngineStarted": false,
+      "log": "waiting for live endpoint controls: v25_3 replica 1\nIsolation probe did not time out: 10.244.1.215:9000 status 1\n"
+    }
+  }
+}

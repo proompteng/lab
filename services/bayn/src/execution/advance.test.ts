@@ -22,6 +22,23 @@ const driver = (observation: AutonomousCyclePassObservation, result?: CycleRunRe
 type RecoveredCycle = Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['cycle']
 
 describe('advanceExecutionOnce', () => {
+  test('binds retained Jev references without changing legacy receipt bytes', async () => {
+    const observation = {
+      result: 'SUCCESS' as const,
+      outcome: 'WINDOW_CLOSED' as const,
+      observedAt: '2026-08-13T17:00:01.000Z',
+    }
+    const legacy = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    const retained = await Effect.runPromise(
+      advanceExecutionOnce(
+        command,
+        driver({ ...observation, jevObservationReferences: { hashes: ['a'.repeat(64)], complete: true } }),
+      ),
+    )
+    expect(legacy.receiptHash).toBe('51e21e1ae5fa32e4feee03b56ce8b322ec709c1492956958a9ada7125acb69f0')
+    expect(retained.receiptHash).not.toBe(legacy.receiptHash)
+  })
+
   test('returns a deterministic receipt for a completed pass', async () => {
     const observation = {
       result: 'SUCCESS' as const,
@@ -52,7 +69,13 @@ describe('advanceExecutionOnce', () => {
         command,
         driver(
           { result: 'SUCCESS', outcome: 'RECOVERED', observedAt },
-          { outcome: 'RECOVERED', action: 'WAITING', observedAt, cycle: {} as never },
+          {
+            outcome: 'RECOVERED',
+            action: 'WAITING',
+            waitReason: 'AWAITING_SUBMISSION_OPEN',
+            observedAt,
+            cycle: {} as never,
+          },
         ),
       ),
     )
@@ -66,8 +89,8 @@ describe('advanceExecutionOnce', () => {
       ),
     )
 
-    expect(windowClosed).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'WindowClosed' } })
-    expect(waiting).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'RecoveryWaiting' } })
+    expect(windowClosed).toMatchObject({ _tag: 'Waiting', reason: { _tag: 'WindowClosed' } })
+    expect(waiting).toMatchObject({ _tag: 'Waiting', reason: { _tag: 'RecoveryWaiting' } })
     expect(blocked).toMatchObject({ _tag: 'Blocked', reason: { _tag: 'CycleBlocked' } })
   })
 
@@ -77,14 +100,60 @@ describe('advanceExecutionOnce', () => {
       advanceExecutionOnce(command, {
         advance: Effect.succeed({
           observation: { result: 'SUCCESS', outcome: 'RECOVERED', observedAt },
-          result: { outcome: 'RECOVERED', action: 'WAITING', observedAt, cycle: {} as never },
+          result: {
+            outcome: 'RECOVERED',
+            action: 'WAITING',
+            waitReason: 'AWAITING_SUBMISSION_OPEN',
+            observedAt,
+            cycle: {} as never,
+          },
           nextDelayMs: 300_000,
         }),
         nextDelayMs: 30_000,
       }),
     )
 
-    expect(outcome).toMatchObject({ _tag: 'Blocked', nextDelayMs: 300_000 })
+    expect(outcome).toMatchObject({ _tag: 'Waiting', nextDelayMs: 300_000 })
+  })
+
+  test('retains holding status without a transient cycle result and binds its reason into the receipt', async () => {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'RECOVERED',
+      recoveryAction: 'WAITING',
+      observedAt: '2026-08-13T17:00:01.000Z',
+      waitReason: 'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
+    } as const
+    const holding = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    const settling = await Effect.runPromise(
+      advanceExecutionOnce(
+        command,
+        driver({
+          ...observation,
+          waitReason: 'POST_MUTATION_RECONCILIATION',
+        }),
+      ),
+    )
+    expect(holding).toMatchObject({ _tag: 'Waiting', observation })
+    expect(settling.receiptHash).not.toBe(holding.receiptHash)
+  })
+
+  test('a pending broker cut remains a waiting receipt after the transient result is discarded', async () => {
+    const observation = {
+      result: 'SUCCESS',
+      outcome: 'WAITING',
+      observedAt: '2026-08-13T17:00:01.000Z',
+      waitReason: 'BROKER_OBSERVATION_PENDING',
+    } as const
+    const first = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    const replay = await Effect.runPromise(advanceExecutionOnce(command, driver(observation)))
+    expect(first).toEqual(replay)
+    expect(first).toMatchObject({
+      _tag: 'Waiting',
+      reason: { _tag: 'RecoveryWaiting' },
+      observation,
+      nextDelayMs: 30_000,
+    })
   })
 
   test('hashes only bounded failure facts and maps interpreter errors for Restate retry', async () => {

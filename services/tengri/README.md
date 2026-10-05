@@ -2,10 +2,76 @@
 
 Tengri is the standalone Rust owner of `runtime.proompteng.ai/v1alpha1 MicroVM` resources. It accepts only signed,
 authenticated internal gRPC calls, derives one deterministic MicroVM name per GitHub subject, and projects each CR into
-an unprivileged `kata-fc` Pod with a 16 GiB persistent home PVC.
+a `kata-fc` Pod with guest administrator access and a 16 GiB persistent home PVC.
+
+Every guest uses 4 vCPU, 8 GiB memory, and a 16 GiB workspace. Admission rejects any other profile. There is no
+controller compatibility or automatic resource upgrade path. Correct any existing MicroVM resource values once
+during the deployment cutover, then sleep/resume it to apply the profile while preserving its home PVC. The namespace
+quota accommodates six guests plus Kata overhead and the controller.
 
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
+
+The Rust control plane calls the Go guest through the shared
+[`NanoagentService` protobuf contract](proto/proompteng/runtime/guest/v1/nanoagent.proto). File operations, editor
+startup, terminal lifecycle, Codex calls, and approvals use unary gRPC. File and Codex events use server streams;
+terminal input, output, resize, signals, and replay use one bidirectional stream. Tengri translates that stream into
+the existing browser WebSocket frames. Application previews and editor content keep their HTTP/WebSocket proxy.
+
+Tengri authenticates directly to gRPC `GetInfo` on guest TLS port 8443 and verifies the current guest Pod UID and protocol
+version. Nanoagent's `MICROVM_ID` comes from the Pod's downward-API `metadata.uid`; the controller compares it with
+`status.podUid`, binding the connection to the current guest incarnation. Guest control is gRPC-only: HTTP discovery,
+REST calls, NDJSON streams, and the guest terminal WebSocket
+transport have been removed. Failed or unsupported RPCs fail visibly. Existing HTTP-only guests must sleep/resume
+with a compatible guest image; an older HTTP-only controller cannot operate the new guest. SPIRE mutual TLS authenticates
+both application hops. The per-MicroVM bootstrap secret remains additional RPC authorization. Plain port 8080 serves
+only health probes; application/VS Code content uses HTTPS and secure WebSockets on the same authenticated guest listener.
+
+## SPIRE workload identity
+
+The trust domain is `proompteng.ai`. Tengri's identity is
+`spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051 accepts only
+`spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. The BFF verifies the exact Tengri identity, and signed HMAC
+metadata continues to enforce GitHub ownership and replay protection. There is no plaintext production gRPC listener
+or transport fallback.
+
+Normal Kubernetes workloads obtain their rotating X.509-SVID and trust bundle through the SPIFFE CSI Workload API socket.
+Tengri requires `SPIFFE_ENDPOINT_SOCKET` and `SPIFFE_TRUST_DOMAIN` before it binds its public listeners. Each Firecracker
+guest supervises its own SPIRE agent because host process attestation cannot see processes inside the guest kernel.
+Its identity is `spiffe://proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>`. Nanoagent accepts only Tengri's
+identity; Tengri's gRPC, HTTPS, and WebSocket clients verify the exact current guest Pod identity.
+
+The controller creates one `ClusterStaticEntry` per guest Pod. Its parent is the guest's `galactic-guests` PSAT agent,
+its sole workload selector is `unix:uid:1000`, and its SVID lifetime is two minutes. Pod replacement removes the old
+entry; sleep and deletion remove all entries owned by that MicroVM. Kubernetes admission confines the controller's
+registration permissions to this identity pattern and prohibits SPIRE administration, delegation, and federation.
+
+The `nanoagent` service account has no Kubernetes API roles and disables normal token mounting. Its projected PSAT
+has audience `spire-server`, is bound to the Pod, and initially lasts one hour to cover a cold toolchain installation.
+After readiness, Tengri refreshes it with a ten-minute Pod-bound TokenRequest before five minutes remain, sending the
+new token and public CA bundle over authenticated gRPC. Nanoagent atomically replaces only its private temporary
+bootstrap files. This avoids depending on host projected-volume updates crossing Kata's VM boundary. Agent keys and
+data stay under `/tmp/nanoagent-spire`, outside the retained home PVC.
+
+The VM administrator can access that VM's workload identity because the guest user owns the entire VM and has sudo.
+The Pod-bound parent and exact peer authorization prevent that identity from becoming another guest or the controller.
+SPIRE downtime prevents new issuance and renewal; valid certificates last until expiry. A removed registration does
+not invalidate an already issued certificate before expiry.
+
+Rust bindings are generated by `build.rs`; committed Go bindings are regenerated with
+`bash services/nanoagent/generate-proto.sh` from the repository root. Run `bash services/tengri/test-rpc-interop.sh`
+with the pinned Rust and Go toolchains to exercise the actual Rust client against a Go guest test server. CI runs this
+wire test alongside each component's tests before publishing the paired images. The native fixture exercises mutual
+TLS, exact peer rejection, and live SVID renewal with the standard Workload API schema. BFF tests separately verify
+signed-stream continuity during certificate rotation.
+
+The guest user retains UID/GID 1000 and can become root with passwordless `sudo`. The writable root filesystem,
+privilege escalation, full Linux capabilities, and unconfined guest syscalls allow administration inside the VM.
+`privileged: false`, the `kata-fc` runtime, absent host namespaces/mounts, and disabled Kubernetes API token mounting retain
+the VM boundary. System-root changes are ephemeral and reset when the guest container is recreated; the home and
+workspace survive sleep/resume.
+The ApplicationSet permits this guest profile through Tengri's namespace admission policy. The control-plane
+Deployment retains its non-root UID, dropped capabilities, read-only root, and disabled privilege escalation.
 
 Terminal creation has one protocol: every client supplies a stable 16-to-128-character `creation_id`, and Nanoagent
 returns that exact identity with the session. Retries reuse the same identity and are idempotent. Tengri rejects
@@ -14,12 +80,11 @@ id-less requests instead of generating a compatibility identity or negotiating w
 Pending Codex device logins are guest-owned. A reconnecting desktop reads the active attempt from Nanoagent and keeps
 the same verification code and original expiry instead of silently starting and invalidating another attempt.
 
-Workspace file reads are revision-aware when the guest supports the contract: Nanoagent returns the bounded file bytes
-with a strong quoted SHA-256 `ETag`, and Tengri forwards the unquoted revision alongside the content. A missing ETag
-keeps legacy reads usable with an empty revision so clients can present the file read-only; a malformed or mismatched
-ETag fails closed. File writes require `expectedRevision` to be a lowercase 64-character SHA-256 revision or `missing`,
-and Tengri rejects omitted or malformed preconditions before contacting the guest. Nanoagent rejects stale revisions
-with HTTP 409. Successful writes return the new path, size, and revision.
+Workspace file reads return bounded protobuf bytes and a required strong SHA-256 revision. Tengri verifies that the
+revision matches the content and rejects missing, malformed, or mismatched revisions. Writes require a lowercase
+64-character SHA-256 `expected_revision` or `missing` for create-only writes; malformed preconditions fail before
+contacting the guest. Nanoagent reports stale writes as `ABORTED` with the current revision. Successful writes return
+the new path, size, and revision.
 
 Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
 `thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
@@ -28,9 +93,8 @@ cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 2
 page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
-The guest pins Codex 0.153.4 in `services/nanoagent/bootstrap-codex.sh`. Its
-[item-page contract](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L1743-L1760)
-returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
+The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+`gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
 
@@ -70,6 +134,19 @@ Only live receipts are retained and the bounded store fails closed. The deployme
 on that named ConfigMap.
 
 ## GitOps rollout and rollback
+
+Deploy the SPIRE prerequisites first: host workload registrations and CSI mounts, the guest PSAT profile, the public
+bundle publisher, the `nanoagent` service account, and constrained registration/token RBAC. Verify the bundle in
+`tengri/spire-guest-bundle` and the existing node canaries before deploying the secure application images. The SPIRE
+Application owns and pre-creates the cross-namespace bundle before restarting its server with the guest publisher;
+Argo ignores the generated
+bundle data while retaining desired ownership of the ConfigMap and publisher Role.
+
+Then publish reviewed controller, guest, and BFF images through their existing CI and Kargo Stages. The hard TLS switch
+briefly interrupts callers while the two application Stages converge. Sleep/resume existing guests so their new Pod
+receives the agent and attestation mounts, preserving the PVC. Verify both exact deployed image revisions, identity
+issuance and renewal, and logged-in Finder, Codex, Terminal, and editor behavior. Recovery re-promotes compatible Freight
+for both application Stages; preserve the SPIRE datastore and workspace PVCs.
 
 Tengri is a singleton `Recreate` Deployment. A GitOps rollout terminates the old control-plane Pod before the new Pod
 becomes ready, so gRPC, event streams, PTY WebSockets, and preview proxy connections are briefly unavailable. Clients
@@ -176,3 +253,30 @@ diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
 
 Runtime configuration is documented in [`../../docs/tengri/operations.md`](../../docs/tengri/operations.md). The
 protobuf contract is [`proto/proompteng/runtime/v1/microvm.proto`](proto/proompteng/runtime/v1/microvm.proto).
+
+## Editor sessions
+
+`IssueEditorSession(agent_id, window_id)` authorizes the owner, starts the guest workbench, and returns an ordinary
+preview launch ticket for virtual port 13337. Its DNS-safe origin derives from owner, agent, CR UID, and desktop window
+identity, so reload restores the native workspace and backups while another owner, incarnation, or window gets another
+origin. Session cookies expire after 24 hours. The one-use launch token is also the revocation generation: a delayed
+cleanup cannot revoke a replacement session on the same origin. Generic preview revocation retains its existing behavior.
+Before sign-out clears authentication, `RevokeEditorSessions` removes every pending and active editor lease for the
+authenticated owner. A revocation failure blocks sign-out so it can be retried. The gateway also closes established
+preview WebSockets within one second of session revocation or expiry.
+
+The gateway injects the desktop integration script only into the workbench document. Native Markdown and extension
+webviews retain their own HTML and CSP; editor frame ancestors allow both the issued origin and desktop origin.
+Packaged assets under an exact upstream revision are compressed and privately cached. Workspace resources, HTML,
+tickets, and integration scripts remain uncached. The private extension bridge binds its session query to the
+cookie-authenticated preview origin. Ordinary preview sessions cannot select either reserved editor port.
+
+Codex `SendCodexInput` and `SteerCodexInput` RPCs accept text, PNG/JPEG/WebP image bytes, or both.
+These replace the former turn-input RPCs. A controller with the old contract rejects the new RPCs before
+starting or steering a turn, preventing silent image loss during a mismatched release. Image inputs are limited to four,
+4 MiB each, and 8 MiB total. Tengri verifies media signatures, writes the images into the owned retained guest
+under `/workspace/.tengri-attachments` through gRPC, and submits Codex `localImage` inputs. A failed image write
+fails the request before Codex starts or steers a turn. Attachments remain with the persistent workspace so saved
+conversation references remain valid.
+If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
+Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.

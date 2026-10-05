@@ -1,10 +1,5 @@
 import { Data, Result, Schema } from 'effect'
-
-import {
-  ExecutionModelV5Schema,
-  usEquityRegularSessionDurationMs,
-  type ExecutionModel,
-} from '../../execution-model-contract'
+import { ExecutionModelV5Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
 import {
   maximumIntradayObservationLagMs,
@@ -18,7 +13,6 @@ import {
   SymbolSchema,
   strictParseOptions,
 } from '../../schemas'
-import { defaultExecutionModel } from '../execution-model/model'
 
 const PositiveUnitIntervalSchema = Schema.Finite.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1))
 const BasisPointsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000))
@@ -26,66 +20,27 @@ const PartsPerMillionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0),
 const IntradayMinuteOffsetSchema = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 60))
 const SessionBoundaryMinuteOffsetSchema = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 60))
 
-const coreUniverse = {
-  id: 'torghut-core-equity-v2',
-  symbols: [
-    'AAPL',
-    'AMD',
-    'AMZN',
-    'AVGO',
-    'COHR',
-    'CRDO',
-    'IWM',
-    'LITE',
-    'MRVL',
-    'MU',
-    'NVDA',
-    'QQQ',
-    'SMH',
-    'SNDK',
-    'SPY',
-    'WDC',
-  ],
-  symbolHash: '12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1',
-} as const
+import {
+  intradayUniverse as coreUniverse,
+  intradaySourceTopics,
+  intradayExecutionModel,
+  intradayLookbackMinutes,
+  intradayDecisionDelaySeconds,
+  intradayFeatureTopic,
+  intradayStreamingContract,
+  IntradayStreamingInputSchema as StreamingInputContract,
+} from '../intraday-market'
 
-export const intradayMomentumSourceTopics = Object.freeze({
-  bars: 'torghut.bars.1m.v1',
-  quotes: 'torghut.quotes.v1',
-  trades: 'torghut.trades.v1',
-} as const)
-
+export const intradayMomentumSourceTopics = intradaySourceTopics
+export const intradayMomentumExecutionModel = intradayExecutionModel
+export const intradayMomentumFeatureTopic = intradayFeatureTopic
+export const intradayMomentumStreamingContract = intradayStreamingContract
 export const intradayMomentumCandidateSymbols = ['AAPL', 'AMZN', 'IWM', 'NVDA', 'QQQ', 'SMH'] as const
 const prospectiveBenchmark = 'SPY' as const
 
-export const intradayMomentumExecutionModel: Extract<
-  ExecutionModel,
-  { readonly schemaVersion: 'bayn.execution-model.v5' }
-> = Object.freeze({
-  ...defaultExecutionModel,
-  schemaVersion: 'bayn.execution-model.v5',
-  order: Object.freeze({
-    type: 'limit',
-    timeInForce: 'ioc',
-    extendedHours: false,
-    planAfter: 'verified-intraday-window',
-    submitAfter: 'plan-committed',
-    submitBefore: 'intraday-entry-cutoff',
-    planningPriceReference: 'verified-adverse-top-of-book',
-    planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
-    fillPriceReference: 'limit-or-better',
-    buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
-    warmupAfterOpenMs: 0,
-    submissionCutoffBeforeCloseMs: 5 * 60_000,
-  }),
-  precision: Object.freeze({
-    ...defaultExecutionModel.precision,
-    quantityIncrementMicros: '1000000',
-  }),
-})
-
 const IntradayMomentumProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.intraday-momentum.protocol.v2'),
+  schemaVersion: Schema.Literal('bayn.intraday-momentum.protocol.v3'),
+  streamingInput: StreamingInputContract,
   universeId: Schema.Literal('torghut-core-equity-v2'),
   universeSymbolHash: Sha256Schema,
   universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
@@ -122,6 +77,8 @@ const IntradayMomentumProtocolBase = Schema.Struct({
 
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  if (protocol.lookbackMinutes !== intradayLookbackMinutes)
+    issues.push({ path: ['lookbackMinutes'], issue: 'rolling-price-30m requires exactly 30 completed minutes' })
   const canonicalUniverse = [...new Set(protocol.universe)].sort()
   const canonicalCandidates = [...new Set(protocol.candidateSymbols)].sort()
   if (
@@ -267,7 +224,8 @@ export const intradayMomentumSnapshotSymbols = (protocol: IntradayMomentumProtoc
   Object.freeze([...protocol.candidateSymbols, protocol.benchmarkSymbol].sort())
 
 export const defaultIntradayMomentumProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.intraday-momentum.protocol.v2',
+  schemaVersion: 'bayn.intraday-momentum.protocol.v3',
+  streamingInput: intradayMomentumStreamingContract,
   universeId: coreUniverse.id,
   universeSymbolHash: coreUniverse.symbolHash,
   universe: coreUniverse.symbols,
@@ -277,10 +235,10 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   delayClass: 'real_time_exchange_only',
   sourceTopics: intradayMomentumSourceTopics,
   positionPolicy: 'long-only',
-  lookbackMinutes: 30,
-  decisionDelaySeconds: 2,
+  lookbackMinutes: intradayLookbackMinutes,
+  decisionDelaySeconds: intradayDecisionDelaySeconds,
   maximumDecisionLagMs: 60_000,
-  maximumQuoteAgeMs: 2_000,
+  maximumQuoteAgeMs: 10_000,
   warmupMinutesAfterOpen: 0,
   entryCutoffMinutesBeforeClose: 5,
   flattenBeforeCloseMinutes: 5,

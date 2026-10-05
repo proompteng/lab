@@ -247,10 +247,12 @@ export const makeCycleIdentity = (material: unknown): Result.Result<CycleIdentit
       failure(
         'cycle-identity',
         'session-order',
-        decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+        decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+          decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v4'
           ? 'execution session must follow the Signal session'
           : 'intraday cycle identity is invalid',
-        decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v3'
+        decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v3' &&
+          decoded.schemaVersion !== 'bayn.autonomous-cycle-identity.v4'
           ? { signalSessionDate: decoded.signalSessionDate, executionSessionDate: decoded.executionSessionDate }
           : { executionSessionDate: decoded.executionSessionDate },
         cause,
@@ -466,11 +468,13 @@ const makeCycleDraftDataFirst = (
     return yield* Result.mapError(
       decodeCycleDraftResult({
         schemaVersion:
-          decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v3'
-            ? 'bayn.autonomous-cycle.v3'
-            : decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v2'
-              ? 'bayn.autonomous-cycle.v2'
-              : 'bayn.autonomous-cycle.v1',
+          decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
+            ? 'bayn.autonomous-cycle.v4'
+            : decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v3'
+              ? 'bayn.autonomous-cycle.v3'
+              : decodedIdentity.schemaVersion === 'bayn.autonomous-cycle-identity.v2'
+                ? 'bayn.autonomous-cycle.v2'
+                : 'bayn.autonomous-cycle.v1',
         identity: decodedIdentity,
         window: decodedWindow,
       }),

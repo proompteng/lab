@@ -43,6 +43,7 @@ export type JangarHttpRuntimeMetrics = {
 export type JangarHttpRuntimeOptions = {
   routeModules: Record<string, () => Promise<unknown>>
   routeSources: Record<string, string>
+  routeGuard?: (routePath: string) => Response | undefined
   serveClient?: boolean
   clientOutputDirCandidates?: () => string[]
   clientMissingMessage?: string
@@ -218,18 +219,24 @@ const loadServerRoutes = async (
   return definitions
 }
 
-const registerServerRoutes = (app: ReturnType<typeof createApp>, definitions: JangarServerRouteDefinition[]) => {
+const registerServerRoutes = (
+  app: ReturnType<typeof createApp>,
+  definitions: JangarServerRouteDefinition[],
+  routeGuard: JangarHttpRuntimeOptions['routeGuard'],
+) => {
   for (const definition of definitions) {
     for (const method of serverMethods) {
       const handler = definition.handlers[method]
       if (!handler) continue
 
-      const wrappedHandler = defineEventHandler((event) =>
-        handler({
+      const wrappedHandler = defineEventHandler((event) => {
+        const guarded = routeGuard?.(definition.routePath)
+        if (guarded) return guarded
+        return handler({
           request: getEventRequest(event),
           params: getRouterParams(event, { decode: true }),
-        }),
-      )
+        })
+      })
 
       for (const path of getRegistrationPaths(definition.routePath)) {
         switch (method) {
@@ -287,7 +294,7 @@ export const createJangarHttpRuntime = async (options: JangarHttpRuntimeOptions)
 
   const serverRouteDefinitions = await loadServerRoutes(options.routeModules, options.routeSources)
   const serverRouteRoots = getServerRouteRoots(serverRouteDefinitions)
-  registerServerRoutes(app, serverRouteDefinitions)
+  registerServerRoutes(app, serverRouteDefinitions, options.routeGuard)
 
   if (options.serveClient === true) {
     const serveClient = defineEventHandler((event) => {

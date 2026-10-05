@@ -2,6 +2,8 @@ import { defineConfig } from '@playwright/test'
 
 const port = Number.parseInt(process.env.TENGRI_PLAYWRIGHT_PORT ?? '3000', 10)
 const baseURL = process.env.TENGRI_PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`
+const fixtureCertificate =
+  process.env.TENGRI_EDITOR_TEST_HTTPS === '1' ? process.env.TENGRI_EDITOR_TEST_CERT_SPKI : undefined
 export default defineConfig({
   testDir: './src/components/tengri',
   testMatch: '**/*.e2e.test.ts',
@@ -20,6 +22,9 @@ export default defineConfig({
   reporter: process.env.CI ? [['line'], ['html', { open: 'never' }]] : 'line',
   use: {
     baseURL,
+    launchOptions: fixtureCertificate
+      ? { args: [`--ignore-certificate-errors-spki-list=${fixtureCertificate}`] }
+      : undefined,
     colorScheme: 'dark',
     locale: 'en-US',
     screenshot: 'only-on-failure',
@@ -41,7 +46,10 @@ export default defineConfig({
             GITHUB_CLIENT_ID: 'playwright',
             GITHUB_CLIENT_SECRET: 'playwright',
             NEXT_TELEMETRY_DISABLED: '1',
-            TENGRI_GRPC_ENDPOINT: '127.0.0.1:65535',
+            TENGRI_GRPC_ENDPOINT: 'localhost:65535',
+            SPIFFE_ENDPOINT_SOCKET: 'unix:///tmp/tengri-playwright-workload-api.sock',
+            SPIFFE_ID: 'spiffe://proompteng.ai/ns/proompteng/sa/proompteng',
+            TENGRI_SPIFFE_ID: 'spiffe://proompteng.ai/ns/tengri/sa/tengri',
             TENGRI_INTERNAL_HMAC_SECRET: 'playwright-tengri-hmac-secret-0000000000',
           },
           reuseExistingServer: !process.env.CI,

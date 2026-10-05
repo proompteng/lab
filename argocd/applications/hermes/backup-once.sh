@@ -35,8 +35,8 @@ if ! hermes_backup_output_is_safe "$backup_output" "${HERMES_HOME:-/opt/data}"; 
   exit 1
 fi
 case "$backup_output" in
-  *"Warnings (1 files skipped):"*)
-    echo 'Accepted the single transient gateway.sock omission from the Hermes 0.20.6 backup'
+  *"Warnings ("*)
+    echo 'Verified that every skipped path is a known transient Hermes Unix socket'
     ;;
 esac
 unset backup_output backup_status
@@ -52,11 +52,16 @@ from pathlib import Path
 archive = sys.argv[1]
 database_count = 0
 with zipfile.ZipFile(archive) as backup:
+    for entry in backup.infolist():
+        if Path(entry.filename).name == ".env" and backup.read(entry).strip():
+            raise RuntimeError("backup contains a nonempty environment credential file")
     corrupt_entry = backup.testzip()
     if corrupt_entry is not None:
         raise RuntimeError(f"corrupt zip entry: {corrupt_entry}")
     if "gateway.sock" in backup.namelist():
         raise RuntimeError("backup contains the transient gateway socket path")
+    if "state/gateway.loop-tick.1.sock" in backup.namelist():
+        raise RuntimeError("backup contains the transient gateway loop-tick socket path")
     for entry in (candidate for candidate in backup.infolist() if candidate.filename.endswith(".db")):
         with tempfile.NamedTemporaryFile(dir=Path(archive).parent, suffix=".db") as extracted:
             with backup.open(entry) as source:

@@ -1,3 +1,4 @@
+import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
@@ -7,10 +8,8 @@ import {
   intradayAgeNanos,
   millisecondsAsNanos,
   type IntradayMarketDataService,
-  type IntradayMarketSnapshot,
   type IntradaySnapshotQuery,
 } from '../market-data'
-import type { ArchiveVerifiedIntradayMarketSnapshot } from '../market-data/intraday/model'
 import { strictParseOptions } from '../schemas'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 
@@ -18,6 +17,8 @@ export class IntradayMarketDataFailure extends Data.TaggedError('IntradayMarketD
   readonly operation: 'entry-decision' | 'close-quote-not-ready' | 'prices' | 'binding'
   readonly message: string
   readonly cause?: unknown
+  readonly symbol?: string
+  readonly eventAt?: string
 }> {}
 
 const failure = (
@@ -29,10 +30,7 @@ const failure = (
 export const loadIntradaySnapshot = (
   marketData: IntradayMarketDataService,
   query: IntradaySnapshotQuery,
-): Effect.Effect<ArchiveVerifiedIntradayMarketSnapshot, OperationalError> =>
-  marketData
-    .captureVersion(query)
-    .pipe(Effect.flatMap((archiveWatermarks) => marketData.loadSnapshot({ ...query, archiveWatermarks })))
+): Effect.Effect<VerifiedStrategyMarketSnapshot, OperationalError> => marketData.loadSnapshot(query)
 
 const decodeExecutionMarketDataBinding = Schema.decodeUnknownResult(
   ExecutionMarketDataBindingSchema,
@@ -40,49 +38,21 @@ const decodeExecutionMarketDataBinding = Schema.decodeUnknownResult(
 )
 
 export const executionMarketDataBinding = (
-  snapshot: IntradayMarketSnapshot,
-): Result.Result<ExecutionMarketDataBinding, IntradayMarketDataFailure> =>
-  Result.mapError(
+  snapshot: StrategyMarketSnapshot,
+): Result.Result<ExecutionMarketDataBinding, IntradayMarketDataFailure> => {
+  const { schemaVersion, ...material } = snapshot.manifest
+  return Result.mapError(
     decodeExecutionMarketDataBinding({
+      ...material,
       schemaVersion:
-        snapshot.manifest.universe === undefined
-          ? 'bayn.execution-market-data-binding.v1'
-          : 'bayn.execution-market-data-binding.v2',
-      snapshotSchemaVersion: snapshot.manifest.schemaVersion,
-      sessionDate: snapshot.manifest.sessionDate,
-      calendar: snapshot.manifest.calendar,
-      rangeStartAt: snapshot.manifest.rangeStartAt,
-      rangeEndAt: snapshot.manifest.rangeEndAt,
-      observedAt: snapshot.manifest.observedAt,
-      universeId: snapshot.manifest.universeId,
-      universeSymbolHash: snapshot.manifest.universeSymbolHash,
-      ...(snapshot.manifest.universe === undefined ? {} : { universe: snapshot.manifest.universe }),
-      symbols: snapshot.manifest.symbols,
-      ...(snapshot.manifest.candidateSymbols === undefined
-        ? {}
-        : { candidateSymbols: snapshot.manifest.candidateSymbols }),
-      ...(snapshot.manifest.candidateExclusions === undefined
-        ? {}
-        : { candidateExclusions: snapshot.manifest.candidateExclusions }),
-      ...(snapshot.manifest.purpose === undefined ? {} : { purpose: snapshot.manifest.purpose }),
-      feed: snapshot.manifest.feed,
-      delayClass: snapshot.manifest.delayClass,
-      sourceTopics: snapshot.manifest.sourceTopics,
-      archiveWatermarks: snapshot.manifest.archiveWatermarks,
-      maximumQuoteAgeMs: snapshot.manifest.maximumQuoteAgeMs,
-      minimumWatermarkLagMs: snapshot.manifest.minimumWatermarkLagMs,
-      barCount: snapshot.manifest.barCount,
-      quoteCount: snapshot.manifest.quoteCount,
-      tradeCount: snapshot.manifest.tradeCount,
-      barsContentHash: snapshot.manifest.barsContentHash,
-      quotesContentHash: snapshot.manifest.quotesContentHash,
-      tradesContentHash: snapshot.manifest.tradesContentHash,
-      lineage: snapshot.manifest.lineage,
-      contentHash: snapshot.manifest.contentHash,
-      snapshotId: snapshot.manifest.snapshotId,
+        schemaVersion === 'bayn.simulated-market-snapshot.v1'
+          ? 'bayn.execution-market-data-binding.v4'
+          : 'bayn.execution-market-data-binding.v3',
+      snapshotSchemaVersion: schemaVersion,
     }),
-    (cause) => failure('binding', 'verified intraday snapshot cannot form an execution binding', cause),
+    (cause) => failure('binding', 'streaming execution market data binding is invalid', cause),
   )
+}
 
 export interface AdverseQuotePrices {
   readonly bidPriceMicros: Readonly<Record<string, string>>
@@ -119,19 +89,30 @@ export const adverseQuotePrices = (
 }
 
 export const adverseClosingQuotePrices = (
-  snapshot: IntradayMarketSnapshot,
+  snapshot: StrategyMarketSnapshot,
   symbols: readonly string[],
 ): Result.Result<AdverseQuotePrices, IntradayMarketDataFailure> => {
   const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
   for (const symbol of [...new Set(symbols)].sort()) {
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined) {
-      return Result.fail(failure('close-quote-not-ready', `intraday snapshot has no verified quote for ${symbol}`))
+      return Result.fail(
+        new IntradayMarketDataFailure({
+          operation: 'close-quote-not-ready',
+          message: `intraday snapshot has no verified quote for ${symbol}`,
+          symbol,
+        }),
+      )
     }
     const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
     if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
       return Result.fail(
-        failure('close-quote-not-ready', `closing quote for ${symbol} is outside the freshness window`),
+        new IntradayMarketDataFailure({
+          operation: 'close-quote-not-ready',
+          message: `closing quote for ${symbol} is outside the freshness window`,
+          symbol,
+          eventAt: quote.eventAt,
+        }),
       )
     }
   }
@@ -139,7 +120,7 @@ export const adverseClosingQuotePrices = (
 }
 
 export const requireFreshIntradayPositionQuotes = (
-  snapshot: IntradayMarketSnapshot,
+  snapshot: StrategyMarketSnapshot,
   positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
 ): Result.Result<void, IntradayMarketDataFailure> => {
   const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)

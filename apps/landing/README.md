@@ -44,6 +44,32 @@ Traefik's connection source, so the application never trusts caller-supplied for
 The BFF also restores an in-progress Codex device login from the guest after a browser reconnect; it does not start a
 replacement attempt or invalidate the code already shown to the user.
 
+The internal gRPC connection requires SPIRE mutual TLS. The Proompteng Pod uses service account `proompteng` and a
+read-only SPIFFE CSI socket. `SPIFFE_ID` selects its exact `spiffe://proompteng.ai/ns/proompteng/sa/proompteng`
+identity; `TENGRI_SPIFFE_ID` pins `spiffe://proompteng.ai/ns/tengri/sa/tengri`. The server-only Workload API
+client validates the URI, private-key match, validity window, and CA bundle before creating a TLS gRPC client.
+Renewal creates a new client; existing streams retain their previous client until that certificate expires and then
+reconnect with their event cursor. HMAC metadata still binds every request to its authenticated GitHub owner.
+Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
+requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
+
+The Codex view places user messages on the right with left-aligned text and a subtle background, and agent responses
+on the left, without visible speaker headings. The rounded composer uses a subtle border and keeps model and reasoning
+choices beside the send/stop control. Prompt suggestions prepare a
+draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
+Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
+Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
+Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
+`/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
+by saved conversations.
+
+Active turns show a Thinking label with a one-second highlight moving left to right; reduced motion keeps the label still.
+Usage shows the remaining weekly percentage and rounds credits up to a whole number. The dock keeps its blurred
+material stationary while its outline and icons magnify, with labels appearing without an opacity animation.
+Responses support Markdown tables, task lists, and code blocks with copy feedback. The conversation follows new events
+while the reader is at the bottom. Reading earlier messages preserves the scroll position until the reader chooses
+**Jump to latest**.
+
 1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
    The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway
    origin. HTTPS is required except for the exact `http://localhost` development host.
@@ -82,6 +108,12 @@ proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application 
 is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Code, Terminal, and Settings continue to
 operate on the real guest workspace.
 
+Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,
+with colors and rounded hover glyphs matched to native macOS screenshots. Each retains a separate 24 px hit target.
+Available actions show symbols on hover or keyboard focus; unavailable actions are gray and disabled.
+Closing a confirmation cancels it, and its controls stay
+disabled while the confirmed operation runs.
+
 Window movement and Dock magnification update transforms without React state changes per pointer frame. Pointer
 geometry is measured at gesture boundaries; app content is memoized independently from window placement. The clock
 updates its own leaf component. Minimized windows retain their application sessions and finish their animation at the
@@ -118,3 +150,34 @@ bun run lint:oxlint
 bun test src/lib/tengri
 bun run build
 ```
+
+## VS Code in the desktop
+
+Code runs the upstream VS Code workbench through [code-server 4.135.0](https://github.com/coder/code-server/releases/tag/v4.135.0)
+(Code 1.135.0) inside the user's Nanoagent guest. Explorer, tabs, search, Source Control, integrated terminals, language
+servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
+may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
+
+Finder's **Open in Code** sends a file-opening request through the owner-scoped gateway to a small guest extension using
+VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.
+Lifecycle changes are blocked while a window has unsaved edits or its save state is unknown. Settings and installed
+extensions live in the persistent guest home; stable window origins preserve VS Code's workspace identity and native backups across reload.
+Recoverable drafts from the previous editor remain available as downloads and never overwrite workspace files.
+Sign-out first revokes the user's editor sessions, including those opened in other desktop tabs. If revocation fails,
+the desktop keeps the user signed in and shows the error so they can retry.
+
+Run the real integration test from the repository root:
+
+```sh
+bunx playwright install chromium
+bash services/nanoagent/test-vscode-browser.sh
+```
+
+The runner requires Bun, Go, Rust, Node.js, OpenSSL, Python, and `protoc`. It downloads and verifies the pinned upstream release, starts
+real Nanoagent and Tengri gateway fixtures, and drives the actual workbench through Chromium. Provisioning and identity
+are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CSP use their production implementations.
+Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
+The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without
+weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
+The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
+an existing installation cache without reusing a test workspace.

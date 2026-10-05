@@ -98,3 +98,41 @@ jobs:
       - uses: code.proompteng.ai/kalmyk/actions-checkout@<PINNED_SHA>
       - run: docker version
 ```
+
+
+## Runner 13 and Docker 29 rollout
+
+The fleet uses Forgejo Runner 13.1.0 and Docker 29.8.0 on both architectures,
+with immutable multi-architecture image digests. Docker retains the classic
+`overlay2` image store explicitly. Docker is a Kubernetes native sidecar: its
+startup probe must pass before the runner starts, and Kubernetes keeps it alive
+until the runner has stopped. The runner allows 3h5m for graceful shutdown and
+the Pod allows 3h10m, covering the configured 3h job timeout and cleanup.
+AMD64 reconciles before ARM64. Original registration files, tokens, runner IDs,
+labels and data PVCs are retained; registration is skipped when `/data/.runner`
+already exists.
+
+The initial transition starts from ordinary Docker and runner containers, whose
+shutdown is unordered. Before enabling the new ApplicationSet registration,
+use each existing runner's authenticated `RunnerService/Declare` endpoint to
+replace its advertised labels temporarily with a unique maintenance label.
+Keep the runner daemon and Docker running while its already assigned jobs finish.
+Wait beyond the existing 30-second fetch timeout and verify that neither runner
+has active assigned tasks before reconciling the exact merged root revision.
+Do not delete registrations, change tokens, cancel builds or stop Docker to drain.
+The new daemon reads the original registration file and advertises its original
+labels automatically. If rollout is abandoned, wait for assigned jobs to finish and gracefully
+restart only the idle runner process while leaving Docker running. The daemon
+then redeclares its original labels and starts a fresh polling cursor with the
+same registration. Verify labels and recent heartbeats for runner IDs 4 and 5 after rollout, plus the original PVC/Secret and
+registration-file identities.
+
+Before this transition, Docker 29.8.0 was tested on both native architectures with
+an isolated daemon, imported image, container execution and cleanup. The workflow
+compatibility audit covered the existing Bilig and Tsag workflow definitions.
+Live acceptance must additionally execute a non-publishing local workflow through
+the new runner and Docker daemon on each architecture.
+
+Sources: [Runner 13 changes](https://forgejo.org/2026-08-runner-release-v13/),
+[Docker 29 storage behavior](https://docs.docker.com/engine/storage/containerd/),
+[Kubernetes native sidecar lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/).

@@ -1,7 +1,29 @@
-import { Data, Duration, Effect, Result, Schema } from 'effect'
+import type { ReconciliationRuntime } from './model'
+import { CandidateObservationStore } from './candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClient } from '../jev/client'
+import { decideJevEntry } from '../jev/decision'
+import type { JevExitTarget } from '../jev/exit'
+import { decodeJevProtocol } from '../jev/protocol'
+import { decodeJevPortfolio, JevPurpose } from '../jev/portfolio'
+import {
+  compileJevEntry,
+  evaluateJevObservation,
+  JevAwaitingEvidence,
+  JevAwaitingFreshWindow,
+  jevObservationQuery,
+  jevPricingQuery,
+} from '../jev/runtime'
+import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
+import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contract'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
 import {
   BrokerRead,
+  BrokerReadError,
+  BrokerReadErrorKind,
   type BrokerReadShape,
   type MarketCalendarObservation,
   type MarketCalendarQuery,
@@ -16,6 +38,7 @@ import {
   type CyclePassObservation,
 } from '../cycle/runner'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
+import { DecisionReadinessReason, snapshotReadiness, type DecisionReadiness } from '../cycle/runner/readiness'
 import {
   bindCycleExecutionSession,
   type ExecutionSessionBinding,
@@ -23,12 +46,9 @@ import {
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import {
-  IntradaySnapshotPurpose,
-  persistIntradaySnapshotRows,
-  type PersistedIntradaySnapshotRows,
-} from '../market-data'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type PersistedIntradaySnapshotRows } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
+import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
@@ -39,7 +59,14 @@ import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../executi
 import { legacyRiskPolicySchemaVersion, legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
-import { BrokerMode, decodePolicy, executionRiskPolicySchemaVersion, type Policy, type State } from '../risk'
+import {
+  BrokerMode,
+  decodePolicy,
+  executionRiskPolicySchemaVersion,
+  type Policy,
+  type State,
+  type EntryQuoteFreshness,
+} from '../risk'
 import {
   buildObserveShadowDecision,
   buildExecutionDecision,
@@ -70,13 +97,7 @@ import {
   type TargetPlannerFailure,
   type TargetPlanResult,
 } from '../target-planner'
-import {
-  decodeIntradayMomentumProtocol,
-  makeIntradayMomentumDefinition,
-  strategyDefinition,
-  type IntradayMomentumStrategyDefinition,
-  type StrategyRuntime,
-} from '../strategy'
+import { strategyDefinition, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import { defaultExecutionModel } from '../strategy/execution-model/model'
 import type { DecisionPlan, IsoDate } from '../types'
@@ -85,20 +106,10 @@ import {
   adverseClosingQuotePrices,
   executionMarketDataBinding,
   loadIntradaySnapshot,
-  requireFreshIntradayPositionQuotes,
+  IntradayMarketDataFailure,
 } from './intraday-market-data'
-import {
-  compileIntradayMomentumDecision,
-  evaluateIntradayMomentumDecision,
-  IntradayMomentumCloseAwaitingSnapshot,
-  IntradayMomentumEntryAwaitingSnapshot,
-  intradayMomentumCloseQuery,
-  intradayMomentumEntryDisposition,
-  intradayMomentumEntryQuery,
-  intradayMomentumPricingQuery,
-} from './intraday-momentum-decision'
 import { Pipeable } from '../pipeable'
-import type { ObserveAutonomousCycleInput, ObserveDecisionRuntime, ObserveStartupPreparation } from './model'
+import type { ObserveAutonomousCycleInput, ObserveStartupPreparation } from './model'
 
 const dollarsToMicros = (dollars: bigint): string => (dollars * 1_000_000n).toString()
 
@@ -165,9 +176,37 @@ export type ReconciliationPassError = Effect.Error<typeof runOnce> | Reconciliat
 
 export const boundedReconciliationPass = (
   timeoutMs: number,
-): Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime> =>
-  runOnce.pipe(
-    Effect.timeoutOrElse({
+): Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime> =>
+  Effect.gen(function* () {
+    const read = yield* BrokerRead
+    const readBudgetMs = Math.max(1, Math.floor(timeoutMs / 3))
+    const bounded = <A>(operation: BrokerReadError['operation'], request: Effect.Effect<A, BrokerReadError>) =>
+      request.pipe(
+        Effect.timeoutOrElse({
+          duration: readBudgetMs,
+          orElse: () =>
+            Effect.fail(
+              new BrokerReadError({
+                operation,
+                kind: BrokerReadErrorKind.Timeout,
+                retryable: true,
+                message: `Reconciliation ${operation} read exceeded its ${readBudgetMs}ms budget`,
+              }),
+            ),
+        }),
+      )
+    return yield* runOnce.pipe(
+      Effect.provideService(BrokerRead, {
+        ...read,
+        account: bounded('account', read.account),
+        positions: bounded('positions', read.positions),
+        orders: (query) => bounded('orders', read.orders(query)),
+        fillActivities: (query) => bounded('fill-activities', read.fillActivities(query)),
+        feeActivities: (query) => bounded('fee-activities', read.feeActivities(query)),
+      }),
+    )
+  }).pipe(
+    operationTimeoutOrElse({
       duration: timeoutMs,
       orElse: () =>
         Effect.fail(
@@ -186,16 +225,37 @@ export const mutationCyclePassTimeoutError = (timeoutMs: number): CycleRunnerErr
     message: `mutation autonomous cycle pass did not complete or reconcile within ${timeoutMs.toString()}ms`,
   })
 
+const mutationPassBudget = Context.Reference<{ readonly startedAt: number; readonly deadlineAt: number } | undefined>(
+  'bayn/MutationPassBudget',
+  { defaultValue: () => undefined },
+)
+
 export const runMutationPassWithinTimeout = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   timeoutMs: number,
 ): Effect.Effect<A, E | CycleRunnerError, R> =>
-  effect.pipe(
-    Effect.timeoutOrElse({
-      duration: Duration.millis(timeoutMs),
-      orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
-    }),
-  )
+  Effect.gen(function* () {
+    const startedAt = yield* operationCurrentTimeMillis
+    const parentBudget = yield* mutationPassBudget
+    return yield* effect.pipe(
+      Effect.provideService(mutationPassBudget, {
+        startedAt: parentBudget?.startedAt ?? startedAt,
+        deadlineAt: Math.min(parentBudget?.deadlineAt ?? Infinity, startedAt + timeoutMs),
+      }),
+      operationTimeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        orElse: () => Effect.fail(mutationCyclePassTimeoutError(timeoutMs)),
+      }),
+    )
+  })
+
+export type PricingReconciliationRead<R = never> = (
+  minimumRemainingMs: number,
+) => Effect.Effect<
+  { readonly reconciliation: ReconciliationPassResult; readonly freshUntil: number | undefined },
+  ReconciliationPassError,
+  R
+>
 
 export type ObserveDecisionInput<R = never> = {
   readonly authorityGenerationHash: string
@@ -203,6 +263,8 @@ export type ObserveDecisionInput<R = never> = {
   readonly executionModel: CycleExecutionModel
   readonly policy: Policy
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
+  /** Refresh before pricing when the pass cache lacks quote headroom, preserving broker-risk freshness. */
+  readonly reconcileForPricing?: PricingReconciliationRead<R>
   readonly strategy: ObserveStrategy
   readonly intradayMarketData?: import('../market-data').IntradayMarketDataService
   /** Worst-case delay required to run and durably bind one final decision before the submission cutoff. */
@@ -211,6 +273,7 @@ export type ObserveDecisionInput<R = never> = {
 
 export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDecisionAwaitingSignal')<{
   readonly message: string
+  readonly readiness: DecisionReadiness
   readonly observedAt: string
   readonly submissionCutoffAt: string
 }> {}
@@ -218,7 +281,35 @@ export class ObserveDecisionAwaitingSignal extends Data.TaggedError('ObserveDeci
 export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('ExecutionCloseAwaitingMarketData')<{
   readonly message: string
   readonly observedAt: string
+  readonly readiness?: DecisionReadiness
+  readonly cause?: unknown
+  /** A verified snapshot exists, but its executable quote must be refreshed. */
+  readonly quotePending?: boolean
 }> {}
+
+export const executionCloseMarketDataDiagnostics = (failure: ExecutionCloseAwaitingMarketData) => {
+  const cause = failure.cause
+  const snapshotFailure =
+    cause instanceof OperationalError && cause.cause instanceof IntradaySnapshotFailure ? cause.cause : undefined
+  return {
+    reason: failure.message,
+    observedAt: failure.observedAt,
+    ...(cause instanceof OperationalError
+      ? { component: cause.component, operation: cause.operation }
+      : cause instanceof IntradayMarketDataFailure
+        ? { component: 'market-data', operation: cause.operation }
+        : {}),
+    ...(snapshotFailure === undefined
+      ? {}
+      : {
+          snapshotFailure: snapshotFailure.reason,
+          ...(snapshotFailure.ingestionDelayDirection === undefined
+            ? {}
+            : { ingestionDelayDirection: snapshotFailure.ingestionDelayDirection }),
+        }),
+    ...(failure.readiness === undefined ? {} : { readiness: JSON.stringify(failure.readiness) }),
+  }
+}
 
 type MarketCalendarRead = Effect.Success<ReturnType<BrokerReadShape['marketCalendar']>>
 type CycleCalendarQueryFailure = Result.Result.Failure<ReturnType<typeof marketCalendarQueryFromSession>>
@@ -352,7 +443,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
   switch (cause._tag) {
     case 'OperationalError':
       if (isIntradaySnapshotPending(cause.cause)) {
-        return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
+        return new CycleDecisionBuildError({
+          failure: 'not-ready',
+          message: cause.message,
+          readiness: snapshotReadiness(cause.cause),
+          cause,
+        })
       }
       return new CycleDecisionBuildError({
         failure: operationalDecisionFailure(cause.component),
@@ -368,7 +464,12 @@ export const decisionBuildError = (cause: ObserveDecisionFailure): CycleDecision
     case 'ExecutionSessionBindingFailure':
       return new CycleDecisionBuildError({ failure: 'contract', message: cause.message, cause })
     case 'ObserveDecisionAwaitingSignal':
-      return new CycleDecisionBuildError({ failure: 'not-ready', message: cause.message, cause })
+      return new CycleDecisionBuildError({
+        failure: 'not-ready',
+        message: cause.message,
+        readiness: cause.readiness,
+        cause,
+      })
     case 'ObserveDecisionCompositionFailure':
     case 'ShadowDecisionError':
     case 'TargetPlannerFailure':
@@ -673,8 +774,10 @@ const prepareExecutionSessionBinding = <R>(
 }
 
 type CompiledObserveStrategyDecision = {
+  readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly decision: RuntimeStrategyDecision
   readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
+  readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
   /** Compatibility identity for the existing planner; intraday decisions remain bound separately to execution date. */
   readonly signalDate: SignalSessionReferencePrices['signalDate']
   readonly priceMicros: Readonly<Record<string, string>>
@@ -687,40 +790,47 @@ type CompiledObserveStrategyDecision = {
   readonly executionMarketData?: import('../shadow-decision-contract').ExecutionMarketDataBinding
 }
 
-const intradayMomentumDefinition = (
-  strategy: StrategyRuntime,
-): Result.Result<IntradayMomentumStrategyDefinition, OperationalError> => {
+const nativeJevProtocol = (strategy: StrategyRuntime) => {
   const definition = strategyDefinition(strategy)
-  if (definition.name !== 'intraday-momentum' || definition.holdingPeriod !== 'INTRADAY') {
+  if (definition.name !== 'jev' || definition.holdingPeriod !== 'INTRADAY')
     return Result.fail(
       operationalError({
         component: 'strategy',
         operation: 'current-decision',
-        message: `strategy ${definition.name} is not the full-session intraday strategy`,
+        message: 'Native execution requires the Jev intraday strategy',
       }),
     )
-  }
-  return Result.mapError(
-    Result.map(decodeIntradayMomentumProtocol(definition.parameters), makeIntradayMomentumDefinition),
-    (cause) =>
+  return decodeJevProtocol(definition.parameters).pipe(
+    Result.mapError((cause) =>
       operationalError({
         component: 'strategy',
         operation: 'current-decision',
-        message: 'intraday-momentum runtime parameters are invalid',
+        message: 'Native Jev parameters are invalid',
         cause,
       }),
+    ),
   )
 }
+
+type JevDecisionServices = CandidateObservationStore | JevBatchStore | JevEvaluationStore | JevClient
+
+const snapshotQueryReadiness = (query: IntradaySnapshotQuery) => ({
+  rangeStartAt: query.rangeStartAt,
+  rangeEndAt: query.rangeEndAt,
+  symbols: query.symbols ?? query.universe,
+})
 
 const classifyIntradayEntrySnapshotFailure = (
   cause: OperationalError,
   observedAt: string,
   submissionCutoffAt: string,
+  query: IntradaySnapshotQuery,
 ): OperationalError | ObserveDecisionAwaitingSignal => {
   const snapshotFailure = cause.cause
   return isIntradaySnapshotPending(snapshotFailure)
     ? new ObserveDecisionAwaitingSignal({
         message: snapshotFailure.message,
+        readiness: { ...snapshotReadiness(snapshotFailure), snapshotQuery: snapshotQueryReadiness(query) },
         observedAt,
         submissionCutoffAt,
       })
@@ -729,156 +839,162 @@ const classifyIntradayEntrySnapshotFailure = (
 
 const compileObserveStrategyDecision = <R>(
   input: ObserveDecisionInput<R>,
-  facts: ObserveDecisionFacts,
+  initialFacts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
-): Effect.Effect<CompiledObserveStrategyDecision, OperationalError | ObserveDecisionAwaitingSignal> => {
-  return Effect.gen(function* () {
-    const intradayMarketData = input.intradayMarketData
-    if (intradayMarketData === undefined) {
+  requiredAuthority: DecisionAuthorityRequirement,
+): Effect.Effect<
+  { readonly compiled: CompiledObserveStrategyDecision; readonly facts: ObserveDecisionFacts },
+  OperationalError | ObserveDecisionAwaitingSignal | ObserveDecisionCompositionFailure,
+  JevDecisionServices | R
+> =>
+  Effect.gen(function* () {
+    const marketData = input.intradayMarketData
+    if (marketData === undefined)
       return yield* operationalError({
         component: 'market-data',
         operation: 'current-decision',
-        message: 'intraday-momentum runtime has no injected intraday archive reader',
+        message: 'Jev requires the native market-data reader',
       })
-    }
-    const intradayDefinition = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy))
-    const heldPositions = facts.reconciliation.brokerState.positions.filter(
-      (position) => BigInt(position.quantityMicros) !== 0n,
+    const protocol = yield* Effect.fromResult(nativeJevProtocol(input.strategy))
+    if (initialFacts.reconciliation.riskContext.unknownMutationCount !== 0)
+      return yield* operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'Unresolved broker mutations prevent Jev entry',
+      })
+    const portfolio = yield* Effect.fromResult(
+      decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initialFacts.reconciliation.brokerState }),
     )
-    const strategyUniverse = new Set(intradayDefinition.parameters.universe)
-    const planningHeldPositions = heldPositions.filter((position) => strategyUniverse.has(position.symbol))
-    const heldSymbols = planningHeldPositions.map((position) => position.symbol)
-    const decisionQuery = yield* Effect.fromResult(
-      intradayMomentumEntryQuery(
-        input.cycle,
-        intradayDefinition.parameters,
-        executionSession.calendar,
-        facts.evaluatedAt,
-      ),
-    ).pipe(
+    const query = yield* Effect.fromResult(
+      jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt),
+    )
+    const snapshot = yield* loadIntradaySnapshot(marketData, query).pipe(
       Effect.mapError((cause) =>
-        cause instanceof IntradayMomentumEntryAwaitingSnapshot
-          ? new ObserveDecisionAwaitingSignal({
-              message: cause.message,
-              observedAt: facts.evaluatedAt,
-              submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-            })
-          : operationalError({
-              component: 'market-data',
-              operation: 'current-decision',
-              message: cause.message,
-              cause,
-            }),
+        classifyIntradayEntrySnapshotFailure(
+          cause,
+          initialFacts.evaluatedAt,
+          input.cycle.window.submissionCutoffAt,
+          query,
+        ),
       ),
     )
-    const decisionSnapshot = yield* loadIntradaySnapshot(intradayMarketData, decisionQuery).pipe(
-      Effect.mapError((cause) =>
-        classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
-      ),
-    )
-    const decision = yield* Effect.fromResult(
-      evaluateIntradayMomentumDecision(intradayDefinition, input.cycle, decisionSnapshot),
-    ).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof IntradayMomentumEntryAwaitingSnapshot
-          ? new ObserveDecisionAwaitingSignal({
-              message: cause.message,
-              observedAt: facts.evaluatedAt,
-              submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-            })
-          : operationalError({
-              component: 'strategy',
-              operation: 'current-decision',
-              message: cause.message,
-              cause,
-            }),
-      ),
-    )
-    yield* Effect.logInfo({
-      event: 'bayn.intraday-candidate-observation.v1',
+    const evidence = yield* evaluateJevObservation({
       cycleId: input.cycle.identity.cycleId,
       authorityGenerationHash: input.authorityGenerationHash,
-      observedAt: facts.evaluatedAt,
-      manifest: decisionSnapshot.manifest,
-      decision,
+      protocol,
+      portfolio,
+      snapshot,
     })
-    if (decision.signals.length === 0 && heldPositions.length === 0) {
-      return yield* new ObserveDecisionAwaitingSignal({
-        message: 'intraday entry is waiting for at least one available candidate signal',
-        observedAt: facts.evaluatedAt,
-        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-      })
-    }
-    const pricingSymbols = [
-      ...new Set([
-        ...Object.entries(decision.targetWeights)
-          .filter(([, targetWeight]) => targetWeight > 0)
-          .map(([symbol]) => symbol),
-        ...heldSymbols,
-      ]),
-    ].sort()
-    const pricingSnapshot =
-      pricingSymbols.length === 0
-        ? decisionSnapshot
-        : yield* Effect.gen(function* () {
-            const pricingQuery = yield* Effect.fromResult(
-              intradayMomentumPricingQuery(
-                input.cycle,
-                intradayDefinition.parameters,
-                executionSession.calendar,
-                facts.evaluatedAt,
-                decisionSnapshot.manifest.rangeEndAt,
-                pricingSymbols,
-              ),
-            ).pipe(
-              Effect.mapError((cause) =>
-                operationalError({
-                  component: 'market-data',
-                  operation: 'current-decision',
-                  message: cause.message,
-                  cause,
-                }),
-              ),
-            )
-            return yield* loadIntradaySnapshot(intradayMarketData, pricingQuery).pipe(
-              Effect.mapError((cause) =>
-                classifyIntradayEntrySnapshotFailure(cause, facts.evaluatedAt, input.cycle.window.submissionCutoffAt),
-              ),
-            )
-          })
-    const compiled = yield* Effect.fromResult(
-      Result.flatMap(
-        requireFreshIntradayPositionQuotes(pricingSnapshot, facts.reconciliation.brokerState.positions),
-        () => compileIntradayMomentumDecision(decision, decisionSnapshot, pricingSnapshot, planningHeldPositions),
-      ),
-    ).pipe(
-      Effect.mapError((cause) =>
-        operationalError({
-          component: 'strategy',
-          operation: 'current-decision',
-          message: cause.message,
-          cause,
-        }),
-      ),
-    )
+    const decision = yield* Effect.fromResult(decideJevEntry(evidence))
     if (
-      input.decisionFinalizationHeadroomMs !== undefined &&
-      intradayMomentumEntryDisposition(
-        compiled.decision,
-        heldPositions.length > 0,
-        input.cycle.window.submissionCutoffAt,
-        input.decisionFinalizationHeadroomMs,
-      ) === 'AWAIT_SIGNAL'
-    ) {
-      return yield* new ObserveDecisionAwaitingSignal({
-        message: 'full-session intraday entry remains armed while a qualifying signal can still arrive',
-        observedAt: facts.evaluatedAt,
-        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+      decision.selectedSymbols.length === 0 &&
+      Date.parse(input.cycle.window.submissionCutoffAt) - Date.parse(evidence.decidedAt) >
+        (input.decisionFinalizationHeadroomMs ?? 0)
+    )
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev entry remains armed for a qualifying fresh signal',
+        readiness: DecisionReadinessReason.NoEligibleCandidate,
       })
+    const pricingReconciliation =
+      decision.selectedSymbols.length === 0 || input.reconcileForPricing === undefined
+        ? undefined
+        : yield* input
+            .reconcileForPricing(protocol.maximumQuoteAgeMs)
+            .pipe(Effect.mapError(reconciliationOperationalError))
+    const reconciliation =
+      pricingReconciliation?.reconciliation ??
+      (yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError)))
+    yield* Effect.fromResult(decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }))
+    if (reconciliation.riskContext.unknownMutationCount !== 0)
+      return yield* operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'Broker mutations changed during Jev inference',
+      })
+    yield* Effect.fromResult(
+      requireDecisionAuthority(reconciliation, input.policy, input.authorityGenerationHash, requiredAuthority),
+    )
+    if (pricingReconciliation !== undefined && pricingReconciliation.freshUntil === undefined)
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev entry awaits reconciliation covering the execution quote lifetime',
+        readiness: DecisionReadinessReason.InferenceUnavailable,
+      })
+    const pricingAt = yield* currentUtcInstant
+    if (
+      pricingAt >= evidence.batchPlan.expiresAt ||
+      (pricingReconciliation?.freshUntil !== undefined &&
+        Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
+    )
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        readiness: DecisionReadinessReason.InferenceUnavailable,
+      })
+    const pricingQuery =
+      decision.selectedSymbols.length === 0
+        ? undefined
+        : yield* Effect.fromResult(
+            jevPricingQuery(input.cycle, protocol, executionSession.calendar, pricingAt, decision.selectedSymbols),
+          )
+    const pricingSnapshot =
+      pricingQuery === undefined
+        ? snapshot
+        : yield* loadIntradaySnapshot(marketData, pricingQuery).pipe(
+            Effect.mapError((cause) =>
+              classifyIntradayEntrySnapshotFailure(
+                cause,
+                pricingAt,
+                input.cycle.window.submissionCutoffAt,
+                pricingQuery,
+              ),
+            ),
+          )
+    const evaluatedAt = yield* currentUtcInstant
+    if (evaluatedAt >= evidence.batchPlan.expiresAt)
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        readiness: DecisionReadinessReason.InferenceUnavailable,
+      })
+    const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
+    return {
+      compiled: { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) },
+      facts: { ...initialFacts, reconciliation, evaluatedAt },
     }
-    return { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) }
-  })
-}
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof JevAwaitingFreshWindow
+        ? new ObserveDecisionAwaitingSignal({
+            message: cause.message,
+            observedAt: initialFacts.evaluatedAt,
+            submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+            readiness: {
+              reason: DecisionReadinessReason.SignalWindowObserved,
+              message: cause.message,
+              availableAt: cause.availableAt,
+            },
+          })
+        : cause instanceof JevAwaitingEvidence
+          ? new ObserveDecisionAwaitingSignal({
+              message: cause.message,
+              observedAt: initialFacts.evaluatedAt,
+              submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+              readiness: {
+                reason: cause.readiness,
+                message: cause.message,
+                ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
+              },
+            })
+          : cause instanceof OperationalError ||
+              cause instanceof ObserveDecisionAwaitingSignal ||
+              cause._tag === 'ObserveDecisionCompositionFailure'
+            ? cause
+            : operationalError({
+                component: 'strategy',
+                operation: 'current-decision',
+                message: 'Native Jev decision could not be constructed',
+                cause,
+              }),
+    ),
+  )
 
 export const prepareObservePlanner = <R>(
   input: ObserveDecisionInput<R>,
@@ -967,6 +1083,8 @@ export const prepareObservePlanner = <R>(
   )
 
 type RiskInputPreparation = {
+  readonly limitSlippageBps: number
+  readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
   readonly authorityObservation: ObserveAuthorityObservation
@@ -987,6 +1105,15 @@ const reduceRiskInputs = (
   Result.mapError(
     Result.all(
       input.targetPlan.intentTargets.map((target) => {
+        const entryQuote = input.closeOnlyExpiresAt === undefined ? input.entryQuotes?.[target.symbol] : undefined
+        if (input.closeOnlyExpiresAt === undefined && entryQuote === undefined) {
+          return Result.fail(
+            compositionFailure(
+              'shadow-risk-inputs',
+              `entry target ${target.symbol} has no bound pricing quote event time`,
+            ),
+          )
+        }
         const referencePriceMicros = input.targetPlan.targets.find(
           (planned) => planned.symbol === target.symbol,
         )?.referencePriceMicros
@@ -1007,6 +1134,7 @@ const reduceRiskInputs = (
             quantityMicros: BigInt(target.quantityMicros),
             referencePriceMicros: referencePrice,
             executionModel: input.executionModel,
+            limitSlippageBps: BigInt(input.limitSlippageBps),
           }),
           (pricing): ShadowDeltaRiskInput => {
             const state: State = {
@@ -1033,6 +1161,7 @@ const reduceRiskInputs = (
               referencePriceMicros: referencePrice.toString(),
               expectedExecutionPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
               marketDataObservedAt: input.executionMarketData?.observedAt ?? input.evaluatedAt,
+              ...(entryQuote === undefined ? {} : { entryQuote }),
               executionSession: input.executionSession,
               reservedBuyingPowerMicros: '0',
               evaluatedAt: input.evaluatedAt,
@@ -1064,8 +1193,14 @@ const reduceObserveRiskInputs = <R>(
     'contentHash' | 'observedAt'
   >,
   closeOnlyExpiresAt?: string,
+  entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>,
 ): Result.Result<readonly ShadowDeltaRiskInput[], ObserveDecisionCompositionFailure> =>
   reduceRiskInputs({
+    limitSlippageBps:
+      closeOnlyExpiresAt === undefined && authorityObservation.authority.effective === Authority.Execution
+        ? input.policy.maxAdverseSlippageBps
+        : 0,
+    ...(entryQuotes === undefined ? {} : { entryQuotes }),
     executionModel: input.executionModel,
     reconciliation: facts.reconciliation,
     authorityObservation,
@@ -1079,7 +1214,7 @@ const reduceObserveRiskInputs = <R>(
 
 export const buildObserveCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
   buildCycleDecision(input, { authorityRequirement: Authority.Observe, documentMode: Authority.Observe })
 
 type CycleDecisionRequirements =
@@ -1089,18 +1224,33 @@ type CycleDecisionRequirements =
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: { readonly authorityRequirement: Authority.Observe; readonly documentMode: Authority.Observe },
-): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
+): Effect.Effect<ObserveShadowDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: { readonly authorityRequirement: Authority.Execution; readonly documentMode: Authority.Execution },
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R>
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R>
 function buildCycleDecision<R>(
   input: ObserveDecisionInput<R>,
   requirements: CycleDecisionRequirements,
-): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | R> {
+): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
-    const facts = yield* readObserveDecisionFacts(input, readPreparation)
+    const initialFacts = yield* readObserveDecisionFacts(input, readPreparation)
+    yield* Effect.fromResult(
+      requireDecisionAuthority(
+        initialFacts.reconciliation,
+        input.policy,
+        input.authorityGenerationHash,
+        requirements.authorityRequirement,
+      ),
+    )
+    const initialSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, initialFacts))
+    const { compiled, facts } = yield* compileObserveStrategyDecision(
+      input,
+      initialFacts,
+      initialSession,
+      requirements.authorityRequirement,
+    )
     const executionAuthority = yield* Effect.fromResult(
       requireDecisionAuthority(
         facts.reconciliation,
@@ -1110,7 +1260,6 @@ function buildCycleDecision<R>(
       ),
     )
     const executionSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, facts))
-    const compiled = yield* compileObserveStrategyDecision(input, facts, executionSession)
     const planningTargetWeights = compiled.planningTargetWeights ?? compiled.decision.targetWeights
     const allowedSymbols = new Set(input.policy.allowedSymbols)
     const hasExternalPosition = facts.reconciliation.brokerState.positions.some(
@@ -1129,6 +1278,7 @@ function buildCycleDecision<R>(
                 maxNetExposureMicros: BigInt(input.policy.maxNetExposureMicros),
                 maxDailyTradedNotionalMicros: BigInt(input.policy.maxDailyTradedNotionalMicros),
                 maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
+                targetWeights: planningTargetWeights,
                 positions: facts.reconciliation.brokerState.positions,
                 referencePriceMicros: compiled.priceMicros,
               }),
@@ -1138,6 +1288,7 @@ function buildCycleDecision<R>(
                       allocationCapitalMicros: capitalMicros,
                       maxOrderNotionalMicros: BigInt(input.policy.maxOrderNotionalMicros),
                       maxSymbolExposureMicros: BigInt(input.policy.maxSymbolExposureMicros),
+                      maxAdverseSlippageBps: BigInt(input.policy.maxAdverseSlippageBps),
                       targetWeights: planningTargetWeights,
                     })
                   : Result.succeed(capitalMicros),
@@ -1178,6 +1329,8 @@ function buildCycleDecision<R>(
         targetPlan,
         snapshotContentHash,
         compiled.executionMarketData,
+        undefined,
+        compiled.entryQuotes,
       ),
     )
     const decisionMarketData = compiled.decisionMarketData ?? compiled.executionMarketData
@@ -1202,6 +1355,9 @@ function buildCycleDecision<R>(
         finalizedAt: decisionSnapshot.finalizedAt,
       },
       compiledDecision: compiled.decision,
+      ...(compiled.executionMarketDataRows === undefined
+        ? {}
+        : { executionMarketDataRows: compiled.executionMarketDataRows }),
       ...(compiled.decisionMarketDataRows === undefined
         ? {}
         : { decisionMarketDataRows: compiled.decisionMarketDataRows }),
@@ -1216,6 +1372,7 @@ function buildCycleDecision<R>(
       ? yield* buildObserveShadowDecision(decisionInput)
       : yield* buildExecutionDecision({
           ...decisionInput,
+          entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
         })
@@ -1224,7 +1381,7 @@ function buildCycleDecision<R>(
 
 export const buildMutationShadowCycleDecision = <R>(
   input: ObserveDecisionInput<R>,
-): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | R> =>
+): Effect.Effect<ExecutionDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> =>
   buildCycleDecision(input, { authorityRequirement: Authority.Execution, documentMode: Authority.Execution })
 
 export const makeClosingDecisionPlan = (
@@ -1235,7 +1392,7 @@ export const makeClosingDecisionPlan = (
   symbols: readonly string[],
 ): Result.Result<RuntimeStrategyDecision, ObserveDecisionCompositionFailure> => {
   const orderedSymbols = [...new Set(symbols)].sort()
-  if (identity.strategyName !== 'intraday-momentum') {
+  if (identity.strategyName !== 'jev') {
     return Result.fail(
       compositionFailure('cycle-binding', 'only the active intraday strategy can build close decisions'),
     )
@@ -1305,23 +1462,26 @@ export const selectClosingSymbolPass = (
     : { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
 }
 
-export interface BuildClosingExecutionCycleDecisionInput {
+export interface BuildClosingExecutionCycleDecisionInput<R = ReconciliationRuntime> {
   readonly input: ObserveAutonomousCycleInput
   readonly preparation: ObserveStartupPreparation
   readonly policy: Policy
   readonly cycle: AutonomousCycle
   readonly entryDocument: ExecutionDecisionDocument
-  readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ObserveDecisionRuntime>
+  readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
+  readonly initialReconciliation?: ReconciliationPassResult
   readonly closeExpiresAt: string
   readonly replanGenerationHash?: string
+  readonly exitTarget?: JevExitTarget
 }
 
-export const buildClosingExecutionCycleDecision = (
-  request: BuildClosingExecutionCycleDecisionInput,
+const buildClosingExecutionCycleDecisionWithSource = <R>(
+  request: BuildClosingExecutionCycleDecisionInput<R>,
+  source: 'archive' | 'reconciled-position',
 ): Effect.Effect<
-  ExecutionDecisionDocument,
+  { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
   CycleRunnerError | ExecutionCloseAwaitingMarketData,
-  ObserveDecisionRuntime
+  R
 > => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
@@ -1332,9 +1492,31 @@ export const buildClosingExecutionCycleDecision = (
         failure: 'contract',
       })
     }
-    const reconciliation = yield* reconcile.pipe(
-      Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')),
+    const intradayParameters = yield* Effect.fromResult(nativeJevProtocol(input.strategy)).pipe(
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const requireFallbackWindow = (observedAt: string) => {
+      const closeAt = Date.parse(cycle.window.executionCloseAt)
+      const observed = Date.parse(observedAt)
+      return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
+        observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000 &&
+        observedAt < closeExpiresAt
+        ? Effect.void
+        : Effect.fail(
+            new ExecutionCloseAwaitingMarketData({
+              message: 'reconciled-position fallback is outside the authorized close window',
+              observedAt,
+            }),
+          )
+    }
+    // Sample after the archive attempt: it may have crossed into the close window. Outside that
+    // window a second reconciliation cannot authorize this fallback and only delays the next pass.
+    if (source === 'reconciled-position') yield* requireFallbackWindow(yield* currentUtcInstant)
+    const reconciliation = yield* (
+      source === 'archive' && request.initialReconciliation !== undefined
+        ? Effect.succeed(request.initialReconciliation)
+        : reconcile
+    ).pipe(Effect.mapError((cause) => reconciliationRunnerError(cause, 'execution close reconciliation failed')))
     const evaluatedAt = yield* currentUtcInstant
     const executionAuthority = yield* Effect.fromResult(
       requireMutationAuthorityGeneration(reconciliation, policy, input.authorityGenerationHash),
@@ -1353,22 +1535,31 @@ export const buildClosingExecutionCycleDecision = (
         failure: 'contract',
       })
     }
-    const intradayParameters = yield* Effect.fromResult(intradayMomentumDefinition(input.strategy)).pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-      Effect.map((definition) => definition.parameters),
-    )
+    // Reconciliation can cross the deadline; the early guard never replaces this final check.
+    if (source === 'reconciled-position') yield* requireFallbackWindow(evaluatedAt)
     const entryMarketData = entryDocument.bindings.executionMarketData
-    const persistedUniverse =
-      entryMarketData?.schemaVersion === 'bayn.execution-market-data-binding.v2' ? entryMarketData.universe : undefined
+    const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
+      ? entryMarketData.universe
+      : undefined
     const closingPass = selectClosingSymbolPass(
       reconciliation.brokerState.positions,
       persistedUniverse ?? intradayParameters.universe,
     )
     const symbols = closingPass.symbols
     const requiresFractionalClose = closingPass.kind === 'fractional'
-    const closeDecision = yield* Effect.fromResult(makeClosingDecisionPlan(cycle.identity, symbols)).pipe(
-      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
-    )
+    const closeDecision = yield* Effect.fromResult(
+      request.exitTarget === undefined
+        ? makeClosingDecisionPlan(cycle.identity, symbols)
+        : request.exitTarget.cycleId === cycle.identity.cycleId &&
+            request.exitTarget.entryDecisionHash === entryDocument.contentHash &&
+            request.exitTarget.sessionDate === cycle.identity.executionSessionDate &&
+            symbols.length === request.exitTarget.symbols.length &&
+            symbols.every((symbol, index) => symbol === request.exitTarget?.symbols[index])
+          ? Result.succeed(request.exitTarget)
+          : Result.fail(
+              compositionFailure('cycle-binding', 'Jev exit target does not match this entry and remaining position'),
+            ),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const closeDecisionHash = yield* Effect.fromResult(
       hashObserveMaterial('compiled-decision-hash', 'close decision is not canonicalizable', closeDecision),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -1392,7 +1583,7 @@ export const buildClosingExecutionCycleDecision = (
         }),
     )
     const closeExecutionMarketData = yield* Effect.gen(function* () {
-      if (closingPass.kind === 'broker-position') {
+      if (closingPass.kind === 'broker-position' || source === 'reconciled-position') {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
         ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
@@ -1419,32 +1610,87 @@ export const buildClosingExecutionCycleDecision = (
         })
       }
       const query = yield* Effect.fromResult(
-        intradayMomentumCloseQuery(cycle, intradayParameters, executionSession.calendar, evaluatedAt, symbols),
+        jevPricingQuery(
+          cycle,
+          intradayParameters,
+          executionSession.calendar,
+          evaluatedAt,
+          symbols,
+          IntradaySnapshotPurpose.Liquidation,
+        ),
       ).pipe(
         Effect.mapError((cause) =>
-          cause instanceof IntradayMomentumCloseAwaitingSnapshot
-            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+          cause instanceof JevAwaitingEvidence
+            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt, cause })
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
+      const archiveMarketAt = yield* Clock.currentTimeMillis
+      const archiveStartedAt = yield* operationCurrentTimeMillis
+      const passBudget = yield* mutationPassBudget
+      const remainingMs = Math.min(
+        input.reconciliationPassTimeoutMs,
+        input.reconciliationIntervalMs,
+        Date.parse(closeExpiresAt) - archiveMarketAt,
+        (passBudget?.deadlineAt ?? Infinity) - archiveStartedAt,
+      )
+      // Reserve twice the observed preparatory work for a fresh reconciliation and close construction.
+      const fallbackReserveMs =
+        passBudget === undefined ? remainingMs / 2 : 2 * (archiveStartedAt - passBudget.startedAt)
       const snapshot = yield* loadIntradaySnapshot(input.intradayMarketData, query).pipe(
+        operationTimeoutOrElse({
+          duration: Duration.millis(
+            Math.max(1, Math.floor(Math.min(remainingMs / 2, remainingMs - fallbackReserveMs))),
+          ),
+          orElse: () =>
+            Effect.fail(
+              new ExecutionCloseAwaitingMarketData({
+                message: 'closing archive read exhausted its share of the remaining execution pass',
+                observedAt: evaluatedAt,
+              }),
+            ),
+        }),
         Effect.mapError((cause) =>
-          isIntradaySnapshotPending(cause.cause)
-            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
-            : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
+          cause instanceof ExecutionCloseAwaitingMarketData
+            ? cause
+            : isIntradaySnapshotPending(cause.cause) ||
+                (cause.component === 'market-data' &&
+                  cause.retryable &&
+                  !(cause.cause instanceof IntradaySnapshotFailure))
+              ? new ExecutionCloseAwaitingMarketData({
+                  message: cause.message,
+                  observedAt: evaluatedAt,
+                  cause,
+                  ...(isIntradaySnapshotPending(cause.cause) ? { readiness: snapshotReadiness(cause.cause) } : {}),
+                })
+              : mutationRunnerError({ message: 'execution close market-data read failed', cause }),
         ),
       )
       const quotePrices = yield* Effect.fromResult(adverseClosingQuotePrices(snapshot, symbols)).pipe(
         Effect.mapError((cause) =>
           cause.operation === 'close-quote-not-ready'
-            ? new ExecutionCloseAwaitingMarketData({ message: cause.message, observedAt: evaluatedAt })
+            ? new ExecutionCloseAwaitingMarketData({
+                message: cause.message,
+                observedAt: evaluatedAt,
+                cause,
+                quotePending: cause.eventAt !== undefined,
+                readiness: {
+                  reason:
+                    cause.eventAt === undefined
+                      ? DecisionReadinessReason.SnapshotUnavailable
+                      : DecisionReadinessReason.SnapshotStale,
+                  message: cause.message,
+                  ...(cause.symbol === undefined ? {} : { symbol: cause.symbol }),
+                  ...(cause.eventAt === undefined ? {} : { eventAt: cause.eventAt }),
+                },
+              })
             : mutationRunnerError({ message: cause.message, cause, failure: 'contract' }),
         ),
       )
       const binding = yield* Effect.fromResult(executionMarketDataBinding(snapshot)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
-      const decisionMarketDataRows = yield* Effect.fromResult(persistIntradaySnapshotRows(snapshot)).pipe(
+      const decisionMarketDataRows = yield* Effect.fromResult(persistIntradayRecordRows(snapshot)).pipe(
         Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
       )
       return { binding, ...quotePrices, decisionMarketDataRows }
@@ -1524,8 +1770,11 @@ export const buildClosingExecutionCycleDecision = (
     const targetPlan = yield* Effect.fromResult(planTargets(plannerInput)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
+    const closeLimitSlippageBps =
+      reconciledPositionClose || requiresFractionalClose ? undefined : policy.maxAdverseSlippageBps
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
+        limitSlippageBps: closeLimitSlippageBps ?? 0,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,
@@ -1537,7 +1786,7 @@ export const buildClosingExecutionCycleDecision = (
         closeOnlyExpiresAt: closeExpiresAt,
       }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    return yield* buildExecutionDecision({
+    const document = yield* buildExecutionDecision({
       cycle,
       snapshot: {
         snapshotId: entryDocument.bindings.snapshotId,
@@ -1552,6 +1801,7 @@ export const buildClosingExecutionCycleDecision = (
       plannerInput,
       targetPlan,
       policy,
+      ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
       riskInputs,
       authorityGenerationHash: input.authorityGenerationHash,
       executionSession,
@@ -1567,8 +1817,27 @@ export const buildClosingExecutionCycleDecision = (
         })
       }),
     )
+    return { document, reconciliation }
   })
 }
+
+export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExecutionCycleDecisionInput<R>) =>
+  buildClosingExecutionCycleDecisionWithSource(request, 'archive').pipe(
+    Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
+      buildClosingExecutionCycleDecisionWithSource(request, 'reconciled-position').pipe(
+        // An unavailable fallback must not erase the archive/quote failure that caused this wait.
+        Effect.catchTag('ExecutionCloseAwaitingMarketData', () => Effect.fail(failure)),
+        Effect.tap(() =>
+          Effect.logWarning('Execution close used reconciled positions after archive evidence was unavailable').pipe(
+            Effect.annotateLogs({ cycleId: request.cycle.identity.cycleId, reason: failure.message }),
+          ),
+        ),
+      ),
+    ),
+  )
+
+export const buildClosingExecutionCycleDecision = <R>(request: BuildClosingExecutionCycleDecisionInput<R>) =>
+  prepareClosingExecutionCycleDecision(request).pipe(Effect.map(({ document }) => document))
 
 export const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],

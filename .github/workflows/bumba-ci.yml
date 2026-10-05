@@ -8,6 +8,18 @@ on:
       - 'services/bumba/**'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
+      - '.github/workflows/bumba-ci.yml'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - 'nix/check-bun-dependency-closure.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
+      - 'bun.lock'
+      - '**/package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
@@ -17,6 +29,18 @@ on:
       - 'services/bumba/**'
       - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
+      - '.github/workflows/bumba-ci.yml'
+      - '.github/workflows/nix-bun-dependency-closure.yml'
+      - 'nix/check-bun-dependency-closure.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/bun-workspace-deps-source.nix'
+      - 'nix/images/bun-workspace-deps-source.test.sh'
+      - 'nix/images/prune-bun-dependency-metadata.sh'
+      - 'bun.lock'
+      - '**/package.json'
+      - 'bunfig.toml'
+      - '.npmrc'
+      - 'patches/**'
       - '.github/workflows/nix-oci-build-common.yml'
       - 'packages/scripts/src/shared/oci.ts'
       - 'nix/oci-push.sh'
@@ -32,7 +56,7 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/common-monorepo.yml
     with:
-      bun-version: 1.4.0
+      bun-version: 1.4.2
       node-version: 24.11.1
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk && bun run --filter @proompteng/temporal-bun-sdk build
       lint-command: bunx oxfmt --check services/bumba packages/scripts/src/bumba argocd/applications/bumba
@@ -66,12 +90,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bumba --filter @proompteng/temporal-bun-sdk
       - run: bun run --filter @proompteng/temporal-bun-sdk build
       - run: bun test services/bumba/src/atlas/reconciliation.integration.test.ts
 
+  dependency-closure:
+    uses: ./.github/workflows/nix-bun-dependency-closure.yml
+    with:
+      service: bumba
+    secrets: inherit
+
   nix-image:
+    needs: dependency-closure
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||

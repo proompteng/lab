@@ -8,6 +8,7 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Option,
   Ref,
   Result,
   Scope,
@@ -15,7 +16,12 @@ import {
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
-import type { RetainedAutonomousCyclePassObservation } from '../cycle/runner/pass-observation'
+import {
+  maximumRetainedJevObservationReferences,
+  type RetainedAutonomousCyclePassObservation,
+} from '../cycle/runner/pass-observation'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -44,6 +50,8 @@ import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeAutonomousServiceRuntime } from './autonomous-runtime'
 import { AutonomousWorkerApplicationResourcesLive, ExecutionControllerStatusResourceLive } from './resources'
+import { makeResearchCaptureSession } from '../research-capture/session'
+import { researchCaptureSessionConfig } from '../research-capture/session-config'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -110,7 +118,69 @@ const bindRecoveryFirstCycleDriver = (
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
-      advance: Effect.provideContext(driver.advance, context),
+      advance: Effect.gen(function* () {
+        const hashes = new Set<string>()
+        let complete = true
+        const observe = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: (value: A) => string | null) =>
+          effect.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                try {
+                  if (Exit.isFailure(exit)) {
+                    complete = false
+                    return
+                  }
+                  const hash = reference(exit.value)
+                  if (hash === null) return
+                  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+                    complete = false
+                    return
+                  }
+                  if (hashes.has(hash)) return
+                  if (hashes.size === maximumRetainedJevObservationReferences) {
+                    complete = false
+                    return
+                  }
+                  hashes.add(hash)
+                } catch {
+                  // Evidence collection must not change the store result or trading behavior.
+                  complete = false
+                }
+              }),
+            ),
+          )
+        let observedContext = context
+        const observations = Context.getOption(context, CandidateObservationStore)
+        if (Option.isSome(observations)) {
+          const store = observations.value
+          observedContext = Context.add(observedContext, CandidateObservationStore, {
+            record: (observation) =>
+              observe(store.record(observation), () =>
+                observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
+              ),
+            latestJevWindowEnd: (input) => observe(store.latestJevWindowEnd(input), () => null),
+          })
+        } else complete = false
+        const batches = Context.getOption(context, JevBatchStore)
+        if (Option.isSome(batches)) {
+          const store = batches.value
+          observedContext = Context.add(observedContext, JevBatchStore, {
+            read: (batchId) =>
+              observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
+            pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
+            begin: (plan) => observe(store.begin(plan), (batch) => batch.plan.observationHash),
+            finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
+          })
+        } else complete = false
+        const advanced = yield* Effect.provideContext(driver.advance, observedContext)
+        return {
+          ...advanced,
+          observation: {
+            ...advanced.observation,
+            jevObservationReferences: { hashes: [...hashes].sort(), complete },
+          },
+        }
+      }),
       nextDelayMs: driver.nextDelayMs,
     })),
   )
@@ -161,8 +231,16 @@ const projectionFailure = (cause: unknown): TransientExecutionFailure =>
     cause,
   })
 
-const controllerOutcome = (outcome: 'Blocked' | 'Completed'): ExecutionControllerOutcome =>
-  outcome === 'Completed' ? ExecutionControllerOutcome.Completed : ExecutionControllerOutcome.Blocked
+const controllerOutcome = (outcome: 'Blocked' | 'Completed' | 'Waiting'): ExecutionControllerOutcome => {
+  switch (outcome) {
+    case 'Completed':
+      return ExecutionControllerOutcome.Completed
+    case 'Blocked':
+      return ExecutionControllerOutcome.Blocked
+    case 'Waiting':
+      return ExecutionControllerOutcome.Waiting
+  }
+}
 
 const legacyUnboundControllerPlanHash = '0'.repeat(64)
 
@@ -544,12 +622,6 @@ export const initializeNativeExecutionRuntime = <R, E>(
     ),
   )
 
-export const initializeNativeExecutionRuntimeForBinding = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
-  previousBinding: ExecutionControllerBinding | undefined,
-): Effect.Effect<void, NativeExecutionRuntimeError> =>
-  previousBinding === undefined ? initializeNativeExecutionRuntime(executionRunner) : Effect.void
-
 export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, ProjectionR, ProjectionE>(
   executionRuntimes: ScopedRef.ScopedRef<NativeExecutionManagedRuntime<R, E>>,
   executionResources: Layer.Layer<R | NativeExecutionManagedServices, E>,
@@ -596,8 +668,22 @@ export const acquireNativeExecutionRuntime = (
     const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
     const config: ExecutionControllerConfig =
       previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
+    const requestedCapture = yield* researchCaptureSessionConfig.pipe(Effect.result)
+    const decodedCapture = Result.isSuccess(requestedCapture) ? requestedCapture.success : undefined
+    const capture =
+      decodedCapture !== undefined && Result.isSuccess(decodedCapture)
+        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision).pipe(
+            Effect.catchCause(() =>
+              Effect.logWarning('Bayn research capture could not start; capture is disabled').pipe(
+                Effect.as(undefined),
+              ),
+            ),
+          )
+        : undefined
+    if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
+      yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
     const sharedResources = Layer.mergeAll(
-      AutonomousWorkerApplicationResourcesLive(plan),
+      AutonomousWorkerApplicationResourcesLive(plan, capture),
       ExecutionControllerStatusResourceLive(plan.config),
       makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
     )
@@ -605,13 +691,10 @@ export const acquireNativeExecutionRuntime = (
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
-    // Restate must register a replacement endpoint before its operator drains the previous version. For an exact
-    // predecessor-bound rotation, keep execution-driver preparation lazy until the first durable tick so the new
-    // endpoint becomes ready without performing trading-state startup before activation transfers controller ownership.
-    // Fresh startup has no predecessor to drain, so it still acquires the execution driver eagerly and fails closed
-    // before exposing an unusable endpoint. PostgreSQL write exclusion itself is transaction-scoped.
+    // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
+    // Endpoint registration itself neither acquires trading state nor grants execution authority.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
-    yield* initializeNativeExecutionRuntimeForBinding(ScopedRef.getUnsafe(managed), previousBinding)
+
     const projectionManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
     )
@@ -619,14 +702,12 @@ export const acquireNativeExecutionRuntime = (
     const logManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
     )
-    return {
-      config,
-      runtime: makeRecoveringManagedNativeExecutionRuntimeAdapter(
-        managed,
-        executionResources,
-        projectionManaged,
-        logManaged,
-        config.planHash,
-      ),
-    }
+    const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+      managed,
+      executionResources,
+      projectionManaged,
+      logManaged,
+      config.planHash,
+    )
+    return { config, runtime: capture === undefined ? runtime : { ...runtime, capture: capture.observer } }
   })

@@ -6,7 +6,7 @@ import { Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
 import { OrderSide, type Fill } from '../execution/contracts'
-import { prepareAccounting, rebuildAccountingLedger } from './domain'
+import { brokerFeeLedgerPlan, prepareAccounting, rebuildAccountingLedger } from './domain'
 import type { AccountingFailure } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'
 
@@ -42,6 +42,24 @@ const postedMicros = (prepared: PreparedAccounting): bigint =>
   prepared.ledger.transfers.reduce((sum, transfer) => sum + transfer.amount, 0n)
 
 describe('execution accounting', () => {
+  test('posts delayed broker fees and refunds with stable identities and the existing cash and expense accounts', () => {
+    const fee = brokerFeeLedgerPlan('paper-account', 'fee-1', '-230000', 7001)
+    const replay = brokerFeeLedgerPlan('paper-account', 'fee-1', '-230000', 7001)
+    const refund = brokerFeeLedgerPlan('paper-account', 'refund-1', '230000', 7001)
+    const withFillFee = successOf(prepareAccounting(eventId, fill({ feeMicros: '230000' }), emptyPosition, 7001))
+    const knownFee = withFillFee.ledger.transfers.find((transfer) => transfer.amount === 230000n)
+    if (knownFee === undefined) throw new Error('expected existing fee transfer')
+    expect(fee).toEqual(replay)
+    expect(fee.transfers).toHaveLength(1)
+    expect(fee.transfers[0]?.amount).toBe(230000n)
+    expect(fee.transfers[0]?.debit_account_id).toBe(knownFee.debit_account_id)
+    expect(fee.transfers[0]?.credit_account_id).toBe(knownFee.credit_account_id)
+    expect(refund.transfers[0]?.debit_account_id).toBe(fee.transfers[0]?.credit_account_id)
+    expect(refund.transfers[0]?.credit_account_id).toBe(fee.transfers[0]?.debit_account_id)
+    expect(refund.transfers[0]?.id).not.toBe(fee.transfers[0]?.id)
+    expect(brokerFeeLedgerPlan('paper-account', 'zero', '0', 7001).transfers).toEqual([])
+  })
+
   test('posts an exact buy with an explicit fee', () => {
     const prepared = successOf(prepareAccounting(eventId, fill({ feeMicros: '2500' }), emptyPosition, 7001))
 

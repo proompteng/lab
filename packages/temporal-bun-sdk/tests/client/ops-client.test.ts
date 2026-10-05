@@ -4,6 +4,7 @@ import { Code, ConnectError, createClient, type CallOptions } from '@connectrpc/
 
 import { createTemporalClient, temporalCallOptions } from '../../src/client'
 import { loadTemporalConfig } from '../../src/config'
+import { createDefaultDataConverter } from '../../src/common/payloads'
 import { WorkflowExecutionAlreadyStartedFailureSchema } from '../../src/proto/temporal/api/errordetails/v1/message_pb'
 import {
   HistoryEventSchema,
@@ -100,6 +101,25 @@ test('workflow result keeps polling after an empty long-poll response', async ()
       client.workflow.result({ workflowId: 'long-poll-result', runId: 'run-1' }),
     ).resolves.toBeUndefined()
     expect(attempts).toBe(2)
+  } finally {
+    await client.shutdown()
+  }
+})
+
+test('workflow result preserves a null return value', async () => {
+  const config = await loadTemporalConfig()
+  const converter = createDefaultDataConverter()
+  const workflowService = {
+    getWorkflowExecutionHistory: async () => ({
+      history: { events: [create(HistoryEventSchema, {
+        attributes: { case: 'workflowExecutionCompletedEventAttributes', value: { result: { payloads: await converter.toPayloads([null]) } } },
+      })] },
+      nextPageToken: new Uint8Array(),
+    }),
+  } as unknown as ReturnType<typeof createClient<typeof WorkflowService>>
+  const { client } = await createTemporalClient({ config, workflowService })
+  try {
+    expect(await client.workflow.result({ workflowId: 'null-result', runId: 'run-1' })).toBeNull()
   } finally {
     await client.shutdown()
   }

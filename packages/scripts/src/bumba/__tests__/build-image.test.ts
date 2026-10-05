@@ -18,8 +18,8 @@ describe('bumba build-image internals', () => {
   it('pins the dependency closures observed by both native builders', () => {
     const image = readFileSync(join(repoRoot, 'nix/images/bumba.nix'), 'utf8')
 
-    expect(image).toContain('x86_64-linux = "sha256-3bYjnzGcQW/tNWbrRq1WQTZYyvvdBbEWcREM3dy22ak="')
-    expect(image).toContain('aarch64-linux = "sha256-+HVNk4KyoRVK0bXmIRy5CtmyIVgSQucwAihDgFCmy0A="')
+    expect(image).toContain('x86_64-linux = "sha256-mbyFOEverOV/uz8MqdcVsGu2d/CuhSdSBUPxrGlR00Q="')
+    expect(image).toContain('aarch64-linux = "sha256-4zh9A1fkRrgOWk8bxeJV1Y7em7sP9SnbWabg+lQKHp0="')
   })
 
   it('includes LAB_GIT_SHA in build args so the worker build id is stable', async () => {

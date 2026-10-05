@@ -3,7 +3,7 @@ import { Schema, type Redacted } from 'effect'
 import type { BrokerConnection, BrokerConnectionDecodeFailure, BrokerProvider } from '../broker/connection'
 import type { BrokerEnvironment } from '../broker/identity'
 import type { EmbeddedBuildMetadata } from '../build'
-import type { EvaluationBounds } from '../contracts'
+import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
 import type { BrokerAccess } from '../execution/authority'
 import {
   CapitalAuthoritySelection,
@@ -20,6 +20,7 @@ export interface RuntimeBuildMetadata extends EmbeddedBuildMetadata {
 }
 
 export interface RuntimeConfig {
+  readonly jevKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -38,14 +39,11 @@ export interface RuntimeConfig {
         readonly reconciliationIntervalMs: number
       })
     | undefined
+  readonly kafka?: KafkaMarketConfig | undefined
   readonly clickhouse: {
     readonly url: string
     readonly username: string
     readonly password: Redacted.Redacted<string>
-    readonly snapshotId: string
-    readonly publicationAsOf: string
-    readonly calendarVersion: string
-    readonly bounds: EvaluationBounds
   }
   readonly postgres: {
     readonly url: Redacted.Redacted<string>
@@ -77,6 +75,7 @@ export type LoadedRuntimeConfig = LoadedRuntimeConfigBase & {
 export const CapitalAuthoritySelectionSchema = Schema.Enum(CapitalAuthoritySelection)
 
 export interface ParsedRuntimeConfig {
+  readonly jevKey?: Redacted.Redacted<string> | undefined
   readonly host: string
   readonly port: number
   readonly capitalActivationRequestJson?: string | undefined
@@ -107,6 +106,7 @@ export interface ParsedRuntimeConfig {
     readonly retryAttempts: number
     readonly reconciliationIntervalMs: number
   }
+  readonly kafka?: KafkaMarketConfig | undefined
   readonly clickhouse: RuntimeConfig['clickhouse']
   readonly postgres: RuntimeConfig['postgres']
   readonly tigerBeetle: RuntimeConfig['tigerBeetle']
@@ -124,10 +124,6 @@ export interface AlpacaCredentialPresence {
 }
 
 export type RuntimeConfigResolutionFailure =
-  | {
-      readonly _tag: 'InvalidEvaluationBounds'
-      readonly cause: Schema.SchemaError
-    }
   | {
       readonly _tag: 'CyclePollIntervalNotShorterThanStallThreshold'
       readonly cyclePollIntervalMs: number

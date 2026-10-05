@@ -1,5 +1,7 @@
 import 'server-only'
 
+import type { TengriCodexImage } from './codex-images'
+
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -27,6 +29,8 @@ import type {
 } from '@/lib/tengri/types'
 import { parseTengriSigningSecrets, signTengriMetadata } from './internal-auth'
 import { readTengriBffSecret } from './runtime-secrets'
+import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
+import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -97,7 +101,13 @@ export class TengriUnavailableError extends Error {
 }
 
 export function isTengriControlPlaneConfigured() {
-  return Boolean(process.env.TENGRI_GRPC_ENDPOINT?.trim() && signingSecrets())
+  return Boolean(
+    process.env.TENGRI_GRPC_ENDPOINT?.trim() &&
+    signingSecrets() &&
+    process.env.SPIFFE_ENDPOINT_SOCKET?.trim() &&
+    process.env.SPIFFE_ID?.trim() &&
+    process.env.TENGRI_SPIFFE_ID?.trim(),
+  )
 }
 
 export async function listAgents(subject: string): Promise<TengriAgent[]> {
@@ -207,7 +217,7 @@ export async function searchFiles(subject: string, agentId: string, filePath: st
   } satisfies TengriFileSearchResult
 }
 
-export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence?: number) {
+export async function watchFiles(subject: string, agentId: string, filePath: string, afterSequence?: number) {
   const request: RawRecord = { agentId, path: filePath }
   if (afterSequence !== undefined) request.afterSequence = afterSequence
   return stream('watchFiles', request, subject, WATCH_FILES_PRESERVED_SCALAR_DEFAULTS)
@@ -301,13 +311,31 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   }
 }
 
-export async function createCodexThread(subject: string, agentId: string): Promise<TengriCodexThread> {
-  const response = await unary<RawRecord>('createCodexThread', { agentId }, subject, 130_000)
+export async function listCodexModels(subject: string, agentId: string, cursor?: string) {
+  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, subject, 130_000)
+  try {
+    return parseCodexModelPage(stringValue(response.rawJson))
+  } catch {
+    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog')
+  }
+}
+
+export async function createCodexThread(
+  subject: string,
+  agentId: string,
+  options: TengriCodexOptions = {},
+): Promise<TengriCodexThread> {
+  const response = await unary<RawRecord>('createCodexThread', { agentId, ...options }, subject, 130_000)
   return normalizeCodexThread(response)
 }
 
-export async function resumeCodexThread(subject: string, agentId: string, threadId: string) {
-  const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId }, subject, 130_000)
+export async function resumeCodexThread(
+  subject: string,
+  agentId: string,
+  threadId: string,
+  options: TengriCodexOptions = {},
+) {
+  const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId, ...options }, subject, 130_000)
   return normalizeCodexThread(response)
 }
 
@@ -334,12 +362,52 @@ function normalizeCodexThread(response: RawRecord): TengriCodexThread {
   }
 }
 
-export async function sendCodexTurn(subject: string, agentId: string, threadId: string, text: string) {
-  return normalizeTurn(await unary<RawRecord>('sendCodexTurn', { agentId, threadId, text }, subject, 130_000))
+export async function sendCodexTurn(
+  subject: string,
+  agentId: string,
+  threadId: string,
+  text: string,
+  options: TengriCodexOptions = {},
+  images: readonly TengriCodexImage[] = [],
+) {
+  return normalizeTurn(
+    await unary<RawRecord>(
+      'sendCodexInput',
+      {
+        agentId,
+        threadId,
+        text,
+        ...options,
+        images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
+      },
+      subject,
+      130_000,
+    ),
+  )
 }
 
-export async function steerCodexTurn(subject: string, agentId: string, threadId: string, turnId: string, text: string) {
-  return normalizeTurn(await unary<RawRecord>('steerCodexTurn', { agentId, threadId, turnId, text }, subject, 130_000))
+export async function steerCodexTurn(
+  subject: string,
+  agentId: string,
+  threadId: string,
+  turnId: string,
+  text: string,
+  images: readonly TengriCodexImage[] = [],
+) {
+  return normalizeTurn(
+    await unary<RawRecord>(
+      'steerCodexInput',
+      {
+        agentId,
+        threadId,
+        turnId,
+        text,
+        images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
+      },
+      subject,
+      130_000,
+    ),
+  )
 }
 
 export async function interruptCodexTurn(subject: string, agentId: string, threadId: string, turnId: string) {
@@ -383,11 +451,34 @@ export async function issuePreviewSession(
   }
 }
 
-export async function revokePreviewSession(subject: string, agentId: string, sessionId: string) {
-  await unary('revokePreviewSession', { agentId, sessionId }, subject)
+export async function issueEditorSession(
+  subject: string,
+  agentId: string,
+  windowId: string,
+): Promise<TengriPreviewSession> {
+  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, subject, 400_000)
+  return {
+    id: stringValue(response.id),
+    launchUrl: stringValue(response.launchUrl),
+    expiresAt: stringValue(response.expiresAt),
+    previewOrigin: stringValue(response.previewOrigin),
+  }
 }
 
-export function watchCodexEvents(subject: string, agentId: string, afterSequence: number) {
+export async function revokeEditorSessions(subject: string) {
+  await unary('revokeEditorSessions', {}, subject)
+}
+
+export async function revokePreviewSession(
+  subject: string,
+  agentId: string,
+  sessionId: string,
+  revocationToken?: string,
+) {
+  await unary('revokePreviewSession', { agentId, sessionId, revocationToken }, subject)
+}
+
+export async function watchCodexEvents(subject: string, agentId: string, afterSequence: number) {
   return stream('watchCodexEvents', { agentId, afterSequence }, subject)
 }
 
@@ -412,7 +503,7 @@ async function unary<Response = RawRecord>(
   deadlineMs = DEFAULT_GRPC_DEADLINE_MS,
   signal?: AbortSignal,
 ): Promise<Response> {
-  const client = getClient()
+  const client = await getClient()
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   const canonicalRequest = canonicalizeProto3Request(request)
@@ -453,13 +544,13 @@ function abortedRequestError() {
   return error
 }
 
-function stream(
+async function stream(
   methodName: string,
   request: RawRecord,
   subject: string,
   preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
 ) {
-  const client = getClient()
+  const client = await getClient()
   const method = client[methodName] as StreamMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
@@ -487,15 +578,46 @@ function isProto3ScalarDefault(value: unknown) {
   )
 }
 
-function getClient(): TengriGrpcClient {
+async function getClient(): Promise<TengriGrpcClient> {
   const globalState = globalThis as typeof globalThis & {
     tengriGrpcClient?: TengriGrpcClient
     tengriGrpcService?: RuntimeServiceDefinition
+    tengriSpiffeSource?: SpiffeSource
+    tengriSpiffeConfiguration?: string
+    tengriSpiffeFingerprint?: string
   }
-  if (globalState.tengriGrpcClient && globalState.tengriGrpcService) return globalState.tengriGrpcClient
-  globalState.tengriGrpcClient?.close()
   const target = process.env.TENGRI_GRPC_ENDPOINT?.trim()
-  if (!target || !signingSecrets()) throw new TengriUnavailableError('Tengri control plane is not configured')
+  const endpoint = process.env.SPIFFE_ENDPOINT_SOCKET?.trim()
+  const ownId = process.env.SPIFFE_ID?.trim()
+  const peerId = process.env.TENGRI_SPIFFE_ID?.trim()
+  if (!target || !endpoint || !ownId || !peerId || !signingSecrets()) {
+    throw new TengriUnavailableError('Tengri workload identity is not configured')
+  }
+  parseSpiffeId(ownId)
+  parseSpiffeId(peerId)
+  const configuration = JSON.stringify([target, endpoint, ownId, peerId])
+  if (!globalState.tengriSpiffeSource || globalState.tengriSpiffeConfiguration !== configuration) {
+    globalState.tengriGrpcClient?.close()
+    globalState.tengriGrpcClient = undefined
+    globalState.tengriSpiffeSource?.close()
+    globalState.tengriSpiffeSource = new SpiffeSource({
+      endpoint,
+      spiffeId: ownId,
+      protoPath:
+        process.env.SPIFFE_WORKLOAD_API_PROTO_PATH?.trim() ??
+        path.resolve(path.dirname(resolveProtoPath()), '../../../spiffe/workloadapi.proto'),
+    })
+    globalState.tengriSpiffeConfiguration = configuration
+  }
+  let material
+  try {
+    material = await globalState.tengriSpiffeSource.material()
+  } catch {
+    throw new TengriUnavailableError('Tengri workload identity is unavailable')
+  }
+  if (globalState.tengriGrpcClient && globalState.tengriSpiffeFingerprint === material.fingerprint) {
+    return globalState.tengriGrpcClient
+  }
   const definition = protoLoader.loadSync(resolveProtoPath(), {
     defaults: true,
     enums: String,
@@ -505,14 +627,18 @@ function getClient(): TengriGrpcClient {
   })
   const descriptor = grpc.loadPackageDefinition(definition) as unknown as RuntimeDescriptor
   const Constructor = descriptor.proompteng.runtime.v1.MicroVMControlPlane
-  const credentials =
-    process.env.TENGRI_GRPC_TLS === 'true' ? grpc.credentials.createSsl() : grpc.credentials.createInsecure()
+  const credentials = grpc.credentials.createSsl(material.bundle, material.privateKey, material.certificate, {
+    checkServerIdentity: (_hostname, certificate) => verifySpiffePeer(peerId, certificate),
+  })
   const client = new Constructor(target, credentials, {
     'grpc.max_receive_message_length': MAX_GRPC_MESSAGE_BYTES,
     'grpc.max_send_message_length': MAX_GRPC_MESSAGE_BYTES,
   }) as TengriGrpcClient
+  const expiration = setTimeout(() => client.close(), Math.max(0, material.expiresAt - Date.now()))
+  expiration.unref()
   globalState.tengriGrpcClient = client
   globalState.tengriGrpcService = Constructor.service
+  globalState.tengriSpiffeFingerprint = material.fingerprint
   return client
 }
 
@@ -550,7 +676,6 @@ function metadata(subject: string, methodName: string, request: RawRecord) {
 }
 
 function grpcMethod(methodName: string) {
-  getClient()
   const globalState = globalThis as typeof globalThis & { tengriGrpcService?: RuntimeServiceDefinition }
   const method = Object.values(globalState.tengriGrpcService ?? {}).find(
     (candidate) => candidate.originalName === methodName,
@@ -569,6 +694,15 @@ function callOptions(deadlineMs: number): grpc.CallOptions {
 
 function mapGrpcError(error: grpc.ServiceError, methodName: string) {
   switch (error.code) {
+    case grpc.status.UNIMPLEMENTED:
+      if (methodName === 'listCodexModels') {
+        return new TengriUnavailableError(
+          'Model selection is unavailable for this workspace. Chat continues with existing Codex settings.',
+          412,
+          'model_selection_unavailable',
+        )
+      }
+      return new TengriUnavailableError('Tengri control plane is unavailable', 503)
     case grpc.status.INVALID_ARGUMENT:
       return new TengriUnavailableError('Tengri request is invalid', 400)
     case grpc.status.UNAUTHENTICATED:

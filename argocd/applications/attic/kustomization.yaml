@@ -13,4 +13,4 @@ resources:
 - gc-cronjob.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/attic
-  digest: sha256:45e591bf32738b2a4a696a540fd74941081445fcac68420b1e9f30b9fdceeb04
+  digest: sha256:2d519d97fd3cccae2e89d6bb4e38ea0485c87999593d524b526e428eb6d99529

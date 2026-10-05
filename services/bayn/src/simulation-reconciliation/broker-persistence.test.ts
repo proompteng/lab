@@ -45,6 +45,7 @@ const snapshot: StableBrokerSnapshot = {
   history: {
     orders: { rows: [], observedAt },
     fills: [],
+    fees: [],
   },
 }
 
@@ -95,6 +96,7 @@ const writeResult = (persisted: BrokerSnapshot): ReconciliationWriteResult => ({
 
 const store: ReconciliationPersistence = {
   events: {
+    completeHistory: () => Effect.succeed(new Set()),
     ingest: (input) =>
       Effect.succeed({
         eventId: canonicalHashV1(input.sourceEventId),
@@ -110,6 +112,7 @@ const store: ReconciliationPersistence = {
   },
   accounting: {
     account: () => Effect.die(new Error('empty successful reconciliation must not account a fill')),
+    verifyCompleted: () => Effect.void,
   },
   valuation: {
     value: () => Effect.succeed(valuation),

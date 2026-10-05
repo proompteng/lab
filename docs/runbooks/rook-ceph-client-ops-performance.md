@@ -110,19 +110,19 @@ move traffic to a new network path.
 Do not rely on one-off `ceph config set` commands as the final state. Live commands are acceptable only to unblock or
 pre-stage a safe setting; the durable state must be represented here:
 
-| Setting | GitOps file | Live proof |
-| --- | --- | --- |
-| Rook chart version | `argocd/applications/rook-ceph/kustomization.yaml` | rendered chart labels and `rook-ceph-operator` image |
-| Rook operator image | `argocd/applications/rook-ceph/operator-values.yaml` | `kubectl -n rook-ceph get deploy rook-ceph-operator` |
-| Ceph image | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph versions` |
-| RBD CRC messenger mode | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph config dump` |
-| mClock/client-ops settings | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph config dump` |
-| mgr balancer `upmap` mode | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph balancer status` |
-| RGW bucket data pool PG floor | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph osd pool ls detail` |
-| RBD pool PG floor and bulk flag | `argocd/applications/rook-ceph/storageclasses.yaml` | `ceph osd pool ls detail` |
-| CephFS data pool PG floor and bulk flag | `argocd/applications/rook-ceph/storageclasses.yaml` | `ceph osd pool ls detail` |
-| RBD `noatime` mount option | `argocd/applications/rook-ceph/storageclasses.yaml` | `kubectl get storageclass` |
-| NBD canary class | `argocd/applications/rook-ceph/storageclasses.yaml` | `kubectl get storageclass rook-ceph-block-nbd-canary` |
+| Setting                                 | GitOps file                                          | Live proof                                            |
+| --------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------- |
+| Rook chart version                      | `argocd/applications/rook-ceph/kustomization.yaml`   | rendered chart labels and `rook-ceph-operator` image  |
+| Rook operator image                     | `argocd/applications/rook-ceph/operator-values.yaml` | `kubectl -n rook-ceph get deploy rook-ceph-operator`  |
+| Ceph image                              | `argocd/applications/rook-ceph/cluster-values.yaml`  | `ceph versions`                                       |
+| RBD CRC messenger mode                  | `argocd/applications/rook-ceph/cluster-values.yaml`  | `ceph config dump`                                    |
+| mClock/client-ops settings              | `argocd/applications/rook-ceph/cluster-values.yaml`  | `ceph config dump`                                    |
+| mgr balancer `upmap` mode               | `argocd/applications/rook-ceph/cluster-values.yaml`  | `ceph balancer status`                                |
+| RGW bucket data pool PG floor           | `argocd/applications/rook-ceph/cluster-values.yaml`  | `ceph osd pool ls detail`                             |
+| RBD pool PG floor and bulk flag         | `argocd/applications/rook-ceph/storageclasses.yaml`  | `ceph osd pool ls detail`                             |
+| CephFS data pool PG floor and bulk flag | `argocd/applications/rook-ceph/storageclasses.yaml`  | `ceph osd pool ls detail`                             |
+| RBD `noatime` mount option              | `argocd/applications/rook-ceph/storageclasses.yaml`  | `kubectl get storageclass`                            |
+| NBD canary class                        | `argocd/applications/rook-ceph/storageclasses.yaml`  | `kubectl get storageclass rook-ceph-block-nbd-canary` |
 
 Argo must own the final rollout. Do not patch the generated `rook-ceph` Application as the source of truth; the
 ApplicationSet and repo content must reconcile the desired state.
@@ -315,14 +315,21 @@ cephfs-data0 pg_num=128 pgp_num=128
 objectstore.rgw.buckets.data pg_num=128 pgp_num=128
 ```
 
-## Normal Client-Ops State
+## Current GitOps Posture
 
-Normal operation should prefer client IO after recovery/backfill is clean:
+For per-OSD and host telemetry, effective-config verification, and removal of persistent live recovery overrides,
+follow [Ceph performance telemetry](ceph-performance-telemetry.md). Removing a key from Git alone is not live proof.
+
+The current shared-cluster posture prioritizes scrub catch-up after recovery/backfill is clean.
+Use the complete custom profile in [Scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture),
+including all nine scheduler settings; setting only the profile name is insufficient. Scrubs can start all day:
 
 ```yaml
-osd_mclock_profile: "high_client_ops"
-osd_mclock_max_capacity_iops_hdd: "275"
-target_max_misplaced_ratio: "0.03"
+osd_mclock_profile: 'custom'
+osd_scrub_begin_hour: '0'
+osd_scrub_end_hour: '0'
+osd_mclock_max_capacity_iops_hdd: '275'
+target_max_misplaced_ratio: '0.03'
 ```
 
 `osd_mclock_max_capacity_iops_hdd=275` is only the fallback for new HDD OSDs. Current OSDs use measured per-daemon
@@ -342,6 +349,7 @@ The recovery override keys must be absent in normal operation:
 ```yaml
 osd_mclock_override_recovery_settings
 osd_max_backfills
+osd_recovery_max_active
 osd_recovery_max_active_hdd
 osd_recovery_sleep_hdd
 ```
@@ -363,13 +371,13 @@ Live sample from 2026-07-07, while the cluster was clean from recovery/backfill 
 showing the known `osd.0` BlueStore slow-op warning:
 
 | OSD | Measured IOPS | Durable mClock IOPS |
-| --- | ---: | ---: |
-| 0 | 210.51 | 210 |
-| 1 | 257.92 | 250 |
-| 2 | 264.48 | 260 |
-| 3 | 199.97 | 200 |
-| 4 | 219.71 | 220 |
-| 5 | 243.81 | 240 |
+| --- | ------------: | ------------------: |
+| 0   |        210.51 |                 210 |
+| 1   |        257.92 |                 250 |
+| 2   |        264.48 |                 260 |
+| 3   |        199.97 |                 200 |
+| 4   |        219.71 |                 220 |
+| 5   |        243.81 |                 240 |
 
 Raw evidence file from the calibration run:
 
@@ -383,6 +391,9 @@ cluster-wide number.
 
 ## Temporary Recovery-Surge Mode
 
+This procedure addresses recovery and remapping, not overdue scrubs. It supersedes the scrub profile only
+during an explicitly authorized recovery maintenance window; restore the current GitOps posture afterward.
+
 If the hot-pool PG split remains active for many hours, switch from client-biased QoS to recovery-biased QoS until
 the split completes. This is temporary maintenance mode, not the final client-ops posture.
 
@@ -390,26 +401,26 @@ Temporary GitOps patch for recovery surge:
 
 ```yaml
 osd:
-  osd_mclock_profile: "high_recovery_ops"
-  osd_mclock_max_capacity_iops_hdd: "750"
-  osd_mclock_override_recovery_settings: "true"
-  osd_max_backfills: "6"
-  osd_recovery_max_active_hdd: "12"
-  osd_recovery_sleep_hdd: "0"
+  osd_mclock_profile: 'high_recovery_ops'
+  osd_mclock_max_capacity_iops_hdd: '750'
+  osd_mclock_override_recovery_settings: 'true'
+  osd_max_backfills: '6'
+  osd_recovery_max_active_hdd: '12'
+  osd_recovery_sleep_hdd: '0'
 osd.0:
-  osd_mclock_max_capacity_iops_hdd: "750"
+  osd_mclock_max_capacity_iops_hdd: '750'
 osd.1:
-  osd_mclock_max_capacity_iops_hdd: "750"
+  osd_mclock_max_capacity_iops_hdd: '750'
 osd.2:
-  osd_mclock_max_capacity_iops_hdd: "750"
+  osd_mclock_max_capacity_iops_hdd: '750'
 osd.3:
-  osd_mclock_max_capacity_iops_hdd: "750"
+  osd_mclock_max_capacity_iops_hdd: '750'
 osd.4:
-  osd_mclock_max_capacity_iops_hdd: "750"
+  osd_mclock_max_capacity_iops_hdd: '750'
 osd.5:
-  osd_mclock_max_capacity_iops_hdd: "750"
+  osd_mclock_max_capacity_iops_hdd: '750'
 mgr:
-  target_max_misplaced_ratio: "0.10"
+  target_max_misplaced_ratio: '0.10'
 ```
 
 The per-OSD entries are required because daemon-scoped values override the type-wide `osd` value. Changing only
@@ -460,42 +471,55 @@ Rollback the surge immediately if OSDs start flapping, client mounts fail, or Bl
 single known OSD:
 
 ```bash
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile high_client_ops
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 275
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
+  ceph config set osd osd_mclock_profile custom
+for mclock_value in \
+  client_res:0.4 client_wgt:1 client_lim:0 \
+  background_recovery_res:0.1 background_recovery_wgt:1 background_recovery_lim:0 \
+  background_best_effort_res:0.5 background_best_effort_wgt:2 background_best_effort_lim:0; do
+  key="${mclock_value%%:*}"
+  value="${mclock_value##*:}"
+  kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph config set osd "osd_mclock_scheduler_${key}" "${value}"
+done
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 275
 for osd_value in 0:210 1:250 2:260 3:200 4:220 5:240; do
   osd_id="${osd_value%%:*}"
   capacity="${osd_value##*:}"
-  kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+  kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
     ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd "${capacity}"
 done
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set mgr target_max_misplaced_ratio 0.03
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_mclock_override_recovery_settings
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_max_backfills
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_recovery_max_active_hdd
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_recovery_sleep_hdd
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config set mgr target_max_misplaced_ratio 0.03
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_mclock_override_recovery_settings
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_max_backfills
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_recovery_max_active_hdd
+kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config rm osd osd_recovery_sleep_hdd
 ```
 
-After `ceph -s` reports zero misplaced objects and zero remapped/backfilling/backfill-wait PGs, restore client mode
-in GitOps:
+After `ceph -s` reports zero misplaced objects and zero remapped/backfilling/backfill-wait PGs, restore the
+complete [scrub catch-up profile](rook-ceph-on-talos.md#scrub-catch-up-posture) and calibrated capacities in GitOps:
 
 ```yaml
 osd:
-  osd_mclock_profile: "high_client_ops"
-  osd_mclock_max_capacity_iops_hdd: "275"
+  # Include all nine scheduler settings from the owning scrub catch-up section.
+  osd_mclock_profile: 'custom'
+  osd_scrub_begin_hour: '0'
+  osd_scrub_end_hour: '0'
+  osd_mclock_max_capacity_iops_hdd: '275'
 osd.0:
-  osd_mclock_max_capacity_iops_hdd: "210"
+  osd_mclock_max_capacity_iops_hdd: '210'
 osd.1:
-  osd_mclock_max_capacity_iops_hdd: "250"
+  osd_mclock_max_capacity_iops_hdd: '250'
 osd.2:
-  osd_mclock_max_capacity_iops_hdd: "260"
+  osd_mclock_max_capacity_iops_hdd: '260'
 osd.3:
-  osd_mclock_max_capacity_iops_hdd: "200"
+  osd_mclock_max_capacity_iops_hdd: '200'
 osd.4:
-  osd_mclock_max_capacity_iops_hdd: "220"
+  osd_mclock_max_capacity_iops_hdd: '220'
 osd.5:
-  osd_mclock_max_capacity_iops_hdd: "240"
+  osd_mclock_max_capacity_iops_hdd: '240'
 mgr:
-  target_max_misplaced_ratio: "0.03"
+  target_max_misplaced_ratio: '0.03'
 ```
 
 Remove the recovery override keys from GitOps at the same time:
@@ -554,7 +578,7 @@ separate change.
 
 ## Safe Changes Applied
 
-1. Keep `osd_mclock_profile=high_client_ops`.
+1. Use the current [scrub catch-up profile](rook-ceph-on-talos.md#scrub-catch-up-posture).
 1. Keep `osd_mclock_max_capacity_iops_hdd=275` only as the fallback for future HDD OSDs.
 1. Set measured per-OSD `osd_mclock_max_capacity_iops_hdd` overrides in GitOps for current OSDs:
    - `osd.0=210`
@@ -643,10 +667,10 @@ The canary passes only if the pod mounts, fio completes, the pod can be recreate
 The first live run on 2026-07-06 passed mount/fio/readback for both classes. Default KRBD was faster than the NBD
 canary in that sample, so the default class remains unchanged:
 
-| StorageClass | Randread IOPS | Randread p95 | Mixed read/write IOPS | Seq write BW |
-| --- | ---: | ---: | ---: | ---: |
-| `rook-ceph-block` | 76.57 | 115.9 ms | 34.85 / 15.64 | 7.28 MB/s |
-| `rook-ceph-block-nbd-canary` | 63.38 | 132.6 ms | 24.73 / 11.08 | 7.26 MB/s |
+| StorageClass                 | Randread IOPS | Randread p95 | Mixed read/write IOPS | Seq write BW |
+| ---------------------------- | ------------: | -----------: | --------------------: | -----------: |
+| `rook-ceph-block`            |         76.57 |     115.9 ms |         34.85 / 15.64 |    7.28 MB/s |
+| `rook-ceph-block-nbd-canary` |         63.38 |     132.6 ms |         24.73 / 11.08 |    7.26 MB/s |
 
 ## Legacy RBD Client Plan
 

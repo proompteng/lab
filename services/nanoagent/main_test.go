@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -71,6 +71,11 @@ func TestConfigureToolchainEnvironmentUsesOnePersistentGlobalPrefix(t *testing.T
 	localBin := filepath.Join(home, ".local", "bin")
 	t.Setenv("BUN_INSTALL", "/tmp/wrong-bun-prefix")
 	t.Setenv("NPM_CONFIG_PREFIX", "/tmp/wrong-npm-prefix")
+	t.Setenv("HOMEBREW_PREFIX", "")
+	t.Setenv("HOMEBREW_CELLAR", "")
+	t.Setenv("HOMEBREW_REPOSITORY", "")
+	t.Setenv("EDITOR", "")
+	t.Setenv("VISUAL", "")
 	t.Setenv("PATH", "/usr/bin"+string(os.PathListSeparator)+localBin)
 
 	if err := configureToolchainEnvironment(home); err != nil {
@@ -84,8 +89,33 @@ func TestConfigureToolchainEnvironmentUsesOnePersistentGlobalPrefix(t *testing.T
 	if got := os.Getenv("NPM_CONFIG_PREFIX"); got != wantPrefix {
 		t.Fatalf("NPM_CONFIG_PREFIX = %q, want %q", got, wantPrefix)
 	}
-	if got := filepath.SplitList(os.Getenv("PATH")); len(got) != 2 || got[0] != localBin || got[1] != "/usr/bin" {
-		t.Fatalf("PATH = %#v, want persistent global bin followed by /usr/bin", got)
+	wantPaths := []string{localBin, filepath.Join(home, ".linuxbrew/bin"), filepath.Join(home, ".linuxbrew/sbin"), "/usr/bin"}
+	if got := filepath.SplitList(os.Getenv("PATH")); !reflect.DeepEqual(got, wantPaths) {
+		t.Fatalf("PATH = %#v, want %#v", got, wantPaths)
+	}
+	for key, want := range map[string]string{
+		"HOMEBREW_PREFIX":     filepath.Join(home, ".linuxbrew"),
+		"HOMEBREW_CELLAR":     filepath.Join(home, ".linuxbrew/Cellar"),
+		"HOMEBREW_REPOSITORY": filepath.Join(home, ".linuxbrew/Homebrew"),
+		"EDITOR":              "nvim", "VISUAL": "nvim",
+	} {
+		if got := os.Getenv(key); got != want {
+			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestConfigureToolchainEnvironmentPreservesEditorPreference(t *testing.T) {
+	for _, key := range []string{"PATH", "BUN_INSTALL", "NPM_CONFIG_PREFIX", "HOMEBREW_PREFIX", "HOMEBREW_CELLAR", "HOMEBREW_REPOSITORY"} {
+		t.Setenv(key, os.Getenv(key))
+	}
+	t.Setenv("EDITOR", "vim")
+	t.Setenv("VISUAL", "code --wait")
+	if err := configureToolchainEnvironment(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("EDITOR") != "vim" || os.Getenv("VISUAL") != "code --wait" {
+		t.Fatal("custom editor preference was overwritten")
 	}
 }
 
@@ -157,36 +187,6 @@ func TestBootstrapToolchainRejectsRelativeCommands(t *testing.T) {
 	}
 }
 
-func TestEvidenceHandler(t *testing.T) {
-	t.Parallel()
-
-	want := evidence{MicroVMID: "firecracker-canary", State: "ready"}
-	server := testAPIServer(t)
-	server.evidence = want
-	response := performAuthorizedRequest(server.authenticatedRoutes(), http.MethodGet, "/v1/evidence", nil)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d", response.Code)
-	}
-	var got evidence
-	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got != want {
-		t.Fatalf("evidence = %#v, want %#v", got, want)
-	}
-}
-
-func TestEvidenceHandlerRequiresAuthentication(t *testing.T) {
-	t.Parallel()
-	server := testAPIServer(t)
-	response := httptest.NewRecorder()
-	server.authenticatedRoutes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/evidence", nil))
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d", response.Code)
-	}
-}
-
 func TestProbeHandlers(t *testing.T) {
 	t.Parallel()
 
@@ -254,7 +254,7 @@ func TestBootstrapUserHomeCreatesPersistentToolDirectories(t *testing.T) {
 		t.Fatalf("bootstrapUserHome() error = %v", err)
 	}
 
-	for _, path := range []string{"workspace", ".cache", ".local/bin", ".bun", ".cargo", "go/bin", ".codex"} {
+	for _, path := range []string{"workspace", ".cache", ".cache/apt/lists", ".cache/apt/archives", ".local/bin", ".bun", ".cargo", "go/bin", ".codex"} {
 		info, err := os.Stat(filepath.Join(home, path))
 		if err != nil {
 			t.Fatalf("stat %s: %v", path, err)

@@ -43,8 +43,9 @@ before changing anything. Correct the owning source or build failure, then re-pr
 Kargo. Do not patch a live Deployment, run `argocd app sync`, or create a manifest-bump PR.
 
 Direct deployment is a break-glass action only when explicitly authorized and recorded with the incident. Restore Kargo
-control after the incident. Bayn is not Kargo-enrolled and remains subject to its `bayn-release` activation and lineage
-authority; an image digest alone never authorizes strategy promotion.
+control after the incident. Bayn follows this Kargo recovery path through `lab-delivery/bayn` and `kargo/bayn`.
+Its native activation hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk
+contracts; image promotion preserves the authored research request.
 
 ## New application enrollment
 
@@ -52,3 +53,7 @@ Add a main-only immutable image publisher, one Warehouse, one Stage with an exac
 update contract, an exact automatic policy, and the target Application's `kargo.akuity.io/authorized-stage` annotation.
 Configure promotion to update the source files consumed by the Application's existing renderer and prove the rendered
 output contains the promoted digest; do not replace a working renderer as part of enrollment.
+
+If the root Application uses manual sync, apply the reviewed enrollment by syncing only the owning ApplicationSet
+from the merged source. This installs the authorized-stage annotation and Kargo branch target. Workload image
+promotion and Application sync remain owned by Kargo.

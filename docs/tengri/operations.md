@@ -1,8 +1,14 @@
 # Tengri operations
 
 Tengri is delivered through the main-branch image build, Kargo, and the `tengri` Argo CD application. It owns namespaced `MicroVM` resources,
-their bootstrap Secrets, 16 GiB `rook-ceph-block` PVCs, and unprivileged `kata-fc` Pods. It does not mutate Talos,
+their bootstrap Secrets, 16 GiB `rook-ceph-block` PVCs, and `kata-fc` Pods with guest administrator access. It does not mutate Talos,
 Kata RuntimeClasses, node scheduling, or cluster nodes.
+
+The owning ApplicationSet sets Tengri's namespace admission to `privileged` so the `kata-fc` guests can use
+passwordless `sudo`, full capabilities, and unconfined guest syscalls. Guest Pods keep `privileged: false`, no host
+namespaces or mounts, and no service-account token. The controller Deployment keeps its restricted security context.
+The guest root is writable and ephemeral; container recreation restores the image. Home and workspace contents
+survive sleep/resume.
 
 ## Source and release contract
 
@@ -108,13 +114,16 @@ credentials, or guest bootstrap tokens.
 ## Lifecycle behavior
 
 `CreateAgent` derives a deterministic CR name from the authenticated GitHub subject, so one identity cannot race two
-active agents into existence. The server selects the architecture, 2 CPU, 4 GiB memory, 16 GiB workspace, and current
+active agents into existence. The server selects the architecture, 4 CPU, 8 GiB memory, 16 GiB workspace, and current
 digest-pinned guest image.
 
 - `Running`: the controller creates or retains the PVC, bootstrap Secret, and `kata-fc` Pod.
 - `Sleeping`: after 60 idle minutes the controller deletes only the Pod; the CR and PVC remain.
 - Resume: any authenticated file, terminal, preview, lifecycle, or Codex action sets the desired state to `Running` and
   waits for observed guest readiness before continuing.
+- Resource profile: every guest uses 4 CPU, 8 GiB memory, and a 16 GiB workspace. The controller does not upgrade
+  resource values. During a hard deployment cutover, correct any existing MicroVM's CPU and memory values once,
+  then sleep/resume it while retaining the same CR and PVC. Admission rejects all other profiles and workspace changes.
 - Delete: the finalizer removes the Pod, bootstrap Secret, terminal capabilities, and PVC before removing the CR.
 - Retention: workspaces remain until their owner explicitly deletes the agent. Sleeping, elapsed creation deadlines,
   and controller releases never delete the CR or PVC. The legacy CR `expiresAt` field does not control retention;

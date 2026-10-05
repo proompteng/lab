@@ -154,7 +154,13 @@ const normalizeSnapshotDataFirst = (
     const fillEvents = yield* normalizeFills(snapshot.history.fills, orders, intentByClient)
     const account = yield* normalizeAccount(snapshot.account)
     const positions = yield* normalizePositions(snapshot.account.value.id, snapshot.positions)
-    return { account, positions, orderEvents: Chunk.toReadonlyArray(orders.events), fillEvents }
+    return {
+      account,
+      positions,
+      orderEvents: Chunk.toReadonlyArray(orders.events),
+      fillEvents,
+      fees: snapshot.history.fees,
+    }
   })
 
 export const normalizeSnapshot = Pipeable.dual(2, normalizeSnapshotDataFirst)
@@ -172,7 +178,7 @@ export const decideAccountBaseline = (hasAccountBaseline: boolean): Result.Resul
 const prepareNormalizedSnapshotDataFirst = (store: ReconciliationPersistence, snapshot: StableBrokerSnapshot) =>
   Effect.gen(function* () {
     const bindings = yield* store.reconciliation.bindings(snapshot.account.value.id)
-    if (snapshot.history.fills.length > 0) {
+    if (snapshot.history.fills.length > 0 || snapshot.history.fees.length > 0) {
       const hasAccountBaseline = yield* store.valuation.hasAccountBaseline(snapshot.account.value.id)
       yield* Effect.fromResult(decideAccountBaseline(hasAccountBaseline))
     }

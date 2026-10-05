@@ -5,17 +5,37 @@ Loki, Mimir, and Tempo read S3 access credentials from secret `rook-ceph-rgw-lok
 namespace.
 That secret should be a reflected copy of the Rook-managed source secret
 `rook-ceph-object-user-objectstore-loki` in namespace `rook-ceph`, not a hand-sealed credential copy.
-The RGW endpoint is not sourced from the reflected secret. Keep it explicit in the Helm values as
-`rook-ceph-rgw-objectstore.rook-ceph.svc:80` (or `http://...` only where the chart expects a URL string).
+Keep the RGW endpoint explicit in Helm values; it is not sourced from the reflected secret. Loki, Mimir and Tempo
+use the internal TLS endpoint `rook-ceph-rgw-tls.rook-ceph.svc:443` with `insecure: false` and TLS server name
+`ceph.k8s.proompteng.ai`. Loki 3 uses its supported Thanos object-store client and retains the `loki-data` bucket
+and existing BoltDB Shipper schema. The compatibility gateway Service preserves the original client address.
+Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for the verified drain, cutover and recovery
+procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
+Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
+[Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
+and live acceptance. Mimir uses the shared Strimzi Kafka cluster at
+`kafka-kafka-bootstrap.kafka.svc.cluster.local:9093`, on `observability.mimir.ingest.v1`.
+The topic has three partitions, replication factor three, and minimum ISR two. Topic creation belongs to the Kafka
+application; Mimir's bundled Kafka chart is disabled. Increase topic partitions before scaling ingesters above three.
+The [shared Kafka migration runbook](../../../docs/runbooks/mimir-shared-kafka.md) describes the hard cutover,
+offset handling, and verification. Historical Kafka snapshot/restore PVCs remain as retained data without a workload.
+The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
+Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
+[compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
+Its Tempo 2 buffer-reload procedure is historical and does not apply to the production Tempo 3 deployment.
+
+Tempo 3 owns production ingestion, queries, and compaction. The compatibility Services preserve the original
+Tempo distributor, gateway, and query-frontend addresses; do not remove them while clients use those names.
+See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) for buffer-drain and recovery evidence.
 
 ## Sources of truth
 
 1. `argocd/applications/rook-ceph/rook-ceph-objectstore-loki-user.yaml`
 2. `argocd/applications/rook-ceph/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
 3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
-4. `argocd/applications/observability/loki-values.yaml`
+4. `argocd/applications/observability/loki-v3-values.yaml`
 5. `argocd/applications/observability/mimir-values.yaml`
-6. `argocd/applications/observability/tempo-values.yaml`
+6. `argocd/applications/observability/tempo-v3-values.yaml`
 
 ## Required buckets
 
@@ -65,8 +85,8 @@ Observability is exposed over Tailscale using `Ingress` resources (not `Service`
 4. Restart components if needed:
 
 ```bash
-kubectl -n observability rollout restart deploy observability-loki-loki-distributed-distributor
-kubectl -n observability rollout restart deploy observability-tempo-distributor
+kubectl -n observability rollout restart deploy observability-loki-v3-distributor
+kubectl -n observability rollout restart deploy observability-tempo-v3-distributor
 kubectl -n observability rollout restart deploy observability-mimir-distributor
 ```
 
@@ -95,6 +115,19 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
   health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+
+The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic
+series declared by Bayn's catalog-only monitoring queries, including timing-enabled flags and statistics-reset times.
+It also retains bounded exporter collection errors and durations so a failed built-in collector cannot be mistaken
+for zero I/O. Unknown future metric families and unrelated PostgreSQL settings remain excluded. A new exporter
+metric requires both its query definition and this ingestion policy; direct endpoint availability is not Mimir proof.
+The storage-observability contract test exercises the configured allow-list against every declared metric name and
+negative examples. Verify both database pods in Mimir after the collector's configuration-digest rollout.
+The Rook application owns a read-only host Alloy DaemonSet (`node-storage` job) for disk latency/queue depth,
+NIC throughput/link speed/drops, CPU, memory, and pressure. It pushes to the same Mimir gateway without exposing
+a listener on the provider LAN. See the [Ceph telemetry runbook](../../../docs/runbooks/ceph-performance-telemetry.md)
+for ingestion acceptance, recording-rule units, missing-data alerts, and the bounded recovery-override cleanup.
 
 Validate the Mimir tenant after sync:
 

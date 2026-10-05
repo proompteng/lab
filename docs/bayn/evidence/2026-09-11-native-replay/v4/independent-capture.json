@@ -1,0 +1,157 @@
+{
+  "schemaVersion": "bayn.replay-source-capture.v1",
+  "capturedAt": "2026-09-12T22:42:41.933Z",
+  "origin": "Independent Kafka timestamp-offset capture b89009d4c91bbb5663ff439b71884303cff2593b8adbf524af704c3e7266f559 and Dorvud producer receipt e81de32a8ebf3a7cd6c1aee42de18d71464470d9430801ac97d30f9aab77b7b3. Regenerated feature coordinates follow the producer receipt; original exported records are not used to derive cuts.",
+  "coverageStartMs": 1789133390000,
+  "coverageEndMs": 1789156810000,
+  "universe": {
+    "universeId": "torghut-core-equity-v2",
+    "universeSymbolHash": "12d8e7ad3e0087e85c39f47896e77adde6bb8e029724a70aae1ef5fd393bddf1",
+    "symbols": [
+      "AAPL",
+      "AMD",
+      "AMZN",
+      "AVGO",
+      "COHR",
+      "CRDO",
+      "IWM",
+      "LITE",
+      "MRVL",
+      "MU",
+      "NVDA",
+      "QQQ",
+      "SMH",
+      "SNDK",
+      "SPY",
+      "WDC"
+    ],
+    "topics": {
+      "bars": "torghut.bars.1m.v1",
+      "quotes": "torghut.quotes.v1",
+      "trades": "torghut.trades.v1",
+      "features": "torghut.market-features.v1"
+    }
+  },
+  "positions": [
+    {
+      "topic": "torghut.bars.1m.v1",
+      "partition": 0,
+      "startOffset": "1146468",
+      "endOffsetExclusive": "1154691"
+    },
+    {
+      "topic": "torghut.bars.1m.v1",
+      "partition": 1,
+      "startOffset": "1708105",
+      "endOffsetExclusive": "1722521"
+    },
+    {
+      "topic": "torghut.bars.1m.v1",
+      "partition": 2,
+      "startOffset": "2125586",
+      "endOffsetExclusive": "2149395"
+    },
+    {
+      "topic": "torghut.market-features.v1",
+      "partition": 0,
+      "startOffset": "0",
+      "endOffsetExclusive": "3817"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 0,
+      "startOffset": "139095974",
+      "endOffsetExclusive": "139095974"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 1,
+      "startOffset": "178228122",
+      "endOffsetExclusive": "179426303"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 2,
+      "startOffset": "329864983",
+      "endOffsetExclusive": "329864983"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 3,
+      "startOffset": "4737975",
+      "endOffsetExclusive": "5347939"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 4,
+      "startOffset": "9927002",
+      "endOffsetExclusive": "11247702"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 5,
+      "startOffset": "0",
+      "endOffsetExclusive": "0"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 6,
+      "startOffset": "3538818",
+      "endOffsetExclusive": "3948222"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 7,
+      "startOffset": "0",
+      "endOffsetExclusive": "0"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 8,
+      "startOffset": "2319702",
+      "endOffsetExclusive": "2899956"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 9,
+      "startOffset": "9260322",
+      "endOffsetExclusive": "10926182"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 10,
+      "startOffset": "0",
+      "endOffsetExclusive": "0"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 11,
+      "startOffset": "0",
+      "endOffsetExclusive": "0"
+    },
+    {
+      "topic": "torghut.quotes.v1",
+      "partition": 12,
+      "startOffset": "14565455",
+      "endOffsetExclusive": "16961205"
+    },
+    {
+      "topic": "torghut.trades.v1",
+      "partition": 0,
+      "startOffset": "6401850",
+      "endOffsetExclusive": "6431342"
+    },
+    {
+      "topic": "torghut.trades.v1",
+      "partition": 1,
+      "startOffset": "10214335",
+      "endOffsetExclusive": "10224451"
+    },
+    {
+      "topic": "torghut.trades.v1",
+      "partition": 2,
+      "startOffset": "12472894",
+      "endOffsetExclusive": "12640339"
+    }
+  ]
+}

@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
-const hermesRelease = 'v2026.8.27'
-const hermesVersion = '0.20.6'
-const hermesSourceRevision = '5fc308a70719a83cccdbba4c0e39c23f5a8239d5'
-const hermesUpstreamIndexDigest = 'sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79'
-const hermesUpstreamAmd64Digest = 'sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843'
-const hermesAttestationManifestDigest = 'sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c'
+const hermesRelease = 'v2026.9.24'
+const hermesVersion = '0.21.5'
+const hermesSourceRevision = 'f97608f178d1ffeca59860195ab7da295f7c8e5f'
+const hermesUpstreamIndexDigest = 'sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7'
+const hermesUpstreamAmd64Digest = 'sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283'
+const hermesAttestationManifestDigest = 'sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c'
 const hermesImage = `registry.ide-newton.ts.net/lab/hermes-agent@${hermesUpstreamAmd64Digest}`
 const squidImage = 'docker.io/ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
 const kubectlImage = 'registry.k8s.io/kubectl@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e'
@@ -28,11 +28,13 @@ export const productionPaths = {
   backupScript: 'argocd/applications/hermes/backup-once.sh',
   backupPolicy: 'argocd/applications/hermes/backup-output-policy.sh',
   config: 'argocd/applications/hermes/config.yaml',
+  kargoStages: 'argocd/applications/kargo/stages.yaml',
   externalSecret: 'argocd/applications/hermes/external-secret.yaml',
   exaExternalSecret: 'argocd/applications/hermes/exa-external-secret.yaml',
   discordSealedSecret: 'argocd/applications/hermes/discord-sealed-secret.yaml',
   githubSealedSecret: 'argocd/applications/hermes/github-sealed-secret.yaml',
   tailscaleIngress: 'argocd/applications/hermes/tailscale-ingress.yaml',
+  service: 'argocd/applications/hermes/service.yaml',
   networkPolicy: 'argocd/applications/hermes/network-policy.yaml',
   egressProxy: 'argocd/applications/hermes/egress-proxy.yaml',
   squidConfig: 'argocd/applications/hermes/squid.conf',
@@ -66,6 +68,7 @@ export const productionPaths = {
   pullRequestWorkflow: '.github/workflows/pull-request.yml',
   toolchainImage: 'nix/images/hermes-toolchain.nix',
   toolchainBuildWorkflow: '.github/workflows/hermes-toolchain-build-push.yml',
+  mirrorWorkflow: '.github/workflows/hermes-agent-mirror.yml',
 } as const
 
 export type ProductionPath = keyof typeof productionPaths
@@ -138,6 +141,17 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   const containersSection = sectionBetween(files.statefulSet, '      containers:\n', '      volumes:\n')
   const bootstrapContainer = namedListItemSection(initContainersSection, 8, 'bootstrap')
   const gatewayContainer = namedListItemSection(containersSection, 8, 'hermes')
+  const dashboardContainer = namedListItemSection(containersSection, 8, 'dashboard')
+  const volumeNames = [
+    ...sectionBetween(files.statefulSet, '      volumes:\n', '  volumeClaimTemplates:').matchAll(
+      /^        - name: (.+)$/gm,
+    ),
+  ].map((match) => match[1])
+  const toolchainVolumeIndex = volumeNames.indexOf('lab-toolchain-image')
+  const hermesStage = sectionBetween(files.kargoStages, 'metadata:\n  name: hermes-toolchain\n', '\n---\n')
+  requireTerms(failures, productionPaths.kargoStages, hermesStage, [
+    `- key: spec.template.spec.volumes.${toolchainVolumeIndex}.image.reference`,
+  ])
 
   requireTerms(failures, productionPaths.kustomization, files.kustomization, [
     'namespace: hermes',
@@ -155,6 +169,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '- bootstrap-lab-checkout.sh',
     '- bootstrap-github.sh',
     '- terminal-profile.sh',
+    '- runtime.env=',
+    '- managed-install=gitops',
   ])
   forbidTerms(failures, productionPaths.kustomization, files.kustomization, [
     'kind: Namespace',
@@ -170,13 +186,85 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'namespace: hermes',
     'tailscale.com/tags: tag:k8s',
     'ingressClassName: tailscale',
-    'path: /',
-    'pathType: Prefix',
-    `backend:
+    `path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hermes
+                port:
+                  name: dashboard`,
+    `path: /v1
+            pathType: Prefix
+            backend:
               service:
                 name: hermes
                 port:
                   name: api`,
+    `path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: hermes
+                port:
+                  name: api`,
+  ])
+  requireTerms(failures, productionPaths.service, files.service, [
+    'name: api\n      port: 8642\n      targetPort: api',
+    'name: dashboard\n      port: 9119\n      targetPort: dashboard',
+  ])
+  requireTerms(failures, productionPaths.config, files.config, [
+    'dashboard:\n  public_url: https://hermes.ide-newton.ts.net\n  show_token_analytics: false\n  trusted_proxies:\n    - 10.244.0.0/16',
+  ])
+  requireTerms(failures, productionPaths.statefulSet, dashboardContainer, [
+    `image: ${hermesImage}`,
+    'workingDir: /opt/data/workspace/tuslagch/lab',
+    '- dashboard\n            - --host\n            - 0.0.0.0\n            - --port\n            - "9119"\n            - --no-open\n            - --skip-build',
+    'name: HERMES_WEB_DIST\n              value: /opt/hermes/hermes_cli/web_dist',
+    'name: HERMES_HOME\n              value: /opt/data',
+    'name: HERMES_DASHBOARD_BASIC_AUTH_USERNAME\n              value: tuslagch',
+    'name: HERMES_DASHBOARD_BASIC_AUTH_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: hermes-api-auth\n                  key: API_SERVER_KEY',
+    "d.get('auth_required') is True and 'basic' in d.get('auth_providers', [])",
+    'containerPort: 9119',
+    'runAsUser: 10000',
+    'readOnlyRootFilesystem: true',
+    'allowPrivilegeEscalation: false',
+    'mountPath: /opt/data/config.yaml\n              subPath: config.yaml\n              readOnly: true',
+    'mountPath: /opt/github-auth\n              readOnly: true',
+  ])
+  for (const managedContainer of [bootstrapContainer, gatewayContainer, dashboardContainer]) {
+    requireTerms(failures, productionPaths.statefulSet, managedContainer, [
+      'name: HERMES_MANAGED\n              value: gitops',
+      'mountPath: /opt/data/.managed\n              subPath: managed-install\n              readOnly: true',
+      'name: profiles\n              mountPath: /opt/data/profiles\n              readOnly: true',
+    ])
+  }
+  for (const runtimeContainer of [gatewayContainer, dashboardContainer]) {
+    requireTerms(failures, productionPaths.statefulSet, runtimeContainer, [
+      'mountPath: /opt/data/.env\n              subPath: runtime.env\n              readOnly: true',
+    ])
+  }
+  requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
+    'name: profiles\n          emptyDir:\n            sizeLimit: 1Mi',
+  ])
+  requireTerms(failures, productionPaths.statefulSet, dashboardContainer, [
+    'name: GATEWAY_HEALTH_URL\n              value: http://127.0.0.1:8642',
+  ])
+  forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, ['shareProcessNamespace: true'])
+  requireTerms(failures, productionPaths.backupScript, files.backupScript, [
+    'if Path(entry.filename).name == ".env" and backup.read(entry).strip():',
+    'backup contains a nonempty environment credential file',
+  ])
+  forbidTerms(failures, productionPaths.statefulSet, dashboardContainer, [
+    '--insecure',
+    'DISCORD_BOT_TOKEN',
+    'API_SERVER_ENABLED',
+    'GH_TOKEN',
+  ])
+  if (count(files.networkPolicy, '          port: 9119\n') !== 1) {
+    failures.push(`${productionPaths.networkPolicy}: only the exact Tailscale proxy may reach the dashboard port`)
+  }
+  requireTerms(failures, productionPaths.networkPolicy, files.networkPolicy, [
+    'tailscale.com/parent-resource: hermes-tailscale\n      ports:\n        - protocol: TCP\n          port: 8642\n        - protocol: TCP\n          port: 9119',
   ])
   if (count(files.tailscaleIngress, 'hermes.ide-newton.ts.net') !== 2) {
     failures.push(`${productionPaths.tailscaleIngress}: TLS and routing must use only the Hermes MagicDNS hostname`)
@@ -187,9 +275,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'type: LoadBalancer',
     'ingressClassName: traefik',
   ])
-  if (count(files.statefulSet, `image: ${hermesImage}`) !== 2) {
+  if (count(files.statefulSet, `image: ${hermesImage}`) !== 3) {
     failures.push(
-      `${productionPaths.statefulSet}: the bootstrap and gateway containers must use the mirrored immutable amd64 digest`,
+      `${productionPaths.statefulSet}: the bootstrap, gateway, and dashboard containers must use the mirrored immutable amd64 digest`,
     )
   }
   if (count(files.statefulSet, `app.kubernetes.io/version: ${hermesRelease}`) !== 2) {
@@ -245,7 +333,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       `${productionPaths.statefulSet}: missing production invariant "workingDir: /opt/data/workspace/tuslagch/lab"`,
     )
   }
-  if (count(files.statefulSet, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
+  if (count(gatewayContainer, 'mountPath: /etc/profile.d/hermes-tools.sh\n') !== 1) {
     failures.push(`${productionPaths.statefulSet}: the gateway must mount exactly one immutable terminal login profile`)
   }
   const exaSecretKeyRef = [
@@ -255,7 +343,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '                  name: hermes-exa-auth',
     '                  key: EXA_API_KEY',
   ].join('\n')
-  if (count(files.statefulSet, exaSecretKeyRef) !== 1) {
+  if (count(gatewayContainer, exaSecretKeyRef) !== 1) {
     failures.push(`${productionPaths.statefulSet}: the gateway must receive exactly one Exa SecretKeyRef`)
   }
   forbidTerms(failures, productionPaths.statefulSet, files.statefulSet, [
@@ -290,13 +378,21 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '              subPath: nix/store',
     '              readOnly: true',
   ].join('\n')
-  if (count(files.statefulSet, toolchainBinMount) !== 2) {
+  if (count(files.statefulSet, toolchainBinMount) !== 3) {
     failures.push(
-      `${productionPaths.statefulSet}: init and gateway must mount the immutable toolchain bin facade read-only`,
+      `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable toolchain bin facade read-only`,
     )
   }
-  if (count(files.statefulSet, toolchainStoreMount) !== 2) {
-    failures.push(`${productionPaths.statefulSet}: init and gateway must mount the immutable Nix closure read-only`)
+  if (count(files.statefulSet, toolchainStoreMount) !== 3) {
+    failures.push(
+      `${productionPaths.statefulSet}: init, gateway, and dashboard must mount the immutable Nix closure read-only`,
+    )
+  }
+  for (const container of [bootstrapContainer, gatewayContainer, dashboardContainer]) {
+    requireTerms(failures, productionPaths.statefulSet, container, [
+      'name: PYTHONPATH\n              value: /opt/lab-toolchain/python',
+      'name: lab-toolchain-image\n              mountPath: /opt/lab-toolchain/python\n              subPath: python\n              readOnly: true',
+    ])
   }
   if (count(files.statefulSet, '        - name: lab-toolchain-image\n          image:\n') !== 1) {
     failures.push(`${productionPaths.statefulSet}: the toolchain must use exactly one OCI image volume`)
@@ -335,11 +431,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
       `${productionPaths.statefulSet}: only the bootstrap init container may receive the sealed GitHub token`,
     )
   }
-  if (count(files.statefulSet, '            - name: GH_CONFIG_DIR\n') !== 2) {
-    failures.push(`${productionPaths.statefulSet}: init and gateway must share exactly one GitHub CLI config directory`)
+  if (count(files.statefulSet, '            - name: GH_CONFIG_DIR\n') !== 3) {
+    failures.push(
+      `${productionPaths.statefulSet}: init, gateway, and dashboard must share exactly one GitHub CLI config directory`,
+    )
   }
-  if (count(files.statefulSet, 'name: github-auth\n') !== 3) {
-    failures.push(`${productionPaths.statefulSet}: GitHub auth must use two mounts and one ephemeral volume`)
+  if (count(files.statefulSet, 'name: github-auth\n') !== 4) {
+    failures.push(`${productionPaths.statefulSet}: GitHub auth must use three mounts and one ephemeral volume`)
   }
   requireTerms(failures, productionPaths.statefulSet, files.statefulSet, [
     '            - name: github-auth\n              mountPath: /opt/github-auth\n              readOnly: true',
@@ -375,11 +473,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'hermes_backup_output_is_safe() (',
     '*"SQLite safe copy failed"*|*"Raw copy also failed"*)',
     '*"Backup incomplete:"*|*"Warnings ("*)',
-    'backup_policy_socket="$backup_policy_home/gateway.sock"',
+    'for backup_policy_path in gateway.sock state/gateway.loop-tick.1.sock; do',
+    'backup_policy_socket="$backup_policy_home/$backup_policy_path"',
     "backup_policy_header='  Warnings (1 files skipped):'",
-    'backup_policy_detail="  gateway.sock: [Errno 6] No such device or address:',
+    "backup_policy_header='  Warnings (2 files skipped):'",
+    'backup_policy_detail="  $backup_policy_path: [Errno 6] No such device or address:',
+    '[ ! -L "$backup_policy_socket" ] || return 1',
     '[ -S "$backup_policy_socket" ] || return 1',
-    '[ "$backup_policy_header_count" -eq 1 ] || return 1',
+    '[ "$backup_policy_warnings" = "$backup_policy_header$backup_policy_details" ] || return 1',
     '[ "$backup_policy_detail_count" -eq 1 ] || return 1',
     '*"Backup complete:"*) return 1',
   ])
@@ -390,6 +491,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'if ! hermes_backup_output_is_safe "$backup_output" "${HERMES_HOME:-/opt/data}"; then',
     'corrupt_entry = backup.testzip()',
     'if "gateway.sock" in backup.namelist():',
+    'if "state/gateway.loop-tick.1.sock" in backup.namelist():',
     'connection.execute("PRAGMA quick_check")',
     'if database_count == 0:',
     'pending_digest=$(sha256sum "$pending_archive")',
@@ -412,15 +514,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   }
 
   requireTerms(failures, productionPaths.config, files.config, [
-    '_config_version: 39',
-    [
-      'model:',
-      '  default: qwen36-flamingo',
-      '  provider: custom',
-      '  base_url: http://flamingo.flamingo.svc.cluster.local/v1',
-      '  api_mode: chat_completions',
-      '  context_length: 262144',
-    ].join('\n'),
+    '_config_version: 46',
+    ['model:', '  default: qwen36-flamingo', '  provider: flamingo', '  context_length: 262144'].join('\n'),
     'terminal:\n  backend: local\n  cwd: /opt/data/workspace/tuslagch/lab',
     'shell_init_files:\n    - /etc/profile.d/hermes-tools.sh',
     'discord:\n    enabled: true',
@@ -429,19 +524,13 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'orchestrator_enabled: false',
     'inherit_mcp_toolsets: false',
     'web:\n  search_backend: exa\n  extract_backend: exa',
-    'mcp_servers:\n  exa:',
-    'url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"',
-    'x-api-key: "${EXA_API_KEY}"',
-    'connect_timeout: 15',
-    'timeout: 120',
-    'tools:\n      include:\n        - web_search_exa\n        - web_fetch_exa',
+    'mcp_servers: {}',
     'hooks_auto_accept: false',
     'user_char_limit: 2200',
     'memory_char_limit: 4400',
-    'code_execution:\n  timeout: 120\n  max_tool_calls: 100',
     'Treat /opt/data/workspace/tuslagch/lab as the project root and default working directory',
     'Use the authenticated tuslagch GitHub identity, codex/ branches, and pull requests',
-    'platform_toolsets:\n  cli: [file, memory, terminal, todo, web, exa]\n  api_server: [file, memory, terminal, todo, web, exa]\n  discord: [file, memory, terminal, todo, web, exa]',
+    'platform_toolsets:\n  cli: [file, memory, session_search, terminal, todo, web, skills]\n  api_server: [file, memory, session_search, terminal, todo, web, skills]\n  discord: [file, memory, session_search, terminal, todo, web, skills]',
     'Kubernetes access is cluster-wide read-only',
     '    - "*git push --force*"',
     '  - "kubectl get *"',
@@ -459,27 +548,42 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '    - "*kubectl*"',
   ])
   for (const platform of ['cli', 'api_server', 'discord']) {
-    if (count(files.config, `  ${platform}: [file, memory, terminal, todo, web, exa]\n`) !== 1) {
+    if (count(files.config, `  ${platform}: [file, memory, session_search, terminal, todo, web, skills]\n`) !== 1) {
       failures.push(`${productionPaths.config}: ${platform} must have exactly one production web and terminal toolset`)
     }
   }
-  const expectedMcpConfig = [
-    'mcp_servers:',
-    '  exa:',
-    '    url: "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"',
-    '    headers:',
-    '      x-api-key: "${EXA_API_KEY}"',
-    '    connect_timeout: 15',
-    '    timeout: 120',
-    '    tools:',
-    '      include:',
-    '        - web_search_exa',
-    '        - web_fetch_exa',
-  ].join('\n')
-  const mcpConfig = files.config.match(/\nmcp_servers:\n[\s\S]*?\n\ndelegation:/)?.[0] ?? ''
-  if (mcpConfig !== `\n${expectedMcpConfig}\n\ndelegation:`) {
-    failures.push(`${productionPaths.config}: Exa must be the only MCP server with exactly two read-only web tools`)
+  if (count(files.config, 'mcp_servers:') !== 1 || !files.config.includes('\nmcp_servers: {}\n\ndelegation:')) {
+    failures.push(`${productionPaths.config}: native Exa web tools must be the only web integration`)
   }
+  requireTerms(failures, productionPaths.config, files.config, [
+    'providers:\n  flamingo:\n    model: qwen36-flamingo\n    base_url: http://flamingo.flamingo.svc.cluster.local/v1\n    api_mode: chat_completions\n    context_length: 262144',
+    'temperature: 0.6\n      top_p: 0.95\n      top_k: 20\n      min_p: 0.0\n      presence_penalty: 0.0\n      repetition_penalty: 1.0',
+    'compression:\n    provider: flamingo\n    timeout: 180\n    max_concurrency: 1',
+    'title_generation:\n    provider: flamingo\n    timeout: 30\n    max_concurrency: 1',
+    'memory_query_rewrite:\n    provider: flamingo\n    max_concurrency: 1',
+    'skills_hub:\n    provider: flamingo\n    max_concurrency: 1',
+    'background_review:\n    enabled: false',
+    'compression:\n  enabled: true\n  threshold: 0.75\n  threshold_tokens: 65536',
+    'protect_last_n: 20\n  protect_first_n: 3',
+    'abort_on_summary_failure: true',
+    'sessions:\n  auto_prune: false',
+    'curator:\n  enabled: false',
+    'coding_context: "on"',
+    'disabled_toolsets: [delegation, cronjob, code_execution, kanban]',
+    'plugins:\n  enabled: [security-guidance]\n  disabled: []',
+    'cron:\n  allow_agent_scheduling: false',
+    'kanban:\n  dispatch_in_gateway: false\n  auto_decompose: false',
+    'auto_multiplex_migration: false',
+    'keyless_fallback: false\n  keyless_rescue: false',
+    'lsp:\n  install_strategy: manual',
+    'Manage persistent configuration, plugins, tools, and integrations through reviewed GitOps changes',
+  ])
+  forbidTerms(failures, productionPaths.config, files.config, [
+    'session_reset:',
+    'flush_min_turns:',
+    'multiplex_profiles: false',
+    'standalone: true',
+  ])
 
   requireTerms(failures, productionPaths.externalSecret, files.externalSecret, [
     'name: onepassword-infra',
@@ -754,8 +858,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
     'toolchain_bin=/opt/lab-toolchain/bin',
     'check_tool_version node v24.11.1 "$toolchain_bin/node" --version',
-    'check_tool_version bun 1.4.0 "$toolchain_bin/bun" --version',
-    'check_tool_version bunx 1.4.0 "$toolchain_bin/bunx" --version',
+    'check_tool_version bun 1.4.2 "$toolchain_bin/bun" --version',
+    'check_tool_version bunx 1.4.2 "$toolchain_bin/bunx" --version',
     'check_tool_version go \'go version go1.25.5 linux/amd64\' "$toolchain_bin/go" version',
     'check_tool_version helm v3.19.1 "$toolchain_bin/helm" version --template \'{{.Version}}\'',
     'check_tool_version jq jq-1.8.1 "$toolchain_bin/jq" --version',
@@ -858,7 +962,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'Writes, Kubernetes Secrets, exec, attach, copy, proxy, and',
     '/opt/data/workspace/tuslagch/lab',
     'GitHub CLI `2.96.0` and Git are authenticated as `tuslagch`',
-    'Node `24.11.1`, Bun/Bunx `1.4.0`, Go `1.25.5`',
+    'Node `24.11.1`, Bun/Bunx `1.4.2`, Go `1.25.5`',
     '/opt/lab-toolchain/bin',
   ])
   requireTerms(failures, productionPaths.readme, files.readme, [
@@ -885,8 +989,8 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'There is no digest bump PR, release PR, manual SHA edit, or manual Argo sync.',
     'Bootstrap fails closed unless every tool reports the repository-pinned version.',
     'https://hermes.ide-newton.ts.net',
-    'Kubernetes Ingress: `hermes-tailscale`',
-    'It does not enable Funnel or create a public Ingress.',
+    'The `hermes-tailscale` Ingress',
+    'There is no Funnel or public Ingress.',
     'both require bearer authentication',
   ])
   forbidPattern(
@@ -923,6 +1027,15 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '"proompteng.ai/toolchain.node" = lib.getVersion nodejs;',
     '"proompteng.ai/toolchain.bun" = lib.getVersion bun;',
     '"proompteng.ai/toolchain.go" = lib.getVersion go;',
+    'exa_py-2.10.2-py3-none-any.whl',
+    'sha256 = "ecb2a7581f4b7a8aeb6b434acce1bbc40f92ed1d4126b2aa6029913acd904a47";',
+    'unzip -q ${exaWheel} -d "$out/python"',
+    '    pythonDependencies\n',
+    '"proompteng.ai/toolchain.exa-py" = "2.10.2";',
+  ])
+  requireTerms(failures, productionPaths.bootstrap, files.bootstrap, [
+    'check_tool_version exa-py 2.10.2 /opt/hermes/.venv/bin/python -c',
+    'import exa_py; import importlib.metadata as m; print(m.version("exa-py"))',
   ])
   forbidTerms(failures, productionPaths.toolchainImage, files.toolchainImage, [
     'pkgs.nix',
@@ -941,6 +1054,9 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'image_name: hermes-toolchain',
     'package_attr: hermes-toolchain-image',
     'hermes-toolchain-release-contract',
+    'nix-image:\n    needs: verify-agent-mirror',
+    'timeout 30s crane manifest --insecure',
+    'Hermes agent mirror unavailable; withholding toolchain publication',
   ])
   const operationDeadlines = {
     migrationDryRun: 600,
@@ -1153,7 +1269,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   requireTerms(failures, productionPaths.platform, hermesApplication, [
     'path: argocd/applications/hermes',
     'namespace: hermes',
-    'automation: manual',
     'group: apps',
     'kind: StatefulSet',
     'name: hermes',
@@ -1166,6 +1281,14 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'pod-security.kubernetes.io/enforce: restricted',
     'argocd.argoproj.io/sync-options: Prune=false',
   ])
+  const hermesAutomation = hermesApplication.match(/^\s+automation: ([^\r\n]+)$/m)?.[1]?.trim()
+  requireTerms(failures, productionPaths.platform, hermesApplication, [
+    'targetRevision: kargo/hermes-toolchain',
+    'kargo.akuity.io/authorized-stage: lab-delivery:hermes-toolchain',
+  ])
+  if (hermesAutomation !== 'auto' && hermesAutomation !== 'manual') {
+    failures.push(`${productionPaths.platform}: Hermes automation must be exactly auto or manual`)
+  }
   forbidTerms(failures, productionPaths.platform, hermesApplication, [
     'group: coordination.k8s.io',
     'kind: Lease',
@@ -1174,6 +1297,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
   ])
 
   requireTerms(failures, productionPaths.runbook, files.runbook, [
+    'Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`.',
     'Never run OpenClaw and Hermes with the same Discord token at the same time.',
     'Never pass `--migrate-secrets`',
     'Never run `hermes claw cleanup`',
@@ -1196,7 +1320,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'previous_exa_secret_version=',
     'kubectl -n hermes annotate externalsecret hermes-exa-auth force-sync=',
     'exa_rotation_native_web_canary=ok',
-    'exa_rotation_mcp_canary=ok tools=2',
     'OpenClaw VM/PVC identities',
     'single-writer Discord message lifecycle IDs',
     'bun run scripts/hermes/audit-migration-source.ts "$hermes_stage_dir/openclaw"',
@@ -1218,7 +1341,6 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'if kubectl -n hermes exec hermes-0 -c hermes -- /opt/hermes/.venv/bin/python -c',
     'direct public egress unexpectedly succeeded',
     'native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}',
-    'exa_mcp_canary=ok tools=2',
     'git ls-remote --exit-code https://github.com/proompteng/lab.git refs/heads/main',
     'opener.open("https://169.254.169.254", timeout=5)',
     '*"403 Forbidden"*)',
@@ -1233,7 +1355,7 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'test "$(command -v bun)" = /opt/lab-toolchain/bin/bun',
     'test "$(command -v go)" = /opt/lab-toolchain/bin/go',
     'test "$(node --version)" = v24.11.1',
-    'test "$(bun --version)" = 1.4.0',
+    'test "$(bun --version)" = 1.4.2',
     'test "$(go version)" = "go version go1.25.5 linux/amd64"',
     'bun run scripts/hermes/validate-production.ts',
     'shellcheck argocd/applications/hermes/*.sh',
@@ -1294,8 +1416,19 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     `test "$upstream_digest" = ${hermesUpstreamIndexDigest}`,
     `test "$upstream_amd64_digest" = ${hermesUpstreamAmd64Digest}`,
     `test "$upstream_attestation_digest" = ${hermesAttestationManifestDigest}`,
+    'provenance_manifest=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest")',
+    'provenance_layer_digest=$(printf \'%s\' "$provenance_manifest" | jq -er',
+    'crane blob "docker.io/nousresearch/hermes-agent@$provenance_layer_digest" > "$provenance_path"',
+    'test "$(jq -er \'.predicateType\' "$provenance_path")" = \'https://slsa.dev/provenance/v1\'',
+    'case "$provenance_subject" in',
+    'sha256:*) ;;',
+    '*) provenance_subject="sha256:$provenance_subject" ;;',
+    'upstream_revision=$(jq -er \'.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]\' "$provenance_path")',
     'test "$provenance_subject" = "$upstream_amd64_digest"',
     `test "$upstream_revision" = ${hermesSourceRevision}`,
+    'mirror_index_digest=$(crane digest "$mirror_ref")',
+    'mirror_manifest=$(crane manifest "$mirror_ref")',
+    'test "$mirror_index_digest" = "$upstream_digest"',
     `test "$mirror_digest" = ${hermesUpstreamAmd64Digest}`,
     'test "$mirror_revision" = "$upstream_revision"',
     'toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" |',
@@ -1307,6 +1440,48 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'argocd app get hermes --refresh >/dev/null',
     "hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status.sync.revision}')",
     'test "$hermes_revision" = "$kargo_revision"',
+  ])
+  requireTerms(failures, productionPaths.mirrorWorkflow, files.mirrorWorkflow, [
+    'workflow_dispatch: {}',
+    'SOURCE_REF: docker.io/nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7',
+    `SOURCE_INDEX_DIGEST: ${hermesUpstreamIndexDigest}`,
+    'SOURCE_AMD64_DIGEST: sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283',
+    'SOURCE_ATTESTATION_DIGEST: sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c',
+    'SOURCE_PROVENANCE_LAYER_DIGEST: sha256:80bc715251a9a4cb80b1c7127baa208ef2585859c09302d5c218cddcb9dc4317',
+    'EXPECTED_SOURCE_REVISION: f97608f178d1ffeca59860195ab7da295f7c8e5f',
+    `TARGET_REF: registry.registry.svc.cluster.local/lab/hermes-agent:${hermesRelease}-amd64`,
+    `PUBLIC_TARGET_REF: registry.ide-newton.ts.net/lab/hermes-agent:${hermesRelease}-amd64`,
+    'push:',
+    'branches:',
+    '- main',
+    'paths:',
+    '.github/workflows/hermes-agent-mirror.yml',
+    "if: github.ref == 'refs/heads/main'",
+    'uses: imjasonh/setup-crane@v0.4',
+    'docker buildx imagetools inspect --raw "$SOURCE_REF"',
+    'skopeo --version',
+    'skopeo --policy "$hermes_copy_policy" copy',
+    '--all --preserve-digests --image-parallel-copies 1',
+    '--src-tls-verify=true --dest-tls-verify=false',
+    '"docker://$SOURCE_REF" "docker://$TARGET_REF"',
+    'docker.io/nousresearch/hermes-agent@$SOURCE_ATTESTATION_DIGEST',
+    'provenance_subject="$(jq -er \'.subject.digest\' attestation.json)"',
+    'sha256:$provenance_subject',
+    'test "$provenance_subject" = "$SOURCE_AMD64_DIGEST"',
+    "test \"$(jq -er '.predicateType' provenance.json)\" = 'https://slsa.dev/provenance/v1'",
+    'crane blob "docker.io/nousresearch/hermes-agent@$SOURCE_PROVENANCE_LAYER_DIGEST" > provenance.json',
+    'test "$(jq -er \'.subject | map(select(("sha256:" + .digest.sha256) == $digest)) | length\' --arg digest "$SOURCE_AMD64_DIGEST" provenance.json)" = 1',
+    'provenance_revision="$(jq -er \'.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]\' provenance.json)"',
+    'test "$provenance_revision" = "$EXPECTED_SOURCE_REVISION"',
+    'set +e',
+    'docker buildx imagetools inspect --raw "$TARGET_REF" > existing-target.json 2>existing-target.error',
+    'inspect_status=$?',
+    'set -e',
+    'if ((inspect_status == 0)); then',
+    'test "sha256:$(sha256sum existing-target.json | cut -d \' \' -f1)" = "$SOURCE_INDEX_DIGEST"',
+    "elif grep -Eiq 'manifest unknown|name unknown|status code: 404|404 Not Found|(^|:)[[:space:]]*not found[[:space:]]*$' existing-target.error; then",
+    'exit "$inspect_status"',
+    'test "sha256:$(sha256sum mirrored-index.json | cut -d \' \' -f1)" = "$SOURCE_INDEX_DIGEST"',
   ])
   const phaseZeroSection = files.runbook.match(/## Phase 0:[\s\S]*?## Phase 1:/)?.[0] ?? ''
   requireTerms(failures, productionPaths.runbook, phaseZeroSection, [
@@ -1373,10 +1548,10 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     'kubectl -n hermes delete pod hermes-0',
     'kubectl -n hermes rollout status statefulset/hermes --timeout=15m',
     'exa_rotation_native_web_canary=ok',
-    'exa_rotation_mcp_canary=ok tools=2',
     'cleanup_exa_rotation',
   ])
   forbidTerms(failures, productionPaths.runbook, files.runbook, [
+    '<last-known-good-main-sha>',
     '--ignore-failed-read',
     'API_SERVER_KEY[password]=',
     'DISCORD_BOT_TOKEN[password]=',
@@ -1652,10 +1827,12 @@ export function validateProductionContent(files: ProductionFiles): string[] {
     '        - list\n        - watch',
   ])
 
-  requireTerms(failures, productionPaths.impactMap, files.impactMap, [
+  const rootScriptsImpact = sectionBetween(files.impactMap, '  root-scripts:\n', '\n  sag:\n')
+  requireTerms(failures, productionPaths.impactMap, rootScriptsImpact, [
     '- .github/ci/impact-map.yml',
     '- .github/workflows/pull-request.yml',
     '- argocd/applications/hermes/**',
+    '- argocd/applications/kargo/stages.yaml',
     '- argocd/applications/observability/cluster-metrics-alloy-config.river',
     '- argocd/applications/observability/cluster-metrics-alloy-deployment.yaml',
     '- argocd/applications/observability/graf-mimir-rules.yaml',

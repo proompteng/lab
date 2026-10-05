@@ -54,7 +54,7 @@ prometheus.relabel "cnpg_metrics" {
 	rule {
 		action        = "keep"
 		source_labels = ["__name__", "name"]
-		regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size)"
+		regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
 	}
 }
 
@@ -74,6 +74,70 @@ prometheus.relabel "ceph_storage_metrics" {
 		source_labels = ["__name__"]
 		regex         = "up|ceph_health_status|ceph_health_detail|ceph_healthcheck_slow_ops|ceph_osd_(apply|commit)_latency_ms|ceph_osd_flag_(nobackfill|nodeep_scrub|norebalance|norecover|noscrub)|ceph_osd_(in|metadata|up)|ceph_pg_(active|backfill_toofull|backfill_unfound|backfill_wait|backfilling|clean|deep|degraded|down|forced_backfill|forced_recovery|incomplete|peering|recovering|recovery_toofull|recovery_unfound|recovery_wait|scrubbing|stale|total|undersized|unknown)|ceph_pool_(avail_raw|bytes_used|max_avail|metadata|percent_used|rd|rd_bytes|recovering_bytes_per_sec|recovering_objects_per_sec|wr|wr_bytes)|ceph_cluster_total_(bytes|used_bytes|used_raw_bytes)"
 	}
+}
+
+// Daemon counters come from every exporter pod, not the load-balanced Service.
+// Keep node identity for correlation with the host disk and NIC collectors.
+discovery.kubernetes "ceph_exporter_pods" {
+	role = "pod"
+
+	namespaces {
+		names = ["rook-ceph"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app=rook-ceph-exporter"
+	}
+}
+
+discovery.relabel "ceph_exporters" {
+	targets = discovery.kubernetes.ceph_exporter_pods.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "ceph-exporter;http-metrics"
+	}
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_phase"]
+		regex         = "Running"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+}
+
+prometheus.relabel "ceph_daemon_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|ceph_osd_op(_(r|w|rw))?(_(in_bytes|out_bytes))?|ceph_osd_op(_(r|w|rw))?(_process)?_latency_(sum|count)|ceph_osd_op_before_queue_op_lat_(sum|count)|ceph_bluefs_(db_(total|used)_bytes|slow_used_bytes|bytes_written_slow|fsync_lat_(sum|count))|ceph_bluestore_((kv_sync|txc_commit|read_wait_aio|state_kv_queued|state_deferred_queued)_lat_(sum|count)|buffer_(hit|miss)_bytes|slow_(aio_wait|committed_kv|read_onode_meta|read_wait_aio)_count)|ceph_rocksdb_((get|submit_sync)_latency_(sum|count)|compact_queue_len)"
+	}
+}
+
+prometheus.scrape "ceph_exporters" {
+	job_name        = "ceph-exporter"
+	targets         = discovery.relabel.ceph_exporters.output
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.ceph_daemon_metrics.receiver]
 }
 
 prometheus.scrape "ceph_storage" {
@@ -222,11 +286,6 @@ discovery.kubernetes "bayn_log_pods" {
 	namespaces {
 		names = ["bayn"]
 	}
-
-	selectors {
-		role  = "pod"
-		label = "app.kubernetes.io/part-of=bayn"
-	}
 }
 
 discovery.relabel "bayn_pod_logs" {
@@ -235,7 +294,7 @@ discovery.relabel "bayn_pod_logs" {
 	rule {
 		action        = "keep"
 		source_labels = ["__meta_kubernetes_pod_container_name"]
-		regex         = "bayn|execution-controller|activate"
+		regex         = "bayn|execution-controller|activate|postgres"
 	}
 
 	rule {
@@ -472,12 +531,6 @@ prometheus.scrape "flink" {
 			"job"         = "torghut",
 			"namespace"   = "torghut",
 			"service"     = "torghut-ta-metrics",
-		},
-		{
-			"__address__" = "torghut-ta-sim-metrics.torghut.svc.cluster.local:9249",
-			"job"         = "torghut-sim",
-			"namespace"   = "torghut",
-			"service"     = "torghut-ta-sim-metrics",
 		},
 	]
 	scrape_interval = "30s"

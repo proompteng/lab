@@ -134,11 +134,11 @@ const DockItem = forwardRef<DockItemHandle, DockItemProps>(function DockItem(
       <motion.span
         aria-hidden="true"
         role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/20 bg-[#303030]/90 px-2.5 py-1 text-[13px] leading-4 font-normal text-white/95 opacity-0 shadow-[0_3px_10px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-opacity delay-0 duration-100 group-hover:delay-75 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-[6px] border border-white/10 bg-zinc-800/95 px-2.5 py-1 text-[13px] leading-4 font-normal text-white/95 opacity-0 shadow-[0_3px_10px_rgba(0,0,0,0.25)] group-hover:opacity-100 group-focus-visible:opacity-100"
         style={{ y: labelLift }}
       >
         {APP_TITLES[app]}
-        <span className="absolute top-[calc(100%-3px)] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 border-r border-b border-white/20 bg-[#303030]" />
+        <span className="absolute top-[calc(100%-3px)] left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 border-r border-b border-white/10 bg-zinc-800" />
       </motion.span>
       <span
         aria-hidden="true"
@@ -267,20 +267,22 @@ export function DesktopDock({
     <nav
       ref={navRef}
       aria-label="Dock"
-      className="pointer-events-auto relative flex h-[76px] max-w-[calc(100vw-1rem)] items-end justify-center gap-[clamp(0px,0.8vw,0.5rem)] overflow-visible rounded-[24px] border border-transparent px-[clamp(0.25rem,1.25vw,0.75rem)] pt-0 pb-1.5 touch-manipulation select-none"
+      className="pointer-events-auto relative flex h-[76px] max-w-[calc(100vw-1rem)] items-end justify-center gap-[clamp(0px,0.8vw,0.5rem)] overflow-visible rounded-[18px] border border-transparent px-[clamp(0.25rem,1.25vw,0.75rem)] pt-0 pb-1.5 touch-manipulation select-none"
       data-tengri-dock="true"
       onPointerEnter={handlePointerEnter}
       onPointerMove={updateProximity}
       onPointerLeave={resetProximity}
       onPointerCancel={resetProximity}
     >
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute -inset-px rounded-[18px] bg-zinc-800/35 backdrop-blur-2xl backdrop-saturate-125"
+      />
       <motion.span
         aria-hidden="true"
-        className="absolute -inset-px rounded-[24px] border border-white/25 bg-[rgba(31,35,49,0.46)] shadow-[0_12px_30px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,255,255,0.2)] backdrop-blur-2xl backdrop-saturate-150"
+        className="pointer-events-none absolute -inset-px rounded-[18px] border border-white/10 bg-white/[0.035] shadow-[0_1px_0_rgba(255,255,255,0.04),0_12px_30px_rgba(0,0,0,0.25)]"
         style={{ scaleX: plateScale }}
-      >
-        <span className="pointer-events-none absolute inset-x-5 top-px h-px rounded-full bg-gradient-to-r from-transparent via-white/35 to-transparent" />
-      </motion.span>
+      />
       {items.map(({ app, ref }) => (
         <DockItem
           key={app}

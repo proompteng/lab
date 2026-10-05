@@ -11,13 +11,16 @@ import {
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
+  issueEditorSession,
   issueTerminalTicket,
   listAgents,
+  listCodexModels,
   listFiles,
   listTerminals,
   moveFile,
   readFile,
   resolveCodexApproval,
+  revokeEditorSessions,
   revokePreviewSession,
   resumeAgent,
   resumeCodexThread,
@@ -159,17 +162,43 @@ export async function POST(request: Request) {
       case 'codex-login':
         result = await startCodexLogin(identity.subject, action.agentId)
         break
+      case 'codex-models':
+        result = await listCodexModels(identity.subject, action.agentId, action.cursor)
+        break
       case 'create-thread':
-        result = await createCodexThread(identity.subject, action.agentId)
+        result = await createCodexThread(identity.subject, action.agentId, {
+          model: action.model,
+          reasoningEffort: action.reasoningEffort,
+        })
         break
       case 'resume-thread':
-        result = await resumeCodexThread(identity.subject, action.agentId, action.threadId)
+        result = await resumeCodexThread(identity.subject, action.agentId, action.threadId, {
+          model: action.model,
+          reasoningEffort: action.reasoningEffort,
+        })
         break
       case 'send-turn':
-        result = await sendCodexTurn(identity.subject, action.agentId, action.threadId, action.text)
+        result = await sendCodexTurn(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          action.text,
+          {
+            model: action.model,
+            reasoningEffort: action.reasoningEffort,
+          },
+          action.images,
+        )
         break
       case 'steer-turn':
-        result = await steerCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId, action.text)
+        result = await steerCodexTurn(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          action.turnId,
+          action.text,
+          action.images,
+        )
         break
       case 'interrupt-turn':
         await interruptCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId)
@@ -182,8 +211,15 @@ export async function POST(request: Request) {
       case 'preview-session':
         result = await issuePreviewSession(identity.subject, action.agentId, action.port, action.path, action.fragment)
         break
+      case 'editor-session':
+        result = await issueEditorSession(identity.subject, action.agentId, action.windowId)
+        break
+      case 'revoke-editor-sessions':
+        await revokeEditorSessions(identity.subject)
+        result = null
+        break
       case 'revoke-preview-session':
-        await revokePreviewSession(identity.subject, action.agentId, action.sessionId)
+        await revokePreviewSession(identity.subject, action.agentId, action.sessionId, action.revocationToken)
         result = null
         break
     }

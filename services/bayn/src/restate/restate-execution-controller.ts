@@ -1,32 +1,42 @@
 import { timingSafeEqual } from 'node:crypto'
 
 import * as restate from '@restatedev/restate-sdk'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { maximumConsistencyDelayMs } from '../execution/mutations'
 import {
   completeExecutionControllerTick,
   decodeExecutionAdvanceStepResult,
   decodeExecutionControllerActivation,
-  decodeExecutionControllerBootstrap,
+  decodeExecutionDeploymentActivation,
   decodeExecutionControllerDeactivation,
   decodeExecutionControllerState,
   decodeExecutionControllerTick,
   decideExecutionControllerActivation,
-  decideExecutionControllerBootstrap,
+  decideExecutionDeploymentActivation,
   decideExecutionControllerDeactivation,
   decideExecutionControllerTick,
   executionControllerMaximumDeliveryAttempt,
   executionControllerMaximumRecoveryWindow,
+  executionControllerSuccessorPassCompleted,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
   type ExecutionControllerBinding,
-  type ExecutionControllerBootstrap,
+  type ExecutionDeploymentActivation,
   type ExecutionControllerDeactivation,
   type ExecutionControllerState,
   type ExecutionControllerTick,
 } from '../execution/controller'
 import { sha256 } from '../hash'
+import {
+  recordResearchCapture,
+  CaptureInvalidation,
+  invalidateResearchCapture,
+  type ResearchCaptureEvent,
+  type ResearchCaptureObserver,
+} from '../research-capture/capture'
+import { strictParseOptions } from '../schemas'
+import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
 
 const stateKey = 'controller'
 const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
@@ -45,7 +55,7 @@ const executionTickSerde = restate.serde.json.schema<ExecutionControllerTick>({
   additionalProperties: false,
 })
 export const executionControllerFinalizationHeadroomMs = 30_000
-export const executionControllerActivationRetentionMs = 10 * 60_000
+export const executionControllerActivationRetentionMs = 7 * 24 * 60 * 60_000
 export const executionControllerAdvanceRunOptions = {
   maxRetryAttempts: 0,
 } as const satisfies restate.RunOptions<ExecutionAdvanceStepResult>
@@ -73,7 +83,7 @@ export const executionControllerRecoveryDelayMs = (recoveryWindow: number): numb
     executionControllerRecoveryTickDelayMs * 4 ** Math.max(0, recoveryWindow - 1),
     executionControllerRecoveryMaximumDelayMs,
   )
-export const executionControllerBootstrapCompletionPollIntervalMs = 5_000
+export const executionControllerDeploymentCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
   readonly controllerKey: string
@@ -84,6 +94,7 @@ export interface ExecutionControllerConfig {
 }
 
 export interface NativeExecutionRuntime {
+  readonly capture?: ResearchCaptureObserver
   readonly advance: (
     command: import('../execution/advance').AdvanceExecutionCommand,
     signal: AbortSignal,
@@ -200,9 +211,12 @@ const verifyActivationBinding = (
   }
 }
 
-const verifyBootstrapBinding = (config: ExecutionControllerConfig, request: ExecutionControllerBootstrap): void => {
-  const requestPrevious =
-    request.schemaVersion === 'bayn.execution-controller-bootstrap.v3' ? request.previousBinding : undefined
+const verifyDeploymentBinding = (
+  config: ExecutionControllerConfig,
+  key: string,
+  request: ExecutionDeploymentActivation,
+): void => {
+  const requestPrevious = request.previousBinding
   const previousMatches =
     requestPrevious === undefined && config.previousBinding === undefined
       ? true
@@ -211,12 +225,13 @@ const verifyBootstrapBinding = (config: ExecutionControllerConfig, request: Exec
         requestPrevious.planHash === config.previousBinding.planHash &&
         requestPrevious.sourceRevision === config.previousBinding.sourceRevision
   if (
+    key !== config.controllerKey ||
     request.controllerKey !== config.controllerKey ||
     request.planHash !== config.planHash ||
     request.sourceRevision !== config.sourceRevision ||
     !previousMatches
   ) {
-    throw terminal('execution controller bootstrap does not match this immutable deployment')
+    throw terminal('execution controller deployment activation does not match this immutable deployment')
   }
 }
 
@@ -257,36 +272,38 @@ const isPreviousBinding = (config: ExecutionControllerConfig, state: ExecutionCo
   state.planHash === config.previousBinding.planHash &&
   state.sourceRevision === config.previousBinding.sourceRevision
 
-const bootstrapTokenPattern = /^[A-Za-z0-9_-]{43,128}$/
+const activationTokenPattern = /^[A-Za-z0-9_-]{43,128}$/
 const authorizationPrefix = 'Bearer '
 
-const isCanonicalBootstrapToken = (token: string): boolean => {
-  if (!bootstrapTokenPattern.test(token)) return false
+const isCanonicalActivationToken = (token: string): boolean => {
+  if (!activationTokenPattern.test(token)) return false
   const decoded = Buffer.from(token, 'base64url')
   return decoded.length >= 32 && decoded.length <= 96 && decoded.toString('base64url') === token
 }
 
-export const executionBootstrapAuthorizationHash = (token: string): Result.Result<string, string> =>
-  isCanonicalBootstrapToken(token)
+export const executionActivationAuthorizationHash = (token: string): Result.Result<string, string> =>
+  isCanonicalActivationToken(token)
     ? Result.succeed(sha256(token))
-    : Result.fail('execution controller bootstrap token must be 32-96 bytes of base64url entropy')
+    : Result.fail('execution controller deployment activation token must be 32-96 bytes of base64url entropy')
 
-const authorizeBootstrap = (expectedHash: string, authorization: string | undefined): void => {
+const authorizeDeployment = (expectedHash: string, authorization: string | undefined): void => {
   const token =
     authorization !== undefined && authorization.startsWith(authorizationPrefix)
       ? authorization.slice(authorizationPrefix.length)
       : undefined
-  const actualHash = token !== undefined && isCanonicalBootstrapToken(token) ? sha256(token) : '0'.repeat(64)
+  const actualHash = token !== undefined && isCanonicalActivationToken(token) ? sha256(token) : '0'.repeat(64)
   const expected = Buffer.from(expectedHash, 'hex')
   const actual = Buffer.from(actualHash, 'hex')
   if (expected.length !== 32 || actual.length !== 32 || !timingSafeEqual(expected, actual)) {
-    throw new restate.TerminalError('execution controller bootstrap authorization failed', { errorCode: 403 })
+    throw new restate.TerminalError('execution controller deployment activation authorization failed', {
+      errorCode: 403,
+    })
   }
 }
 
-export const bindBootstrapActivation = (
+export const bindDeploymentActivation = (
   state: ExecutionControllerState | null,
-  request: ExecutionControllerBootstrap,
+  request: ExecutionDeploymentActivation,
   config: ExecutionControllerConfig,
 ): ExecutionControllerActivation => ({
   schemaVersion: 'bayn.execution-controller-activation.v1',
@@ -332,6 +349,7 @@ const scheduleTick = (
   sourceCatchUpRevision?: string,
   retryWindowHash?: string,
   recoveryWindow?: number,
+  capture?: ResearchCaptureObserver,
 ): void => {
   let idempotencyKey: string
   if (sourceCatchUpRevision !== undefined) {
@@ -351,23 +369,34 @@ const scheduleTick = (
   } else {
     idempotencyKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
   }
+  const tick: ExecutionControllerTick = {
+    schemaVersion: 'bayn.execution-controller-tick.v1',
+    epoch: state.epoch,
+    sequence: state.nextSequence,
+    attempt,
+    ...(issuedAt === undefined ? {} : { issuedAt }),
+    ...(recoveryWindow === undefined ? {} : { recoveryWindow }),
+    ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
+    ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
+  }
   ctx.genericSend({
     service: 'BaynExecutionController',
     method: 'tick',
     key: ctx.key,
-    parameter: {
-      schemaVersion: 'bayn.execution-controller-tick.v1',
-      epoch: state.epoch,
-      sequence: state.nextSequence,
-      attempt,
-      ...(issuedAt === undefined ? {} : { issuedAt }),
-      ...(recoveryWindow === undefined ? {} : { recoveryWindow }),
-      ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
-      ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
-    },
+    parameter: tick,
     inputSerde: executionTickSerde,
     delay,
     idempotencyKey,
+  })
+  recordResearchCapture(capture, {
+    kind: 'controller-pass',
+    phase: 'SCHEDULED',
+    controllerKey: ctx.key,
+    invocationId: ctx.request().id,
+    sourceRevision: sourceCatchUpRevision ?? state.sourceRevision,
+    tick,
+    idempotencyKey,
+    delayMs: delay,
   })
 }
 
@@ -378,56 +407,59 @@ export const executionControllerHandlerTimeouts = (
   abortTimeout: executionControllerFinalizationHeadroomMs,
 })
 
-// A bootstrap rotation can wait behind one already-running exclusive controller command. Keep the bootstrap alive for
-// the controller's complete native inactivity bound plus one response-finalization margin. This is deliberately
-// independent of the retired lifecycle controller and remains below the 15-minute activation-hook deadline at the
-// production 30s operation budget.
-export const executionControllerBootstrapRotationBoundMs = (operationTimeoutMs: number): number =>
+// Rotation can wait behind an exclusive command already in progress. Allow its full inactivity bound plus one
+// response-finalization margin, within the deployment hook's 15-minute deadline at the production 30s operation budget.
+export const executionControllerDeploymentRotationBoundMs = (operationTimeoutMs: number): number =>
   executionControllerHandlerTimeouts(operationTimeoutMs).inactivityTimeout + executionControllerFinalizationHeadroomMs
 
-export const executionControllerBootstrapHandlerTimeouts = (
+export const executionControllerDeploymentHandlerTimeouts = (
   operationTimeoutMs: number,
   rotatesPreviousBinding: boolean,
 ): { readonly inactivityTimeout: number; readonly abortTimeout: number } =>
   rotatesPreviousBinding
     ? {
-        inactivityTimeout: executionControllerBootstrapRotationBoundMs(operationTimeoutMs),
+        inactivityTimeout: executionControllerDeploymentRotationBoundMs(operationTimeoutMs),
         abortTimeout: executionControllerFinalizationHeadroomMs,
       }
     : executionControllerHandlerTimeouts(operationTimeoutMs)
 
-export const executionControllerBootstrapCompletionMaximumAttempts = (operationTimeoutMs: number): number =>
+export const executionControllerDeploymentCompletionMaximumAttempts = (operationTimeoutMs: number): number =>
   Math.floor(
     (executionControllerHandlerTimeouts(operationTimeoutMs).inactivityTimeout -
       executionControllerFinalizationHeadroomMs) /
-      executionControllerBootstrapCompletionPollIntervalMs,
+      executionControllerDeploymentCompletionPollIntervalMs,
   ) + 1
 
-export const executionControllerSuccessorPassCompleted = (
-  state: ExecutionControllerState | null,
-  activation: ExecutionControllerActivation,
-): state is ExecutionControllerState & {
-  readonly lastCompletion: NonNullable<ExecutionControllerState['lastCompletion']>
-} =>
-  state !== null &&
-  state.active &&
-  state.epoch === activation.epoch &&
-  state.planHash === activation.planHash &&
-  state.sourceRevision === activation.sourceRevision &&
-  state.lastCompletion !== undefined &&
-  state.lastCompletion.sequence > activation.firstSequence &&
-  state.nextSequence === state.lastCompletion.sequence + 1
-
 export const makeBaynExecutionController = (
-  config: ExecutionControllerConfig,
+  config: ExecutionControllerConfig & { readonly activationAuthorizationHash: string },
   runtime: NativeExecutionRuntime,
   hooks: readonly restate.HooksProvider[] = [],
-) =>
-  restate.object({
+) => {
+  const capture = runtime.capture
+  type PassReceipt = Extract<ResearchCaptureEvent, { readonly kind: 'controller-pass' }>
+  const capturePass = (
+    ctx: restate.ObjectContext<ControllerObjectState>,
+    tick: ExecutionControllerTick,
+    phase: PassReceipt['phase'],
+    detail: Pick<
+      PassReceipt,
+      'commandIssuedAt' | 'completedAt' | 'receiptHash' | 'reason' | 'runtimeAttempted' | 'jevObservationReferences'
+    > = {},
+  ): void =>
+    recordResearchCapture(capture, {
+      kind: 'controller-pass',
+      phase,
+      controllerKey: ctx.key,
+      invocationId: ctx.request().id,
+      sourceRevision: config.sourceRevision,
+      tick,
+      ...detail,
+    })
+  const controller = restate.object({
     name: 'BaynExecutionController',
     handlers: {
       activate: restate.handlers.object.exclusive(
-        { retryPolicy: executionControllerCommandRetryPolicy },
+        { ingressPrivate: true, retryPolicy: executionControllerCommandRetryPolicy },
         async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown) => {
           const request = decodeOrTerminal(
             decodeExecutionControllerActivation(candidate),
@@ -442,7 +474,17 @@ export const makeBaynExecutionController = (
           )
           if (decision._tag === 'Activated') {
             ctx.set(stateKey, decision.state)
-            scheduleTick(ctx, decision.state, executionControllerInitialTickDelayMs)
+            scheduleTick(
+              ctx,
+              decision.state,
+              executionControllerInitialTickDelayMs,
+              0,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              capture,
+            )
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller activated', {
               controllerKey: ctx.key,
               epoch: decision.state.epoch,
@@ -461,6 +503,9 @@ export const makeBaynExecutionController = (
               0,
               undefined,
               config.sourceRevision,
+              undefined,
+              undefined,
+              capture,
             )
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller scheduled a source catch-up pass', {
               controllerKey: ctx.key,
@@ -475,7 +520,7 @@ export const makeBaynExecutionController = (
       ),
 
       tick: restate.handlers.object.exclusive(
-        { retryPolicy: executionControllerTickRetryPolicy },
+        { ingressPrivate: true, retryPolicy: executionControllerTickRetryPolicy },
         async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown): Promise<void> => {
           const tick = decodeOrTerminal(
             decodeExecutionControllerTick(candidate),
@@ -484,6 +529,7 @@ export const makeBaynExecutionController = (
           const state = await readState(ctx)
           verifyTickBinding(config, ctx.key, state)
           if (tick.sourceCatchUpRevision !== undefined && tick.sourceCatchUpRevision !== config.sourceRevision) {
+            capturePass(ctx, tick, 'IGNORED', { reason: 'foreign-source-catch-up' })
             await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller quiesced a foreign source catch-up', {
               controllerKey: ctx.key,
               epoch: tick.epoch,
@@ -494,6 +540,7 @@ export const makeBaynExecutionController = (
             return
           }
           if (isPreviousBinding(config, state)) {
+            capturePass(ctx, tick, 'IGNORED', { reason: 'previous-binding' })
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller quiesced a previous-binding tick', {
               controllerKey: ctx.key,
               epoch: tick.epoch,
@@ -507,18 +554,32 @@ export const makeBaynExecutionController = (
           const decision = decisionOrTerminal(
             decideExecutionControllerTick(state, tick, ctx.key, issuedAt, config.sourceRevision),
           )
-          if (decision._tag === 'Ignored') return
+          if (decision._tag === 'Ignored') {
+            capturePass(ctx, tick, 'IGNORED', { reason: decision.reason, commandIssuedAt: issuedAt })
+            return
+          }
 
           let stepResult: ExecutionAdvanceStepResult
+          let runtimeAttempted = false
           try {
             stepResult = await ctx.run(
               'advance Bayn execution once',
-              () => runtime.advance(decision.command, ctx.request().attemptCompletedSignal),
+              () => {
+                runtimeAttempted = true
+                capturePass(ctx, tick, 'STARTED', { commandIssuedAt: decision.command.issuedAt, runtimeAttempted })
+                return runtime.advance(decision.command, ctx.request().attemptCompletedSignal)
+              },
               executionControllerAdvanceRunOptions,
             )
           } catch (cause: unknown) {
             const attempt = tick.attempt ?? 0
             const failure = executionAdvanceFailureDiagnostic(cause)
+            capturePass(ctx, tick, 'FAILED', {
+              commandIssuedAt: decision.command.issuedAt,
+              reason: failure.failureTag,
+              runtimeAttempted,
+            })
+            if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)
             const replacementFirstPass =
               config.previousBinding !== undefined &&
               state !== null &&
@@ -537,6 +598,7 @@ export const makeBaynExecutionController = (
                 tick.sourceCatchUpRevision,
                 tick.retryWindowHash,
                 tick.recoveryWindow,
+                capture,
               )
               await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller advance will retry', {
                 controllerKey: ctx.key,
@@ -595,7 +657,17 @@ export const makeBaynExecutionController = (
             const nextRecoveryWindow = currentRecoveryWindow + 1
             const retryWindowHash = sha256(`${ctx.request().id}:${nextRecoveryWindow}`)
             const recoveryDelayMs = executionControllerRecoveryDelayMs(nextRecoveryWindow)
-            scheduleTick(ctx, state, recoveryDelayMs, 0, issuedAt, undefined, retryWindowHash, nextRecoveryWindow)
+            scheduleTick(
+              ctx,
+              state,
+              recoveryDelayMs,
+              0,
+              issuedAt,
+              undefined,
+              retryWindowHash,
+              nextRecoveryWindow,
+              capture,
+            )
             await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller scheduled a recovery window', {
               controllerKey: ctx.key,
               epoch: state.epoch,
@@ -617,7 +689,27 @@ export const makeBaynExecutionController = (
             completeExecutionControllerTick(state, tick, result, config.sourceRevision),
           )
           ctx.set(stateKey, completed)
-          scheduleTick(ctx, completed, result.outcome.nextDelayMs)
+          capturePass(ctx, tick, 'COMPLETED', {
+            commandIssuedAt: decision.command.issuedAt,
+            completedAt: result.completedAt,
+            receiptHash: result.outcome.receiptHash,
+            ...(result.observation?.jevObservationReferences === undefined
+              ? {}
+              : { jevObservationReferences: result.observation.jevObservationReferences }),
+            runtimeAttempted,
+          })
+          if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)
+          scheduleTick(
+            ctx,
+            completed,
+            result.outcome.nextDelayMs,
+            0,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            capture,
+          )
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             controllerKey: ctx.key,
             epoch: completed.epoch,
@@ -631,7 +723,7 @@ export const makeBaynExecutionController = (
       ),
 
       deactivate: restate.handlers.object.exclusive(
-        { retryPolicy: executionControllerCommandRetryPolicy },
+        { ingressPrivate: true, retryPolicy: executionControllerCommandRetryPolicy },
         async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown) => {
           const request = decodeOrTerminal(
             decodeExecutionControllerDeactivation(candidate),
@@ -659,41 +751,34 @@ export const makeBaynExecutionController = (
       ),
 
       status: restate.handlers.object.shared(
+        { ingressPrivate: true },
         async (ctx: restate.ObjectSharedContext<ControllerObjectState>, _candidate: unknown) => readState(ctx),
       ),
-    },
-    options: {
-      ingressPrivate: true,
-      enableLazyState: true,
-      hooks: [...hooks],
-      ...executionControllerHandlerTimeouts(config.operationTimeoutMs),
-    },
-  })
 
-export const makeBaynExecutionBootstrap = (
-  config: ExecutionControllerConfig,
-  controller: ReturnType<typeof makeBaynExecutionController>,
-  authorizationHash: string,
-  hooks: readonly restate.HooksProvider[] = [],
-) =>
-  restate.service({
-    name: 'BaynExecutionBootstrap',
-    handlers: {
-      start: restate.handlers.handler(
+      activateDeployment: restate.handlers.object.shared(
         {
+          ingressPrivate: false,
           idempotencyRetention: executionControllerActivationRetentionMs,
+          journalRetention: 0,
           retryPolicy: executionControllerCommandRetryPolicy,
+          ...executionControllerDeploymentHandlerTimeouts(
+            config.operationTimeoutMs,
+            config.previousBinding !== undefined,
+          ),
         },
-        async (ctx: restate.Context, candidate: unknown) => {
+        async (
+          ctx: restate.ObjectSharedContext<ControllerObjectState>,
+          candidate: unknown,
+        ): Promise<ExecutionControllerState> => {
           const request = decodeOrTerminal(
-            decodeExecutionControllerBootstrap(candidate),
-            'execution controller bootstrap failed validation',
+            decodeExecutionDeploymentActivation(candidate),
+            'execution controller deployment activation failed validation',
           )
-          verifyBootstrapBinding(config, request)
-          authorizeBootstrap(authorizationHash, ctx.request().headers.get('authorization'))
-          const client = ctx.objectClient(controller, config.controllerKey)
+          verifyDeploymentBinding(config, ctx.key, request)
+          authorizeDeployment(config.activationAuthorizationHash, ctx.request().headers.get('authorization'))
+          const client = ctx.objectClient(controller, ctx.key)
           const state = await client.status(undefined)
-          const decision = decisionOrTerminal(decideExecutionControllerBootstrap(state, request))
+          const decision = decisionOrTerminal(decideExecutionDeploymentActivation(state, request))
           let activationState = decision._tag === 'Activate' ? decision.state : undefined
           if (decision._tag === 'Rotate') {
             const deactivated = await client.deactivate(decision.deactivation)
@@ -707,23 +792,48 @@ export const makeBaynExecutionBootstrap = (
             }
             activationState = deactivated
           }
-          const activation = bindBootstrapActivation(activationState ?? null, request, config)
+          const observation = Schema.decodeUnknownResult(
+            BrokerObservationOwnerStateSchema,
+            strictParseOptions,
+          )(
+            await ctx.genericCall({
+              service: 'BaynBrokerObservations',
+              method: 'activate',
+              key: config.controllerKey,
+              parameter: { sourceRevision: config.sourceRevision },
+              inputSerde: brokerObservationJsonSerde,
+              outputSerde: brokerObservationJsonSerde,
+            }),
+          )
+          if (
+            Result.isFailure(observation) ||
+            observation.success.sourceRevision !== config.sourceRevision ||
+            observation.success.lastSnapshotHash === undefined
+          )
+            throw terminal('execution controller deployment activation requires a fresh published broker observation')
+          const activation = bindDeploymentActivation(activationState ?? null, request, config)
           let activated: ExecutionControllerState | null = await client.activate(activation)
-          const maximumAttempts = executionControllerBootstrapCompletionMaximumAttempts(config.operationTimeoutMs)
+          const maximumAttempts = executionControllerDeploymentCompletionMaximumAttempts(config.operationTimeoutMs)
           for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
             if (executionControllerSuccessorPassCompleted(activated, activation)) return activated
             if (attempt === maximumAttempts) {
-              throw terminal('execution controller bootstrap did not observe a completed durable successor pass')
+              throw terminal(
+                'execution controller deployment activation did not observe a completed durable successor pass',
+              )
             }
-            await ctx.sleep({ milliseconds: executionControllerBootstrapCompletionPollIntervalMs })
+            await ctx.sleep({ milliseconds: executionControllerDeploymentCompletionPollIntervalMs })
             activated = await client.status(undefined)
           }
-          throw terminal('execution controller bootstrap completion bound is invalid')
+          throw terminal('execution controller deployment activation completion bound is invalid')
         },
       ),
     },
     options: {
+      ingressPrivate: false,
+      enableLazyState: true,
       hooks: [...hooks],
-      ...executionControllerBootstrapHandlerTimeouts(config.operationTimeoutMs, config.previousBinding !== undefined),
+      ...executionControllerHandlerTimeouts(config.operationTimeoutMs),
     },
   })
+  return controller
+}

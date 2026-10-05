@@ -1,0 +1,453 @@
+# Cassandra RF3 expansion gate for the Temporal preparation phase.
+#
+# This is deliberately separate from the major-version rolling gate. It keeps
+# the current 3.11.5 StatefulSet and PVC identities, takes a retained,
+# stage-specific snapshot set, then expands only the Temporal keyspace and
+# repairs it on every existing node. The Job has no pod-delete, patch, or
+# StatefulSet-update permission; remount/eviction work may start only after
+# this Job and the application acceptance checks have succeeded.
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-rf3-cassandra-0
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3-backup
+    temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-12"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    temporal.proompteng.ai/backup-generation: cassandra-rf3-before-alter-v1
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-0
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-rf3-cassandra-1
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3-backup
+    temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-12"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    temporal.proompteng.ai/backup-generation: cassandra-rf3-before-alter-v1
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-1
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: temporal-rf3-cassandra-2
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3-backup
+    temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-12"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    temporal.proompteng.ai/backup-generation: cassandra-rf3-before-alter-v1
+spec:
+  volumeSnapshotClassName: rook-ceph-block
+  source:
+    persistentVolumeClaimName: data-temporal-cassandra-2
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: temporal-cassandra-rf3
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-16"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: temporal-cassandra-rf3
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-16"
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods/exec
+    verbs:
+      - create
+  - apiGroups:
+      - apps
+    resources:
+      - statefulsets
+      - deployments
+    verbs:
+      - get
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+  - apiGroups:
+      - snapshot.storage.k8s.io
+    resources:
+      - volumesnapshots
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: temporal-cassandra-rf3
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-16"
+subjects:
+  - kind: ServiceAccount
+    name: temporal-cassandra-rf3
+    namespace: temporal
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: temporal-cassandra-rf3
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-cassandra-rf3-repair-v1
+  namespace: temporal
+  labels:
+    app.kubernetes.io/name: temporal
+    app.kubernetes.io/component: cassandra-rf3
+    temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  activeDeadlineSeconds: 21600
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: temporal
+        app.kubernetes.io/component: cassandra-rf3
+        temporal.proompteng.ai/upgrade-stage: cassandra-rf3
+    spec:
+      serviceAccountName: temporal-cassandra-rf3
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/os: linux
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: expand-and-repair
+          image: docker.io/bitnami/kubectl@sha256:a67b11e95e953f550f020a41970185ccc5f83d78b86b8c575d02c904aa0f9cd7
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOME
+              value: /tmp
+            - name: EXPECTED_CASSANDRA_IMAGE
+              value: mirror.gcr.io/cassandra:3.11.5
+            - name: EXPECTED_BACKUP_GENERATION
+              value: cassandra-rf3-before-alter-v1
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -Eeuo pipefail
+
+              namespace=temporal
+              expected_snapshot_class=rook-ceph-block
+              expected_stage=cassandra-rf3
+              expected_keyspace=temporal
+              expected_replication_factor=3
+              poll_interval_seconds=10
+              expected_statefulset_uid=0a9b7396-7c88-4750-ba97-cf03e48e374b
+              expected_pvc_uids=(
+                310f9545-d4f6-4b8c-8bdd-a3186a109c14
+                74dd51e0-bc67-4713-804b-c01d60c8d06b
+                a0bf87d0-df41-49c1-9a97-d4af83e11116
+              )
+              pod_uids=()
+
+              fail() {
+                echo "Cassandra RF3 gate: $*" >&2
+                exit 1
+              }
+
+              # RF1 data is not yet present on a read quorum of the new RF3
+              # replica set. Keep Temporal stopped until full repair finishes.
+              for component in frontend history matching worker; do
+                replicas=$(kubectl -n "${namespace}" get "deployment/temporal-${component}" \
+                  -o jsonpath='{.spec.replicas}')
+                remaining=$(kubectl -n "${namespace}" get pods \
+                  -l "app.kubernetes.io/name=temporal,app.kubernetes.io/component=${component}" \
+                  -o name)
+                [[ "${replicas}" == 0 && -z "${remaining}" ]] || \
+                  fail "Temporal ${component} must remain stopped until RF3 repair completes"
+              done
+              quiesced=$(kubectl -n "${namespace}" get job temporal-cassandra-rf3-quiesce \
+                -o jsonpath='{.status.completionTime}')
+              [[ -n "${quiesced}" ]] || fail "quiesce and flush Job has not completed"
+
+              snapshot_jsonpath() {
+                local snapshot="$1"
+                local path="$2"
+                kubectl -n "${namespace}" get "volumesnapshot/${snapshot}" \
+                  -o "jsonpath=${path}"
+              }
+
+              require_fresh_snapshot() {
+                local ordinal="$1"
+                local snapshot="temporal-rf3-cassandra-${ordinal}"
+                local expected_pvc="data-temporal-cassandra-${ordinal}"
+                local ready source snapshot_class stage generation bound error created
+
+                kubectl -n "${namespace}" wait \
+                  --for=jsonpath='{.status.readyToUse}'=true \
+                  "volumesnapshot/${snapshot}" --timeout=30m
+
+                ready=$(snapshot_jsonpath "${snapshot}" '{.status.readyToUse}')
+                source=$(snapshot_jsonpath "${snapshot}" '{.spec.source.persistentVolumeClaimName}')
+                snapshot_class=$(snapshot_jsonpath "${snapshot}" '{.spec.volumeSnapshotClassName}')
+                stage=$(snapshot_jsonpath "${snapshot}" \
+                  '{.metadata.labels.temporal\.proompteng\.ai/upgrade-stage}')
+                generation=$(snapshot_jsonpath "${snapshot}" \
+                  '{.metadata.annotations.temporal\.proompteng\.ai/backup-generation}')
+                bound=$(snapshot_jsonpath "${snapshot}" \
+                  '{.status.boundVolumeSnapshotContentName}')
+                error=$(snapshot_jsonpath "${snapshot}" '{.status.error.message}')
+                created=$(snapshot_jsonpath "${snapshot}" '{.metadata.creationTimestamp}')
+
+                [[ "${ready}" == true ]] || fail "${snapshot} is not ReadyToUse"
+                [[ "${source}" == "${expected_pvc}" ]] || \
+                  fail "${snapshot} sources ${source}, expected ${expected_pvc}"
+                [[ "${snapshot_class}" == "${expected_snapshot_class}" ]] || \
+                  fail "${snapshot} uses ${snapshot_class}, expected ${expected_snapshot_class}"
+                [[ "${stage}" == "${expected_stage}" ]] || \
+                  fail "${snapshot} stage is ${stage}, expected ${expected_stage}"
+                [[ "${generation}" == "${EXPECTED_BACKUP_GENERATION}" ]] || \
+                  fail "${snapshot} generation is ${generation}, expected ${EXPECTED_BACKUP_GENERATION}"
+                [[ -n "${bound}" ]] || fail "${snapshot} has no bound snapshot content"
+                [[ -z "${error}" ]] || fail "${snapshot} reports a snapshot error"
+                [[ -n "${created}" ]] || fail "${snapshot} has no creation timestamp"
+                (( $(date -d "${created}" +%s) >= $(date -d "${quiesced}" +%s) )) || \
+                  fail "${snapshot} predates the verified quiesce and flush"
+              }
+
+              require_bound_pvc() {
+                local ordinal="$1"
+                local pvc="data-temporal-cassandra-${ordinal}"
+                local phase storage_class requested_size uid pv
+
+                phase=$(kubectl -n "${namespace}" get "pvc/${pvc}" \
+                  -o jsonpath='{.status.phase}')
+                storage_class=$(kubectl -n "${namespace}" get "pvc/${pvc}" \
+                  -o jsonpath='{.spec.storageClassName}')
+                requested_size=$(kubectl -n "${namespace}" get "pvc/${pvc}" \
+                  -o jsonpath='{.spec.resources.requests.storage}')
+                uid=$(kubectl -n "${namespace}" get "pvc/${pvc}" -o jsonpath='{.metadata.uid}')
+                pv=$(kubectl -n "${namespace}" get "pvc/${pvc}" -o jsonpath='{.spec.volumeName}')
+                [[ "${uid}" == "${expected_pvc_uids[ordinal]}" ]] || fail "${pvc} UID changed"
+                [[ "${pv}" == "pvc-${expected_pvc_uids[ordinal]}" ]] || fail "${pvc} PV binding changed"
+                [[ "${phase}" == Bound ]] || fail "${pvc} is ${phase}, expected Bound"
+                [[ "${storage_class}" == "${expected_snapshot_class}" ]] || \
+                  fail "${pvc} uses ${storage_class}, expected ${expected_snapshot_class}"
+                [[ -n "${requested_size}" ]] || fail "${pvc} has no requested size"
+              }
+
+              for ordinal in 0 1 2; do
+                require_fresh_snapshot "${ordinal}"
+                require_bound_pvc "${ordinal}"
+              done
+
+              statefulset_image=$(kubectl -n "${namespace}" get statefulset temporal-cassandra \
+                -o jsonpath='{.spec.template.spec.containers[?(@.name=="temporal-cassandra")].image}')
+              statefulset_uid=$(kubectl -n "${namespace}" get statefulset temporal-cassandra \
+                -o jsonpath='{.metadata.uid}')
+              [[ "${statefulset_uid}" == "${expected_statefulset_uid}" ]] || fail "StatefulSet identity changed"
+              [[ "${statefulset_image}" == "${EXPECTED_CASSANDRA_IMAGE}" ]] || \
+                fail "StatefulSet image is ${statefulset_image}; expected ${EXPECTED_CASSANDRA_IMAGE}"
+              update_strategy=$(kubectl -n "${namespace}" get statefulset temporal-cassandra \
+                -o jsonpath='{.spec.updateStrategy.type}')
+              [[ "${update_strategy}" == OnDelete ]] || \
+                fail "StatefulSet update strategy is ${update_strategy}; expected OnDelete"
+
+              for ordinal in 0 1 2; do
+                pod="temporal-cassandra-${ordinal}"
+                pod_phase=$(kubectl -n "${namespace}" get "pod/${pod}" \
+                  -o jsonpath='{.status.phase}')
+                ready=$(kubectl -n "${namespace}" get "pod/${pod}" \
+                  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+                pod_image=$(kubectl -n "${namespace}" get "pod/${pod}" \
+                  -o jsonpath='{.spec.containers[?(@.name=="temporal-cassandra")].image}')
+                deletion_timestamp=$(kubectl -n "${namespace}" get "pod/${pod}" \
+                  -o jsonpath='{.metadata.deletionTimestamp}')
+                pod_uids[ordinal]=$(kubectl -n "${namespace}" get "pod/${pod}" -o jsonpath='{.metadata.uid}')
+                owner_uid=$(kubectl -n "${namespace}" get "pod/${pod}" \
+                  -o jsonpath='{.metadata.ownerReferences[?(@.controller==true)].uid}')
+                [[ "${owner_uid}" == "${expected_statefulset_uid}" ]] || fail "${pod} owner changed"
+                [[ "${pod_phase}" == Running ]] || fail "${pod} is ${pod_phase}"
+                [[ "${ready}" == True ]] || fail "${pod} is not Ready"
+                [[ "${pod_image}" == "${EXPECTED_CASSANDRA_IMAGE}" ]] || \
+                  fail "${pod} image is ${pod_image}; expected ${EXPECTED_CASSANDRA_IMAGE}"
+                [[ -z "${deletion_timestamp}" ]] || fail "${pod} is being deleted"
+              done
+
+              cassandra_pod=temporal-cassandra-0
+
+              ring_state() {
+                local status schema_versions netstats ordinal
+                status=$(kubectl -n "${namespace}" exec "${cassandra_pod}" -- nodetool status)
+                schema_versions=$(kubectl -n "${namespace}" exec "${cassandra_pod}" -- \
+                  nodetool describecluster | awk '
+                    /Schema versions:/ { in_schema = 1; next }
+                    in_schema && /^[[:space:]]*[0-9A-Fa-f-]+:/ { count++ }
+                    END { print count + 0 }
+                  ')
+                [[ "$(printf '%s\n' "${status}" | awk '$1 == "UN" { count++ } END { print count + 0 }')" == 3 ]] || return 1
+                [[ "$(printf '%s\n' "${status}" | awk '$1 ~ /^[A-Z?][A-Z?]$/ { total++; if ($1 != "UN") bad++ } END { print total "," (bad + 0) }')" == 3,0 ]] || return 1
+                [[ "${schema_versions}" == 1 ]] || return 1
+                for ordinal in 0 1 2; do
+                  netstats=$(kubectl -n "${namespace}" exec "temporal-cassandra-${ordinal}" -- nodetool netstats)
+                  grep -q '^Mode: NORMAL' <<< "${netstats}" || return 1
+                  if grep -Eq '^[[:space:]]*(Receiving|Sending)[[:space:]]+[0-9]+[[:space:]]+files' <<< "${netstats}"; then
+                    return 1
+                  fi
+                done
+              }
+
+              wait_for_ring() {
+                local timeout_seconds="$1"
+                local deadline=$((SECONDS + timeout_seconds))
+                while (( SECONDS < deadline )); do
+                  if ring_state; then
+                    return 0
+                  fi
+                  sleep "${poll_interval_seconds}"
+                done
+                return 1
+              }
+
+              read_replication() {
+                kubectl -n "${namespace}" exec "${cassandra_pod}" -- \
+                  cqlsh 127.0.0.1 9042 -e \
+                  "SELECT replication FROM system_schema.keyspaces WHERE keyspace_name='${expected_keyspace}';"
+              }
+
+              replication_factor() {
+                read_replication | awk '
+                  /replication_factor/ {
+                    sub(/.*replication_factor[^0-9]*/, "")
+                    sub(/[^0-9].*/, "")
+                    print; exit
+                  }
+                '
+              }
+
+              replication_class() {
+                read_replication | awk '
+                  /SimpleStrategy/ { print "SimpleStrategy"; exit }
+                  /NetworkTopologyStrategy/ { print "NetworkTopologyStrategy"; exit }
+                '
+              }
+
+              wait_for_ring 900 || fail "Cassandra ring/schema/netstats did not converge before ALTER"
+              [[ "$(replication_class)" == SimpleStrategy ]] || \
+                fail "Temporal keyspace is not using the supported existing SimpleStrategy"
+              current_replication_factor=$(replication_factor)
+              case "${current_replication_factor}" in
+                1|3) ;;
+                *) fail "Temporal keyspace has unsupported replication factor ${current_replication_factor:-<unknown>}" ;;
+              esac
+
+              # This ALTER is deterministic and safe to repeat after a partial
+              # Job retry. It preserves the existing strategy and only expands
+              # the Temporal keyspace; system_distributed is left untouched.
+              kubectl -n "${namespace}" exec "${cassandra_pod}" -- cqlsh 127.0.0.1 9042 -e \
+                "ALTER KEYSPACE ${expected_keyspace} WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '${expected_replication_factor}'};"
+              [[ "$(replication_class)" == SimpleStrategy ]] || \
+                fail "Temporal keyspace strategy changed unexpectedly after ALTER"
+              [[ "$(replication_factor)" == "${expected_replication_factor}" ]] || \
+                fail "Temporal keyspace did not converge to RF${expected_replication_factor}"
+
+              for ordinal in 0 1 2; do
+                pod="temporal-cassandra-${ordinal}"
+                echo "Running full Temporal keyspace repair on ${pod}."
+                repair_output=$(kubectl -n "${namespace}" exec "${pod}" -- \
+                  nodetool repair -full "${expected_keyspace}" 2>&1) || {
+                  printf '%s\n' "${repair_output}" | tail -n 40 >&2
+                  fail "full repair failed on ${pod}"
+                }
+                echo "Full Temporal keyspace repair completed on ${pod}."
+              done
+
+              wait_for_ring 1800 || fail "Cassandra ring/schema/streaming state did not converge after full repair"
+              [[ "$(replication_factor)" == "${expected_replication_factor}" ]] || \
+                fail "Temporal keyspace RF changed after repair"
+
+              for ordinal in 0 1 2; do
+                require_bound_pvc "${ordinal}"
+                uid=$(kubectl -n "${namespace}" get "pod/temporal-cassandra-${ordinal}" -o jsonpath='{.metadata.uid}')
+                [[ "${uid}" == "${pod_uids[ordinal]}" ]] || fail "Cassandra Pod identity changed during repair"
+              done
+              for component in frontend history matching worker; do
+                replicas=$(kubectl -n "${namespace}" get "deployment/temporal-${component}" -o jsonpath='{.spec.replicas}')
+                remaining=$(kubectl -n "${namespace}" get pods \
+                  -l "app.kubernetes.io/name=temporal,app.kubernetes.io/component=${component}" -o name)
+                [[ "${replicas}" == 0 && -z "${remaining}" ]] || fail "Temporal resumed before repair acceptance"
+              done
+
+              echo "Temporal Cassandra RF3 repair passed. Restore server replicas through the prepared GitOps resume change, then verify cluster health and a workflow roundtrip."
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

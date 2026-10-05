@@ -190,6 +190,7 @@ describe('impact router', () => {
   test('routes every Hermes production surface through root script validation', () => {
     const cases = [
       ['argocd/applications/hermes/statefulset.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
+      ['argocd/applications/kargo/stages.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       ['argocd/applications/observability/graf-mimir-rules.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       [
         'argocd/applications/observability/cluster-metrics-alloy-config.river',
@@ -207,6 +208,7 @@ describe('impact router', () => {
       ['docs/runbooks/hermes-production-rollout.md', ['root-scripts']],
       ['.github/ci/impact-map.yml', ['root-scripts', 'workflow-lint']],
       ['.github/workflows/pull-request.yml', ['root-scripts', 'workflow-lint']],
+      ['.github/workflows/hermes-agent-mirror.yml', ['root-scripts', 'workflow-lint']],
     ] as const
 
     for (const [file, expectedTargets] of cases) {

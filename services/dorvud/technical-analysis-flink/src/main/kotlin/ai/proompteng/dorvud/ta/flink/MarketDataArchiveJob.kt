@@ -74,6 +74,8 @@ data class MarketDataArchiveConfig(
   val clickhouseBatchSize: Int,
   val clickhouseFlushMs: Long,
   val clickhouseMaxRetries: Int,
+  val featuresTopic: String? = null,
+  val technicalFeaturesTopic: String? = null,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -186,6 +188,8 @@ data class MarketDataArchiveConfig(
         clickhouseBatchSize = batchSize,
         clickhouseFlushMs = flushMs,
         clickhouseMaxRetries = maxRetries,
+        featuresTopic = optional("ARCHIVE_FEATURES_TOPIC"),
+        technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC"),
       )
     }
   }
@@ -303,6 +307,11 @@ internal fun configureMarketDataArchiveJob(
     .sinkTo(archiveTradeClickhouseSink(config))
     .name("signal-intraday-trades-archive")
     .uid("signal-intraday-trades-archive-v1")
+
+  // Keep generated IDs of the existing raw topology stable for savepoint restoration.
+  require(config.technicalFeaturesTopic == null || config.technicalFeaturesTopic != config.featuresTopic) { "feature topics must differ" }
+  config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
+  config.technicalFeaturesTopic?.let { configureMarketFeatureArchive(environment, config, it, technical = true) }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {
@@ -620,7 +629,7 @@ internal fun decodeArchiveTrade(
   )
 }
 
-private fun canonicalSymbolHash(symbols: Collection<String>): String =
+internal fun canonicalSymbolHash(symbols: Collection<String>): String =
   MessageDigest
     .getInstance("SHA-256")
     .digest(symbols.joinToString(",").toByteArray(StandardCharsets.UTF_8))
@@ -655,7 +664,7 @@ private fun archiveKafkaSource(config: MarketDataArchiveConfig): KafkaSource<Arc
   return builder.build()
 }
 
-private fun applyArchiveKafkaSecurity(
+internal fun applyArchiveKafkaSecurity(
   builder: KafkaSourceBuilder<ArchiveKafkaRecord>,
   config: MarketDataArchiveConfig,
 ) {
@@ -673,39 +682,6 @@ private fun applyArchiveKafkaSecurity(
 }
 
 private fun archiveClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayBarRecord> {
-  val sql =
-    """
-    INSERT INTO signal.intraday_bars_1m_v2 (
-      provider, universe_id, universe_symbol_hash, feed, channel, market_session, delay_class, symbol, event_ts, ingest_ts,
-      source_topic, source_partition, source_offset, is_final,
-      open, high, low, close, volume, vwap, trade_count, schema_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """.trimIndent()
-  val statement =
-    JdbcStatementBuilder<IntradayBarRecord> { prepared, bar ->
-      prepared.setString(1, bar.provider)
-      prepared.setString(2, bar.universeId)
-      prepared.setString(3, bar.universeSymbolHash)
-      prepared.setString(4, bar.feed)
-      prepared.setString(5, bar.channel)
-      prepared.setString(6, bar.marketSession)
-      prepared.setString(7, bar.delayClass)
-      prepared.setString(8, bar.symbol)
-      prepared.setTimestamp(9, Timestamp.from(bar.eventTime))
-      prepared.setTimestamp(10, Timestamp.from(bar.ingestionTime))
-      prepared.setString(11, bar.sourceTopic)
-      prepared.setInt(12, bar.sourcePartition)
-      prepared.setLong(13, bar.sourceOffset)
-      prepared.setInt(14, if (bar.final) 1 else 0)
-      prepared.setDouble(15, bar.open)
-      prepared.setDouble(16, bar.high)
-      prepared.setDouble(17, bar.low)
-      prepared.setDouble(18, bar.close)
-      prepared.setDouble(19, bar.volume)
-      if (bar.vwap == null) prepared.setNull(20, java.sql.Types.DOUBLE) else prepared.setDouble(20, bar.vwap)
-      if (bar.tradeCount == null) prepared.setNull(21, java.sql.Types.BIGINT) else prepared.setLong(21, bar.tradeCount)
-      prepared.setInt(22, bar.schemaVersion)
-    }
   val execution =
     JdbcExecutionOptions
       .builder()
@@ -723,10 +699,52 @@ private fun archiveClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<Int
       .build()
   return JdbcSink
     .builder<IntradayBarRecord>()
-    .withQueryStatement(sql, statement)
+    .withQueryStatement(archiveBarInsertSql(), archiveBarStatement())
     .withExecutionOptions(execution)
     .buildAtLeastOnce(connection)
 }
+
+internal fun archiveBarInsertSql(): String =
+  """
+  INSERT INTO signal.intraday_bars_1m_v2 (
+    provider, universe_id, universe_symbol_hash, feed, channel, market_session, delay_class, symbol, event_ts, ingest_ts,
+    source_topic, source_partition, source_offset, is_final,
+    open, high, low, close, volume, vwap, trade_count, schema_version, event_ts_exact, ingest_ts_exact
+  ) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Int64)),
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Int64)),
+    reinterpretAsFloat64(CAST(? AS Int64)), reinterpretAsFloat64(CAST(? AS Nullable(Int64))), ?, ?, ?, ?
+  )
+  """.trimIndent()
+
+internal fun archiveBarStatement(): JdbcStatementBuilder<IntradayBarRecord> =
+  JdbcStatementBuilder<IntradayBarRecord> { prepared, bar ->
+    prepared.setString(1, bar.provider)
+    prepared.setString(2, bar.universeId)
+    prepared.setString(3, bar.universeSymbolHash)
+    prepared.setString(4, bar.feed)
+    prepared.setString(5, bar.channel)
+    prepared.setString(6, bar.marketSession)
+    prepared.setString(7, bar.delayClass)
+    prepared.setString(8, bar.symbol)
+    prepared.setTimestamp(9, Timestamp.from(bar.eventTime))
+    prepared.setTimestamp(10, Timestamp.from(bar.ingestionTime))
+    prepared.setString(11, bar.sourceTopic)
+    prepared.setInt(12, bar.sourcePartition)
+    prepared.setLong(13, bar.sourceOffset)
+    prepared.setInt(14, if (bar.final) 1 else 0)
+    prepared.setLong(15, bar.open.toRawBits())
+    prepared.setLong(16, bar.high.toRawBits())
+    prepared.setLong(17, bar.low.toRawBits())
+    prepared.setLong(18, bar.close.toRawBits())
+    prepared.setLong(19, bar.volume.toRawBits())
+    if (bar.vwap == null) prepared.setNull(20, java.sql.Types.BIGINT) else prepared.setLong(20, bar.vwap.toRawBits())
+    if (bar.tradeCount == null) prepared.setNull(21, java.sql.Types.BIGINT) else prepared.setLong(21, bar.tradeCount)
+    prepared.setInt(22, bar.schemaVersion)
+    prepared.setTimestamp(23, Timestamp.from(bar.eventTime))
+    prepared.setTimestamp(24, Timestamp.from(bar.ingestionTime))
+  }
 
 private fun archiveQuoteClickhouseSink(config: MarketDataArchiveConfig): JdbcSink<IntradayQuoteRecord> {
   val sql =

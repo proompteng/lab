@@ -3,6 +3,37 @@
 This runbook deploys Hermes as Tuslagch's production runtime, migrates non-secret OpenClaw user data, transfers the Discord
 channel without dual writers, and retains a tested rollback path. All `kubectl` commands use an explicit namespace.
 
+## Restoring retained service
+
+Restore the gateway, egress proxy, backup schedule, rollout alert label, and `hermes_rollout_enabled` recording rule through
+reviewed GitOps. The Application follows `kargo/hermes-toolchain` and authorizes Stage `lab-delivery/hermes-toolchain`;
+automatic promotion is enabled. Preserve the retained data and backup PVCs. Verify that OpenClaw remains stopped and the
+live NetworkPolicy enforcement probe passes before restoring Hermes. Wait for the selected source's successful image
+publication and Kargo promotion, then verify authenticated inference through Flamingo and the Hermes gateway.
+
+Before merging enabled Hermes manifests, reconcile the reviewed ApplicationSet with `automation: manual` and verify
+the live Application has no automated sync policy, no active operation, and zero gateway/proxy replicas. Keep that live
+hold while the restoration source builds. Do not reconcile the enabled ApplicationSet until the new image is published
+and the selected Kargo promotion has generated its exact deployment commit; this avoids syncing either enabled `main`
+or the pre-disable Kargo branch before publication. Then restore the authorized Kargo source through reviewed GitOps.
+
+## Steady-state reconciliation
+
+The completed production cutover uses `automation: auto` on the verified
+`kargo/hermes-toolchain` branch. Kargo remains the only image promotion owner.
+Argo prunes obsolete generated ConfigMaps after the new workload is healthy;
+namespace and recovery-resource retention annotations remain authoritative.
+Kargo 1.11.4 does not request pruning in its `argocd-update` sync operation,
+so steady-state reconciliation must remain enabled for this cleanup.
+
+The staged migration and credential-transfer procedures below require manual
+reconciliation while they run. Before repeating one, commit the Hermes
+ApplicationSet entry back to `automation: manual`, reconcile the exact reviewed
+root revision, verify that no Kargo promotion or Argo sync is active, then
+acquire the maintenance Lease. Restore automatic reconciliation through GitOps
+only after the complete maintenance acceptance checks. OpenClaw remains manual.
+Do not race a new image promotion with any maintenance operation.
+
 ## Invariants
 
 - Never run OpenClaw and Hermes with the same Discord token at the same time.
@@ -15,7 +46,7 @@ channel without dual writers, and retains a tested rollback path. All `kubectl` 
 - Never enable Hermes Discord until a final audited migration is applied after the OpenClaw gateway is inactive.
 - Never sync Hermes until the disposable NetworkPolicy enforcement probe passes on the live cluster.
 - Every API key rotation must restart `hermes-0` and prove the old key is rejected and the new key is accepted.
-- Every Exa API key rotation must restart `hermes-0` and repeat both native-web and Exa MCP canaries before acceptance.
+- Every Exa API key rotation must restart `hermes-0` and repeat native-web search/extract canaries before acceptance.
 - A `Synced/Healthy` Argo application is not sufficient proof. Record authenticated inference, persistence, egress, backup,
   migration, and Discord lifecycle evidence.
 - Roll out and cut over only from Kargo's `kargo/hermes-toolchain` branch, which Kargo creates from a published image
@@ -29,6 +60,12 @@ and Stage `lab-delivery/hermes-toolchain` automatically copies the exact source 
 updates the StatefulSet reference, commits and pushes that branch, and lets Argo CD reconcile it. Do not create or merge a
 digest bump PR, release PR, or manual SHA change.
 
+Before the first rollout using a new Hermes Agent release, dispatch the repository's `hermes-agent-mirror` workflow and
+wait for its immutable-index, platform, attached SLSA subject, predicate, and source-revision checks to pass. It publishes the exact verified upstream index
+under `registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64`; the manifest below then proves that the private
+amd64 digest is the upstream amd64 manifest. The workflow does not publish Kargo tags or alter the Kargo-managed toolchain
+reference.
+
 ```bash
 set -euo pipefail
 git fetch --quiet origin main
@@ -36,8 +73,8 @@ git fetch --quiet origin kargo/hermes-toolchain
 main_revision=$(git rev-parse origin/main)
 kargo_revision=$(git rev-parse origin/kargo/hermes-toolchain)
 test "$(git rev-parse origin/kargo/hermes-toolchain)" = "$kargo_revision"
-upstream_ref=docker.io/nousresearch/hermes-agent:v2026.8.27
-mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.8.27-amd64
+upstream_ref=docker.io/nousresearch/hermes-agent:v2026.9.24
+mirror_ref=registry.ide-newton.ts.net/lab/hermes-agent:v2026.9.24-amd64
 upstream_digest=$(crane digest "$upstream_ref")
 upstream_manifest=$(crane manifest "$upstream_ref")
 upstream_amd64_digest=$(printf '%s' "$upstream_manifest" | jq -er '
@@ -51,23 +88,39 @@ upstream_attestation_digest=$(printf '%s' "$upstream_manifest" | jq -er --arg su
     )
   | .digest
 ')
-provenance_subject=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest" | \
-  jq -er '.subject.digest')
-upstream_revision=$(crane config --platform linux/amd64 "$upstream_ref" | \
-  jq -er '.config.Labels["org.opencontainers.image.revision"]')
-mirror_digest=$(crane digest "$mirror_ref")
-mirror_revision=$(crane config "$mirror_ref" | jq -er '.config.Labels["org.opencontainers.image.revision"]')
+provenance_manifest=$(crane manifest "docker.io/nousresearch/hermes-agent@$upstream_attestation_digest")
+provenance_subject=$(printf '%s' "$provenance_manifest" | jq -er '.subject.digest')
+case "$provenance_subject" in
+  sha256:*) ;;
+  *) provenance_subject="sha256:$provenance_subject" ;;
+esac
+provenance_layer_digest=$(printf '%s' "$provenance_manifest" | jq -er '
+  [.layers[] | select(.mediaType == "application/vnd.in-toto+json") | .digest]
+  | if length == 1 then .[0] else error("expected exactly one SLSA provenance layer") end
+')
+provenance_path=$(mktemp)
+trap 'rm -f "$provenance_path"' EXIT
+crane blob "docker.io/nousresearch/hermes-agent@$provenance_layer_digest" > "$provenance_path"
+test "$(jq -er '.predicateType' "$provenance_path")" = 'https://slsa.dev/provenance/v1'
+upstream_revision=$(jq -er '.predicate.buildDefinition.externalParameters.request.args["build-arg:HERMES_GIT_SHA"]' "$provenance_path")
+mirror_index_digest=$(crane digest "$mirror_ref")
+mirror_manifest=$(crane manifest "$mirror_ref")
+mirror_digest=$(printf '%s' "$mirror_manifest" | jq -er --arg subject "$upstream_amd64_digest" '
+  .manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64" and .digest == $subject) | .digest
+')
+mirror_revision=$(crane config --platform linux/amd64 "$mirror_ref" | jq -er '.config.Labels["org.opencontainers.image.revision"]')
 toolchain_ref=$(git show "origin/kargo/hermes-toolchain:argocd/applications/hermes/statefulset.yaml" | \
   sed -n 's#.*reference: \(registry\.ide-newton\.ts\.net/lab/hermes-toolchain@sha256:[0-9a-f]\{64\}\).*#\1#p')
 test -n "$toolchain_ref"
 test "$(printf '%s\n' "$toolchain_ref" | wc -l | tr -d '[:space:]')" -eq 1
 toolchain_digest=$(crane digest "$toolchain_ref")
-test "$upstream_digest" = sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79
-test "$upstream_amd64_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
-test "$upstream_attestation_digest" = sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c
+test "$upstream_digest" = sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+test "$upstream_amd64_digest" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
+test "$upstream_attestation_digest" = sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c
 test "$provenance_subject" = "$upstream_amd64_digest"
-test "$upstream_revision" = 5fc308a70719a83cccdbba4c0e39c23f5a8239d5
-test "$mirror_digest" = sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843
+test "$upstream_revision" = f97608f178d1ffeca59860195ab7da295f7c8e5f
+test "$mirror_index_digest" = "$upstream_digest"
+test "$mirror_digest" = sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283
 test "$mirror_revision" = "$upstream_revision"
 test "$toolchain_digest" = "${toolchain_ref##*@}"
 toolchain_platforms=$(crane manifest "$toolchain_ref" | jq -r \
@@ -76,7 +129,7 @@ test "$toolchain_platforms" = linux/amd64,linux/arm64
 for platform in linux/amd64 linux/arm64; do
   crane config --platform "$platform" "$toolchain_ref" | jq -e '
     .config.Labels["proompteng.ai/toolchain.node"] == "24.11.1" and
-    .config.Labels["proompteng.ai/toolchain.bun"] == "1.4.0" and
+    .config.Labels["proompteng.ai/toolchain.bun"] == "1.4.2" and
     .config.Labels["proompteng.ai/toolchain.go"] == "1.25.5" and
     .config.Labels["proompteng.ai/toolchain.helm"] == "3.19.1" and
     .config.Labels["proompteng.ai/toolchain.kustomize"] == "5.8.0" and
@@ -91,22 +144,25 @@ hermes_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.status
 hermes_target_revision=$(kubectl -n argocd get application hermes -o jsonpath='{.spec.source.targetRevision}')
 test "$hermes_target_revision" = kargo/hermes-toolchain
 test "$hermes_revision" = "$kargo_revision"
-printf 'main=%s kargo=%s upstream=%s amd64=%s attestation=%s mirror=%s revision=%s argo=%s\n' \
+printf 'main=%s kargo=%s upstream=%s amd64=%s attestation=%s mirror_index=%s mirror_amd64=%s revision=%s argo=%s\n' \
   "$main_revision" "$kargo_revision" "$upstream_digest" "$upstream_amd64_digest" \
-  "$upstream_attestation_digest" "$mirror_digest" "$upstream_revision" "$hermes_revision"
+  "$upstream_attestation_digest" "$mirror_index_digest" "$mirror_digest" "$upstream_revision" "$hermes_revision"
 printf 'toolchain=%s platforms=%s\n' "$toolchain_digest" "$toolchain_platforms"
+rm -f "$provenance_path"
+trap - EXIT
 unset main_revision kargo_revision upstream_ref mirror_ref upstream_digest upstream_manifest upstream_amd64_digest
-unset upstream_attestation_digest provenance_subject upstream_revision mirror_digest mirror_revision
+unset upstream_attestation_digest provenance_manifest provenance_subject provenance_layer_digest provenance_path
+unset upstream_revision mirror_index_digest mirror_manifest mirror_digest mirror_revision
 unset toolchain_ref toolchain_digest toolchain_platforms platform hermes_revision hermes_target_revision
 ```
 
-The expected upstream index digest is `sha256:e0df6adebddf29b91112aefc999d4aaf6846c9eb544faca5672a16a13590ff79`.
+The expected upstream index digest is `sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7`.
 The expected upstream amd64 manifest digest is
-`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`; its attached SLSA provenance manifest is
-`sha256:450e5016e0a278396f097abbb8a2f54418e0980dd09e60dbf5f48eab96e06a9c` and records source revision
-`5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
+`sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283`; its attached SLSA provenance manifest is
+`sha256:c9d52f53bd421aedcd1bc78acbaa2e1c60580d259259e9ee5bd6713a2acb094c` and records source revision
+`f97608f178d1ffeca59860195ab7da295f7c8e5f`.
 The expected mirrored amd64 manifest digest is
-`sha256:5f23552e16589d291099cd8041233e6200197d225e4b28b22a0463e732d4b843`.
+`sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283`.
 The current Hermes toolchain digest is intentionally not repeated in this runbook. The Kargo-managed StatefulSet on
 `kargo/hermes-toolchain` is the sole committed owner; derive its `reference` as shown above and verify the resolved image
 digest and platform labels from that reference.
@@ -287,9 +343,10 @@ digest and platform labels from that reference.
    Job must complete and its log, archived SQLite integrity checks, and checksum verification must succeed. The data mount
    is write-capable only because SQLite read-only WAL connections require shared-memory sidecar access; the pinned backup
    process still opens each source database in read-only mode and fails closed on any safe-copy fallback.
-   Hermes 0.20.6 may report its live root `gateway.sock` as the only skipped file. The production wrapper accepts that exact
-   warning only when the path is a Unix socket, rejects every other skipped file or incomplete database copy, and verifies
-   that the transient socket is absent from the published archive.
+   Hermes 0.21.5 runs as PID 1 and may omit the live `gateway.sock` and `state/gateway.loop-tick.1.sock` runtime sockets.
+   The production wrapper requires every warning to match one of those exact paths and proves each is a Unix socket,
+   not a regular file or symlink. It rejects every other skipped file or incomplete database copy and verifies that
+   neither transient socket is present in the published archive.
    A standalone Job does not update the CronJob's status; `HermesBackupStale` grants a new CronJob 26 hours for its first scheduled success,
    then monitors its last successful completion. A missing CronJob still alerts, and backup failure never changes the
    gateway Pod's readiness.
@@ -314,8 +371,8 @@ digest and platform labels from that reference.
      test "$(command -v shellcheck)" = /opt/lab-toolchain/bin/shellcheck
      test "$(command -v yq)" = /opt/lab-toolchain/bin/yq
      test "$(node --version)" = v24.11.1
-     test "$(bun --version)" = 1.4.0
-     test "$(bunx --version)" = 1.4.0
+     test "$(bun --version)" = 1.4.2
+     test "$(bunx --version)" = 1.4.2
      test "$(go version)" = "go version go1.25.5 linux/amd64"
      test "$(helm version --template "{{.Version}}")" = v3.19.1
      test "$(jq --version)" = jq-1.8.1
@@ -429,7 +486,7 @@ digest and platform labels from that reference.
    the authenticated tailnet request prove backend reachability. Only curl exit `28` (the bounded connection timeout)
    counts as NetworkPolicy denial.
 
-5. Prove native Exa search/extract and the allowlisted Exa MCP tools from the production container:
+5. Prove native Exa search/extract from the production container:
 
    ```bash
    set -euo pipefail
@@ -460,16 +517,7 @@ digest and platform labels from that reference.
    assert "Web Search MCP" in pages[0].get("content", ""), extract
    print(f"native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}")
    PY
-   kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -lc '
-     set -eu
-     mcp_test=$(hermes mcp test exa 2>&1)
-     printf "%s" "$mcp_test" | grep -F "✓ Connected" >/dev/null
-     printf "%s" "$mcp_test" | grep -F "✓ Tools discovered: 2" >/dev/null
-     printf "%s" "$mcp_test" | grep -F "web_search_exa" >/dev/null
-     printf "%s" "$mcp_test" | grep -F "web_fetch_exa" >/dev/null
-     unset mcp_test
-     printf "exa_mcp_canary=ok tools=2\n"
-   '
+
    ```
 
 6. Prove state survives a restart. Create a harmless canary file, restart the pod, and read it back:
@@ -713,15 +761,7 @@ pages = extract.get("results", [])
 assert len(pages) == 1 and not pages[0].get("error"), extract
 print(f"exa_rotation_native_web_canary=ok search_results={len(results)} extracted_pages={len(pages)}")
 PY
-kubectl -n hermes exec hermes-0 -c hermes -- /bin/sh -lc '
-  set -eu
-  mcp_test=$(hermes mcp test exa 2>&1)
-  printf "%s" "$mcp_test" | grep -F "✓ Connected" >/dev/null
-  printf "%s" "$mcp_test" | grep -F "✓ Tools discovered: 2" >/dev/null
-  printf "%s" "$mcp_test" | grep -F "web_search_exa" >/dev/null
-  printf "%s" "$mcp_test" | grep -F "web_fetch_exa" >/dev/null
-  printf "exa_rotation_mcp_canary=ok tools=2\n"
-'
+
 cleanup_exa_rotation
 trap - EXIT HUP INT TERM
 ```
@@ -1114,10 +1154,17 @@ state, backup verification failure, or repeated gateway restarts.
 
 ### Before Discord cutover
 
+Re-promote a previously verified Hermes Freight through Stage `lab-delivery/hermes-toolchain`. Kargo must generate and
+sync the rollback commit on `kargo/hermes-toolchain`; do not sync a `main` SHA or hand-edit an image reference. Verify the
+selected Freight, successful promotion, generated commit, and exact Argo revision before the authenticated API canary.
+
 ```bash
 set -euo pipefail
-argocd app sync hermes --revision '<last-known-good-main-sha>' --prune=false
-kubectl -n hermes rollout status statefulset/hermes --timeout=15m
+kubectl --context galactic-tailscale -n lab-delivery get stage hermes-toolchain -o json | jq -e \
+  '.status.lastPromotion.status.phase == "Succeeded"'
+kubectl --context galactic-tailscale -n argocd get application hermes -o json | jq \
+  '{source: .spec.source.targetRevision, deployedCommit: .status.sync.revision}'
+kubectl --context galactic-tailscale -n hermes rollout status statefulset/hermes --timeout=15m
 ```
 
 The OpenClaw runtime remains unchanged and authoritative.
@@ -1231,8 +1278,7 @@ The rollout record is complete only when it includes:
 - API and Exa ExternalSecret Ready conditions and secret field lengths/counts without values;
 - pod UID, read-only rootfs, scoped service-account token, NetworkPolicy, PVC, and verified backup evidence;
 - gateway service-account identity, allowed cluster-wide reads, rejected Secret reads and writes, and the lab checkout SHA;
-- authenticated API rejection/success, Flamingo model response, native Exa search/extract, the two allowlisted Exa MCP
-  tools, and persistence after restart;
+- authenticated API rejection/success, Flamingo model response, native Exa search/extract, session search, managed configuration, and persistence after restart;
 - migration dry-run/apply Job identities and report counts;
 - single-writer Discord message lifecycle IDs and non-allowlisted-user rejection;
 - retained OpenClaw VM/PVC identities, rollback revision, and rollback-window end timestamp.

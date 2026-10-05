@@ -23,16 +23,18 @@ const (
 	kernelReleasePath         = "/proc/sys/kernel/osrelease"
 	maxBootstrapOutputBytes   = 4 << 10
 	toolchainBootstrapTimeout = 2 * time.Minute
+	developerBootstrapTimeout = 15 * time.Minute
 )
 
 type evidence struct {
-	Architecture  string    `json:"architecture"`
-	BootID        string    `json:"bootId"`
-	Hostname      string    `json:"hostname"`
-	KernelRelease string    `json:"kernelRelease"`
-	MicroVMID     string    `json:"microvmId"`
-	StartedAt     time.Time `json:"startedAt"`
-	State         string    `json:"state"`
+	Architecture         string    `json:"architecture"`
+	BootID               string    `json:"bootId"`
+	Hostname             string    `json:"hostname"`
+	KernelRelease        string    `json:"kernelRelease"`
+	MicroVMID            string    `json:"microvmId"`
+	GuestProtocolVersion uint32    `json:"guestProtocolVersion"`
+	StartedAt            time.Time `json:"startedAt"`
+	State                string    `json:"state"`
 }
 
 type fileReader func(string) ([]byte, error)
@@ -58,6 +60,15 @@ func run(logger *slog.Logger) error {
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
 	}
+	identity, err := startGuestIdentity(context.Background(), microVMID, logger)
+	if err != nil {
+		return err
+	}
+	defer identity.close()
+	tlsConfig, err := identity.tlsConfig()
+	if err != nil {
+		return fmt.Errorf("configure SPIFFE TLS: %w", err)
+	}
 	if err := configureToolchainEnvironment(homeRoot); err != nil {
 		return fmt.Errorf("configure persistent toolchain environment: %w", err)
 	}
@@ -66,6 +77,10 @@ func run(logger *slog.Logger) error {
 		os.Getenv("TOOLCHAIN_BOOTSTRAP_COMMAND"),
 		toolchainBootstrapTimeout,
 	); err != nil {
+		return err
+	}
+	if err := bootstrapPersistentInstall(context.Background(), os.Getenv("DEVELOPER_TOOLS_BOOTSTRAP_COMMAND"),
+		developerBootstrapTimeout, "DEVELOPER_TOOLS_BOOTSTRAP_COMMAND", "developer tools"); err != nil {
 		return err
 	}
 	if err := bootstrapCodex(
@@ -79,6 +94,7 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	current.GuestProtocolVersion = guestProtocolVersion
 
 	encoded, err := json.Marshal(current)
 	if err != nil {
@@ -88,7 +104,7 @@ func run(logger *slog.Logger) error {
 
 	listenAddress := strings.TrimSpace(os.Getenv("LISTEN_ADDRESS"))
 	if listenAddress == "" {
-		listenAddress = ":8080"
+		listenAddress = ":8443"
 	}
 	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
 	if codexBinary == "" {
@@ -96,13 +112,16 @@ func run(logger *slog.Logger) error {
 	}
 
 	api, err := newAPIServer(apiConfig{
-		bootstrapToken: bootstrapToken,
-		codexBinary:    codexBinary,
-		evidence:       current,
-		homeRoot:       homeRoot,
-		shell:          "/bin/bash",
-		startCodex:     true,
-		workspaceRoot:  workspaceRoot,
+		bootstrapToken:      bootstrapToken,
+		identity:            identity,
+		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
+		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
+		codexBinary:         codexBinary,
+		evidence:            current,
+		homeRoot:            homeRoot,
+		shell:               "/bin/bash",
+		startCodex:          true,
+		workspaceRoot:       workspaceRoot,
 	})
 	if err != nil {
 		return fmt.Errorf("configure Nanoagent API: %w", err)
@@ -112,6 +131,8 @@ func run(logger *slog.Logger) error {
 	server := &http.Server{
 		Addr:              listenAddress,
 		Handler:           newHandler(api),
+		Protocols:         guestHTTPProtocols(),
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -119,13 +140,23 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	serverErrors := make(chan error, 1)
+	healthAddress := strings.TrimSpace(os.Getenv("HEALTH_LISTEN_ADDRESS"))
+	if healthAddress == "" {
+		healthAddress = ":8080"
+	}
+	health := &http.Server{Addr: healthAddress, Handler: newHealthHandler(api), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
+	serverErrors := make(chan error, 2)
 	go func() {
 		logger.Info("nanoagent listening", "address", listenAddress)
-		serverErrors <- server.ListenAndServe()
+		serverErrors <- server.ListenAndServeTLS("", "")
 	}()
 
+	go func() { serverErrors <- health.ListenAndServe() }()
+	defer health.Close()
+	defer server.Close()
 	select {
+	case err := <-identity.exited:
+		return fmt.Errorf("SPIRE agent exited: %v", err)
 	case <-ctx.Done():
 		api.beginShutdown()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -156,6 +187,7 @@ func bootstrapPersistentInstall(
 	timeout time.Duration,
 	environmentKey string,
 	component string,
+	extraEnvironment ...string,
 ) error {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -171,7 +203,10 @@ func bootstrapPersistentInstall(
 	bootstrapCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	process := exec.CommandContext(bootstrapCtx, command, "--install-only")
-	process.Env = childEnvironment()
+	process.Env = childEnvironment(extraEnvironment...)
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	process.Cancel = func() error { killProcessGroup(process); return nil }
+	process.WaitDelay = 5 * time.Second
 	output, err := process.CombinedOutput()
 	if err == nil {
 		return nil
@@ -210,14 +245,31 @@ func configureToolchainEnvironment(home string) error {
 	}
 
 	prefix := filepath.Join(home, ".local")
-	path := prependPath(filepath.Join(prefix, "bin"), os.Getenv("PATH"))
+	brew := filepath.Join(home, ".linuxbrew")
+	path := prependPath(filepath.Join(brew, "sbin"), os.Getenv("PATH"))
+	path = prependPath(filepath.Join(brew, "bin"), path)
+	path = prependPath(filepath.Join(prefix, "bin"), path)
 	for key, value := range map[string]string{
-		"BUN_INSTALL":       prefix,
-		"NPM_CONFIG_PREFIX": prefix,
-		"PATH":              path,
+		"BUN_INSTALL":         prefix,
+		"NPM_CONFIG_PREFIX":   prefix,
+		"PATH":                path,
+		"HOMEBREW_PREFIX":     brew,
+		"HOMEBREW_CELLAR":     filepath.Join(brew, "Cellar"),
+		"HOMEBREW_REPOSITORY": filepath.Join(brew, "Homebrew"),
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			return fmt.Errorf("set %s: %w", key, err)
+		}
+	}
+	for _, key := range []string{"EDITOR", "VISUAL"} {
+		if os.Getenv(key) == "" {
+			value := "nvim"
+			if key == "VISUAL" {
+				value = os.Getenv("EDITOR")
+			}
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("set %s: %w", key, err)
+			}
 		}
 	}
 
@@ -247,6 +299,8 @@ func bootstrapUserHome(home string) error {
 	}{
 		{path: "workspace", mode: 0o750},
 		{path: ".cache", mode: 0o750},
+		{path: ".cache/apt/lists", mode: 0o750},
+		{path: ".cache/apt/archives", mode: 0o750},
 		{path: ".local/bin", mode: 0o750},
 		{path: ".bun", mode: 0o750},
 		{path: ".cargo", mode: 0o750},
@@ -260,7 +314,8 @@ func bootstrapUserHome(home string) error {
 	}
 	toolchainProfile := "export BUN_INSTALL=\"$HOME/.local\"\n" +
 		"export NPM_CONFIG_PREFIX=\"$HOME/.local\"\n" +
-		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n"
+		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n" +
+		"if [ -f /etc/profile.d/tengri-development.sh ]; then . /etc/profile.d/tengri-development.sh; fi\n"
 	files := map[string]string{
 		".bashrc":  toolchainProfile + "cd /workspace 2>/dev/null || true\n",
 		".profile": toolchainProfile,
@@ -328,7 +383,7 @@ func readTrimmed(readFile fileReader, path string) (string, error) {
 	return trimmed, nil
 }
 
-func newHandler(api *apiServer) http.Handler {
+func newHealthHandler(api *apiServer) http.Handler {
 	mux := http.NewServeMux()
 	live := func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -336,7 +391,7 @@ func newHandler(api *apiServer) http.Handler {
 		_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
 	}
 	ready := func(writer http.ResponseWriter, _ *http.Request) {
-		if api.codex != nil && !api.codex.isReady() {
+		if (api.codex != nil && !api.codex.isReady()) || (api.identity != nil && !api.identity.ready()) {
 			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"status": "starting"})
 			return
 		}
@@ -345,6 +400,12 @@ func newHandler(api *apiServer) http.Handler {
 	mux.HandleFunc("GET /livez", live)
 	mux.HandleFunc("GET /readyz", ready)
 	mux.HandleFunc("GET /healthz", live)
-	mux.Handle("/v1/", api.authenticatedRoutes())
 	return mux
+}
+
+func newHandler(api *apiServer) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", newHealthHandler(api))
+	mux.Handle("/v1/", api.previewRoutes())
+	return api.rpcHandler(mux)
 }

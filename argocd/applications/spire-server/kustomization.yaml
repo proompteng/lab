@@ -1,0 +1,68 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - guest-bundle.yaml
+helmCharts:
+  - name: spire-crds
+    repo: https://spiffe.github.io/helm-charts-hardened
+    version: 0.6.1
+    releaseName: spire-crds
+    namespace: spire-server
+    includeCRDs: true
+  - name: spire
+    repo: https://spiffe.github.io/helm-charts-hardened
+    version: 0.30.2
+    releaseName: spire
+    namespace: spire-server
+    valuesFile: values.yaml
+patches:
+  - target:
+      kind: StatefulSet
+      name: spire-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: spire-server
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: prepare-trust-domain-store
+                image: mirror.gcr.io/library/busybox:1.37.0
+                command: [sh, -ec, 'umask 077; mkdir -p /run/spire/data/proompteng.ai']
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  runAsNonRoot: true
+                  readOnlyRootFilesystem: true
+                  seccompProfile:
+                    type: RuntimeDefault
+                  capabilities:
+                    drop: [ALL]
+                volumeMounts:
+                  - name: spire-data
+                    mountPath: /run/spire/data
+            containers:
+              - name: spire-server
+                volumeMounts:
+                  - name: spire-data
+                    mountPath: /run/spire/data
+                    subPath: proompteng.ai
+  - target:
+      kind: Pod
+      name: spire-server-test-connection
+    patch: |-
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: spire-server-test-connection
+      $patch: delete
+  - target:
+      kind: CustomResourceDefinition
+    patch: |-
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: Prune=false,Delete=false

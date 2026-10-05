@@ -6,7 +6,57 @@ import YAML from 'yaml'
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 
-test('Restate cluster uses three stable 1.7.9 nodes with hard host separation', () => {
+test('Restate image promotion requires both native fault proofs and uploaded release evidence', () => {
+  const workflow = YAML.parse(readRepoFile('.github/workflows/restate-images.yml'))
+  const build = workflow.jobs.build
+  const publish = workflow.jobs.publish
+  const mainOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+  expect(workflow.on.push.branches).toEqual(['main'])
+  expect(workflow.on.pull_request.paths).toEqual(workflow.on.push.paths)
+  expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
+    'amd64',
+    'arm64',
+  ])
+  const platformPush = build.steps.find((step: { name?: string }) => step.name === 'Publish tested platform image')
+  expect(platformPush.if).toBe(mainOnly)
+  expect(platformPush.run).toBe(
+    'bun packages/scripts/src/shared/docker.ts push "${IMAGE}:prepare-sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${ARCHITECTURE}"',
+  )
+  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/cli.ts')
+  expect(workflow.on.push.paths).toContain('packages/scripts/src/shared/docker.ts')
+  expect(publish.if).toBe(mainOnly)
+  expect(publish.needs).toEqual(['build'])
+  const releaseSteps = publish.steps as { name?: string; uses?: string }[]
+  const uploaded = releaseSteps.findIndex((step) => step.uses === 'actions/upload-artifact@v4')
+  expect(uploaded).toBeGreaterThan(0)
+  expect(releaseSteps.findIndex((step) => step.name === 'Expose the validated digest to Kargo')).toBeGreaterThan(
+    uploaded,
+  )
+  expect(publish.steps.at(-1).run).toContain('test "$existing" = "$DIGEST"')
+
+  const warehouses = YAML.parseAllDocuments(readRepoFile('argocd/applications/kargo/warehouses.yaml')).map((document) =>
+    document.toJSON(),
+  )
+  const warehouse = warehouses.find((entry) => entry.metadata.name === 'restate')
+  expect(warehouse.spec.subscriptions[0].git.includePaths).toEqual(
+    workflow.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, '')),
+  )
+  const stages = YAML.parseAllDocuments(readRepoFile('argocd/applications/kargo/stages.yaml')).map((document) =>
+    document.toJSON(),
+  )
+  const stage = stages.find((entry) => entry.metadata.name === 'restate')
+  expect(
+    stage.spec.promotionTemplate.spec.steps.find((step: { uses: string }) => step.uses === 'kustomize-set-image')
+      .config,
+  ).toEqual({
+    path: './out/argocd/applications/restate',
+    images: [
+      { image: 'restate-runtime', newName: '${{ vars.imageRepo }}', digest: '${{ imageFrom(vars.imageRepo).Digest }}' },
+    ],
+  })
+})
+
+test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runtime image selection', () => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const env = new Map(
     statefulSet.spec.template.spec.containers[0].env.map((entry: { name: string; value?: string }) => [
@@ -16,9 +66,27 @@ test('Restate cluster uses three stable 1.7.9 nodes with hard host separation', 
   )
 
   expect(statefulSet.spec.replicas).toBe(3)
-  expect(statefulSet.spec.template.spec.containers[0].image).toBe(
-    'docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
-  )
+  expect(statefulSet.spec.template.spec.containers[0].image).toBe('restate-runtime')
+  const kustomization = YAML.parse(readRepoFile('argocd/applications/restate/kustomization.yaml'))
+  expect(kustomization.images).toEqual([
+    {
+      name: 'restate-runtime',
+      newName: 'docker.restate.dev/restatedev/restate',
+      newTag: '1.7.9',
+      digest: 'sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595',
+    },
+  ])
+  expect(env.get('RESTATE_METADATA_SERVER__RAFT_ELECTION_TICK')).toBe('450')
+  expect(env.get('RESTATE_GOSSIP_FAILURE_THRESHOLD')).toBe('450')
+  expect(env.get('RESTATE_GOSSIP_LONELINESS_THRESHOLD')).toBe('600')
+  expect(env.get('RESTATE_GOSSIP_TIME_SKEW_THRESHOLD')).toBe('5s')
+  expect(env.get('RESTATE_NETWORKING__CONNECT_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_NETWORKING__HANDSHAKE_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_NETWORKING__HTTP2_KEEP_ALIVE_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_METADATA_CLIENT__CONNECT_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_METADATA_CLIENT__KEEP_ALIVE_TIMEOUT')).toBe('10s')
+  expect(env.get('RESTATE_LOG_SERVER__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
+  expect(env.get('RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('DoNotSchedule')
@@ -41,7 +109,48 @@ test('Restate cluster uses three stable 1.7.9 nodes with hard host separation', 
   })
 })
 
-test('Restate followers cannot start before singleton snapshot coverage is complete', () => {
+test.each([
+  {
+    scenario: 'seed creates missing snapshots',
+    pod: 'restate-1',
+    snapshots: false,
+    storage: 'empty',
+    seed: true,
+    exit: 0,
+  },
+  {
+    scenario: 'fresh follower refuses missing snapshots',
+    pod: 'restate-2',
+    snapshots: false,
+    storage: 'empty',
+    seed: true,
+    exit: 1,
+  },
+  {
+    scenario: 'fresh follower accepts complete snapshots',
+    pod: 'restate-2',
+    snapshots: true,
+    storage: 'empty',
+    seed: true,
+    exit: 0,
+  },
+  {
+    scenario: 'ext4 scaffolding is not retained state',
+    pod: 'restate-2',
+    snapshots: true,
+    storage: 'ext4',
+    seed: false,
+    exit: 1,
+  },
+  {
+    scenario: 'retained follower survives an unavailable seed',
+    pod: 'restate-2',
+    snapshots: true,
+    storage: 'retained',
+    seed: false,
+    exit: 0,
+  },
+] as const)('Restate snapshot startup gate: $scenario', (scenario) => {
   const statefulSet = YAML.parse(readRepoFile('argocd/applications/restate/statefulset.yaml')) as Record<string, any>
   const script = statefulSet.spec.template.spec.initContainers[0].command[2] as string
   const tempDir = mkdtempSync('/tmp/restate-follower-snapshot-gate-')
@@ -78,70 +187,39 @@ esac
     chmodSync(restatectl, 0o755)
     chmodSync(sleep, 0o755)
 
-    const run = (podName: string) =>
-      Bun.spawnSync(['/bin/bash', '-ceu', script], {
-        env: {
-          ...process.env,
-          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
-          POD_NAME: podName,
-          RESTATE_DATA_DIR: dataDir,
-        },
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-
-    expect(run('restate-1').exitCode).toBe(0)
-    expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual(['0', '1'])
-
-    rmSync(`${tempDir}/p0`, { force: true })
-    rmSync(`${tempDir}/p1`, { force: true })
-    rmSync(calls, { force: true })
-    const followerWithoutSnapshot = run('restate-2')
-    expect(followerWithoutSnapshot.exitCode).not.toBe(0)
-    expect(followerWithoutSnapshot.stderr.toString()).toContain(
-      'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
-    )
-    expect(Bun.file(calls).size).toBe(0)
-
-    writeFileSync(`${tempDir}/p0`, '')
-    writeFileSync(`${tempDir}/p1`, '')
-    expect(run('restate-2').exitCode).toBe(0)
-
-    rmSync(calls, { force: true })
-    mkdirSync(`${dataDir}/lost+found`)
-    const freshFollowerWithExt4Scaffolding = Bun.spawnSync(['/bin/bash', '-ceu', script], {
+    if (scenario.snapshots) {
+      writeFileSync(`${tempDir}/p0`, '')
+      writeFileSync(`${tempDir}/p1`, '')
+    }
+    if (scenario.storage !== 'empty') mkdirSync(`${dataDir}/lost+found`)
+    if (scenario.storage === 'retained') writeFileSync(`${dataDir}/metadata-store`, 'retained follower state')
+    const result = Bun.spawnSync(['/bin/bash', '-ceu', script], {
       env: {
         ...process.env,
         PATH: `${tempDir}:${process.env.PATH ?? ''}`,
-        POD_NAME: 'restate-2',
+        POD_NAME: scenario.pod,
         RESTATE_DATA_DIR: dataDir,
-        SEED_UNAVAILABLE: '1',
+        SEED_UNAVAILABLE: scenario.seed ? '0' : '1',
       },
       stdout: 'pipe',
       stderr: 'pipe',
     })
-    expect(freshFollowerWithExt4Scaffolding.exitCode).not.toBe(0)
-    expect(freshFollowerWithExt4Scaffolding.stderr.toString()).toContain(
-      'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
-    )
-
-    writeFileSync(`${dataDir}/metadata-store`, 'retained follower state')
-    const retainedFollower = Bun.spawnSync(['/bin/bash', '-ceu', script], {
-      env: {
-        ...process.env,
-        PATH: `${tempDir}:${process.env.PATH ?? ''}`,
-        POD_NAME: 'restate-2',
-        RESTATE_DATA_DIR: dataDir,
-        SEED_UNAVAILABLE: '1',
-      },
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    expect(retainedFollower.exitCode).toBe(0)
-    expect(retainedFollower.stdout.toString()).toContain(
-      'Retained follower storage is already initialized; skipping first-time snapshot gate',
-    )
-    expect(Bun.file(calls).size).toBe(0)
+    expect(result.exitCode).toBe(scenario.exit)
+    if (scenario.exit === 1) {
+      expect(result.stderr.toString()).toContain(
+        'Follower startup refused because the singleton seed lacks complete archived snapshot coverage',
+      )
+    }
+    if (scenario.pod === 'restate-1') {
+      expect(readFileSync(calls, 'utf8').trim().split('\n')).toEqual(['0', '1'])
+    } else {
+      expect(Bun.file(calls).size).toBe(0)
+    }
+    if (scenario.storage === 'retained') {
+      expect(result.stdout.toString()).toContain(
+        'Retained follower storage is already initialized; skipping first-time snapshot gate',
+      )
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true })
   }

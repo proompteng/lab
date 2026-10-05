@@ -1,3 +1,14 @@
+import { BrokerObservationsLive } from '../db/broker-observations'
+import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
+import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
+import { JevBatchStoreLive } from '../db/jev-batch-postgres'
+import { JevPositionStoreLive } from '../db/jev-position-postgres'
+import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
+import { JevClient, JevClientLive, JevError } from '../jev/client'
+import { JevFailure } from '../jev/contract'
+import { JevHttpClientLive } from '../jev/http'
+import { defaultJevProtocolDocument } from '../jev/protocol'
+import { intradayFeatureTopic } from '../strategy/intraday-market'
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
@@ -19,8 +30,20 @@ import { MutationStoreLive } from '../execution/mutations'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
-import { IntradayMarketData, IntradayMarketDataLive, type IntradayMarketDataService } from '../market-data'
+import { IntradayMarketData, MarketDataHealth, type IntradayMarketDataService } from '../market-data'
+import {
+  KafkaMarketProjection,
+  KafkaMarketProjectionLive,
+  makeKafkaMarketProjection,
+} from '../market-data/streaming/kafka'
+import { makeResearchCapturePostgresStore } from '../db/research-capture-postgres'
+import type { ResearchCaptureSession } from '../research-capture/session'
+import { researchCaptureS3Config } from '../research-capture/session-config'
+import { makeS3ResearchCaptureObjectStore } from '../research-capture/s3'
+import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { sqlResource } from '../operations'
+import { operationalError } from '../errors'
+import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
 
@@ -55,17 +78,95 @@ export const WriterFencedCycleStoreResourceLive = WriterFencedCycleStoreLive
 
 export const WriterFenceResourceLive = WriterFenceLive
 
+const BrokerObservationResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
+  Layer.unwrap(
+    Effect.map(brokerSnapshotCacheConfig, (cache) =>
+      BrokerObservationsLive(config.alpaca.expectedAccountId, config.build.sourceRevision, cache.maxAgeMs),
+    ),
+  )
+
 export const BrokerSessionResourceLive = (config: Extract<LoadedRuntimeConfig, { readonly alpaca: object }>) =>
-  AlpacaBrokerResourcesLive(config.alpaca)
+  AlpacaBrokerResourcesLive(config.alpaca).pipe(Layer.provide(BrokerObservationResourceLive(config)))
 
 export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
 
 const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
   Layer.merge(HttpServerLive(config), ApplicationPlatformLive)
 
-const SignalMarketDataLive = (plan: ApplicationIdentity) => {
+const SignalArchiveHealthLive = (plan: ApplicationIdentity) => {
   const clickHouse = sqlResource(ClickHouseClientResourceLive(plan.config))
-  return IntradayMarketDataLive.pipe(Layer.provide(clickHouse))
+  return Layer.effect(
+    MarketDataHealth,
+    Effect.map(ClickhouseClient.ClickhouseClient, (sql) => ({
+      check: makeIntradayMarketDataQueries(sql).checkIntradayArchive.pipe(
+        Effect.asVoid,
+        Effect.mapError((cause) =>
+          operationalError({
+            component: 'market-data',
+            operation: 'check',
+            message: 'Historical archive is unavailable',
+            cause,
+          }),
+        ),
+      ),
+    })),
+  ).pipe(Layer.provide(clickHouse))
+}
+
+const WorkerMarketDataLive = (
+  plan: ApplicationIdentity,
+  postgres: ReturnType<typeof PostgresLive>,
+  capture?: ResearchCaptureSession,
+) => {
+  if (plan.config.kafka === undefined)
+    return Layer.effect(
+      IntradayMarketData,
+      Effect.fail(
+        operationalError({
+          component: 'config',
+          operation: 'market-data',
+          message: 'Trading requires configured Kafka market data',
+        }),
+      ),
+    )
+  const protocol = defaultJevProtocolDocument
+  const universe = {
+    universeId: protocol.universeId,
+    universeSymbolHash: protocol.universeSymbolHash,
+    symbols: protocol.universe,
+    topics: {
+      ...protocol.sourceTopics,
+      features: intradayFeatureTopic,
+      ...(plan.config.kafka.technicalFeaturesTopic === undefined
+        ? {}
+        : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
+    },
+  }
+  const config = plan.config.kafka
+  const kafka =
+    capture === undefined
+      ? KafkaMarketProjectionLive(config, universe)
+      : Layer.effect(
+          KafkaMarketProjection,
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* capture.start(
+              makeResearchCapturePostgresStore(sql),
+              researchCaptureS3Config.pipe(Effect.flatMap(makeS3ResearchCaptureObjectStore)),
+              universe,
+            )
+            const market = yield* makeKafkaMarketProjection(
+              config,
+              universe,
+              undefined,
+              undefined,
+              capture.workerObserver,
+            )
+            capture.bind(market)
+            return market
+          }),
+        ).pipe(Layer.provide(postgres))
+  return StreamingIntradayMarketDataLive.pipe(Layer.provide(kafka), Layer.provide(postgres))
 }
 
 const PostgresLive = (config: PostgresResourceConfig) => {
@@ -78,7 +179,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    SignalMarketDataLive(plan),
+    WorkerMarketDataLive(plan, postgres),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
@@ -94,17 +195,23 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
     postgres,
     controllerStatus,
     cycleObservability,
-    SignalMarketDataLive(plan),
+    SignalArchiveHealthLive(plan),
     JournalResourceLive(plan.config),
-    BrokerReadOnlyResourcesLive(plan.config.alpaca),
+    BrokerReadOnlyResourcesLive(plan.config.alpaca).pipe(
+      Layer.provide(BrokerObservationResourceLive(plan.config)),
+      Layer.provide(postgres),
+    ),
   ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
-export const AutonomousWorkerApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
+export const AutonomousWorkerApplicationResourcesLive = (
+  plan: ApplicationPlanFor<'AutonomousService'>,
+  capture?: ResearchCaptureSession,
+) => {
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    SignalMarketDataLive(plan),
+    WorkerMarketDataLive(plan, postgres, capture),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
@@ -116,6 +223,9 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
   const journal = JournalResourceLive(plan.config)
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(
+    JevBatchStoreLive.pipe(Layer.provideMerge(JevEvaluationStoreLive)),
+    CandidateObservationStoreLive,
+    JevPositionStoreLive,
     ExecutionStoreResourceLive(plan.config),
     BlockedCycleIntentStoreLive,
     IntentStoreLive,
@@ -125,7 +235,33 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     ExecutionControllerStatusStoreLive,
   ).pipe(Layer.provideMerge(writerFence), Layer.provideMerge(postgres), Layer.provideMerge(journal))
   return Layer.mergeAll(
-    BrokerSessionResourceLive(plan.config),
+    plan.config.jevKey === undefined
+      ? Layer.succeed(JevClient, {
+          evaluate: () =>
+            Effect.fail(
+              new JevError({
+                failure: JevFailure.Request,
+                message: 'Jev entry requires the configured TypeSafe credential',
+              }),
+            ),
+        })
+      : JevClientLive(plan.config.jevKey, defaultJevProtocolDocument.inferenceValidityMs).pipe(
+          Layer.provide(JevHttpClientLive(plan.config.alpaca.proxyUrl)),
+          Layer.catch((cause) =>
+            Layer.effect(
+              JevClient,
+              Effect.fail(
+                operationalError({
+                  component: 'config',
+                  operation: 'jev-client',
+                  message: 'Jev inference configuration is invalid',
+                  cause,
+                }),
+              ),
+            ),
+          ),
+        ),
+    BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
     executionPersistence,
     WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),
   ).pipe(Layer.provideMerge(ApplicationPlatformLive))

@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.intraday-momentum.behavior.v11, verified by the production executable.
-  strategyBehaviorHash = "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285";
-  # Canonical hash of the compiled bayn.intraday-momentum.protocol.v2 document.
-  strategyParameterHash = "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797";
-  strategyName = "intraday-momentum";
+  # SHA-256 identity for bayn.jev.behavior.v3, verified by the production executable.
+  strategyBehaviorHash = "a63b43489d8d386319e0816157766da9225ced9482cef51f547beb6cee3254c0";
+  # Canonical hash of the compiled bayn.jev.protocol.v1 document.
+  strategyParameterHash = "86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd";
+  strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "28582fcf9c63d0409a06d27abf53c05286d1b785374f33e228b88696b990ab40";
+  strategyProtocolHash = "131371357a091ac5d09f5a3dd1585b84cb5509e334beef99ee9d5f14600cf908";
   # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
   # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
   executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
@@ -24,28 +24,32 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/forward-performance-command.js" "$@"
   '';
-  intradayReplayCommand = pkgs.writeShellScriptBin "bayn-intraday-replay" ''
+  backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/intraday-replay-command.js" "$@"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
   '';
-  vendorIntradayReplayCommand = pkgs.writeShellScriptBin "bayn-vendor-intraday-replay" ''
+  inferenceCostCommand = pkgs.writeShellScriptBin "bayn-inference-cost" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/vendor-intraday-replay-command.js" "$@"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/inference-cost-command.js" "$@"
+  '';
+  gapRecoveryCommand = pkgs.writeShellScriptBin "bayn-gap-recovery" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/gap-recovery-command.js" "$@"
   '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    # Refreshed from both Linux builders after adding writer-fence lifecycle integration to the manifest.
-    x86_64-linux = "sha256-yAxmJ5wQYpC2o0knYamaQokBg7QEnRAVXQe3Q450MUE=";
-    aarch64-linux = "sha256-iUdV2SCqtLssuByqrrl958FkvyUSYgyKU5T5bGahxTg=";
+    x86_64-linux = "sha256-5tBr7QUHW8m8+ONnrBmL/htx2LWBZr/XV97njDIcO78=";
+    aarch64-linux = "sha256-iUt18Om9qDMiHZlCeLdiF/PVpWj4w7mr8PvKDAlTv4g=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/intraday-replay-command.ts src/vendor-intraday-replay-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
-      + "--external tigerbeetle-node --entry-naming '[name].js' --outdir=dist "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/backtest-command.ts src/gap-recovery-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
       + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
@@ -61,10 +65,10 @@ let
       + buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash
     )
     "node services/bayn/dist/verify-build-contract.js"
+    "node services/bayn/dist/gap-recovery-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/intraday-replay-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/vendor-intraday-replay-command.js"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/backtest-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg strategyBehaviorHash} services/bayn/dist/index.js"
@@ -74,16 +78,18 @@ let
     "grep -F -- ${lib.escapeShellArg executionRiskPolicyHash} services/bayn/dist/verify-build-contract.js"
   ];
   runtimeInstallPhase = ''
-    mkdir -p "$out/app/services/bayn/dist" "$out/app/services/bayn/node_modules/tigerbeetle-node"
+    mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/intraday-replay-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/vendor-intraday-replay-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/inference-cost-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/backtest-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/gap-recovery-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/streaming-diagnostics-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
-    cp -R -L "$TMPDIR/work/services/bayn/node_modules/tigerbeetle-node/." \
-      "$out/app/services/bayn/node_modules/tigerbeetle-node/"
+    node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
+      "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
   runtimeRoot = import ./bayn-runtime-root.nix {
     inherit
@@ -100,7 +106,14 @@ let
   };
 in
 import ./bun-workspace-service.nix {
-  inherit pkgs lib bun nodejs depsHash runtimeRoot;
+  inherit
+    pkgs
+    lib
+    bun
+    nodejs
+    depsHash
+    runtimeRoot
+    ;
   repoRoot = dependencySource;
   serviceName = "bayn";
   packageName = "@proompteng/bayn";
@@ -121,8 +134,9 @@ import ./bun-workspace-service.nix {
     nodejs
     pkgs.cacert
     forwardPerformanceCommand
-    intradayReplayCommand
-    vendorIntradayReplayCommand
+    inferenceCostCommand
+    backtestCommand
+    gapRecoveryCommand
   ];
   exposedPorts = {
     "8080/tcp" = { };

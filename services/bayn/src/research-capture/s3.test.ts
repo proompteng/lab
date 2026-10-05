@@ -1,0 +1,333 @@
+import { expect, test } from 'bun:test'
+import { Readable } from 'node:stream'
+import type { S3ClientConfig, S3ClientResolvedConfig } from '@aws-sdk/client-s3'
+import { Deferred, Effect, Exit, Fiber, Redacted } from 'effect'
+import { TestClock } from 'effect/testing'
+
+import { provideTestLayer } from '../effect-test-support'
+import { researchCaptureObject } from './export'
+import { makeS3ResearchCaptureObjectStore } from './s3'
+
+const options = {
+  endpoint: 'http://fixture.invalid',
+  bucket: 'synthetic-captures',
+  region: '',
+  accessKeyId: Redacted.make('synthetic-access'),
+  secretAccessKey: Redacted.make('synthetic-secret'),
+  timeoutMs: 100,
+}
+type Request = Parameters<S3ClientResolvedConfig['requestHandler']['handle']>[0]
+type RequestOptions = { readonly abortSignal?: AbortSignal }
+type Fault =
+  | 'none'
+  | 'existing'
+  | 'wrong-existing'
+  | 'lost-ack'
+  | '503'
+  | '409'
+  | 'truncated'
+  | 'oversized'
+  | 'wrong-bytes'
+  | 'wrong-length'
+  | 'stream-error'
+const fixture = (fault: Fault = 'none') => {
+  const requests: Array<{ method: string; conditional: string | undefined; path: string }> = []
+  let stored = Buffer.from('fixture payload')
+  let destroys = 0
+  let readback: Readable | undefined
+  const handler: S3ClientConfig['requestHandler'] = {
+    handle: async (request: Request) => {
+      requests.push({ method: request.method, conditional: request.headers['if-none-match'], path: request.path })
+      if (request.method === 'PUT') {
+        if (fault === '503' || fault === '409' || fault === 'existing' || fault === 'wrong-existing') {
+          const statusCode = fault === '503' ? 503 : fault === '409' ? 409 : 412
+          return {
+            response: {
+              statusCode,
+              headers: { 'content-type': 'application/xml' },
+              body: Readable.from([
+                Buffer.from(
+                  `<Error><Code>${statusCode === 412 ? 'PreconditionFailed' : 'ServiceUnavailable'}</Code></Error>`,
+                ),
+              ]),
+            },
+          }
+        }
+        if (!(request.body instanceof Uint8Array)) throw new Error('Expected binary request body')
+        stored = Buffer.from(request.body)
+        if (fault === 'lost-ack') throw new Error('Acknowledgement lost after commit')
+        return { response: { statusCode: 200, headers: {}, body: Readable.from([]) } }
+      }
+      const payload =
+        fault === 'truncated'
+          ? stored.subarray(0, 2)
+          : fault === 'oversized'
+            ? Buffer.concat([stored, Buffer.from([1])])
+            : fault === 'wrong-existing' || fault === 'wrong-bytes'
+              ? Buffer.alloc(stored.length, 0xff)
+              : stored
+      readback =
+        fault === 'stream-error'
+          ? Readable.from(
+              (async function* () {
+                yield payload.subarray(0, 2)
+                throw new Error('Read failed')
+              })(),
+            )
+          : Readable.from([payload.subarray(0, 2), payload.subarray(2)])
+      return {
+        response: {
+          statusCode: 200,
+          headers: { 'content-length': String(fault === 'wrong-length' ? stored.length + 1 : stored.length) },
+          body: readback,
+        },
+      }
+    },
+    destroy: () => {
+      destroys++
+    },
+  }
+  return { handler, requests, stored: () => stored, destroys: () => destroys, readback: () => readback }
+}
+
+test.each(['none', 'existing'] as const)(
+  'S3 %s path uses one conditional put then exact full readback',
+  async (fault) => {
+    const server = fixture(fault)
+
+    const object = researchCaptureObject(Buffer.from('fixture payload'))
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* makeS3ResearchCaptureObjectStore(options, server.handler)
+          yield* store.putVerified(object)
+        }),
+      ),
+    )
+    expect(server.requests.map((request) => request.method)).toEqual(['PUT', 'GET'])
+    expect(server.requests[0]?.conditional).toBe('*')
+    expect(server.requests[0]?.path).toBe(`/synthetic-captures/research-capture/sha256/${object.contentHash}`)
+    expect(server.destroys()).toBe(1)
+    expect(server.readback()?.destroyed).toBe(true)
+  },
+)
+
+test('S3 verifies a zero-byte binary object without conflating it with a missing object', async () => {
+  const server = fixture()
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* makeS3ResearchCaptureObjectStore(options, server.handler)
+        yield* store.putVerified(researchCaptureObject(Buffer.alloc(0)))
+      }),
+    ),
+  )
+  expect(server.stored()).toEqual(Buffer.alloc(0))
+  expect(server.requests.map((request) => request.method)).toEqual(['PUT', 'GET'])
+  expect(server.destroys()).toBe(1)
+})
+
+test.each([
+  'wrong-existing',
+  'lost-ack',
+  '503',
+  '409',
+  'truncated',
+  'oversized',
+  'wrong-bytes',
+  'wrong-length',
+  'stream-error',
+] as const)('S3 %s fails closed without retry, overwrite, or an acknowledged object', async (fault) => {
+  const server = fixture(fault)
+  const object = researchCaptureObject(Buffer.from('fixture payload'))
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* makeS3ResearchCaptureObjectStore(options, server.handler)
+        yield* store.putVerified(object)
+      }),
+    ),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(server.requests.filter((request) => request.method === 'PUT')).toHaveLength(1)
+  expect(server.requests.map((request) => request.method)).toEqual(
+    fault === 'lost-ack' || fault === '503' || fault === '409' ? ['PUT'] : ['PUT', 'GET'],
+  )
+  expect(server.destroys()).toBe(1)
+  if (server.readback() !== undefined) expect(server.readback()?.destroyed).toBe(true)
+  expect(JSON.stringify(exit)).not.toContain('synthetic-secret')
+  expect(JSON.stringify(exit)).not.toContain('synthetic-access')
+})
+
+test.each(['PUT', 'GET'] as const)(
+  'S3 deadline cancels blocked %s I/O and releases the client once',
+  async (blockedMethod) => {
+    let aborted = 0
+    let destroys = 0
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>()
+          const handler: S3ClientConfig['requestHandler'] = {
+            handle: async (request: Request, requestOptions: RequestOptions) => {
+              if (request.method !== blockedMethod)
+                return { response: { statusCode: 200, headers: {}, body: Readable.from([]) } }
+              Deferred.doneUnsafe(entered, Effect.void)
+              return await new Promise<never>((_resolve, reject) => {
+                const abort = () => {
+                  aborted++
+                  reject(new Error('Aborted fixture request'))
+                }
+                if (requestOptions?.abortSignal?.aborted) abort()
+                else requestOptions?.abortSignal?.addEventListener('abort', abort, { once: true })
+              })
+            },
+            destroy: () => {
+              destroys++
+            },
+          }
+          const store = yield* makeS3ResearchCaptureObjectStore(options, handler)
+          const operation = yield* store.putVerified(researchCaptureObject('fixture payload')).pipe(Effect.forkChild)
+          yield* Deferred.await(entered)
+          yield* TestClock.adjust(100)
+          expect(Exit.isFailure(yield* Fiber.await(operation))).toBe(true)
+        }),
+      ).pipe(provideTestLayer(TestClock.layer())),
+    )
+    expect(aborted).toBe(1)
+    expect(destroys).toBe(1)
+  },
+)
+
+test('S3 timeout destroys a stalled response stream after successful headers', async () => {
+  let responseBody: Readable | undefined
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const handler: S3ClientConfig['requestHandler'] = {
+          handle: async (request: Request) => {
+            if (request.method === 'PUT') return { response: { statusCode: 200, headers: {}, body: Readable.from([]) } }
+            responseBody = new Readable({
+              read() {
+                Deferred.doneUnsafe(entered, Effect.void)
+              },
+            })
+            return { response: { statusCode: 200, headers: { 'content-length': '15' }, body: responseBody } }
+          },
+        }
+        const store = yield* makeS3ResearchCaptureObjectStore(options, handler)
+        const operation = yield* store.putVerified(researchCaptureObject('fixture payload')).pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(100)
+        expect(Exit.isFailure(yield* Fiber.await(operation))).toBe(true)
+      }),
+    ).pipe(provideTestLayer(TestClock.layer())),
+  )
+  expect(responseBody?.destroyed).toBe(true)
+})
+
+test.each([
+  { method: 'PUT', status: 200 },
+  { method: 'PUT', status: 412 },
+  { method: 'GET', status: 404 },
+])(
+  'SDK collector rejects oversized $method/$status bodies before unbounded deserialization',
+  async ({ method, status }) => {
+    let body: Readable | undefined
+    let emitted = 0
+    const handler: S3ClientConfig['requestHandler'] = {
+      handle: async (request: Request) => {
+        if (request.method !== method) return { response: { statusCode: 200, headers: {}, body: Readable.from([]) } }
+        body = Readable.from(
+          (async function* () {
+            for (let index = 0; index < 1024; index++) {
+              emitted++
+              yield Buffer.alloc(1024, 65)
+            }
+          })(),
+          { highWaterMark: 1024, objectMode: false },
+        )
+        return { response: { statusCode: status, headers: { 'content-type': 'application/xml' }, body } }
+      },
+    }
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* makeS3ResearchCaptureObjectStore(options, handler)
+          yield* store.putVerified(researchCaptureObject('fixture payload'))
+        }),
+      ),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(emitted).toBeLessThan(16)
+    expect(body?.destroyed).toBe(true)
+  },
+)
+
+test.each([
+  { method: 'PUT', status: 200 },
+  { method: 'PUT', status: 412 },
+  { method: 'GET', status: 404 },
+])('deadline destroys stalled SDK $method/$status bodies before deserialization', async ({ method, status }) => {
+  let body: Readable | undefined
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>()
+        const handler: S3ClientConfig['requestHandler'] = {
+          handle: async (request: Request) => {
+            if (request.method !== method)
+              return { response: { statusCode: 200, headers: {}, body: Readable.from([]) } }
+            body = new Readable({
+              read() {
+                Deferred.doneUnsafe(entered, Effect.void)
+              },
+            })
+            return { response: { statusCode: status, headers: { 'content-type': 'application/xml' }, body } }
+          },
+        }
+        const store = yield* makeS3ResearchCaptureObjectStore(options, handler)
+        const operation = yield* store.putVerified(researchCaptureObject('fixture payload')).pipe(Effect.forkChild)
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(100)
+        expect(Exit.isFailure(yield* Fiber.await(operation))).toBe(true)
+      }),
+    ).pipe(provideTestLayer(TestClock.layer())),
+  )
+  expect(body?.destroyed).toBe(true)
+})
+
+test.each(['xml-code', 'transport-name'] as const)('SDK %s never escapes into capture errors', async (fault) => {
+  const privateText = 'synthetic-access synthetic-secret private-raw-value'
+  const handler: S3ClientConfig['requestHandler'] = {
+    handle: async () => {
+      if (fault === 'transport-name') {
+        const error = new Error(privateText)
+        error.name = privateText
+        throw error
+      }
+      return {
+        response: {
+          statusCode: 503,
+          headers: { 'content-type': 'application/xml' },
+          body: Readable.from([
+            Buffer.from(`<Error><Code>${privateText}</Code><Message>${privateText}</Message></Error>`),
+          ]),
+        },
+      }
+    },
+  }
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* makeS3ResearchCaptureObjectStore(options, handler)
+        yield* store.putVerified(researchCaptureObject('fixture payload'))
+      }),
+    ),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(JSON.stringify(exit)).not.toContain('synthetic-access')
+  expect(JSON.stringify(exit)).not.toContain('synthetic-secret')
+  expect(JSON.stringify(exit)).not.toContain('private-raw-value')
+})

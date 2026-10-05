@@ -140,7 +140,13 @@ class ForwarderEndpointsTest {
         alpacaFeed = "overnight",
         barsBackfillLookbackHours = 120,
       )
-    val query = alpacaBarsBackfillQuery(cfg, listOf("AAPL", "MSFT"), Instant.parse("2026-03-11T09:30:00Z"), "page-1")
+    val query =
+      alpacaBarsBackfillQuery(
+        cfg,
+        listOf("AAPL", "MSFT"),
+        alpacaBarsBackfillWindow(Instant.parse("2026-03-11T09:30:00Z"), cfg.barsBackfillLookbackHours),
+        "page-1",
+      )
 
     assertEquals("AAPL,MSFT", query.symbols)
     assertEquals("1Min", query.timeframe)
@@ -172,7 +178,7 @@ class ForwarderEndpointsTest {
   @Test
   fun `crypto backfill query omits feed parameter`() {
     val cfg = baseConfig(AlpacaMarketType.CRYPTO)
-    val query = alpacaBarsBackfillQuery(cfg, listOf("BTC/USD"), Instant.parse("2026-03-11T09:30:00Z"))
+    val query = alpacaBarsBackfillQuery(cfg, listOf("BTC/USD"), alpacaBarsBackfillWindow(Instant.parse("2026-03-11T09:30:00Z")))
 
     assertEquals(null, query.feed)
     assertEquals(null, query.pageToken)

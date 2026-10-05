@@ -2,6 +2,12 @@
 # For medium/large instances, add external Redis/Valkey for session/cache/queue.
 replicaCount: 1
 
+# Kargo writes the selected version and immutable image in its generated branch.
+image:
+  rootless: true
+  tag: "15.0.6"
+
+
 podSecurityContext:
   fsGroup: 1000
   fsGroupChangePolicy: OnRootMismatch
@@ -36,6 +42,11 @@ service:
       metallb.io/loadBalancerIPs: 100.100.244.181
 
 gitea:
+  podAnnotations:
+    delivery.proompteng.ai/source-revision: ""
+    delivery.proompteng.ai/image-digest: ""
+    delivery.proompteng.ai/upstream-digest: ""
+    delivery.proompteng.ai/created: ""
   admin:
     existingSecret: forgejo-admin
     username: kalmyk

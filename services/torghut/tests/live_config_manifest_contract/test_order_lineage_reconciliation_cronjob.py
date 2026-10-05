@@ -90,7 +90,7 @@ class OrderLineageReconciliationCronJobTests(TestCase):
         sim_dsn = str(env["SIM_DB_DSN"]["value"])
         self.assertIn("$(TORGHUT_SIM_DB_PASSWORD)", sim_dsn)
 
-    def test_cronjob_tracks_exact_build_and_is_rendered(self) -> None:
+    def test_inactive_cronjob_tracks_exact_build_without_being_rendered(self) -> None:
         _job_spec, _pod_spec, container = _cronjob_parts()
         env = _env_by_name(container)
         image = str(container["image"])
@@ -104,4 +104,4 @@ class OrderLineageReconciliationCronJobTests(TestCase):
             "argocd/applications/torghut/kustomization.yaml"
         )
         resources = cast(list[str], kustomization["resources"])
-        self.assertIn("order-lineage-reconciliation-cronjob.yaml", resources)
+        self.assertNotIn("order-lineage-reconciliation-cronjob.yaml", resources)

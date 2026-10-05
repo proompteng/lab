@@ -1,51 +1,3 @@
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: bayn-execution-activate
-  labels:
-    app.kubernetes.io/name: bayn-execution-activate
-    app.kubernetes.io/part-of: bayn
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: bayn-execution-activate
-  policyTypes:
-    - Egress
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: restate
-          podSelector:
-            matchLabels:
-              app: restate
-      ports:
-        - port: 8080
-          protocol: TCP
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: observability
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: tempo
-              app.kubernetes.io/component: distributor
-      ports:
-        - port: 4318
-          protocol: TCP
----
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -88,9 +40,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              # canonicalHashV1(bayn.execution-controller-activation.v3,
-              # plan hash, source revision, image digest, and activation request hash)
-              value: "d39df585e43593019dbc3f33efa264122c4efe22a4c1bee727a1efaa59e17bc9"
+              value: "44a58a1d26ec2cad62fae863739d8101a919ef74272770ae93fb2d8fb5e89bf5"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_IMAGE_REPOSITORY
@@ -102,9 +52,9 @@ spec:
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
               value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
+              value: "a63b43489d8d386319e0816157766da9225ced9482cef51f547beb6cee3254c0"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
+              value: "86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -113,7 +63,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\"authoredActivation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"},\"activation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"44a58a1d26ec2cad62fae863739d8101a919ef74272770ae93fb2d8fb5e89bf5\",\"authoredActivation\":{\"sourceRevision\":\"ca4d32859b0ffbca3bf2e2d5a61d2f265eb95263\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f42804b5e010a708fa1f27dc623d23977910e4e06c08a71182e1efec98bd20c9\"},\"activation\":{\"sourceRevision\":\"ca4d32859b0ffbca3bf2e2d5a61d2f265eb95263\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f42804b5e010a708fa1f27dc623d23977910e4e06c08a71182e1efec98bd20c9\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
@@ -161,22 +111,6 @@ spec:
                 secretKeyRef:
                   name: bayn-clickhouse-auth
                   key: password
-            - name: BAYN_SIGNAL_SNAPSHOT_ID
-              value: "f50f63fecf62991203e8ddae519406a432b1d1a06c3376b18a2957b962c67a60"
-            - name: BAYN_SIGNAL_PUBLICATION_ASOF
-              value: "2026-08-04"
-            - name: BAYN_SIGNAL_CALENDAR_VERSION
-              value: "alpaca-us-equity-calendar-v1"
-            - name: BAYN_SIGNAL_DATA_START
-              value: "2016-01-04"
-            - name: BAYN_SIGNAL_DATA_END
-              value: "2026-08-04"
-            - name: BAYN_SIGNAL_LOOKBACK_START
-              value: "2016-01-04"
-            - name: BAYN_SIGNAL_EVALUATION_START
-              value: "2017-01-03"
-            - name: BAYN_SIGNAL_EVALUATION_END
-              value: "2026-08-04"
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
@@ -190,7 +124,7 @@ spec:
               value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
-            - name: BAYN_EXECUTION_BOOTSTRAP_TOKEN
+            - name: BAYN_EXECUTION_ACTIVATION_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: bayn-execution-bootstrap
@@ -201,6 +135,11 @@ spec:
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
+            - name: BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.labels['batch.kubernetes.io/controller-uid']
           resources:
             requests:
               cpu: 25m

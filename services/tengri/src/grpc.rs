@@ -30,7 +30,10 @@ use crate::{
         MicroVMResources, MicroVMSpec,
     },
     gateway::PreviewOrigin,
-    guest::{GuestClient, GuestError, TerminalCreation as GuestTerminalCreation},
+    guest::{
+        CodexOptions, EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
+        TerminalCreation as GuestTerminalCreation,
+    },
     metrics,
     pod::{SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
     tickets::TicketStore,
@@ -42,19 +45,19 @@ pub mod proto {
 
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
-    CodexEvent, CodexEventKind, CodexLogin, CodexThread, CodexTurn, CreateAgentRequest,
-    CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest,
-    DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind, GetAgentRequest,
-    GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
-    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
-    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
-    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
-    ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
-    RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexTurnRequest,
-    SleepAgentRequest, StartCodexLoginRequest, SteerCodexTurnRequest, TerminalSession,
-    TerminalTicket, TerminateTerminalRequest, WatchAgentRequest, WatchCodexEventsRequest,
-    WatchFilesRequest, WriteFileRequest, WriteFileResponse,
-    micro_vm_control_plane_server::MicroVmControlPlane,
+    CodexEvent, CodexEventKind, CodexImage, CodexLogin, CodexModels, CodexThread, CodexTurn,
+    CreateAgentRequest, CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest,
+    DeleteAgentRequest, DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind,
+    GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
+    IssueEditorSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
+    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListFilesRequest,
+    ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
+    PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
+    ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
+    SearchFilesResponse, SendCodexInputRequest, SleepAgentRequest, StartCodexLoginRequest,
+    SteerCodexInputRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
+    WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
+    WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -72,6 +75,7 @@ const RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX: &str =
 #[derive(Clone)]
 pub struct ControlPlane {
     client: Client,
+    identity: crate::identity::WorkloadIdentity,
     namespace: Arc<str>,
     default_image: Arc<str>,
     architecture: MicroVMArchitecture,
@@ -85,6 +89,7 @@ pub struct ControlPlane {
 }
 
 pub struct ControlPlaneConfig {
+    pub identity: crate::identity::WorkloadIdentity,
     pub namespace: String,
     pub default_image: String,
     pub architecture: MicroVMArchitecture,
@@ -107,10 +112,14 @@ impl ControlPlane {
             config.internal_hmac_secret,
         )?;
         let namespace: Arc<str> = config.namespace.into();
-        let provisional_terminal_leases =
-            ProvisionalTerminalLeaseManager::new(client.clone(), namespace.clone());
+        let provisional_terminal_leases = ProvisionalTerminalLeaseManager::new(
+            client.clone(),
+            namespace.clone(),
+            config.identity.clone(),
+        );
         Ok(Self {
             client,
+            identity: config.identity,
             namespace,
             default_image: config.default_image.into(),
             architecture: config.architecture,
@@ -219,7 +228,7 @@ impl ControlPlane {
 
     async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
         self.wake_agent(principal, id).await?;
-        GuestClient::for_agent(self.client.clone(), &self.namespace, id)
+        GuestClient::for_agent(self.client.clone(), &self.namespace, id, &self.identity)
             .await
             .map_err(map_guest_error)
     }
@@ -759,6 +768,33 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn list_codex_models(
+        &self,
+        request: Request<ListCodexModelsRequest>,
+    ) -> Result<Response<CodexModels>, Status> {
+        let principal = self.authorize(&request, "ListCodexModels").await?;
+        let request = request.into_inner();
+        if request.cursor.len() > 4096 || request.cursor.chars().any(char::is_control) {
+            return Err(Status::invalid_argument("invalid Codex model cursor"));
+        }
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
+            .codex_call(
+                "model/list",
+                json!({
+                    "cursor": if request.cursor.is_empty() { None } else { Some(request.cursor) },
+                    "limit": 100,
+                    "includeHidden": false,
+                }),
+            )
+            .await
+            .map_err(map_codex_models_error)?;
+        Ok(Response::new(CodexModels {
+            raw_json: value.to_string(),
+        }))
+    }
+
     async fn start_codex_login(
         &self,
         request: Request<StartCodexLoginRequest>,
@@ -804,12 +840,16 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<CodexThread>, Status> {
         let principal = self.authorize(&request, "CreateCodexThread").await?;
         let request = request.into_inner();
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
             .codex_call_with_sequence(
                 "thread/start",
                 json!({
+                    "model": options.model,
+                    "config": options.thread_config(),
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
                     "approvalPolicy": "on-request",
@@ -837,10 +877,12 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResumeCodexThread").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
         let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
-            .resume_codex_thread(&request.thread_id)
+            .resume_codex_thread(&request.thread_id, &options)
             .await
             .map_err(map_guest_error)?;
         let value = snapshot.result;
@@ -852,22 +894,26 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    async fn send_codex_turn(
+    async fn send_codex_input(
         &self,
-        request: Request<SendCodexTurnRequest>,
+        request: Request<SendCodexInputRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request, "SendCodexTurn").await?;
+        let principal = self.authorize(&request, "SendCodexInput").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
-        let text = validate_prompt(&request.text)?;
-        let value = self
-            .guest(&principal, &request.agent_id)
-            .await?
+        validate_codex_message(&request.text, &request.images)?;
+        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+            .map_err(Status::invalid_argument)?;
+        let guest = self.guest(&principal, &request.agent_id).await?;
+        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
+        let value = guest
             .codex_call(
                 "turn/start",
                 json!({
                     "threadId": request.thread_id,
-                    "input": [{"type": "text", "text": text, "text_elements": []}],
+                    "model": options.model,
+                    "effort": options.reasoning_effort,
+                    "input": input,
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
                     "approvalPolicy": "on-request",
@@ -883,24 +929,24 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    async fn steer_codex_turn(
+    async fn steer_codex_input(
         &self,
-        request: Request<SteerCodexTurnRequest>,
+        request: Request<SteerCodexInputRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request, "SteerCodexTurn").await?;
+        let principal = self.authorize(&request, "SteerCodexInput").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         validate_codex_id(&request.turn_id)?;
-        let text = validate_prompt(&request.text)?;
-        let value = self
-            .guest(&principal, &request.agent_id)
-            .await?
+        validate_codex_message(&request.text, &request.images)?;
+        let guest = self.guest(&principal, &request.agent_id).await?;
+        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
+        let value = guest
             .codex_call(
                 "turn/steer",
                 json!({
                     "threadId": request.thread_id,
                     "expectedTurnId": request.turn_id,
-                    "input": [{"type": "text", "text": text, "text_elements": []}],
+                    "input": input,
                 }),
             )
             .await
@@ -983,20 +1029,59 @@ impl MicroVmControlPlane for ControlPlane {
         Ok(Response::new(Box::pin(stream)))
     }
 
+    async fn issue_editor_session(
+        &self,
+        request: Request<IssueEditorSessionRequest>,
+    ) -> Result<Response<PreviewSession>, Status> {
+        let principal = self.authorize(&request, "IssueEditorSession").await?;
+        let request = request.into_inner();
+        if request.window_id.len() < 16
+            || request.window_id.len() > 128
+            || !request
+                .window_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(Status::invalid_argument("invalid editor window identity"));
+        }
+        let agent = self.owned_agent(&principal, &request.agent_id).await?;
+        let incarnation = agent
+            .uid()
+            .ok_or_else(|| Status::unavailable("agent identity is unavailable"))?;
+        GuestClient::for_agent_incarnation(
+            self.client.clone(),
+            &self.namespace,
+            &request.agent_id,
+            Some(&incarnation),
+            &self.identity,
+        )
+        .await
+        .map_err(map_guest_error)?
+        .open_editor()
+        .await
+        .map_err(map_guest_error)?;
+        let issued = self.tickets.issue_editor(
+            &principal.owner_hash,
+            &request.agent_id,
+            &incarnation,
+            &request.window_id,
+        )?;
+        let preview_origin = self.preview_origin.origin(&issued.id);
+        Ok(Response::new(PreviewSession {
+            id: issued.id,
+            launch_url: issued.url,
+            expires_at: issued.expires_at,
+            preview_origin,
+        }))
+    }
+
     async fn issue_preview_session(
         &self,
         request: Request<IssuePreviewSessionRequest>,
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssuePreviewSession").await?;
         let request = request.into_inner();
-        let port = u16::try_from(request.port)
-            .ok()
-            .filter(|port| *port >= 1024 && *port != 8080)
-            .ok_or_else(|| {
-                Status::invalid_argument(
-                    "preview port must be between 1024 and 65535 and cannot be 8080",
-                )
-            })?;
+        let port = validate_preview_port(request.port)?;
         let path = validate_preview_path(&request.path)?;
         let fragment = validate_preview_fragment(&request.fragment)?;
         self.guest(&principal, &request.agent_id).await?;
@@ -1017,6 +1102,15 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
+    async fn revoke_editor_sessions(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
+        let principal = self.authorize(&request, "RevokeEditorSessions").await?;
+        self.tickets.revoke_editors(&principal.owner_hash)?;
+        Ok(Response::new(Empty {}))
+    }
+
     async fn revoke_preview_session(
         &self,
         request: Request<RevokePreviewSessionRequest>,
@@ -1025,6 +1119,18 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         validate_preview_session_id(&request.session_id)?;
         self.owned_agent(&principal, &request.agent_id).await?;
+        if request.revocation_token.len() > 256 {
+            return Err(Status::invalid_argument("invalid revocation token"));
+        }
+        if !request.revocation_token.is_empty() {
+            self.tickets.revoke_preview_lease(
+                &principal.owner_hash,
+                &request.agent_id,
+                &request.session_id,
+                &request.revocation_token,
+            )?;
+            return Ok(Response::new(Empty {}));
+        }
         self.tickets.revoke_preview(
             &principal.owner_hash,
             &request.agent_id,
@@ -1626,14 +1732,20 @@ fn validate_terminal_creation_id(value: &str) -> Result<(), Status> {
 #[derive(Clone)]
 struct ProvisionalTerminalLeaseManager {
     client: Client,
+    identity: crate::identity::WorkloadIdentity,
     namespace: Arc<str>,
     registry: ProvisionalTerminalLeaseRegistry,
 }
 
 impl ProvisionalTerminalLeaseManager {
-    fn new(client: Client, namespace: Arc<str>) -> Self {
+    fn new(
+        client: Client,
+        namespace: Arc<str>,
+        identity: crate::identity::WorkloadIdentity,
+    ) -> Self {
         Self {
             client,
+            identity,
             namespace,
             registry: ProvisionalTerminalLeaseRegistry::default(),
         }
@@ -1690,20 +1802,26 @@ impl ProvisionalTerminalLeaseManager {
     }
 
     async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
-        let guest =
-            match GuestClient::for_agent(self.client.clone(), &self.namespace, agent_id).await {
-                Ok(guest) => Some(guest),
-                Err(error) if agent_is_absent(&error) => None,
-                Err(error) => {
-                    tracing::warn!(
-                        agent_id,
-                        terminal_id,
-                        %error,
-                        "failed to connect to the guest while cleaning up an unconfirmed terminal"
-                    );
-                    return false;
-                }
-            };
+        let guest = match GuestClient::for_agent(
+            self.client.clone(),
+            &self.namespace,
+            agent_id,
+            &self.identity,
+        )
+        .await
+        {
+            Ok(guest) => Some(guest),
+            Err(error) if agent_is_absent(&error) => None,
+            Err(error) => {
+                tracing::warn!(
+                    agent_id,
+                    terminal_id,
+                    %error,
+                    "failed to connect to the guest while cleaning up an unconfirmed terminal"
+                );
+                return false;
+            }
+        };
 
         if let Some(guest) = guest {
             match guest.terminate_terminal(terminal_id).await {
@@ -2040,14 +2158,106 @@ fn validate_codex_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
-fn validate_prompt(value: &str) -> Result<String, Status> {
-    let value = value.trim();
-    if value.is_empty() || value.len() > 64 << 10 {
+fn validate_codex_message(text: &str, images: &[CodexImage]) -> Result<(), Status> {
+    if (text.trim().is_empty() && images.is_empty()) || text.trim().len() > 64 << 10 {
         return Err(Status::invalid_argument(
-            "message must contain between 1 byte and 64 KiB",
+            "add a message or image; message text must not exceed 64 KiB",
         ));
     }
-    Ok(value.to_owned())
+    if images.len() > 4
+        || images
+            .iter()
+            .map(|image| image.content.len())
+            .sum::<usize>()
+            > 8 << 20
+    {
+        return Err(Status::invalid_argument(
+            "attach at most 4 images and 8 MiB total",
+        ));
+    }
+    for image in images {
+        if image.content.is_empty() || image.content.len() > 4 << 20 {
+            return Err(Status::invalid_argument("each image must be at most 4 MiB"));
+        }
+        image_extension(image)?;
+    }
+    Ok(())
+}
+
+fn image_extension(image: &CodexImage) -> Result<&'static str, Status> {
+    match image.media_type.as_str() {
+        "image/png" if image.content.starts_with(b"\x89PNG\r\n\x1a\n") => Ok("png"),
+        "image/jpeg" if image.content.starts_with(b"\xff\xd8\xff") => Ok("jpg"),
+        "image/webp"
+            if image.content.starts_with(b"RIFF") && image.content.get(8..12) == Some(b"WEBP") =>
+        {
+            Ok("webp")
+        }
+        _ => Err(Status::invalid_argument(
+            "attach a valid PNG, JPEG, or WebP image",
+        )),
+    }
+}
+
+pub(crate) async fn codex_turn_input(
+    guest: &GuestClient,
+    text: &str,
+    images: &[CodexImage],
+) -> Result<Vec<Value>, Status> {
+    validate_codex_message(text, images)?;
+    let mut input = Vec::new();
+    if !text.trim().is_empty() {
+        input.push(json!({"type": "text", "text": text.trim(), "text_elements": []}));
+    }
+    if !images.is_empty() {
+        let directory = "/workspace/.tengri-attachments";
+        if let Err(error) = guest.create_directory(directory).await
+            && !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
+        {
+            return Err(map_guest_error(error));
+        }
+        let mut written_paths = Vec::new();
+        for image in images {
+            let path = format!("{directory}/{}.{}", Uuid::new_v4(), image_extension(image)?);
+            if let Err(error) = guest.write_file(&path, &image.content, "missing").await {
+                if !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
+                {
+                    written_paths.push(path);
+                }
+                for staged_path in &written_paths {
+                    if let Err(cleanup_error) = guest.delete_file(staged_path, false).await
+                        && !matches!(&cleanup_error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::NOT_FOUND)
+                    {
+                        tracing::warn!(error = %cleanup_error, "failed to clean unsent Codex attachment");
+                    }
+                }
+                return Err(map_guest_error(error));
+            }
+            written_paths.push(path.clone());
+            input.push(json!({"type": "localImage", "path": path}));
+        }
+    }
+    Ok(input)
+}
+
+fn validate_preview_port(value: u32) -> Result<u16, Status> {
+    u16::try_from(value)
+        .ok()
+        .filter(|port| {
+            *port >= 1024
+                && ![
+                    8080,
+                    crate::guest::GUEST_API_PORT,
+                    EDITOR_PORT,
+                    EDITOR_BRIDGE_PORT,
+                ]
+                .contains(port)
+        })
+        .ok_or_else(|| {
+            Status::invalid_argument(
+                "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
+            )
+        })
 }
 
 fn validate_preview_path(value: &str) -> Result<String, Status> {
@@ -2173,6 +2383,25 @@ fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
     }
 }
 
+fn map_codex_models_error(error: GuestError) -> Status {
+    if let GuestError::Api { status, message } = &error
+        && *status == reqwest::StatusCode::BAD_GATEWAY
+        && serde_json::from_str::<Value>(message)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .as_deref()
+            == Some("Codex method is not exposed by Nanoagent")
+    {
+        return Status::unimplemented("This guest does not support Codex model selection");
+    }
+    map_guest_error(error)
+}
+
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
@@ -2194,9 +2423,6 @@ fn map_guest_error(error: GuestError) -> Status {
         GuestError::Api { status, message } if status == reqwest::StatusCode::FORBIDDEN => {
             Status::permission_denied(message)
         }
-        GuestError::MissingCodexSnapshotCursor => Status::failed_precondition(
-            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent",
-        ),
         GuestError::MissingFileRevision
         | GuestError::InvalidFileRevision
         | GuestError::FileRevisionMismatch => Status::failed_precondition(
@@ -2214,6 +2440,34 @@ fn map_guest_error(error: GuestError) -> Status {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn validates_codex_images_and_image_only_messages() {
+        let png = CodexImage {
+            media_type: "image/png".into(),
+            content: b"\x89PNG\r\n\x1a\n".to_vec(),
+        };
+        assert!(validate_codex_message("", std::slice::from_ref(&png)).is_ok());
+        assert!(validate_codex_message("Inspect this", std::slice::from_ref(&png)).is_ok());
+        assert!(validate_codex_message("", &[]).is_err());
+        assert!(
+            validate_codex_message(
+                "",
+                &[CodexImage {
+                    media_type: "image/jpeg".into(),
+                    ..png.clone()
+                }]
+            )
+            .is_err()
+        );
+        assert!(validate_codex_message("", &vec![png.clone(); 5]).is_err());
+        let mut exact = png.clone();
+        exact.content.resize(4 << 20, 0);
+        assert!(validate_codex_message("", &[exact.clone(), exact.clone()]).is_ok());
+        assert!(validate_codex_message("", &[exact.clone(), exact.clone(), png]).is_err());
+        exact.content.push(0);
+        assert!(validate_codex_message("", &[exact]).is_err());
+    }
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2225,13 +2479,29 @@ mod tests {
     use kube::client::Body as KubeBody;
 
     #[test]
-    fn missing_codex_snapshot_cursor_reports_the_destructive_recovery() {
-        let status = map_guest_error(GuestError::MissingCodexSnapshotCursor);
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    fn recognizes_only_the_legacy_guest_model_allowlist_failure() {
+        let message = json!({"error": "Codex method is not exposed by Nanoagent"}).to_string();
         assert_eq!(
-            status.message(),
-            "This agent cannot safely restore Codex threads; save the workspace, then delete and recreate the agent"
+            map_codex_models_error(GuestError::Api {
+                status: reqwest::StatusCode::BAD_GATEWAY,
+                message: message.clone(),
+            })
+            .code(),
+            tonic::Code::Unimplemented
         );
+        for (status, message) in [
+            (reqwest::StatusCode::FORBIDDEN, message),
+            (
+                reqwest::StatusCode::BAD_GATEWAY,
+                json!({"error": "Codex app-server is unavailable"}).to_string(),
+            ),
+            (reqwest::StatusCode::BAD_GATEWAY, "invalid response".into()),
+        ] {
+            assert_ne!(
+                map_codex_models_error(GuestError::Api { status, message }).code(),
+                tonic::Code::Unimplemented
+            );
+        }
     }
 
     #[test]
@@ -2262,8 +2532,8 @@ mod tests {
             display_name: "My agent".to_owned(),
         };
         assert_eq!(request.display_name, "My agent");
-        assert_eq!(MicroVMResources::default().cpu_millis, 2_000);
-        assert_eq!(MicroVMResources::default().memory_mib, 4_096);
+        assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
+        assert_eq!(MicroVMResources::default().memory_mib, 8_192);
         assert_eq!(MicroVMResources::default().workspace_gib, 16);
     }
 
@@ -2880,6 +3150,19 @@ mod tests {
     }
 
     #[test]
+    fn preview_ports_reject_guest_control_and_editor_listeners() {
+        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 65536] {
+            assert_eq!(
+                validate_preview_port(port).unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        for port in [1024, 3000, 65535] {
+            assert_eq!(validate_preview_port(port).unwrap(), port as u16);
+        }
+    }
+
+    #[test]
     fn preview_fragment_is_bounded_and_kept_separate_from_the_proxy_path() {
         assert_eq!(
             validate_preview_fragment("#editor").expect("preview fragment"),
@@ -3069,6 +3352,7 @@ mod tests {
         let manager = ProvisionalTerminalLeaseManager::new(
             Client::new(service, "tengri"),
             Arc::<str>::from("tengri"),
+            crate::identity::WorkloadIdentity::Fixture,
         );
         let tracking_manager = manager.clone();
         let tracked_after = Utc::now();
@@ -3131,6 +3415,7 @@ mod tests {
         let manager = ProvisionalTerminalLeaseManager::new(
             Client::new(service, "tengri"),
             Arc::<str>::from("tengri"),
+            crate::identity::WorkloadIdentity::Fixture,
         );
 
         manager

@@ -7,7 +7,7 @@ safety_manifest="$repo_root/argocd/applications/kube-router/safety-policies.yaml
 desired_namespaces=$(
   {
     yq eval-all --no-doc --unwrapScalar 'select(.kind == "NetworkPolicy") | .metadata.namespace' "$safety_manifest"
-    printf '%s\n' hermes
+    printf '%s\n' hermes buzz observability proompteng restate restate-example temporal
     if kubectl -n kube-system get namespace tengri >/dev/null 2>&1 &&
       kubectl -n tengri get networkpolicies.networking.k8s.io -o json |
         jq -e '.items | length > 0' >/dev/null; then
@@ -16,7 +16,7 @@ desired_namespaces=$(
   } | sort -u
 )
 actual_namespaces=$(
-  kubectl get networkpolicies.networking.k8s.io --all-namespaces -o json |
+  kubectl -n kube-system get networkpolicies.networking.k8s.io --all-namespaces -o json |
     jq -r '.items[].metadata.namespace' |
     sort -u
 )

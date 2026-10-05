@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
-import { prepareAccounting } from '../accounting/domain'
+import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import type { RuntimeConfig } from '../config'
 import { OrderSide, type Fill } from '../execution/contracts'
 import { stableU128 } from '../hash'
@@ -88,20 +88,20 @@ const materializeAccounts = (plan: LedgerPlan): readonly Account[] => {
     debit.debits += transfer.amount
     credit.credits += transfer.amount
   }
-  return plan.accounts.map((account) => {
+  return plan.accounts.map((account, index) => {
     const balance = balances.get(account.id)
     if (balance === undefined) throw new Error('ledger fixture omitted an account balance')
     return {
       ...account,
       debits_posted: balance.debits,
       credits_posted: balance.credits,
-      timestamp: 1n,
+      timestamp: BigInt(index + 1),
     }
   })
 }
 
 const materializeTransfers = (plan: LedgerPlan): readonly Transfer[] =>
-  plan.transfers.map((transfer) => ({ ...transfer, timestamp: transfer.timestamp === 0n ? 1n : transfer.timestamp }))
+  plan.transfers.map((transfer, index) => ({ ...transfer, timestamp: BigInt(index + 1) }))
 
 const cashYieldEvidence = (
   amount: bigint,
@@ -186,12 +186,13 @@ const dependencies = (
       lookupAccounts: async () => [],
       lookupTransfers: async () => [],
       queryAccounts: async (filter) => {
-        if (observedLimits !== undefined) observedLimits.accounts = filter.limit
-        return [...accounts]
+        if (observedLimits !== undefined) observedLimits.accounts = Math.max(observedLimits.accounts ?? 0, filter.limit)
+        return accounts.filter((account) => account.timestamp >= filter.timestamp_min).slice(0, filter.limit)
       },
       queryTransfers: async (filter) => {
-        if (observedLimits !== undefined) observedLimits.transfers = filter.limit
-        return [...transfers]
+        if (observedLimits !== undefined)
+          observedLimits.transfers = Math.max(observedLimits.transfers ?? 0, filter.limit)
+        return transfers.filter((transfer) => transfer.timestamp >= filter.timestamp_min).slice(0, filter.limit)
       },
       destroy: () => undefined,
     }) satisfies TigerBeetleClient,
@@ -225,6 +226,32 @@ describe('forward performance TigerBeetle read', () => {
       cashYieldMicros: '0',
     })
     expect(evidence.openPositionCount).toBe(0)
+  })
+
+  test('verifies delayed fees and refunds in the stable account and selected generation', async () => {
+    const currentPlans = [
+      ...plans(),
+      brokerFeeLedgerPlan(accountId, 'fee', '-230000', ledger),
+      brokerFeeLedgerPlan(accountId, 'refund', '10000', ledger),
+    ]
+    const priorPlans = secondGenerationPlans()
+    const allPlans = [...priorPlans, ...currentPlans]
+    const accountPlan = success(assembleAccountPlan(accountId, allPlans))
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          allPlans,
+          undefined,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+          currentPlans,
+        ),
+      ),
+    )
+    expect(evidence.ledgerExact).toBe(true)
+    expect(evidence.totals.brokerExecutionFeesMicros).toBe('220300')
+    expect(evidence.totals.realizedGainMicros).toBe('10000000')
   })
 
   test('reconciles authoritative account balances and transfer events exactly', async () => {
@@ -276,7 +303,10 @@ describe('forward performance TigerBeetle read', () => {
       ),
     )
 
-    expect(observedLimits).toEqual({ accounts: LEDGER_BATCH_MAX, transfers: LEDGER_BATCH_MAX })
+    expect(observedLimits).toEqual({
+      accounts: accountPlan.accounts.length + 1,
+      transfers: accountPlan.transfers.length + 1,
+    })
     expect(evidence).toEqual({
       totals: {
         realizedGainMicros: '10000000',
@@ -370,7 +400,7 @@ describe('forward performance TigerBeetle read', () => {
     expect(evidence.cashYieldEvidence).toBeUndefined()
   })
 
-  test('fails closed when the bounded account query reaches its exact limit', async () => {
+  test('withholds exactness when the account contains unexpected records', async () => {
     const accountingPlans = plans()
     const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
     const sample = materializeAccounts(accountPlan)[0]
@@ -378,23 +408,14 @@ describe('forward performance TigerBeetle read', () => {
     const saturated = Array.from({ length: LEDGER_BATCH_MAX }, (_, index) => ({
       ...sample,
       id: BigInt(index + 1),
+      timestamp: BigInt(index + 1),
     }))
 
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        Effect.scoped(
-          readForwardPerformanceLedger(config, accountId, accountingPlans, undefined, dependencies(saturated, [])),
-        ),
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(config, accountId, accountingPlans, undefined, dependencies(saturated, [])),
       ),
     )
-
-    expect(failure).toMatchObject({
-      operation: 'read',
-      cause: {
-        operation: 'verify-account',
-        reason: 'batch-limit',
-        material: { accountCount: LEDGER_BATCH_MAX, transferCount: 0, limit: LEDGER_BATCH_MAX },
-      },
-    })
+    expect(evidence.ledgerExact).toBe(false)
   })
 })

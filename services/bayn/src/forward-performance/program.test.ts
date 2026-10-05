@@ -1,3 +1,8 @@
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
 import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -6,7 +11,7 @@ import { DateTime, Effect, Redacted, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
-import type { LoadedRuntimeConfig } from '../config'
+import type { ForwardPerformanceConfig } from './config'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
@@ -17,6 +22,7 @@ import {
   makeForwardPerformanceMarketVolumeEvidence,
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformance,
+  runForwardPerformanceReport,
   type ForwardPerformanceReaders,
 } from './program'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
@@ -29,7 +35,7 @@ const identityResult = makeBrokerIdentity({
 })
 if (Result.isFailure(identityResult)) throw new Error('broker identity fixture failed')
 
-const config: LoadedRuntimeConfig = {
+const config: ForwardPerformanceConfig = {
   runtimeMode: 'AutonomousService',
   host: '127.0.0.1',
   port: 8080,
@@ -70,6 +76,8 @@ const config: LoadedRuntimeConfig = {
     url: 'http://clickhouse.invalid',
     username: 'bayn',
     password: Redacted.make('unused'),
+  },
+  historicalSignal: {
     snapshotId: '1'.repeat(64),
     publicationAsOf: '2026-07-20',
     calendarVersion: 'fixture-calendar-v1',
@@ -345,8 +353,8 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
 const newerMarketSnapshot = makeMarketSnapshotRevision('104.00000000', '999.00000000', '2026-07-20 21:10:00.000')
 const marketReaderConfig = {
   ...config,
-  clickhouse: {
-    ...config.clickhouse,
+  historicalSignal: {
+    ...config.historicalSignal,
     bounds: {
       schemaVersion: 'bayn.evaluation-bounds.v1' as const,
       dataStart: '2026-07-19' as const,
@@ -472,7 +480,9 @@ describe('forward performance read program', () => {
       closePriceMicros: '103000000',
       quantityMicros: '123456789',
     })
-    expect(evidence[0]?.snapshotId).not.toBe(newerMarketSnapshot.snapshotId)
+    expect(
+      evidence[0]?.schemaVersion === 'bayn.forward-performance-market-volume-evidence.v1' && evidence[0].snapshotId,
+    ).not.toBe(newerMarketSnapshot.snapshotId)
     expect(
       queries.some(
         (query) =>
@@ -627,6 +637,13 @@ describe('forward performance read program', () => {
     const receipt = await Effect.runPromise(
       Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
+    const report = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v1')
+    expect(report.receipt).toEqual(receipt)
+    expect(report.positionEpisodes.status).toBe('UNDETERMINED')
+    expect(report.receipt).not.toHaveProperty('positionEpisodes')
 
     expect(observation.statements.length).toBeGreaterThan(8)
     expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
@@ -657,9 +674,6 @@ describe('forward performance read program', () => {
           statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
           statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
       ),
-    ).toBe(true)
-    expect(
-      observation.statements.some((statement) => statement.includes('JOIN snapshot_references AS reference')),
     ).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('FROM orders AS observed_order'))).toBe(true)
@@ -1025,3 +1039,48 @@ describe('forward performance read program', () => {
     })
   })
 })
+
+test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture])(
+  'routes native completed cycles to the bounded archive and preserves their evidence: %p',
+  async (makeFixture) => {
+    const { request, archive, bars } = makeFixture()
+    let volumeReads = 0
+    let watermarkReads = 0
+    const statement = (strings: TemplateStringsArray) => {
+      const text = strings.join('?')
+      if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
+      if (text.includes('GROUP BY source_topic, source_partition')) {
+        watermarkReads += 1
+        return Effect.succeed(
+          archive.archiveWatermarks.map((item) => ({
+            source_topic: item.sourceTopic,
+            source_partition: String(item.sourcePartition),
+            inclusive_last_offset: item.inclusiveLastOffset,
+          })),
+        )
+      }
+      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
+        volumeReads += 1
+        return Effect.succeed(bars)
+      }
+      return Effect.die(new Error('Unexpected market-data query'))
+    }
+    const client = Object.assign(statement, {
+      param: (_type: string, value: unknown) => ({ value }),
+    }) as unknown as ClickhouseClient.ClickhouseClient
+    const evidence = await Effect.runPromise(
+      readForwardPerformanceMarketVolumeWithClient(marketReaderConfig, [request]).pipe(
+        Effect.provideService(ClickhouseClient.ClickhouseClient, client),
+      ),
+    )
+    expect(watermarkReads).toBe(1)
+    expect(volumeReads).toBe(1)
+    expect(evidence).toHaveLength(1)
+    expect(evidence[0]).toMatchObject({
+      decisionSnapshotId: request.decisionSnapshotId,
+      sourceFeed: 'iex',
+      quantityMicros: '39000000000',
+      archiveRequest: archive,
+    })
+  },
+)

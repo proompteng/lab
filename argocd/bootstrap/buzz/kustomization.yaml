@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Empty-namespace first phase only. Select this component in the promoted application.
+
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: snapshot.storage.k8s.io/v1
+      kind: VolumeSnapshot
+      metadata:
+        name: buzz-redis-before-8-10-1
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: buzz-redis-8-10-1-v2-save
+  - patch: |-
+      $patch: delete
+      apiVersion: snapshot.storage.k8s.io/v1
+      kind: VolumeSnapshot
+      metadata:
+        name: buzz-redis-8-10-1-v2-snapshot
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: buzz-redis-8-10-1-v2-rehearsal
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: buzz-redis-8-10-1-v2-rehearsal
+  - patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: buzz-redis-8-10-1-v2-rehearsal
+  - target:
+      group: redis.redis.opstreelabs.in
+      version: v1beta2
+      kind: Redis
+      name: buzz-redis
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-7"
+      - op: replace
+        path: /spec/kubernetesConfig/image
+        value: quay.io/opstree/redis:v7.4.8@sha256:b3bbb254bfe964f4333c581e1461e738853ec2351aa3a620a5fff45b94fba2b3

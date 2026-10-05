@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 import YAML from 'yaml'
@@ -67,8 +68,83 @@ describe('Tengri image workflow', () => {
     expect(controllerValidation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
     expect(guestValidation).toContain('GOWORK=off go test -race ./...')
     expect(guestValidation).toContain('GOWORK=off go vet ./...')
+    expect(guestValidation).toContain('bash validate-rootfs.test.sh')
     expect(images.jobs?.publish?.needs).toContain('validate-tengri')
     expect(images.jobs?.publish?.needs).toContain('validate-nanoagent')
+  })
+
+  it('withholds Kargo aliases until both images and their retained indexes succeed', () => {
+    const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: {
+        publish: {
+          steps: Array<{
+            id?: string
+            name?: string
+            uses?: string
+            run?: string
+            with?: { path?: string; 'include-hidden-files'?: boolean }
+          }>
+        }
+      }
+    }
+    const steps = images.jobs.publish.steps
+    const prepared = steps.findIndex((step) => step.id === 'images')
+    const retained = steps.findIndex((step) => step.uses === 'actions/upload-artifact@v4')
+    const exposed = steps.findIndex((step) => step.name === 'Expose both verified images to Kargo')
+    expect(prepared).toBeGreaterThanOrEqual(0)
+    expect(retained).toBeGreaterThan(prepared)
+    expect(exposed).toBeGreaterThan(retained)
+    expect(steps[retained]?.with?.path).toBe('.artifacts/tengri/*-index.json')
+    expect(steps[retained]?.with?.['include-hidden-files']).toBe(true)
+    expect(steps[prepared]?.run).toContain('nanoagent_digest="$(publish_image "${NANOAGENT_IMAGE}")"')
+    expect(steps[prepared]?.run).not.toContain('kargo-sha-')
+    expect(steps[exposed]?.run).toContain('publish_kargo_alias "${TENGRI_IMAGE}" "${TENGRI_DIGEST}"')
+    expect(steps[exposed]?.run).toContain('publish_kargo_alias "${NANOAGENT_IMAGE}" "${NANOAGENT_DIGEST}"')
+  })
+
+  it('propagates an image preparation failure out of command substitution', () => {
+    const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: { publish: { steps: Array<{ id?: string; run?: string }> } }
+    }
+    const run = images.jobs.publish.steps.find((step) => step.id === 'images')?.run ?? ''
+    const start = run.indexOf('publish_image() {')
+    const end = run.indexOf('\ntengri_digest=', start)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-publish-failure-'))
+    try {
+      mkdirSync(resolve(fixture, '.artifacts/tengri'), { recursive: true })
+      for (const command of ['crane', 'docker', 'cosign', 'jq']) {
+        writeFileSync(
+          resolve(fixture, command),
+          command === 'crane' ? '#!/bin/sh\nexit 42\n' : '#!/bin/sh\nprintf "sha256:%064d\\n" 0\n',
+          { mode: 0o755 },
+        )
+      }
+      const result = Bun.spawnSync(
+        [
+          'bash',
+          '-c',
+          `set -euo pipefail\n${run.slice(start, end)}\nresult="$(publish_image registry.example.test/tengri)"\nprintf '%s' "$result"`,
+        ],
+        {
+          cwd: fixture,
+          env: {
+            ...process.env,
+            PATH: `${fixture}:${process.env.PATH}`,
+            SOURCE_SHA: '0'.repeat(40),
+            SOURCE_TIMESTAMP: '2026-09-08T00:00:00Z',
+            SOURCE_URL: 'https://github.com/proompteng/lab',
+            SIGNING_IDENTITY: 'https://github.com/proompteng/lab/test',
+            tag: 'sha-test',
+          },
+        },
+      )
+      expect(result.exitCode).toBe(42)
+      expect(result.stdout.toString()).toBe('')
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
   })
 
   it('keeps the controller workflow separate from image publication', () => {

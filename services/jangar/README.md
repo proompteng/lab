@@ -1,5 +1,17 @@
 Jangar
 
+Production sets `JANGAR_TORGHUT_LEGACY_RETIRED=true` before removing the legacy Torghut API,
+simulation, and PostgreSQL workloads. Jangar returns HTTP 410 for their trading, decision-engine,
+simulation, and whitepaper routes, and stops quant background work and whitepaper finalization.
+The flag overrides legacy enablement flags and prevents opening the Torghut database connection.
+Market-context batches retain their open-session requirement and stop querying the retired trading
+status endpoint; an unknown session does not authorize a batch. Symbol management, TA/ClickHouse
+readers, and the other Jangar services remain available.
+
+Roll out this Jangar change through its normal Kargo stage and verify the retired routes return 410
+before pruning the Torghut workloads. Keep the flag enabled while they are absent. Recovery requires
+restoring the Torghut services and database before restoring their Jangar connection configuration.
+
 OpenAI-compatible chat completions endpoint, operator UI, and control-plane surface backed by the Codex app-server.
 
 ## Architecture
