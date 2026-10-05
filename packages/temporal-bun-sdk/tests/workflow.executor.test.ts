@@ -49,7 +49,7 @@ test('activity failures enter the recoverable Effect error channel', async () =>
   const { registry, executor } = makeExecutor()
   registry.register(
     defineWorkflow('recoverActivity', ({ activities }) =>
-      activities.schedule('chargeCard').pipe(Effect.catchAll(() => Effect.succeed('compensated'))),
+      activities.schedule('chargeCard').pipe(Effect.catch(() => Effect.succeed('compensated'))),
     ),
   )
   const first = await execute(executor, { workflowType: 'recoverActivity', arguments: [] })

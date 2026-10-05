@@ -24,6 +24,7 @@ on:
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'nix/packages.nix'
+      - 'nix/verify-agents-shell-image-lifecycle.sh'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
@@ -164,6 +165,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep
+
+      - name: Install kubectl for shell context regression tests
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.37.0
 
       - name: Run Agents script unit tests
         env:
@@ -512,6 +518,11 @@ jobs:
                 _ "${archive_path}" "${load_archive}"
             fi
             load_archives+=("${load_archive}")
+            if [[ "${target}" == 'agents-shell' ]]; then
+              IMAGE_LABEL="${target}"
+              run_with_progress 'Agents Shell process lifecycle' 3 \
+                bash nix/verify-agents-shell-image-lifecycle.sh "${load_archive}"
+            fi
           done
 
           IMAGE_LABEL="$(IFS=,; echo "${targets[*]}")"
