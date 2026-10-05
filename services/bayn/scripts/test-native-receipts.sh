@@ -121,6 +121,7 @@ if [[ "$mode" == --capture-capacity ]]; then
     --tmpfs /tmp:rw,noexec,nosuid,size=64m --label "bayn-receipt-fixture=$run_id" \
     --env BAYN_TEST_KAFKA_USERNAME --env BAYN_TEST_KAFKA_PASSWORD --env BAYN_TEST_POSTGRES_URL \
     --env BAYN_TEST_CAPTURE_CPU_PROFILE \
+    --env BAYN_TEST_CAPTURE_IO_DIAGNOSTICS \
     --volume "$root:$root:ro" --workdir "$root" "$node_image" \
     /bin/sh -ec 'timeout --version; exec timeout --signal=KILL 240s node "$@"' capacity-worker \
     "$directory/capture-capacity-native-node.js" "$plan" \

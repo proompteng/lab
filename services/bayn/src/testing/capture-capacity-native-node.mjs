@@ -9,6 +9,7 @@ import { Effect, Exit, Fiber, Logger, Redacted, Result } from 'effect'
 
 import { canonicalHashV1, sha256 } from '../hash.ts'
 import { observeConsumedRecords } from './capture-capacity-iterator.ts'
+import { observeCapacityIo } from './capture-capacity-io.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
@@ -29,7 +30,10 @@ const plan = JSON.parse(planBytes)
 const expectedPlanHash = process.argv[5]
 assert.equal(sha256(planBytes), expectedPlanHash)
 const profileEnabled = process.env.BAYN_TEST_CAPTURE_CPU_PROFILE === '1'
-if (profileEnabled) console.log(JSON.stringify({ instrumentedDiagnostic: true, capacityQualification: false }))
+const ioEnabled = process.env.BAYN_TEST_CAPTURE_IO_DIAGNOSTICS === '1'
+assert.ok(!(profileEnabled && ioEnabled), 'Run one diagnostic mode at a time')
+if (profileEnabled || ioEnabled)
+  console.log(JSON.stringify({ instrumentedDiagnostic: true, capacityQualification: false }))
 const sourceTopics = JSON.parse(readFileSync(process.argv[3], 'utf8'))
 const execution = JSON.parse(readFileSync(process.argv[4], 'utf8'))
 const username = process.env.BAYN_TEST_KAFKA_USERNAME
@@ -95,6 +99,8 @@ const objectServer = createServer(async (request, response) => {
     return
   }
   const key = new URL(request.url, 'http://fixture').pathname
+  const io = arm.io
+  const ioRequest = io?.serverStart(request.method, request.url, response)
   const attempt = `${request.method} ${key}`
   arm.requests.set(attempt, (arm.requests.get(attempt) ?? 0) + 1)
   try {
@@ -107,8 +113,10 @@ const objectServer = createServer(async (request, response) => {
         assert.ok(length <= plan.limits.maximumObjectBodyBytes)
         chunks.push(chunk)
       }
+      io?.serverMark(ioRequest, 'serverBodyConsumedAt')
       const bytes = Buffer.concat(chunks)
       if (arm.objects.has(key)) {
+        io?.serverMark(ioRequest, 'serverResponseEndCalledAt')
         response
           .writeHead(412, { 'content-type': 'application/xml' })
           .end('<Error><Code>PreconditionFailed</Code></Error>')
@@ -127,12 +135,14 @@ const objectServer = createServer(async (request, response) => {
         request.socket.destroy()
         return
       }
+      io?.serverMark(ioRequest, 'serverResponseEndCalledAt')
       response.writeHead(200, { 'content-length': 0 }).end()
       return
     }
     if (request.method === 'GET') {
       const bytes = arm.objects.get(key)
       assert.ok(bytes)
+      io?.serverMark(ioRequest, 'serverBodyConsumedAt')
       response.writeHead(200, {
         'content-length': bytes.byteLength,
         'content-type': 'application/octet-stream',
@@ -147,6 +157,7 @@ const objectServer = createServer(async (request, response) => {
         })
         return
       }
+      io?.serverMark(ioRequest, 'serverResponseEndCalledAt')
       response.end(bytes)
       return
     }
@@ -310,7 +321,6 @@ const program = Effect.gen(function* () {
           inject: false,
         }
         active = arm
-        const nativeStore = makeResearchCapturePostgresStore(sql)
         const charge = (bytes) => {
           arm.chargedBytes += bytes
           assert.ok(arm.chargedBytes <= plan.limits.maximumCombinedAttemptedSinkBytesPerArm)
@@ -319,11 +329,52 @@ const program = Effect.gen(function* () {
         let cpuProfile
         let activeSink = null
         let lastChunk = null
+        const io =
+          ioEnabled && name === 'normal-0-enabled'
+            ? observeCapacityIo({ port: objectPort, bucket: arm.bucket, sink: () => activeSink })
+            : undefined
+        if (io !== undefined) {
+          arm.io = io
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              io.dispose()
+              console.log(io.encodedReport())
+            }),
+          )
+        }
+        const observedSql =
+          io === undefined
+            ? sql
+            : new Proxy(sql, {
+                apply: (target, receiver, args) => {
+                  const statement = Reflect.apply(target, receiver, args)
+                  const first = args[0][0].replace(/\s+/g, ' ').trim()
+                  const kind = first.includes('pg_advisory_xact_lock')
+                    ? 'lock'
+                    : first.startsWith('SELECT chunk_ordinal')
+                      ? 'frontier-read'
+                      : first.startsWith('SELECT content_hash')
+                        ? 'duplicate-read'
+                        : first.startsWith('INSERT INTO research_capture_chunks')
+                          ? 'chunk-insert'
+                          : first.startsWith('INSERT INTO research_capture_seals')
+                            ? 'seal-insert'
+                            : 'other'
+                  return Effect.suspend(() => {
+                    const ordinal = io.beginSql(kind)
+                    return statement.pipe(
+                      Effect.onExit((exit) => Effect.sync(() => io.endSql(ordinal, Exit.isSuccess(exit)))),
+                    )
+                  })
+                },
+              })
+        const nativeStore = makeResearchCapturePostgresStore(observedSql)
         const timedSink = (stage, bytes, operation) =>
           Effect.suspend(() => {
             const began = performance.now()
+            const ioOrdinal = io?.beginSink(stage, bytes, began, lastChunk)
             const profileCpuStart = cpuProfile?.window.stoppedAt === null ? wholeProcessCpuMicros() : undefined
-            activeSink = { stage, bytes, began, profileCpuStart }
+            activeSink = { stage, bytes, began, profileCpuStart, ioOrdinal }
             return operation.pipe(
               Effect.onExit((exit) =>
                 Effect.sync(() => {
@@ -334,6 +385,7 @@ const program = Effect.gen(function* () {
                   value.bytes += bytes
                   value.totalMs += ms
                   value.maximumMs = Math.max(value.maximumMs, ms)
+                  io?.endSink(ioOrdinal, Exit.isSuccess(exit))
                   if (profileCpuStart !== undefined) {
                     value.profiledCalls = (value.profiledCalls ?? 0) + 1
                     value.diagnosticWholeProcessCpuMs =
@@ -534,6 +586,7 @@ const program = Effect.gen(function* () {
               invalidatedAtCount = recordCount
               firstInvalidation = structuredClone({ ...snapshot(), observedAtMs: Date.now(), recordCount })
               console.log(JSON.stringify({ captureFirstInvalidation: firstInvalidation }))
+              io?.invalidate()
               if (cpuProfile !== undefined) void cpuProfile.stop('invalidation')
             }
           } catch (error) {
@@ -699,8 +752,34 @@ const program = Effect.gen(function* () {
         const probes = yield* Effect.gen(function* () {
           while (running) {
             const before = performance.now()
-            const rows = yield* sql`SELECT 1 AS value`.pipe(Effect.timeout('1 second'))
+            const observing = io?.withinWindow() === true
+            const query = observing
+              ? sql`
+                  SELECT 1 AS value, COALESCE((
+                    SELECT json_agg(json_build_object(
+                      'pid', pid, 'state', state, 'waitType', wait_event_type, 'waitEvent', wait_event,
+                      'queryKind', CASE
+                        WHEN position('pg_advisory_xact_lock' in query) > 0 THEN 'lock'
+                        WHEN query ~* 'INSERT.*research_capture_chunks' THEN 'chunk-insert'
+                        WHEN query ~* 'INSERT.*research_capture_seals' THEN 'seal-insert'
+                        WHEN position('research_capture_chunks' in query) > 0 THEN 'capture-read'
+                        ELSE 'other' END,
+                      'queryAgeMs', extract(epoch FROM clock_timestamp() - query_start) * 1000,
+                      'stateAgeMs', extract(epoch FROM clock_timestamp() - state_change) * 1000
+                    )) FROM (
+                      SELECT pid, state, wait_event_type, wait_event, query, query_start, state_change
+                      FROM pg_stat_activity
+                      WHERE datname = current_database() AND usename = current_user
+                        AND application_name = 'bayn' AND pid <> pg_backend_pid()
+                        AND query_start IS NOT NULL AND state_change IS NOT NULL
+                      ORDER BY pid LIMIT 8
+                    ) AS observed_backends
+                  ), '[]'::json) AS sessions
+                `
+              : sql`SELECT 1 AS value`
+            const rows = yield* query.pipe(Effect.timeout('1 second'))
             assert.equal(Number(rows[0].value), 1)
+            if (observing) io.pgSample(rows[0].sessions, before)
             sqlLatency.push(performance.now() - before)
             assert.ok(sqlLatency.length <= 2400)
             yield* Effect.sleep(100)
@@ -721,6 +800,7 @@ const program = Effect.gen(function* () {
           )
         cpuStart = cpuMicros()
         started = performance.now()
+        io?.startInput(started)
         if (cpuProfile !== undefined) cpuProfile.window.inputStartOffsetMs = started - cpuProfile.window.startedAt
         inputStartSinkBaseline = structuredClone({
           completedOperations: sinkTimings,
@@ -1080,7 +1160,7 @@ try {
   )
   console.log(
     JSON.stringify({
-      capacityResult: profileEnabled ? 'INSTRUMENTED_DIAGNOSTIC_ONLY' : 'PASS',
+      capacityResult: profileEnabled || ioEnabled ? 'INSTRUMENTED_DIAGNOSTIC_ONLY' : 'PASS',
       planHash: sha256(planBytes),
       totalRecords,
       memoryPeakBytes: memoryPeak(),
