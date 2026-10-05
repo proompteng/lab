@@ -1268,7 +1268,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
     expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(jangarBuildWorkflow).toContain('image_build_timeout: 12m')
+    expect(jangarBuildWorkflow).toContain('image_build_timeout: 20m')
     expect(jangarBuildWorkflow).toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
