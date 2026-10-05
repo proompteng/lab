@@ -27,6 +27,25 @@ export type WorkflowPosition = {
   readonly column: number
 }
 
+const regexPrefixTokens = new Set([
+  SyntaxKind.OpenParenToken,
+  SyntaxKind.OpenBracketToken,
+  SyntaxKind.OpenBraceToken,
+  SyntaxKind.CommaToken,
+  SyntaxKind.ColonToken,
+  SyntaxKind.SemicolonToken,
+  SyntaxKind.EqualsToken,
+  SyntaxKind.EqualsGreaterThanToken,
+  SyntaxKind.QuestionToken,
+  SyntaxKind.ReturnKeyword,
+  SyntaxKind.ThrowKeyword,
+  SyntaxKind.CaseKeyword,
+  SyntaxKind.ExclamationToken,
+  SyntaxKind.AmpersandAmpersandToken,
+  SyntaxKind.BarBarToken,
+  SyntaxKind.QuestionQuestionToken,
+])
+
 export const scanWorkflowSyntaxTokens = (sourceText: string): WorkflowSyntaxToken[] => {
   const scanner = createScanner(true, undefined, sourceText)
   const tokens: WorkflowSyntaxToken[] = []
@@ -34,6 +53,13 @@ export const scanWorkflowSyntaxTokens = (sourceText: string): WorkflowSyntaxToke
   let previousEnd = -1
 
   for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
+    const previousKind = tokens.at(-1)?.kind
+    if (
+      (kind === SyntaxKind.SlashToken || kind === SyntaxKind.SlashEqualsToken) &&
+      (previousKind === undefined || regexPrefixTokens.has(previousKind))
+    ) {
+      kind = scanner.reScanSlashToken()
+    }
     if (kind === SyntaxKind.CloseBraceToken && templateExpressionBraceDepths.length > 0) {
       const templateIndex = templateExpressionBraceDepths.length - 1
       const braceDepth = templateExpressionBraceDepths[templateIndex] ?? 0
