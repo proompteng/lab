@@ -8,6 +8,7 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Option,
   Ref,
   Result,
   Scope,
@@ -15,7 +16,12 @@ import {
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
-import type { RetainedAutonomousCyclePassObservation } from '../cycle/runner/pass-observation'
+import {
+  maximumRetainedJevObservationReferences,
+  type RetainedAutonomousCyclePassObservation,
+} from '../cycle/runner/pass-observation'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -112,7 +118,69 @@ const bindRecoveryFirstCycleDriver = (
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
-      advance: Effect.provideContext(driver.advance, context),
+      advance: Effect.gen(function* () {
+        const hashes = new Set<string>()
+        let complete = true
+        const observe = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: (value: A) => string | null) =>
+          effect.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                try {
+                  if (Exit.isFailure(exit)) {
+                    complete = false
+                    return
+                  }
+                  const hash = reference(exit.value)
+                  if (hash === null) return
+                  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+                    complete = false
+                    return
+                  }
+                  if (hashes.has(hash)) return
+                  if (hashes.size === maximumRetainedJevObservationReferences) {
+                    complete = false
+                    return
+                  }
+                  hashes.add(hash)
+                } catch {
+                  // Evidence collection must not change the store result or trading behavior.
+                  complete = false
+                }
+              }),
+            ),
+          )
+        let observedContext = context
+        const observations = Context.getOption(context, CandidateObservationStore)
+        if (Option.isSome(observations)) {
+          const store = observations.value
+          observedContext = Context.add(observedContext, CandidateObservationStore, {
+            record: (observation) =>
+              observe(store.record(observation), () =>
+                observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
+              ),
+            latestJevWindowEnd: (input) => observe(store.latestJevWindowEnd(input), () => null),
+          })
+        } else complete = false
+        const batches = Context.getOption(context, JevBatchStore)
+        if (Option.isSome(batches)) {
+          const store = batches.value
+          observedContext = Context.add(observedContext, JevBatchStore, {
+            read: (batchId) =>
+              observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
+            pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
+            begin: (plan) => observe(store.begin(plan), (batch) => batch.plan.observationHash),
+            finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
+          })
+        } else complete = false
+        const advanced = yield* Effect.provideContext(driver.advance, observedContext)
+        return {
+          ...advanced,
+          observation: {
+            ...advanced.observation,
+            jevObservationReferences: { hashes: [...hashes].sort(), complete },
+          },
+        }
+      }),
       nextDelayMs: driver.nextDelayMs,
     })),
   )
