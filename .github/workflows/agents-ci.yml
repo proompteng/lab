@@ -165,6 +165,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ripgrep
 
+      - name: Install kubectl for shell context regression tests
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.37.0
+
       - name: Run Agents script unit tests
         env:
           AGENTS_CI_SKIP_CROSS_PRODUCT_BOUNDARIES: 'true'
