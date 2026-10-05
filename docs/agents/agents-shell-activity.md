@@ -45,7 +45,7 @@ helpers, so remote inspection requires execution authority.
 The old `shell_run`, `shell_start`, `shell_read`, `shell_kill` and `shell_status` tools are removed.
 
 The shell image runs Tini as PID 1 to reap orphaned command descendants. SIGTERM and SIGINT stop the HTTP listener,
-close active HTTP connections, and kill active shell and native process groups before Bun exits. Image publication
+close active HTTP connections, reject new or queued work, and kill active shell and native process groups before Bun exits. Image publication
 verifies orphan reaping and clean termination against the built Linux container on both architectures.
 
 ```logql
