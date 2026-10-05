@@ -106,6 +106,13 @@ only when all of the following are proven:
 Unused versions are normally garbage-collected. Do not delete a version merely to force propagation, weaken the startup
 gate, or bypass Temporal's drainage checks with `--skip-drainage`.
 
+The `routing-propagation-v1` Temporal worker patch prevents a delivered completion signal from being lost when the
+deployment workflow continues as new. For an already-retained completion, it also supports a conflict-token-fenced
+same-current reconciliation that rechecks every retained task queue before clearing the corresponding pending revision.
+Follow the [Temporal worker recovery procedure](../../services/temporal-worker/README.md#recover-a-retained-propagation-completion)
+only after the patched image and current poller are verified. Keep the patched worker until that internal recovery run
+continues as new; rolling back earlier would leave the new activity history incompatible with the old worker.
+
 ## Rebuild activity is running after its worker died
 
 Symptoms:

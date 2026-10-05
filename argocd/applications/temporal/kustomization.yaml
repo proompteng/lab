@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - cassandra-pvcs.yaml
   - upgrade/cassandra-509-rollout.yaml
   - upgrade/cassandra-509-backup.yaml
   - upgrade/cassandra-4112-rollout.yaml
@@ -124,6 +125,8 @@ helmCharts:
         enabled: true
         storageClass: rook-ceph-block
         accessMode: ReadWriteOnce
+        # Immutable live template. Existing ordinal claims are managed at 30Gi in cassandra-pvcs.yaml.
+        # See README.md before changing this value or scaling beyond the three declared claims.
         size: 20Gi
       config:
         cluster_size: 3
