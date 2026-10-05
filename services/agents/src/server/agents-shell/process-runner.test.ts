@@ -1,6 +1,46 @@
 import { spawnSync } from 'node:child_process'
-import { describe, expect, it } from 'vitest'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import { auditStdout } from './audit'
+import { defaultAgentsShellConfigFromEnv } from './config'
 import { formatCommand } from './process-runner'
+import { AgentsShellRunner } from './runner'
+
+it('shutdown terminates an active native process group', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'agents-shell-native-shutdown-'))
+  const pidFile = join(root, 'pid')
+  const runner = new AgentsShellRunner(defaultAgentsShellConfigFromEnv({ AGENTS_SHELL_WORKSPACE_ROOT: root }))
+  const audit = vi.spyOn(auditStdout, 'write').mockImplementation(() => true)
+  let pid = 0
+  let finished = false
+  const pending = runner
+    .runProcess({
+      command: '/bin/bash',
+      args: ['-c', 'echo $$ > "$1"; exec sleep 120', 'shutdown-test', pidFile],
+      cwd: root,
+      timeoutSeconds: 180,
+      auditEvent: 'shutdown_test',
+      auth: { subject: 'shutdown-test', email: null, username: null, scopes: new Set(), payload: {} },
+    })
+    .then((result) => {
+      finished = true
+      return result
+    })
+  try {
+    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true))
+    pid = Number(readFileSync(pidFile, 'utf8').trim())
+    runner.shutdown()
+    await vi.waitFor(() => expect(finished).toBe(true), { timeout: 2_000 })
+    expect(await pending).toMatchObject({ signal: 'SIGKILL', timedOut: false })
+  } finally {
+    if (pid && !finished) process.kill(-pid, 'SIGKILL')
+    await pending
+    audit.mockRestore()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 describe('command display argument boundaries', () => {
   it('round trips punctuation, whitespace, quotes, expansions and empty argv through shell words', () => {
