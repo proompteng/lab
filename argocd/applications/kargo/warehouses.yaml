@@ -1144,8 +1144,6 @@ spec:
           - services/rune
           - .github/workflows/rune-images.yml
           - argocd/applications/rune
-          - argocd/applications/kargo
-          - argocd/applicationsets/platform.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/rune
         imageSelectionStrategy: NewestBuild

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 
+import { Glob } from 'bun'
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
 
@@ -187,13 +188,7 @@ const expected = {
     tagRegex: runQualifiedTagRegex,
     images: [imageRepo('rune')],
     apps: ['rune'],
-    includePaths: [
-      'services/rune',
-      '.github/workflows/rune-images.yml',
-      'argocd/applications/rune',
-      'argocd/applications/kargo',
-      'argocd/applicationsets/platform.yaml',
-    ],
+    includePaths: ['services/rune', '.github/workflows/rune-images.yml', 'argocd/applications/rune'],
   },
   restate: {
     creationCriteria: 'single',
@@ -887,6 +882,28 @@ describe('Kargo direct-push GitOps contract', () => {
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
       expect(sourcePaths).toEqual(buildPaths)
+    }
+  })
+
+  it.each(['pull_request', 'push'])('limits Rune %s builds to its owned inputs', (event) => {
+    const workflow = YAML.parse(readRepoFile('.github/workflows/rune-images.yml'))
+    const paths = workflow.on[event].paths.map((path: string) => new Glob(path))
+    const triggersBuild = (path: string) => paths.some((glob: Glob) => glob.match(path))
+
+    for (const path of [
+      'services/rune/Dockerfile',
+      '.github/workflows/rune-images.yml',
+      'argocd/applications/rune/deployment.yaml',
+    ]) {
+      expect(triggersBuild(path), path).toBe(true)
+    }
+    for (const path of [
+      'argocd/applications/kargo/warehouses.yaml',
+      'argocd/applications/kargo/stages.yaml',
+      'argocd/applicationsets/platform.yaml',
+      'services/agents/src/server/agents-shell/runner.ts',
+    ]) {
+      expect(triggersBuild(path), path).toBe(false)
     }
   })
 
