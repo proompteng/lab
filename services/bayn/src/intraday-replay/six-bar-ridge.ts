@@ -41,6 +41,8 @@ export const SixBarRidgeFeatureSchema = Schema.Struct({
   symbol: SymbolSchema,
   featureDefinitionHash: Sha256Schema,
   featureEvidenceHash: Sha256Schema,
+  sourceManifestHash: Sha256Schema,
+  calendarHash: Sha256Schema,
   availableAt: UtcInstantSchema,
   decisionAt: UtcInstantSchema,
   values: SixBarRidgeValuesSchema,
@@ -50,6 +52,18 @@ export const SixBarRidgeProvenanceSchema = Schema.Struct({
   sourceManifestHash: Sha256Schema,
   labelDefinitionHash: Sha256Schema,
   calendarHash: Sha256Schema,
+})
+export enum SixBarRidgePartition {
+  Training = 'TRAINING',
+  Validation = 'VALIDATION',
+  Holdout = 'HOLDOUT',
+}
+export const SixBarRidgeSessionSchema = Schema.Struct({
+  date: IsoDateSchema,
+  openAt: UtcInstantSchema,
+  closeAt: UtcInstantSchema,
+  firstDecisionAt: UtcInstantSchema,
+  partition: Schema.Enum(SixBarRidgePartition),
 })
 export const SixBarRidgeArtifactSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.six-bar-ridge-artifact.v1'),
@@ -65,6 +79,7 @@ export const SixBarRidgeArtifactSchema = Schema.Struct({
   trainingDataHash: Sha256Schema,
   fitCutoffAt: UtcInstantSchema,
   firstEvaluationDecisionAt: UtcInstantSchema,
+  evaluationSessions: Schema.Array(SixBarRidgeSessionSchema).check(Schema.isMinLength(1)),
   trainingSessions: Schema.Array(Schema.Struct({ date: IsoDateSchema, rowCount: NonNegativeIntegerSchema })),
   nonemptyTrainingDays: PositiveIntegerSchema,
   trainingRows: PositiveIntegerSchema,
@@ -78,6 +93,16 @@ const ExpectedBindingSchema = Schema.Struct({
   artifactHash: Sha256Schema,
   manifestHash: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
+})
+const ScoringBindingSchema = Schema.Struct({
+  artifact: ExpectedBindingSchema,
+  evaluation: Schema.Struct({
+    sourceManifestHash: Sha256Schema,
+    calendarHash: Sha256Schema,
+    sessionDate: IsoDateSchema,
+    partition: Schema.Enum(SixBarRidgePartition),
+    decisionAt: UtcInstantSchema,
+  }),
 })
 export type SixBarRidgeArtifact = typeof SixBarRidgeArtifactSchema.Type
 export class SixBarRidgeFailure extends Data.TaggedError('SixBarRidgeFailure')<{
@@ -105,6 +130,23 @@ export const decodeSixBarRidgeArtifact = (input: unknown, expectedBinding: unkno
     if (
       !Number.isSafeInteger(Number(artifact.allocationBudgetMicros)) ||
       artifact.fitCutoffAt > artifact.firstEvaluationDecisionAt ||
+      artifact.firstEvaluationDecisionAt !== artifact.evaluationSessions[0]?.firstDecisionAt ||
+      artifact.evaluationSessions.some((session, index) => {
+        const previous = artifact.evaluationSessions[index - 1]
+        return (
+          session.partition === SixBarRidgePartition.Training ||
+          session.openAt >= session.closeAt ||
+          session.firstDecisionAt < session.openAt ||
+          session.firstDecisionAt >= session.closeAt ||
+          session.date !== session.openAt.slice(0, 10) ||
+          session.date !== session.closeAt.slice(0, 10) ||
+          artifact.trainingSessions.some((training) => training.date >= session.date) ||
+          (previous !== undefined &&
+            (previous.date >= session.date ||
+              previous.closeAt >= session.openAt ||
+              (previous.partition === SixBarRidgePartition.Holdout && session.partition !== previous.partition)))
+        )
+      }) ||
       artifact.trainingSessions.length === 0 ||
       artifact.trainingSessions.some((session, index) => {
         const previous = artifact.trainingSessions[index - 1]
@@ -122,12 +164,25 @@ export const decodeSixBarRidgeArtifact = (input: unknown, expectedBinding: unkno
 
 export const scoreSixBarRidge = (input: unknown, candidatesInput: unknown, expectedBinding: unknown) =>
   Result.gen(function* () {
-    const artifact = yield* decodeSixBarRidgeArtifact(input, expectedBinding)
+    const expected = yield* Schema.decodeUnknownResult(ScoringBindingSchema, strictParseOptions)(expectedBinding)
+    const artifact = yield* decodeSixBarRidgeArtifact(input, expected.artifact)
+    const evaluation = expected.evaluation
+    const session = artifact.evaluationSessions.find((entry) => entry.date === evaluation.sessionDate)
+    if (
+      session === undefined ||
+      evaluation.partition !== session.partition ||
+      evaluation.calendarHash !== artifact.provenance.calendarHash ||
+      evaluation.sessionDate !== evaluation.decisionAt.slice(0, 10) ||
+      evaluation.decisionAt < session.firstDecisionAt ||
+      evaluation.decisionAt >= session.closeAt
+    )
+      return yield* Result.fail(
+        fail('Ridge evaluation must match a declared session, partition, calendar, and decision'),
+      )
     const candidates = yield* Schema.decodeUnknownResult(
       Schema.Array(SixBarRidgeFeatureSchema),
       strictParseOptions,
     )(candidatesInput)
-    const first = candidates[0]
     const symbols = new Set<string>()
     const scores: { symbol: string; scoreBps: number }[] = []
     for (const candidate of candidates) {
@@ -135,11 +190,12 @@ export const scoreSixBarRidge = (input: unknown, candidatesInput: unknown, expec
         symbols.has(candidate.symbol) ||
         candidate.symbol === sixBarResearchDefinition.benchmarkSymbol ||
         candidate.featureDefinitionHash !== artifact.featureDefinitionHash ||
+        candidate.sourceManifestHash !== evaluation.sourceManifestHash ||
+        candidate.calendarHash !== evaluation.calendarHash ||
+        candidate.availableAt < session.openAt ||
         candidate.availableAt > candidate.decisionAt ||
-        candidate.decisionAt < artifact.firstEvaluationDecisionAt ||
-        candidate.sessionDate !== candidate.decisionAt.slice(0, 10) ||
-        candidate.decisionAt !== first?.decisionAt ||
-        candidate.sessionDate !== first.sessionDate
+        candidate.decisionAt !== evaluation.decisionAt ||
+        candidate.sessionDate !== evaluation.sessionDate
       )
         return yield* Result.fail(
           fail('Ridge candidates must share one causal decision and have unique candidate symbols'),

@@ -8,10 +8,11 @@ import { sixBarResearchDefinition } from './six-bar-features'
 import {
   decodeSixBarRidgeArtifact,
   scoreSixBarRidge,
+  SixBarRidgePartition,
   sixBarRidgeRecipe,
   type SixBarRidgeArtifact,
 } from './six-bar-ridge'
-import { fitSixBarRidge, SixBarRidgeLabelStatus, SixBarRidgePartition } from './six-bar-ridge-fit'
+import { fitSixBarRidge, SixBarRidgeLabelStatus } from './six-bar-ridge-fit'
 
 const zeros: [number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0]
 const definitionHash = hash(sixBarResearchDefinition)
@@ -25,13 +26,15 @@ const feature = (values: number[], date = '2026-09-04', index = 0, symbol = 'AAP
   sessionDate: date,
   symbol,
   featureDefinitionHash: definitionHash,
+  sourceManifestHash: sha256('synthetic-source'),
+  calendarHash: sha256('synthetic-calendar'),
   featureEvidenceHash: sha256(`synthetic-${date}-${index}-${symbol}`),
   availableAt: `${date}T13:${String(30 + index).padStart(2, '0')}:58.000Z`,
   decisionAt: `${date}T13:${String(31 + index).padStart(2, '0')}:00.000Z`,
   values,
 })
 const input = (
-  days: { date: string; rows: Row[] }[] = [
+  days: { date: `${number}-${number}-${number}`; rows: Row[] }[] = [
     {
       date: '2026-09-01',
       rows: [row([-1, -1, 0, 0, 0, 0, 0], -3), row([1, 1, 0, 0, 0, 0, 0], 9)],
@@ -49,7 +52,7 @@ const input = (
       },
     })),
   )
-  const session = (date: string, partition: SixBarRidgePartition) => ({
+  const session = (date: `${number}-${number}-${number}`, partition: SixBarRidgePartition) => ({
     date,
     partition,
     openAt: `${date}T13:30:00.000Z`,
@@ -90,8 +93,18 @@ const binding = (artifact: SixBarRidgeArtifact) => ({
   manifestHash: artifact.manifestHash,
   sourceRevision: artifact.provenance.sourceRevision,
 })
+const scoringBinding = (artifact: SixBarRidgeArtifact, date = '2026-09-04') => ({
+  artifact: binding(artifact),
+  evaluation: {
+    sourceManifestHash: sha256('synthetic-source'),
+    calendarHash: sha256('synthetic-calendar'),
+    sessionDate: date,
+    partition: date === '2026-09-08' ? SixBarRidgePartition.Holdout : SixBarRidgePartition.Validation,
+    decisionAt: `${date}T13:31:00.000Z`,
+  },
+})
 const score = (artifact: SixBarRidgeArtifact, values: number[], symbol = 'AAPL') =>
-  Result.getOrThrow(scoreSixBarRidge(artifact, [feature(values, '2026-09-04', 0, symbol)], binding(artifact)))
+  Result.getOrThrow(scoreSixBarRidge(artifact, [feature(values, '2026-09-04', 0, symbol)], scoringBinding(artifact)))
 const rebindRows = (data: Input) => {
   for (const session of data.manifest.sessions)
     session.requiredFeatureRowHashes = data.rows
@@ -319,6 +332,12 @@ describe('offline six-bar ridge training boundaries', () => {
     ).toBe(true)
   })
 
+  test.each(['sourceManifestHash', 'calendarHash'] as const)('rejects a training row from another %s', (field) => {
+    const data = input()
+    data.rows[0]!.features[field] = sha256('other-source-or-calendar')
+    expect(Result.isFailure(fit(rebindRows(data)))).toBe(true)
+  })
+
   test('rejects empty fitting mass, duplicate observations and foreign definitions', () => {
     expect(Result.isFailure(fit(input([{ date: '2026-09-01', rows: [] }])))).toBe(true)
     const duplicate = input()
@@ -406,15 +425,17 @@ describe('offline six-bar ridge artifact and scoring boundaries', () => {
   test('changed coefficients cannot pass the original artifact pin even after rehashing', () => {
     const artifact = fitted(),
       changed = rehashArtifact({ ...artifact, intercept: 999 })
-    expect(Result.isFailure(scoreSixBarRidge(changed, [feature(zeros)], binding(artifact)))).toBe(true)
+    expect(Result.isFailure(scoreSixBarRidge(changed, [feature(zeros)], scoringBinding(artifact)))).toBe(true)
   })
 
   test('selects only strictly positive scores and breaks exact ties by ascending symbol', () => {
     const artifact = fitted()
     const values = [1, 1, 0, 0, 0, 0, 0]
     const candidates = [feature(values, '2026-09-04', 0, 'MSFT'), feature(values, '2026-09-04', 0, 'AAPL')]
-    expect(Result.getOrThrow(scoreSixBarRidge(artifact, candidates, binding(artifact))).selectedSymbol).toBe('AAPL')
-    expect(Result.getOrThrow(scoreSixBarRidge(artifact, [], binding(artifact))).selectedSymbol).toBeNull()
+    expect(Result.getOrThrow(scoreSixBarRidge(artifact, candidates, scoringBinding(artifact))).selectedSymbol).toBe(
+      'AAPL',
+    )
+    expect(Result.getOrThrow(scoreSixBarRidge(artifact, [], scoringBinding(artifact))).selectedSymbol).toBeNull()
     expect(score(artifact, [-1, -1, 0, 0, 0, 0, 0]).selectedSymbol).toBeNull()
     const zero = fitted(input([{ date: '2026-09-01', rows: [row(zeros, 0)] }]))
     expect(score(zero, zeros).selectedSymbol).toBeNull()
@@ -435,7 +456,7 @@ describe('offline six-bar ridge artifact and scoring boundaries', () => {
       [{ ...valid, values: [Number.MAX_VALUE, Number.MAX_VALUE, 0, 0, 0, 0, 0] }],
     ]
     for (const candidates of mutations)
-      expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, binding(artifact)))).toBe(true)
+      expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, scoringBinding(artifact)))).toBe(true)
   })
 
   test('rejects the cutoff-to-evaluation gap and a false scoring session date', () => {
@@ -443,8 +464,126 @@ describe('offline six-bar ridge artifact and scoring boundaries', () => {
       valid = feature(zeros)
     expect(score(artifact, zeros).selectedSymbol).toBe('AAPL')
     const beforeEvaluation = { ...valid, decisionAt: '2026-09-04T13:30:59.999Z' }
-    expect(Result.isFailure(scoreSixBarRidge(artifact, [beforeEvaluation], binding(artifact)))).toBe(true)
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [beforeEvaluation], scoringBinding(artifact)))).toBe(true)
     const falseDate = { ...valid, sessionDate: '2026-09-08' }
-    expect(Result.isFailure(scoreSixBarRidge(artifact, [falseDate], binding(artifact)))).toBe(true)
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [falseDate], scoringBinding(artifact)))).toBe(true)
+  })
+})
+
+describe('offline six-bar ridge declared evaluation binding', () => {
+  test('retains evaluation sessions and accepts an independently pinned later capture', () => {
+    const data = input(),
+      artifact = fitted(data)
+    expect(artifact.evaluationSessions).toEqual(
+      data.manifest.sessions.slice(1).map(({ requiredFeatureRowHashes: _, ...session }) => session),
+    )
+    const expected = scoringBinding(artifact, '2026-09-08')
+    expected.evaluation.sourceManifestHash = sha256('later-holdout-capture')
+    const candidate = { ...feature(zeros, '2026-09-08'), sourceManifestHash: expected.evaluation.sourceManifestHash }
+    expect(candidate.sourceManifestHash).not.toBe(artifact.provenance.sourceManifestHash)
+    expect(Result.getOrThrow(scoreSixBarRidge(artifact, [candidate], expected)).selectedSymbol).toBe('AAPL')
+  })
+
+  test.each(['sourceManifestHash', 'calendarHash'] as const)('rejects swapped candidate %s', (field) => {
+    const artifact = fitted(),
+      candidate = { ...feature(zeros), [field]: sha256('foreign') }
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], scoringBinding(artifact)))).toBe(true)
+  })
+
+  test('rejects a foreign calendar even when every candidate agrees with it', () => {
+    const artifact = fitted(),
+      expected = scoringBinding(artifact)
+    expected.evaluation.calendarHash = sha256('foreign-calendar')
+    const candidate = { ...feature(zeros), calendarHash: expected.evaluation.calendarHash }
+    for (const candidates of [[candidate], []])
+      expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, expected))).toBe(true)
+  })
+
+  test.each(['partition', 'training', 'undeclared', 'false-date', 'before-first', 'at-close', 'after-close'] as const)(
+    'rejects %s evaluation context, including an empty candidate set',
+    (mutation) => {
+      const artifact = fitted(),
+        expected = scoringBinding(artifact)
+      if (mutation === 'partition') expected.evaluation.partition = SixBarRidgePartition.Holdout
+      if (mutation === 'training') expected.evaluation.partition = SixBarRidgePartition.Training
+      if (mutation === 'undeclared') {
+        expected.evaluation.sessionDate = '2026-09-09'
+        expected.evaluation.decisionAt = '2026-09-09T13:31:00.000Z'
+      }
+      if (mutation === 'false-date') expected.evaluation.decisionAt = '2026-09-08T13:31:00.000Z'
+      if (mutation === 'before-first') expected.evaluation.decisionAt = '2026-09-04T13:30:59.999Z'
+      if (mutation === 'at-close') expected.evaluation.decisionAt = '2026-09-04T20:00:00.000Z'
+      if (mutation === 'after-close') expected.evaluation.decisionAt = '2026-09-04T20:00:00.001Z'
+      const candidate = {
+        ...feature(zeros),
+        sessionDate: expected.evaluation.sessionDate,
+        decisionAt: expected.evaluation.decisionAt,
+      }
+      for (const candidates of [[candidate], []])
+        expect(Result.isFailure(scoreSixBarRidge(artifact, candidates, expected))).toBe(true)
+    },
+  )
+
+  test('accepts the first decision and final instant before close but rejects pre-open features', () => {
+    const artifact = fitted(),
+      expected = scoringBinding(artifact)
+    expect(Result.isSuccess(scoreSixBarRidge(artifact, [feature(zeros)], expected))).toBe(true)
+    expected.evaluation.decisionAt = '2026-09-04T19:59:59.999Z'
+    const candidate = { ...feature(zeros), decisionAt: expected.evaluation.decisionAt }
+    expect(Result.isSuccess(scoreSixBarRidge(artifact, [candidate], expected))).toBe(true)
+    expect(Result.isSuccess(scoreSixBarRidge(artifact, [], expected))).toBe(true)
+    candidate.availableAt = '2026-09-04T13:29:59.999Z'
+    expect(Result.isFailure(scoreSixBarRidge(artifact, [candidate], expected))).toBe(true)
+  })
+
+  test('rejects a mixed validation and holdout candidate batch', () => {
+    const artifact = fitted()
+    expect(
+      Result.isFailure(
+        scoreSixBarRidge(artifact, [feature(zeros), feature(zeros, '2026-09-08', 0, 'MSFT')], scoringBinding(artifact)),
+      ),
+    ).toBe(true)
+  })
+
+  test.each([
+    'empty',
+    'training',
+    'partition-order',
+    'reversed',
+    'duplicate',
+    'open',
+    'close',
+    'first-before-open',
+    'first-at-close',
+    'date',
+    'first-evaluation',
+    'training-overlap',
+  ] as const)('rejects rehashed artifact with invalid evaluation %s', (mutation) => {
+    const artifact = fitted()
+    const changed = structuredClone(artifact) as unknown as Record<string, unknown>
+    const sessions = structuredClone(artifact.evaluationSessions).map((session) => ({ ...session }))
+    if (mutation === 'empty') sessions.length = 0
+    if (mutation === 'training') sessions[0]!.partition = SixBarRidgePartition.Training
+    if (mutation === 'partition-order') {
+      sessions[0]!.partition = SixBarRidgePartition.Holdout
+      sessions[1]!.partition = SixBarRidgePartition.Validation
+    }
+    if (mutation === 'reversed') sessions.reverse()
+    if (mutation === 'duplicate') sessions[1] = sessions[0]!
+    if (mutation === 'open') sessions[0]!.openAt = sessions[0]!.closeAt
+    if (mutation === 'close') sessions[0]!.closeAt = sessions[0]!.firstDecisionAt
+    if (mutation === 'first-before-open') sessions[0]!.firstDecisionAt = '2026-09-04T13:29:00.000Z'
+    if (mutation === 'first-at-close') sessions[0]!.firstDecisionAt = sessions[0]!.closeAt
+    if (mutation === 'date') sessions[0]!.date = '2026-09-05'
+    if (mutation === 'first-evaluation') changed['firstEvaluationDecisionAt'] = '2026-09-04T13:32:00.000Z'
+    if (mutation === 'training-overlap') changed['trainingSessions'] = [{ date: '2026-09-04', rowCount: 2 }]
+    changed['evaluationSessions'] = sessions
+    delete changed['artifactHash']
+    changed['artifactHash'] = hash(changed)
+    expect(
+      Result.isFailure(
+        decodeSixBarRidgeArtifact(changed, { ...binding(artifact), artifactHash: changed['artifactHash'] }),
+      ),
+    ).toBe(true)
   })
 })

@@ -13,7 +13,8 @@ A hash binds supplied content. It cannot prove source authenticity or that a man
 
 Sessions form chronological, disjoint training, validation, and holdout partitions. Every required training row must
 appear exactly once. Features must be available by the decision. Labels must complete strictly before the fitting cutoff
-and first evaluation decision. Validation and holdout values never enter the fitting interface.
+and first evaluation decision. Each training row must match the manifest's source and calendar hashes, even when its
+row hash has been recomputed. Validation and holdout values never enter the fitting interface.
 
 For D nonempty training sessions and n rows in a session, each row weighs 1/(D\*n). Zero-opportunity sessions stay in
 the manifest and artifact but contribute no fabricated training rows. Their eventual portfolio evaluation is outside
@@ -41,9 +42,17 @@ revision. Unknown fields and versions, reordered features, incompatible recipes,
 training counts, and inconsistent zero scales reject the artifact. Zero scale encodes constant status without a
 second flag that could disagree.
 
-The scorer applies the frozen training means, scales, intercept, and coefficients. All candidates must share one
-decision time and session, have unique symbols, and carry the matching feature definition. Decisions must be on or after
-the declared first evaluation decision, and their date must match the session. SPY remains benchmark-only.
+The artifact retains the declared evaluation sessions, including dates, open/close bounds, first decisions, and
+validation or holdout partitions. The scorer's third argument contains `artifact` (the expected identities above) and
+`evaluation` (independently pinned source and calendar hashes, session date, partition, and decision time). The evaluation
+calendar must match the artifact. Its capture source can differ from the training source, allowing a later holdout capture.
+Callers must obtain these expected identities independently of the candidate rows; equality does not prove authenticity.
+
+The scorer applies the frozen training means, scales, intercept, and coefficients. Each candidate must match that
+evaluation source, calendar, date, and decision, carry the matching feature definition, and have a unique symbol.
+Features must be available during the selected session by the decision. The decision must be on or after the session's
+first decision and strictly before its close. The declared session, partition, calendar, and decision are checked even
+for an empty candidate set. SPY remains benchmark-only.
 A score strictly greater than zero beats cash. Exact ties use ascending symbol order. An empty or nonpositive set
 selects cash. Scores are predicted fixed-budget execution returns, not realized portfolio returns.
 

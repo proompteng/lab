@@ -3,7 +3,6 @@ import { CholeskyDecomposition, Matrix } from 'ml-matrix'
 
 import { canonicalHashV1Result } from '../hash'
 import {
-  IsoDateSchema,
   PositiveMicrosSchema,
   Sha256Schema,
   SignedMicrosSchema,
@@ -15,15 +14,12 @@ import {
   decodeSixBarRidgeArtifact,
   SixBarRidgeFailure,
   SixBarRidgeFeatureSchema,
+  SixBarRidgePartition,
   SixBarRidgeProvenanceSchema,
+  SixBarRidgeSessionSchema,
   sixBarRidgeRecipe,
 } from './six-bar-ridge'
 
-export enum SixBarRidgePartition {
-  Training = 'TRAINING',
-  Validation = 'VALIDATION',
-  Holdout = 'HOLDOUT',
-}
 export enum SixBarRidgeLabelStatus {
   Resolved = 'RESOLVED',
   NoEntryFill = 'NO_ENTRY_FILL',
@@ -37,11 +33,7 @@ export const SixBarRidgeManifestSchema = Schema.Struct({
   fitCutoffAt: UtcInstantSchema,
   sessions: Schema.Array(
     Schema.Struct({
-      date: IsoDateSchema,
-      openAt: UtcInstantSchema,
-      closeAt: UtcInstantSchema,
-      firstDecisionAt: UtcInstantSchema,
-      partition: Schema.Enum(SixBarRidgePartition),
+      ...SixBarRidgeSessionSchema.fields,
       requiredFeatureRowHashes: Schema.Array(Sha256Schema).check(Schema.isUnique()),
     }),
   ).check(Schema.isMinLength(1)),
@@ -157,6 +149,8 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
         identities.has(identity) ||
         features.symbol === sixBarResearchDefinition.benchmarkSymbol ||
         features.featureDefinitionHash !== manifest.featureDefinitionHash ||
+        features.sourceManifestHash !== manifest.provenance.sourceManifestHash ||
+        features.calendarHash !== manifest.provenance.calendarHash ||
         features.availableAt > features.decisionAt ||
         features.availableAt < session.openAt ||
         features.decisionAt < session.firstDecisionAt ||
@@ -283,6 +277,9 @@ export const fitSixBarRidge = (manifestInput: unknown, rowsInput: unknown, expec
       trainingDataHash: yield* canonicalHashV1Result(orderedRows),
       fitCutoffAt: manifest.fitCutoffAt,
       firstEvaluationDecisionAt: evaluation.firstDecisionAt,
+      evaluationSessions: sessions
+        .filter((session) => session.partition !== SixBarRidgePartition.Training)
+        .map(({ requiredFeatureRowHashes: _, ...session }) => session),
       trainingSessions: trainingSessions.map((session) => ({
         date: session.date,
         rowCount: session.requiredFeatureRowHashes.length,
