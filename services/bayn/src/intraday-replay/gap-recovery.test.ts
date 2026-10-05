@@ -139,7 +139,7 @@ describe('original-receipt gap recovery', () => {
     expect(r.selectedSymbol).toBeNull()
   })
 
-  test('candidate exclusions cannot conceal a wide required benchmark quote', () => {
+  test('wide benchmark pricing remains unavailable when candidates are also excluded', () => {
     const r = run(
       gapFixture({
         alter: (kind, inputs) =>
@@ -152,9 +152,7 @@ describe('original-receipt gap recovery', () => {
             : inputs,
       }),
     )
-    expect(
-      r.candidates.some((c) => c.feature.status === SixBarResearchStatus.Excluded && c.feature.symbol === 'SPY'),
-    ).toBeFalse()
+    expect(r.candidates.every((c) => !c.eligible)).toBeTrue()
     expect(r.inputComplete).toBeFalse()
     expect(r.status).toBe(GapRecoveryDecision.BenchmarkUnavailable)
     expect(r.selectedSymbol).toBeNull()
