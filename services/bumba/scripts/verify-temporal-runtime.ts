@@ -10,10 +10,13 @@ export const verifyTemporalRuntime = async (consumerRoot: string) => {
   const sdkRoot = resolve(dirname(entry), '../..')
   const sdk = JSON.parse(await readFile(resolve(sdkRoot, 'package.json'), 'utf8'))
   const sdkRequire = createRequire(resolve(sdkRoot, 'package.json'))
-  const effect = JSON.parse(await readFile(sdkRequire.resolve('effect/package.json'), 'utf8'))
+  const sdkEffect = JSON.parse(await readFile(sdkRequire.resolve('effect/package.json'), 'utf8'))
+  const workflowRequire = createRequire(resolve(import.meta.dir, '../src/workflows/index.ts'))
+  const workflowEffect = JSON.parse(await readFile(workflowRequire.resolve('effect/package.json'), 'utf8'))
   assert.ok(entry.includes('/node_modules/'), `Worker resolved a workspace SDK: ${entry}`)
   assert.equal(sdk.version, '0.11.5', 'Existing workflows require the immutable Effect 3 SDK')
-  assert.equal(effect.version, '3.22.1', 'The retained SDK must use its exact published Effect runtime')
+  assert.equal(sdkEffect.version, '3.22.1', 'The retained SDK must use its exact published Effect runtime')
+  assert.equal(workflowEffect.version, '3.22.1', 'Workflow imports must retain the same Effect runtime')
 
   const { loadTemporalConfig } = await import(pathToFileURL(entry).href)
   const config = await loadTemporalConfig({ env: { TEMPORAL_ADDRESS: '127.0.0.1:7233', TEMPORAL_NAMESPACE: 'smoke' } })
@@ -38,7 +41,7 @@ export const verifyTemporalRuntime = async (consumerRoot: string) => {
   assert.equal(output.intents.length, 1)
   assert.equal(output.intents[0].kind, 'schedule-activity')
   assert.equal(output.intents[0].activityType, 'publishMainMergeMemoryNote')
-  return { sdk: sdk.version, effect: effect.version, entry }
+  return { sdk: sdk.version, sdkEffect: sdkEffect.version, workflowEffect: workflowEffect.version, entry }
 }
 
 if (import.meta.main) {
