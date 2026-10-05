@@ -6,6 +6,61 @@ import { WorkflowActivationRuntime, WorkflowMailbox } from '../../src/workflow/a
 
 const settle = async () => {}
 
+test('workflow code and callback continuations run only during an activation drain', async () => {
+  const runtime = new WorkflowActivationRuntime()
+  const events: string[] = []
+  let resume: ((effect: Effect.Effect<string>) => void) | undefined
+  const fiber = runtime.fork(
+    Effect.gen(function* () {
+      events.push('started')
+      const value = yield* Effect.callback<string>((callback) => {
+        resume = callback
+      })
+      events.push(value)
+      return value
+    }),
+  )
+  expect(events).toEqual([])
+  await runtime.drain(settle)
+  expect(events).toEqual(['started'])
+  resume!(Effect.succeed('delivered'))
+  expect(events).toEqual(['started'])
+  expect(fiber.pollUnsafe()).toBeUndefined()
+  await runtime.drain(settle)
+  expect(events).toEqual(['started', 'delivered'])
+  expect(fiber.pollUnsafe()).toEqual(Exit.succeed('delivered'))
+  runtime.dispose()
+})
+
+test('a late arbitrary callback cannot continue or finalize a discarded workflow', async () => {
+  const runtime = new WorkflowActivationRuntime()
+  let resume: ((effect: Effect.Effect<void>) => void) | undefined
+  let continued = false
+  let finalized = false
+  const fiber = runtime.fork(
+    Effect.callback<void>((callback) => {
+      resume = callback
+    }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          continued = true
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          finalized = true
+        }),
+      ),
+    ),
+  )
+  await runtime.drain(settle)
+  runtime.dispose()
+  resume!(Effect.void)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  expect(fiber.pollUnsafe()).toBeUndefined()
+  expect({ continued, finalized }).toEqual({ continued: false, finalized: false })
+})
+
 test('mailboxes suspend, deliver a batch in order, and unregister interrupted consumers', async () => {
   const runtime = new WorkflowActivationRuntime()
   const mailbox = new WorkflowMailbox<string>()

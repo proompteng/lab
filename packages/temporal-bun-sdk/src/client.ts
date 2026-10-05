@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
-import { Context, Effect } from 'effect'
+import { Effect } from 'effect'
 import * as Option from 'effect/Option'
 import type * as Schema from 'effect/Schema'
 

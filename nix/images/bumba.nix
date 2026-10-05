@@ -16,15 +16,17 @@ import ./bun-workspace-service.nix {
   };
   installFilters = [
     "@proompteng/bumba"
-    "@proompteng/temporal-bun-sdk"
   ];
   sourcePaths = [
-    "packages/temporal-bun-sdk"
     "services/bumba"
   ];
   buildCommands = [
-    "bun --cwd=packages/temporal-bun-sdk run build"
+    "bun services/bumba/scripts/verify-temporal-runtime.ts services/bumba"
   ];
+  runtimeInstallPhase = ''
+    cp -R "$TMPDIR/work/." "$out/app/"
+    bun "$out/app/services/bumba/scripts/verify-temporal-runtime.ts" "$out/app/services/bumba"
+  '';
   command = [
     "tini"
     "-g"

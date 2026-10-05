@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Exit, Fiber, Layer } from 'effect'
+import { Cause, Context, Effect, Exit, Layer } from 'effect'
 import * as Deferred from 'effect/Deferred'
 import * as Scope from 'effect/Scope'
 

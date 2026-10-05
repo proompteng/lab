@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
@@ -408,7 +408,17 @@ export type Template = {
   contents: string
 }
 
-const SCAFFOLD_SDK_VERSION = '^0.7.1'
+const scaffoldSdkVersion = (): string => {
+  for (const path of [
+    resolve(import.meta.dir, '../../package.json'),
+    resolve(import.meta.dir, '../../../package.json'),
+  ]) {
+    if (!existsSync(path)) continue
+    const metadata = JSON.parse(readFileSync(path, 'utf8')) as { name?: string; version?: string }
+    if (metadata.name === '@proompteng/temporal-bun-sdk' && metadata.version) return `^${metadata.version}`
+  }
+  throw new Error('Unable to resolve the installed Temporal Bun SDK version for scaffolding')
+}
 
 export function projectTemplates(name: string): Template[] {
   return [
@@ -426,7 +436,7 @@ export function projectTemplates(name: string): Template[] {
             'docker:build': 'bun run scripts/build-docker.ts --tag temporal-worker:latest',
           },
           dependencies: {
-            '@proompteng/temporal-bun-sdk': SCAFFOLD_SDK_VERSION,
+            '@proompteng/temporal-bun-sdk': scaffoldSdkVersion(),
             effect: '4.0.0',
           },
           devDependencies: {
@@ -451,6 +461,9 @@ peer = true
             module: 'esnext',
             target: 'es2022',
             moduleResolution: 'bundler',
+            lib: ['esnext', 'dom'],
+            types: ['bun-types'],
+            skipLibCheck: true,
             strict: true,
             noEmit: true,
           },

@@ -1242,10 +1242,11 @@ describe('native OCI build workflows', () => {
     expect(jangarImageModule).toContain('dependencyClosure = "bunCache";')
     expect(jangarImageModule).toContain('"@proompteng/jangar"')
     expect(jangarImageModule).toContain('"@proompteng/cx-tools"')
-    expect(jangarImageModule).toContain(
-      'for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk',
-    )
+    expect(jangarImageModule).toContain('for package in agent-contracts codex cx-tools design discord otel')
     expect(jangarImageModule).toContain('cp -R "$TMPDIR/work/services/jangar/node_modules"')
+    expect(jangarImageModule).toContain('services/bumba/scripts/verify-temporal-runtime.ts')
+    expect(jangarImageModule).not.toContain('ln -s /app/node_modules "$out/app/services/bumba/node_modules"')
+    expect(jangarImageModule).not.toContain('"packages/temporal-bun-sdk"')
     expect(jangarImageModule).toContain('node-gyp rebuild')
     expect(jangarImageModule).toContain('test -f build/Release/pty.node')
     expect(jangarImageModule).toContain('rm -rf build')

@@ -77,7 +77,6 @@ import ./bun-workspace-service.nix {
     "@proompteng/discord"
     "@proompteng/jangar"
     "@proompteng/otel"
-    "@proompteng/temporal-bun-sdk"
   ];
   sourcePaths = [
     "packages/agent-contracts"
@@ -86,7 +85,6 @@ import ./bun-workspace-service.nix {
     "packages/design"
     "packages/discord"
     "packages/otel"
-    "packages/temporal-bun-sdk"
     "services/bumba"
     "services/jangar"
   ];
@@ -125,7 +123,6 @@ import ./bun-workspace-service.nix {
     "bun --cwd=packages/agent-contracts run build"
     "bun --cwd=packages/codex run build"
     "bun --cwd=packages/otel run build"
-    "bun --cwd=packages/temporal-bun-sdk run build"
     "bun --cwd=packages/cx-tools run build"
     "NODE_OPTIONS=--max-old-space-size=4096 CI=true JANGAR_BUILD_MINIFY=0 JANGAR_BUILD_SOURCEMAP=0 JANGAR_BUILD_LOG_LEVEL=warn bun --cwd=services/jangar run build"
   ];
@@ -134,7 +131,7 @@ import ./bun-workspace-service.nix {
 
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
 
-    for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk; do
+    for package in agent-contracts codex cx-tools design discord otel; do
       cp -R "$TMPDIR/work/packages/$package" "$out/app/packages/$package"
     done
 
@@ -164,6 +161,9 @@ import ./bun-workspace-service.nix {
     cp -R "$TMPDIR/work/services/jangar/src/server/runtime-tooling-config.ts" "$out/app/services/jangar/src/server/runtime-tooling-config.ts"
 
     cp -R "$TMPDIR/work/services/bumba" "$out/app/services/bumba"
+
+    bun "$out/app/services/bumba/scripts/verify-temporal-runtime.ts" \
+      "$out/app/services/bumba" "$out/app/services/jangar"
 
     chmod +x "$out/app/packages/cx-tools/dist/"*.js
   '';

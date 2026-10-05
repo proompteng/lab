@@ -101,7 +101,7 @@ export const createWorkflowServiceLayer = (
 
 export const createConfigLayer = (
   options: TemporalConfigLayerOptions = {},
-): Layer.Layer<never, TemporalConfigError | TemporalTlsConfigurationError, TemporalConfigService> =>
+): Layer.Layer<TemporalConfigService, TemporalConfigError | TemporalTlsConfigurationError> =>
   Layer.effect(TemporalConfigService, buildTemporalConfigEffect(options))
 
 export const ConfigLayer = createConfigLayer()
