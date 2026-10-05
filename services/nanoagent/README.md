@@ -13,9 +13,24 @@ unauthenticated.
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
 [`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves authenticated gRPC
-over HTTP/2 without TLS on its existing port 8080. Each unary and streaming RPC checks the same per-MicroVM bootstrap
-credential in `authorization` metadata. This migration retains the existing transport trust and requires no SPIRE,
-service mesh, additional listener, or Talos configuration.
+over HTTP/2 with SPIRE mutual TLS on port 8443. Each unary and streaming RPC also checks the per-MicroVM bootstrap
+credential in `authorization` metadata. Port 8080 serves only unauthenticated health probes and cannot dispatch RPCs
+or previews. No Talos machine configuration or service mesh change is required.
+
+Nanoagent supervises SPIRE 1.15.3 inside the Firecracker guest. Its `galactic-guests` PSAT agent is attested with a
+Pod-bound token for audience `spire-server`; its workload selector is Unix UID 1000. The issued identity includes the
+current Pod UID. It connects to `spire-server.spire-server.svc.cluster.local:443`; the Kubernetes Service forwards that
+connection to the SPIRE Pod's listener on port 8081. The TLS listener accepts only
+`spiffe://proompteng.ai/ns/tengri/sa/tengri`; the controller pins
+the guest's exact `spiffe://proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>` identity. The Go SPIFFE source watches
+certificate and bundle updates, so new connections use renewed credentials without restarting Nanoagent.
+
+The agent binary is installed under the persistent home from a versioned, SHA-256-pinned musl release archive. Build
+stages verify both the native binary and the generated agent configuration. Only the installer and version receipt
+enter the 512 MiB rootfs. Agent keys, attestation token, and data remain in private `/tmp/nanoagent-spire` files.
+Tengri refreshes the token and public bundle over mTLS; the refresh RPC rejects another Pod UID and private material
+in place of CA certificates. Terminal and Codex children receive no SPIFFE or SPIRE configuration variables. A guest
+administrator owns that guest's identity; its Pod-bound parent cannot attest another guest or the controller.
 
 The service covers editor startup, bounded file discovery and atomic mutations, PTY lifecycle, Codex calls and
 approvals, file/Codex server streams, and a bidirectional terminal stream. File content travels as protobuf bytes.
@@ -30,8 +45,8 @@ this guest.
 
 HTTP remains for process probes and application content:
 
-- `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes;
-- `/v1/preview/{port}/{path...}`: authenticated HTTP and WebSocket proxying to an allowed loopback application or VS Code.
+- `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes on plain port 8080;
+- `/v1/preview/{port}/{path...}`: mTLS-authenticated HTTPS and secure WebSocket proxying on port 8443 to an allowed loopback application or VS Code.
 
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
@@ -92,6 +107,32 @@ compilation and doctests use the bundled architecture-specific `rust-lld` and mi
 atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
 C, and CGO projects therefore build from the persistent home toolchain without installing system packages.
 
+`bootstrap-developer-tools` then installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
+the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without sudo. This 26-byte prefix meets
+[Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
+for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
+CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
+Subsequent boots reuse installed packages and install missing baseline formulae. Neovim is upgraded when it is below
+AstroNvim's required 0.11 minimum; other installed baseline formulae are reused.
+Cold installation requires GitHub and Homebrew registry access and fails startup if installation or validation fails.
+
+Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
+`/etc/profile.d/tengri-development.sh`, and newly created shell profiles source it too. Existing user shell profiles
+and Neovim configuration are preserved. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
+configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
+and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. Text icons work with the web
+terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
+or `:TSInstall` to add language support. Existing configurations remain user-owned. Repeated boots install missing
+plugins in the supplied default without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
+configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
+Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
+bootstrap before the rootfs check.
+
+Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
+`/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
+headers and startup objects. Native validation compiles and executes a C++ program; the existing C and CGO checks
+continue to use the pinned GCC 13.3.0 toolchain.
+
 The guest's operating-system root filesystem is writable. The `nanoagent` user has passwordless `sudo` for guest
 administration, including `sudo apt-get install`, system-file edits, mounts, and guest network configuration. The
 controller allows privilege escalation, grants the guest Linux capabilities, and leaves guest syscalls unconfined
@@ -111,8 +152,9 @@ Linux container with the guest capability and seccomp settings to also exercise 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
-Codex app server is available, and the `MicroVM` startup probe allows fifteen minutes for the sequential toolchain and
-Codex cold boot. Image builds run
+Codex app server is available, and the `MicroVM` startup probe allows 35 minutes for SPIRE, language-toolchain,
+developer-tool, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools fifteen
+minutes, and Codex nine minutes. Image builds run
 the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
 CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
 one-use pipe and been removed from the process environment, so downloader and archive child processes cannot inherit
@@ -131,6 +173,7 @@ cd services/nanoagent
 bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
+bash -n bootstrap-developer-tools.sh developer-profile.sh
 bash -n validate-rootfs.sh validate-rootfs.test.sh
 # On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
 bash validate-rootfs.test.sh

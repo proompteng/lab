@@ -5,6 +5,8 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 ## Prerequisites
 
 - Bun 1.4.2 (matches repo toolchain)
+- Prometheus `promtool` 3.5.0 on `PATH` (or `PROMTOOL` set to its executable) for real Bayn alert-rule evaluation;
+  CI installs the checksum-pinned standalone release tool
 - Required CLIs noted per script available on `PATH`
 - Authenticated GitHub CLI (`gh auth status`) for GitHub integrations
 - Kubernetes/Argo credentials when triggering infrastructure workflows

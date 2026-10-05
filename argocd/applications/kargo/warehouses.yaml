@@ -785,6 +785,7 @@ spec:
           - services/agents
           - charts/agents/crds
           - nix/images/agents.nix
+          - nix/verify-agents-shell-image-lifecycle.sh
           - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - nix/oci-push.sh
@@ -1147,6 +1148,48 @@ spec:
           - argocd/applicationsets/platform.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/rune
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
+        platform: linux/amd64
+        cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: temporal-worker
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Tag == 'kargo-sha-' +
+      commitFrom('git@github.com:proompteng/lab.git').ID + '-run-' +
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-run-id']
+  subscriptions:
+    - git:
+        repoURL: git@github.com:proompteng/lab.git
+        branch: main
+        commitSelectionStrategy: NewestFromBranch
+        discoveryLimit: 20
+        strictSemvers: true
+        includePaths:
+          - services/temporal-worker
+          - .github/workflows/temporal-worker-images.yml
+          - argocd/applications/temporal
+          - argocd/applications/kargo
+          - argocd/applicationsets/platform.yaml
+          - packages/scripts/src/shared/__tests__/kargo.test.ts
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/temporal-worker
         imageSelectionStrategy: NewestBuild
         discoveryLimit: 20
         strictSemvers: true

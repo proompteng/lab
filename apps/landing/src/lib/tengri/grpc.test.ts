@@ -3,6 +3,8 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
+import { createSpiffeFixture } from './spiffe.fixture'
+import { verifySpiffePeer } from './spiffe'
 import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -29,6 +31,7 @@ const descriptor = grpc.loadPackageDefinition(definition) as unknown as {
   }
 }
 
+let fixture: Awaited<ReturnType<typeof createSpiffeFixture>>
 let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
@@ -36,8 +39,10 @@ let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
+let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
 
 beforeAll(async () => {
+  fixture = await createSpiffeFixture()
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
     issueEditorSession(
@@ -146,7 +151,15 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, { id: 'thread-selected', rawJson: '{}', eventSequence: 0 })
     },
-    sendCodexTurn(
+    sendCodexInput(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, { id: 'turn-selected', threadId: call.request.threadId })
+    },
+    steerCodexInput(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
@@ -279,7 +292,8 @@ beforeAll(async () => {
         kind: 'FILE_EVENT_KIND_RESET',
         path: String(call.request.path),
       })
-      call.end()
+      if (call.request.path === '/renewal') renewingFileWatch = call
+      else call.end()
     },
     resolveCodexApproval(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -330,26 +344,83 @@ beforeAll(async () => {
     },
   })
   const port = await new Promise<number>((resolve, reject) => {
-    server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, boundPort) => {
-      if (error) reject(error)
-      else resolve(boundPort)
-    })
+    server.bindAsync(
+      '127.0.0.1:0',
+      grpc.ServerCredentials.createSsl(
+        fixture.bundle,
+        [{ cert_chain: fixture.peer.pem, private_key: fixture.peer.key }],
+        true,
+      ),
+      (error, boundPort) => {
+        if (error) reject(error)
+        else resolve(boundPort)
+      },
+    )
   })
-  process.env.TENGRI_GRPC_ENDPOINT = `127.0.0.1:${port}`
-  process.env.TENGRI_GRPC_TLS = 'false'
+  process.env.TENGRI_GRPC_ENDPOINT = `localhost:${port}`
+  process.env.SPIFFE_ENDPOINT_SOCKET = fixture.endpoint
+  process.env.SPIFFE_ID = fixture.ownId
+  process.env.TENGRI_SPIFFE_ID = fixture.peerId
+  process.env.SPIFFE_WORKLOAD_API_PROTO_PATH = fixture.protoPath
   process.env.TENGRI_INTERNAL_HMAC_SECRET = secret
   process.env.TENGRI_PROTO_PATH = protoPath
 })
 
 afterAll(async () => {
-  const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client; tengriGrpcService?: unknown }
+  const state = globalThis as typeof globalThis & {
+    tengriGrpcClient?: grpc.Client
+    tengriGrpcService?: unknown
+    tengriSpiffeSource?: { close(): void }
+  }
+  state.tengriSpiffeSource?.close()
+  delete state.tengriSpiffeSource
   state.tengriGrpcClient?.close()
   delete state.tengriGrpcClient
   delete state.tengriGrpcService
   await new Promise<void>((resolve) => server.tryShutdown(() => resolve()))
+  fixture.close()
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('renews the client certificate while an existing signed stream stays open', async () => {
+    const { listCodexModels, watchFiles } = await import('./grpc')
+    const watch = await watchFiles('github:42', 'agent-test', '/renewal')
+    const first = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      watch.once('data', resolve)
+      watch.once('error', reject)
+    })
+    expect(first.sequence).toBe('1')
+    const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client; tengriSpiffeFingerprint?: string }
+    const before = state.tengriGrpcClient
+    fixture.rotate()
+    const deadline = Date.now() + 2_000
+    while (state.tengriGrpcClient === before && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      await listCodexModels('github:42', 'agent-test')
+    }
+    expect(state.tengriGrpcClient).not.toBe(before)
+    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
+    const next = new Promise<Record<string, unknown>>((resolve, reject) => {
+      watch.once('data', resolve)
+      watch.once('error', reject)
+    })
+    renewingFileWatch?.write({ sequence: '2', kind: 'FILE_EVENT_KIND_RESET', path: '/renewal' })
+    expect((await next).sequence).toBe('2')
+    watch.cancel()
+    before?.close()
+  })
+
+  test('rejects a trusted certificate with the wrong destination SPIFFE ID', async () => {
+    const { listCodexModels } = await import('./grpc')
+    process.env.TENGRI_SPIFFE_ID = 'spiffe://proompteng.ai/ns/tengri/sa/another-service'
+    try {
+      expect(await rejection(listCodexModels('github:42', 'agent-test'))).toMatchObject({ status: 503 })
+    } finally {
+      process.env.TENGRI_SPIFFE_ID = fixture.peerId
+    }
+    expect((await listCodexModels('github:42', 'agent-test')).models).toEqual(codexModelFixtures)
+  })
+
   test('reads a validated guest catalog through the owner-signed transport', async () => {
     const { listCodexModels } = await import('./grpc')
     expect(await listCodexModels('github:42', 'agent-test', 'models-2')).toEqual({
@@ -373,6 +444,106 @@ describe('Tengri gRPC BFF transport', () => {
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', ...options })
     await sendCodexTurn('github:42', 'agent-test', 'thread-selected', 'Read the workspace', options)
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
+  })
+
+  test('carries binary images through owner-signed mTLS for sends and steering', async () => {
+    const { sendCodexTurn, steerCodexTurn } = await import('./grpc')
+    const content = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0])
+    const images = [{ mediaType: 'image/png' as const, data: content.toString('base64') }]
+    await sendCodexTurn('github:42', 'agent-test', 'thread-selected', '', {}, images)
+    expect(receivedRequest).toMatchObject({
+      agentId: 'agent-test',
+      text: '',
+      images: [{ mediaType: 'image/png', content }],
+    })
+    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
+    await steerCodexTurn('github:42', 'agent-test', 'thread-selected', 'turn-selected', 'Inspect this', images)
+    expect(receivedRequest).toMatchObject({
+      turnId: 'turn-selected',
+      text: 'Inspect this',
+      images: [{ mediaType: 'image/png', content }],
+    })
+  })
+
+  test('rejects the previous input contract without starting or steering a text-only turn', async () => {
+    const oldController = new grpc.Server()
+    const service = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service
+    let startedTurns = 0
+    const oldInput = (
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) => {
+      startedTurns += 1
+      callback(null, { id: 'image-lost', threadId: call.request.threadId })
+    }
+    oldController.addService(
+      {
+        SendCodexTurn: {
+          ...service.SendCodexInput,
+          path: service.SendCodexInput.path.replace('SendCodexInput', 'SendCodexTurn'),
+          originalName: 'sendCodexTurn',
+        },
+        SteerCodexTurn: {
+          ...service.SteerCodexInput,
+          path: service.SteerCodexInput.path.replace('SteerCodexInput', 'SteerCodexTurn'),
+          originalName: 'steerCodexTurn',
+        },
+        GetCodexAccount: service.GetCodexAccount,
+      },
+      {
+        sendCodexTurn: oldInput,
+        steerCodexTurn: oldInput,
+        getCodexAccount: (
+          _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+          callback: grpc.sendUnaryData<Record<string, unknown>>,
+        ) => callback(null, { authenticated: true, plan: 'pro' }),
+      },
+    )
+    const port = await new Promise<number>((resolve, reject) => {
+      oldController.bindAsync(
+        '127.0.0.1:0',
+        grpc.ServerCredentials.createSsl(
+          fixture.bundle,
+          [{ cert_chain: fixture.peer.pem, private_key: fixture.peer.key }],
+          true,
+        ),
+        (error, boundPort) => (error ? reject(error) : resolve(boundPort)),
+      )
+    })
+    const client = new grpc.Client(
+      `localhost:${port}`,
+      grpc.credentials.createSsl(fixture.bundle, fixture.own.key, fixture.own.pem, {
+        checkServerIdentity: (_hostname, certificate) => verifySpiffePeer(fixture.peerId, certificate),
+      }),
+    )
+    const request = {
+      agentId: 'agent-test',
+      threadId: 'thread-selected',
+      turnId: 'turn-selected',
+      text: 'Inspect this',
+      images: [{ mediaType: 'image/png', content: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]) }],
+    }
+    const call = (method: grpc.MethodDefinition<Record<string, unknown>, Record<string, unknown>>) =>
+      new Promise<unknown>((resolve, reject) => {
+        client.makeUnaryRequest(
+          method.path,
+          method.requestSerialize,
+          method.responseDeserialize,
+          request,
+          new grpc.Metadata(),
+          { deadline: Date.now() + 3000 },
+          (error, result) => (error ? reject(error) : resolve(result)),
+        )
+      })
+    try {
+      expect(await call(service.GetCodexAccount)).toMatchObject({ authenticated: true })
+      expect(await rejection(call(service.SendCodexInput))).toMatchObject({ code: grpc.status.UNIMPLEMENTED })
+      expect(await rejection(call(service.SteerCodexInput))).toMatchObject({ code: grpc.status.UNIMPLEMENTED })
+      expect(startedTurns).toBe(0)
+    } finally {
+      client.close()
+      oldController.forceShutdown()
+    }
   })
 
   test('identifies unsupported model selection without disguising other catalog failures', async () => {
@@ -534,7 +705,7 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('distinguishes an initial file watch from an explicit zero resume cursor', async () => {
     const { watchFiles } = await import('./grpc')
-    const stream = watchFiles('github:42', 'agent-test', '/workspace')
+    const stream = await watchFiles('github:42', 'agent-test', '/workspace')
     await new Promise<void>((resolve, reject) => {
       stream.on('error', reject)
       stream.on('end', resolve)
@@ -559,7 +730,7 @@ describe('Tengri gRPC BFF transport', () => {
         .digest('hex'),
     )
 
-    const resumed = watchFiles('github:42', 'agent-test', '/workspace', 0)
+    const resumed = await watchFiles('github:42', 'agent-test', '/workspace', 0)
     await new Promise<void>((resolve, reject) => {
       resumed.on('error', reject)
       resumed.on('end', resolve)

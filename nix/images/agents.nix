@@ -279,8 +279,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-UWRGuYz1BvRO9oOfal83Cmuc2cFNmYXqdia2zdo4BWc=";
-    aarch64-linux = "sha256-09vbtE1Q3IkbOErjZGDlQ4PGqUa166xZGfjyNfiUMDg=";
+    x86_64-linux = "sha256-vV22nCwUWgyzccYnpwfHO6hgjZ3LrGU9f1zcOjENf+s=";
+    aarch64-linux = "sha256-Z6jMDdt9t9e9HJVMm0GgH7k9sM+kxDO90OAxEp1gKxg=";
   };
 
   installFilters = [
@@ -435,7 +435,16 @@ let
     yq
   ] ++ cxTools;
 
+  # Repo-installed CLI shims commonly use #!/usr/bin/env. Nix store PATH entries alone
+  # do not provide the absolute interpreter path required by the kernel.
+  agentsShellInterpreterCompat = pkgs.runCommand "agents-shell-interpreter-compat" { } ''
+    mkdir -p "$out/usr/bin"
+    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+    "$out/usr/bin/env" --version >/dev/null
+  '';
+
   agentsShellContents = commonContents ++ [
+    agentsShellInterpreterCompat
     applyPatch
     pstackBundle
     pkgs.gh
@@ -443,6 +452,7 @@ let
     pkgs.procps
     pkgs.python3
     pkgs.ripgrep
+    pkgs.tini
     pkgs.uv
     pkgs.wget
   ];
@@ -660,6 +670,9 @@ in
     serviceName = "agents-shell";
     imageName = "agents-shell";
     command = [
+      "tini"
+      "-g"
+      "--"
       "bash"
       "./scripts/agents-shell-entrypoint.sh"
     ];
@@ -669,7 +682,7 @@ in
       "AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true"
       "AGENTS_RUNTIME_SERVICE=agents-shell"
       "AGENTS_SHELL_WORKSPACE_ROOT=/workspace"
-      "AGENTS_SHELL_AUDIT_LOG_PATH=/workspace/.agents-shell/audit.jsonl"
+      "AGENTS_SHELL_AUDIT_LOG_PATH="
       "AGENTS_SHELL_RESOURCE=https://agents-shell.proompteng.ai"
       "AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master"
       "AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents"
