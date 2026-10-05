@@ -13,6 +13,7 @@ import { observeCapacityIo } from './capture-capacity-io.mjs'
 import { capacityAttributionCase, capacityCorpusHash, terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
 import { makeCapacitySqlProbes } from './capture-capacity-sql-probes.ts'
+import { assertUnfaultedCapacitySeal } from './capture-capacity-seal.ts'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
@@ -1025,6 +1026,12 @@ const program = Effect.gen(function* () {
       const rows =
         yield* sql`SELECT content_hash, payload FROM research_capture_seals WHERE capture_id = ${result.captureId} AND octet_length(convert_to(payload, 'UTF8')) <= 65536`
       const clean = !result.report.fault && result.report.invalidations.length === 0
+      if (!result.report.fault)
+        assertUnfaultedCapacitySeal({
+          burst: result.report.name === 'burst-enabled',
+          invalidations: result.report.invalidations,
+          seals: rows.map((row) => JSON.parse(row.payload)),
+        })
       if (clean) assert.equal(rows.length, 1)
       const acknowledgedObjects = new Set()
       let marketCount = 0
