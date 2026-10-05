@@ -1,4 +1,4 @@
-import { Data, Result, Schema } from 'effect'
+import { BigDecimal, Data, Result, Schema } from 'effect'
 
 import protocol from '../../../../docs/bayn/jev-migration-acceptance-v2.json'
 import { canonicalHashV1Result } from '../hash'
@@ -77,16 +77,44 @@ export class JevAcceptanceError extends Data.TaggedError('JevAcceptanceError')<{
 
 export const jevAcceptanceProtocolHash = () => canonicalHashV1Result(protocol)
 
-const sum = (values: ReadonlyArray<number>): number => values.reduce((total, value) => total + value, 0)
+const sum = (values: ReadonlyArray<bigint>): bigint => values.reduce((total, value) => total + value, 0n)
+const maximum = (values: ReadonlyArray<bigint>): bigint =>
+  values.reduce((largest, value) => (value > largest ? value : largest))
 
-const percentile = (values: ReadonlyArray<number>, probability: number): number => {
+const moneyScale = (series: ReadonlyArray<CompleteSeries>) => {
+  const values = series.flatMap(({ sessions }) =>
+    sessions.flatMap((session) => [
+      ...Object.values(session).filter((value): value is number => typeof value === 'number'),
+      ...(session.p95LatencyStress.status === 'COMPLETE' ? [session.p95LatencyStress.netPnlUsd] : []),
+    ]),
+  )
+  const scale = Math.max(
+    0,
+    ...values.map((value) => BigDecimal.fromNumberUnsafe(value).scale),
+    BigDecimal.fromStringUnsafe(protocol.requiredOutcomes.netPnlVsBestMatchedControlAtLeastMultiplier).scale,
+  )
+  const units = (value: number): bigint => {
+    const decimal = BigDecimal.fromNumberUnsafe(value)
+    return decimal.value * 10n ** BigInt(scale - decimal.scale)
+  }
+  const usd = (value: bigint, factor = 1): number =>
+    BigDecimal.toNumberUnsafe(BigDecimal.multiply(BigDecimal.make(value, scale), BigDecimal.fromNumberUnsafe(factor)))
+  return { units, usd }
+}
+
+const percentile = (values: ReadonlyArray<bigint>, probability: number): bigint => {
   const selectedIndex = Math.floor((values.length - 1) * probability)
   return values
-    .toSorted((left, right) => left - right)
+    .toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0))
     .reduce((selected, value, index) => (index <= selectedIndex ? value : selected))
 }
 
-const confidenceBounds = (candidate: CompleteSeries, controls: ReadonlyArray<CompleteSeries>, attemptIndex: number) => {
+const confidenceBounds = (
+  candidate: CompleteSeries,
+  controls: ReadonlyArray<CompleteSeries>,
+  attemptIndex: number,
+  money: ReturnType<typeof moneyScale>,
+) => {
   let state = protocol.evaluation.uncertainty.seed >>> 0
   const nextStart = (): number => {
     state ^= state << 13
@@ -94,8 +122,13 @@ const confidenceBounds = (candidate: CompleteSeries, controls: ReadonlyArray<Com
     state ^= state << 5
     return Math.floor(((state >>> 0) / 2 ** 32) * candidate.sessions.length)
   }
-  const means: number[] = []
-  const comparisons = controls.map((control) => ({ control, differences: [] as number[] }))
+  const candidatePnl = candidate.sessions.map((session) => money.units(session.netPnlUsd))
+  const totals: bigint[] = []
+  const comparisons = controls.map((control) => ({
+    control,
+    pnl: control.sessions.map((session) => money.units(session.netPnlUsd)),
+    differences: [] as bigint[],
+  }))
   for (let replicate = 0; replicate < protocol.evaluation.uncertainty.replicates; replicate += 1) {
     const weights = new Map<number, number>()
     for (let block = 0; block < candidate.sessions.length / 2; block += 1) {
@@ -103,93 +136,109 @@ const confidenceBounds = (candidate: CompleteSeries, controls: ReadonlyArray<Com
       for (const index of [start, (start + 1) % candidate.sessions.length])
         weights.set(index, (weights.get(index) ?? 0) + 1)
     }
-    const mean = (series: CompleteSeries): number =>
-      series.sessions.reduce((total, session, index) => total + session.netPnlUsd * (weights.get(index) ?? 0), 0) /
-      series.sessions.length
-    const candidateMean = mean(candidate)
-    means.push(candidateMean)
-    for (const comparison of comparisons) comparison.differences.push(candidateMean - mean(comparison.control))
+    const weightedTotal = (pnl: ReadonlyArray<bigint>): bigint =>
+      pnl.reduce((total, value, index) => total + value * BigInt(weights.get(index) ?? 0), 0n)
+    const candidateTotal = weightedTotal(candidatePnl)
+    totals.push(candidateTotal)
+    for (const comparison of comparisons) comparison.differences.push(candidateTotal - weightedTotal(comparison.pnl))
   }
   const comparisonAlpha =
     protocol.evaluation.uncertainty.familywiseAlpha / (attemptIndex * (attemptIndex + 1)) / controls.length
   return {
-    meanNetPnlUsdLowerBound: percentile(means, 0.05),
+    netPnlLowerBound: percentile(totals, 0.05),
     comparisonAlpha,
-    paired: comparisons.map(({ control, differences }) => ({
+    paired: comparisons.map(({ control, pnl, differences }) => ({
       control: control.policy,
-      meanIncrementalNetPnlUsd:
-        (sum(candidate.sessions.map((s) => s.netPnlUsd)) - sum(control.sessions.map((s) => s.netPnlUsd))) /
-        candidate.sessions.length,
-      meanIncrementalNetPnlUsdLowerBound: percentile(differences, comparisonAlpha),
+      incrementalNetPnl: sum(candidatePnl) - sum(pnl),
+      incrementalNetPnlLowerBound: percentile(differences, comparisonAlpha),
     })),
   }
 }
 
 const numericalReport = (candidate: CompleteSeries, controls: ReadonlyArray<CompleteSeries>, attemptIndex: number) => {
   const rows = candidate.sessions
-  const netPnlUsd = sum(rows.map((s) => s.netPnlUsd))
-  const filledNotionalUsd = sum(rows.map((s) => s.filledNotionalUsd))
-  const completedEpisodes = sum(rows.map((s) => s.completedEpisodes))
-  const controlNetPnlUsd = controls.map((control) => ({
+  const money = moneyScale([candidate, ...controls])
+  const sessionCount = BigInt(rows.length)
+  const netPnl = sum(rows.map((s) => money.units(s.netPnlUsd)))
+  const filledNotional = sum(rows.map((s) => money.units(s.filledNotionalUsd)))
+  const completedEpisodes = rows.reduce((total, session) => total + session.completedEpisodes, 0)
+  const controlNetPnl = controls.map((control) => ({
     policy: control.policy,
-    netPnlUsd: sum(control.sessions.map((s) => s.netPnlUsd)),
+    netPnl: sum(control.sessions.map((s) => money.units(s.netPnlUsd))),
   }))
-  const confidence = confidenceBounds(candidate, controls, attemptIndex)
-  let peak = protocol.riskAcceptance.allocationUsd
-  let maximumDrawdownUsd = 0
+  const bounds = confidenceBounds(candidate, controls, attemptIndex, money)
+  let peak = money.units(protocol.riskAcceptance.allocationUsd)
+  let maximumDrawdown = 0n
   for (const session of rows) {
-    maximumDrawdownUsd = Math.max(maximumDrawdownUsd, peak - session.minimumEquityUsd, session.maximumDrawdownUsd)
-    peak = Math.max(peak, session.maximumEquityUsd)
+    maximumDrawdown = maximum([
+      maximumDrawdown,
+      peak - money.units(session.minimumEquityUsd),
+      money.units(session.maximumDrawdownUsd),
+    ])
+    peak = maximum([peak, money.units(session.maximumEquityUsd)])
   }
-  const maximumSessionLossUsd = Math.max(...rows.map((s) => s.openingEquityUsd - s.minimumEquityUsd))
-  const netAfterDroppingBestSessionUsd = netPnlUsd - Math.max(...rows.map((s) => s.netPnlUsd))
-  const netAfterAdditionalCostUsd =
-    netPnlUsd - (filledNotionalUsd * protocol.executionEvidence.stress.additionalCostBpsOnEachFilledLeg) / 10_000
-  const p95LatencyStressNetPnlUsd = sum(
-    rows.flatMap((s) => (s.p95LatencyStress.status === 'COMPLETE' ? [s.p95LatencyStress.netPnlUsd] : [])),
+  const maximumSessionLoss = maximum(rows.map((s) => money.units(s.openingEquityUsd) - money.units(s.minimumEquityUsd)))
+  const netAfterDroppingBestSession = netPnl - maximum(rows.map((s) => money.units(s.netPnlUsd)))
+  const netAfterAdditionalCostBps =
+    netPnl * 10_000n - filledNotional * BigInt(protocol.executionEvidence.stress.additionalCostBpsOnEachFilledLeg)
+  const p95LatencyStressNetPnl = sum(
+    rows.flatMap((s) => (s.p95LatencyStress.status === 'COMPLETE' ? [money.units(s.p95LatencyStress.netPnlUsd)] : [])),
   )
+  const multiplier = BigDecimal.fromStringUnsafe(protocol.requiredOutcomes.netPnlVsBestMatchedControlAtLeastMultiplier)
   const checks = {
     frequency:
       completedEpisodes >= protocol.evaluation.minimumCompletedEpisodes &&
-      completedEpisodes / rows.length >= protocol.requiredOutcomes.completedEpisodesPerSessionAtLeast,
-    volume: filledNotionalUsd / rows.length >= protocol.requiredOutcomes.filledBuyPlusSellNotionalPerSessionUsdAtLeast,
-    netProfit: netPnlUsd >= protocol.requiredOutcomes.netPnlOver20SessionsUsdAtLeast,
+      completedEpisodes >= protocol.requiredOutcomes.completedEpisodesPerSessionAtLeast * rows.length,
+    volume:
+      filledNotional >=
+      money.units(protocol.requiredOutcomes.filledBuyPlusSellNotionalPerSessionUsdAtLeast) * sessionCount,
+    netProfit: netPnl >= money.units(protocol.requiredOutcomes.netPnlOver20SessionsUsdAtLeast),
     observedControlAdvantage:
-      netPnlUsd >=
-      Math.max(...controlNetPnlUsd.map((c) => c.netPnlUsd)) *
-        Number(protocol.requiredOutcomes.netPnlVsBestMatchedControlAtLeastMultiplier),
+      netPnl * 10n ** BigInt(multiplier.scale) >= maximum(controlNetPnl.map((c) => c.netPnl)) * multiplier.value,
     positiveProfitLowerBound:
-      confidence.meanNetPnlUsdLowerBound >
-      protocol.evaluation.uncertainty.oneSided95PercentLowerBoundForMeanNetPnlGreaterThan,
-    pairedIncrementalLowerBounds: confidence.paired.every(
+      bounds.netPnlLowerBound >
+      money.units(protocol.evaluation.uncertainty.oneSided95PercentLowerBoundForMeanNetPnlGreaterThan) * sessionCount,
+    pairedIncrementalLowerBounds: bounds.paired.every(
       (c) =>
-        c.meanIncrementalNetPnlUsdLowerBound >
-        protocol.evaluation.uncertainty.pairedMeanIncrementalNetPnlUsdLowerBoundGreaterThan,
+        c.incrementalNetPnlLowerBound >
+        money.units(protocol.evaluation.uncertainty.pairedMeanIncrementalNetPnlUsdLowerBoundGreaterThan) * sessionCount,
     ),
     profitWithoutBestSession:
-      netAfterDroppingBestSessionUsd > protocol.requiredOutcomes.minimumNetAfterDroppingBestSessionUsdExclusive,
-    additionalExecutionCost: netAfterAdditionalCostUsd > 0,
-    p95BatchLatency: p95LatencyStressNetPnlUsd > 0,
-    drawdown: maximumDrawdownUsd <= protocol.riskAcceptance.maximumMarkedPeakToTroughDrawdownUsd,
-    sessionLoss: maximumSessionLossUsd <= protocol.riskAcceptance.maximumSessionLossUsd,
+      netAfterDroppingBestSession >
+      money.units(protocol.requiredOutcomes.minimumNetAfterDroppingBestSessionUsdExclusive),
+    additionalExecutionCost: netAfterAdditionalCostBps > 0n,
+    p95BatchLatency: p95LatencyStressNetPnl > 0n,
+    drawdown: maximumDrawdown <= money.units(protocol.riskAcceptance.maximumMarkedPeakToTroughDrawdownUsd),
+    sessionLoss: maximumSessionLoss <= money.units(protocol.riskAcceptance.maximumSessionLossUsd),
   }
   return {
     verdict: Object.values(checks).every(Boolean) ? JevNumericalVerdict.Passed : JevNumericalVerdict.Missed,
     checks,
     metrics: {
-      netPnlUsd,
-      filledNotionalUsd,
+      netPnlUsd: money.usd(netPnl),
+      filledNotionalUsd: money.usd(filledNotional),
       completedEpisodes,
       completedEpisodesPerSession: completedEpisodes / rows.length,
-      filledNotionalPerSessionUsd: filledNotionalUsd / rows.length,
-      maximumDrawdownUsd,
-      maximumSessionLossUsd,
-      netAfterDroppingBestSessionUsd,
-      netAfterAdditionalCostUsd,
-      p95LatencyStressNetPnlUsd,
-      controlNetPnlUsd,
+      filledNotionalPerSessionUsd: money.usd(filledNotional, 1 / rows.length),
+      maximumDrawdownUsd: money.usd(maximumDrawdown),
+      maximumSessionLossUsd: money.usd(maximumSessionLoss),
+      netAfterDroppingBestSessionUsd: money.usd(netAfterDroppingBestSession),
+      netAfterAdditionalCostUsd: money.usd(netAfterAdditionalCostBps, 1 / 10_000),
+      p95LatencyStressNetPnlUsd: money.usd(p95LatencyStressNetPnl),
+      controlNetPnlUsd: controlNetPnl.map((control) => ({
+        policy: control.policy,
+        netPnlUsd: money.usd(control.netPnl),
+      })),
     },
-    confidence,
+    confidence: {
+      meanNetPnlUsdLowerBound: money.usd(bounds.netPnlLowerBound, 1 / rows.length),
+      comparisonAlpha: bounds.comparisonAlpha,
+      paired: bounds.paired.map((comparison) => ({
+        control: comparison.control,
+        meanIncrementalNetPnlUsd: money.usd(comparison.incrementalNetPnl, 1 / rows.length),
+        meanIncrementalNetPnlUsdLowerBound: money.usd(comparison.incrementalNetPnlLowerBound, 1 / rows.length),
+      })),
+    },
   }
 }
 
