@@ -1,4 +1,108 @@
-const READ_ONLY_GIT_COMMANDS = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'grep', 'describe'])
+const READ_ONLY_GIT_COMMANDS = new Set([
+  'status',
+  'diff',
+  'log',
+  'show',
+  'rev-parse',
+  'ls-files',
+  'ls-tree',
+  'grep',
+  'describe',
+])
+const GIT_GLOBAL_FLAGS = new Set(['--no-pager', '--paginate', '--no-optional-locks', '--literal-pathspecs'])
+const REV_LIST_FLAGS = new Set([
+  '-n',
+  '--max-count',
+  '--parents',
+  '--children',
+  '--count',
+  '--all',
+  '--branches',
+  '--tags',
+  '--remotes',
+  '--glob',
+  '--exclude',
+  '--not',
+  '--first-parent',
+  '--merges',
+  '--no-merges',
+  '--min-parents',
+  '--max-parents',
+  '--reverse',
+  '--topo-order',
+  '--date-order',
+  '--left-right',
+  '--left-only',
+  '--right-only',
+  '--cherry-pick',
+  '--cherry-mark',
+  '--boundary',
+  '--objects',
+  '--object-names',
+  '--no-object-names',
+  '--oneline',
+  '--header',
+  '--timestamp',
+  '--quiet',
+  '--since',
+  '--after',
+  '--until',
+  '--before',
+  '--author',
+  '--committer',
+  '--grep',
+])
+const CAT_FILE_FLAGS = new Set([
+  '-e',
+  '-p',
+  '-t',
+  '-s',
+  '-z',
+  '-Z',
+  '--use-mailmap',
+  '--no-use-mailmap',
+  '--mailmap',
+  '--no-mailmap',
+  '--batch',
+  '--batch-check',
+  '--batch-command',
+  '--batch-all-objects',
+  '--buffer',
+  '--no-buffer',
+  '--follow-symlinks',
+  '--no-follow-symlinks',
+  '--unordered',
+  '--no-unordered',
+])
+const KUBECTL_GLOBAL_VALUES = new Set([
+  '-n',
+  '--namespace',
+  '--context',
+  '--cluster',
+  '--user',
+  '--kubeconfig',
+  '-s',
+  '--server',
+  '--request-timeout',
+  '--as',
+  '--as-group',
+  '--as-uid',
+  '--token',
+  '--certificate-authority',
+  '--client-certificate',
+  '--client-key',
+  '--tls-server-name',
+  '--cache-dir',
+  '--v',
+  '-v',
+  '--vmodule',
+])
+const KUBECTL_GLOBAL_FLAGS = new Set([
+  '--insecure-skip-tls-verify',
+  '--match-server-version',
+  '--disable-compression',
+  '--warnings-as-errors',
+])
 const READ_ONLY_KUBECTL_COMMANDS = new Set([
   'api-resources',
   'api-versions',
@@ -16,27 +120,69 @@ const READ_ONLY_KUBECTL_AUTH_COMMANDS = new Set(['can-i', 'whoami'])
 const READ_ONLY_KUBECTL_ROLLOUT_COMMANDS = new Set(['history', 'status'])
 
 export const normalizeCliArgs = (toolName: string, rawArgs: readonly string[]) => {
-  const args = rawArgs.map((arg) => arg.trim()).filter(Boolean)
-  if (args.length === 0) throw new Error(`${toolName} args must not be empty`)
-  return args
+  if (rawArgs.length === 0) throw new Error(`${toolName} args must not be empty`)
+  return Array.from(rawArgs)
+}
+
+const commandIndex = (args: readonly string[], values: ReadonlySet<string>, flags: ReadonlySet<string>, start = 0) => {
+  for (let index = start; index < args.length; index += 1) {
+    const arg = args[index]
+    if (arg === '--') return index + 1
+    if (!arg.startsWith('-')) return index
+    const [option] = arg.split('=', 1)
+    if (flags.has(option)) continue
+    if (values.has(option)) {
+      if (arg.includes('=')) continue
+      if (index + 1 === args.length) throw new Error(`missing value for ${arg}`)
+      index += 1
+      continue
+    }
+    if (arg.length > 2 && values.has(arg.slice(0, 2)) && arg[1] !== '-') continue
+    throw new Error(`unsupported global inspection option: ${arg}`)
+  }
+  return args.length
 }
 
 export const requireReadOnlyGitArgs = (args: readonly string[]) => {
-  const command = args[0]
+  const index = commandIndex(args, new Set(), GIT_GLOBAL_FLAGS)
+  const command = args[index]
+  if (command === 'rev-list') {
+    for (const arg of args.slice(index + 1)) {
+      if (arg === '--') break
+      const [option] = arg.split('=', 1)
+      if (!arg.startsWith('-') || REV_LIST_FLAGS.has(option) || /^-(?:n)?\d+$/.test(arg)) continue
+      throw new Error(`git rev-list inspection does not allow option ${arg}; use git_write for other modes`)
+    }
+    return
+  }
+  if (command === 'cat-file') {
+    for (const arg of args.slice(index + 1)) {
+      if (arg === '--') break
+      if (!arg.startsWith('-') || CAT_FILE_FLAGS.has(arg) || /^--(?:batch|batch-check|batch-command)=/.test(arg))
+        continue
+      throw new Error(`git cat-file inspection does not allow option ${arg}; use git_write for filter execution`)
+    }
+    return
+  }
   if (READ_ONLY_GIT_COMMANDS.has(command)) return
+  if (command === 'worktree' && args[index + 1] === 'list') return
+  if (command === 'remote' && args.length === index + 2 && ['-v', '--verbose'].includes(args[index + 1])) return
   throw new Error(`git supports read-only repository inspection only; use git_write for git ${command}`)
 }
 
 export const requireReadOnlyKubectlArgs = (args: readonly string[]) => {
-  const command = args[0]
+  const index = commandIndex(args, KUBECTL_GLOBAL_VALUES, KUBECTL_GLOBAL_FLAGS)
+  const command = args[index]
+  const subcommand = () => args[commandIndex(args, KUBECTL_GLOBAL_VALUES, KUBECTL_GLOBAL_FLAGS, index + 1)]
   if (READ_ONLY_KUBECTL_COMMANDS.has(command)) {
-    if (command === 'auth' && !READ_ONLY_KUBECTL_AUTH_COMMANDS.has(args[1] ?? '')) {
+    if (command === 'auth' && !READ_ONLY_KUBECTL_AUTH_COMMANDS.has(subcommand() ?? '')) {
       throw new Error(
         'kubectl auth supports read-only subcommands only; use kubectl_admin for other kubectl auth calls',
       )
     }
     return
   }
-  if (command === 'rollout' && READ_ONLY_KUBECTL_ROLLOUT_COMMANDS.has(args[1] ?? '')) return
+  if (command === 'rollout' && READ_ONLY_KUBECTL_ROLLOUT_COMMANDS.has(subcommand() ?? '')) return
+  if (command === 'config' && subcommand() === 'current-context') return
   throw new Error(`kubectl supports read-only cluster inspection only; use kubectl_admin for kubectl ${command}`)
 }

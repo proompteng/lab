@@ -41,7 +41,7 @@ export const createPatchTools = (): EffectTool[] => [
     name: 'apply_patch',
     title: 'Apply Codex patch',
     description:
-      'Edit files under /workspace with Codex patch syntax. Pass the full *** Begin Patch / *** End Patch document.',
+      'Edit files in an owned repo session with Codex patch syntax. Pass sessionId and the full patch document.',
     inputSchema: ApplyPatchInputSchema,
     outputSchema: ApplyPatchOutputSchema,
     annotations: writeAnnotations,
@@ -51,7 +51,7 @@ export const createPatchTools = (): EffectTool[] => [
       Effect.tryPromise({
         try: async () => {
           const sessionRoot = runner.resolveRoot(args.sessionId, auth)
-          const cwd = runner.resolveCwd(args.cwd ?? (args.sessionId ? undefined : 'lab'), args.sessionId, auth)
+          const cwd = runner.resolveCwd(args.cwd, args.sessionId, auth)
           const changedFiles = validateCodexPatch(sessionRoot, cwd, args.patch)
           const result = await runner.runProcess({
             command: 'apply_patch',

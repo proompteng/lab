@@ -1,20 +1,21 @@
 import { Effect } from 'effect'
 
-import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, readOnlyAnnotations } from '../constants'
+import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, openReadOnlyAnnotations } from '../constants'
 import { normalizeCliArgs, requireReadOnlyGitArgs } from '../cli-policy'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
-import { CliInputSchema, CommandResultSchema, type CliInput } from '../schemas'
+import { CliInputSchema, GitWriteInputSchema, CommandResultSchema, type CliInput, type GitWriteInput } from '../schemas'
 
 export const createGitTools = (): EffectTool[] => [
   {
     name: 'git',
     title: 'Inspect git repository',
-    description: 'Run read-only git commands under /workspace. Pass argv after git.',
+    description:
+      'Inspect local Git metadata under /workspace. Pass argv after git. Use git_write with an owned session for ls-remote.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
-    annotations: readOnlyAnnotations,
+    annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
     handler: (args: CliInput, { runner, auth }) =>
@@ -40,14 +41,15 @@ export const createGitTools = (): EffectTool[] => [
   },
   {
     name: 'git_write',
-    title: 'Run mutating git',
-    description: 'Run repository-changing git commands under /workspace. Pass argv after git.',
-    inputSchema: CliInputSchema,
+    title: 'Execute Git in repo session',
+    description:
+      'Run Git commands that may change files or execute configured helpers. Pass argv after git and an owned sessionId.',
+    inputSchema: GitWriteInputSchema,
     outputSchema: CommandResultSchema,
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: CliInput, { runner, auth }) =>
+    handler: (args: GitWriteInput, { runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
           const gitArgs = normalizeCliArgs('git_write', args.args)

@@ -26,7 +26,9 @@ const readLogs = (node: string, since?: string) => {
   const result = spawnSync('docker', ['logs', ...(since === undefined ? [] : ['--since', since]), node], {
     encoding: 'utf8',
     timeout: 10_000,
+    maxBuffer: 16 * 1024 * 1024,
   })
+  assert.ifError(result.error)
   assert.equal(result.status, 0, result.stderr)
   return result.stdout + result.stderr
 }
@@ -104,29 +106,47 @@ const leader = (rows: string[][]) => {
   assert(rows.every((row) => row[1] === 'Member' && row[3] === selected && row[7] === rows[0]?.[7]))
   return { node: nodes[Number(selected.slice(1)) - 1] as string, id: selected, term: Number(rows[0]?.[7]) }
 }
-const query = (node: string) => {
-  const result = docker(
-    'exec',
-    node,
-    'curl',
-    '--silent',
-    '--show-error',
-    '--fail-with-body',
-    '--max-time',
-    '20',
-    '-H',
-    'content-type: application/json',
-    '-H',
-    'accept: application/json',
-    '--data',
-    JSON.stringify({ query: 'SELECT COUNT(*) AS invocations FROM sys_invocation_status' }),
-    'http://127.0.0.1:9070/query',
-  )
-  assert(!result.includes('No such scanner'))
-  const decoded = JSON.parse(result)
-  assert(Array.isArray(decoded.rows), `Unexpected query response: ${result}`)
-  assert.equal(decoded.rows.length, 1)
-  assert(Number.isSafeInteger(decoded.rows[0]?.invocations) && decoded.rows[0].invocations >= 0)
+const query = (node: string, queryPhase: string) => {
+  const startedAt = Date.now()
+  record({ phase: 'sql-query-started', queryPhase, node, requestTimeoutMs: 20_000 })
+  try {
+    const result = docker(
+      'exec',
+      node,
+      'curl',
+      '--silent',
+      '--show-error',
+      '--fail-with-body',
+      '--max-time',
+      '20',
+      '-H',
+      'content-type: application/json',
+      '-H',
+      'accept: application/json',
+      '--data',
+      JSON.stringify({ query: 'SELECT COUNT(*) AS invocations FROM sys_invocation_status' }),
+      'http://127.0.0.1:9070/query',
+    )
+    assert(!result.includes('No such scanner'))
+    const decoded = JSON.parse(result)
+    assert(Array.isArray(decoded.rows), `Unexpected query response: ${result}`)
+    assert.equal(decoded.rows.length, 1)
+    assert(Number.isSafeInteger(decoded.rows[0]?.invocations) && decoded.rows[0].invocations >= 0)
+  } catch (error) {
+    try {
+      record({
+        phase: 'sql-query-failed',
+        queryPhase,
+        node,
+        elapsedMs: Date.now() - startedAt,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    } catch {
+      // A failed diagnostic write must not replace the query error.
+    }
+    throw error
+  }
+  record({ phase: 'sql-query-succeeded', queryPhase, node, elapsedMs: Date.now() - startedAt })
 }
 const toxic = (node: string, method: string, path: string, body?: unknown) =>
   docker(
@@ -208,7 +228,7 @@ try {
       '2g',
       ...env,
       '--env',
-      'RUST_LOG=info,restate_metadata_server=debug',
+      'RUST_LOG=info,restate_metadata_server=debug,restate_core::network::grpc::connector=debug,restate_core::network::connection=debug,restate_core::network::connection_manager=debug,restate_core::network::message_router=trace,restate_core::network::io::egress_stream=trace,restate_core::network::io::reactor=trace',
       '--env',
       'RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE=256 MiB',
       '--env',
@@ -260,7 +280,7 @@ try {
     )
   })
   await until('distributed SQL', () => {
-    query(first)
+    query(first, 'startup')
     return true
   })
   const initial = leader(metadata(first))
@@ -277,7 +297,7 @@ try {
   record({ phase: 'messages-delayed', oneWayLatencyMs: 3000 })
   await sleep(15_000)
   assert.deepEqual(leader(metadata(observer)), initial)
-  query(observer)
+  query(observer, 'messages-delayed')
   assertNoFalseDeaths(sinceDelay)
   for (const node of nodes)
     assert(
@@ -302,7 +322,7 @@ try {
     const members = metadata(observer)
     assert.deepEqual(leader(members), initial)
     if (members.length !== 3) return false
-    query(observer)
+    query(observer, 'pause-recovery')
     return true
   })
   assertNoFalseDeaths(sincePause)
@@ -331,7 +351,7 @@ try {
     Math.max(1, 100_000 - (Date.now() - failedAt)),
   )
   await until('SQL after node loss', () => {
-    query(observer)
+    query(observer, 'node-loss-recovery')
     return true
   })
   record({ phase: 'passed', detectionMs, elected })
