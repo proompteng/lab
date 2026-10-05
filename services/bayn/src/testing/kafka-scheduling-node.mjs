@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { Agent, createServer, get } from 'node:http'
 import { Cause, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
 import { makeKafkaMarketProjection } from '../market-data/streaming/kafka.ts'
@@ -27,6 +28,34 @@ let closed = false
 let closeCount = 0
 let notifyInvalidation
 let immediate
+let timer
+let timerAt
+let requestAt
+let responseAt
+let httpError
+let httpPending
+const server =
+  mode === 'drain'
+    ? createServer((request, response) => {
+        if (request.url === '/pending') requestAt = consumed
+        response.end('ok')
+      })
+    : undefined
+const agent = server === undefined ? undefined : new Agent({ keepAlive: true })
+const requestHttp = (path) =>
+  new Promise((resolve, reject) => {
+    const request = get({ host: '127.0.0.1', port: server.address().port, path, agent }, (response) => {
+      response.resume()
+      response.once('end', resolve)
+      response.once('error', reject)
+    })
+    request.once('error', reject)
+    request.setTimeout(2000, () => request.destroy(new Error('Local HTTP probe timed out')))
+  })
+if (server !== undefined) {
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  await requestHttp('/warm')
+}
 const nextTurn = () => {
   turns.push(consumed)
   if (mode === 'interrupt') abort.abort()
@@ -49,7 +78,22 @@ const transport = {
               pending = resolve
             })
           }
-          if (consumed === 0) immediate = setImmediate(nextTurn)
+          if (consumed === 0) {
+            immediate = setImmediate(nextTurn)
+            if (server !== undefined) {
+              timer = setTimeout(() => {
+                timerAt = consumed
+              }, 0)
+              httpPending = requestHttp('/pending').then(
+                () => {
+                  responseAt = consumed
+                },
+                (error) => {
+                  httpError = error
+                },
+              )
+            }
+          }
           const offset = String(consumed++)
           const at = new Date(Date.parse('2026-09-24T14:00:00Z') + consumed).toISOString()
           return {
@@ -112,6 +156,18 @@ const exit = await Effect.runPromiseExit(
   ).pipe(Effect.provide(Logger.layer([]))),
   { signal: abort.signal },
 )
+if (server !== undefined) {
+  await httpPending
+  clearTimeout(timer)
+  agent.destroy()
+  server.closeAllConnections()
+  await new Promise((resolve) => server.close(resolve))
+  assert.equal(httpError, undefined)
+  assert.ok(timerAt > 0 && timerAt <= 256, 'Timer exceeded 256 records of ready work')
+  assert.ok(requestAt > 0 && requestAt <= 256, 'HTTP server exceeded 256 records of ready work')
+  assert.ok(responseAt > 0 && responseAt <= 256, 'HTTP response exceeded 256 records of ready work')
+  console.log(`HTTP progress: timer=${timerAt}; request=${requestAt}; response=${responseAt}`)
+}
 assert.equal(closeCount, 1)
 assert.ok(turns.length > 0, 'Node I/O never ran while draining the ready backlog')
 assert.ok(turns[0] < total, 'Node I/O was starved until the entire backlog drained')

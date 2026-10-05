@@ -573,7 +573,7 @@ export const makeKafkaMarketProjection = (
         ).pipe(
           Stream.runForEach((record) =>
             Effect.gen(function* () {
-              if (++recordsSinceYield === 256) {
+              if (++recordsSinceYield === 64) {
                 recordsSinceYield = 0
                 yield* Effect.yieldNow
               }
