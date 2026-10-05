@@ -103,6 +103,7 @@ jobs:
           set -euo pipefail
           bash -n bootstrap-codex.sh
           bash -n bootstrap-toolchain.sh
+          bash -n bootstrap-developer-tools.sh install-developer-tools.sh test-developer-tools.sh developer-profile.sh
           bash -n validate-rootfs.sh validate-rootfs.test.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
@@ -169,6 +170,17 @@ jobs:
             --cap-add ALL --security-opt seccomp=unconfined \
             --entrypoint /bin/bash "$GUEST_ADMIN_IMAGE" -s -- --runtime \
             < services/nanoagent/test-guest-admin.sh
+
+      - name: Verify offline developer tools with a fresh home mount
+        if: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
+        env:
+          DEVELOPER_TOOLS_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          docker run --rm --interactive --network none --user 1000:1000 \
+            --tmpfs /home/nanoagent:uid=1000,gid=1000,mode=0750 \
+            --entrypoint /bin/bash "$DEVELOPER_TOOLS_IMAGE" -s \
+            < services/nanoagent/test-developer-tools.sh
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

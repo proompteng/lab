@@ -23,7 +23,7 @@ const (
 	kernelReleasePath         = "/proc/sys/kernel/osrelease"
 	maxBootstrapOutputBytes   = 4 << 10
 	toolchainBootstrapTimeout = 2 * time.Minute
-	developerBootstrapTimeout = 15 * time.Minute
+	developerBootstrapTimeout = 2 * time.Minute
 )
 
 type evidence struct {

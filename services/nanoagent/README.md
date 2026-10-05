@@ -107,26 +107,30 @@ compilation and doctests use the bundled architecture-specific `rust-lld` and mi
 atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
 C, and CGO projects therefore build from the persistent home toolchain without installing system packages.
 
-`bootstrap-developer-tools` then installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
+At image build time, `install-developer-tools.sh` installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
 the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without sudo. This 26-byte prefix meets
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
 for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
-Subsequent boots reuse installed packages and install missing baseline formulae. Neovim is upgraded when it is below
-AstroNvim's required 0.11 minimum; other installed baseline formulae are reused.
-Cold installation requires GitHub and Homebrew registry access and fails startup if installation or validation fails.
+The image includes compressed Homebrew and AstroNvim seeds outside the mounted home. `bootstrap-developer-tools`
+verifies and extracts these local files into the PVC as UID 1000, filling missing files without replacing existing
+files, symlinks, ownership, or directory modes. A completed seed receipt avoids repeated Homebrew extraction.
+Boot checks the supplied commands and Neovim's required 0.11 minimum without running Homebrew, Lazy, or Mason installers.
+Incomplete or incompatible tools fail startup; no network installation fallback is attempted.
 
 Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
 `/etc/profile.d/tengri-development.sh`, and newly created shell profiles source it too. Existing user shell profiles
 and Neovim configuration are preserved. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
 configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
-and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. Text icons work with the web
+and a pinned Lazy bootstrap. Its plugins and native build steps are completed during image creation. Text icons work with the web
 terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
-or `:TSInstall` to add language support. Existing configurations remain user-owned. Repeated boots install missing
-plugins in the supplied default without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
-configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
-Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
-bootstrap before the rootfs check.
+or `:TSInstall` to add language support. Existing configurations, lockfiles and plugin data remain user-owned.
+The default configuration and matching plugin seed are supplied only when no Neovim/Vim configuration exists,
+including custom XDG locations. Homebrew's Cellar, cache, and Neovim configuration, plugin lockfile, plugin data,
+and undo files survive sleep/resume; only compressed seeds enter the 512 MiB rootfs.
+Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and offline
+clean-home, existing-home and restart checks before the rootfs check. PR image verification repeats these checks
+with networking disabled and an empty home mount, so baked home files cannot mask a missing seed.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
 `/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
@@ -153,7 +157,7 @@ On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available, and the `MicroVM` startup probe allows 35 minutes for SPIRE, language-toolchain,
-developer-tool, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools fifteen
+developer-tool seeding, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools two
 minutes, and Codex nine minutes. Image builds run
 the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
 CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
@@ -173,7 +177,7 @@ cd services/nanoagent
 bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
-bash -n bootstrap-developer-tools.sh developer-profile.sh
+bash -n bootstrap-developer-tools.sh install-developer-tools.sh test-developer-tools.sh developer-profile.sh
 bash -n validate-rootfs.sh validate-rootfs.test.sh
 # On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
 bash validate-rootfs.test.sh

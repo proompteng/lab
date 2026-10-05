@@ -399,7 +399,8 @@ RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
 
 FROM runtime-with-toolchain AS developer-tools-smoke
 USER 1000:1000
-RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-only && \
+RUN --mount=type=bind,source=install-developer-tools.sh,target=/tmp/install-developer-tools.sh,readonly \
+    bootstrap-toolchain --install-only && bash /tmp/install-developer-tools.sh --install-only && \
     . /etc/profile.d/tengri-development.sh && \
     brew config > /tmp/developer-tools-version && \
     brew list --versions >> /tmp/developer-tools-version && \
@@ -415,12 +416,33 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \
     brew install --formula --force-bottle hello && \
     test "$(hello)" = 'Hello, world!' && \
+    brew uninstall --formula hello && \
     sha256sum "$HOME/.config/nvim/init.lua" "$HOME/.config/nvim/lazy-lock.json" > /tmp/astronvim-config.sha256 && \
-    bootstrap-developer-tools --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
+    bash /tmp/install-developer-tools.sh --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
     mkdir -p "$HOME/.custom-config/nvim" && \
     printf 'vim.g.user_config_preserved = true\n' > "$HOME/.custom-config/nvim/init.lua" && \
-    XDG_CONFIG_HOME="$HOME/.custom-config" bootstrap-developer-tools --install-only && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" bash /tmp/install-developer-tools.sh --install-only && \
     XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
+
+FROM developer-tools-smoke AS developer-tools-bundle
+RUN mkdir -p /tmp/developer-seed && \
+    XZ_OPT='-T2 -8' tar --create --xz --file /tmp/developer-seed/developer-tools.tar.xz \
+      --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
+      --directory "$HOME" .linuxbrew .local/bin/g++ .local/bin/c++ && \
+    XZ_OPT='-T2 -8' tar --create --xz --file /tmp/developer-seed/astronvim.tar.xz \
+      --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
+      --directory "$HOME/.local/share/nvim" . && \
+    cp "$HOME/.config/nvim/lazy-lock.json" /tmp/developer-seed/astronvim-lazy-lock.json && \
+    cd /tmp/developer-seed && \
+    sha256sum developer-tools.tar.xz astronvim.tar.xz astronvim-lazy-lock.json > developer-tools.tar.xz.sha256
+
+FROM runtime-with-toolchain AS runtime-with-developer-tools
+COPY --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
+
+FROM runtime-with-developer-tools AS developer-seed-smoke
+USER 1000:1000
+RUN --network=none --mount=type=bind,source=test-developer-tools.sh,target=/tmp/test-developer-tools.sh,readonly \
+    bash /tmp/test-developer-tools.sh > /tmp/developer-seed-validation.txt
 
 FROM runtime-with-toolchain AS guest-rootfs
 
@@ -430,6 +452,8 @@ COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
 COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoagent/developer-tools-version
+COPY --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
+COPY --from=developer-seed-smoke /tmp/developer-seed-validation.txt /usr/share/nanoagent/developer-seed-validation.txt
 
 FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
 

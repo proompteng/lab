@@ -1,98 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly INSTALLER_COMMIT='35da6871c4be7d7fdab2fd505fb7fa667926a2a5'
-readonly INSTALLER_SHA256='5f333bbe53bc490e51e7ccb1df8779b3dd6ee73a1a7379efda216edb08ccb148'
-readonly FORMULAE=(neovim tree-sitter-cli gh fd fzf tmux make cmake pkgconf gcc)
-installer=''
-
+readonly SEED_ROOT='/usr/share/nanoagent'
 fail() { printf 'bootstrap-developer-tools: %s\n' "$*" >&2; exit 1; }
-cleanup() { if [[ -n "$installer" ]]; then rm -f -- "$installer"; fi; }
+temporary_directory=''
+cleanup() { if [[ -n "$temporary_directory" ]]; then rm -rf -- "$temporary_directory"; fi; }
 
-install_tools() {
-  [[ "$(uname -s)" == Linux ]] || fail 'developer tools require Linux'
-  case "$(uname -m)" in x86_64|aarch64|arm64) ;; *) fail 'unsupported architecture' ;; esac
-  [[ "$(id -u)" != 0 ]] || fail 'Homebrew must run as the guest user'
-  [[ -n "${HOME:-}" && "$HOME" == /* ]] || fail 'HOME must be an absolute path'
-  local prefix="$HOME/.linuxbrew"
-  [[ "${#prefix}" -le 26 ]] || fail 'Homebrew prefix exceeds the supported Linux bottle relocation length'
-  export HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_SUDO=1
-  export HOMEBREW_CACHE="$HOME/.cache/Homebrew"
-  umask 022
-  mkdir -p "$HOME/.cache" "$HOME/.local/bin"
-  if [[ ! -x "$prefix/bin/brew" ]]; then
-    installer="$(mktemp "$HOME/.cache/homebrew-install.XXXXXX")"
-    trap cleanup EXIT HUP INT TERM
-    curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
-      --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 \
-      --output "$installer" \
-      "https://raw.githubusercontent.com/Homebrew/install/$INSTALLER_COMMIT/install.sh"
-    printf '%s  %s\n' "$INSTALLER_SHA256" "$installer" | sha256sum --check --status -
-    NONINTERACTIVE=1 /bin/bash "$installer" --path="$prefix"
-    cleanup
-    installer=''
-    trap - EXIT HUP INT TERM
-  fi
-  [[ "$(stat -c %u "$prefix")" == "$(id -u)" ]] || fail 'Homebrew prefix has a different owner'
-  eval "$("$prefix/bin/brew" shellenv bash)"
-  # Preserve the pinned language toolchains ahead of optional Homebrew packages.
-  export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH"
-  local missing=()
-  for formula in "${FORMULAE[@]}"; do
-    if ! "$prefix/bin/brew" list --versions "$formula" >/dev/null 2>&1; then
-      missing+=("$formula")
-    fi
-  done
-  if (( ${#missing[@]} )); then
-    "$prefix/bin/brew" install --formula --force-bottle "${missing[@]}"
-  fi
-  local cpp_compilers=("$prefix"/opt/gcc/bin/g++-*)
-  [[ "${#cpp_compilers[@]}" == 1 && -x "${cpp_compilers[0]}" ]] || fail 'Homebrew C++ compiler is unavailable or ambiguous'
-  local c_root
-  c_root="$(dirname "$(readlink -f "$HOME/.local/go")")/c"
-  local triplet
-  case "$(uname -m)" in
-    x86_64) triplet=x86_64-linux-gnu ;;
-    aarch64|arm64) triplet=aarch64-linux-gnu ;;
-  esac
-  [[ -f "$c_root/sysroot/usr/include/features.h" ]] || fail 'persistent C development headers are unavailable'
-  local cpp_wrapper
-  cpp_wrapper="$(mktemp "$HOME/.local/bin/.cpp-wrapper.XXXXXX")"
-  {
-    printf '#!/usr/bin/env bash\n'
-    printf 'exec %q --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
-      "${cpp_compilers[0]}" "$c_root/sysroot" "$c_root/sysroot/usr/include" \
-      "$c_root/sysroot/usr/include/$triplet" "$c_root/sysroot/usr/lib/$triplet/"
-  } > "$cpp_wrapper"
-  chmod 0700 "$cpp_wrapper"
-  mv -Tf "$cpp_wrapper" "$HOME/.local/bin/g++"
-  ln -sfn "$HOME/.local/bin/g++" "$HOME/.local/bin/c++"
-  for command in nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
-    [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
-  done
-  if ! "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
-    '+if v:errmsg != "" | cquit 1 | endif' +qa; then
-    HOMEBREW_NO_ASK=1 "$prefix/bin/brew" upgrade --formula --force-bottle neovim
-    "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
-      '+if v:errmsg != "" | cquit 1 | endif' +qa
-  fi
-  local config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
-  mkdir -p "$config"
-  if [[ ! -e "$config/init.lua" && ! -e "$config/init.vim" ]]; then
-    local init
-    init="$(mktemp "$config/.init.XXXXXX")"
-    install -m 0644 /usr/share/nanoagent/astronvim-init.lua "$init"
-    mv -Tf "$init" "$config/init.lua"
-  fi
-  if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
-    "$prefix/bin/nvim" --headless \
-      "+lua require('lazy').install({wait=true,show=false}); for name,plugin in pairs(require('lazy.core.config').plugins) do assert(plugin._.installed,name .. ' is missing'); for _,task in ipairs(plugin._.tasks or {}) do assert(not task:has_errors(),name .. ' failed installation') end end" \
-      "+lua assert(require('astronvim').version() == 'v6.1.0'); assert(vim.v.errmsg == '',vim.v.errmsg)" \
-      '+if v:errmsg != "" | cquit 1 | endif' +qa
-  fi
+seed_archive() {
+  local archive="$1" destination="$2" staging_root="$2"
+  [[ "$destination" != "$HOME" ]] || staging_root="$HOME/.tengri"
+  temporary_directory="$(mktemp -d "$staging_root/.developer-seed.XXXXXX")"
+  tar --extract --xz --file "$archive" --directory "$temporary_directory" \
+    --no-same-owner --no-same-permissions
+  # Link complete staged files atomically, preserving existing files and directory
+  # metadata. A killed copy cannot leave a partially written executable in HOME.
+  cp -a --link --no-clobber --no-preserve=mode,ownership,timestamps \
+    "$temporary_directory/." "$destination/"
+  cleanup
+  temporary_directory=''
 }
 
-case "${1:-}" in
-  --install-only) install_tools ;;
-  *) fail 'expected --install-only' ;;
-esac
+[[ "${1:-}" == --install-only ]] || fail 'expected --install-only'
+# Homebrew bottles, symlinks and compiled plugin paths are relocated at image time.
+[[ "${HOME:-}" == /home/nanoagent ]] || fail 'the image seed requires HOME=/home/nanoagent'
+[[ "$(id -u)" != 0 ]] || fail 'the image seed must run as the guest user'
+umask 022
+mkdir -p "$HOME/.tengri"
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+receipt="$HOME/.tengri/developer-tools-seed.sha256"
+expected="$(cat "$SEED_ROOT/developer-tools.tar.xz.sha256")"
+prefix="$HOME/.linuxbrew"
+needs_seed=false
+for command in brew nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
+  [[ -x "$prefix/bin/$command" ]] || needs_seed=true
+done
+[[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || needs_seed=true
+if [[ "$needs_seed" == true || ! -f "$receipt" || "$(cat "$receipt")" != "$expected" ]]; then
+  (cd "$SEED_ROOT" && sha256sum --check --status developer-tools.tar.xz.sha256)
+  seed_archive "$SEED_ROOT/developer-tools.tar.xz" "$HOME"
+fi
+
+config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
+data="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
+# Seed the default editor only when no user configuration is present. Keep its
+# lockfile with the matching preinstalled data; never run Lazy/Mason at startup.
+if [[ ! -e "$config/init.lua" && ! -L "$config/init.lua" && ! -e "$config/init.vim" && ! -L "$config/init.vim" ]]; then
+  mkdir -p "$config" "$data"
+  seed_archive "$SEED_ROOT/astronvim.tar.xz" "$data"
+  temporary_directory="$(mktemp -d "$config/.developer-seed.XXXXXX")"
+  cp "$SEED_ROOT/astronvim-lazy-lock.json" "$temporary_directory/lazy-lock.json"
+  cp "$SEED_ROOT/astronvim-init.lua" "$temporary_directory/init.lua"
+  cp -a --link --no-clobber --no-preserve=mode,ownership,timestamps "$temporary_directory/." "$config/"
+  cleanup
+  temporary_directory=''
+fi
+
+[[ "$(stat -c %u "$prefix")" == "$(id -u)" ]] || fail 'Homebrew prefix has a different owner'
+for command in brew nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
+  [[ -x "$prefix/bin/$command" ]] || fail "developer command is missing: $command"
+done
+[[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || fail 'C++ compiler is missing'
+"$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
+  '+if v:errmsg != "" | cquit 1 | endif' +qa
+
+temporary_receipt="$(mktemp "$HOME/.tengri/.developer-tools-seed.XXXXXX")"
+printf '%s\n' "$expected" > "$temporary_receipt"
+mv -Tf "$temporary_receipt" "$receipt"
