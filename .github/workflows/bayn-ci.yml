@@ -6,6 +6,11 @@ permissions:
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      capture_io_diagnostic:
+        description: Run non-qualifying capture I/O observation (manual only)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -269,6 +274,8 @@ jobs:
         with:
           node-version: 24.11.1
       - name: Verify bounded capture capacity with isolated native transports
+        env:
+          BAYN_TEST_CAPTURE_IO_DIAGNOSTICS: ${{ github.event_name == 'workflow_dispatch' && inputs.capture_io_diagnostic && '1' || '0' }}
         run: timeout --kill-after=5s 475s bash services/bayn/scripts/test-native-receipts.sh --capture-capacity
       - name: Start isolated TigerBeetle for durable replay acceptance
         run: |
