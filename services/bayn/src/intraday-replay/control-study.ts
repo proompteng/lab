@@ -187,7 +187,7 @@ const ridgeControlStudyDefinition = {
   sizing:
     'Fixed principal budget, whole shares, cash including fees and native risk/turnover limits. Actual fills can be smaller.',
   coverage:
-    'Missing candidate or benchmark input is unavailable for both policies, even if a frozen score would choose cash.',
+    'Candidate-local gaps are evidenced zero-allocation exclusions; required benchmark and global failures make both policies unavailable, even if a frozen score would choose cash.',
   exclusions:
     'Entry exclusion counters count available six-bar decisions and their excluded candidates. Each exclusion retains the actual input symbol, reason and evidence hash.',
   opportunityAccounting: opportunityAccountingDefinition,
