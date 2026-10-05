@@ -160,6 +160,11 @@ jobs:
           --filter @proompteng/scripts
           --filter @proompteng/temporal-bun-sdk
 
+      - name: Install shell integration test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
       - name: Run Agents script unit tests
         env:
           AGENTS_CI_SKIP_CROSS_PRODUCT_BOUNDARIES: 'true'

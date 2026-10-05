@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 
-import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, readOnlyAnnotations } from '../constants'
+import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, openReadOnlyAnnotations } from '../constants'
 import { normalizeCliArgs, requireReadOnlyGitArgs } from '../cli-policy'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
@@ -14,7 +14,7 @@ export const createGitTools = (): EffectTool[] => [
     description: 'Run read-only git commands under /workspace. Pass argv after git.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
-    annotations: readOnlyAnnotations,
+    annotations: openReadOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
     handler: (args: CliInput, { runner, auth }) =>

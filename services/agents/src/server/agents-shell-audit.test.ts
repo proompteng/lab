@@ -278,7 +278,7 @@ describe('complete operational activity export', () => {
   })
 
   it('prevents another owner from reading, listing or stopping jobs', async () => {
-    captureAudit()
+    const { records } = captureAudit()
     const { client, runner } = await connect()
     const second = await connect(runner, authFixture('owner-b'))
     const start = await client.callTool({
@@ -294,6 +294,18 @@ describe('complete operational activity export', () => {
     await client.callTool({ name: 'cancel', arguments: { jobId } })
     await vi.waitFor(() => expect(runner.requireJob(String(jobId), authFixture()).finishedAt).not.toBeNull())
     expect(jobMetadata(runner.requireJob(String(jobId), authFixture())).state).toBe('cancelled')
+    expect(
+      records()
+        .filter((event) => event.event === 'tool_call_finished' && event.tool === 'cancel')
+        .at(-1)?.payload.outcome,
+    ).toBe('succeeded')
+    const read = await client.callTool({ name: 'read', arguments: { jobId, cursor } })
+    expect(data(read)).toMatchObject({ state: 'cancelled', ok: false })
+    expect(
+      records()
+        .filter((event) => event.event === 'tool_call_finished' && event.tool === 'read')
+        .at(-1)?.payload.outcome,
+    ).toBe('succeeded')
   })
 
   it('mirrors CLI tools and retains raw argv with exact failure details', async () => {

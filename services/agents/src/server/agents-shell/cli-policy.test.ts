@@ -48,3 +48,22 @@ describe('read-only CLI inspection', () => {
     expect(normalizeCliArgs('git', ['grep', ' padded ', ''])).toEqual(['grep', ' padded ', ''])
   })
 })
+
+describe('ls-remote executable and transport boundaries', () => {
+  it.each([
+    ['ls-remote', '--upload-pack=touch /tmp/should-not-run', 'origin'],
+    ['ls-remote', '--upload-pack', 'touch /tmp/should-not-run', 'origin'],
+    ['ls-remote', 'origin', '--upload-p=touch /tmp/should-not-run'],
+    ['ls-remote', 'ext::sh -c touch /tmp/should-not-run'],
+    ['ls-remote', 'custom::repository'],
+  ])('rejects git %j', (...args) => {
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
+  })
+  it.each([
+    ['ls-remote', '--heads', '--tags', 'origin', 'refs/heads/main'],
+    ['--no-pager', 'ls-remote', '--symref', '--sort=version:refname', 'https://github.com/example/repo.git'],
+    ['ls-remote', '--sort', '-version:refname', '--refs', 'git@example.test:repo.git'],
+  ])('retains git %j', (...args) => {
+    expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
+  })
+})

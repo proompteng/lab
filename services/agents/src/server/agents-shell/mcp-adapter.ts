@@ -87,6 +87,7 @@ const decodeInput = async <I>(tool: EffectTool<I>, value: unknown): Promise<I> =
 const toolOutcome = (name: string | undefined, result: CallToolResult) => {
   if (result.isError) return 'error'
   if ((name === 'exec' || name === 'read') && result.structuredContent?.state === 'running') return 'running'
+  if (name === 'read' || name === 'status' || name === 'cancel') return 'succeeded'
   return result.structuredContent?.ok === false ? 'failed' : 'succeeded'
 }
 

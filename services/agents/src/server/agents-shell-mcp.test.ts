@@ -360,7 +360,7 @@ describe('agents-shell MCP tools', () => {
     const git = tools.tools.find((tool) => tool.name === 'git')
     expect(git?.annotations?.readOnlyHint).toBe(true)
     expect(git?.annotations?.destructiveHint).toBe(false)
-    expect(git?.annotations?.openWorldHint).toBe(false)
+    expect(git?.annotations?.openWorldHint).toBe(true)
     expect(git?._meta).toMatchObject({
       securitySchemes: linkedOauthScheme,
     })

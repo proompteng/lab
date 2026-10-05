@@ -7,12 +7,33 @@ const READ_ONLY_GIT_COMMANDS = new Set([
   'rev-list',
   'ls-files',
   'ls-tree',
-  'ls-remote',
   'cat-file',
   'grep',
   'describe',
 ])
 const GIT_GLOBAL_FLAGS = new Set(['--no-pager', '--paginate', '--no-optional-locks', '--literal-pathspecs'])
+const LS_REMOTE_FLAGS = new Set([
+  '-q',
+  '--quiet',
+  '--no-quiet',
+  '-h',
+  '--heads',
+  '-b',
+  '--branches',
+  '--no-branches',
+  '-t',
+  '--tags',
+  '--no-tags',
+  '--refs',
+  '--no-refs',
+  '--get-url',
+  '--no-get-url',
+  '--exit-code',
+  '--no-exit-code',
+  '--symref',
+  '--no-symref',
+  '--no-sort',
+])
 const KUBECTL_GLOBAL_VALUES = new Set([
   '-n',
   '--namespace',
@@ -85,6 +106,31 @@ const commandIndex = (args: readonly string[], values: ReadonlySet<string>, flag
 export const requireReadOnlyGitArgs = (args: readonly string[]) => {
   const index = commandIndex(args, new Set(), GIT_GLOBAL_FLAGS)
   const command = args[index]
+  if (command === 'ls-remote') {
+    let literal = false
+    let repository: string | undefined
+    for (let offset = index + 1; offset < args.length; offset += 1) {
+      const arg = args[offset]
+      if (!literal && arg === '--') {
+        literal = true
+        continue
+      }
+      if (!literal && arg.startsWith('-')) {
+        if (LS_REMOTE_FLAGS.has(arg) || arg.startsWith('--sort=')) continue
+        if (arg === '--sort' && offset + 1 < args.length) {
+          offset += 1
+          continue
+        }
+        throw new Error(
+          `git ls-remote inspection does not allow option ${arg}; use git_write for executable or transport overrides`,
+        )
+      }
+      repository ??= arg
+    }
+    if (repository && /^[a-z][a-z0-9+.-]*::/i.test(repository))
+      throw new Error('git ls-remote inspection does not allow remote helpers; use git_write')
+    return
+  }
   if (READ_ONLY_GIT_COMMANDS.has(command)) return
   if (command === 'worktree' && args[index + 1] === 'list') return
   if (command === 'remote' && args.length === index + 2 && ['-v', '--verbose'].includes(args[index + 1])) return
