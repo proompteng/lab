@@ -322,6 +322,27 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 
 ## Runtime architecture
 
+Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL
+`last_pass` projection. The sorted, deduplicated hashes come only from successful Jev observation persistence or
+successful batch-store results, including recovered batches. The journaled advance result binds these references
+into its version-two execution receipt; a completed research-capture event carries the same references alongside
+the controller invocation ID. Each hash resolves the exact persisted observation, whose manifest identifies its
+snapshot and whose existing batch plans identify candidate requests and terminal receipts. Store access does not
+prove that an observation was selected, submitted, traded, or profitable.
+
+The `complete` flag describes only this pass's reference collection, not complete controller knowledge or capture
+coverage. Ordinary passes can create entry and management observations; pending-batch recovery has no fixed count.
+The collection retains at most sixteen unique hashes (about one KiB of hash data). A legitimate recovery touching
+more becomes explicitly incomplete rather than changing trading behavior. A failed store operation, unavailable
+store instrumentation, or invalid reference also marks the collection incomplete. Waiting and expected failure
+results keep references already collected; an aborted action without a returned result has no reference claim.
+An empty complete collection means no Jev observation references were returned by these instrumented operations.
+It does not rule out reuse of a previously bound decision or access to other evidence.
+
+Legacy journal and projection results keep the field absent, with unknown reference coverage and byte-identical
+version-one receipt hashes. Replays retain only their original references and do not rerun evaluation or fabricate
+a fresh capture. This linkage does not prove full-session capture completeness or repair missing historical links.
+
 - `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
@@ -690,7 +711,35 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+`src/intraday-replay/six-bar-features.ts` extracts a separate offline research observation from an original-capture
+cursor. Each candidate and SPY require six exact consecutive completed regular-session minute bars. The seven
+ordered values are the candidate's one-minute close return, five-minute return relative to SPY, SPY's five-minute
+return, root-sum-square of five candidate log returns, quote spread in basis points, displayed-size imbalance, and
+elapsed calendar-session fraction. Missing minutes are explicit and are never filled from older bars.
+
+The research definition requires a two-second watermark delay, zero producer-clock allowance, and quotes no older
+than ten seconds. Each producer publication must precede or equal its original consumer receipt. Both symbols
+require positive displayed sizes and spread at most five basis points. Candidate
+trades may occur anywhere in the selected window. SPY requires post-window quotes and trades, and its trade must be
+no older than ten seconds at observation. This definition is stricter than the streaming source-clock allowance.
+
+Available values, evidenced spread or size exclusions, and unavailable inputs are separate outcomes. Each outcome
+binds the definition, source, query, original receipt cut, decoded record-text hashes, and selected availability times.
+`recordTextSha256` hashes the decoded UTF-8 text, which can differ from the original byte hash for malformed UTF-8.
+The verified capture export and source hashes bind original bytes and receipt coordinates. Callers must verify the
+capture interval and source bytes through `replayResearchCaptureInterval` and `openBacktestSource` before using its cursor.
+Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
+It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
+contract. Capture interval verification remains the caller's responsibility before economic research.
+
 ### Bounded mechanical control and turnover comparison
+
+The explicitly opted-in `bayn.control-study-input.v4` adds the research-only
+`SPY_RELATIVE_SHOCK_REBOUND_60S_V1` falsification candidate described in
+[control portfolios](../../docs/bayn/control-portfolios.md#frozen-residual-shock-falsification-candidate).
+It uses the same offline portfolio and execution accounting, with a frozen exact-rational signal and a
+poll-delayed 60-second exit target. It is not a profitability claim, qualification, production strategy registration,
+or trading activation. Legacy v2/v3 inputs retain their original three policies and definition hashes.
 
 `bun tools/control-study.ts` supports the strictly offline `MECHANICAL` management mode, which creates no provider
 client, broker account, database or capital authority. Its three fixed control policies share the native control
@@ -905,11 +954,13 @@ additional full execution windows are needed, preserving the earlier dataset ver
 ### Property tests and structured fuzzing
 
 `bun run --cwd services/bayn test:property` runs the fixed seed `20261003` with 100 generated cases per property
-(20 for full streaming snapshots). These tests also run in the normal `test` command and existing Bayn CI gate.
+(20 for full streaming snapshots and acceptance bootstraps). These tests also run in the normal `test` command and
+existing Bayn CI gate.
 The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
 mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
 row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
-and authority/freshness failures. All data is synthetic; no broker, database, or live account is contacted.
+authority/freshness failures, and exact decimal acceptance thresholds against an independent bootstrap oracle.
+All data is synthetic; no broker, database, or live account is contacted.
 
 Run a longer, reproducible 1,000-case-per-property campaign with a new seed:
 

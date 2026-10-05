@@ -441,7 +441,10 @@ export const makeBaynExecutionController = (
     ctx: restate.ObjectContext<ControllerObjectState>,
     tick: ExecutionControllerTick,
     phase: PassReceipt['phase'],
-    detail: Pick<PassReceipt, 'commandIssuedAt' | 'completedAt' | 'receiptHash' | 'reason' | 'runtimeAttempted'> = {},
+    detail: Pick<
+      PassReceipt,
+      'commandIssuedAt' | 'completedAt' | 'receiptHash' | 'reason' | 'runtimeAttempted' | 'jevObservationReferences'
+    > = {},
   ): void =>
     recordResearchCapture(capture, {
       kind: 'controller-pass',
@@ -690,6 +693,9 @@ export const makeBaynExecutionController = (
             commandIssuedAt: decision.command.issuedAt,
             completedAt: result.completedAt,
             receiptHash: result.outcome.receiptHash,
+            ...(result.observation?.jevObservationReferences === undefined
+              ? {}
+              : { jevObservationReferences: result.observation.jevObservationReferences }),
             runtimeAttempted,
           })
           if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)

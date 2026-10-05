@@ -14,9 +14,11 @@ export interface IntradayArchivePageCursor {
 }
 
 export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseClient) => {
+  const barEventTime = sql`coalesce(event_ts_exact, event_ts)`
+  const barIngestionTime = sql`coalesce(ingest_ts_exact, ingest_ts)`
   const checkIntradayArchive = Effect.all(
     [
-      sql`SELECT 1 FROM signal.intraday_bars_1m_v2 LIMIT 0`,
+      sql`SELECT event_ts_exact, ingest_ts_exact FROM signal.intraday_bars_1m_v2 LIMIT 0`,
       sql`SELECT 1 FROM signal.intraday_quotes_v1 LIMIT 0`,
       sql`SELECT 1 FROM signal.intraday_trades_v1 LIMIT 0`,
     ],
@@ -42,16 +44,14 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
     }
   }
 
-  const afterCursorWhere = (cursor: IntradayArchivePageCursor | undefined, precision: 3 | 9) => {
+  const afterCursorWhere = (cursor: IntradayArchivePageCursor | undefined, eventTime = sql`event_ts`) => {
     if (cursor === undefined) return sql``
     const eventAt = sql.param('String', cursor.eventAt)
     const symbol = sql.param('String', cursor.symbol)
     const sourceTopic = sql.param('String', cursor.sourceTopic)
     const sourcePartition = sql.param('String', String(cursor.sourcePartition))
     const sourceOffset = sql.param('String', cursor.sourceOffset)
-    return precision === 3
-      ? sql`WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort(${eventAt}, 3, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
-      : sql`WHERE tuple(event_ts, symbol, source_topic, toUInt64(source_partition), source_offset) > tuple(parseDateTime64BestEffort(${eventAt}, 9, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
+    return sql`WHERE tuple(${eventTime}, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)) > tuple(parseDateTime64BestEffort(${eventAt}, 9, 'UTC'), ${symbol}, ${sourceTopic}, toUInt64(${sourcePartition}), toUInt64(${sourceOffset}))`
   }
 
   const captureIntradayArchiveWatermarks = (request: IntradaySnapshotQuery) => {
@@ -70,7 +70,9 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
         AND event_ts >= parseDateTime64BestEffort(${time.open}, 3, 'UTC')
         AND event_ts <= parseDateTime64BestEffort(${time.close}, 3, 'UTC')
-        AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 3, 'UTC')
+        AND ${barEventTime} >= parseDateTime64BestEffort(${time.open}, 9, 'UTC')
+        AND ${barEventTime} <= parseDateTime64BestEffort(${time.close}, 9, 'UTC')
+        AND ${barIngestionTime} <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
       UNION ALL
       SELECT source_topic, source_partition, source_offset
       FROM signal.intraday_quotes_v1
@@ -110,8 +112,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         market_session,
         delay_class,
         symbol,
-        concat(replaceOne(toString(event_ts), ' ', 'T'), 'Z') AS event_at,
-        concat(replaceOne(toString(ingest_ts), ' ', 'T'), 'Z') AS ingested_at,
+        concat(replaceOne(coalesce(toString(event_ts_exact), toString(event_ts)), ' ', 'T'), 'Z') AS event_at,
+        concat(replaceOne(coalesce(toString(ingest_ts_exact), toString(ingest_ts)), ' ', 'T'), 'Z') AS ingested_at,
         source_topic,
         toString(source_partition) AS source_partition,
         toString(source_offset) AS source_offset,
@@ -132,9 +134,11 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
           AND feed = ${sql.param('String', request.feed)}
           AND source_topic = ${sql.param('String', request.sourceTopics.bars)}
           AND has(${symbols(request)}, symbol)
-          AND event_ts >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
-          AND event_ts < parseDateTime64BestEffort(${time.end}, 9, 'UTC')
-          AND ingest_ts <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
+          AND event_ts >= parseDateTime64BestEffort(${time.start}, 3, 'UTC')
+          AND event_ts <= parseDateTime64BestEffort(${time.end}, 3, 'UTC')
+          AND ${barEventTime} >= parseDateTime64BestEffort(${time.start}, 9, 'UTC')
+          AND ${barEventTime} < parseDateTime64BestEffort(${time.end}, 9, 'UTC')
+          AND ${barIngestionTime} <= parseDateTime64BestEffort(${time.observed}, 9, 'UTC')
           AND has(${sql.param('Array(String)', watermark.partitions)}, toString(source_partition))
           AND source_offset <= ifNull(
             toUInt64OrNull(arrayElement(
@@ -143,11 +147,11 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
             )),
             0
           )
-        ORDER BY ingest_ts DESC, source_partition DESC, source_offset DESC
-        LIMIT 1 BY universe_id, feed, symbol, event_ts
+        ORDER BY ${barIngestionTime} DESC, source_partition DESC, source_offset DESC
+        LIMIT 1 BY universe_id, feed, symbol, ${barEventTime}
       )
-      ${afterCursorWhere(after, 3)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ${afterCursorWhere(after, barEventTime)}
+      ORDER BY ${barEventTime}, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }
@@ -209,8 +213,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         )
         WHERE latest_candidate_rank = 1
       )
-      ${afterCursorWhere(after, 9)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ${afterCursorWhere(after)}
+      ORDER BY event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }
@@ -268,8 +272,8 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
         )
         WHERE latest_candidate_rank = 1
       )
-      ${afterCursorWhere(after, 9)}
-      ORDER BY event_ts, symbol, source_topic, source_partition, source_offset
+      ${afterCursorWhere(after)}
+      ORDER BY event_ts, symbol, source_topic, toUInt64(source_partition), toUInt64(source_offset)
       LIMIT ${sql.param('UInt32', intradayArchivePageSize)}
     `
   }

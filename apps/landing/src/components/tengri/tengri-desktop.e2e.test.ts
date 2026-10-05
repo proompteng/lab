@@ -137,6 +137,7 @@ type MockOptions = {
   codexAuthenticated?: boolean
   codexModels?: typeof codexModelFixtures
   failCodexModels?: boolean
+  failSendTurnOnce?: boolean
   legacyCodexModels?: boolean
   paginateCodexModels?: boolean
   deferSleepReconciliation?: boolean
@@ -169,6 +170,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let resumeThreadResponses = 0
   let codexAccountFailuresReleased = !options.failCodexAccountUntilReleased
   let heldCodexAccountRequest = false
+  let sendTurnFailuresRemaining = options.failSendTurnOnce ? 1 : 0
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
   const readFileFailures = new Map<string, number>()
@@ -729,6 +731,11 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'send-turn':
+        if (sendTurnFailuresRemaining) {
+          sendTurnFailuresRemaining -= 1
+          await route.fulfill({ status: 503, json: { error: 'Temporary image send failure' } })
+          return
+        }
         result = { id: 'turn-1', threadId: action.threadId }
         break
       case 'sleep-agent':
@@ -1387,15 +1394,87 @@ test('offers old-editor drafts for download without overwriting guest files or e
   await expect(code).toHaveCount(0)
 })
 
+async function selectCodexOption(page: Page, picker: Locator, label: string) {
+  await picker.click()
+  await page.getByRole('option', { name: label, exact: true }).click()
+  await expect(page.getByRole('listbox')).toHaveCount(0)
+}
+
+test('opens composer menus above the picker and supports keyboard selection on desktop and mobile', async ({
+  page,
+}, testInfo) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const model = page.getByRole('combobox', { name: 'Model', exact: true })
+  await expect(model).toBeEnabled()
+  await model.focus()
+  await model.press('ArrowUp')
+  const menu = page.getByRole('listbox')
+  await expect(menu).toBeVisible()
+  await expect(page.getByRole('option', { name: 'GPT-6.1 Sol', exact: true })).toHaveAttribute('aria-selected', 'true')
+  const triggerBounds = (await model.boundingBox())!
+  const menuBounds = (await menu.boundingBox())!
+  expect(menuBounds.y + menuBounds.height).toBeLessThan(triggerBounds.y)
+  await page.screenshot({ path: testInfo.outputPath('composer-model-picker.png'), animations: 'disabled' })
+  const accessibility = await new AxeBuilder({ page }).include('[data-slot="select-content"]').analyze()
+  expect(accessibility.violations).toEqual([])
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await expect(model).toBeFocused()
+  await model.press('ArrowDown')
+  await expect(menu).toBeVisible()
+  await page.keyboard.press('End')
+  await expect(page.getByRole('option', { name: 'GPT-5.6 Luna', exact: true })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-5.6 Luna')
+  await expect(menu).toHaveCount(0)
+  const reasoning = page.getByRole('combobox', { name: 'Reasoning effort' })
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Default (Low)')
+  await page.setViewportSize({ width: 390, height: 680 })
+  await reasoning.click()
+  await expect(menu).toBeVisible()
+  const mobileBounds = (await menu.boundingBox())!
+  expect(mobileBounds.x).toBeGreaterThanOrEqual(0)
+  expect(mobileBounds.x + mobileBounds.width).toBeLessThanOrEqual(390)
+  await page.screenshot({ path: testInfo.outputPath('composer-reasoning-picker-mobile.png'), animations: 'disabled' })
+  await page.getByRole('option', { name: 'Medium', exact: true }).click()
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Medium')
+  await expect(reasoning).toBeFocused()
+})
+
+test('keeps composer menus clickable after repeated desktop window switches', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const model = page.getByRole('combobox', { name: 'Model', exact: true })
+  await expect(model).toBeEnabled()
+  for (let switchIndex = 0; switchIndex < 28; switchIndex += 1) {
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+    await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  }
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  expect(Number(await chrome.locator('..').evaluate((element) => getComputedStyle(element).zIndex))).toBeGreaterThan(50)
+  await model.click()
+  const option = page.getByRole('option', { name: 'GPT-5.6 Luna', exact: true })
+  await expect(option).toBeVisible()
+  expect(
+    await option.evaluate((element) => {
+      const bounds = element.getBoundingClientRect()
+      return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2))
+    }),
+  ).toBe(true)
+  await option.click()
+  await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-5.6 Luna')
+})
+
 test('selects and persists Codex models and reasoning for subsequent turns', async ({ page }) => {
   const mock = await mockTengri(page, { preserveDraftStorageOnReload: true, paginateCodexModels: true })
   await page.goto('/')
   const chrome = page.getByRole('region', { name: 'Chrome window' })
   const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
   const reasoning = chrome.getByRole('combobox', { name: 'Reasoning effort' })
-  await expect(model).toHaveValue('gpt-6.1-sol')
+  await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-6.1 Sol')
   await expect(model).toBeEnabled()
-  await reasoning.selectOption('high')
+  await selectCodexOption(page, reasoning, 'High')
   await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
   await chrome.getByRole('button', { name: 'Send message' }).click()
   await expect
@@ -1423,7 +1502,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
   })
   await expect(model).toBeEnabled()
   await page.reload()
-  await expect(reasoning).toHaveValue('high')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('High')
   await expect(reasoning).toBeEnabled()
   await expect
     .poll(() => mock.actions.filter((action) => action.action === 'resume-thread').at(-1))
@@ -1431,9 +1510,13 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
       model: 'gpt-6.1-sol',
       reasoningEffort: 'high',
     })
-  await model.selectOption('gpt-5.6-luna')
-  await expect(reasoning).toHaveValue('default')
-  await expect(reasoning.locator('option[value="high"]')).toHaveCount(0)
+  await selectCodexOption(page, model, 'GPT-5.6 Luna')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Default (Low)')
+  await reasoning.click()
+  await expect(page.getByRole('listbox')).toBeVisible()
+  await expect(page.getByRole('option', { name: 'High', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('listbox')).toHaveCount(0)
   await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected model')
   await chrome.getByRole('button', { name: 'Send message' }).click()
   await expect
@@ -1497,7 +1580,7 @@ for (const savedThread of [false, true]) {
     options.legacyCodexModels = false
     await chrome.getByRole('button', { name: 'Retry models' }).click()
     await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
-    await chrome.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('high')
+    await selectCodexOption(page, chrome.getByRole('combobox', { name: 'Reasoning effort' }), 'High')
     await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected settings')
     await chrome.getByRole('button', { name: 'Send message' }).click()
     await expect
@@ -1526,10 +1609,10 @@ for (const unavailable of ['model', 'effort']) {
     await expect(chrome.getByText('Saved Codex settings are unavailable', { exact: true })).toBeVisible()
     const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
     await expect(model).toBeEnabled()
-    if (unavailable === 'model') await model.selectOption('gpt-6.1-sol')
+    if (unavailable === 'model') await selectCodexOption(page, model, 'GPT-6.1 Sol')
     const reasoning = chrome.getByRole('combobox', { name: 'Reasoning effort' })
     await expect(reasoning).toBeEnabled()
-    await reasoning.selectOption('low')
+    await selectCodexOption(page, reasoning, 'Low')
     await chrome.getByRole('button', { name: 'Retry conversation recovery' }).click()
     await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
     expect(mock.actions.filter((action) => action.action === 'resume-thread').at(-1)).toMatchObject({
@@ -1549,10 +1632,10 @@ test('keeps an unavailable default visible until the user selects an available m
   const chrome = page.getByRole('region', { name: 'Chrome window' })
   const model = chrome.getByRole('combobox', { name: 'Model', exact: true })
   await expect(chrome.getByRole('alert')).toContainText('This model is unavailable')
-  await expect(model).toHaveValue('gpt-6.1-sol')
+  await expect(model.locator('[data-slot="select-value"]')).toHaveText('gpt-6.1-sol (unavailable)')
   await chrome.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
   await expect(chrome.getByRole('button', { name: 'Send message' })).toBeDisabled()
-  await model.selectOption('gpt-5.6-luna')
+  await selectCodexOption(page, model, 'GPT-5.6 Luna')
   await expect(chrome.getByRole('button', { name: 'Send message' })).toBeEnabled()
   await expect(chrome.getByRole('alert')).toHaveCount(0)
 })
@@ -2406,7 +2489,7 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
       kind: 'usage',
       method: 'account/rateLimits/updated',
       itemId: '',
-      text: '7d window: 10% used',
+      text: 'Weekly 90% left · Credits: 62,307',
     },
     {
       sequence: 43,
@@ -2420,7 +2503,7 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
       kind: 'usage',
       method: 'account/rateLimits/updated',
       itemId: '',
-      text: '7d window: 12% used',
+      text: 'Weekly 88% left · Credits: 62,307',
     },
     {
       sequence: 45,
@@ -2450,9 +2533,9 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
   await expect(page.getByText(progressText, { exact: true })).toHaveCount(1)
   await expect(page.getByText(finalText, { exact: true })).toHaveCount(1)
   await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('7d window: 10% used', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Tokens: 20 input · 6 output', { exact: true })).toHaveCount(1)
-  await expect(page.getByText('7d window: 12% used', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Weekly 90% left · Credits: 62,307', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Tokens: 20 input · 6 output', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Weekly 88% left · Credits: 62,307', { exact: true })).toHaveCount(1)
   await expect(page.getByText('One oversized Codex event was omitted', { exact: true })).toHaveCount(1)
   await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
 })
@@ -3804,8 +3887,8 @@ test('prepares suggested prompts and grows multiline drafts without sending them
   await expect.poll(async () => (await prompt.boundingBox())!.height).toBeGreaterThan(initialHeight)
   expect((await prompt.boundingBox())!.height).toBeLessThanOrEqual(160)
   expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
-  await chrome.getByRole('combobox', { name: 'Model', exact: true }).selectOption('gpt-5.6-luna')
-  await chrome.getByRole('combobox', { name: 'Reasoning effort' }).selectOption('medium')
+  await selectCodexOption(page, chrome.getByRole('combobox', { name: 'Model', exact: true }), 'GPT-5.6 Luna')
+  await selectCodexOption(page, chrome.getByRole('combobox', { name: 'Reasoning effort' }), 'Medium')
   await page.setViewportSize({ width: 390, height: 680 })
   await expect(chrome.getByRole('combobox', { name: 'Model', exact: true })).toBeInViewport()
   await expect(chrome.getByRole('combobox', { name: 'Reasoning effort' })).toBeInViewport()
@@ -4093,4 +4176,106 @@ test('makes device login readable and copyable at desktop and narrow widths', as
   expect(
     accessibility.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
   ).toEqual([])
+})
+
+const clipboardPng =
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGUlEQVR4nGOQy3v2nxLMMGrAqAGjBgwXAwBI3HEfWzO/eAAAAABJRU5ErkJggg=='
+
+async function pasteClipboardImage(page: Page, prompt: Locator) {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: desktopOrigin })
+  await page.bringToFront()
+  await page.evaluate(async (base64) => {
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })])
+  }, clipboardPng)
+  const expected = await page.evaluate(async () => {
+    const item = (await navigator.clipboard.read())[0]
+    const bytes = new Uint8Array(await (await item.getType('image/png')).arrayBuffer())
+    return btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''))
+  })
+  await prompt.focus()
+  await prompt.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V')
+  return expected
+}
+
+test('pastes a real clipboard image, previews it, and sends an image-only message', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  const expected = await pasteClipboardImage(page, prompt)
+  const attachments = page.getByRole('list', { name: 'Image attachments' })
+  await expect(attachments.getByRole('img')).toHaveCount(1)
+  expect((await new AxeBuilder({ page }).include('[aria-label="Message composer"]').analyze()).violations).toEqual([])
+  await page.screenshot({ path: 'test-results/composer-image-attachment.png' })
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
+    .toMatchObject({ text: '', images: [{ mediaType: 'image/png', data: expected }] })
+  await expect(attachments).toHaveCount(0)
+})
+
+test('retains pasted images and text after a failed send and supports retry', async ({ page }) => {
+  const mock = await mockTengri(page, { failSendTurnOnce: true })
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  await prompt.fill('Inspect this screenshot')
+  await pasteClipboardImage(page, prompt)
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Chrome window' }).getByRole('alert')).toContainText(
+    'Temporary image send failure',
+  )
+  await expect(prompt).toHaveValue('Inspect this screenshot')
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(2)
+  await expect(page.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
+})
+
+test('steers with a clipboard image and keeps plain text paste native', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: desktopOrigin })
+  await page.evaluate(() => navigator.clipboard.writeText('Inspect the workspace'))
+  await prompt.focus()
+  await prompt.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V')
+  await expect(prompt).toHaveValue('Inspect the workspace')
+  await prompt.press('Enter')
+  const steering = page.getByRole('textbox', { name: 'Steer the current turn', exact: true })
+  await expect(steering).toBeEnabled()
+  const expected = await pasteClipboardImage(page, steering)
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.action === 'steer-turn'))
+    .toMatchObject({ text: '', images: [{ mediaType: 'image/png', data: expected }] })
+})
+
+test('bounds pasted images and removes attachments before sending', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent', exact: true })
+  await expect(prompt).toBeEnabled()
+  for (let count = 1; count <= 4; count += 1) {
+    await pasteClipboardImage(page, prompt)
+    await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(count)
+  }
+  await pasteClipboardImage(page, prompt)
+  await expect(page.getByRole('region', { name: 'Chrome window' }).getByRole('alert')).toContainText(
+    'Attach at most 4 images',
+  )
+  await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(4)
+  for (let count = 4; count > 0; count -= 1) {
+    await page
+      .getByRole('button', { name: /Remove image/ })
+      .first()
+      .click()
+    await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(count - 1)
+  }
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
 })

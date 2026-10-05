@@ -29,6 +29,7 @@ check_tool_version shellcheck 0.11.0 printf '%s' "$shellcheck_version"
 yq_version=$("$toolchain_bin/yq" --version | sed 's/^.* version //')
 check_tool_version yq v4.49.2 printf '%s' "$yq_version"
 unset shellcheck_version yq_version
+check_tool_version exa-py 2.10.2 /opt/hermes/.venv/bin/python -c 'import exa_py; import importlib.metadata as m; print(m.version("exa-py"))'
 
 mkdir -p \
   /opt/data/cron \

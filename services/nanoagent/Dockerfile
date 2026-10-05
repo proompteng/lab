@@ -140,6 +140,8 @@ COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
 COPY --chmod=0555 bootstrap-spire-agent.sh /usr/local/bin/bootstrap-spire-agent
 COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-developer-tools
+COPY --chmod=0444 astronvim-init.lua /usr/share/nanoagent/astronvim-init.lua
+RUN chmod 0755 /usr/share/nanoagent
 COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
@@ -402,7 +404,8 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     brew config > /tmp/developer-tools-version && \
     brew list --versions >> /tmp/developer-tools-version && \
     brew doctor && \
-    nvim --headless '+lua assert(vim.o.number and vim.o.undofile)' +qa && \
+    nvim --headless '+lua assert(vim.o.number and vim.o.undofile); assert(require("astronvim").version() == "v6.1.0"); assert(require("astronvim").config.icons_enabled == false)' '+if v:errmsg != "" | cquit 1 | endif' +qa && \
+    tree-sitter --version && \
     test "$EDITOR" = nvim && test "$VISUAL" = nvim && \
     test "$(node --version)" = v24.11.1 && \
     test "$(gcc -dumpfullversion)" = 13.3.0 && \
@@ -412,7 +415,12 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \
     brew install --formula --force-bottle hello && \
     test "$(hello)" = 'Hello, world!' && \
-    bootstrap-developer-tools --install-only
+    sha256sum "$HOME/.config/nvim/init.lua" "$HOME/.config/nvim/lazy-lock.json" > /tmp/astronvim-config.sha256 && \
+    bootstrap-developer-tools --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
+    mkdir -p "$HOME/.custom-config/nvim" && \
+    printf 'vim.g.user_config_preserved = true\n' > "$HOME/.custom-config/nvim/init.lua" && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" bootstrap-developer-tools --install-only && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
 
 FROM runtime-with-toolchain AS guest-rootfs
 

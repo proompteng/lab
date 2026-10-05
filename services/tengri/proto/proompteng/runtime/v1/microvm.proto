@@ -31,8 +31,8 @@ service MicroVMControlPlane {
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
   rpc CreateCodexThread(CreateCodexThreadRequest) returns (CodexThread);
   rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (CodexThread);
-  rpc SendCodexTurn(SendCodexTurnRequest) returns (CodexTurn);
-  rpc SteerCodexTurn(SteerCodexTurnRequest) returns (CodexTurn);
+  rpc SendCodexInput(SendCodexInputRequest) returns (CodexTurn);
+  rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
   rpc ResolveCodexApproval(ResolveCodexApprovalRequest) returns (Empty);
   rpc WatchCodexEvents(WatchCodexEventsRequest) returns (stream CodexEvent);
@@ -201,14 +201,16 @@ message ResumeCodexThreadRequest {
   string model = 3;
   string reasoning_effort = 4;
 }
-message SendCodexTurnRequest {
+message SendCodexInputRequest {
   string agent_id = 1;
   string thread_id = 2;
   string text = 3;
   string model = 4;
   string reasoning_effort = 5;
+  repeated CodexImage images = 6;
 }
-message SteerCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; }
+message CodexImage { string media_type = 1; bytes content = 2; }
+message SteerCodexInputRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; repeated CodexImage images = 5; }
 message InterruptCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; }
 message WatchCodexEventsRequest { string agent_id = 1; uint64 after_sequence = 2; }
 
