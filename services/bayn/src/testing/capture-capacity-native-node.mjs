@@ -12,6 +12,7 @@ import { observeConsumedRecords } from './capture-capacity-iterator.ts'
 import { observeCapacityIo } from './capture-capacity-io.mjs'
 import { capacityAttributionCase, capacityCorpusHash, terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
+import { makeCapacitySqlProbes } from './capture-capacity-sql-probes.ts'
 import { PostgresClientLive } from '../db/postgres-client.ts'
 import { makeResearchCapturePostgresStore, readResearchCapturePostgresChunk } from '../db/research-capture-postgres.ts'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
@@ -753,6 +754,7 @@ const program = Effect.gen(function* () {
               }).pipe(Effect.forkChild)
             : undefined
         const sqlLatency = []
+        const sqlProbes = makeCapacitySqlProbes(() => firstInvalidation !== null)
         let probeFailed = false
         lastBeat = performance.now()
         const timer = yield* Effect.acquireRelease(
@@ -794,7 +796,7 @@ const program = Effect.gen(function* () {
                   ), '[]'::json) AS sessions
                 `
               : sql`SELECT 1 AS value`
-            const rows = yield* query.pipe(Effect.timeout('1 second'))
+            const rows = yield* sqlProbes.run(query)
             assert.equal(Number(rows[0].value), 1)
             if (observing) io.pgSample(rows[0].sessions, before)
             sqlLatency.push(performance.now() - before)
@@ -886,6 +888,12 @@ const program = Effect.gen(function* () {
           yield* recorder.finish
           finishDone = true
         }
+        if (fault)
+          while (sqlProbes.progress.completedAfterInvalidation === 0) {
+            assert.equal(probeFailed, false, 'Post-invalidation SQL probe failed')
+            assert.ok(performance.now() < deadline, 'Post-invalidation SQL probe exceeded the drain deadline')
+            yield* Effect.sleep(10)
+          }
         assert.ok(performance.now() < deadline)
         const drainedAt = performance.now()
         const measuredMs = drainedAt - started
@@ -938,6 +946,7 @@ const program = Effect.gen(function* () {
           heartbeatP99Ms: percentile(heartbeat, 0.99),
           heartbeatMaxMs: terminalHeartbeatMaximum(wholeArmDiagnostics),
           sqlProbeMaxMs: Math.max(0, ...sqlLatency),
+          sqlProbes: { ...sqlProbes.progress },
           peakBacklog,
           peakQueued,
           peakRetained,
