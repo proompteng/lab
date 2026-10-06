@@ -8,6 +8,9 @@ readonly work
 readonly bootstrap="${1:-/usr/local/bin/bootstrap-developer-tools}"
 
 cleanup() {
+  if [[ -e "$work/g++" ]]; then
+    mv -f -- "$work/g++" "$HOME/.local/bin/g++"
+  fi
   if [[ -e "$work/go" || -L "$work/go" ]]; then
     rm -f -- "$HOME/.local/go"
     mv -- "$work/go" "$HOME/.local/go"
@@ -51,6 +54,17 @@ if "$bootstrap" --install-only; then
 fi
 test ! -e "$receipt"
 mv -- "$work/fd" "$prefix/bin/fd"
+
+cp -- "$work/receipt" "$receipt"
+mv -- "$HOME/.local/bin/g++" "$work/g++"
+printf '#!/usr/bin/env bash\nexit 97\n' > "$HOME/.local/bin/g++"
+chmod 0755 "$HOME/.local/bin/g++"
+if "$bootstrap" --install-only; then
+  printf 'A stale C++ wrapper incorrectly reused its receipt\n' >&2
+  exit 1
+fi
+test ! -e "$receipt"
+mv -f -- "$work/g++" "$HOME/.local/bin/g++"
 
 cp -- "$work/receipt" "$receipt"
 if XDG_CONFIG_HOME="$work/config" "$bootstrap" --install-only; then

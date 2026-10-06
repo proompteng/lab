@@ -11,7 +11,12 @@ cleanup() { if [[ -n "$installer" ]]; then rm -f -- "$installer"; fi; }
 
 install_tools() {
   [[ "$(uname -s)" == Linux ]] || fail 'developer tools require Linux'
-  case "$(uname -m)" in x86_64|aarch64|arm64) ;; *) fail 'unsupported architecture' ;; esac
+  local triplet
+  case "$(uname -m)" in
+    x86_64) triplet=x86_64-linux-gnu ;;
+    aarch64|arm64) triplet=aarch64-linux-gnu ;;
+    *) fail 'unsupported architecture' ;;
+  esac
   [[ "$(id -u)" != 0 ]] || fail 'Homebrew must run as the guest user'
   [[ -n "${HOME:-}" && "$HOME" == /* ]] || fail 'HOME must be an absolute path'
   local prefix="$HOME/.linuxbrew"
@@ -28,7 +33,7 @@ install_tools() {
   export HOMEBREW_CACHE="$HOME/.cache/Homebrew"
   umask 022
   mkdir -p "$HOME/.cache" "$HOME/.local/bin"
-  if [[ -f "$receipt" && "$(cat "$receipt")" == "$fingerprint" ]] && tools_present "$prefix" "$config" "$c_root"; then
+  if [[ -f "$receipt" && "$(cat "$receipt")" == "$fingerprint" ]] && tools_present "$prefix" "$config" "$c_root" "$triplet"; then
     return
   fi
   rm -f -- "$receipt"
@@ -62,20 +67,10 @@ install_tools() {
   fi
   local cpp_compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#cpp_compilers[@]}" == 1 && -x "${cpp_compilers[0]}" ]] || fail 'Homebrew C++ compiler is unavailable or ambiguous'
-  local triplet
-  case "$(uname -m)" in
-    x86_64) triplet=x86_64-linux-gnu ;;
-    aarch64|arm64) triplet=aarch64-linux-gnu ;;
-  esac
   [[ -f "$c_root/sysroot/usr/include/features.h" ]] || fail 'persistent C development headers are unavailable'
   local cpp_wrapper
   cpp_wrapper="$(mktemp "$HOME/.local/bin/.cpp-wrapper.XXXXXX")"
-  {
-    printf '#!/usr/bin/env bash\n'
-    printf 'exec %q --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
-      "${cpp_compilers[0]}" "$c_root/sysroot" "$c_root/sysroot/usr/include" \
-      "$c_root/sysroot/usr/include/$triplet" "$c_root/sysroot/usr/lib/$triplet/"
-  } > "$cpp_wrapper"
+  cpp_wrapper_contents "${cpp_compilers[0]}" "$c_root" "$triplet" > "$cpp_wrapper"
   chmod 0700 "$cpp_wrapper"
   mv -Tf "$cpp_wrapper" "$HOME/.local/bin/g++"
   ln -sfn "$HOME/.local/bin/g++" "$HOME/.local/bin/c++"
@@ -108,8 +103,16 @@ install_tools() {
   mv -Tf "$staging" "$receipt"
 }
 
+cpp_wrapper_contents() {
+  local compiler="$1" c_root="$2" triplet="$3"
+  printf '#!/usr/bin/env bash\n'
+  printf 'exec %q --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
+    "$compiler" "$c_root/sysroot" "$c_root/sysroot/usr/include" \
+    "$c_root/sysroot/usr/include/$triplet" "$c_root/sysroot/usr/lib/$triplet/"
+}
+
 tools_present() {
-  local prefix="$1" config="$2" c_root="$3" command
+  local prefix="$1" config="$2" c_root="$3" triplet="$4" command
   [[ -x "$prefix/bin/brew" && "$(stat -c %u "$prefix")" == "$(id -u)" ]] || return 1
   for command in nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || return 1
@@ -117,6 +120,7 @@ tools_present() {
   [[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || return 1
   local compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#compilers[@]}" == 1 && -x "${compilers[0]}" ]] || return 1
+  [[ "$(<"$HOME/.local/bin/g++")" == "$(cpp_wrapper_contents "${compilers[0]}" "$c_root" "$triplet")" ]] || return 1
   [[ -f "$c_root/sysroot/usr/include/features.h" ]] || return 1
   [[ -e "$config/init.lua" || -e "$config/init.vim" ]] || return 1
   if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then

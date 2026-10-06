@@ -114,6 +114,7 @@ for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neov
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
 Successful installation writes a receipt tied to the bootstrap script, bundled Neovim configuration, XDG paths,
 and resolved C toolchain root. A toolchain upgrade invalidates it so the C++ wrappers use the new headers and startup objects.
+The cache also verifies that the C++ wrapper targets the active Homebrew compiler and sysroot.
 Subsequent boots check that receipt and the supplied executables without starting Homebrew or Neovim. A missing
 executable, changed configuration path, or new bootstrap invalidates the receipt and runs installation again.
 The installer checks all baseline formulae in one Homebrew invocation. Neovim is upgraded when it is below
