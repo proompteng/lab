@@ -18,12 +18,12 @@ import {
   type ResearchCaptureSeal,
 } from './capture'
 import {
+  buildResearchCaptureExportChunk,
   captureEvent,
   marketEvent as metadataMarketEvent,
   recoverCaptureFromStoredObjects,
 } from './capture.test-support'
 import {
-  buildResearchCaptureExportChunk,
   decodeResearchCaptureExportEnvelope,
   deriveResearchCaptureExportManifest,
   ResearchCaptureByteIndexSchema,

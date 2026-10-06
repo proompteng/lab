@@ -179,7 +179,7 @@ describe('Agents Shell HTTP receipts', () => {
           jsonrpc: '2.0',
           id: 2,
           method: 'tools/call',
-          params: { name: 'shell_run', arguments: { command: 'printf should-not-run' } },
+          params: { name: 'exec', arguments: { requestKey: crypto.randomUUID(), command: 'printf should-not-run' } },
         }),
       }),
     )

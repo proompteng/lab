@@ -1,12 +1,24 @@
 import { Schema } from 'effect'
 
-import { UtcInstantSchema } from '../../schemas'
+import { Sha256Schema, UtcInstantSchema } from '../../schemas'
 import { CycleWaitReasonSchema, DecisionReadinessSchema } from './readiness'
+
+export const maximumRetainedJevObservationReferences = 16
+export const JevObservationReferencesSchema = Schema.Struct({
+  hashes: Schema.Array(Sha256Schema).check(
+    Schema.isMaxLength(maximumRetainedJevObservationReferences),
+    Schema.makeFilter((hashes) => hashes.every((hash, index) => hash > (hashes[index - 1] ?? '')), {
+      expected: 'unique Jev observation hashes in canonical order',
+    }),
+  ),
+  complete: Schema.Boolean,
+})
 
 export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   Schema.Struct({
     result: Schema.Literal('SUCCESS'),
     observedAt: UtcInstantSchema,
+    jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     outcome: Schema.Literals([
       'WAITING',
       'WINDOW_CLOSED',
@@ -36,6 +48,7 @@ export const RetainedAutonomousCyclePassObservationSchema = Schema.Union([
   Schema.Struct({
     result: Schema.Literal('FAILURE'),
     observedAt: UtcInstantSchema,
+    jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     operation: Schema.Literals([
       'acquire-cycle',
       'build-decision',

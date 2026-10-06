@@ -89,60 +89,6 @@ const reference = (object: ResearchCaptureObject) => ({
 })
 const fail = (message: string) => new ResearchCaptureFailure({ message })
 
-export const buildResearchCaptureExportChunk = (
-  chunk: ResearchCaptureChunk,
-  metadataBytes: ResearchCaptureBytes,
-  entries: readonly ResearchCaptureExportEntry[],
-  previousIndexHash: string | null,
-) => {
-  const parts: Uint8Array[] = []
-  const ranges: Array<typeof ByteRangeSchema.Type> = []
-  let offset = 0
-  for (const entry of entries) {
-    if (entry.receipt.event.kind !== 'market-record') continue
-    const raw = entry.rawValue
-    if (raw === undefined) throw fail('Admitted market receipt lost its original bytes')
-    const range = {
-      receiptSequence: entry.receipt.sequence,
-      byteOffset: raw === null ? null : offset,
-      byteLength: raw === null ? null : raw.byteLength,
-    }
-    if (Buffer.byteLength(JSON.stringify(range)) > 128) throw fail('Byte range exceeds its admission reservation')
-    ranges.push(range)
-    if (raw !== null) {
-      parts.push(raw)
-      offset += raw.byteLength
-    }
-  }
-  const raw = researchCaptureObject(Buffer.concat(parts, offset))
-  const metadata = researchCaptureObject(metadataBytes.payload)
-  const index = researchCaptureObject(
-    JSON.stringify({
-      schemaVersion: 'bayn.research-capture-byte-index.v1',
-      qualification: CaptureQualification.Unqualified,
-      captureId: chunk.captureId,
-      sourceRevision: chunk.sourceRevision,
-      chunkOrdinal: chunk.chunkOrdinal,
-      previousIndexHash,
-      metadata: reference(metadata),
-      raw: reference(raw),
-      ranges,
-    } satisfies typeof ResearchCaptureByteIndexSchema.Type),
-  )
-  return { raw, metadata, index }
-}
-
-export const persistResearchCaptureExportChunk = (
-  store: ResearchCaptureObjectStore,
-  objects: ReturnType<typeof buildResearchCaptureExportChunk>,
-) =>
-  Effect.gen(function* () {
-    yield* store.putVerified(objects.raw)
-    yield* store.putVerified(objects.metadata)
-    yield* store.putVerified(objects.index)
-    return objects.index.contentHash
-  })
-
 const envelopeMagic = Buffer.from('BAYNCAP2')
 const envelopePrefixBytes = 12
 const envelopeFixedHeaderBytes = 4096

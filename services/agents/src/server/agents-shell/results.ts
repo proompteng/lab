@@ -2,7 +2,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 
 export const jsonTextResult = (structuredContent: Record<string, unknown>): CallToolResult => ({
   structuredContent,
-  content: [{ type: 'text', text: JSON.stringify(structuredContent, null, 2) }],
+  content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
 })
 
 export const errorResult = (message: string, challenge?: string): CallToolResult => ({

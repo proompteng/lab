@@ -66,7 +66,7 @@ export const selectReleaseVersion = (request: VersionRequest, current: string): 
 const pullRequestSchema = Schema.Struct({
   number: Schema.Number,
   url: Schema.String,
-  state: Schema.Literal('OPEN', 'MERGED', 'CLOSED'),
+  state: Schema.Literals(['OPEN', 'MERGED', 'CLOSED']),
   headRefOid: Schema.String,
   headRefName: Schema.String,
   baseRefName: Schema.String,
@@ -84,10 +84,10 @@ const authorSchema = Schema.NullOr(Schema.Struct({ login: Schema.String }))
 const checksSchema = Schema.Struct({
   headRefOid: Schema.String,
   baseRefOid: Schema.String,
-  state: Schema.Literal('OPEN', 'MERGED', 'CLOSED'),
+  state: Schema.Literals(['OPEN', 'MERGED', 'CLOSED']),
   reviewDecision: Schema.String,
   statusCheckRollup: Schema.Array(
-    Schema.Union(
+    Schema.Union([
       Schema.Struct({
         __typename: Schema.Literal('CheckRun'),
         name: Schema.String,
@@ -96,7 +96,7 @@ const checksSchema = Schema.Struct({
         workflowName: Schema.String,
       }),
       Schema.Struct({ __typename: Schema.Literal('StatusContext'), context: Schema.String, state: Schema.String }),
-    ),
+    ]),
   ),
   reviews: Schema.Array(
     Schema.Struct({ author: authorSchema, state: Schema.String, commit: Schema.Struct({ oid: Schema.String }) }),
@@ -172,7 +172,7 @@ const run = async (args: string[], stdin?: Blob, inherit = false) => {
   return stdout.trim()
 }
 
-const ghJson = async <A>(schema: Schema.Schema<A>, args: string[]): Promise<A> =>
+const ghJson = async <A>(schema: Schema.Codec<A>, args: string[]): Promise<A> =>
   Schema.decodeUnknownSync(schema)(JSON.parse(await run(['gh', ...args])))
 
 const readVersion = async (ref: string) => {

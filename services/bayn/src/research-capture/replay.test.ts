@@ -27,8 +27,8 @@ import {
   type ResearchCaptureEvent,
   type ResearchCaptureBytes,
 } from './capture'
+import { buildResearchCaptureExportChunk } from './capture.test-support'
 import {
-  buildResearchCaptureExportChunk,
   buildResearchCaptureExportEnvelope,
   decodeResearchCaptureExportEnvelope,
   deriveResearchCaptureExportManifest,
