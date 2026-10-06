@@ -15,6 +15,47 @@ import (
 	"time"
 )
 
+func TestToolSeedManifestMatchesThePairedGuestImage(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		expected  string
+		mounted   string
+		missing   bool
+		wantError bool
+	}{
+		{name: "paired", expected: "image-manifest\n", mounted: "image-manifest\n"},
+		{name: "wrong release", expected: "image-manifest\n", mounted: "older-manifest\n", wantError: true},
+		{name: "empty", wantError: true},
+		{name: "absent disk", expected: "image-manifest\n", missing: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateToolSeedManifest("/expected", func(path string) ([]byte, error) {
+				if path == "/expected" {
+					return []byte(test.expected), nil
+				}
+				if path != "/usr/share/nanoagent/seed-files.sha256" {
+					t.Fatalf("unexpected path: %s", path)
+				}
+				if test.missing {
+					return nil, os.ErrNotExist
+				}
+				return []byte(test.mounted), nil
+			})
+			if (err != nil) != test.wantError {
+				t.Fatalf("validateToolSeedManifest() = %v, want error %v", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestNativeDevelopmentDoesNotRequireAPackagedToolDisk(t *testing.T) {
+	t.Parallel()
+	if err := validateToolSeedManifest("", func(string) ([]byte, error) { t.Fatal("unexpected file read"); return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCollectEvidenceDoesNotExposeBootstrapTokenMetadata(t *testing.T) {
 	t.Parallel()
 

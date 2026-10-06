@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           bash -n bootstrap-codex.sh
           bash -n bootstrap-toolchain.sh
-          bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
+          bash -n bootstrap-developer-tools.sh install-developer-tools.sh compact-developer-tools.sh test-developer-tools.sh test-developer-tools-cache.sh test-image-chain.sh test-guest-admin.sh developer-profile.sh
           bash -n validate-rootfs.sh validate-rootfs.test.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
@@ -108,32 +108,16 @@ jobs:
           GOWORK=off go vet ./...
 
   build:
-    name: Build ${{ matrix.service }} (${{ matrix.architecture }})
-    timeout-minutes: 75
+    name: Build paired images (${{ matrix.architecture }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
-          - service: tengri
-            architecture: amd64
+          - architecture: amd64
             runner: arc-amd64
-            context: services/tengri
-            image: registry.ide-newton.ts.net/lab/tengri
-          - service: tengri
-            architecture: arm64
+          - architecture: arm64
             runner: arc-arm64
-            context: services/tengri
-            image: registry.ide-newton.ts.net/lab/tengri
-          - service: nanoagent
-            architecture: amd64
-            runner: arc-amd64
-            context: services/nanoagent
-            image: registry.ide-newton.ts.net/lab/nanoagent
-          - service: nanoagent
-            architecture: arm64
-            runner: arc-arm64
-            context: services/nanoagent
-            image: registry.ide-newton.ts.net/lab/nanoagent
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -144,28 +128,105 @@ jobs:
         with:
           driver-opts: network=host
 
-      - name: Build native image
+      - name: Export native tool seed filesystem
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: services/nanoagent
+          target: seed-artifact
+          platforms: linux/${{ matrix.architecture }}
+          outputs: type=local,dest=.artifacts/nanoagent-seeds
+          cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
+
+      - name: Build native Nanoagent image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/nanoagent
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-          load: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
-          tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
+          load: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
+          tags: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
 
-      - name: Verify guest administrator access
-        if: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
+      - name: Build paired native Tengri image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/tengri
+          build-contexts: nanoagent-seeds=./.artifacts/nanoagent-seeds
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          load: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
+          tags: ${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Load prepared main images for terminal validation
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        run: |
+          docker pull "${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${{ matrix.architecture }}"
+          docker pull "${TENGRI_IMAGE}:sha-${GITHUB_SHA}-${{ matrix.architecture }}"
+
+      - name: Install unprivileged filesystem inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends e2fsprogs
+
+      - name: Verify paired root and tool disk with offline fresh and retained homes
         env:
-          GUEST_ADMIN_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          CONTROLLER_IMAGE: ${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          bash services/nanoagent/test-image-chain.sh "$GUEST_IMAGE" .artifacts/nanoagent-seeds "$CONTROLLER_IMAGE" \
+            | tee .artifacts/nanoagent-seeds/validation.txt
+
+      - name: Verify guest administrator access
+        env:
+          GUEST_ADMIN_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
         run: |
           set -euo pipefail
           docker run --rm --interactive --user 1000:1000 \
             --cap-add ALL --security-opt seccomp=unconfined \
             --entrypoint /bin/bash "$GUEST_ADMIN_IMAGE" -s -- --runtime \
             < services/nanoagent/test-guest-admin.sh
+
+      - name: Retain native seed validation receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanoagent-seeds-${{ matrix.architecture }}-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            .artifacts/nanoagent-seeds/nanoagent-seeds.ext4.sha256
+            .artifacts/nanoagent-seeds/validation.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retain verified AMD64 canary image
+        if: ${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}
+        env:
+          GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          CONTROLLER_IMAGE: ${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/nanoagent
+          docker image inspect "$GUEST_IMAGE" | jq --arg head "$SOURCE_HEAD" --arg build "$GITHUB_SHA" \
+            '{source_head: $head, build_revision: $build, image: .[0]}' > .artifacts/nanoagent/receipt.json
+          docker image save "$GUEST_IMAGE" "$CONTROLLER_IMAGE" | gzip -1 > .artifacts/nanoagent/image.tar.gz
+          cp .artifacts/nanoagent-seeds/nanoagent-seeds.ext4.sha256 .artifacts/nanoagent/
+          (cd .artifacts/nanoagent && sha256sum image.tar.gz receipt.json nanoagent-seeds.ext4.sha256 > SHA256SUMS)
+
+      - name: Upload canary review artifact
+        if: ${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanoagent-canary-amd64-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}
+          path: .artifacts/nanoagent/*
+          include-hidden-files: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

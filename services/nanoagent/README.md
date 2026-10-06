@@ -86,14 +86,30 @@ a shared `OPENAI_API_KEY`.
 
 ## Firecracker rootfs and persistent tools
 
-Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
-a real 512 MiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+The guest's first filesystem layer contains a parentless, stripped Ubuntu rootfs that fits the installed
+512 MiB Firecracker scratch. No node extension, scratch resize, cached-layer replacement, or host maintenance is
+required. The Dockerfile populates a real 512 MiB ext4 filesystem and checks it, reserving at least 16 MiB and 256
+inodes for extraction overhead. Tool seeds live outside this root on a private 1 GiB raw-block PVC mounted at
+`/usr/share/nanoagent` through the installed Kata persistent-block contract.
+
+Each native image build exports the exact image-built seed filesystem and SHA-256 receipt into the matching
+architecture's Tengri controller image. Before starting a new guest, a short-lived container runs as UID 0 to open
+only its private block device, with every capability dropped, no privilege escalation, and a read-only root. It writes
+the verified artifact to the MicroVM-owned tool PVC and verifies the full readback. It mounts no host paths, uses no
+Kubernetes token, and adds no API permission. Existing matching tool disks are reused on resume. Release changes
+replace only the disposable tool disk after the guest has stopped; the retained 16 GiB home is never populated or
+reformatted by this initializer. There is no shared seed source, CSI clone cache, or runtime package download.
+Nanoagent compares the disk's manifest with `/etc/nanoagent-seed-files.sha256` before any bootstrap helper runs.
+Missing or mismatched seed disks fail startup visibly.
+
 Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
 executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
-The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
+The check runs in a separate build stage and copies only its receipt into the image. Final-image CI verifies a
+parentless layer, unchanged runtime configuration and source filesystem ownership, modes, symlinks and capabilities.
+Packaged manuals, translated
 messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
-The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
-compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.2, uv 0.11.14, Go 1.25.5, Rust/Cargo
+The guest image contains a minimal Ubuntu 24.04 shell environment and Nanoagent. Its paired tool disk carries a
+compressed native bundle for the pinned Node 24.11.1, Bun 1.4.2, uv 0.11.14, Go 1.25.5, Rust/Cargo
 1.90.0, and native GCC 13.3.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox
 prerequisite instead of showing a bundled-helper fallback warning after device login.
 
@@ -107,33 +123,41 @@ compilation and doctests use the bundled architecture-specific `rust-lld` and mi
 atomically generated wrappers. Go uses the bundled target-platform GCC and sysroot with CGO enabled by default. Rust,
 C, and CGO projects therefore build from the persistent home toolchain without installing system packages.
 
-`bootstrap-developer-tools` then installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
+At image build time, `install-developer-tools.sh` installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
 the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without sudo. This 26-byte prefix meets
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
 for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
-Successful installation writes a receipt tied to the bootstrap script, bundled Neovim configuration, XDG paths,
-and resolved C toolchain root. A toolchain upgrade invalidates it so the C++ wrappers use the new headers and startup objects.
-The cache also verifies that the C++ wrapper targets the active Homebrew compiler and sysroot.
-Subsequent boots check that receipt and the supplied executables without starting Homebrew or Neovim. A missing
-executable, changed configuration path, or new bootstrap invalidates the receipt and runs installation again.
-The installer checks all baseline formulae in one Homebrew invocation. Neovim is upgraded when it is below
-AstroNvim's required 0.11 minimum; other installed baseline formulae are reused.
-Cold installation requires GitHub and Homebrew registry access and fails startup if installation or validation fails.
+The tool disk includes compressed Homebrew and AstroNvim seeds outside the mounted home. `bootstrap-developer-tools`
+verifies and extracts these local files into the PVC as UID 1000, filling missing files without replacing existing
+files, symlinks, ownership, or directory modes. A completed seed receipt avoids repeated Homebrew extraction.
+The separate readiness receipt covers the bootstrap, seed version, XDG paths, and active C toolchain root.
+Valid resumes check supplied executables and compiler-wrapper targets without starting Homebrew or Neovim.
+Invalid readiness triggers local repair and Neovim's required 0.11 check, without Homebrew, Lazy, or Mason installers.
+The managed C++ wrappers follow the active C sysroot and Homebrew compiler selection.
+Incomplete or incompatible tools fail startup; no network installation fallback is attempted.
+The build retains Homebrew's exact manager checkout and current tag in a shallow repository, omitting old history
+and reflogs. It verifies unchanged runtime-file hashes, manager/package versions, and `brew doctor` before packaging.
 
 Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
 `/etc/profile.d/tengri-development.sh`, and newly created shell profiles source it too. Existing user shell profiles
 and Neovim configuration are preserved. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
 configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
-and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. Text icons work with the web
+and a pinned Lazy bootstrap. Its plugins and native build steps are completed during image creation. Text icons work with the web
 terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
-or `:TSInstall` to add language support. Existing configurations remain user-owned. The default plugin setup runs when
-the installation receipt is invalid, without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
-configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
-Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
-bootstrap before the rootfs check. The cache regression replaces Homebrew and Neovim with failing executables and
-proves that a prepared home still boots. Stale receipts, missing commands, changed XDG paths, and a changed toolchain root must run installation
-and must not retain a successful receipt after a failure.
+or `:TSInstall` to add language support. Existing configurations, lockfiles and plugin data remain user-owned.
+The default configuration and matching plugin seed are supplied only when no Neovim/Vim configuration exists,
+including custom XDG locations. Homebrew's Cellar, cache, and Neovim configuration, plugin lockfile, plugin data,
+and undo files survive sleep/resume; compressed seeds remain on the separate tool disk.
+Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and offline
+clean-home, existing-home and restart checks before the rootfs check. Final-image CI verifies the exported disk
+checksum and filesystem, reads it back with `debugfs` without a host mount,
+and supplies that readback to the final guest image with networking disabled and an empty home mount. It records
+fresh-install and retained-home helper timings; these are not whole-VM startup timings. Baked home files cannot mask
+a missing seed.
+The offline cache regression replaces Homebrew and Neovim with failing executables and verifies valid-cache reuse,
+missing-command repair, stale-wrapper rejection, XDG and C-root invalidation, and C++ compilation after repair.
+If either the 512 MiB root or 1 GiB seed capacity gate fails, the build produces no final verified image pair.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
 `/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
@@ -149,21 +173,23 @@ token. Codex threads and turns use `danger-full-access` inside this same guest.
 Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
 omitted options preserve an existing thread's settings.
 
-The operating-system root remains the 512 MiB Firecracker image filesystem. Its changes are ephemeral;
+The operating-system root remains the installed 512 MiB Firecracker image filesystem. Its changes are ephemeral;
 container recreation, sleep/resume, or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
 Linux container with the guest capability and seccomp settings to also exercise mounts and network administration.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
-verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
-`~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
+Image creation downloads and verifies the pinned Codex 0.159.2, code-server 4.135.0, and SPIRE 1.15.3 packages using
+`fetch-runtime-tools.sh`. Complete Codex/code-server packages and the SPIRE agent are recompressed into checked local
+seeds outside the mounted home. On first boot, the helpers verify and extract those seeds atomically into the
+16 GiB PVC-backed home. Existing versioned installations and user settings are reused. No boot/workspace helper
+runs a package downloader; a missing or corrupt image seed fails startup. Nanoagent does not become ready until the
 Codex app server is available, and the `MicroVM` startup probe allows 35 minutes for SPIRE, language-toolchain,
-developer-tool, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools fifteen
+developer-tool seeding, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools two
 minutes, and Codex nine minutes. Image builds run
-the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
-CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
+the same bootstrap with networking disabled against the image-baked packages, so a bad checksum or package layout
+fails CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
 one-use pipe and been removed from the process environment, so downloader and archive child processes cannot inherit
 the credential. The toolchain installer runs through the same sanitized child-process boundary. The initial Nanoagent
 process also starts `tini` only through that sanitized re-exec; PID 1 never retains the Kubernetes Secret environment
@@ -180,7 +206,7 @@ cd services/nanoagent
 bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
-bash -n bootstrap-developer-tools.sh developer-profile.sh
+bash -n bootstrap-developer-tools.sh install-developer-tools.sh compact-developer-tools.sh test-developer-tools.sh developer-profile.sh
 bash -n validate-rootfs.sh validate-rootfs.test.sh
 # On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
 bash validate-rootfs.test.sh
@@ -210,9 +236,9 @@ controller and guest; the automatic Tengri Warehouse and Stage promote only the 
 ## VS Code workbench
 
 Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
-platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
-on the persistent home volume, outside Firecracker's 512 MiB rootfs. Each image build verifies the native Linux archive;
-first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
+the image seed before installing into `$HOME/.tengri/code-server`. The complete installed payload stays on the
+persistent home volume; its compact seed lives on the separate 1 GiB tool disk. Image creation verifies the upstream SHA-256
+and native package. First use and retained-home resume work without package-download access.
 
 `CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
 process group per guest with sanitized credentials, a private Unix socket, persistent user settings and extensions under

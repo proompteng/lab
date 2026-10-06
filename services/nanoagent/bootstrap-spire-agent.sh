@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly SPIRE_VERSION='1.15.3'
+readonly TOOL_SEED_ROOT="${NANOAGENT_TOOL_SEED_ROOT:-/usr/share/nanoagent}"
 spire_platform=''
 spire_digest=''
 spire_temporary=''
@@ -31,14 +32,11 @@ install_agent() {
   else
     spire_temporary="$(mktemp -d "$spire_root/.install.XXXXXX")"
     trap cleanup EXIT HUP INT TERM
-    local spire_archive="$spire_temporary/spire.tgz"
-    curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
-      --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 \
-      --output "$spire_archive" \
-      "https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/spire-${SPIRE_VERSION}-linux-${spire_platform}-musl.tar.gz"
-    printf '%s  %s\n' "$spire_digest" "$spire_archive" | sha256sum --check --status -
+    local spire_archive="$TOOL_SEED_ROOT/spire-${SPIRE_VERSION}-linux-${spire_platform}.tar.xz"
+    [[ -r "$spire_archive" ]] || fail "image package is missing: $spire_archive"
+    (cd "$TOOL_SEED_ROOT" && sha256sum --check --status "${spire_archive##*/}.sha256")
     mkdir "$spire_temporary/install"
-    tar -xzf "$spire_archive" -C "$spire_temporary" --no-same-owner --no-same-permissions
+    tar -xJf "$spire_archive" -C "$spire_temporary" --no-same-owner --no-same-permissions
     local spire_binary="$spire_temporary/spire-${SPIRE_VERSION}/bin/spire-agent"
     [[ -x "$spire_binary" ]] || fail 'verified archive is missing spire-agent'
     mv "$spire_binary" "$spire_temporary/install/spire-agent"
@@ -54,6 +52,12 @@ install_agent() {
 }
 
 case "${1:-}" in
+  --archive-manifest)
+    select_platform
+    printf '%s\n' "spire-${SPIRE_VERSION}-linux-${spire_platform}.tar.xz" sha256 "$spire_digest" \
+      "https://github.com/spiffe/spire/releases/download/v${SPIRE_VERSION}/spire-${SPIRE_VERSION}-linux-${spire_platform}-musl.tar.gz" \
+      "spire-${SPIRE_VERSION}/bin/spire-agent"
+    ;;
   --validate-manifest) select_platform ;;
   --install-only) install_agent ;;
   *) fail 'expected --validate-manifest or --install-only' ;;

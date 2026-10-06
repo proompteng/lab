@@ -76,6 +76,7 @@ ENV CARGO_HOME=/home/nanoagent/.cargo \
     NANOAGENT_HOME=/home/nanoagent \
     NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
     NANOAGENT_WORKSPACE=/workspace \
+    NANOAGENT_TOOL_SEED_MANIFEST=/etc/nanoagent-seed-files.sha256 \
     NPM_CONFIG_PREFIX=/home/nanoagent/.local \
     PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
@@ -306,7 +307,15 @@ RUN set -eux; \
       --directory /bundle \
       .
 
-FROM runtime AS runtime-with-toolchain
+FROM runtime AS runtime-tools-downloads
+USER 1000:1000
+RUN --mount=type=bind,source=fetch-runtime-tools.sh,target=/tmp/fetch-runtime-tools.sh,readonly \
+    bash /tmp/fetch-runtime-tools.sh /tmp/runtime-tool-seeds
+
+FROM runtime AS runtime-with-runtime-tools
+COPY --chown=0:0 --from=runtime-tools-downloads /tmp/runtime-tool-seeds/ /usr/share/nanoagent/
+
+FROM runtime-with-runtime-tools AS runtime-with-toolchain
 
 COPY --from=development-toolchain-bundle /out/development-toolchain.tar.xz /usr/share/nanoagent/development-toolchain.tar.xz
 COPY --chmod=0555 bootstrap-toolchain.sh /usr/local/bin/bootstrap-toolchain
@@ -368,39 +377,37 @@ RUN mkdir -p "$HOME" && \
       "$(rustdoc --version)" \
       > /tmp/toolchain-version
 
-# Download and verify the pinned native Codex package during every image build. The
-# package is intentionally not copied into the final rootfs; a guest installs the
-# same verified package into its persistent 16 GiB home volume on first boot.
-FROM runtime AS codex-smoke
+# Verify the same image-baked packages used for an offline fresh-home install.
+FROM runtime-with-runtime-tools AS codex-smoke
 
 ENV CODEX_BINARY=/home/nanoagent/.smoke/.local/bin/codex \
     CODEX_HOME=/home/nanoagent/.smoke/.codex \
     HOME=/home/nanoagent/.smoke
 
 USER 1000:1000
-RUN mkdir -p "$HOME" "$CODEX_HOME" && \
+RUN --network=none mkdir -p "$HOME" "$CODEX_HOME" && \
     bootstrap-codex --install-only && \
     "$CODEX_BINARY" --version > /tmp/codex-version
 
-FROM runtime AS code-server-smoke
+FROM runtime-with-runtime-tools AS code-server-smoke
 
 ENV HOME=/home/nanoagent/.vscode-smoke
 USER 1000:1000
-RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
+RUN --network=none mkdir -p "$HOME" && bootstrap-code-server --install-only && \
     "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
 
 FROM runtime-with-toolchain AS spire-agent-smoke
 ENV HOME=/home/nanoagent/.spire-smoke
 COPY --from=build /out/nanoagent-tests /tmp/nanoagent-tests
-RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
+RUN --network=none mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
     "$HOME/.local/bin/spire-agent" --version > /tmp/spire-agent-version && \
     SPIRE_AGENT_VALIDATE_BINARY="$HOME/.local/bin/spire-agent" \
       /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v
 
 FROM runtime-with-toolchain AS developer-tools-smoke
-COPY --chmod=0555 test-developer-tools-cache.sh /usr/local/bin/test-developer-tools-cache
 USER 1000:1000
-RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-only && \
+RUN --mount=type=bind,source=install-developer-tools.sh,target=/tmp/install-developer-tools.sh,readonly \
+    bootstrap-toolchain --install-only && bash /tmp/install-developer-tools.sh --install-only && \
     . /etc/profile.d/tengri-development.sh && \
     brew config > /tmp/developer-tools-version && \
     brew list --versions >> /tmp/developer-tools-version && \
@@ -416,13 +423,38 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \
     brew install --formula --force-bottle hello && \
     test "$(hello)" = 'Hello, world!' && \
-    test-developer-tools-cache && \
+    brew uninstall --formula hello && \
     sha256sum "$HOME/.config/nvim/init.lua" "$HOME/.config/nvim/lazy-lock.json" > /tmp/astronvim-config.sha256 && \
-    bootstrap-developer-tools --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
+    bash /tmp/install-developer-tools.sh --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
     mkdir -p "$HOME/.custom-config/nvim" && \
     printf 'vim.g.user_config_preserved = true\n' > "$HOME/.custom-config/nvim/init.lua" && \
-    XDG_CONFIG_HOME="$HOME/.custom-config" bootstrap-developer-tools --install-only && \
+    XDG_CONFIG_HOME="$HOME/.custom-config" bash /tmp/install-developer-tools.sh --install-only && \
     XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
+
+FROM developer-tools-smoke AS developer-tools-bundle
+RUN --mount=type=bind,source=compact-developer-tools.sh,target=/tmp/compact-developer-tools.sh,readonly \
+    . /etc/profile.d/tengri-development.sh && bash /tmp/compact-developer-tools.sh && \
+    mkdir -p /tmp/developer-seed && \
+    XZ_OPT='-T2 -9' tar --create --xz --file /tmp/developer-seed/developer-tools.tar.xz \
+      --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
+      --directory "$HOME" .linuxbrew .local/bin/g++ .local/bin/c++ && \
+    XZ_OPT='-T2 -8' tar --create --xz --file /tmp/developer-seed/astronvim.tar.xz \
+      --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
+      --directory "$HOME/.local/share/nvim" . && \
+    cp "$HOME/.config/nvim/lazy-lock.json" /tmp/developer-seed/astronvim-lazy-lock.json && \
+    cd /tmp/developer-seed && \
+    sha256sum developer-tools.tar.xz astronvim.tar.xz astronvim-lazy-lock.json > developer-tools.tar.xz.sha256 && \
+    stat --printf='%n_bytes=%s\n' /usr/share/nanoagent/development-toolchain.tar.xz /tmp/developer-seed/*
+
+FROM runtime-with-toolchain AS runtime-with-developer-tools
+COPY --chown=0:0 --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
+
+FROM runtime-with-developer-tools AS developer-seed-smoke
+COPY --chmod=0555 test-developer-tools-cache.sh /usr/local/bin/test-developer-tools-cache
+USER 1000:1000
+RUN --network=none --mount=type=bind,source=test-developer-tools.sh,target=/tmp/test-developer-tools.sh,readonly \
+    bash /tmp/test-developer-tools.sh > /tmp/developer-seed-validation.txt && \
+    test-developer-tools-cache >> /tmp/developer-seed-validation.txt && cat /tmp/developer-seed-validation.txt
 
 FROM runtime-with-toolchain AS guest-rootfs
 
@@ -432,19 +464,69 @@ COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
 COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoagent/developer-tools-version
+COPY --chown=0:0 --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
+COPY --from=developer-seed-smoke /tmp/developer-seed-validation.txt /usr/share/nanoagent/developer-seed-validation.txt
 
-FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
-
+FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS filesystem-tools
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-COPY --from=guest-rootfs / /rootfs/
+
+# Tool archives are built once and exported separately from the small guest root.
+# The manifest excludes itself and is identical inside the disk and guest image.
+FROM filesystem-tools AS seed-filesystem
+COPY --from=guest-rootfs /usr/share/nanoagent/ /seeds/
+RUN cd /seeds && find . -type f -print0 | sort -z | xargs -0 sha256sum > /seed-files.sha256 && \
+    cp /seed-files.sha256 /seeds/seed-files.sha256 && \
+    mkdir -p /out && truncate -s 1073741824 /out/nanoagent-seeds.ext4 && \
+    E2FSPROGS_FAKE_TIME=0 mkfs.ext4 -F -q -m 0 -b 4096 -N 32768 -J size=16 \
+      -U 00000000-0000-0000-0000-000000000000 \
+      -E lazy_itable_init=0,lazy_journal_init=0 -d /seeds /out/nanoagent-seeds.ext4 && \
+    e2fsck -f -n /out/nanoagent-seeds.ext4 && \
+    cd /out && sha256sum nanoagent-seeds.ext4 > nanoagent-seeds.ext4.sha256
+
+# This exact native artifact is a named context in the paired controller build.
+FROM scratch AS seed-artifact
+COPY --from=seed-filesystem /out/ /
+
+FROM guest-rootfs AS guest-without-seeds
+RUN rm -rf /usr/share/nanoagent && mkdir -p /usr/share/nanoagent
+COPY --from=seed-filesystem /seed-files.sha256 /etc/nanoagent-seed-files.sha256
+
+FROM filesystem-tools AS rootfs-check
+COPY --from=guest-without-seeds / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
 RUN validate-rootfs /rootfs /rootfs-validation.txt
 
-FROM guest-rootfs
+FROM guest-without-seeds AS guest-image
+COPY --from=rootfs-check /rootfs-validation.txt /etc/nanoagent-rootfs-validation.txt
+RUN --network=none --mount=type=bind,source=test-guest-admin.sh,target=/tmp/test-guest-admin.sh,readonly \
+    bash /tmp/test-guest-admin.sh --metadata > /etc/nanoagent-filesystem.sha256
 
-COPY --from=rootfs-check /rootfs-validation.txt /usr/share/nanoagent/rootfs-validation.txt
+# Every populated file is in one layer, which fits the installed 512 MiB scratch.
+# COPY from a build stage retains filesystem ownership and xattrs.
+FROM scratch AS nanoagent
+ENV CARGO_HOME=/home/nanoagent/.cargo \
+    CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
+    SPIRE_AGENT_BINARY=/home/nanoagent/.local/bin/spire-agent \
+    SPIRE_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-spire-agent \
+    CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
+    CODEX_BINARY=/home/nanoagent/.local/bin/codex \
+    CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
+    CODEX_HOME=/home/nanoagent/.codex \
+    BUN_INSTALL=/home/nanoagent/.local \
+    GOROOT=/home/nanoagent/.local/go \
+    HOME=/home/nanoagent \
+    NANOAGENT_HOME=/home/nanoagent \
+    NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
+    NANOAGENT_WORKSPACE=/workspace \
+    NANOAGENT_TOOL_SEED_MANIFEST=/etc/nanoagent-seed-files.sha256 \
+    NPM_CONFIG_PREFIX=/home/nanoagent/.local \
+    PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
+    DEVELOPER_TOOLS_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-developer-tools \
+    XDG_CACHE_HOME=/home/nanoagent/.cache
+COPY --from=guest-image / /
 USER 1000:1000
 WORKDIR /home/nanoagent
 EXPOSE 8080

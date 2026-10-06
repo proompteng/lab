@@ -31,6 +31,8 @@ RUN apt-get update -o Acquire::Retries=3 && \
     useradd --uid 65532 --gid 65532 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin tengri
 
 COPY --from=build /out-tengri /usr/local/bin/tengri
+# Paired native builds supply this named context from Nanoagent seed-artifact.
+COPY --from=nanoagent-seeds /nanoagent-seeds.ext4 /nanoagent-seeds.ext4.sha256 /usr/share/tengri/
 
 USER 65532:65532
 EXPOSE 50051 8080

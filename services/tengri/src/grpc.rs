@@ -2388,7 +2388,7 @@ fn validate_preview_fragment(value: &str) -> Result<String, Status> {
     Ok(value.to_owned())
 }
 
-fn validate_digest_pinned_image(image: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_digest_pinned_image(image: &str) -> anyhow::Result<()> {
     let (repository, digest) = image
         .rsplit_once("@sha256:")
         .ok_or_else(|| anyhow::anyhow!("TENGRI_DEFAULT_IMAGE must be pinned by sha256 digest"))?;

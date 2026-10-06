@@ -64,7 +64,7 @@ pub fn pvc_name(microvm: &MicroVM) -> String {
     bounded_child_name(&microvm.name_any(), "home")
 }
 
-fn bounded_child_name(parent: &str, suffix: &str) -> String {
+pub(crate) fn bounded_child_name(parent: &str, suffix: &str) -> String {
     let candidate = format!("{parent}-{suffix}");
     if candidate.len() <= MAX_DNS_SUBDOMAIN_LENGTH
         && candidate
@@ -619,6 +619,8 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..ContainerPort::default()
             },
         ]),
+        // Observe usable guests promptly while retaining the existing 15-second
+        // readiness failure window and 35-minute maximum startup allowance.
         readiness_probe: Some(http_probe("/readyz", 1, 15)),
         startup_probe: Some(http_probe("/readyz", 1, 2100)),
         liveness_probe: Some(http_probe("/livez", 15, 3)),

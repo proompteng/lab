@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly CODE_SERVER_VERSION='4.135.0'
+readonly TOOL_SEED_ROOT="${NANOAGENT_TOOL_SEED_ROOT:-/usr/share/nanoagent}"
 code_platform=''
 code_digest=''
 code_temporary=''
@@ -34,17 +35,14 @@ install_code_server() {
   else
     code_temporary="$(mktemp -d "$code_root/.install.XXXXXX")"
     trap cleanup EXIT HUP INT TERM
-    local archive="$code_temporary/code-server.tgz"
-    curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
-      --retry 3 --retry-all-errors --connect-timeout 15 --max-time 600 \
-      --output "$archive" \
-      "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${install_name}.tar.gz"
+    local archive="$TOOL_SEED_ROOT/${install_name}.tar.xz"
+    [[ -r "$archive" ]] || fail "image package is missing: $archive"
     if command -v sha256sum >/dev/null 2>&1; then
-      printf '%s  %s\n' "$code_digest" "$archive" | sha256sum --check --status -
+      (cd "$TOOL_SEED_ROOT" && sha256sum --check --status "${archive##*/}.sha256")
     else
-      printf '%s  %s\n' "$code_digest" "$archive" | shasum -a 256 --check --status -
+      (cd "$TOOL_SEED_ROOT" && shasum -a 256 --check --status "${archive##*/}.sha256")
     fi
-    tar -xzf "$archive" -C "$code_temporary" --no-same-owner --no-same-permissions
+    tar -xJf "$archive" -C "$code_temporary" --no-same-owner --no-same-permissions
     [[ -x "$code_temporary/$install_name/bin/code-server" ]] || fail 'verified archive is missing code-server'
     printf '%s\n' "$expected_marker" > "$code_temporary/$install_name/.tengri-manifest"
     mv "$code_temporary/$install_name" "$install_root"
@@ -58,6 +56,11 @@ install_code_server() {
 }
 
 case "${1:-}" in
+  --archive-manifest)
+    select_platform
+    printf '%s\n' "code-server-${CODE_SERVER_VERSION}-${code_platform}.tar.xz" sha256 "$code_digest" \
+      "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-${code_platform}.tar.gz" .
+    ;;
   --validate-manifest) select_platform ;;
   --install-only) install_code_server ;;
   *) fail 'expected --validate-manifest or --install-only' ;;

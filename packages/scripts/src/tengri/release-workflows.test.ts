@@ -22,8 +22,9 @@ describe('Tengri image workflow', () => {
 
     expect(YAML.parse(source).name).toBe('Tengri images')
     expect(source).not.toContain('tengri-release.yml')
-    expect(source).toContain('service: tengri')
-    expect(source).toContain('service: nanoagent')
+    expect(source).toContain('Build paired images (${{ matrix.architecture }})')
+    expect(source).toContain('Build native Nanoagent image')
+    expect(source).toContain('Build paired native Tengri image')
     expect(source).toContain('architecture: amd64')
     expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
@@ -49,6 +50,41 @@ describe('Tengri image workflow', () => {
     expect(source).not.toContain('release-contract.json')
     expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent'])
     expect(existsSync(resolve(repositoryRoot, 'argocd/applications/kargo'))).toBe(true)
+  })
+
+  it('builds each controller with the exact native guest seed artifact and validates the pair', () => {
+    const images = YAML.parse(readFileSync(imagesPath, 'utf8'))
+    const build = images.jobs.build
+    expect(build.strategy.matrix.include).toEqual([
+      { architecture: 'amd64', runner: 'arc-amd64' },
+      { architecture: 'arm64', runner: 'arc-arm64' },
+    ])
+    const steps = build.steps
+    const seed = steps.findIndex((step: { name: string }) => step.name === 'Export native tool seed filesystem')
+    const controller = steps.findIndex((step: { name: string }) => step.name === 'Build paired native Tengri image')
+    const validation = steps.findIndex(
+      (step: { name: string }) =>
+        step.name === 'Verify paired root and tool disk with offline fresh and retained homes',
+    )
+    expect(seed).toBeGreaterThanOrEqual(0)
+    expect(controller).toBeGreaterThan(seed)
+    expect(validation).toBeGreaterThan(controller)
+    expect(steps[seed].with.target).toBe('seed-artifact')
+    expect(steps[controller].with['build-contexts']).toBe('nanoagent-seeds=./.artifacts/nanoagent-seeds')
+    expect(steps[controller].with.platforms).toBe(steps[seed].with.platforms)
+    expect(steps[validation].if).toBeUndefined()
+    expect(steps[validation].run).toContain(
+      'test-image-chain.sh "$GUEST_IMAGE" .artifacts/nanoagent-seeds "$CONTROLLER_IMAGE"',
+    )
+    const check = readFileSync(resolve(repositoryRoot, 'services/nanoagent/test-image-chain.sh'), 'utf8')
+    expect(check).toContain('e2fsck -f -n')
+    expect(check).toContain('debugfs -R')
+    expect(check).toContain('--validate-tool-seeds')
+    expect(check).toContain('test-developer-tools.sh')
+    expect(check).not.toContain('losetup')
+    expect(check).not.toContain('--privileged')
+    expect(check).not.toContain('type=bind')
+    expect(check).toContain('tar --create --file - --directory "$work/seeds" . | docker run --rm --interactive')
   })
 
   it('gates the publisher on full controller and guest validation', () => {

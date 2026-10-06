@@ -11,6 +11,7 @@ mod metrics;
 mod pod;
 mod runtime_secret;
 mod tickets;
+mod tool_seeds;
 
 use std::{env, future::Future, net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -47,6 +48,16 @@ const STARTUP_KUBERNETES_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) == Some("--validate-tool-seeds") {
+        println!("seed_image_sha256={}", tool_seeds::validate_image()?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("--populate-tool-seeds") {
+        anyhow::ensure!(args.len() == 2, "expected the tool seed PVC UID");
+        tool_seeds::populate(&args[1])?;
+        return Ok(());
+    }
     install_rustls_crypto_provider()?;
 
     tracing_subscriber::fmt()
@@ -90,6 +101,27 @@ async fn main() -> anyhow::Result<()> {
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
+    // Reuse the exact deployed controller image for its architecture-specific seed artifact.
+    // No extra image subscription, credential, API role, or promotion path is needed.
+    let own_pods =
+        kube::Api::<k8s_openapi::api::core::v1::Pod>::namespaced(client.clone(), &namespace);
+    let own_pod_name = required_env("TENGRI_POD_NAME")?;
+    let own_pod = retry_kubernetes_startup_operation(
+        || own_pods.get(&own_pod_name),
+        STARTUP_KUBERNETES_RETRY_ATTEMPTS,
+        STARTUP_KUBERNETES_INITIAL_RETRY_DELAY,
+        STARTUP_KUBERNETES_MAX_RETRY_DELAY,
+    )
+    .await
+    .context("read controller seed image")?;
+    let seed_image = own_pod
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.containers.iter().find(|c| c.name == "tengri"))
+        .and_then(|c| c.image.clone())
+        .context("controller Pod has no Tengri image")?;
+    grpc::validate_digest_pinned_image(&seed_image)
+        .context("controller tool seed image must be immutable")?;
     let workload_identity = identity::WorkloadIdentity::from_environment(&namespace).await?;
     let grpc_tls = workload_identity.server_tls()?;
     let grpc_listener = TcpListener::bind(listen_address)
@@ -145,6 +177,7 @@ async fn main() -> anyhow::Result<()> {
             namespace: controller_namespace,
             tickets,
             guest_image: controller_guest_image.into(),
+            seed_image: seed_image.into(),
             identity: workload_identity,
         })
         .await;
@@ -233,22 +266,22 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-async fn retry_kubernetes_startup_operation<F, Fut>(
+async fn retry_kubernetes_startup_operation<F, Fut, T>(
     mut operation: F,
     max_attempts: usize,
     initial_delay: Duration,
     max_delay: Duration,
-) -> Result<(), kube::Error>
+) -> Result<T, kube::Error>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<(), kube::Error>>,
+    Fut: Future<Output = Result<T, kube::Error>>,
 {
     debug_assert!(max_attempts > 0);
 
     let mut retry_delay = initial_delay;
     for attempt in 1..=max_attempts {
         match operation().await {
-            Ok(()) => return Ok(()),
+            Ok(result) => return Ok(result),
             Err(error) if attempt < max_attempts && retryable_startup_kubernetes_error(&error) => {
                 warn!(
                     attempt,
@@ -407,7 +440,7 @@ mod tests {
             move || {
                 operation_attempts.fetch_add(1, Ordering::SeqCst);
                 async {
-                    Err(kube::Error::Api(
+                    Err::<(), _>(kube::Error::Api(
                         kube::core::Status::failure("forbidden", "Forbidden")
                             .with_code(403)
                             .boxed(),
@@ -433,7 +466,7 @@ mod tests {
         let error = retry_kubernetes_startup_operation(
             move || {
                 operation_attempts.fetch_add(1, Ordering::SeqCst);
-                async { Err(connection_refused_error()) }
+                async { Err::<(), _>(connection_refused_error()) }
             },
             3,
             Duration::ZERO,
