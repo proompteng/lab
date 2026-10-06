@@ -1,4 +1,5 @@
 import type { ReconciliationRuntime } from './model'
+import { BrokerEnvironment } from '../broker/identity'
 import { CandidateObservationStore } from './candidate-observation'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
@@ -128,10 +129,19 @@ const observeRiskLimits = {
   decisionTtlMs: 300_000,
 } as const
 
+const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
+  ...observeRiskLimits,
+  maxDailyTradedNotionalMicros:
+    brokerEnvironment === BrokerEnvironment.Sandbox
+      ? dollarsToMicros(1_000_000n)
+      : observeRiskLimits.maxDailyTradedNotionalMicros,
+})
+
 const loadExecutionRiskPolicyDataFirst = (
   accountId: string,
   allowedSymbols: readonly string[],
   executionModel: CycleExecutionModel,
+  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
 ) =>
   decodePolicy({
     schemaVersion: isQuoteBoundExecutionModel(executionModel)
@@ -143,15 +153,26 @@ const loadExecutionRiskPolicyDataFirst = (
     allowedOrderTypes: [isQuoteBoundExecutionModel(executionModel) ? OrderType.Limit : OrderType.Market],
     allowedTimeInForce: [isQuoteBoundExecutionModel(executionModel) ? TimeInForce.ImmediateOrCancel : TimeInForce.Day],
     maxOpenOrders: allowedSymbols.length,
-    ...observeRiskLimits,
+    ...executionRiskLimits(brokerEnvironment),
   })
 
-export const loadExecutionRiskPolicy = Pipeable.dual(3, loadExecutionRiskPolicyDataFirst)
+export const loadExecutionRiskPolicy = Pipeable.by<
+  (
+    allowedSymbols: readonly string[],
+    executionModel: CycleExecutionModel,
+    brokerEnvironment?: BrokerEnvironment,
+  ) => (accountId: string) => ReturnType<typeof loadExecutionRiskPolicyDataFirst>,
+  typeof loadExecutionRiskPolicyDataFirst
+>((args) => typeof args[0] === 'string', loadExecutionRiskPolicyDataFirst)
 
 export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
   loadExecutionRiskPolicyDataFirst(accountId, allowedSymbols, defaultExecutionModel)
 
-const loadQuoteBoundExecutionRiskPolicyDataFirst = (accountId: string, allowedSymbols: readonly string[]) =>
+const loadQuoteBoundExecutionRiskPolicyDataFirst = (
+  accountId: string,
+  allowedSymbols: readonly string[],
+  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
+) =>
   decodePolicy({
     schemaVersion: executionRiskPolicySchemaVersion,
     accountId,
@@ -160,10 +181,16 @@ const loadQuoteBoundExecutionRiskPolicyDataFirst = (accountId: string, allowedSy
     allowedOrderTypes: [OrderType.Limit],
     allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
     maxOpenOrders: allowedSymbols.length,
-    ...observeRiskLimits,
+    ...executionRiskLimits(brokerEnvironment),
   })
 
-export const loadQuoteBoundExecutionRiskPolicy = Pipeable.dual(2, loadQuoteBoundExecutionRiskPolicyDataFirst)
+export const loadQuoteBoundExecutionRiskPolicy = Pipeable.by<
+  (
+    allowedSymbols: readonly string[],
+    brokerEnvironment?: BrokerEnvironment,
+  ) => (accountId: string) => ReturnType<typeof loadQuoteBoundExecutionRiskPolicyDataFirst>,
+  typeof loadQuoteBoundExecutionRiskPolicyDataFirst
+>((args) => typeof args[0] === 'string', loadQuoteBoundExecutionRiskPolicyDataFirst)
 
 type ObserveStrategy = StrategyRuntime
 
