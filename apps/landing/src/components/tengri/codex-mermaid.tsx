@@ -53,11 +53,25 @@ export function CodexMermaid({ source, children }: { source: string; children: R
 
   useEffect(() => {
     let cancelled = false
+    let loadRetries = 0
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
     const render = async () => {
       if (cancelled) return
       try {
         assertMermaidResourcePolicy(source)
-        const mermaid = await getMermaid()
+        const mermaid = await getMermaid().catch((error) => {
+          // Completed responses may never change source. Retry transient imports
+          // twice with backoff, without retrying invalid syntax or unsafe diagrams.
+          if (!cancelled && loadRetries < 2) {
+            retryTimer = setTimeout(
+              () => {
+                renderQueue = renderQueue.then(render)
+              },
+              500 * 2 ** loadRetries++,
+            )
+          }
+          throw error
+        })
         if (cancelled) return
         // Mermaid fetches image nodes during layout, before SVG sanitization.
         const diagram = await mermaid.mermaidAPI.getDiagramFromText(source)
@@ -86,6 +100,7 @@ export function CodexMermaid({ source, children }: { source: string; children: R
     return () => {
       cancelled = true
       clearTimeout(timer)
+      clearTimeout(retryTimer)
     }
   }, [id, source])
 

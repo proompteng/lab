@@ -4060,54 +4060,64 @@ test('coalesces Mermaid streaming updates before rendering the latest source', a
   ).toHaveLength(1)
 })
 
-test('retries Mermaid loading after a failed lazy chunk request', async ({ page }) => {
-  await mockTengri(page, {
-    resumeThreadRawJson: JSON.stringify({
-      thread: {
-        turns: [
-          {
-            id: 'turn-1',
-            status: 'inProgress',
-            items: [{ id: 'warm', type: 'agentMessage', text: 'Ready to stream.' }],
-          },
-        ],
-      },
-    }),
-  })
-  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
-  await page.goto('/')
-  await expect(page.getByRole('article', { name: 'Codex response' })).toContainText('Ready to stream.')
-  const chunkPattern = '**/_next/static/chunks/**'
-  let blockedChunk: string | undefined
-  let blockedRequests = 0
-  await page.route(chunkPattern, (route) => {
-    if (route.request().resourceType() !== 'script') return route.continue()
-    blockedChunk ??= route.request().url()
-    // Also fail the development loader's automatic retry of the same chunk.
-    if (route.request().url() === blockedChunk) {
-      blockedRequests++
-      return route.abort('failed')
+for (const completed of [false, true]) {
+  test(`retries Mermaid loading after a failed lazy chunk request for ${completed ? 'unchanged completed responses' : 'streamed responses'}`, async ({
+    page,
+  }) => {
+    await mockTengri(page, {
+      resumeThreadRawJson: JSON.stringify({
+        thread: {
+          turns: [
+            {
+              id: 'turn-1',
+              status: 'inProgress',
+              items: [{ id: 'warm', type: 'agentMessage', text: 'Ready to stream.' }],
+            },
+          ],
+        },
+      }),
+    })
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+    await page.goto('/')
+    await expect(page.getByRole('article', { name: 'Codex response' })).toContainText('Ready to stream.')
+    const chunkPattern = '**/_next/static/chunks/**'
+    let blockedChunk: string | undefined
+    let blockedRequests = 0
+    await page.route(chunkPattern, (route) => {
+      if (route.request().resourceType() !== 'script') return route.continue()
+      blockedChunk ??= route.request().url()
+      // Also fail the development loader's automatic retry of the same chunk.
+      if (route.request().url() === blockedChunk) {
+        blockedRequests++
+        return route.abort('failed')
+      }
+      return route.continue()
+    })
+    const event = {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      approvalId: '',
+      rawJson: '{}',
+      itemId: 'retry',
+      kind: 'assistant-text',
+      method: completed ? 'item/completed' : 'item/agentMessage/delta',
     }
-    return route.continue()
+    await emitCodexEvent(page, {
+      ...event,
+      sequence: 1,
+      text: completed
+        ? '```mermaid\nflowchart LR\nA[Retry] --> B[Recovered]\n```'
+        : '```mermaid\nflowchart LR\nA[Retry]\n',
+    })
+    const response = page.getByRole('article', { name: 'Codex response' }).last()
+    await expect(response.getByRole('status')).toContainText('Diagram unavailable')
+    expect(blockedRequests).toBeGreaterThan(0)
+    await page.unroute(chunkPattern)
+    if (!completed) await emitCodexEvent(page, { ...event, sequence: 2, text: 'A --> B[Recovered]\n```' })
+    await expect(response.getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText('Recovered')
+    await expect(response.locator('pre')).toHaveCount(0)
   })
-  const event = {
-    threadId: 'thread-1',
-    turnId: 'turn-1',
-    approvalId: '',
-    rawJson: '{}',
-    itemId: 'retry',
-    kind: 'assistant-text',
-    method: 'item/agentMessage/delta',
-  }
-  await emitCodexEvent(page, { ...event, sequence: 1, text: '```mermaid\nflowchart LR\nA[Retry]\n' })
-  const response = page.getByRole('article', { name: 'Codex response' }).last()
-  await expect(response.getByRole('status')).toContainText('Diagram unavailable')
-  expect(blockedRequests).toBeGreaterThan(0)
-  await page.unroute(chunkPattern)
-  await emitCodexEvent(page, { ...event, sequence: 2, text: 'A --> B[Recovered]\n```' })
-  await expect(response.getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText('Recovered')
-  await expect(response.locator('pre')).toHaveCount(0)
-})
+}
 
 test('rejects Mermaid image nodes before fetching their URLs', async ({ page }) => {
   const imageRequests: string[] = []
