@@ -250,6 +250,15 @@ batches and checks the retained observation window before loading full signal hi
 signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
 the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
 
+A newly committed terminal Jev cycle makes one best-effort attempt to seal its own expired pending batches, across
+that cycle's recorded authority generations. This runs after the authoritative cycle mutation and uses the existing
+configured operation timeout and cancellation-aware deadline clock. It never calls the model, waits for an original
+deadline, revives a decision, or scans historical terminal cycles. Unattempted and abandoned outcomes retain the
+original evidence semantics. A missing, unexpired, foreign-cycle or failed cleanup remains explicitly logged as
+incomplete; typed failures, defects and cleanup timeout do not replace the committed terminal receipt. External
+interruption still cancels and joins cleanup without undoing the terminal state. This is evidence closure, not a
+durable retry queue or a guarantee against process death after the terminal commit.
+
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
 deadlines. An invalid historical bar remains invalid while it is in the rolling window; waiting only helps once a
