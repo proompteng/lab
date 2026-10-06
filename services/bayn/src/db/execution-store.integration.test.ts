@@ -576,6 +576,28 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(forward.brokerFeeRecords).toHaveLength(3)
     expect(forward.generationBrokerFeeIds).toEqual(['fee-0', 'fee-1', 'fee-2'])
     expect(forward.ambiguousBrokerFeeCount).toBe(0)
+    const cuts = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const reports = []
+        for (const cut of [occurredAt, observedAt]) {
+          yield* sql`INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${hash(`fee-cut-${cut}`)}, 'bayn.paper-reconciliation.v1', ${accountId}, ${hash('fee-cut-state')},
+            ${hash('fee-cut-state')}, ${hash(`fee-cut-content-${cut}`)}, 'EXACT', '[]'::jsonb, ${cut}::timestamptz
+          )`
+          reports.push(yield* readForwardPerformancePostgres(sql, accountId))
+        }
+        return reports
+      }),
+    )
+    expect(cuts.map((report) => report.postReconciliationActivityCount)).toEqual([3, 0])
+    for (const report of cuts) {
+      expect(report.brokerFeeRecords).toEqual(forward.brokerFeeRecords)
+      expect(report.generationBrokerFeeIds).toEqual(forward.generationBrokerFeeIds)
+    }
   })
 
   test('binds the submit cache to the latest exact reconciliation, broker observations and authority version', async () => {

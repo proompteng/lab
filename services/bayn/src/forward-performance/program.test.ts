@@ -101,12 +101,48 @@ interface SqlObservation {
 interface SqlFixture {
   readonly extraReconciliationDiscrepancy?: boolean
   readonly preWindowCashResidualMicros?: string
+  readonly brokerFeeTimes?: {
+    readonly firstObservedAt: string
+    readonly postedAt: string | null
+  }
 }
 
 const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}): PgClient.PgClient => {
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
+    if (statement.includes('SELECT fee.data, fee.read_evidence')) {
+      const times = fixture.brokerFeeTimes
+      return Effect.succeed(
+        times === undefined
+          ? []
+          : [
+              {
+                data: {
+                  accountId: identityResult.success.accountId,
+                  activityId: 'synthetic-delayed-fee',
+                  date: '2026-07-20',
+                  netAmountMicros: '-100',
+                },
+                read_evidence: {
+                  requestId: 'synthetic-fee-read',
+                  status: 200,
+                  contentHash: hash('1'),
+                  observedAt: times.firstObservedAt,
+                },
+                content_hash: hash('2'),
+                ledger_plan_hash: hash('3'),
+                tigerbeetle_cluster_id: '2001',
+                tigerbeetle_ledger: 7001,
+                posted: times.postedAt !== null,
+                first_observed_at: new Date(times.firstObservedAt),
+                posted_at: times.postedAt === null ? null : new Date(times.postedAt),
+                includes_generation: true,
+                includes_other_generation: false,
+              },
+            ],
+      )
+    }
     if (statement.includes('SELECT reconciliation_id, content_hash, status, discrepancies, reconciled_at')) {
       return Effect.succeed([
         {
@@ -367,6 +403,25 @@ const marketReaderConfig = {
 }
 
 describe('forward performance read program', () => {
+  test.each([
+    ['at-cut', '2026-07-20T21:01:00.000Z', '2026-07-20T21:01:00.000Z', 0],
+    ['observed-after-cut', '2026-07-20T21:01:00.001Z', '2026-07-20T21:01:00.001Z', 1],
+    ['posted-after-cut', '2026-07-20T21:00:00.000Z', '2026-07-20T21:01:00.001Z', 1],
+    ['unposted-before-cut', '2026-07-20T21:00:00.000Z', null, 0],
+    ['unposted-after-cut', '2026-07-20T21:01:00.001Z', null, 1],
+  ] as const)('retains delayed fees and detects %s evidence', async (_name, firstObservedAt, postedAt, count) => {
+    const sql = makeReadOnlySql({ statements: [] }, { brokerFeeTimes: { firstObservedAt, postedAt } })
+    const evidence = await Effect.runPromise(readForwardPerformancePostgres(sql, identityResult.success.accountId))
+
+    expect(evidence.postReconciliationActivityCount).toBe(count)
+    expect(evidence.generationBrokerFeeIds).toEqual(['synthetic-delayed-fee'])
+    expect(evidence.brokerFeeRecords).toHaveLength(1)
+    expect(evidence.brokerFeeRecords?.[0]?.data).toMatchObject({ date: '2026-07-20', netAmountMicros: '-100' })
+    expect(evidence.brokerFeeRecords?.[0]?.posted).toBe(postedAt !== null)
+    expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('first_observed_at')
+    expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('posted_at')
+  })
+
   test('constructs exact immutable Signal volume evidence without rounding fractional microshares', () => {
     const first = success(
       makeForwardPerformanceMarketVolumeEvidence(marketVolumeRequest, marketSnapshotRows, marketEvaluationStart),
@@ -1037,6 +1092,21 @@ describe('forward performance read program', () => {
         decimal: '0.100000000000',
       },
     })
+    const withLaterFeeEvidence = await Effect.runPromise(
+      Effect.scoped(
+        runForwardPerformance(config, {
+          ...readers,
+          postgres: (...args) =>
+            readers
+              .postgres(...args)
+              .pipe(Effect.map((evidence) => ({ ...evidence, postReconciliationActivityCount: 1 }))),
+        }).pipe(Effect.provideService(PgClient.PgClient, sql)),
+      ),
+    )
+    expect(withLaterFeeEvidence.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
+    expect(withLaterFeeEvidence.evidence.reasonCodes).toEqual(['UNCLOSED_WINDOW'])
+    expect(withLaterFeeEvidence.profitability).toBe('UNDETERMINED')
+    expect(withLaterFeeEvidence.totals).toEqual(receipt.totals)
   })
 })
 
