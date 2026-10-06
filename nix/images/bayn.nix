@@ -16,9 +16,9 @@ let
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
   strategyProtocolHash = "131371357a091ac5d09f5a3dd1585b84cb5509e334beef99ee9d5f14600cf908";
-  # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
-  # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
-  executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
+  # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
+  # This records availability; runtime separately selects and verifies the account-bound activation policy.
+  executionRiskPolicyHash = "b6fa12aa74014cb122a525ddbde52ee93d31f17096b88ffad507791a83ea4ce1";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"

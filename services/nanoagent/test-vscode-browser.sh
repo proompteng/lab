@@ -82,12 +82,15 @@ fixture_pids="$fixture_pids $!"
 ) >"$fixture_root/desktop.log" 2>&1 &
 fixture_pids="$fixture_pids $!"
 python3 - <<'PY'
-import socket, time
+import socket, sys, time
+# Linux probe source ports can overlap fixture listeners and even self-connect.
+# A distinct loopback address avoids both without changing fixture ports.
+source_address = ('127.0.0.2', 0) if sys.platform == 'linux' else None
 for port in (8080, 33082, 33083, 3143, 3443):
     deadline = time.monotonic() + 300
     while True:
         try:
-            with socket.create_connection(('127.0.0.1', port), timeout=1): break
+            with socket.create_connection(('127.0.0.1', port), timeout=1, source_address=source_address): break
         except OSError:
             if time.monotonic() > deadline: raise RuntimeError(f'Fixture on port {port} failed to start')
             time.sleep(.2)

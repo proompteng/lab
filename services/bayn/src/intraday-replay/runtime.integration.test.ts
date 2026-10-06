@@ -950,6 +950,7 @@ durableTest.each(
               )
               const engine = yield* makeTradingEngine({
                 authority,
+                riskPolicyHash: generation.riskPolicyHash,
                 executionMode: mode,
                 cycle: {
                   accountId,

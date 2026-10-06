@@ -1,4 +1,5 @@
 import type { Effect } from 'effect'
+import type { BrokerEnvironment } from '../broker/identity'
 import { BrokerRead } from '../broker/alpaca'
 import type { CycleExecutionPolicy } from '../cycle'
 import type { CycleRunnerError, CycleRunResult } from '../cycle/runner'
@@ -79,6 +80,9 @@ export type RecoveryFirstCycleDriverOwner<R = RecoveryFirstRuntime> = (
 
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
+  readonly brokerEnvironment?: BrokerEnvironment
+  /** The exact policy hash from the verified durable mandate; absence retains the original policy. */
+  readonly riskPolicyHash?: string
   readonly authorityGenerationHash: string
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number

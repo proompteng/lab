@@ -85,6 +85,11 @@ allowed capture start and invocation abort bound before issuing requests. A lost
 deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
 its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
 timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
+Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
+quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
+Failed captures dispose their broker runtime before recording failure or sampling the settled request budget, so a lazy
+client acquisition cannot continue issuing requests after recovery returns. Defects, interruption, mixed failure causes,
+and lost or expired capture tickets retain the conservative reservation.
 Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
@@ -142,6 +147,15 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
+Sandbox execution can select a $1,000,000 daily gross-turnover budget through its exact immutable mandate hash;
+the retained sandbox mandate stays at $200,000 until explicitly rebound. Live and unspecified environments stay at $200,000.
+At $100,000 equity and a 20% target, the sandbox budget supports about 25 full-size round trips across the entry
+window. This is bounded research capacity, not a profitability assumption. All other sizing, cost and risk checks
+are unchanged. The existing sandbox request remains usable across the code rollout; the increase requires a newly
+reviewed research request bound to the new policy hash. Unknown hashes and the increased hash on live fail closed.
+Durable account/session turnover is retained across policy and worker changes, and completed
+decisions are not reopened. The image's policy-hash annotation verifies the available increased sandbox policy for its
+build-account sentinel; the durable mandate remains the authority for the active account policy.
 The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
 exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
 yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
@@ -431,6 +445,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Forward performance deducts delayed fees by their trading date when that date belongs to one authority generation.
   Fees on dates shared by generations leave the receipt insufficient until allocation is supported. Account-wide
   ledger verification includes all fees; cash-yield calculations account for their actual observation window.
+  Fees first observed or posted after the selected reconciliation retain their economic-date attribution and
+  amounts, but leave the report `INSUFFICIENT_EVIDENCE` with `UNCLOSED_WINDOW`. A closed reconciliation cut cannot
+  certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
   authority.
@@ -503,6 +520,15 @@ and activation manifests, and deploy that restored configuration with the compat
 the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
 
 ### Private inference operating-cost report
+
+The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
+coverage: `otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
+`OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Verified gross trading P&L and fees remain visible.
+Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
+Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
+receipts keep their original bytes and hashes; this correction applies to newly computed reports.
+Tariffs and expense packets are configured on the private command below. Their account/session scope is not
+silently applied to a generation or window report.
 
 Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
 Jev requests across all cycles for one account and exchange-session date, including blocked and no-trade cycles:
