@@ -331,7 +331,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     )
   })
 
-  test.each(['settled', 'stale', 'position', 'unresolved', 'operator'] as const)(
+  test.each(['settled', 'submillisecond', 'stale', 'position', 'unresolved', 'operator'] as const)(
     'recovers restricted OBSERVE after historical trading only with settled fresh evidence: %s',
     async (scenario) => {
       const fixture = makeFixture(true)
@@ -402,10 +402,17 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             maximum: Authority.Observe,
           })
           expect(successor.kill).toBe(KillState.Clear)
+          const restrictionClock =
+            scenario === 'submillisecond'
+              ? sql`date_trunc('milliseconds', greatest(clock_timestamp(), updated_at)) + interval '1 millisecond'`
+              : sql`greatest(clock_timestamp(), updated_at + interval '1 millisecond')`
+          const evidenceClock =
+            scenario === 'submillisecond'
+              ? sql`(SELECT updated_at + interval '1500 microseconds' FROM authority_state WHERE singleton)`
+              : sql`clock_timestamp()`
           yield* sql`UPDATE authority_state SET kill_state = 'ACTIVE', effective = 'OBSERVE',
           reason = ${scenario === 'operator' ? 'operator hold' : 'reconciliation pass incomplete'},
-          version = version + 1, updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond')
-          WHERE singleton`
+          version = version + 1, updated_at = ${restrictionClock} WHERE singleton`
           if (scenario === 'position') {
             yield* sql`INSERT INTO position_snapshots (
             snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
@@ -430,7 +437,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
               snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
             ) VALUES (
               ${canonicalHashV1({ snapshot: 'after-restriction' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
-              ${'c'.repeat(64)}, clock_timestamp(), 0, ${'c'.repeat(64)}
+              ${'c'.repeat(64)}, ${evidenceClock}, 0, ${'c'.repeat(64)}
             )`
             }
             yield* sql`INSERT INTO reconciliations (
@@ -438,14 +445,36 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             status, discrepancies, reconciled_at
           ) VALUES (
             ${canonicalHashV1({ reconciliation: 'after-restriction' })}, 'bayn.paper-reconciliation.v1', ${accountId},
-            ${'b'.repeat(64)}, ${'b'.repeat(64)}, ${'b'.repeat(64)}, 'EXACT', '[]'::jsonb, clock_timestamp()
+            ${'b'.repeat(64)}, ${'b'.repeat(64)}, ${'b'.repeat(64)}, 'EXACT', '[]'::jsonb, ${evidenceClock}
           )`
           }
-          const recovered = yield* authority.ensureAuthorityGeneration({
+          const recoveryAuthority = makeObserveAuthorityInterpreter(
+            sql,
+            makeAuthorityPostgres(sql, {
+              now:
+                scenario === 'submillisecond'
+                  ? sql`(SELECT updated_at + interval '1900 microseconds' FROM authority_state WHERE singleton)`
+                  : sql`clock_timestamp()`,
+            }),
+            brokerIdentity,
+          )
+          const recovered = yield* recoveryAuthority.ensureAuthorityGeneration({
             generationHash: canonicalHashV1({ generation: 'recovered-observe' }),
             maximum: Authority.Observe,
           })
-          expect(recovered.kill).toBe(scenario === 'settled' ? KillState.Clear : KillState.Active)
+          expect(recovered.kill).toBe(
+            scenario === 'settled' || scenario === 'submillisecond' ? KillState.Clear : KillState.Active,
+          )
+          if (scenario === 'submillisecond') {
+            expect(
+              yield* sql`SELECT
+                state.updated_at = generation.activated_at AS matching_instant,
+                extract(microseconds FROM state.updated_at - date_trunc('milliseconds', state.updated_at))::integer AS submillisecond
+              FROM authority_state AS state
+              JOIN authority_generations AS generation USING (generation_hash)
+              WHERE state.singleton`,
+            ).toEqual([{ matching_instant: true, submillisecond: 900 }])
+          }
           expect(recovered.effective).toBe(Authority.Observe)
           expect(yield* sql`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([
             { count: scenario === 'unresolved' ? 3 : 2 },

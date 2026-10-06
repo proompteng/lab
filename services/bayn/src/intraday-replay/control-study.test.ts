@@ -676,10 +676,17 @@ test('a canceled residual-shock entry consumes the minute and unknown exit quote
   expect(missing.report.missingExecutionQuotes).toBeGreaterThan(0)
 })
 
+const compressedControlFixture = (body: string) => {
+  const compressed = gzipSync(body)
+  compressed[9] = 3
+  return compressed
+}
+
 const frozenControlFixture = () => {
   const retained = retainedReplayFixture()
   const source = {
     ...retained.manifest,
+    dataSha256: sha256(compressedControlFixture(retained.body)),
     coverageStartMs: Date.parse('2026-09-04T13:30:00Z'),
     coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
   }
@@ -740,7 +747,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped()
       const arrivals = `${directory}/arrivals.ndjson.gz`
-      yield* fs.writeFile(arrivals, gzipSync(retained.body))
+      yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
       const legacyV3 = yield* runControlStudy(
         {
@@ -936,7 +943,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       expect({ status, error }).toEqual({ status: 0, error: '' })
       const written = yield* fs.readFileString(`${directory}/report.json`)
       expect(written).toBe(`${JSON.stringify(report, null, 2)}\n`)
-      yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+      yield* fs.writeFile(arrivals, compressedControlFixture(`${retained.body} `))
       const corrupt = yield* Effect.result(
         runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
       )
@@ -959,7 +966,7 @@ test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
         const fs = yield* FileSystem.FileSystem
         const directory = yield* fs.makeTempDirectoryScoped()
         const arrivals = `${directory}/arrivals.ndjson.gz`
-        yield* fs.writeFile(arrivals, gzipSync(retained.body))
+        yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
         const preflight = yield* runControlPreflight(input, arrivals, receipt)
         expect(preflight.classification).toBe('INPUT_COMPATIBILITY_ONLY')
         expect(preflight.coverage).toBe(ControlInputCoverage.Incomplete)
@@ -1016,7 +1023,7 @@ test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
         expect(preflightStatus).toBe(1)
         expect(preflightError).toContain('Preflight input coverage is INCOMPLETE')
         expect(yield* fs.readFileString(`${directory}/preflight.json`)).toBe(`${JSON.stringify(preflight, null, 2)}\n`)
-        yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+        yield* fs.writeFile(arrivals, compressedControlFixture(`${retained.body} `))
         expect(Result.isFailure(yield* Effect.result(runControlPreflight(input, arrivals, receipt)))).toBeTrue()
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.timeout('25 seconds')),
     )

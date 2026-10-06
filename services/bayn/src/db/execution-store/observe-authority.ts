@@ -156,7 +156,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const [databaseTime] = yield* sql<Record<string, unknown>>`
-        SELECT ${authority.clock.now} AS activated_at
+        SELECT to_char(${authority.clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS activated_at
       `.pipe(Effect.flatMap(decodeDatabaseInstant))
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
@@ -211,7 +211,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
   const terminalizeUnusedPreSubmissionResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
     request: ObserveGenerationRequest,
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     sql`
       UPDATE autonomous_cycles AS cycle
