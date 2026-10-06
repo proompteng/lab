@@ -346,7 +346,7 @@ export const evaluateJevPositionManagement = (input: {
           },
         }),
       )
-      yield* Effect.logWarning('Jev protective exit uses an exchange-only price reference').pipe(
+      yield* Effect.logWarning('Jev protective exit price reference').pipe(
         Effect.annotateLogs({
           ...jevProtectiveQuoteDiagnostics(quote, input.protocol.maximumSpreadBps),
           cycleId: input.cycle.identity.cycleId,

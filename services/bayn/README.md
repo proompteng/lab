@@ -403,6 +403,7 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   30-second budget gives statements 25 seconds, reserving five seconds for cancellation and rollback. Smaller budgets
   reserve half their time. The client closes a connection with no network activity halfway through that remaining
   allowance (27.5 seconds for the current budget), so a lost response cannot leave transaction cleanup waiting forever.
+  Its custom socket factory retains the SQL adapter's `TCP_NODELAY` setting for ordinary and cancellation connections.
   The aggregate execution deadline remains unchanged, and an uncertain mutation still requires durable lookup and reconciliation.
 - Connection acquisition and transaction startup are cancellable, including when both pool connections are occupied
   or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
