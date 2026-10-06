@@ -298,6 +298,64 @@ test('keeps accounting totals while any unverified decision withholds execution 
 })
 
 describe('forward performance domain', () => {
+  test('unknown operating costs preserve trading evidence and withhold full net profitability', () => {
+    const evidence = input()
+    assert(evidence.ledgerTotals !== undefined)
+    const receipt = success(
+      makeForwardPerformanceReceipt({
+        ...evidence,
+        ledgerTotals: { ...evidence.ledgerTotals, otherChargedCostsMicros: null },
+      }),
+    )
+    expect(receipt.evidence.reasonCodes).toEqual(['OPERATING_COST_EVIDENCE_GAP'])
+    expect(receipt.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
+    expect(receipt.reconciliationProof.ledgerExact).toBe(true)
+    expect(receipt.totals).toMatchObject({
+      startingCapitalMicros: '1000',
+      realizedGainsMicros: '100',
+      realizedLossesMicros: '0',
+      grossRealizedPnlMicros: '100',
+      brokerExecutionFeesMicros: '20',
+      otherChargedCostsMicros: null,
+      netRealizedPnlAfterCostsMicros: null,
+      netRealizedReturn: null,
+    })
+    expect(receipt.profitability).toBe('UNDETERMINED')
+  })
+
+  test('unknown operating costs keep measured execution prices from implying complete explicit costs', () => {
+    const evidence = input({
+      transactions: exactTransactions(),
+      executionEvidence: exactExecutionEvidence(),
+      marketVolumeEvidence: exactMarketVolumeEvidence(),
+    })
+    assert(evidence.ledgerTotals !== undefined)
+    const receipt = success(
+      makeForwardPerformanceReceipt({
+        ...evidence,
+        ledgerTotals: { ...evidence.ledgerTotals, otherChargedCostsMicros: null },
+      }),
+    )
+    expect(receipt.executionQuality.status).toBe('UNDETERMINED')
+    expect(receipt.executionQuality.reasonCodes).toEqual(['EXPLICIT_COST_EVIDENCE_GAP'])
+    expect(receipt.executionQuality.implementationShortfall).toBeNull()
+    expect(receipt.totals.grossRealizedPnlMicros).toBe('100')
+  })
+
+  test('retains explicitly supplied operating costs in the checked net calculation', () => {
+    const evidence = input()
+    assert(evidence.ledgerTotals !== undefined)
+    const receipt = success(
+      makeForwardPerformanceReceipt({
+        ...evidence,
+        ledgerTotals: { ...evidence.ledgerTotals, otherChargedCostsMicros: '90' },
+      }),
+    )
+    expect(receipt.evidence.reasonCodes).toEqual([])
+    expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-10')
+    expect(receipt.profitability).toBe('NOT_PROFITABLE')
+  })
+
   test('reports positive net realized returns after charged costs', () => {
     const receipt = success(makeForwardPerformanceReceipt(input()))
 

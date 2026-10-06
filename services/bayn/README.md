@@ -486,6 +486,15 @@ the older binary through the existing Kargo delivery path. No database migration
 
 ### Private inference operating-cost report
 
+The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
+coverage: `otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
+`OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Verified gross trading P&L and fees remain visible.
+Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
+Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
+receipts keep their original bytes and hashes; this correction applies to newly computed reports.
+Tariffs and expense packets are configured on the private command below. Their account/session scope is not
+silently applied to a generation or window report.
+
 Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
 Jev requests across all cycles for one account and exchange-session date, including blocked and no-trade cycles:
 
