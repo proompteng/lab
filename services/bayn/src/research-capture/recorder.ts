@@ -162,7 +162,7 @@ export const makeResearchCaptureRecorder = (
           invalidate(CaptureInvalidation.InvalidEvent)
           return
         }
-        const bytes = Buffer.byteLength(JSON.stringify(retained.success), 'utf8')
+        const bytes = Buffer.byteLength(payload, 'utf8')
         if (objectStore !== undefined && event.kind === 'market-record') {
           if (event.originalTransport === undefined) {
             invalidate(CaptureInvalidation.InvalidEvent)

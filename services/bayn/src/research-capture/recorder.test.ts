@@ -386,6 +386,37 @@ test('a full 4MiB UTF8 queue splits below the exact chunk envelope limit', () =>
     }),
   ))
 
+test.each([0, 1])('receipt admission enforces its exact UTF8 size and owns nested evidence (%s)', (extraByte) =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const event = {
+        reason: '測量 🛰️',
+        positions: [{ offset: '1', partition: 0, topic: '行情-é' }],
+        phase: 'STARTED' as const,
+        consumerEpoch: 'epoch-é',
+        kind: 'consumer-boundary' as const,
+      }
+      const expected = { sequence: 1, observedAtMs: 100, event: JSON.parse(JSON.stringify(event)) }
+      const payload = JSON.stringify(expected)
+      const maximumReceiptBytes = Buffer.byteLength(payload, 'utf8') - extraByte
+      expect(Buffer.byteLength(payload, 'utf8')).toBeGreaterThan(payload.length)
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, { ...options, maximumReceiptBytes })
+      recorder.record(event, 100)
+      event.reason = 'changed after admission'
+      event.positions[0].topic = 'changed after admission'
+      yield* recorder.finish
+      if (extraByte === 0) {
+        expect((yield* recorder.status).invalidations).toEqual([])
+        expect(Result.getOrThrow(decodeResearchCaptureChunk(saved.chunks[0])).receipts).toEqual([expected])
+      } else {
+        expect((yield* recorder.status).invalidations).toEqual([CaptureInvalidation.Overflow])
+        expect(saved.chunks).toEqual([])
+      }
+    }),
+  ),
+)
+
 test.each([0, 1])('exact chunk limit plus %s bytes includes its envelope and comma separators', (extraByte) =>
   run(
     Effect.gen(function* () {
