@@ -245,6 +245,9 @@ describe('closing market-data fallback boundaries', () => {
   test.each([
     'filled',
     'filled reuses preflight',
+    'filled refreshes older preflight',
+    'filled refreshes unknown preflight',
+    'filled refreshes inexact preflight',
     'denied',
     'unknown',
     'inexact-accounting',
@@ -399,8 +402,19 @@ describe('closing market-data fallback boundaries', () => {
                 : fresh,
           )
         })
+        const preflight =
+          scenario === 'filled refreshes older preflight'
+            ? factsAt(before)
+            : scenario === 'filled refreshes unknown preflight'
+              ? { ...fresh, riskContext: { ...fresh.riskContext, unknownMutationCount: 1 } }
+              : scenario === 'filled refreshes inexact preflight'
+                ? {
+                    ...fresh,
+                    report: { ...fresh.report, metrics: { ...fresh.report.metrics, accountingExact: false } },
+                  }
+                : fresh
         const terminalReconciliation = yield* reconciliationForPreparation(
-          fresh,
+          preflight,
           refreshReconciliation,
           Effect.succeed(fresh.riskContext.authority ?? undefined),
           30_000,
@@ -415,8 +429,10 @@ describe('closing market-data fallback boundaries', () => {
               : {}),
           },
           closeWindow,
-          reconcile: scenario === 'filled reuses preflight' ? terminalReconciliation.read : refreshReconciliation,
-          refreshReconciliation,
+          reconcile: scenario.startsWith('filled ') ? terminalReconciliation.read : refreshReconciliation,
+          refreshReconciliation: scenario.startsWith('filled ')
+            ? terminalReconciliation.refresh
+            : refreshReconciliation,
           existing: closure,
         })
         for (let pass = 0; pass < (fallbackFlat ? 3 : 2); pass++) {
@@ -451,7 +467,15 @@ describe('closing market-data fallback boundaries', () => {
             }
           }
           expect(freshReads).toBe(
-            scenario === 'filled reuses preflight' ? 0 : fallbackFlat ? Math.min((pass + 1) * 2, 5) : pass + 1,
+            scenario === 'filled reuses preflight'
+              ? 0
+              : scenario.startsWith('filled refreshes')
+                ? 1
+                : fallbackFlat
+                  ? Math.min((pass + 1) * 2, 5)
+                  : scenario === 'unknown' || scenario === 'inexact-accounting' || scenario === 'older-cut'
+                    ? (pass + 1) * 2
+                    : pass + 1,
           )
           expect(residualBinds).toBe(0)
           expect(records.size).toBe(expectedIntentCount)
