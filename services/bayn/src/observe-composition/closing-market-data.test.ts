@@ -310,6 +310,7 @@ describe('closing market-data fallback boundaries', () => {
           input: { ...request.input, executionCycleClosureStore: store },
           closeWindow,
           reconcile: Effect.succeed(factsAt(before, true)),
+          refreshReconciliation: Effect.die('an uncommitted close has no terminal evidence to refresh'),
           existing: undefined,
           ...(exitTarget === undefined ? {} : { exitTarget }),
         })
@@ -415,6 +416,7 @@ describe('closing market-data fallback boundaries', () => {
           },
           closeWindow,
           reconcile: scenario === 'filled reuses preflight' ? terminalReconciliation.read : refreshReconciliation,
+          refreshReconciliation,
           existing: closure,
         })
         for (let pass = 0; pass < (fallbackFlat ? 3 : 2); pass++) {
@@ -470,6 +472,7 @@ describe('closing market-data fallback boundaries', () => {
     'expiry',
     'partial fill',
     'partial fill reuses preflight',
+    'cached residual refreshes after archive failure',
     'partial fill without archive',
     'fallback becomes unknown',
     'fallback loses accounting',
@@ -495,6 +498,7 @@ describe('closing market-data fallback boundaries', () => {
     let closeCommits = 0
     let restrictions = 0
     let closeSettled = false
+    let positionDivisor = 2n
     const store: ExecutionCycleClosureStoreShape = {
       read: () => Effect.sync(() => Option.fromUndefinedOr(closure)),
       readLatestReplan: () => Effect.sync(() => Option.fromUndefinedOr(replan)),
@@ -521,11 +525,12 @@ describe('closing market-data fallback boundaries', () => {
           if (!closeSettled || terminalOutcome !== TerminalOutcome.Canceled) return facts
           const positions = facts.brokerState.positions.map((position) => ({
             ...position,
-            quantityMicros: (BigInt(position.quantityMicros) / 2n).toString(),
-            marketValueMicros: (BigInt(position.marketValueMicros) / 2n).toString(),
+            quantityMicros: (BigInt(position.quantityMicros) / positionDivisor).toString(),
+            marketValueMicros: (BigInt(position.marketValueMicros) / positionDivisor).toString(),
           }))
           const releasedValue = facts.brokerState.positions.reduce(
-            (sum, position) => sum + BigInt(position.marketValueMicros) / 2n,
+            (sum, position) =>
+              sum + BigInt(position.marketValueMicros) - BigInt(position.marketValueMicros) / positionDivisor,
             0n,
           )
           const state = {
@@ -586,6 +591,7 @@ describe('closing market-data fallback boundaries', () => {
           input: { ...request.input, executionCycleClosureStore: store },
           closeWindow,
           reconcile,
+          refreshReconciliation: reconcile,
           existing: undefined,
         })
         if (first._tag !== 'Close') throw new Error('fresh owned position should produce a close')
@@ -659,11 +665,24 @@ describe('closing market-data fallback boundaries', () => {
             ...request.input,
             executionCycleClosureStore: store,
             ...(unavailableArchive
-              ? { intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) } }
+              ? {
+                  intradayMarketData: {
+                    ...freshMarket,
+                    loadSnapshot: () =>
+                      Effect.sync(() => {
+                        if (scenario === 'cached residual refreshes after archive failure') positionDivisor = 4n
+                      }).pipe(Effect.andThen(Effect.fail(marketFailure))),
+                  },
+                }
               : {}),
           },
           closeWindow,
-          reconcile: scenario === 'partial fill reuses preflight' ? residualReconciliation.read : refreshResidual,
+          reconcile:
+            scenario === 'partial fill reuses preflight' ||
+            scenario === 'cached residual refreshes after archive failure'
+              ? residualReconciliation.read
+              : refreshResidual,
+          refreshReconciliation: refreshResidual,
           existing: closure,
         })
         if (scenario === 'fallback read is invalid') {
@@ -697,7 +716,9 @@ describe('closing market-data fallback boundaries', () => {
             symbol,
             side,
             quantityMicros:
-              terminalOutcome === TerminalOutcome.Canceled ? (BigInt(quantityMicros) / 2n).toString() : quantityMicros,
+              terminalOutcome === TerminalOutcome.Canceled
+                ? (BigInt(quantityMicros) / positionDivisor).toString()
+                : quantityMicros,
           })),
         )
         expect(yield* prepare(next.document)).toMatchObject({
@@ -708,6 +729,7 @@ describe('closing market-data fallback boundaries', () => {
         expect(closeCommits).toBe(2)
         expect(restrictions).toBe(1)
         if (scenario === 'partial fill reuses preflight') expect(residualReads).toBe(0)
+        if (scenario === 'cached residual refreshes after archive failure') expect(residualReads).toBe(1)
         yield* TestClock.setTime(Date.parse(closeWindow.expiresAt))
         expect(yield* prepare(next.document)).toMatchObject({
           _tag: 'Block',

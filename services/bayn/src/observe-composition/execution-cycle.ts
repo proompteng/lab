@@ -440,6 +440,7 @@ export const ensureExecutionCycleClosure = <R>({
   entryDocument,
   closeWindow,
   reconcile,
+  refreshReconciliation,
   existing,
   exitTarget,
 }: {
@@ -450,6 +451,7 @@ export const ensureExecutionCycleClosure = <R>({
   readonly entryDocument: ExecutionDecisionDocument
   readonly closeWindow: ExecutionCycleCloseWindow
   readonly reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
+  readonly refreshReconciliation: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>
   readonly existing: ExecutionCycleClosure | undefined
   readonly exitTarget?: JevExitTarget
 }): Effect.Effect<ExecutionCycleClosureResult, CycleRunnerError, R | IntentStore | MutationStore> =>
@@ -566,7 +568,7 @@ export const ensureExecutionCycleClosure = <R>({
       policy,
       cycle,
       entryDocument,
-      reconcile: reconcile.pipe(
+      reconcile: refreshReconciliation.pipe(
         Effect.flatMap((facts) =>
           isTerminalCloseReconciliationReady(facts, terminal.settledAt) &&
           countOpenPositions(facts.brokerState.positions) > 0 &&
@@ -723,16 +725,22 @@ export const prepareNextMutationIntent = (
     },
   )
 
+interface ExecutionReconciliation {
+  readonly read: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>
+  readonly refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>
+}
+
 const executeBoundExecutionCycle = (
   input: ObserveAutonomousCycleInput,
   preparation: ObserveStartupPreparation,
   policy: Policy,
   cycle: AutonomousCycle,
   document: ExecutionDecisionDocument,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
 ): Effect.Effect<BoundExecutionCycleOutcome, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
+    const reconcile = reconciliation.read
     const observedAt = yield* currentUtcInstant
     const runtimeMatchesCycle = runtimeStrategyMatchesCycle(input, cycle)
     if (!runtimeMatchesCycle || preparation.executionModel.schemaVersion !== 'bayn.execution-model.v5') {
@@ -836,6 +844,7 @@ const executeBoundExecutionCycle = (
           entryDocument: document,
           closeWindow,
           reconcile,
+          refreshReconciliation: reconciliation.refresh,
           existing: committedClosure,
         })
         if (closure._tag !== 'Close') return closure
@@ -922,6 +931,7 @@ const executeBoundExecutionCycle = (
             entryDocument: document,
             closeWindow,
             reconcile,
+            refreshReconciliation: reconciliation.refresh,
             existing: committedClosure,
             exitTarget: management.target,
           })
@@ -1224,7 +1234,7 @@ const recoverBoundMutationCycle = (
   policy: Policy,
   cycle: AutonomousCycle,
   context: CycleRunContext<ObserveDecisionRuntime>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   readBoundMutationDocument(cycle).pipe(
@@ -1244,7 +1254,7 @@ const recoverBoundMutationCycle = (
                 recovered.policy,
                 cycle,
                 document,
-                reconcile,
+                reconciliation,
                 capability,
               ),
             ),
@@ -1257,7 +1267,7 @@ export const runRecoveryFirstCyclePass = (
   input: ObserveAutonomousCycleInput,
   policy: Policy,
   context: CycleRunContext<ObserveDecisionRuntime>,
-  reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
+  reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
@@ -1265,7 +1275,7 @@ export const runRecoveryFirstCyclePass = (
     const completedProgress = new Set<CyclePassProgress>()
     while (true) {
       if (cycle !== undefined && mutationBound(cycle)) {
-        return yield* recoverBoundMutationCycle(input, policy, cycle, context, reconcile, capability)
+        return yield* recoverBoundMutationCycle(input, policy, cycle, context, reconciliation, capability)
       }
       const observedAt = yield* currentUtcInstant
       if (cycle !== undefined) {
