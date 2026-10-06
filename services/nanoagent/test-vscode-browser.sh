@@ -36,7 +36,10 @@ export TENGRI_EDITOR_TEST_CERT_SPKI
 node "$repository/services/nanoagent/vscode-test-proxy.mjs" "$fixture_root/tls.crt" "$fixture_root/tls.key" >"$fixture_root/proxy.log" 2>&1 &
 fixture_pids="$fixture_pids $!"
 fixture_install_home="${TENGRI_EDITOR_INSTALL_HOME:-$repository/node_modules/.cache/tengri-code-server}"
-env HOME="$fixture_install_home" bash "$repository/services/nanoagent/bootstrap-code-server.sh" --install-only
+fixture_tool_seeds="$fixture_root/tool-seeds"
+bash "$repository/services/nanoagent/fetch-runtime-tools.sh" "$fixture_tool_seeds" code-server
+env HOME="$fixture_install_home" NANOAGENT_TOOL_SEED_ROOT="$fixture_tool_seeds" \
+  bash "$repository/services/nanoagent/bootstrap-code-server.sh" --install-only
 export TENGRI_EDITOR_TEST_BINARY="$fixture_install_home/.local/bin/code-server"
 export TENGRI_EDITOR_TEST_HOME="$fixture_root/home"
 export TENGRI_EDITOR_BROWSER_FIXTURE=1

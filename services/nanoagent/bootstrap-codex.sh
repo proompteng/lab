@@ -5,6 +5,7 @@ readonly CODEX_VERSION='0.159.2'
 readonly CODEX_AMD64_SHA512='46b099d57e76c296b594eb17b42b52ca18ce15d40f87b2c7e4272ff07b0a99dff65176d4c315c5a965c52b72736adaae50d1ad5bf4cba31e58eea54e1a4574fd'
 readonly CODEX_ARM64_SHA512='3e6d16d8f9c579312a3f1f80388c20395078741b58db872e0f4b71d618c2a2beb409b4804fb5813d954d508352ad3083acc9ddbd00baee9ef5644cfe8263cf90'
 readonly CODEX_REGISTRY='https://registry.npmjs.org'
+readonly TOOL_SEED_ROOT="${NANOAGENT_TOOL_SEED_ROOT:-/usr/share/nanoagent}"
 
 codex_platform=''
 codex_sha512=''
@@ -69,26 +70,12 @@ install_codex() {
     temporary_directory="$(mktemp -d "$codex_root/.install.XXXXXX")"
     trap cleanup EXIT HUP INT TERM
 
-    local archive="$temporary_directory/codex.tgz"
+    local archive="$TOOL_SEED_ROOT/codex-${CODEX_VERSION}-${codex_platform}.tar.xz"
     local extracted="$temporary_directory/extracted"
-    local archive_url="$CODEX_REGISTRY/@openai/codex/-/codex-${CODEX_VERSION}-${codex_platform}.tgz"
     mkdir -p "$extracted"
-
-    curl \
-      --proto '=https' \
-      --tlsv1.2 \
-      --fail \
-      --location \
-      --silent \
-      --show-error \
-      --retry 5 \
-      --retry-all-errors \
-      --connect-timeout 15 \
-      --max-time 600 \
-      --output "$archive" \
-      "$archive_url"
-    printf '%s  %s\n' "$codex_sha512" "$archive" | sha512sum --check --status -
-    tar --extract --gzip --file "$archive" --directory "$extracted" --no-same-owner --no-same-permissions
+    [[ -r "$archive" ]] || fail "image package is missing: $archive"
+    (cd "$TOOL_SEED_ROOT" && sha256sum --check --status "${archive##*/}.sha256")
+    tar --extract --xz --file "$archive" --directory "$extracted" --no-same-owner --no-same-permissions
 
     local extracted_binary="$extracted/package/vendor/$codex_target/bin/codex"
     [[ -x "$extracted_binary" ]] || fail 'verified Codex package does not contain the native binary'
@@ -107,6 +94,12 @@ install_codex() {
 }
 
 case "${1:-}" in
+  --archive-manifest)
+    validate_manifest
+    printf '%s\n' "codex-${CODEX_VERSION}-${codex_platform}.tar.xz" sha512 "$codex_sha512" \
+      "$CODEX_REGISTRY/@openai/codex/-/codex-${CODEX_VERSION}-${codex_platform}.tgz" .
+    exit 0
+    ;;
   --validate-manifest)
     validate_manifest
     exit 0

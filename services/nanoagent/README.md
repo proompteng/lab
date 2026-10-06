@@ -158,14 +158,16 @@ installed system packages consume root-filesystem space. Image builds exercise p
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
 Linux container with the guest capability and seccomp settings to also exercise mounts and network administration.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
-verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
-`~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
+Image creation downloads and verifies the pinned Codex 0.159.2, code-server 4.135.0, and SPIRE 1.15.3 packages using
+`fetch-runtime-tools.sh`. Complete Codex/code-server packages and the SPIRE agent are recompressed into checked local
+seeds outside the mounted home. On first boot, the helpers verify and extract those seeds atomically into the
+16 GiB PVC-backed home. Existing versioned installations and user settings are reused. No boot/workspace helper
+runs a package downloader; a missing or corrupt image seed fails startup. Nanoagent does not become ready until the
 Codex app server is available, and the `MicroVM` startup probe allows 35 minutes for SPIRE, language-toolchain,
 developer-tool seeding, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools two
 minutes, and Codex nine minutes. Image builds run
-the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
-CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
+the same bootstrap with networking disabled against the image-baked packages, so a bad checksum or package layout
+fails CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
 one-use pipe and been removed from the process environment, so downloader and archive child processes cannot inherit
 the credential. The toolchain installer runs through the same sanitized child-process boundary. The initial Nanoagent
 process also starts `tini` only through that sanitized re-exec; PID 1 never retains the Kubernetes Secret environment
@@ -212,9 +214,9 @@ controller and guest; the automatic Tengri Warehouse and Stage promote only the 
 ## VS Code workbench
 
 Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
-platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
-on the persistent home volume, outside Firecracker's 1 GiB rootfs. Each image build verifies the native Linux archive;
-first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
+the image seed before installing into `$HOME/.tengri/code-server`. The complete installed payload stays on the
+persistent home volume; its compact seed lives in the 1 GiB rootfs. Image creation verifies the upstream SHA-256
+and native package. First use and retained-home resume work without package-download access.
 
 `CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
 process group per guest with sanitized credentials, a private Unix socket, persistent user settings and extensions under

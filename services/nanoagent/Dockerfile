@@ -306,7 +306,15 @@ RUN set -eux; \
       --directory /bundle \
       .
 
-FROM runtime AS runtime-with-toolchain
+FROM runtime AS runtime-tools-downloads
+USER 1000:1000
+RUN --mount=type=bind,source=fetch-runtime-tools.sh,target=/tmp/fetch-runtime-tools.sh,readonly \
+    bash /tmp/fetch-runtime-tools.sh /tmp/runtime-tool-seeds
+
+FROM runtime AS runtime-with-runtime-tools
+COPY --from=runtime-tools-downloads /tmp/runtime-tool-seeds/ /usr/share/nanoagent/
+
+FROM runtime-with-runtime-tools AS runtime-with-toolchain
 
 COPY --from=development-toolchain-bundle /out/development-toolchain.tar.xz /usr/share/nanoagent/development-toolchain.tar.xz
 COPY --chmod=0555 bootstrap-toolchain.sh /usr/local/bin/bootstrap-toolchain
@@ -368,31 +376,29 @@ RUN mkdir -p "$HOME" && \
       "$(rustdoc --version)" \
       > /tmp/toolchain-version
 
-# Download and verify the pinned native Codex package during every image build. The
-# package is intentionally not copied into the final rootfs; a guest installs the
-# same verified package into its persistent 16 GiB home volume on first boot.
-FROM runtime AS codex-smoke
+# Verify the same image-baked packages used for an offline fresh-home install.
+FROM runtime-with-runtime-tools AS codex-smoke
 
 ENV CODEX_BINARY=/home/nanoagent/.smoke/.local/bin/codex \
     CODEX_HOME=/home/nanoagent/.smoke/.codex \
     HOME=/home/nanoagent/.smoke
 
 USER 1000:1000
-RUN mkdir -p "$HOME" "$CODEX_HOME" && \
+RUN --network=none mkdir -p "$HOME" "$CODEX_HOME" && \
     bootstrap-codex --install-only && \
     "$CODEX_BINARY" --version > /tmp/codex-version
 
-FROM runtime AS code-server-smoke
+FROM runtime-with-runtime-tools AS code-server-smoke
 
 ENV HOME=/home/nanoagent/.vscode-smoke
 USER 1000:1000
-RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
+RUN --network=none mkdir -p "$HOME" && bootstrap-code-server --install-only && \
     "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
 
 FROM runtime-with-toolchain AS spire-agent-smoke
 ENV HOME=/home/nanoagent/.spire-smoke
 COPY --from=build /out/nanoagent-tests /tmp/nanoagent-tests
-RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
+RUN --network=none mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
     "$HOME/.local/bin/spire-agent" --version > /tmp/spire-agent-version && \
     SPIRE_AGENT_VALIDATE_BINARY="$HOME/.local/bin/spire-agent" \
       /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v

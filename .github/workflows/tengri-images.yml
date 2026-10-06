@@ -178,7 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --interactive --network none --user 1000:1000 \
-            --tmpfs /home/nanoagent:uid=1000,gid=1000,mode=0750 \
+            --tmpfs /home/nanoagent:uid=1000,gid=1000,mode=0750,exec \
             --entrypoint /bin/bash "$DEVELOPER_TOOLS_IMAGE" -s \
             < services/nanoagent/test-developer-tools.sh
 
