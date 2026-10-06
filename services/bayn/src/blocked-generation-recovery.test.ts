@@ -15,11 +15,12 @@ import { refreshResearchCapitalActivationReconciliation } from './composition/ca
 import { makeGenerationCycleDriver } from './composition/generation-cycle'
 import { Authority, KillState, ReconciliationStatus, type AuthorityState } from './execution/contracts'
 import { OperationalError } from './errors'
+import { reconcileReplayForActivation } from './intraday-replay/runtime'
 import type { RecoveryFirstCycleAdvance } from './observe-composition'
 import { utcInstantFromEpochMillis } from './time'
 
 describe('terminal generation recovery', () => {
-  test('keeps a cash discrepancy on the normal restricted cadence until exact reconciliation permits rollover', async () => {
+  test.each(['production', 'replay'] as const)('keeps %s restricted until exact reconciliation', async (runtime) => {
     const generationHash = 'a'.repeat(64)
     const preserveCyclePlanHash = 'b'.repeat(64)
     const successorGenerationHash = Result.getOrThrow(
@@ -40,6 +41,13 @@ describe('terminal generation recovery', () => {
     let settlements = 0
     let reconciliations = 0
     let rollovers = 0
+    const reconcile = refreshResearchCapitalActivationReconciliation(
+      Effect.sync(() => {
+        reconciliations += 1
+        return { report: { reconciliation: { status: reconciliationStatus } } }
+      }),
+      1000,
+    ).pipe(Effect.asVoid)
     const settle = recoverTerminalGenerationToObserve({
       accountId: 'test-account',
       blockedIntents: {
@@ -79,13 +87,10 @@ describe('terminal generation recovery', () => {
           }),
       },
       writerFence: { check: Effect.void, transaction: (effect) => effect },
-      reconcileAfterSettlement: refreshResearchCapitalActivationReconciliation(
-        Effect.sync(() => {
-          reconciliations += 1
-          return { report: { reconciliation: { status: reconciliationStatus } } }
-        }),
-        1000,
-      ).pipe(Effect.asVoid),
+      reconcileAfterSettlement:
+        runtime === 'replay'
+          ? reconcileReplayForActivation(Effect.succeed(restricted.updatedAt), reconcile)
+          : reconcile,
     })
     const advanced: RecoveryFirstCycleAdvance = {
       observation: {
@@ -132,19 +137,32 @@ describe('terminal generation recovery', () => {
     expect(authority.kill).toBe(KillState.Clear)
   })
 
-  test('does not treat a reconciliation database failure as an expected wait', async () => {
+  test.each(['production', 'replay'] as const)('propagates %s reconciliation database failures', async (runtime) => {
     const failure = new OperationalError({
       component: 'database',
       operation: 'reconcile',
       message: 'database unavailable',
       retryable: true,
     })
-    const settle = refreshResearchCapitalActivationReconciliation(Effect.fail(failure), 1000)
+    const reconcile = refreshResearchCapitalActivationReconciliation(Effect.fail(failure), 1000)
+    const settle = (
+      runtime === 'replay'
+        ? reconcileReplayForActivation(Effect.succeed('2026-09-03T07:00:00.000Z'), reconcile)
+        : reconcile
+    ).pipe(Effect.as({ _tag: 'NotRequired' as const }))
     const result = await Effect.runPromise(
       advanceRestrictedGenerationRecovery(Effect.succeed('advanced'), settle).pipe(Effect.result),
     )
     expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) expect(result.failure.cause).toBe(failure)
+    if (Result.isFailure(result)) {
+      if (runtime === 'replay') {
+        expect(result.failure.operation).toBe('replay-generation-recovery')
+        expect(result.failure.cause).toBeInstanceOf(OperationalError)
+        if (result.failure.cause instanceof OperationalError) expect(result.failure.cause.cause).toBe(failure)
+      } else {
+        expect(result.failure.cause).toBe(failure)
+      }
+    }
   })
 
   test('samples settlement time after acquiring the writer fence', async () => {
