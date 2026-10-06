@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Match configureToolchainEnvironment so C++ subprocesses find Homebrew binutils.
+export PATH="$HOME/.local/bin:$HOME/.linuxbrew/bin:$HOME/.linuxbrew/sbin:$PATH"
+
 readonly prefix="$HOME/.linuxbrew"
 readonly receipt="$HOME/.local/share/nanoagent/developer-tools-ready"
 work="$(mktemp -d "$HOME/.cache/developer-tools-test.XXXXXX")"
