@@ -8,6 +8,10 @@ readonly work
 readonly bootstrap="${1:-/usr/local/bin/bootstrap-developer-tools}"
 
 cleanup() {
+  if [[ -e "$work/go" || -L "$work/go" ]]; then
+    rm -f -- "$HOME/.local/go"
+    mv -- "$work/go" "$HOME/.local/go"
+  fi
   local command
   for command in brew nvim fd; do
     if [[ -e "$work/$command" || -L "$work/$command" ]]; then
@@ -54,4 +58,15 @@ if XDG_CONFIG_HOME="$work/config" "$bootstrap" --install-only; then
   exit 1
 fi
 test ! -e "$receipt"
-printf 'Prepared homes skip installers; stale and incomplete homes require successful installation.\n'
+
+cp -- "$work/receipt" "$receipt"
+mv -- "$HOME/.local/go" "$work/go"
+mkdir -p "$work/toolchain/go" "$work/toolchain/c/sysroot/usr/include"
+touch "$work/toolchain/c/sysroot/usr/include/features.h"
+ln -s "$work/toolchain/go" "$HOME/.local/go"
+if "$bootstrap" --install-only; then
+  printf 'A different toolchain incorrectly reused its C++ wrapper receipt\n' >&2
+  exit 1
+fi
+test ! -e "$receipt"
+printf 'Prepared homes skip installers; stale, incomplete, and changed-toolchain homes require successful installation.\n'

@@ -17,15 +17,18 @@ install_tools() {
   local prefix="$HOME/.linuxbrew"
   local config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
   local receipt="$HOME/.local/share/nanoagent/developer-tools-ready"
+  local go_root c_root
+  go_root="$(readlink -f "$HOME/.local/go")"
+  c_root="${go_root%/*}/c"
   local fingerprint
   fingerprint="$(sha256sum "${BASH_SOURCE[0]}" /usr/share/nanoagent/astronvim-init.lua)"
-  fingerprint+=$'\n'"$config"$'\n'"${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
+  fingerprint+=$'\n'"$config"$'\n'"${XDG_DATA_HOME:-$HOME/.local/share}/nvim"$'\n'"$c_root"
   [[ "${#prefix}" -le 26 ]] || fail 'Homebrew prefix exceeds the supported Linux bottle relocation length'
   export HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_SUDO=1
   export HOMEBREW_CACHE="$HOME/.cache/Homebrew"
   umask 022
   mkdir -p "$HOME/.cache" "$HOME/.local/bin"
-  if [[ -f "$receipt" && "$(cat "$receipt")" == "$fingerprint" ]] && tools_present "$prefix" "$config"; then
+  if [[ -f "$receipt" && "$(cat "$receipt")" == "$fingerprint" ]] && tools_present "$prefix" "$config" "$c_root"; then
     return
   fi
   rm -f -- "$receipt"
@@ -59,8 +62,6 @@ install_tools() {
   fi
   local cpp_compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#cpp_compilers[@]}" == 1 && -x "${cpp_compilers[0]}" ]] || fail 'Homebrew C++ compiler is unavailable or ambiguous'
-  local c_root
-  c_root="$(dirname "$(readlink -f "$HOME/.local/go")")/c"
   local triplet
   case "$(uname -m)" in
     x86_64) triplet=x86_64-linux-gnu ;;
@@ -108,7 +109,7 @@ install_tools() {
 }
 
 tools_present() {
-  local prefix="$1" config="$2" command
+  local prefix="$1" config="$2" c_root="$3" command
   [[ -x "$prefix/bin/brew" && "$(stat -c %u "$prefix")" == "$(id -u)" ]] || return 1
   for command in nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
     [[ -x "$prefix/bin/$command" ]] || return 1
@@ -116,7 +117,7 @@ tools_present() {
   [[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || return 1
   local compilers=("$prefix"/opt/gcc/bin/g++-*)
   [[ "${#compilers[@]}" == 1 && -x "${compilers[0]}" ]] || return 1
-  [[ -f "$HOME/.local/go/../c/sysroot/usr/include/features.h" ]] || return 1
+  [[ -f "$c_root/sysroot/usr/include/features.h" ]] || return 1
   [[ -e "$config/init.lua" || -e "$config/init.vim" ]] || return 1
   if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
     local data="${XDG_DATA_HOME:-$HOME/.local/share}/nvim/lazy"

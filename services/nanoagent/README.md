@@ -112,7 +112,8 @@ the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without su
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
 for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
-Successful installation writes a receipt tied to the bootstrap script, bundled Neovim configuration, and XDG paths.
+Successful installation writes a receipt tied to the bootstrap script, bundled Neovim configuration, XDG paths,
+and resolved C toolchain root. A toolchain upgrade invalidates it so the C++ wrappers use the new headers and startup objects.
 Subsequent boots check that receipt and the supplied executables without starting Homebrew or Neovim. A missing
 executable, changed configuration path, or new bootstrap invalidates the receipt and runs installation again.
 The installer checks all baseline formulae in one Homebrew invocation. Neovim is upgraded when it is below
@@ -130,7 +131,7 @@ the installation receipt is invalid, without upgrading installed plugins. Homebr
 configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
 bootstrap before the rootfs check. The cache regression replaces Homebrew and Neovim with failing executables and
-proves that a prepared home still boots. Stale receipts, missing commands, and changed XDG paths must run installation
+proves that a prepared home still boots. Stale receipts, missing commands, changed XDG paths, and a changed toolchain root must run installation
 and must not retain a successful receipt after a failure.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
