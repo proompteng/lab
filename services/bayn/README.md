@@ -171,6 +171,11 @@ the fresh execution quote's event time and ten-second maximum age; the earlier b
 quote deadline for version-three decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
 
+After selecting a candidate, entry planning reapplies the same spread and positive displayed-size rules to its
+refreshed execution quote. A quote that widened or lost either side's displayed liquidity leaves the entry waiting
+for fresh evidence before an intent is built. The accepted model evidence remains immutable; quote freshness,
+quantity caps and final submission deadlines still apply. This entry check never suppresses a position-reducing exit.
+
 Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
 headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
 limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
