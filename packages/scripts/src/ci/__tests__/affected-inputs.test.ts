@@ -153,6 +153,7 @@ test('preserves ordered path exclusions and native source changes', () => {
   expect(matchesPaths('src/helper.test.ts', ['src/**', '!src/**/*.test.ts'])).toBe(false)
   expect(matchesPaths('src/keep.test.ts', ['src/**', '!src/**/*.test.ts', 'src/keep.test.ts'])).toBe(true)
   expect(selectAffectedInputs(['services/bayn/src/runtime.ts'], targets, before, before).bayn).toBe(true)
+  expect(selectAffectedInputs(['services/bayn/fixtures/package.json'], targets, before, before).bayn).toBe(true)
 })
 
 const property = (value: unknown, key: string): unknown => {

@@ -140,7 +140,15 @@ export const selectAffectedInputs = (
         if (matchesPaths(file, ['packages/scripts/src/ci/**', '.github/actions/affected-inputs/**'])) return true
         if (file === 'bun.lock') return !equalDependencies(before, after, target.workspaces)
         if (file === 'package.json') return true
-        if (file.endsWith('/package.json')) return owned.has(file.slice(0, -'/package.json'.length))
+        if (file.endsWith('/package.json')) {
+          return (
+            owned.has(file.slice(0, -'/package.json'.length)) ||
+            matchesPaths(
+              file,
+              target.paths.filter((pattern) => !pattern.endsWith('/package.json') || !pattern.includes('*')),
+            )
+          )
+        }
         return matchesPaths(file, target.paths)
       })
       return [name, changed]
