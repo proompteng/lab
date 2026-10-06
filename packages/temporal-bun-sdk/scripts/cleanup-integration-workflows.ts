@@ -252,6 +252,10 @@ export async function verifyOnlyStaleVisibility(
   const countRunning = options.countRunning ?? count
   const listRunning = options.listRunning ?? list
 
+  if (listOutput.trim().length === 0) {
+    return (await countRunning(query)) === 0
+  }
+
   const result = await terminateVisibleWorkflows(
     workflowType,
     listOutput,

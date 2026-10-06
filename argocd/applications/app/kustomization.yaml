@@ -9,4 +9,4 @@ resources:
 - secret.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/app
-  digest: sha256:4855e00aa62af911a8b85e94a477c24586efe46d36fe250b601fc680a189e1a2
+  digest: sha256:a5be0bcc4a2af32e5a1f7ca3a222e2815aa04bde89b0629d63052dd260f1c044

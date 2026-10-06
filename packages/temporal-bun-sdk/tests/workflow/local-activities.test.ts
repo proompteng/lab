@@ -110,7 +110,7 @@ test('Nexus failures enter the recoverable Effect error channel', async () => {
   const result = await Effect.runPromise(
     initial.context.nexus
       .schedule('endpoint', 'service', 'operation', {})
-      .pipe(Effect.catchAll((error) => Effect.succeed(error.message))),
+      .pipe(Effect.catch((error) => Effect.succeed(error.message))),
   )
   expect(result).toBe('service unavailable')
 })

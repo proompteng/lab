@@ -13,6 +13,12 @@ export const MAX_EDITABLE_FILE_BYTES = 4 * 1024 * 1024
 export const MAX_CODEX_PROMPT_BYTES = 64 * 1024
 export const MAX_FILE_SEARCH_QUERY_BYTES = 256
 
+export const tengriPowerSettingsSchema = z.strictObject({
+  idleTimeoutMinutes: z.number().int().min(0).max(1440),
+})
+
+export type TengriPowerSettings = z.infer<typeof tengriPowerSettingsSchema>
+
 const filePath = z
   .string()
   .startsWith('/')
@@ -105,6 +111,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('delete-agent'), agentId }),
   z.strictObject({ action: z.literal('sleep-agent'), agentId }),
   z.strictObject({ action: z.literal('resume-agent'), agentId }),
+  z.strictObject({ action: z.literal('update-power-settings'), agentId, power: tengriPowerSettingsSchema }),
   z.strictObject({ action: z.literal('list-files'), agentId, path: filePath }),
   z.strictObject({ action: z.literal('read-file'), agentId, path: filePath }),
   z.strictObject({

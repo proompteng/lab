@@ -1242,10 +1242,11 @@ describe('native OCI build workflows', () => {
     expect(jangarImageModule).toContain('dependencyClosure = "bunCache";')
     expect(jangarImageModule).toContain('"@proompteng/jangar"')
     expect(jangarImageModule).toContain('"@proompteng/cx-tools"')
-    expect(jangarImageModule).toContain(
-      'for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk',
-    )
+    expect(jangarImageModule).toContain('for package in agent-contracts codex cx-tools design discord otel')
     expect(jangarImageModule).toContain('cp -R "$TMPDIR/work/services/jangar/node_modules"')
+    expect(jangarImageModule).toContain('services/bumba/scripts/verify-temporal-runtime.ts')
+    expect(jangarImageModule).not.toContain('ln -s /app/node_modules "$out/app/services/bumba/node_modules"')
+    expect(jangarImageModule).not.toContain('"packages/temporal-bun-sdk"')
     expect(jangarImageModule).toContain('node-gyp rebuild')
     expect(jangarImageModule).toContain('test -f build/Release/pty.node')
     expect(jangarImageModule).toContain('rm -rf build')
@@ -1267,7 +1268,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('kargo_tag_include_run_id: true')
     expect(jangarBuildWorkflow).not.toContain('release_artifact_name:')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(jangarBuildWorkflow).toContain('image_build_timeout: 12m')
+    expect(jangarBuildWorkflow).toContain('image_build_timeout: 20m')
     expect(jangarBuildWorkflow).toContain("- '.github/workflows/jangar-post-deploy-verify.yml'")
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')

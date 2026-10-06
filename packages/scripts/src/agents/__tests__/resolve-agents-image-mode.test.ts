@@ -3,6 +3,13 @@ import { describe, expect, it } from 'bun:test'
 import { classifyAgentsImageMode } from '../resolve-agents-image-mode'
 
 describe('classifyAgentsImageMode', () => {
+  it('validates the built shell image when its lifecycle check changes', () => {
+    const result = classifyAgentsImageMode(['nix/verify-agents-shell-image-lifecycle.sh'])
+    expect(result.tier).toBe('local-smoke')
+    expect(result.imageTargets).toEqual(['agents-shell'])
+    expect(result.runIntegration).toBe(true)
+  })
+
   it('keeps test-only changes on the Ubuntu unit tier', () => {
     expect(
       classifyAgentsImageMode([

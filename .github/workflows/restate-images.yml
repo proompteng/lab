@@ -3,6 +3,8 @@ name: Restate images
 on:
   pull_request:
     paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
       - 'services/restate/**'
       - 'packages/scripts/src/restate/**'
       - 'packages/scripts/src/shared/cli.ts'
@@ -38,7 +40,24 @@ env:
   IMAGE: registry.ide-newton.ts.net/lab/restate
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/restate-images.yml
+          workspaces: |
+            service: ['', 'packages/scripts']
+
   build:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     name: Restate build and fault tests (${{ matrix.architecture }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
