@@ -97,6 +97,20 @@ blockBuilder:
 liveStore:
   enabled: true
   replicas: 3
+  extraArgs:
+    - -live-store.readiness-target-lag=1s
+    - -live-store.readiness-max-wait=30m
+  # Native catch-up readiness must stay false if the Kafka reader fails its
+  # initial offset lookup. Restart before Tempo's catch-up timeout can mark
+  # that stopped reader ready; allow five minutes for healthy backlog replay.
+  livenessProbe:
+    httpGet:
+      path: /ready
+      port: http-metrics
+    initialDelaySeconds: 300
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
   affinity: |
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
