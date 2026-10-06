@@ -5,7 +5,7 @@ steps. No host maintenance or canary is authorized by this preparation.
 
 ## Boundary and prerequisites
 
-Nanoagent PR14781 packages the tested compressed tools in a single filesystem layer starting from scratch.
+Nanoagent PR14781 puts the complete compressed rootfs in its first layer starting from scratch; later layers are empty.
 Containerd 2.3.4 applies the first OCI layer with an empty parent and copies the persistent scratch. Its existing
 512 MiB parent chains remain usable and are not selected for this new first layer. Later snapshots copy their own
 parent, so old and new root sizes can coexist in the same snapshotter.
@@ -26,8 +26,8 @@ networking, identity, memory or PVC defaults.
 
 Required before execution:
 
-- Exact-head native image checks and one-layer/configuration/metadata checks pass on AMD64 and ARM64.
-- The AMD64 review artifact's SHA256SUMS, source_head, build_revision, image ID and sole first diff ID are verified.
+- Exact-head native image checks and first-layer/configuration/metadata checks pass on AMD64 and ARM64.
+- The AMD64 review artifact's SHA256SUMS, source_head, build_revision, image ID and first diff ID are verified.
   PR CI retains the tested Docker archive and receipt; these are unsigned review artifacts, not deployment receipts.
 - An operator supplies reviewed access that survives Ryzen CRI/containerd shutdown, the existing Talos credentials,
   an off-node scratch-backup destination and recovery access. Agents Shell and CSI Pods on the paused CRI are
