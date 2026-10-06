@@ -259,6 +259,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
         )
         const engine = yield* makeTradingEngine({
           authority,
+          riskPolicyHash: generation.riskPolicyHash,
           cycle: {
             accountId: identity.accountId,
             authorityGenerationHash: generationHash,

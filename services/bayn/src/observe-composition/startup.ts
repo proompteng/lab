@@ -1,4 +1,5 @@
 import { Effect, Result, Schema } from 'effect'
+import { BrokerEnvironment } from '../broker/identity'
 import type { AutonomousCycleDriverStartup } from '../app'
 import { makeCycleExecutionPolicyFromModel } from '../cycle'
 import { AuthorityGenerationStore } from '../db/execution-store'
@@ -133,11 +134,31 @@ export const decodeStrategyExecutionModel = (strategy: StrategyRuntime) =>
       }),
   )
 
-export const loadStrategyExecutionRiskPolicy = (accountId: string, strategy: StrategyRuntime) =>
-  Effect.fromResult(decodeStrategyExecutionModel(strategy)).pipe(
-    Effect.flatMap((executionModel) =>
-      loadExecutionRiskPolicy(accountId, strategyDefinition(strategy).parameters.universe, executionModel),
-    ),
+export const loadStrategyExecutionRiskPolicy = (
+  accountId: string,
+  strategy: StrategyRuntime,
+  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
+  riskPolicyHash?: string,
+) =>
+  Effect.gen(function* () {
+    const executionModel = yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
+    const symbols = strategyDefinition(strategy).parameters.universe
+    const retainedPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, executionModel)
+    if (
+      riskPolicyHash === undefined ||
+      riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(retainedPolicy)))
+    )
+      return retainedPolicy
+    if (brokerEnvironment === BrokerEnvironment.Sandbox) {
+      const paperPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, executionModel, BrokerEnvironment.Sandbox)
+      if (riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(paperPolicy)))) return paperPolicy
+    }
+    return yield* operationalError({
+      component: 'strategy',
+      operation: 'risk-policy',
+      message: 'bound execution risk policy is not approved for this broker environment',
+    })
+  }).pipe(
     Effect.mapError((cause) =>
       cause instanceof OperationalError
         ? cause
@@ -194,7 +215,12 @@ export const makeObserveAutonomousCycleStartup =
   (startup) =>
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
-      const policy = yield* loadStrategyExecutionRiskPolicy(input.accountId, input.strategy)
+      const policy = yield* loadStrategyExecutionRiskPolicy(
+        input.accountId,
+        input.strategy,
+        input.brokerEnvironment,
+        input.riskPolicyHash,
+      )
       yield* initializeObserveAuthority(input)
       return yield* Effect.fromResult(
         makeRecoveryFirstCycleDriver(
@@ -218,7 +244,12 @@ export const makeMutationAutonomousCycleStartup =
     Effect.gen(function* () {
       const preparation = yield* Effect.fromResult(prepareObserveStartup(input))
       yield* Effect.fromResult(validateMutationExecutionProgram(input))
-      const policy = yield* loadStrategyExecutionRiskPolicy(input.accountId, input.strategy)
+      const policy = yield* loadStrategyExecutionRiskPolicy(
+        input.accountId,
+        input.strategy,
+        input.brokerEnvironment,
+        input.riskPolicyHash,
+      )
       return yield* Effect.fromResult(
         makeRecoveryFirstCycleDriver(
           input,

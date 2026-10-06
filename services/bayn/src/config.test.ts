@@ -416,14 +416,16 @@ describe('runtime configuration loading', () => {
     })
   })
 
-  test('requires explicit historical inputs when loading a forward-performance report', async () => {
-    const missing = await Effect.runPromise(
-      Effect.result(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment)),
+  test('loads native forward reporting without inventing a historical snapshot', async () => {
+    const report = await Effect.runPromise(
+      provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),
     )
-    expect(missing).toMatchObject({
-      _tag: 'Failure',
-      failure: { component: 'config', operation: 'historical-signal', retryable: false },
-    })
+    const runtime = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
+    expect(report).toEqual(runtime)
+    expect(report.historicalSignal).toBeUndefined()
+  })
+
+  test('preserves complete explicit historical inputs for legacy forward reporting', async () => {
     const environment = new Map(runtimeEnvironment)
     for (const [key, value] of Object.entries({
       BAYN_SIGNAL_SNAPSHOT_ID: historicalSignalConfig.snapshotId,
