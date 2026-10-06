@@ -9,6 +9,8 @@ on:
     branches:
       - main
     paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
       - 'apps/app/**'
       - 'apps/docs/**'
       - 'apps/landing/**'
@@ -106,19 +108,26 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
-      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
-      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || steps.filter.outputs.synthesis }}
-      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
+      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || fromJSON(steps.filter.outputs.affected).proompteng }}
+      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app }}
+      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || fromJSON(steps.filter.outputs.affected).synthesis }}
+      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || fromJSON(steps.filter.outputs.affected).docs }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Check for product image input changes
         if: github.event_name != 'workflow_dispatch'
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: ./.github/actions/affected-inputs
         with:
+          workspaces: |
+            proompteng: ['', 'apps/landing', 'packages/backend', 'packages/design']
+            app: ['', 'apps/app', 'packages/design']
+            synthesis: ['', 'apps/synthesis', 'packages/design']
+            docs: ['', 'apps/docs', 'packages/design']
           filters: |
             proompteng:
               - 'apps/landing/**'

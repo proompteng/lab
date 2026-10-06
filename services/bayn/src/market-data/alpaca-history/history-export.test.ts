@@ -139,7 +139,18 @@ for (const failure of ['unsorted', 'defect', 'interruption'] as const)
           if (Exit.isFailure(result)) {
             if (failure === 'unsorted')
               expect(Cause.pretty(result.cause)).toContain('Historical export input reverses arrival order')
-            else expect(Cause.pretty(result.cause)).toContain('merge fixture defect')
+            else {
+              const stackTraceLimit = Error.stackTraceLimit
+              try {
+                // Bun omits Error.stack at zero; defect identity must survive independently of rendering.
+                Error.stackTraceLimit = 0
+                expect(result.cause.reasons).toEqual([
+                  expect.objectContaining({ _tag: 'Die', defect: 'merge fixture defect' }),
+                ])
+              } finally {
+                Error.stackTraceLimit = stackTraceLimit
+              }
+            }
           }
         }
         expect(open).toBe(0)

@@ -1,4 +1,5 @@
 import type { TengriCodexOptions } from './codex-models'
+import type { TengriPowerSettings } from './schemas'
 
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
@@ -24,6 +25,7 @@ export type TengriAgent = {
   cpuMillis: number
   memoryMib: number
   workspaceGib: number
+  power: TengriPowerSettings
   nodeName: string
   message: string
   createdAt: string
@@ -153,6 +155,7 @@ export type TengriAction =
   | { action: 'delete-agent'; agentId: string }
   | { action: 'sleep-agent'; agentId: string }
   | { action: 'resume-agent'; agentId: string }
+  | { action: 'update-power-settings'; agentId: string; power: TengriPowerSettings }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
   | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }

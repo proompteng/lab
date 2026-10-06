@@ -10,7 +10,6 @@ import {
 } from '../cycle/runner/readiness'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type IntradayMarketDataService } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
-import type { OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../reconciliation'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -161,10 +160,10 @@ export const jevPricingQuery = (
 
 // Admit the durable decision window before materializing expensive signal history.
 // The supplied effect stays lazy; position protection is evaluated by the caller first.
-const evaluateJevObservationFromSnapshot = (
+export const evaluateJevObservationFromSnapshot = <E, R>(
   input: Omit<Parameters<typeof recordJevObservation>[0], 'snapshot'>,
   rangeEndAt: string,
-  loadSnapshot: Effect.Effect<Parameters<typeof recordJevObservation>[0]['snapshot'], OperationalError>,
+  loadSnapshot: Effect.Effect<Parameters<typeof recordJevObservation>[0]['snapshot'], E, R>,
 ) =>
   Effect.gen(function* () {
     if (!(yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)))
@@ -219,11 +218,16 @@ const evaluateJevObservationFromSnapshot = (
         message: 'The complete committed Jev batch is not usable within its deadline',
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
-    return { observation: observation.payload, batchPlan: saved.plan, batchResult: saved.result, decidedAt }
+    return {
+      snapshot,
+      evidence: { observation: observation.payload, batchPlan: saved.plan, batchResult: saved.result, decidedAt },
+    }
   })
 
 export const evaluateJevObservation = (input: Parameters<typeof recordJevObservation>[0]) =>
-  evaluateJevObservationFromSnapshot(input, input.snapshot.manifest.rangeEndAt, Effect.succeed(input.snapshot))
+  evaluateJevObservationFromSnapshot(input, input.snapshot.manifest.rangeEndAt, Effect.succeed(input.snapshot)).pipe(
+    Effect.map(({ evidence }) => evidence),
+  )
 
 export const compileJevEntry = (
   decision: JevEntryTarget,
@@ -344,7 +348,7 @@ export const evaluateJevPositionManagement = (input: {
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, input.protocol, input.calendar, observedAt, [position.symbol]),
     )
-    const inference = yield* evaluateJevObservationFromSnapshot(
+    const { evidence: inference } = yield* evaluateJevObservationFromSnapshot(
       {
         cycleId: input.cycle.identity.cycleId,
         authorityGenerationHash: input.authorityGenerationHash,
