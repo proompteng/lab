@@ -134,27 +134,42 @@ describe('Restate broker observation owner', () => {
       expect(h.deliveries[0]?.delay.milliseconds).toBe(Math.max(10_000, measuredDeadline))
     },
   )
-  test.each(['defect', 'interruption'] as const)(
-    'a poll %s retains the conservative lost-worker reservation',
-    async (failure) => {
-      const h = harness({
-        runtime: {
-          poll: (signal) =>
-            Effect.runPromise(
-              settleCompletedBrokerObservationPoll(
-                failure === 'defect' ? Effect.die(new Error('worker defect')) : Effect.interrupt,
-                Effect.succeed(0),
+  test.each([
+    'defect',
+    'interruption',
+    'typed failure with cleanup defect',
+    'typed failure with cleanup interruption',
+  ] as const)('a poll %s retains the conservative lost-worker reservation', async (failure) => {
+    const typedFailure = Effect.fail(
+      new BrokerReadError({
+        operation: 'preflight',
+        kind: BrokerReadErrorKind.Timeout,
+        retryable: true,
+        message: 'injected completed persistence failure',
+      }),
+    )
+    const poll =
+      failure === 'defect'
+        ? Effect.die(new Error('worker defect'))
+        : failure === 'interruption'
+          ? Effect.interrupt
+          : typedFailure.pipe(
+              Effect.ensuring(
+                failure === 'typed failure with cleanup defect'
+                  ? Effect.die(new Error('cleanup defect'))
+                  : Effect.interrupt,
               ),
-              { signal },
-            ),
-        },
-      })
-      await h.handlers.activate(h.context, { sourceRevision })
-      expect(h.state()?.lastSnapshotHash).toBeUndefined()
-      expect(h.budgetDeadline()).toBe(180_000)
-      expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
-    },
-  )
+            )
+    const h = harness({
+      runtime: {
+        poll: (signal) => Effect.runPromise(settleCompletedBrokerObservationPoll(poll, Effect.succeed(0)), { signal }),
+      },
+    })
+    await h.handlers.activate(h.context, { sourceRevision })
+    expect(h.state()?.lastSnapshotHash).toBeUndefined()
+    expect(h.budgetDeadline()).toBe(180_000)
+    expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
+  })
   test('publishes before returning activation and schedules only one serial successor', async () => {
     const h = harness()
     const state = await h.handlers.activate(h.context, { sourceRevision })

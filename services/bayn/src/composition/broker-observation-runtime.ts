@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Result, Scope, ScopedRef } from 'effect'
+import { Cause, Effect, Layer, ManagedRuntime, Option, Result, Scope, ScopedRef } from 'effect'
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlanFor } from '../app'
@@ -19,12 +19,14 @@ export const settleCompletedBrokerObservationPoll = <R>(
   nextPollNotBeforeMs: Effect.Effect<number>,
 ) =>
   poll.pipe(
-    Effect.catchTag('BrokerReadError', (cause) =>
-      Effect.gen(function* () {
+    Effect.catchCause((cause) => {
+      const failure = Cause.findErrorOption(cause)
+      if (Cause.hasDies(cause) || Cause.hasInterrupts(cause) || Option.isNone(failure)) return Effect.failCause(cause)
+      return Effect.gen(function* () {
         yield* Effect.logWarning('Broker observation poll completed without publication', cause)
         return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* nextPollNotBeforeMs } as const
-      }),
-    ),
+      })
+    }),
   )
 
 export const acquireBrokerObservationRuntime = (
@@ -115,18 +117,20 @@ export const acquireBrokerObservationRuntime = (
                     }),
                     Effect.result,
                   )
-                  const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
                   if (Result.isFailure(result)) {
-                    yield* persistence.failed(ticket)
+                    // ManagedRuntime's lazy layer build can outlive the canceled capture effect.
+                    // Stop it before a persistence failure may release the measured request budget.
                     yield* ScopedRef.set(brokerRuntimes, acquireBroker)
+                    yield* persistence.failed(ticket)
                     yield* Effect.logWarning('Broker observation poll failed').pipe(
                       Effect.annotateLogs({
                         'broker.operation': result.failure.operation,
                         'broker.failure_kind': result.failure.kind,
                       }),
                     )
-                    return { _tag: 'Unavailable', nextPollNotBeforeMs } as const
+                    return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
                   }
+                  const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
                   const publication = yield* persistence.publish(ticket, result.success).pipe(Effect.result)
                   if (Result.isFailure(publication)) {
                     yield* persistence.failed(ticket)
