@@ -17,6 +17,18 @@ sessions, replication acknowledgments, storage, and Bayn's market-data freshness
 This setting limits avoidable partition churn; it does not establish that storage latency has been repaired.
 See Kafka's [broker configuration reference](https://kafka.apache.org/43/configuration/broker-configs/#broker.session.timeout.ms).
 
+## Controller metadata idle writes
+
+`metadata.max.idle.interval.ms` is five seconds. On 2026-10-06, the active controller's raft thread was blocked in
+`FileChannel.force` while controller logs recorded metadata no-op writes and heartbeats taking several seconds.
+Kafka's default schedules idle metadata records every 500 milliseconds. The five-second interval reduces that
+periodic idle-write frequency by 90 percent while retaining no-op records and the existing metadata durability,
+quorum, heartbeat, and data-topic replication settings.
+
+This removes repeated idle work from the shared storage path. It does not repair the latency of an individual
+storage flush. Check controller event latency, heartbeat fencing, replica health, and market-data publication
+after the managed roll. See Kafka's [configuration reference](https://kafka.apache.org/43/configuration/broker-configs/#metadata.max.idle.interval.ms).
+
 ## Validation and rollout
 
 Render with Helm 3 on `PATH`, then validate the changed Kafka resource without applying it:
