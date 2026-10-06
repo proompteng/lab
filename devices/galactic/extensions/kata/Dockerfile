@@ -291,7 +291,7 @@ RUN --mount=type=cache,target=/var/cache/downloads \
 FROM scratch
 
 LABEL org.opencontainers.image.source="https://github.com/proompteng/lab"
-LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.13"
+LABEL org.opencontainers.image.description="Kata Containers 4.1.0 multi-VMM system extension for Talos 1.14"
 LABEL org.opencontainers.image.version="4.1.0-talos-v1.14.0-r6"
 
 COPY --from=payload /extension/manifest.yaml /manifest.yaml
