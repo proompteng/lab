@@ -4215,7 +4215,14 @@ A[Resource] --> B[Safe]`,
   await page.goto('/')
   const responses = page.getByRole('article', { name: 'Codex response' })
   await expect(responses).toHaveCount(sources.length)
-  for (const response of await responses.all()) {
+  for (const [index, response] of (await responses.all()).entries()) {
+    if (index === sources.length - 1) {
+      // Locked themeCSS directives are ignored, so the remaining diagram is safe.
+      const diagram = response.getByRole('img', { name: 'Mermaid diagram', exact: true }).locator('svg')
+      await expect(diagram).toBeVisible()
+      expect(await diagram.evaluate((svg) => svg.outerHTML)).not.toContain('mermaid-css-canary')
+      continue
+    }
     await expect(response.getByRole('status')).toContainText('Diagram unavailable')
     await expect(response.locator('pre code')).toContainText('/mermaid-css-canary')
     await expect(response.getByRole('img', { name: 'Mermaid diagram', exact: true })).toHaveCount(0)
