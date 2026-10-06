@@ -218,6 +218,14 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
 export function codexApprovalDecisions(event: TengriCodexEvent): CodexApprovalDecision[] {
   if (event.kind !== 'approval') return []
   const params = record(parseRawEvent(event.rawJson).params)
+  if (event.method === 'mcpServer/elicitation/request') {
+    const meta = record(params._meta)
+    if (meta.codex_approval_kind !== 'mcp_tool_call') return []
+    const persist = meta.persist
+    return persist === 'session' || (Array.isArray(persist) && persist.includes('session'))
+      ? ['approve-once', 'approve-session', 'deny']
+      : ['approve-once', 'deny']
+  }
   const available = params.availableDecisions
   if (event.method.toLowerCase() !== 'item/commandexecution/requestapproval' || available == null) {
     return [...DEFAULT_CODEX_APPROVAL_DECISIONS]
@@ -518,6 +526,22 @@ function userInputText(value: unknown) {
 }
 
 function approvalDisplayText(params: Record<string, unknown>, eventText: string) {
+  const meta = record(params._meta)
+  if (meta.codex_approval_kind === 'mcp_tool_call') {
+    const argumentsText = prettyJson(meta.tool_params)
+    const persist = meta.persist
+    const sessionScope = persist === 'session' || (Array.isArray(persist) && persist.includes('session'))
+    return truncateEventText(
+      [
+        string(params.message) || eventText,
+        string(meta.tool_description),
+        argumentsText && `Arguments:\n${argumentsText}`,
+        sessionScope && 'Session approval applies to this tool for the current session.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    )
+  }
   const command = commandText(params.command)
   const reason = string(params.reason) || (!command ? eventText : '')
   const cwd = string(params.cwd)

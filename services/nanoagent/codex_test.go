@@ -364,6 +364,149 @@ func TestApprovalCancellationRestartsBlockedProcessWriter(t *testing.T) {
 	}
 }
 
+func TestCodexMCPElicitationPublishesUnsupportedError(t *testing.T) {
+	for _, mode := range []string{"form", "url"} {
+		t.Run(mode, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			params, err := json.Marshal(map[string]string{
+				"threadId": "thread-1", "turnId": "turn-1", "mode": mode,
+				"message": "private MCP request content", "serverName": "fixture",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: params}
+			raw, err := json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+
+			response := readCodexWireRequest(t, writer)
+			if string(response.ID) != "17" || string(response.Result) != `{"action":"cancel"}` || len(response.Error) != 0 {
+				t.Fatalf("MCP request must still fail closed, got %+v", response)
+			}
+			if len(supervisor.approvals) != 0 {
+				t.Fatal("unsupported MCP request created an actionable approval")
+			}
+			if len(supervisor.buffer) != 1 {
+				t.Fatalf("got %d events, want an explicit integration error", len(supervisor.buffer))
+			}
+			event := supervisor.buffer[0]
+			if event.Method != "error" || event.ApprovalID != "" {
+				t.Fatalf("unsupported request event = %+v", event)
+			}
+			var notification struct {
+				Method string `json:"method"`
+				Params struct {
+					ThreadID string `json:"threadId"`
+					TurnID   string `json:"turnId"`
+					Message  string `json:"message"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(event.Raw, &notification); err != nil {
+				t.Fatal(err)
+			}
+			if notification.Method != "error" || notification.Params.ThreadID != "thread-1" || notification.Params.TurnID != "turn-1" {
+				t.Fatalf("integration error lost its thread/turn scope: %s", event.Raw)
+			}
+			if !strings.Contains(notification.Params.Message, "No user decision was submitted") || strings.Contains(string(event.Raw), "private MCP request content") {
+				t.Fatalf("integration error should identify the adapter failure without request content: %s", event.Raw)
+			}
+		})
+	}
+}
+
+func TestCodexMCPElicitationFromStaleGenerationIsIgnored(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	message := codexRPCMessage{
+		ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request",
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1"}`),
+	}
+	supervisor.handleServerMessage(&codexProcessGeneration{}, message, nil)
+	if len(supervisor.buffer) != 0 || len(supervisor.approvals) != 0 || len(writer.messages) != 0 {
+		t.Fatal("stale MCP request affected the current process or event stream")
+	}
+}
+
+const testCodexMCPToolApprovalParams = `{"threadId":"thread-1","turnId":"turn-1","serverName":"fixture","mode":"form","message":"Allow the fixture tool?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"],"tool_params":{"command":"fixture"}}}`
+
+func TestCodexMCPToolApprovalWaitsForExplicitDecision(t *testing.T) {
+	for _, decision := range []string{"approveOnce", "approveSession", "deny"} {
+		t.Run(decision, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(testCodexMCPToolApprovalParams)}
+			raw, err := json.Marshal(message)
+			if err != nil {
+				t.Fatal(err)
+			}
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 {
+				t.Fatal("MCP confirmation did not wait for an explicit user decision")
+			}
+			if len(supervisor.buffer) != 1 || supervisor.buffer[0].ApprovalID != "17" || string(supervisor.buffer[0].Raw) != string(raw) {
+				t.Fatal("MCP confirmation was not published with its original scope and arguments")
+			}
+			if err := supervisor.resolveApproval(context.Background(), "17", decision); err != nil {
+				t.Fatal(err)
+			}
+			response := readCodexWireRequest(t, writer)
+			var result struct {
+				Action  string         `json:"action"`
+				Content map[string]any `json:"content"`
+				Meta    struct {
+					Persist string `json:"persist"`
+				} `json:"_meta"`
+			}
+			if err := json.Unmarshal(response.Result, &result); err != nil {
+				t.Fatal(err)
+			}
+			wantAction := "accept"
+			if decision == "deny" {
+				wantAction = "decline"
+			}
+			if result.Action != wantAction || (result.Content != nil) != (wantAction == "accept") {
+				t.Fatalf("MCP result = %s", response.Result)
+			}
+			if (result.Meta.Persist == "session") != (decision == "approveSession") || len(supervisor.approvals) != 0 {
+				t.Fatalf("MCP decision changed scope or remained pending: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexMCPToolApprovalRejectsUnadvertisedScopeAndInputForms(t *testing.T) {
+	params := strings.Replace(testCodexMCPToolApprovalParams, `["session","always"]`, `"always"`, 1)
+	decisions := codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params))
+	approval := codexApproval{method: "mcpServer/elicitation/request", decisions: decisions}
+	if _, err := codexApprovalResult(approval, "approveSession"); err == nil {
+		t.Fatal("unadvertised session scope was accepted")
+	}
+	for _, params := range []string{
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{"token":{"type":"string"}}`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"required":["token"]`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"mcp_tool_call"`, `"new_access"`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"mode":"form"`, `"mode":"url"`, 1),
+	} {
+		if codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params)) != nil {
+			t.Fatal("input/access elicitation was treated as a tool-use confirmation")
+		}
+	}
+}
+
+func TestCodexResolvedMCPRequestCannotBeApprovedAfterCancellation(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	request := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(testCodexMCPToolApprovalParams)}
+	raw, _ := json.Marshal(request)
+	supervisor.handleServerMessage(supervisor.generation, request, raw)
+	resolved := codexRPCMessage{Method: "serverRequest/resolved", Params: json.RawMessage(`{"threadId":"thread-1","requestId":17}`)}
+	raw, _ = json.Marshal(resolved)
+	supervisor.handleServerMessage(supervisor.generation, resolved, raw)
+	if err := supervisor.resolveApproval(context.Background(), "17", "approveOnce"); err == nil || len(writer.messages) != 0 {
+		t.Fatal("canceled MCP request was allowed to execute from a stale approval card")
+	}
+}
+
 func TestAutomaticCodexResponsesRestartBlockedProcessWriter(t *testing.T) {
 	tests := []struct {
 		name    string
