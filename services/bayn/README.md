@@ -563,6 +563,12 @@ Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has
 applicable to the requested period; a list price is an estimate, not proof of a negotiated rate or an invoice. Model
 intervals may not overlap. Missing model/date coverage is unpriced, not free. An explicit zero output rate is valid.
 
+For non-200 Jev responses, the client reads at most 8 KiB within the original inference deadline and retains only
+validated pinned-model and input/output usage fields. The failed receipt's response hash binds that exact metering
+projection, not the complete HTTP error body. Error text, echoed prompts, credentials and arbitrary fields are not
+retained. Missing, malformed, oversized or interrupted bodies remain unknown; status failures never authorize a
+decision or trigger an inference retry. Previously saved receipts and their missing usage remain unchanged.
+
 The report verifies immutable request, receipt, rejected-response, and resolution hashes. A rejected or abandoned
 decision can still carry billable usage. A claim without retained usage stays unknown: it does not prove either that
 the provider received a request or that no charge occurred. Identical repeated evidence is deduplicated by request
