@@ -203,7 +203,10 @@ Entry and position-management observations each commit at most once per complete
 Later polls and process restarts consult the retained observation before creating another inference batch. The next
 evaluation requires the next completed minute and its decision delay. An interrupted or failed observation does not
 authorize another inference attempt on the same window. Protective stops and the holding limit remain eligible on
-every management pass.
+every management pass. Position management checks those protections first, then recovers pending batches and checks
+the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
+signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
+the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
 
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
