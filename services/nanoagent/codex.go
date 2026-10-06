@@ -858,7 +858,7 @@ func codexMCPApprovalDecisions(params json.RawMessage) map[string]json.RawMessag
 		} `json:"_meta"`
 	}
 	if json.Unmarshal(params, &input) != nil || input.Mode != "form" || input.ThreadID == "" ||
-		input.ServerName == "" || input.Message == "" || input.Meta.Kind != "mcp_tool_call" || len(input.Schema) != 2 {
+		input.ServerName == "" || input.Message == "" || input.Meta.Kind != "mcp_tool_call" {
 		return nil
 	}
 	var schemaType string
@@ -866,6 +866,23 @@ func codexMCPApprovalDecisions(params json.RawMessage) map[string]json.RawMessag
 	if json.Unmarshal(input.Schema["type"], &schemaType) != nil || schemaType != "object" ||
 		json.Unmarshal(input.Schema["properties"], &properties) != nil || properties == nil || len(properties) != 0 {
 		return nil
+	}
+	for key, value := range input.Schema {
+		switch key {
+		case "type", "properties":
+		case "required":
+			var required []string
+			if json.Unmarshal(value, &required) != nil || len(required) != 0 {
+				return nil
+			}
+		case "$schema":
+			var schema *string
+			if json.Unmarshal(value, &schema) != nil {
+				return nil
+			}
+		default:
+			return nil
+		}
 	}
 	decisions := map[string]json.RawMessage{
 		"approveOnce": encodedCodexDecision("accept"),

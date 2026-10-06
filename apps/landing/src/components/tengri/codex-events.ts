@@ -200,7 +200,12 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   const params = record(raw.params)
   const item = record(params.item)
 
-  if (event.kind === 'approval') return approvalDisplayText(params, event.text)
+  if (event.kind === 'approval') {
+    const text = approvalDisplayText(params, event.text)
+    return raw.rawOmitted === true && event.method === 'mcpServer/elicitation/request'
+      ? `${text}\nArguments were omitted because the request is too large to display.`
+      : text
+  }
   if (event.kind === 'usage') return usageDisplayText(params) || event.text
 
   const eventText =

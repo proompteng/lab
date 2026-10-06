@@ -487,9 +487,22 @@ func TestCodexMCPToolApprovalRejectsUnadvertisedScopeAndInputForms(t *testing.T)
 		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"required":["token"]`, 1),
 		strings.Replace(testCodexMCPToolApprovalParams, `"mcp_tool_call"`, `"new_access"`, 1),
 		strings.Replace(testCodexMCPToolApprovalParams, `"mode":"form"`, `"mode":"url"`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"required":true`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"$schema":42`, 1),
+		strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},"additionalProperties":true`, 1),
 	} {
 		if codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params)) != nil {
 			t.Fatal("input/access elicitation was treated as a tool-use confirmation")
+		}
+	}
+}
+
+func TestCodexMCPToolApprovalAcceptsOptionalEmptySchemaMetadata(t *testing.T) {
+	for _, optional := range []string{`"required":[]`, `"$schema":"https://json-schema.org/draft/2020-12/schema"`, `"required":null,"$schema":null`, `"required":[],"$schema":"fixture"`} {
+		params := strings.Replace(testCodexMCPToolApprovalParams, `"properties":{}`, `"properties":{},`+optional, 1)
+		decisions := codexApprovalDecisions("mcpServer/elicitation/request", json.RawMessage(params))
+		if len(decisions) != 3 {
+			t.Fatalf("valid empty schema metadata rejected: %s", optional)
 		}
 	}
 }

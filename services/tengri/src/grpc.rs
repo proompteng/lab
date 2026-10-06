@@ -1251,18 +1251,38 @@ fn bounded_codex_raw_json(event: &crate::guest::CodexEvent) -> String {
         return raw_json;
     }
 
-    let bounded = match event
-        .raw
-        .pointer("/params/availableDecisions")
-        .filter(|_| !event.approval_id.is_empty())
+    let bounded = if !event.approval_id.is_empty()
+        && event.method == "mcpServer/elicitation/request"
+        && event
+            .raw
+            .pointer("/params/_meta/codex_approval_kind")
+            .and_then(Value::as_str)
+            == Some("mcp_tool_call")
     {
-        Some(available_decisions) => json!({
-            "params": {
-                "availableDecisions": bounded_approval_decisions(available_decisions),
-            },
-            "rawOmitted": true,
-        }),
-        None => json!({"rawOmitted": true}),
+        let persist = event.raw.pointer("/params/_meta/persist");
+        let session_scope = persist.and_then(Value::as_str) == Some("session")
+            || persist
+                .and_then(Value::as_array)
+                .is_some_and(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("session")));
+        let mut meta = json!({"codex_approval_kind": "mcp_tool_call"});
+        if session_scope {
+            meta["persist"] = json!("session");
+        }
+        json!({"params": {"_meta": meta}, "rawOmitted": true})
+    } else {
+        match event
+            .raw
+            .pointer("/params/availableDecisions")
+            .filter(|_| !event.approval_id.is_empty())
+        {
+            Some(available_decisions) => json!({
+                "params": {
+                    "availableDecisions": bounded_approval_decisions(available_decisions),
+                },
+                "rawOmitted": true,
+            }),
+            None => json!({"rawOmitted": true}),
+        }
     }
     .to_string();
 
@@ -3135,6 +3155,45 @@ mod tests {
             ]),
         );
         assert_eq!(bounded_approval_decisions(&Value::Null), Value::Null);
+    }
+
+    #[test]
+    fn oversized_mcp_approvals_retain_kind_and_advertised_session_scope() {
+        for persist in [
+            json!("session"),
+            json!(["session", "always"]),
+            json!("always"),
+            Value::Null,
+        ] {
+            let event = codex_event(crate::guest::CodexEvent {
+                sequence: 10,
+                method: "mcpServer/elicitation/request".to_owned(),
+                approval_id: "mcp-large".to_owned(),
+                raw: json!({"params": {
+                    "threadId": "thread-large", "message": "Allow fixture tool?",
+                    "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": persist,
+                        "tool_params": {"content": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES + 1)}}
+                }}),
+            });
+            assert_eq!(event.thread_id, "thread-large");
+            assert_eq!(event.approval_id, "mcp-large");
+            assert_eq!(event.text, "Allow fixture tool?");
+            assert!(event.raw_json.len() < 256);
+            let raw: Value =
+                serde_json::from_str(&event.raw_json).expect("bounded MCP approval JSON");
+            assert_eq!(
+                raw.pointer("/params/_meta/codex_approval_kind"),
+                Some(&json!("mcp_tool_call"))
+            );
+            let session_scope =
+                persist == json!("session") || persist == json!(["session", "always"]);
+            assert_eq!(
+                raw.pointer("/params/_meta/persist").is_some(),
+                session_scope
+            );
+            assert_eq!(raw.pointer("/rawOmitted"), Some(&json!(true)));
+            assert!(raw.pointer("/params/_meta/tool_params").is_none());
+        }
     }
 
     #[test]

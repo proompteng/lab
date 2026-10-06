@@ -776,6 +776,26 @@ describe('Codex event decoding', () => {
     }
   })
 
+  test('keeps MCP controls and an omission notice after large arguments are bounded', () => {
+    for (const persist of [undefined, 'session']) {
+      const approval = {
+        ...event,
+        kind: 'approval' as const,
+        method: 'mcpServer/elicitation/request',
+        text: 'Allow the fixture tool?',
+        rawJson: JSON.stringify({
+          params: { _meta: { codex_approval_kind: 'mcp_tool_call', persist } },
+          rawOmitted: true,
+        }),
+      }
+      expect(codexApprovalDecisions(approval)).toEqual(
+        persist === 'session' ? ['approve-once', 'approve-session', 'deny'] : ['approve-once', 'deny'],
+      )
+      expect(codexEventDisplayText(approval)).toContain('Allow the fixture tool?')
+      expect(codexEventDisplayText(approval)).toContain('Arguments were omitted')
+    }
+  })
+
   test('renders token usage and rate-limit snapshots', () => {
     expect(
       codexEventDisplayText({
