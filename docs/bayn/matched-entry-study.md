@@ -67,6 +67,8 @@ payloads and exact source coordinates must reproduce from the frozen capture. Ti
 integer nanoseconds; one-nanosecond changes still fail. Native receipt sequence and provenance are preserved.
 Reconstructed/REST sources remain development diagnostics and cannot complete the experiment because original stream
 availability is unobserved. The full source is hash/cut/order validated and consumed before writing a report.
+Both captured-Kafka and original-capture sources retain their own independently pinned receipt and arrival contracts;
+recognizing either transport does not waive source verification, session coverage or any other completeness witness.
 Candidate exclusions remain in the report; omitted entire batches fail the independent inventory gate.
 
 ## Run
