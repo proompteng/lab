@@ -15,7 +15,7 @@ use kube::{
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, oneshot};
-use tokio::time::{Instant, sleep};
+use tokio::time::sleep;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -27,7 +27,7 @@ use crate::{
     auth::{Authenticator, Principal, deterministic_agent_id},
     crd::{
         IDLE_MINUTES, MicroVM, MicroVMArchitecture, MicroVMDesiredState, MicroVMPhase,
-        MicroVMResources, MicroVMSpec,
+        MicroVMPowerSettings, MicroVMResources, MicroVMSpec,
     },
     gateway::PreviewOrigin,
     guest::{
@@ -35,7 +35,7 @@ use crate::{
         TerminalCreation as GuestTerminalCreation,
     },
     metrics,
-    pod::{SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
+    pod::{FINALIZER_NAME, SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
     tickets::TicketStore,
 };
 
@@ -56,8 +56,8 @@ use proto::{
     ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
     SearchFilesResponse, SendCodexInputRequest, SleepAgentRequest, StartCodexLoginRequest,
     SteerCodexInputRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
-    WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
-    WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
+    UpdatePowerSettingsRequest, WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest,
+    WriteFileRequest, WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -197,33 +197,51 @@ impl ControlPlane {
     }
 
     async fn wait_ready(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
-        let deadline = Instant::now() + READY_TIMEOUT;
-        loop {
-            let agent = self.owned_agent(principal, id).await?;
-            if agent_ready_for_guest(&agent) {
-                return Ok(agent);
-            }
-            match agent.status.as_ref().map(|status| status.phase) {
-                Some(MicroVMPhase::Failed) => {
-                    let status = agent.status.as_ref().expect("checked status");
-                    return Err(Status::failed_precondition(format!(
-                        "{}: {}",
-                        status.failure_reason.as_deref().unwrap_or("GuestFailed"),
-                        status.message.as_deref().unwrap_or("guest failed to start"),
-                    )));
-                }
-                Some(MicroVMPhase::Terminating) => {
-                    return Err(Status::failed_precondition("agent is terminating"));
-                }
-                _ => {}
-            }
-            if Instant::now() >= deadline {
-                return Err(Status::deadline_exceeded(
-                    "agent did not become ready within 120 seconds",
-                ));
-            }
-            sleep(Duration::from_millis(750)).await;
+        let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        let watch = kube::runtime::wait::await_condition(api, id, |agent: Option<&MicroVM>| {
+            agent.is_none_or(|agent| {
+                agent_ready_for_guest(agent)
+                    || agent.meta().deletion_timestamp.is_some()
+                    || agent.spec.desired_state == MicroVMDesiredState::Sleeping
+                    || agent.status.as_ref().is_some_and(|status| {
+                        matches!(
+                            status.phase,
+                            MicroVMPhase::Failed | MicroVMPhase::Terminating
+                        )
+                    })
+            })
+        });
+        let agent = tokio::time::timeout(READY_TIMEOUT, watch)
+            .await
+            .map_err(|_| {
+                Status::deadline_exceeded("agent did not become ready within 120 seconds")
+            })?
+            .map_err(|error| {
+                Status::unavailable(format!("failed watching agent readiness: {error}"))
+            })?
+            .ok_or_else(|| Status::not_found("agent was deleted while starting"))?;
+        ensure_owner(principal, &agent)?;
+        if agent.meta().deletion_timestamp.is_some() {
+            return Err(Status::failed_precondition("agent is terminating"));
         }
+        if agent.spec.desired_state == MicroVMDesiredState::Sleeping {
+            return Err(Status::aborted("agent was put to sleep while starting"));
+        }
+        if agent_ready_for_guest(&agent) {
+            return Ok(agent);
+        }
+        let status = agent
+            .status
+            .as_ref()
+            .ok_or_else(|| Status::failed_precondition("guest has no startup status"))?;
+        if status.phase == MicroVMPhase::Terminating {
+            return Err(Status::failed_precondition("agent is terminating"));
+        }
+        Err(Status::failed_precondition(format!(
+            "{}: {}",
+            status.failure_reason.as_deref().unwrap_or("GuestFailed"),
+            status.message.as_deref().unwrap_or("guest failed to start"),
+        )))
     }
 
     async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
@@ -239,7 +257,7 @@ fn wake_patch(agent: &MicroVM, now: DateTime<Utc>) -> Value {
         "metadata": {"resourceVersion": agent.resource_version()},
         "spec": {
             "desiredState": MicroVMDesiredState::Running,
-            "idleDeadline": (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+            "idleDeadline": (now + chrono::Duration::minutes(i64::from(agent.spec.power.idle_timeout_minutes))).to_rfc3339(),
         }
     });
     let resuming = agent.spec.desired_state == MicroVMDesiredState::Sleeping
@@ -261,6 +279,7 @@ fn agent_ready_for_guest(agent: &MicroVM) -> bool {
 }
 
 fn apply_new_agent_metadata(microvm: &mut MicroVM, owner_hash: &str, storage_layout: &str) {
+    microvm.metadata.finalizers = Some(vec![FINALIZER_NAME.to_owned()]);
     microvm
         .metadata
         .labels
@@ -312,6 +331,7 @@ impl MicroVmControlPlane for ControlPlane {
                 image: self.default_image.to_string(),
                 architecture: self.architecture,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
                 // Retained agents have no lifecycle deadline. Keep the CR field for old
@@ -436,6 +456,41 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResumeAgent").await?;
         let agent = self.wake_agent(&principal, &request.get_ref().id).await?;
         Ok(Response::new(agent_from_microvm(&agent)))
+    }
+
+    async fn update_power_settings(
+        &self,
+        request: Request<UpdatePowerSettingsRequest>,
+    ) -> Result<Response<Agent>, Status> {
+        let principal = self.authorize(&request, "UpdatePowerSettings").await?;
+        let request = request.into_inner();
+        let power = power_settings_from_request(&request)?;
+        for _ in 0..3 {
+            let agent = self.owned_agent(&principal, &request.id).await?;
+            let now = Utc::now();
+            let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+            let patch = json!({
+                "metadata": {
+                    "resourceVersion": agent.resource_version(),
+                    "annotations": {crate::activity::LAST_ACTIVITY_ANNOTATION: now.to_rfc3339()},
+                },
+                "spec": {
+                    "power": power,
+                    "idleDeadline": (now + chrono::Duration::minutes(i64::from(power.idle_timeout_minutes))).to_rfc3339(),
+                },
+            });
+            match api
+                .patch(&request.id, &PatchParams::default(), &Patch::Merge(patch))
+                .await
+            {
+                Ok(updated) => return Ok(Response::new(agent_from_microvm(&updated))),
+                Err(error) if is_conflict(&error) => continue,
+                Err(error) => return Err(map_kube_error(error)),
+            }
+        }
+        Err(Status::aborted(
+            "agent settings changed concurrently; retry the request",
+        ))
     }
 
     async fn delete_agent(
@@ -1163,8 +1218,8 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
             .unwrap_or_default(),
         last_activity_at: last_activity_at(microvm)
             .unwrap_or_else(|| microvm.spec.created_at.clone()),
-        idle_deadline: effective_idle_deadline(microvm)
-            .unwrap_or_else(|| microvm.spec.idle_deadline.clone()),
+        idle_deadline: effective_idle_deadline(microvm).unwrap_or_default(),
+        idle_timeout_minutes: Some(microvm.spec.power.idle_timeout_minutes),
         // This field is retained on the CR only for old-schema compatibility. A retained
         // workspace has no destructive lifecycle deadline, so the public wire value is empty.
         expires_at: String::new(),
@@ -1187,6 +1242,22 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
             })
             .unwrap_or_default(),
     }
+}
+
+fn power_settings_from_request(
+    request: &UpdatePowerSettingsRequest,
+) -> Result<MicroVMPowerSettings, Status> {
+    let idle_timeout_minutes = request
+        .idle_timeout_minutes
+        .ok_or_else(|| Status::invalid_argument("idle timeout must be supplied"))?;
+    if idle_timeout_minutes > 1440 {
+        return Err(Status::invalid_argument(
+            "idle timeout must be between 0 and 1440 minutes",
+        ));
+    }
+    Ok(MicroVMPowerSettings {
+        idle_timeout_minutes,
+    })
 }
 
 fn agent_phase(microvm: &MicroVM) -> MicroVMPhase {
@@ -1251,18 +1322,38 @@ fn bounded_codex_raw_json(event: &crate::guest::CodexEvent) -> String {
         return raw_json;
     }
 
-    let bounded = match event
-        .raw
-        .pointer("/params/availableDecisions")
-        .filter(|_| !event.approval_id.is_empty())
+    let bounded = if !event.approval_id.is_empty()
+        && event.method == "mcpServer/elicitation/request"
+        && event
+            .raw
+            .pointer("/params/_meta/codex_approval_kind")
+            .and_then(Value::as_str)
+            == Some("mcp_tool_call")
     {
-        Some(available_decisions) => json!({
-            "params": {
-                "availableDecisions": bounded_approval_decisions(available_decisions),
-            },
-            "rawOmitted": true,
-        }),
-        None => json!({"rawOmitted": true}),
+        let persist = event.raw.pointer("/params/_meta/persist");
+        let session_scope = persist.and_then(Value::as_str) == Some("session")
+            || persist
+                .and_then(Value::as_array)
+                .is_some_and(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("session")));
+        let mut meta = json!({"codex_approval_kind": "mcp_tool_call"});
+        if session_scope {
+            meta["persist"] = json!("session");
+        }
+        json!({"params": {"_meta": meta}, "rawOmitted": true})
+    } else {
+        match event
+            .raw
+            .pointer("/params/availableDecisions")
+            .filter(|_| !event.approval_id.is_empty())
+        {
+            Some(available_decisions) => json!({
+                "params": {
+                    "availableDecisions": bounded_approval_decisions(available_decisions),
+                },
+                "rawOmitted": true,
+            }),
+            None => json!({"rawOmitted": true}),
+        }
     }
     .to_string();
 
@@ -2474,9 +2565,226 @@ mod tests {
     use crate::activity::LAST_ACTIVITY_ANNOTATION;
     use crate::auth::owner_hash;
     use crate::crd::{LIFETIME_HOURS, MicroVMStatus};
+    use hmac::{Hmac, Mac};
     use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
+    use prost::Message;
+    use sha2::{Digest, Sha256};
+
+    fn test_control_plane(client: Client) -> ControlPlane {
+        let namespace = "tengri".to_owned();
+        ControlPlane::new(
+            client.clone(),
+            ControlPlaneConfig {
+                identity: crate::identity::WorkloadIdentity::Fixture,
+                namespace: namespace.clone(),
+                default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                internal_hmac_secret: "h".repeat(32),
+                ticket_signing_secret: "t".repeat(32),
+                public_url: "https://tengri.example.test".to_owned(),
+                preview_origin: PreviewOrigin::parse(
+                    "https://tengri-{session}.example.test".to_owned(),
+                    "https://tengri.example.test".to_owned(),
+                )
+                .unwrap(),
+            },
+            ActivityTracker::new(client, namespace),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn power_settings_persist_without_waking_and_reject_other_owners() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let control = test_control_plane(Client::new(service, "tengri"));
+        let mut sleeping = provisional_terminal_test_agent(Utc::now());
+        sleeping.spec.owner_hash = owner_hash("github:42");
+        let id = deterministic_agent_id(&sleeping.spec.owner_hash);
+        sleeping.metadata.name = Some(id.clone());
+        sleeping.metadata.resource_version = Some("7".to_owned());
+        sleeping.spec.desired_state = MicroVMDesiredState::Sleeping;
+        sleeping.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Sleeping,
+            ..Default::default()
+        });
+
+        for (requested_id, allowed) in [
+            (id.clone(), true),
+            (deterministic_agent_id(&owner_hash("github:43")), false),
+        ] {
+            let mut request = Request::new(UpdatePowerSettingsRequest {
+                id: requested_id,
+                idle_timeout_minutes: Some(0),
+            });
+            let timestamp = Utc::now().timestamp().to_string();
+            let nonce = Uuid::new_v4().to_string();
+            let hash = format!("{:x}", Sha256::digest(request.get_ref().encode_to_vec()));
+            let mut mac = Hmac::<Sha256>::new_from_slice("h".repeat(32).as_bytes()).unwrap();
+            mac.update(format!("github:42\n{timestamp}\n{nonce}\n/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings\n{hash}").as_bytes());
+            let signature = format!("{:x}", mac.finalize().into_bytes());
+            for (key, value) in [
+                ("x-tengri-subject", "github:42"),
+                ("x-tengri-timestamp", timestamp.as_str()),
+                ("x-tengri-nonce", nonce.as_str()),
+                ("x-tengri-signature", signature.as_str()),
+            ] {
+                request.metadata_mut().insert(key, value.parse().unwrap());
+            }
+            let caller = control.clone();
+            let task = tokio::spawn(async move { caller.update_power_settings(request).await });
+
+            for method in [http::Method::GET, http::Method::PUT] {
+                let (request, response) = handle.next_request().await.unwrap();
+                assert_eq!(request.method(), method);
+                assert_eq!(
+                    request.uri().path(),
+                    "/api/v1/namespaces/tengri/configmaps/tengri-auth-nonces"
+                );
+                let state = if method == http::Method::GET {
+                    serde_json::to_vec(&json!({"apiVersion":"v1", "kind":"ConfigMap", "metadata":{"name":"tengri-auth-nonces", "resourceVersion":"1"}, "data":{}})).unwrap()
+                } else {
+                    request.into_body().collect_bytes().await.unwrap().to_vec()
+                };
+                response.send_response(
+                    HttpResponse::builder()
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(state))
+                        .unwrap(),
+                );
+            }
+            if !allowed {
+                let error = tokio::time::timeout(Duration::from_millis(500), task)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap_err();
+                assert_eq!(error.code(), tonic::Code::PermissionDenied);
+                continue;
+            }
+
+            let path =
+                format!("/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/{id}");
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            assert_eq!(request.uri().path(), path);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
+                    .unwrap(),
+            );
+            let (request, response) = handle.next_request().await.unwrap();
+            assert_eq!(request.method(), http::Method::PATCH);
+            assert_eq!(request.uri().path(), path);
+            let patch: Value =
+                serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                    .unwrap();
+            assert_eq!(patch["metadata"]["resourceVersion"], "7");
+            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 0);
+            assert!(patch["spec"].get("desiredState").is_none());
+            sleeping.spec.power.idle_timeout_minutes = 0;
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
+                    .unwrap(),
+            );
+            let saved = task.await.unwrap().unwrap().into_inner();
+            assert_eq!(saved.idle_timeout_minutes, Some(0));
+            assert_eq!(saved.phase, AgentPhase::Sleeping as i32);
+            assert!(saved.idle_deadline.is_empty());
+        }
+    }
+
+    #[test]
+    fn power_settings_bound_idle_time_and_allow_disabling_automatic_sleep() {
+        let mut request = UpdatePowerSettingsRequest {
+            id: "agent".to_owned(),
+            idle_timeout_minutes: Some(0),
+        };
+        assert_eq!(
+            power_settings_from_request(&request)
+                .unwrap()
+                .idle_timeout_minutes,
+            0
+        );
+        request.idle_timeout_minutes = Some(1440);
+        assert!(power_settings_from_request(&request).is_ok());
+        request.idle_timeout_minutes = Some(1441);
+        assert_eq!(
+            power_settings_from_request(&request).unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+        request.idle_timeout_minutes = None;
+        assert_eq!(
+            power_settings_from_request(&request).unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_observes_the_ready_event_without_polling() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let control = test_control_plane(Client::new(service, "tengri"));
+        let principal = Principal {
+            owner_hash: "a".repeat(64),
+        };
+        let now = Utc::now();
+        let mut pending = MicroVM::new(
+            "agent",
+            MicroVMSpec {
+                display_name: "Agent".to_owned(),
+                owner_hash: principal.owner_hash.clone(),
+                desired_state: MicroVMDesiredState::Running,
+                image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: MicroVMArchitecture::Amd64,
+                resources: MicroVMResources::default(),
+                power: Default::default(),
+                created_at: now.to_rfc3339(),
+                idle_deadline: (now + chrono::Duration::minutes(60)).to_rfc3339(),
+                expires_at: String::new(),
+            },
+        );
+        pending.metadata.generation = Some(1);
+        pending.metadata.resource_version = Some("1".to_owned());
+        let task = tokio::spawn(async move { control.wait_ready(&principal, "agent").await });
+        let (request, response) = handle.next_request().await.unwrap();
+        assert_eq!(
+            request.uri().path(),
+            "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms"
+        );
+        assert!(!request.uri().query().unwrap().contains("watch=true"));
+        response.send_response(HttpResponse::builder().header("content-type", "application/json").body(KubeBody::from(
+            serde_json::to_vec(&json!({"apiVersion":"runtime.proompteng.ai/v1alpha1", "kind":"MicroVMList", "metadata":{"resourceVersion":"1"}, "items":[pending]})).unwrap(),
+        )).unwrap());
+        let (request, response) = handle.next_request().await.unwrap();
+        assert!(request.uri().query().unwrap().contains("watch=true"));
+        pending.metadata.resource_version = Some("2".to_owned());
+        pending.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            observed_generation: 1,
+            ..Default::default()
+        });
+        response.send_response(
+            HttpResponse::builder()
+                .header("content-type", "application/json")
+                .body(KubeBody::from(
+                    format!("{}\n", json!({"type":"MODIFIED", "object":pending})).into_bytes(),
+                ))
+                .unwrap(),
+        );
+        let ready = tokio::time::timeout(Duration::from_millis(500), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready.status.unwrap().phase, MicroVMPhase::Ready);
+    }
 
     #[test]
     fn recognizes_only_the_legacy_guest_model_allowlist_failure() {
@@ -2547,12 +2855,16 @@ mod tests {
     }
 
     #[test]
-    fn new_agents_are_marked_for_the_versioned_single_mount_layout() {
+    fn new_agents_have_the_finalizer_and_single_mount_layout_at_creation() {
         let hash = owner_hash("github:42");
         let mut agent = provisional_terminal_test_agent(Utc::now());
 
         apply_new_agent_metadata(&mut agent, &hash, SINGLE_MOUNT_STORAGE_LAYOUT);
 
+        assert_eq!(
+            agent.metadata.finalizers.as_deref(),
+            Some([FINALIZER_NAME.to_owned()].as_slice()),
+        );
         assert_eq!(
             agent
                 .metadata
@@ -2612,6 +2924,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
@@ -2640,6 +2953,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
                 idle_deadline: now.to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
@@ -2673,6 +2987,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
@@ -2703,6 +3018,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
@@ -2734,6 +3050,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
                 idle_deadline: now.to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
@@ -3138,6 +3455,45 @@ mod tests {
     }
 
     #[test]
+    fn oversized_mcp_approvals_retain_kind_and_advertised_session_scope() {
+        for persist in [
+            json!("session"),
+            json!(["session", "always"]),
+            json!("always"),
+            Value::Null,
+        ] {
+            let event = codex_event(crate::guest::CodexEvent {
+                sequence: 10,
+                method: "mcpServer/elicitation/request".to_owned(),
+                approval_id: "mcp-large".to_owned(),
+                raw: json!({"params": {
+                    "threadId": "thread-large", "message": "Allow fixture tool?",
+                    "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": persist,
+                        "tool_params": {"content": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES + 1)}}
+                }}),
+            });
+            assert_eq!(event.thread_id, "thread-large");
+            assert_eq!(event.approval_id, "mcp-large");
+            assert_eq!(event.text, "Allow fixture tool?");
+            assert!(event.raw_json.len() < 256);
+            let raw: Value =
+                serde_json::from_str(&event.raw_json).expect("bounded MCP approval JSON");
+            assert_eq!(
+                raw.pointer("/params/_meta/codex_approval_kind"),
+                Some(&json!("mcp_tool_call"))
+            );
+            let session_scope =
+                persist == json!("session") || persist == json!(["session", "always"]);
+            assert_eq!(
+                raw.pointer("/params/_meta/persist").is_some(),
+                session_scope
+            );
+            assert_eq!(raw.pointer("/rawOmitted"), Some(&json!(true)));
+            assert!(raw.pointer("/params/_meta/tool_params").is_none());
+        }
+    }
+
+    #[test]
     fn preview_path_is_normalized_and_cannot_smuggle_a_fragment() {
         assert_eq!(
             validate_preview_path("/app?mode=dev").expect("preview path"),
@@ -3338,6 +3694,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),

@@ -785,6 +785,7 @@ spec:
           - services/agents
           - charts/agents/crds
           - nix/images/agents.nix
+          - nix/verify-agents-shell-image-lifecycle.sh
           - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - nix/oci-push.sh
@@ -869,8 +870,6 @@ spec:
           - .github/workflows/tengri-images.yml
           - packages/scripts/src/tengri
           - packages/scripts/src/shared/cli.ts
-          - packages/scripts/package.json
-          - bun.lock
           - argocd/applications/tengri
     - image:
         repoURL: registry.ide-newton.ts.net/lab/tengri
@@ -1129,22 +1128,13 @@ spec:
       imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
       imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
       imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
       imageFrom('registry.ide-newton.ts.net/lab/rune').Tag == 'kargo-sha-' +
-      commitFrom('git@github.com:proompteng/lab.git').ID + '-run-' +
+      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] + '-run-' +
       imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
-    - git:
-        repoURL: git@github.com:proompteng/lab.git
-        branch: main
-        commitSelectionStrategy: NewestFromBranch
-        discoveryLimit: 20
-        strictSemvers: true
-        includePaths:
-          - services/rune
-          - .github/workflows/rune-images.yml
-          - argocd/applications/rune
-          - argocd/applications/kargo
-          - argocd/applicationsets/platform.yaml
     - image:
         repoURL: registry.ide-newton.ts.net/lab/rune
         imageSelectionStrategy: NewestBuild

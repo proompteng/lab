@@ -24,6 +24,7 @@ import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-mo
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { studyIoc } from './signal-study'
+import { RidgeControlPolicy } from './control-ridge'
 import { ResidualShockCandidate, residualShockDefinition, selectResidualShock } from './residual-shock'
 
 export enum ControlPolicy {
@@ -31,6 +32,8 @@ export enum ControlPolicy {
   RepeatedBreakout = 'REPEATED_BREAKOUT',
   RelativeMomentum = 'REPEATED_RELATIVE_MOMENTUM',
   ResidualShock = ResidualShockCandidate.SpyRelativeShockRebound60s,
+  Ridge = RidgeControlPolicy.Ridge,
+  TrainingMean = RidgeControlPolicy.TrainingMean,
 }
 
 export enum ControlExit {
@@ -90,6 +93,10 @@ export const controlCandidates = (policy: ControlPolicy, protocol: JevProtocol) 
 
 export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: ControlPolicy, protocol: JevProtocol) =>
   Result.gen(function* () {
+    if (policy === ControlPolicy.Ridge || policy === ControlPolicy.TrainingMean)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Ridge controls require their bound entry adapter' }),
+      )
     if (policy === ControlPolicy.ResidualShock) return (yield* selectResidualShock(snapshot, protocol)).selectedSymbol
     const latestTrades = Object.fromEntries(
       snapshot.trades.toSorted(compareRecords).map((trade) => [trade.symbol, trade]),
@@ -163,11 +170,40 @@ export const controlEntryQuantity = (input: {
   readonly atMs: number
   readonly feeMultiplierPpm: number
   readonly turnoverPolicy?: EntryTurnoverPolicy
+  readonly allocationBudgetMicros?: bigint
 }) =>
   Result.gen(function* () {
     const { portfolio, policy, symbol, referencePriceMicros, protocol } = input
     if (portfolio.inventory.status !== 'FLAT' || portfolio.ledger.positions.length !== 0)
       return yield* Result.fail(new ControlStudyFailure({ message: 'Control entry requires flat inventory' }))
+    if (input.allocationBudgetMicros !== undefined && (input.allocationBudgetMicros <= 0n || input.targetWeight !== 1))
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Fixed principal sizing requires a positive budget and unit weight' }),
+      )
+    let fixedPrincipalCap: bigint | undefined
+    if (input.allocationBudgetMicros !== undefined) {
+      const brokerEquityMicros = yield* Result.try({
+        try: () => BigInt(portfolio.ledger.cashMicros),
+        catch: (cause) => new ControlStudyFailure({ message: 'Invalid flat-portfolio broker equity', cause }),
+      })
+      const maximumWeightPpm = Math.floor(
+        Math.min(protocol.maximumGrossWeight, protocol.maximumSymbolWeight) * 1_000_000,
+      )
+      if (
+        brokerEquityMicros <= 0n ||
+        !Number.isSafeInteger(maximumWeightPpm) ||
+        maximumWeightPpm <= 0 ||
+        maximumWeightPpm > 1_000_000
+      )
+        return yield* Result.fail(
+          new ControlStudyFailure({
+            message: 'Fixed principal sizing requires positive broker equity and valid exposure limits',
+          }),
+        )
+      const equityRiskCapacity = (brokerEquityMicros * BigInt(maximumWeightPpm)) / MICROS
+      fixedPrincipalCap =
+        input.allocationBudgetMicros < equityRiskCapacity ? input.allocationBudgetMicros : equityRiskCapacity
+    }
     const targetWeights = { [symbol]: input.targetWeight }
     const allocation = yield* executionMandateAllocationCapitalMicros({
       accountEquityMicros: BigInt(portfolio.ledger.cashMicros),
@@ -181,7 +217,8 @@ export const controlEntryQuantity = (input: {
       referencePriceMicros: { [symbol]: String(referencePriceMicros) },
     })
     const constrained = yield* constrainExecutionTargetAllocationCapitalMicros({
-      allocationCapitalMicros: allocation,
+      allocationCapitalMicros:
+        fixedPrincipalCap !== undefined && fixedPrincipalCap < allocation ? fixedPrincipalCap : allocation,
       maxOrderNotionalMicros: BigInt(policy.maxOrderNotionalMicros),
       maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros),
       maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
@@ -220,6 +257,7 @@ export const controlEntryQuantity = (input: {
         return yield* Result.fail(tentative.failure)
       const allowed =
         Result.isSuccess(tentative) &&
+        (fixedPrincipalCap === undefined || notional <= fixedPrincipalCap) &&
         notional <= BigInt(policy.maxOrderNotionalMicros) &&
         portfolio.tradedNotionalMicros + notional <= BigInt(policy.maxDailyTradedNotionalMicros) &&
         (input.turnoverPolicy !== EntryTurnoverPolicy.EntryAndExpectedExit ||

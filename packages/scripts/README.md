@@ -50,6 +50,20 @@ syncs that branch; no script, SHA bump, deployment PR, release branch, Image Upd
 of the normal path. See
 [`docs/release-automation.md`](../../docs/release-automation.md) for enrollment, evidence, and recovery.
 
+## PR input selection
+
+`src/ci/affected-inputs.ts` runs through `.github/actions/affected-inputs` before expensive Bun service and image jobs.
+Each target declares its installed workspaces and source paths. The planner compares PR merge-base and head lockfiles,
+following dependencies, optional dependencies, peers, and linked workspaces. An unrelated workspace manifest or lockfile
+change skips the target. Changes to its resolved packages, integrity, shared source, or build configuration still run it.
+Unsupported lockfiles and unresolved required dependencies fail the planner instead of silently skipping validation.
+
+Push events retain path-based selection because Kargo requires groups of published images at one source revision.
+Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs;
+they do not use the root Bun lockfile.
+
+Run the planner regressions with `bun test packages/scripts/src/ci/__tests__/affected-inputs.test.ts`.
+
 ## Testing & linting
 
 We keep lightweight unit tests alongside scripts where feasible (see `src/codex/__tests__`). Run the following before pushing changes:

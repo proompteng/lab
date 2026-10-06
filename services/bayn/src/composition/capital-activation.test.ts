@@ -13,6 +13,7 @@ import {
 } from '../execution/configuration'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
+import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../reconciliation'
 import {
   configuredCapitalActivation,
@@ -193,4 +194,23 @@ test('activation consumes the current reconciliation rather than the startup pos
       }),
     ),
   ).toBe(true)
+})
+
+test('pre-activation retains a typed nonexact reconciliation failure until a later exact observation', async () => {
+  let status = ReconciliationStatus.Discrepancy
+  const refresh = refreshResearchCapitalActivationReconciliation(
+    Effect.sync(() => ({ report: { reconciliation: { status } } })),
+    1000,
+  )
+  const blocked = await Effect.runPromise(refresh.pipe(Effect.result))
+  expect(Result.isFailure(blocked)).toBe(true)
+  if (Result.isFailure(blocked)) {
+    expect(blocked.failure).toBeInstanceOf(OperationalError)
+    expect(blocked.failure.cause).toBeInstanceOf(CapitalActivationReconciliationNotExact)
+    expect(blocked.failure.cause).toMatchObject({ status: ReconciliationStatus.Discrepancy })
+  }
+  status = ReconciliationStatus.Exact
+  expect(await Effect.runPromise(refresh)).toEqual({
+    report: { reconciliation: { status: ReconciliationStatus.Exact } },
+  })
 })
