@@ -30,6 +30,7 @@ import {
   startCodexLogin,
   steerCodexTurn,
   terminateTerminal,
+  updatePowerSettings,
   writeFile,
 } from '@/lib/tengri/grpc'
 import {
@@ -102,6 +103,9 @@ export async function POST(request: Request) {
         break
       case 'resume-agent':
         result = await resumeAgent(identity.subject, action.agentId)
+        break
+      case 'update-power-settings':
+        result = await updatePowerSettings(identity.subject, action.agentId, action.power)
         break
       case 'list-files':
         result = await listFiles(identity.subject, action.agentId, action.path)

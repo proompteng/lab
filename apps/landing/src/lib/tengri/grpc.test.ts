@@ -87,6 +87,21 @@ beforeAll(async () => {
         cpuMillis: 2_000,
         memoryMib: 4_096,
         workspaceGib: 16,
+        ...(call.request.displayName === 'Old runtime' ? {} : { idleTimeoutMinutes: 60 }),
+      })
+    },
+    updatePowerSettings(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {
+        id: call.request.id,
+        displayName: 'Tengri',
+        phase: 'AGENT_PHASE_READY',
+        architecture: 'ARCHITECTURE_ARM64',
+        idleTimeoutMinutes: call.request.idleTimeoutMinutes,
       })
     },
     getAgent(
@@ -616,6 +631,44 @@ describe('Tengri gRPC BFF transport', () => {
     expect(error).toMatchObject({
       message: 'This file is not valid UTF-8 text',
       status: 415,
+    })
+  })
+
+  test('persists power settings through the signed gRPC contract, including disabled automatic sleep', async () => {
+    const { updatePowerSettings } = await import('./grpc')
+    const agent = await updatePowerSettings('github:42', 'agent-test', {
+      idleTimeoutMinutes: 0,
+    })
+    expect(receivedRequest).toEqual({
+      id: 'agent-test',
+      idleTimeoutMinutes: 0,
+      _idleTimeoutMinutes: 'idleTimeoutMinutes',
+    })
+    expect(agent.power).toEqual({ idleTimeoutMinutes: 0 })
+    expect(metadataValue('x-tengri-subject')).toBe('github:42')
+    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.UpdatePowerSettings
+    const bodyHash = createHash('sha256')
+      .update(
+        method.requestSerialize({
+          id: 'agent-test',
+          idleTimeoutMinutes: 0,
+        }),
+      )
+      .digest('hex')
+    expect(metadataValue('x-tengri-signature')).toBe(
+      createHmac('sha256', secret)
+        .update(
+          `github:42\n${metadataValue('x-tengri-timestamp')}\n${metadataValue('x-tengri-nonce')}\n${method.path}\n${bodyHash}`,
+        )
+        .digest('hex'),
+    )
+  })
+
+  test('rejects an old runtime response rather than inventing its power settings', async () => {
+    const { createAgent } = await import('./grpc')
+    expect(await rejection(createAgent('github:42', 'Old runtime'))).toMatchObject({
+      status: 503,
+      message: 'The runtime returned invalid power settings. Update Tengri and refresh.',
     })
   })
 

@@ -168,14 +168,17 @@ export const startAgentsShellServer = (config = defaultAgentsShellConfigFromEnv(
   const runner = new AgentsShellRunner(config)
   const handleRequest = createAgentsShellRequestHandler(config, runner)
 
-  process.once('SIGTERM', () => runner.shutdown())
-  process.once('SIGINT', () => runner.shutdown())
-
   const server = Bun.serve({
     port: config.port,
     hostname: config.host,
     fetch: handleRequest,
   })
+  const shutdown = () => {
+    runner.shutdown()
+    void server.stop(true)
+  }
+  process.once('SIGTERM', shutdown)
+  process.once('SIGINT', shutdown)
 
   console.log(
     JSON.stringify({

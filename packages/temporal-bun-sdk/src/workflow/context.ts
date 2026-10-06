@@ -1,4 +1,4 @@
-import { Effect, FiberRef } from 'effect'
+import { Context, Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
 import { WorkflowMailbox, type WorkflowActivationJob } from './activation'
@@ -50,7 +50,9 @@ import {
 export type WorkflowCommandIntentId = string
 
 const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT_MS = 10_000
-const queryResolverActive = FiberRef.unsafeMake(false)
+const queryResolverActive = Context.Reference<boolean>('@proompteng/temporal-bun-sdk/QueryResolverActive', {
+  defaultValue: () => false,
+})
 const MARKER_SIDE_EFFECT = 'temporal-bun-sdk/side-effect'
 const MARKER_VERSION = 'temporal-bun-sdk/get-version'
 const MARKER_PATCH = 'temporal-bun-sdk/patch'
@@ -1208,11 +1210,11 @@ class WorkflowInboundSignals {
 
   #decode<I>(handle: WorkflowSignalHandle<I>, entry: SignalQueueEntry): Effect.Effect<I, unknown, never> {
     const normalized = normalizeInboundArguments(entry.args, handle.decodeArgumentsAsArray)
-    return Schema.decodeUnknown(handle.schema)(normalized)
+    return Schema.decodeUnknownEffect(handle.schema)(normalized)
   }
 
   #consume<A>(effect: Effect.Effect<A>): Effect.Effect<A, WorkflowQueryViolationError> {
-    return Effect.flatMap(FiberRef.get(queryResolverActive), (active) =>
+    return Effect.flatMap(Effect.service(queryResolverActive), (active) =>
       active
         ? Effect.fail(
             new WorkflowQueryViolationError('Workflow query cannot consume signals; queries must be read-only'),
@@ -1246,7 +1248,7 @@ export interface WorkflowUpdates {
 
 export interface RegisteredWorkflowUpdate {
   readonly name: string
-  readonly input: Schema.Schema<unknown>
+  readonly input: Schema.Codec<unknown>
   readonly handler: WorkflowUpdateHandler<unknown, unknown>
   readonly validator?: WorkflowUpdateValidator<unknown>
 }
@@ -1265,7 +1267,7 @@ export class WorkflowUpdateRegistry {
     }
     this.#handlers.set(definition.name, {
       name: definition.name,
-      input: definition.input as Schema.Schema<unknown>,
+      input: definition.input as Schema.Codec<unknown>,
       handler: handler as WorkflowUpdateHandler<unknown, unknown>,
       validator: validator as WorkflowUpdateValidator<unknown> | undefined,
     })
@@ -1340,7 +1342,7 @@ export class WorkflowQueryRegistry {
     const value = (input ?? (undefined as I)) as unknown
     const resolver = entry.resolver as WorkflowQueryResolver<I, O>
     return Effect.suspend(() => resolver(value as I, invocationMetadata))
-      .pipe(Effect.locally(queryResolverActive, true))
+      .pipe(Effect.provideService(queryResolverActive, true))
       .pipe(
         Effect.tap((result) =>
           this.#recordQueryEvaluation(
@@ -1374,13 +1376,13 @@ export class WorkflowQueryRegistry {
     }
     const metadata = request.metadata ?? {}
     const normalized = normalizeInboundArguments(request.args, entry.handle.decodeInputAsArray) ?? {}
-    return Schema.decodeUnknown(entry.handle.inputSchema)(normalized)
+    return Schema.decodeUnknownEffect(entry.handle.inputSchema)(normalized)
       .pipe(
         Effect.flatMap((decoded) =>
           Effect.suspend(() => entry.resolver(decoded, metadata))
-            .pipe(Effect.locally(queryResolverActive, true))
+            .pipe(Effect.provideService(queryResolverActive, true))
             .pipe(Effect.map((result) => ({ status: 'success', decoded, result }) as const))
-            .pipe(Effect.catchAll((error) => Effect.succeed({ status: 'failure', decoded, error } as const))),
+            .pipe(Effect.catch((error) => Effect.succeed({ status: 'failure', decoded, error } as const))),
         ),
       )
       .pipe(Effect.tap((payload) => this.#recordQueryEvaluation(entry, payload, metadata, request)))

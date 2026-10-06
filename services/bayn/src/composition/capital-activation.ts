@@ -27,7 +27,7 @@ import {
   type ResearchCapitalBuildContinuation,
   type ResearchCapitalBuildLineage,
 } from '../execution/configuration'
-import { OperationalError } from '../errors'
+import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import { decideExecutionMandateAuthority, isExecutionCyclePreflightStoreRestriction } from '../execution/mandate'
 import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
@@ -411,7 +411,10 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <
       result.report.reconciliation.status === ReconciliationStatus.Exact
         ? Effect.succeed(result)
         : Effect.fail(
-            capitalActivationOperationalError('research capital pre-activation reconciliation was not exact'),
+            capitalActivationOperationalError(
+              'research capital pre-activation reconciliation was not exact',
+              new CapitalActivationReconciliationNotExact({ status: result.report.reconciliation.status }),
+            ),
           ),
     ),
   )

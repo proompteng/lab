@@ -1,0 +1,31 @@
+name: Affected inputs
+description: Compare owned source paths and resolved Bun dependencies before scheduling PR jobs.
+inputs:
+  workspaces:
+    description: YAML mapping of target names to installed workspace paths. Include the root as an empty string.
+    required: true
+  filters:
+    description: YAML mapping of target names to source path patterns.
+    default: '{}'
+  workflow:
+    description: Read default path patterns from this workflow's event trigger.
+    default: ''
+outputs:
+  affected:
+    description: JSON mapping of target names to booleans.
+    value: ${{ steps.filter.outputs.affected }}
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.2
+    - id: filter
+      shell: bash
+      env:
+        INPUT_WORKSPACES: ${{ inputs.workspaces }}
+        INPUT_FILTERS: ${{ inputs.filters }}
+        INPUT_WORKFLOW: ${{ inputs.workflow }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: bun packages/scripts/src/ci/affected-inputs.ts
