@@ -16,9 +16,9 @@ let
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
   strategyProtocolHash = "131371357a091ac5d09f5a3dd1585b84cb5509e334beef99ee9d5f14600cf908";
-  # Canonical quote-bound policy for the build-contract account sentinel. It binds every source-controlled risk limit
-  # without embedding a broker account identity; runtime separately verifies the account-bound activation policy.
-  executionRiskPolicyHash = "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227";
+  # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
+  # This records availability; runtime separately selects and verifies the account-bound activation policy.
+  executionRiskPolicyHash = "b6fa12aa74014cb122a525ddbde52ee93d31f17096b88ffad507791a83ea4ce1";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -39,6 +39,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/gap-recovery-command.js" "$@"
   '';
+  ridgeTrainingCommand = pkgs.writeShellScriptBin "bayn-ridge-training" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/ridge-training-command.js" "$@"
+  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
@@ -48,7 +53,7 @@ let
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/backtest-command.ts src/gap-recovery-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/backtest-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node "
       + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -66,6 +71,7 @@ let
     )
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/gap-recovery-command.js --help"
+    "node services/bayn/dist/ridge-training-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/backtest-command.js"
@@ -84,6 +90,7 @@ let
     cp "$TMPDIR/work/services/bayn/dist/inference-cost-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/backtest-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/gap-recovery-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/ridge-training-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/streaming-diagnostics-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
@@ -137,6 +144,7 @@ import ./bun-workspace-service.nix {
     inferenceCostCommand
     backtestCommand
     gapRecoveryCommand
+    ridgeTrainingCommand
   ];
   exposedPorts = {
     "8080/tcp" = { };

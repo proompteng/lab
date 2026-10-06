@@ -5,6 +5,8 @@ import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
 import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { settleCompletedBrokerObservationPoll } from '../composition/broker-observation-runtime'
 import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 
 const controllerKey = 'a'.repeat(64)
@@ -104,6 +106,70 @@ const harness = (
 }
 
 describe('Restate broker observation owner', () => {
+  test.each([0, 8_400, 45_000])(
+    'a completed persistence failure retains measured quota %d without the lost-worker reservation',
+    async (measuredDeadline) => {
+      const h = harness({
+        runtime: {
+          poll: (signal) =>
+            Effect.runPromise(
+              settleCompletedBrokerObservationPoll(
+                Effect.fail(
+                  new BrokerReadError({
+                    operation: 'preflight',
+                    kind: BrokerReadErrorKind.Timeout,
+                    retryable: true,
+                    message: 'Broker observation persistence failed',
+                  }),
+                ),
+                Effect.succeed(measuredDeadline),
+              ),
+              { signal },
+            ),
+        },
+      })
+      await h.handlers.activate(h.context, { sourceRevision })
+      expect(h.state()?.lastSnapshotHash).toBeUndefined()
+      expect(h.budgetDeadline()).toBe(measuredDeadline)
+      expect(h.deliveries[0]?.delay.milliseconds).toBe(Math.max(10_000, measuredDeadline))
+    },
+  )
+  test.each([
+    'defect',
+    'interruption',
+    'typed failure with cleanup defect',
+    'typed failure with cleanup interruption',
+  ] as const)('a poll %s retains the conservative lost-worker reservation', async (failure) => {
+    const typedFailure = Effect.fail(
+      new BrokerReadError({
+        operation: 'preflight',
+        kind: BrokerReadErrorKind.Timeout,
+        retryable: true,
+        message: 'injected completed persistence failure',
+      }),
+    )
+    const poll =
+      failure === 'defect'
+        ? Effect.die(new Error('worker defect'))
+        : failure === 'interruption'
+          ? Effect.interrupt
+          : typedFailure.pipe(
+              Effect.ensuring(
+                failure === 'typed failure with cleanup defect'
+                  ? Effect.die(new Error('cleanup defect'))
+                  : Effect.interrupt,
+              ),
+            )
+    const h = harness({
+      runtime: {
+        poll: (signal) => Effect.runPromise(settleCompletedBrokerObservationPoll(poll, Effect.succeed(0)), { signal }),
+      },
+    })
+    await h.handlers.activate(h.context, { sourceRevision })
+    expect(h.state()?.lastSnapshotHash).toBeUndefined()
+    expect(h.budgetDeadline()).toBe(180_000)
+    expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
+  })
   test('publishes before returning activation and schedules only one serial successor', async () => {
     const h = harness()
     const state = await h.handlers.activate(h.context, { sourceRevision })
