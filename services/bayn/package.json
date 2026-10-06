@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "rm -rf dist && bun build src/index.ts src/forward-performance-command.ts src/inference-cost-command.ts src/backtest-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist",
+    "build": "rm -rf dist && bun build src/index.ts src/forward-performance-command.ts src/inference-cost-command.ts src/backtest-command.ts src/gap-recovery-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist",
     "dev": "BAYN_PROVENANCE_MODE=development bun --watch src/index.ts",
     "forward:performance": "BAYN_PROVENANCE_MODE=development node dist/forward-performance-command.js",
     "inference:cost": "node dist/inference-cost-command.js",
@@ -39,6 +39,7 @@
     "@restatedev/restate-sdk": "1.16.5",
     "@restatedev/restate-sdk-opentelemetry": "1.16.5",
     "effect": "4.0.0",
+    "ml-matrix": "6.15.0",
     "tigerbeetle-node": "0.17.9"
   },
   "devDependencies": {

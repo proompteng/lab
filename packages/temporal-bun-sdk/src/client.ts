@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { type CallOptions, Code, ConnectError, createClient } from '@connectrpc/connect'
 import { createGrpcTransport } from '@connectrpc/connect-node'
-import { Context, Effect } from 'effect'
+import { Effect } from 'effect'
 import * as Option from 'effect/Option'
 import type * as Schema from 'effect/Schema'
 
@@ -279,7 +279,7 @@ export interface TemporalMemoHelpers {
 export interface TemporalSearchAttributeHelpers {
   encode(input?: Record<string, unknown>): Promise<SearchAttributes | undefined>
   decode(attributes?: SearchAttributes | null): Promise<Record<string, unknown> | undefined>
-  typed<T>(schema: Schema.Schema<T>): TypedSearchAttributes<T>
+  typed<T>(schema: Schema.Codec<T>): TypedSearchAttributes<T>
 }
 
 export interface PauseScheduleInput {
@@ -967,9 +967,7 @@ export const makeTemporalClientEffect = (
     const logger = options.logger ?? (yield* LoggerService)
     const metricsRegistry = options.metrics ?? (yield* MetricsService)
     const metricsExporter = options.metricsExporter ?? (yield* MetricsExporterService)
-    const contextualDataConverter = yield* Effect.contextWith((context) =>
-      Context.getOption(context, DataConverterService),
-    )
+    const contextualDataConverter = yield* Effect.serviceOption(DataConverterService)
     const dataConverter =
       options.dataConverter ??
       Option.getOrUndefined(contextualDataConverter) ??
@@ -1002,9 +1000,7 @@ export const makeTemporalClientEffect = (
       tracingEnabled,
     })
     const clientInterceptors = [...defaultClientInterceptors, ...(options.clientInterceptors ?? [])]
-    const workflowServiceFromContext = yield* Effect.contextWith((context) =>
-      Context.getOption(context, WorkflowServiceClientService),
-    )
+    const workflowServiceFromContext = yield* Effect.serviceOption(WorkflowServiceClientService)
     let workflowService = options.workflowService ?? Option.getOrUndefined(workflowServiceFromContext)
     let operatorService = options.operatorService
     let cloudService = options.cloudService
@@ -2935,7 +2931,7 @@ class TemporalClientImpl implements TemporalClient {
   #log(level: LogLevel, message: string, fields?: LogFields): void {
     void Effect.runPromise(
       this.#logger.log(level, message, fields).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.sync(() => {
             console.warn(`[temporal-bun-sdk] client logger failure: ${describeError(error)}`)
           }),

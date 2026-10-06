@@ -16,6 +16,7 @@ import {
 import { TransientExecutionFailure } from '../execution/advance'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { CycleRunnerError } from '../cycle/runner/model'
+import { OperationalError } from '../errors'
 import {
   executionControllerAdvanceRunOptions,
   executionControllerAdvanceMaximumAttempts,
@@ -78,71 +79,86 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
 
 type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
 
-test('journal replay cannot fabricate a fresh runtime start or a complete original capture', async () => {
-  let state: ExecutionControllerState = {
-    schemaVersion: 1,
-    active: true,
-    epoch: 1,
-    planHash,
-    sourceRevision,
-    initialSequence: 4,
-    nextSequence: 4,
-  }
-  const receipts: ResearchCaptureEvent[] = []
-  const invalidations: CaptureInvalidation[] = []
-  let runtimeCalls = 0
-  const cachedResult = {
-    completedAt: '2026-08-13T18:00:01.000Z',
-    outcome: { _tag: ExecutionControllerOutcome.Blocked, receiptHash: 'd'.repeat(64), nextDelayMs: 30_000 },
-  }
-  const controller = handlers(
-    makeBaynExecutionController(config, {
-      capture: {
-        record: (event) => {
-          receipts.push(event)
+test.each([undefined, { hashes: ['a'.repeat(64), 'b'.repeat(64)], complete: true }])(
+  'journal replay cannot fabricate a fresh runtime start or a complete original capture (%j)',
+  async (jevObservationReferences) => {
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const receipts: ResearchCaptureEvent[] = []
+    const invalidations: CaptureInvalidation[] = []
+    let runtimeCalls = 0
+    const cachedResult = {
+      completedAt: '2026-08-13T18:00:01.000Z',
+      ...(jevObservationReferences === undefined
+        ? {}
+        : {
+            observation: {
+              result: 'SUCCESS' as const,
+              outcome: 'WINDOW_CLOSED' as const,
+              observedAt: '2026-08-13T18:00:01.000Z',
+              jevObservationReferences,
+            },
+          }),
+      outcome: { _tag: ExecutionControllerOutcome.Blocked, receiptHash: 'd'.repeat(64), nextDelayMs: 30_000 },
+    }
+    const controller = handlers(
+      makeBaynExecutionController(config, {
+        capture: {
+          record: (event) => {
+            receipts.push(event)
+          },
+          invalidate: (reason) => {
+            invalidations.push(reason)
+          },
         },
-        invalidate: (reason) => {
-          invalidations.push(reason)
+        advance: async () => {
+          runtimeCalls++
+          return cachedResult
+        },
+        log: async () => undefined,
+        projectState: async () => undefined,
+      }),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, next: ExecutionControllerState) => {
+        state = next
+      },
+      genericSend: () => undefined,
+      run: async () => cachedResult,
+      date: {
+        toJSON: async () => {
+          throw new Error('Unexpected journal clock')
         },
       },
-      advance: async () => {
-        runtimeCalls++
-        return cachedResult
-      },
-      log: async () => undefined,
-      projectState: async () => undefined,
-    }),
-  )
-  const context = {
-    key: controllerKey,
-    get: async () => state,
-    set: (_key: string, next: ExecutionControllerState) => {
-      state = next
-    },
-    genericSend: () => undefined,
-    run: async () => cachedResult,
-    date: {
-      toJSON: async () => {
-        throw new Error('Unexpected journal clock')
-      },
-    },
-    request: () => ({ id: 'replayed-invocation', attemptCompletedSignal: new AbortController().signal }),
-  } as unknown as TestContext
-  await controller.tick(context, {
-    schemaVersion: 'bayn.execution-controller-tick.v1',
-    epoch: 1,
-    sequence: 4,
-    issuedAt: '2026-08-13T18:00:00.000Z',
-  })
-  expect(runtimeCalls).toBe(0)
-  expect(state.nextSequence).toBe(5)
-  expect(receipts.map((receipt) => (receipt.kind === 'controller-pass' ? receipt.phase : undefined))).toEqual([
-    'COMPLETED',
-    'SCHEDULED',
-  ])
-  expect(receipts[0]).toMatchObject({ runtimeAttempted: false, completedAt: cachedResult.completedAt })
-  expect(invalidations).toEqual([CaptureInvalidation.ControllerReplay])
-})
+      request: () => ({ id: 'replayed-invocation', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    await controller.tick(context, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 1,
+      sequence: 4,
+      issuedAt: '2026-08-13T18:00:00.000Z',
+    })
+    expect(runtimeCalls).toBe(0)
+    expect(state.nextSequence).toBe(5)
+    expect(receipts.map((receipt) => (receipt.kind === 'controller-pass' ? receipt.phase : undefined))).toEqual([
+      'COMPLETED',
+      'SCHEDULED',
+    ])
+    expect(receipts[0]).toMatchObject({ runtimeAttempted: false, completedAt: cachedResult.completedAt })
+    expect(receipts[0]).toMatchObject(jevObservationReferences === undefined ? {} : { jevObservationReferences })
+    if (jevObservationReferences === undefined) expect(receipts[0]).not.toHaveProperty('jevObservationReferences')
+    expect(invalidations).toEqual([CaptureInvalidation.ControllerReplay])
+  },
+)
 
 test('optional capture preserves synchronous scheduling, supplied command timestamps and native retry identity', async () => {
   const exercise = async (mode: 'absent' | 'record' | 'broken' | 'mutating') => {
@@ -1484,6 +1500,156 @@ describe('native Restate execution controller', () => {
     expect(loggedAnnotations[2]?.['failureFingerprint']).toMatch(/^[0-9a-f]{64}$/)
     expect(JSON.stringify(loggedAnnotations)).not.toContain('database-secret-must-not-be-logged')
   })
+
+  test.each([
+    {
+      failure: new TransientExecutionFailure({
+        operation: 'advance',
+        message: 'execution advance did not complete within its bounded interpreter',
+        cause: new CycleRunnerError({
+          operation: 'read-authority-slot',
+          failure: 'database',
+          message: 'cycle runner could not read the authority slot',
+          cause: new Error('database-secret-must-not-be-logged'),
+        }),
+      }),
+      expected: {
+        failureTag: 'TransientExecutionFailure',
+        failureOperation: 'advance',
+        failureCauseTag: 'CycleRunnerError',
+        failureCauseOperation: 'read-authority-slot',
+        failureCauseCategory: 'database',
+      },
+    },
+    {
+      failure: new OperationalError({
+        component: 'strategy',
+        operation: 'capital-activation',
+        message: 'research capital pre-activation reconciliation was not exact',
+        retryable: false,
+        cause: { _tag: 'CapitalActivationPreparationRejected' },
+      }),
+      expected: {
+        failureTag: 'OperationalError',
+        failureOperation: 'capital-activation',
+        failureCauseTag: 'CapitalActivationPreparationRejected',
+      },
+    },
+  ])(
+    'retains $expected.failureTag diagnostics across the durable run boundary and replay',
+    async ({ failure, expected }) => {
+      const state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: 7,
+        planHash,
+        sourceRevision,
+        initialSequence: 12,
+        nextSequence: 12,
+      }
+      const deliveries: Delivery[] = []
+      const logged: Array<Readonly<Record<string, string | number | boolean>>> = []
+      let advances = 0
+      let recorded: { message: string; code: number; metadata: Record<string, string> } | undefined
+      const context = {
+        key: controllerKey,
+        get: async () => state,
+        set: () => undefined,
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>): Promise<A> => {
+          if (recorded === undefined) {
+            try {
+              return await action()
+            } catch (cause) {
+              // Restate retains message, code and string metadata, not the original error's prototype or fields.
+              recorded = JSON.parse(
+                JSON.stringify(
+                  cause instanceof TerminalError
+                    ? { message: cause.message, code: cause.code, metadata: cause.metadata ?? {} }
+                    : { message: 'run attempts exhausted', code: 500, metadata: {} },
+                ),
+              ) as typeof recorded
+            }
+          }
+          if (recorded === undefined) throw new Error('missing retained failure')
+          throw new TerminalError(recorded.message, { errorCode: recorded.code, metadata: recorded.metadata })
+        },
+        date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({ id: 'diagnostic-replay', attemptCompletedSignal: new AbortController().signal }),
+      } as unknown as TestContext
+      const object = handlers(
+        makeBaynExecutionController(config, {
+          advance: () => {
+            advances += 1
+            return Promise.reject(failure)
+          },
+          log: (_level, _message, annotations) => {
+            logged.push(annotations)
+            return Promise.resolve()
+          },
+          projectState: () => Promise.resolve(),
+        }),
+      )
+      const tick = { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 7, sequence: 12 }
+      await object.tick(context, tick)
+      await object.tick(context, tick)
+      expect(advances).toBe(1)
+      expect(deliveries).toHaveLength(2)
+      expect(logged).toHaveLength(2)
+      for (const annotations of logged) {
+        expect(annotations).toMatchObject(expected)
+        expect(annotations['failureFingerprint']).toMatch(/^[0-9a-f]{64}$/)
+      }
+      expect(logged[0]?.['failureFingerprint']).toBe(logged[1]?.['failureFingerprint'])
+      expect(JSON.stringify({ recorded, logged })).not.toContain('database-secret-must-not-be-logged')
+    },
+  )
+
+  test.each(['not-json', '{"failureTag":"OperationalError","failureFingerprint":"invalid"}'])(
+    'ignores malformed durable diagnostics without exposing the original error (%s)',
+    async (metadata) => {
+      const state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: 7,
+        planHash,
+        sourceRevision,
+        initialSequence: 12,
+        nextSequence: 12,
+      }
+      const logged: Array<Readonly<Record<string, string | number | boolean>>> = []
+      const deliveries: Delivery[] = []
+      const context = {
+        key: controllerKey,
+        get: async () => state,
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({ id: 'invalid-diagnostic', attemptCompletedSignal: new AbortController().signal }),
+      } as unknown as TestContext
+      const object = handlers(
+        makeBaynExecutionController(config, {
+          advance: () =>
+            Promise.reject(
+              new TerminalError('provider-secret-must-not-be-logged', {
+                errorCode: 500,
+                metadata: { 'bayn.execution-advance-failure.v1': metadata },
+              }),
+            ),
+          log: (_level, _message, annotations) => {
+            logged.push(annotations)
+            return Promise.resolve()
+          },
+          projectState: () => Promise.resolve(),
+        }),
+      )
+      await object.tick(context, { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 7, sequence: 12 })
+      expect(deliveries).toHaveLength(1)
+      expect(logged).toHaveLength(1)
+      expect(logged[0]).toMatchObject({ failureTag: 'TerminalError', failureOperation: 'unclassified' })
+      expect(JSON.stringify(logged)).not.toContain('provider-secret-must-not-be-logged')
+    },
+  )
 
   test('backs off recovery windows and terminates after the durable recovery budget', async () => {
     const state: ExecutionControllerState = {

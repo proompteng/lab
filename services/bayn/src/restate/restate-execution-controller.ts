@@ -35,7 +35,7 @@ import {
   type ResearchCaptureEvent,
   type ResearchCaptureObserver,
 } from '../research-capture/capture'
-import { strictParseOptions } from '../schemas'
+import { Sha256Schema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
 
 const stateKey = 'controller'
@@ -127,7 +127,28 @@ interface ExecutionAdvanceFailureDiagnostic {
   readonly failureTag: string
 }
 
+const executionAdvanceFailureMetadataKey = 'bayn.execution-advance-failure.v1'
+const FailureLabelSchema = Schema.NonEmptyString.check(Schema.isMaxLength(80))
+const ExecutionAdvanceFailureDiagnosticSchema = Schema.fromJsonString(
+  Schema.Struct({
+    failureCauseCategory: Schema.optionalKey(FailureLabelSchema),
+    failureCauseOperation: Schema.optionalKey(FailureLabelSchema),
+    failureCauseTag: Schema.optionalKey(FailureLabelSchema),
+    failureFingerprint: Sha256Schema,
+    failureMessage: Schema.NonEmptyString.check(Schema.isMaxLength(240)),
+    failureOperation: FailureLabelSchema,
+    failureTag: FailureLabelSchema,
+  }),
+)
+
 const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFailureDiagnostic => {
+  if (cause instanceof restate.TerminalError) {
+    const retained = Schema.decodeUnknownResult(
+      ExecutionAdvanceFailureDiagnosticSchema,
+      strictParseOptions,
+    )(cause.metadata?.[executionAdvanceFailureMetadataKey])
+    if (Result.isSuccess(retained)) return retained.success
+  }
   const candidate =
     typeof cause === 'object' && cause !== null
       ? (cause as {
@@ -148,7 +169,9 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
         })
       : undefined
   const knownTag =
-    candidate?._tag === 'TransientExecutionFailure' || candidate?._tag === 'NativeExecutionRuntimeError'
+    candidate?._tag === 'TransientExecutionFailure' ||
+    candidate?._tag === 'NativeExecutionRuntimeError' ||
+    candidate?._tag === 'OperationalError'
       ? candidate._tag
       : undefined
   const failureTag =
@@ -159,9 +182,11 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
       ? candidate.operation.slice(0, 80)
       : 'unclassified'
   const failureMessage =
-    knownTag !== undefined && typeof candidate?.message === 'string'
-      ? candidate.message.slice(0, 240)
-      : 'execution advance rejected with an unclassified failure'
+    knownTag === 'OperationalError'
+      ? 'execution advance rejected an operational check'
+      : knownTag !== undefined && typeof candidate?.message === 'string'
+        ? candidate.message.slice(0, 240)
+        : 'execution advance rejected with an unclassified failure'
   const fingerprintMaterial =
     cause instanceof Error
       ? `${cause.name}:${cause.message}:${cause.stack ?? ''}`
@@ -177,6 +202,18 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
     failureOperation,
     failureTag,
   }
+}
+
+/** Restate records failures as TerminalError; preserve bounded domain diagnostics before the durable boundary. */
+const executionAdvanceRunFailure = (cause: unknown): unknown => {
+  const failure = executionAdvanceFailureDiagnostic(cause)
+  if (!['TransientExecutionFailure', 'NativeExecutionRuntimeError', 'OperationalError'].includes(failure.failureTag)) {
+    return cause
+  }
+  return new restate.TerminalError(failure.failureMessage, {
+    errorCode: cause instanceof restate.TerminalError ? cause.code : 500,
+    metadata: { [executionAdvanceFailureMetadataKey]: JSON.stringify(failure) },
+  })
 }
 
 type ControllerObjectState = { readonly controller: ExecutionControllerState }
@@ -441,7 +478,10 @@ export const makeBaynExecutionController = (
     ctx: restate.ObjectContext<ControllerObjectState>,
     tick: ExecutionControllerTick,
     phase: PassReceipt['phase'],
-    detail: Pick<PassReceipt, 'commandIssuedAt' | 'completedAt' | 'receiptHash' | 'reason' | 'runtimeAttempted'> = {},
+    detail: Pick<
+      PassReceipt,
+      'commandIssuedAt' | 'completedAt' | 'receiptHash' | 'reason' | 'runtimeAttempted' | 'jevObservationReferences'
+    > = {},
   ): void =>
     recordResearchCapture(capture, {
       kind: 'controller-pass',
@@ -561,10 +601,14 @@ export const makeBaynExecutionController = (
           try {
             stepResult = await ctx.run(
               'advance Bayn execution once',
-              () => {
+              async () => {
                 runtimeAttempted = true
                 capturePass(ctx, tick, 'STARTED', { commandIssuedAt: decision.command.issuedAt, runtimeAttempted })
-                return runtime.advance(decision.command, ctx.request().attemptCompletedSignal)
+                try {
+                  return await runtime.advance(decision.command, ctx.request().attemptCompletedSignal)
+                } catch (cause) {
+                  throw executionAdvanceRunFailure(cause)
+                }
               },
               executionControllerAdvanceRunOptions,
             )
@@ -690,6 +734,9 @@ export const makeBaynExecutionController = (
             commandIssuedAt: decision.command.issuedAt,
             completedAt: result.completedAt,
             receiptHash: result.outcome.receiptHash,
+            ...(result.observation?.jevObservationReferences === undefined
+              ? {}
+              : { jevObservationReferences: result.observation.jevObservationReferences }),
             runtimeAttempted,
           })
           if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)

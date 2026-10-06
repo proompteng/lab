@@ -74,6 +74,29 @@ const captureFixture = () => {
   return { chunk, bytes, seal }
 }
 
+test('controller observation references survive retained capture encoding and decoding', () => {
+  const { chunk } = captureFixture()
+  const jevObservationReferences = { hashes: ['a'.repeat(64), 'b'.repeat(64)], complete: false }
+  const receipt = {
+    sequence: 1,
+    observedAtMs: 100,
+    event: {
+      kind: 'controller-pass' as const,
+      phase: 'COMPLETED' as const,
+      controllerKey: 'c'.repeat(64),
+      invocationId: 'original-controller-invocation',
+      sourceRevision: chunk.sourceRevision,
+      tick: { schemaVersion: 'bayn.execution-controller-tick.v1' as const, epoch: 1, sequence: 2 },
+      receiptHash: 'd'.repeat(64),
+      jevObservationReferences,
+    },
+  }
+  const retained = Result.getOrThrow(
+    decodeResearchCaptureChunk(encodeResearchCapture({ ...chunk, receipts: [receipt] })),
+  )
+  expect(retained.receipts).toEqual([receipt])
+})
+
 test('sealed receipts bind exact bytes, consumer order, and the complete observed tail', () => {
   const { chunk, bytes, seal } = captureFixture()
   const verified = Result.getOrThrow(verifyResearchCapture([bytes], encodeResearchCapture(seal)))

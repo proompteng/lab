@@ -7,6 +7,22 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
+## Profitability goal
+
+Demonstrate repeatable positive net profit after execution, model, and allocated data costs on untouched prospective
+sessions. The working target remains the frozen
+[`jev-migration-acceptance-v2`](../../docs/bayn/jev-migration-acceptance-v2.json) contract: at least $5,000 net over
+20 consecutive registered sessions on the existing $100,000 PAPER allocation, maximum session loss $1,000, and
+maximum marked drawdown $2,500. Its paired-control, uncertainty, execution-stress, activity, and evidence requirements
+all remain in force. Activity targets never require an otherwise unjustified order.
+
+The immediate priorities are reliable recovery and complete cost accounting, then the existing
+[`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
+sizing, and exits. Historical trades are development evidence. A selected confidence score, a positive day, or an
+engineering improvement cannot complete economic qualification. Freeze any candidate revision and its cost and
+execution assumptions before its next untouched evaluation; retain failed and inconclusive attempts. Preserve the
+current broker, capital, and risk limits throughout this work.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
@@ -43,6 +59,10 @@ A mutation or newer retained broker event can invalidate a successful cut before
 still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
 Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
 normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
+The same continuation applies when a terminal close needs a newer exact broker cut, including partial-fill recovery.
+Transport failures, inexact accounting and unresolved order or mutation evidence retain the normal retry cadence.
+An advanced mutation with no remaining consistency delay still schedules its reconciliation continuation rather than
+falling back to the idle interval. Every continuation rechecks existing evidence, quantity and submission deadlines.
 Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
 wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
 authority restriction.
@@ -202,8 +222,13 @@ Historical momentum targets remain readable for audit.
 Entry and position-management observations each commit at most once per completed signal window within a cycle.
 Later polls and process restarts consult the retained observation before creating another inference batch. The next
 evaluation requires the next completed minute and its decision delay. An interrupted or failed observation does not
-authorize another inference attempt on the same window. Protective stops and the holding limit remain eligible on
-every management pass.
+authorize another inference attempt on the same window. Entry recovers pending batches and checks the retained window
+before loading full signal history, so a consumed window can wait without rebuilding an unusable snapshot. New entry
+windows still require verified source evidence before observation or inference. Protective stops and the holding limit
+remain eligible on every management pass. Position management checks those protections first, then recovers pending
+batches and checks the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
+signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
+the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
 
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
@@ -322,6 +347,27 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 
 ## Runtime architecture
 
+Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL
+`last_pass` projection. The sorted, deduplicated hashes come only from successful Jev observation persistence or
+successful batch-store results, including recovered batches. The journaled advance result binds these references
+into its version-two execution receipt; a completed research-capture event carries the same references alongside
+the controller invocation ID. Each hash resolves the exact persisted observation, whose manifest identifies its
+snapshot and whose existing batch plans identify candidate requests and terminal receipts. Store access does not
+prove that an observation was selected, submitted, traded, or profitable.
+
+The `complete` flag describes only this pass's reference collection, not complete controller knowledge or capture
+coverage. Ordinary passes can create entry and management observations; pending-batch recovery has no fixed count.
+The collection retains at most sixteen unique hashes (about one KiB of hash data). A legitimate recovery touching
+more becomes explicitly incomplete rather than changing trading behavior. A failed store operation, unavailable
+store instrumentation, or invalid reference also marks the collection incomplete. Waiting and expected failure
+results keep references already collected; an aborted action without a returned result has no reference claim.
+An empty complete collection means no Jev observation references were returned by these instrumented operations.
+It does not rule out reuse of a previously bound decision or access to other evidence.
+
+Legacy journal and projection results keep the field absent, with unknown reference coverage and byte-identical
+version-one receipt hashes. Replays retain only their original references and do not rerun evaluation or fabricate
+a fresh capture. This linkage does not prove full-session capture completeness or repair missing historical links.
+
 - `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
@@ -400,8 +446,8 @@ source matching, replay and delivery requirements.
 
 Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a complete
 `@platformatic/kafka` projection for the 16-symbol core universe. Dorvud/Flink independently publishes rolling
-features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
-candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
+features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The strategy
+evaluates the fifteen non-SPY symbols, with SPY supplying the benchmark. The public status service does not consume Kafka.
 
 The projection yields to the Node event loop every 256 consumed records, including records discarded after an
 assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
@@ -690,6 +736,12 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
+`bayn-gap-recovery` is an offline, original-receipt decision replay command in the
+service image. It implements the fixed gap-recovery entry rule, with a separate
+pure position-exit evaluator, but does not replace the active strategy or submit
+orders. See [the gap-recovery contract](../../docs/bayn/gap-recovery.md) for exact
+inputs, limitations, and the command.
+
 `src/intraday-replay/six-bar-features.ts` extracts a separate offline research observation from an original-capture
 cursor. Each candidate and SPY require six exact consecutive completed regular-session minute bars. The seven
 ordered values are the candidate's one-minute close return, five-minute return relative to SPY, SPY's five-minute
@@ -710,6 +762,13 @@ capture interval and source bytes through `replayResearchCaptureInterval` and `o
 Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
 It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
 contract. Capture interval verification remains the caller's responsibility before economic research.
+
+The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
+control-study input v6 and artifact v2. It compares the seven-feature score with the genuine training-only
+day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
+30-minute-plus-two-second eligibility is unchanged. It uses original-capture six-bar observations and the
+existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
+no production registration, qualification or capital authority.
 
 ### Bounded mechanical control and turnover comparison
 
