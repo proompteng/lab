@@ -20,7 +20,7 @@ digests. Retain the current r5 factory installer indexes/platform manifests from
 Use the current [same-schematic replacement procedure](../../releases/README.md#same-schematic-artifact-replacement).
 The legacy Talos 1.13.9 receipts are not rollback targets for these hosts.
 
-## Read-only inventory, 2026-10-06 02:10–02:19 UTC
+## Read-only inventory, 2026-10-06 02:10–02:27 UTC
 
 All three Kubernetes nodes report Ready, Talos 1.14.0, containerd 2.3.4, and ready Firecracker/persistent-block labels.
 Running Pod counts include system workloads and are a maintenance impact snapshot, not a prediction of evictions.
@@ -35,10 +35,23 @@ No running kata-fc Pod appeared in this inventory. The Tengri controller runs on
 Tengri and singleton database primaries, permit zero disruptions. Ceph reports Ready/HEALTH_WARN; classify its
 specific warning and recovery safety at preflight. Do not infer free host disk space from allocatable storage.
 
-Actual scratch/snapshot sizes, allocated bytes, loop mounts, and host disk free space remain **unverified**.
-The delegated environment has Kubernetes read access but no Talos configuration/client or readable host cache
-through the existing host-metrics Pods. Do not create a privileged inspector or change access/security settings
-under preparation authority. Before maintenance approval, an existing authorized host operator must capture:
+Read-only inspection through the existing privileged CSI node Pods verified the following cache files and their
+host filesystem. No inspector was created and no privileges/configuration were changed. Each bundled and persistent
+scratch is 536870912 bytes, clean ext4 with 131072 4 KiB blocks, 32768 inodes and a 16 MiB journal. All numeric parent
+files are 512 MiB, UID/GID 0:0, mode 0644, single-linked; no unexpected parent filenames or attached blockfile loops
+were observed. These point-in-time checks must be repeated while writers are stopped before any migration.
+
+| Host  | Parent files | Allocated parent bytes | Cache backup minimum including scratch | Worst-case added allocation | Host available bytes |
+| ----- | -----------: | ---------------------: | -------------------------------------: | --------------------------: | -------------------: |
+| Ryzen |           61 |            32749600768 |                            33286471680 |        33285996544 (31 GiB) |          68217516032 |
+| Turin |          312 |           167515217920 |                           168052088832 |    168040595456 (156.5 GiB) |        3020151169024 |
+| Altra |            1 |              536875008 |                             1074008064 |          1073741824 (1 GiB) |         160086773760 |
+
+Backup minima include allocated parent/scratch bytes and blockfile `metadata.db`, but exclude the matching CRI
+metadata store and manifests. Require an off-node backup destination: Ryzen's cache backup plus full growth alone
+would consume nearly all of its available space. Actual growth allocation depends on filesystem sparse/extent
+behavior; future cached layers add further allocation. The environment still has no Talos client/configuration
+or approved maintenance access that survives CRI shutdown. Before maintenance approval, the host operator must capture:
 
 - the installed extension version, bundled template size, and ext4 geometry;
 - `/var/lib/containerd/io.containerd.snapshotter.v1.blockfile/scratch`, `metadata.db`, and each regular numeric
@@ -55,8 +68,8 @@ regular files, not `snapshots/<id>/fs`. Keep containerd metadata/IDs and its con
 
 Use Ryzen, Turin, Altra order, one node at a time, following the current cluster runbook. Run the coordinator
 outside the target node; Turin hosts agents-shell, Tengri and CI infrastructure. Complete native CI before its phase.
-Reserve an operator-attended maintenance window; exact downtime cannot be bounded until cache counts/backup throughput
-are known. Singleton applications can be unavailable during drain and recovery. Never proceed to a second node before
+Reserve an operator-attended maintenance window; exact downtime cannot be bounded until backup throughput and
+workload recovery are measured. Singleton applications can be unavailable during drain and recovery. Never proceed to a second node before
 the first is accepted. Pause if either peer cannot maintain Kubernetes/etcd quorum.
 
 1. Verify signed candidate/recovery digests and current inventory. Confirm no Omni operation is active, then lock
