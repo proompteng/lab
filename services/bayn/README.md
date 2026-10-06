@@ -430,8 +430,8 @@ source matching, replay and delivery requirements.
 
 Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a complete
 `@platformatic/kafka` projection for the 16-symbol core universe. Dorvud/Flink independently publishes rolling
-features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
-candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
+features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The strategy
+evaluates the fifteen non-SPY symbols, with SPY supplying the benchmark. The public status service does not consume Kafka.
 
 The projection yields to the Node event loop every 256 consumed records, including records discarded after an
 assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
