@@ -632,7 +632,14 @@ func (supervisor *codexSupervisor) handleServerMessage(
 			}
 			supervisor.mu.Unlock()
 		case "mcpServer/elicitation/request":
-			if decisions := codexApprovalDecisions(message.Method, message.Params); decisions != nil {
+			decisions := codexApprovalDecisions(message.Method, message.Params)
+			if decisions != nil && len(raw) > codexEventMaxBytes {
+				raw = boundedCodexMCPApproval(message, decisions)
+				if raw == nil {
+					decisions = nil
+				}
+			}
+			if decisions != nil {
 				supervisor.mu.Lock()
 				if supervisor.generation != generation || generation.failure != nil {
 					supervisor.mu.Unlock()
@@ -901,6 +908,55 @@ func codexMCPApprovalDecisions(params json.RawMessage) map[string]json.RawMessag
 		}
 	}
 	return decisions
+}
+
+// Retain the confirmation identity and advertised scope before publish's event
+// cap can replace it with a generic omission. Arguments remain explicitly omitted.
+func boundedCodexMCPApproval(message codexRPCMessage, decisions map[string]json.RawMessage) json.RawMessage {
+	var input struct {
+		ThreadID   string `json:"threadId"`
+		TurnID     string `json:"turnId"`
+		ServerName string `json:"serverName"`
+		Message    string `json:"message"`
+		Meta       struct {
+			Description string `json:"tool_description"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(message.Params, &input) != nil || len(message.ID) > 256 ||
+		len(input.ThreadID) > 256 || len(input.TurnID) > 256 || len(input.ServerName) > 256 {
+		return nil
+	}
+	boundedText := func(value string) string {
+		if len(value) <= 4<<10 {
+			return value
+		}
+		return strings.ToValidUTF8(value[:4<<10], "") + "… (truncated)"
+	}
+	meta := map[string]any{
+		"codex_approval_kind": "mcp_tool_call",
+		"tool_description":    boundedText(input.Meta.Description),
+	}
+	if _, session := decisions["approveSession"]; session {
+		meta["persist"] = "session"
+	}
+	raw, err := json.Marshal(map[string]any{
+		"id":         message.ID,
+		"method":     message.Method,
+		"rawOmitted": true,
+		"params": map[string]any{
+			"threadId":        input.ThreadID,
+			"turnId":          input.TurnID,
+			"serverName":      input.ServerName,
+			"mode":            "form",
+			"message":         boundedText(input.Message),
+			"requestedSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+			"_meta":           meta,
+		},
+	})
+	if err != nil || len(raw) > codexEventMaxBytes {
+		return nil
+	}
+	return raw
 }
 
 func structuredCodexDecisionHasField(decision map[string]json.RawMessage, variant, field string) bool {

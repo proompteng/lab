@@ -507,6 +507,107 @@ func TestCodexMCPToolApprovalAcceptsOptionalEmptySchemaMetadata(t *testing.T) {
 	}
 }
 
+func TestCodexOversizedMCPApprovalPreservesDisplayAndScope(t *testing.T) {
+	for _, persist := range []string{`"always"`, `"session"`, `["session","always"]`} {
+		t.Run(persist, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			params := strings.Replace(testCodexMCPToolApprovalParams, `["session","always"]`, persist, 1)
+			params = strings.Replace(params, `"command":"fixture"`, `"command":"`+strings.Repeat("x", codexEventMaxBytes)+`"`, 1)
+			params = strings.Replace(params, `"tool_params":`, `"tool_description":"Harmless fixture tool.","tool_params":`, 1)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(params)}
+			raw, _ := json.Marshal(message)
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 || len(supervisor.buffer) != 1 {
+				t.Fatal("oversized confirmation did not wait for an explicit decision")
+			}
+			event := supervisor.buffer[0]
+			if event.Method != message.Method || event.ApprovalID != "17" || len(event.Raw) > 16<<10 {
+				t.Fatal("oversized confirmation lost its method, approval ID, or size bound")
+			}
+			var bounded struct {
+				RawOmitted bool `json:"rawOmitted"`
+				Params     struct {
+					ThreadID   string `json:"threadId"`
+					TurnID     string `json:"turnId"`
+					ServerName string `json:"serverName"`
+					Message    string `json:"message"`
+					Meta       struct {
+						Description string          `json:"tool_description"`
+						Arguments   json.RawMessage `json:"tool_params"`
+					} `json:"_meta"`
+				} `json:"params"`
+			}
+			if err := json.Unmarshal(event.Raw, &bounded); err != nil {
+				t.Fatal(err)
+			}
+			if !bounded.RawOmitted || bounded.Params.ThreadID != "thread-1" || bounded.Params.TurnID != "turn-1" ||
+				bounded.Params.ServerName != "fixture" || bounded.Params.Message != "Allow the fixture tool?" ||
+				bounded.Params.Meta.Description != "Harmless fixture tool." || len(bounded.Params.Meta.Arguments) != 0 {
+				t.Fatalf("bounded confirmation lost display metadata or retained arguments: %s", event.Raw)
+			}
+			var replay codexRPCMessage
+			if err := json.Unmarshal(event.Raw, &replay); err != nil {
+				t.Fatal(err)
+			}
+			decisions := codexApprovalDecisions(replay.Method, replay.Params)
+			_, session := decisions["approveSession"]
+			if len(decisions) < 2 || session != strings.Contains(persist, "session") || strings.Contains(string(event.Raw), "always") {
+				t.Fatalf("bounded confirmation changed advertised scopes: %s", event.Raw)
+			}
+			if !session {
+				if err := supervisor.resolveApproval(context.Background(), "17", "approveSession"); err == nil || len(writer.messages) != 0 {
+					t.Fatal("bounded confirmation accepted an unadvertised scope")
+				}
+			}
+			if err := supervisor.resolveApproval(context.Background(), "17", "deny"); err != nil {
+				t.Fatal(err)
+			}
+			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"decline"}` {
+				t.Fatalf("bounded confirmation changed Deny: %s", response.Result)
+			}
+		})
+	}
+}
+
+func TestCodexOversizedMCPApprovalBoundsDisplayAndCancelsUnboundedIdentity(t *testing.T) {
+	for _, field := range []string{"message", "tool_description", "threadId", "turnId", "serverName"} {
+		t.Run(field, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			var params map[string]any
+			if err := json.Unmarshal([]byte(testCodexMCPToolApprovalParams), &params); err != nil {
+				t.Fatal(err)
+			}
+			large := strings.Repeat("界", codexEventMaxBytes/3+1)
+			if field == "tool_description" {
+				params["_meta"].(map[string]any)[field] = large
+			} else {
+				params[field] = large
+			}
+			encoded, _ := json.Marshal(params)
+			message := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: encoded}
+			raw, _ := json.Marshal(message)
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			if field == "message" || field == "tool_description" {
+				if len(writer.messages) != 0 || len(supervisor.approvals) != 1 || len(supervisor.buffer) != 1 {
+					t.Fatal("bounded display did not remain pending")
+				}
+				event := supervisor.buffer[0]
+				if event.Method != message.Method || len(event.Raw) > 16<<10 || !json.Valid(event.Raw) ||
+					!strings.Contains(string(event.Raw), "… (truncated)") || strings.Contains(string(event.Raw), "�") {
+					t.Fatal("display text was not bounded with valid UTF-8 and an explicit truncation notice")
+				}
+				return
+			}
+			if len(supervisor.approvals) != 0 || len(writer.messages) != 1 {
+				t.Fatal("unbounded identity created a hidden actionable approval")
+			}
+			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"cancel"}` {
+				t.Fatalf("unbounded identity did not cancel safely: %s", response.Result)
+			}
+		})
+	}
+}
+
 func TestCodexResolvedMCPRequestCannotBeApprovedAfterCancellation(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	request := codexRPCMessage{ID: json.RawMessage(`17`), Method: "mcpServer/elicitation/request", Params: json.RawMessage(testCodexMCPToolApprovalParams)}
