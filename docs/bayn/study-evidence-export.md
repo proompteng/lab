@@ -1,6 +1,7 @@
 # Retained Jev session evidence
 
 Run `bayn-jev-study-export` to export the complete committed batch inventory for one configured account and session.
+The Bayn image installs this wrapper and its compiled Node entry point. `--help` needs no configuration.
 It reads PostgreSQL and writes a new private local directory. It requires the configured account ID, PostgreSQL URL,
 and the existing verified PostgreSQL CA. It has no broker or model client and requires neither credential.
 
