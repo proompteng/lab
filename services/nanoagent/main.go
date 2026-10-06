@@ -64,11 +64,13 @@ func run(logger *slog.Logger) error {
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
 	}
+	identityStarted := time.Now()
 	identity, err := startGuestIdentity(context.Background(), microVMID, logger)
 	if err != nil {
 		return err
 	}
 	defer identity.close()
+	logger.Info("nanoagent startup stage finished", "stage", "identity", "durationMs", time.Since(identityStarted).Milliseconds())
 	tlsConfig, err := identity.tlsConfig()
 	if err != nil {
 		return fmt.Errorf("configure SPIFFE TLS: %w", err)
@@ -76,6 +78,7 @@ func run(logger *slog.Logger) error {
 	if err := configureToolchainEnvironment(homeRoot); err != nil {
 		return fmt.Errorf("configure persistent toolchain environment: %w", err)
 	}
+	toolchainStarted := time.Now()
 	if err := bootstrapToolchain(
 		context.Background(),
 		os.Getenv("TOOLCHAIN_BOOTSTRAP_COMMAND"),
@@ -83,10 +86,14 @@ func run(logger *slog.Logger) error {
 	); err != nil {
 		return err
 	}
+	logger.Info("nanoagent startup stage finished", "stage", "toolchain", "durationMs", time.Since(toolchainStarted).Milliseconds())
+	developerStarted := time.Now()
 	if err := bootstrapPersistentInstall(context.Background(), os.Getenv("DEVELOPER_TOOLS_BOOTSTRAP_COMMAND"),
 		developerBootstrapTimeout, "DEVELOPER_TOOLS_BOOTSTRAP_COMMAND", "developer tools"); err != nil {
 		return err
 	}
+	logger.Info("nanoagent startup stage finished", "stage", "developer-tools", "durationMs", time.Since(developerStarted).Milliseconds())
+	codexStarted := time.Now()
 	if err := bootstrapCodex(
 		context.Background(),
 		os.Getenv("CODEX_BOOTSTRAP_COMMAND"),
@@ -94,6 +101,7 @@ func run(logger *slog.Logger) error {
 	); err != nil {
 		return err
 	}
+	logger.Info("nanoagent startup stage finished", "stage", "codex", "durationMs", time.Since(codexStarted).Milliseconds())
 	current, err := collectEvidence(microVMID, bootstrapToken, os.ReadFile, time.Now().UTC())
 	if err != nil {
 		return err

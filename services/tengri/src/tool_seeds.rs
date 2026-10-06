@@ -643,6 +643,7 @@ mod tests {
                 image: "guest-image".into(),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: "2026-10-06T00:00:00Z".into(),
                 idle_deadline: "2026-10-07T00:00:00Z".into(),
                 expires_at: String::new(),

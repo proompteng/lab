@@ -83,6 +83,8 @@ describe('Tengri image workflow', () => {
     expect(check).toContain('test-developer-tools.sh')
     expect(check).not.toContain('losetup')
     expect(check).not.toContain('--privileged')
+    expect(check).not.toContain('type=bind')
+    expect(check).toContain('tar --create --file - --directory "$work/seeds" . | docker run --rm --interactive')
   })
 
   it('gates the publisher on full controller and guest validation', () => {

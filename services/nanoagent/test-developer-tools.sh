@@ -76,7 +76,11 @@ sha256sum "$HOME/.codex/retained-session-fixture" "$HOME/.tengri/vscode/User/set
 # is adopted without reading/extracting the developer package on first resume.
 rm "$HOME/.tengri/developer-tools-seed.sha256"
 mkdir -p "$HOME/.tengri/no-seed-bin"
-printf '#!/bin/bash\nexit 97\n' > "$HOME/.tengri/no-seed-bin/sha256sum"
+cat > "$HOME/.tengri/no-seed-bin/sha256sum" <<'NO_SEED_CHECK'
+#!/bin/bash
+for argument; do [[ "$argument" != --check ]] || exit 97; done
+exec /usr/bin/sha256sum "$@"
+NO_SEED_CHECK
 chmod 0700 "$HOME/.tengri/no-seed-bin/sha256sum"
 legacy_started="$(date +%s%N)"
 PATH="$HOME/.tengri/no-seed-bin:$PATH" bootstrap-developer-tools --install-only

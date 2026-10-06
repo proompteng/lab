@@ -450,9 +450,11 @@ FROM runtime-with-toolchain AS runtime-with-developer-tools
 COPY --chown=0:0 --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
 
 FROM runtime-with-developer-tools AS developer-seed-smoke
+COPY --chmod=0555 test-developer-tools-cache.sh /usr/local/bin/test-developer-tools-cache
 USER 1000:1000
 RUN --network=none --mount=type=bind,source=test-developer-tools.sh,target=/tmp/test-developer-tools.sh,readonly \
-    bash /tmp/test-developer-tools.sh > /tmp/developer-seed-validation.txt && cat /tmp/developer-seed-validation.txt
+    bash /tmp/test-developer-tools.sh > /tmp/developer-seed-validation.txt && \
+    test-developer-tools-cache >> /tmp/developer-seed-validation.txt && cat /tmp/developer-seed-validation.txt
 
 FROM runtime-with-toolchain AS guest-rootfs
 

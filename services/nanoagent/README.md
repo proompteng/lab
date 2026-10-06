@@ -131,7 +131,10 @@ CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SS
 The tool disk includes compressed Homebrew and AstroNvim seeds outside the mounted home. `bootstrap-developer-tools`
 verifies and extracts these local files into the PVC as UID 1000, filling missing files without replacing existing
 files, symlinks, ownership, or directory modes. A completed seed receipt avoids repeated Homebrew extraction.
-Boot checks the supplied commands and Neovim's required 0.11 minimum without running Homebrew, Lazy, or Mason installers.
+The separate readiness receipt covers the bootstrap, seed version, XDG paths, and active C toolchain root.
+Valid resumes check supplied executables and compiler-wrapper targets without starting Homebrew or Neovim.
+Invalid readiness triggers local repair and Neovim's required 0.11 check, without Homebrew, Lazy, or Mason installers.
+The managed C++ wrappers follow the active C sysroot and Homebrew compiler selection.
 Incomplete or incompatible tools fail startup; no network installation fallback is attempted.
 The build retains Homebrew's exact manager checkout and current tag in a shallow repository, omitting old history
 and reflogs. It verifies unchanged runtime-file hashes, manager/package versions, and `brew doctor` before packaging.
@@ -152,6 +155,8 @@ checksum and filesystem, reads it back with `debugfs` without a host mount,
 and supplies that readback to the final guest image with networking disabled and an empty home mount. It records
 fresh-install and retained-home helper timings; these are not whole-VM startup timings. Baked home files cannot mask
 a missing seed.
+The offline cache regression replaces Homebrew and Neovim with failing executables and verifies valid-cache reuse,
+missing-command repair, stale-wrapper rejection, XDG and C-root invalidation, and C++ compilation after repair.
 If either the 512 MiB root or 1 GiB seed capacity gate fails, the build produces no final verified image pair.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and

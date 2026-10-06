@@ -9,6 +9,19 @@ installer=''
 fail() { printf 'install-developer-tools: %s\n' "$*" >&2; exit 1; }
 cleanup() { if [[ -n "$installer" ]]; then rm -f -- "$installer"; fi; }
 
+cpp_wrapper_contents() {
+  local prefix="$1" c_root="$2" triplet="$3"
+  printf '#!/usr/bin/env bash\n'
+  printf 'compilers=(%q/opt/gcc/bin/g++-*)\n' "$prefix"
+  # These expressions are emitted into the generated wrapper.
+  # shellcheck disable=SC2016
+  printf '[[ "${#compilers[@]}" == 1 && -x "${compilers[0]}" ]] || exit 1\n'
+  # shellcheck disable=SC2016
+  printf 'exec "${compilers[0]}" --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
+    "$c_root/sysroot" "$c_root/sysroot/usr/include" \
+    "$c_root/sysroot/usr/include/$triplet" "$c_root/sysroot/usr/lib/$triplet/"
+}
+
 install_tools() {
   [[ "$(uname -s)" == Linux ]] || fail 'developer tools require Linux'
   case "$(uname -m)" in x86_64|aarch64|arm64) ;; *) fail 'unsupported architecture' ;; esac
@@ -37,9 +50,11 @@ install_tools() {
   eval "$("$prefix/bin/brew" shellenv bash)"
   # Preserve the pinned language toolchains ahead of optional Homebrew packages.
   export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH"
+  local installed
+  installed="$("$prefix/bin/brew" list --formula --versions)"
   local missing=()
   for formula in "${FORMULAE[@]}"; do
-    if ! "$prefix/bin/brew" list --versions "$formula" >/dev/null 2>&1; then
+    if ! grep -q "^$formula " <<< "$installed"; then
       missing+=("$formula")
     fi
   done
@@ -58,18 +73,7 @@ install_tools() {
   [[ -f "$c_root/sysroot/usr/include/features.h" ]] || fail 'persistent C development headers are unavailable'
   local cpp_wrapper
   cpp_wrapper="$(mktemp "$HOME/.local/bin/.cpp-wrapper.XXXXXX")"
-  {
-    printf '#!/usr/bin/env bash\n'
-    # Existing homes may select a different GCC bottle through opt/gcc.
-    printf 'compilers=(%q/opt/gcc/bin/g++-*)\n' "$prefix"
-    # These expressions are emitted into the generated wrapper.
-    # shellcheck disable=SC2016
-    printf '[[ "${#compilers[@]}" == 1 && -x "${compilers[0]}" ]] || exit 1\n'
-    # shellcheck disable=SC2016
-    printf 'exec "${compilers[0]}" --sysroot=%q -idirafter %q -idirafter %q -B%q "$@"\n' \
-      "$c_root/sysroot" "$c_root/sysroot/usr/include" \
-      "$c_root/sysroot/usr/include/$triplet" "$c_root/sysroot/usr/lib/$triplet/"
-  } > "$cpp_wrapper"
+  cpp_wrapper_contents "$prefix" "$c_root" "$triplet" > "$cpp_wrapper"
   chmod 0700 "$cpp_wrapper"
   mv -Tf "$cpp_wrapper" "$HOME/.local/bin/g++"
   ln -sfn "$HOME/.local/bin/g++" "$HOME/.local/bin/c++"

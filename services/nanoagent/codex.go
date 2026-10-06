@@ -551,6 +551,19 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	if !supervisor.isCurrentGeneration(generation) {
 		return
 	}
+	if message.Method == "serverRequest/resolved" {
+		var params struct {
+			RequestID json.RawMessage `json:"requestId"`
+		}
+		if json.Unmarshal(message.Params, &params) == nil && len(params.RequestID) > 0 {
+			supervisor.mu.Lock()
+			id := normalizeRequestID(params.RequestID)
+			if approval, found := supervisor.approvals[id]; found && approval.generation == generation {
+				delete(supervisor.approvals, id)
+			}
+			supervisor.mu.Unlock()
+		}
+	}
 	if message.Method == "account/login/completed" {
 		var params struct {
 			LoginID string `json:"loginId"`
@@ -618,6 +631,51 @@ func (supervisor *codexSupervisor) handleServerMessage(
 				rawID:       append(json.RawMessage(nil), message.ID...),
 			}
 			supervisor.mu.Unlock()
+		case "mcpServer/elicitation/request":
+			decisions := codexApprovalDecisions(message.Method, message.Params)
+			if decisions != nil && len(raw) > codexEventMaxBytes {
+				raw = boundedCodexMCPApproval(message, decisions)
+				if raw == nil {
+					decisions = nil
+				}
+			}
+			if decisions != nil {
+				supervisor.mu.Lock()
+				if supervisor.generation != generation || generation.failure != nil {
+					supervisor.mu.Unlock()
+					return
+				}
+				supervisor.approvals[approvalID] = codexApproval{
+					generation: generation,
+					method:     message.Method,
+					decisions:  decisions,
+					rawID:      append(json.RawMessage(nil), message.ID...),
+				}
+				supervisor.mu.Unlock()
+				break
+			}
+			var params struct {
+				ThreadID string `json:"threadId"`
+				TurnID   string `json:"turnId"`
+			}
+			// Unsupported input/access requests must not be accepted as tool-use
+			// confirmations. Cancel rather than fabricate a user decline.
+			if json.Unmarshal(message.Params, &params) == nil && params.ThreadID != "" {
+				supervisor.publish("error", "", map[string]any{
+					"method": "error",
+					"params": map[string]string{
+						"threadId": params.ThreadID,
+						"turnId":   params.TurnID,
+						"message":  "Tengri cannot display this MCP confirmation or input request. No user decision was submitted.",
+					},
+				})
+			}
+			_ = supervisor.respondRawForGenerationWithin(
+				generation,
+				message.ID,
+				map[string]any{"action": "cancel"},
+			)
+			return
 		default:
 			supervisor.respondErrorForGeneration(
 				generation,
@@ -682,6 +740,25 @@ func codexApprovalResult(approval codexApproval, decision string) (map[string]an
 		return nil, fmt.Errorf("decode approval decision: %w", err)
 	}
 	protocolName, _ := protocolDecision.(string)
+	if approval.method == "mcpServer/elicitation/request" {
+		var action string
+		switch protocolName {
+		case "accept", "acceptForSession":
+			action = "accept"
+		case "decline":
+			action = "decline"
+		default:
+			return nil, errors.New("unsupported MCP approval decision")
+		}
+		result := map[string]any{"action": action}
+		if action == "accept" {
+			result["content"] = map[string]any{}
+		}
+		if protocolName == "acceptForSession" {
+			result["_meta"] = map[string]string{"persist": "session"}
+		}
+		return result, nil
+	}
 	if approval.method == "item/permissions/requestApproval" {
 		permissions := json.RawMessage(`{}`)
 		if protocolName != "decline" {
@@ -723,6 +800,9 @@ func encodedCodexDecision(decision string) json.RawMessage {
 }
 
 func codexApprovalDecisions(method string, params json.RawMessage) map[string]json.RawMessage {
+	if method == "mcpServer/elicitation/request" {
+		return codexMCPApprovalDecisions(params)
+	}
 	if method == "execCommandApproval" || method == "applyPatchApproval" {
 		return defaultCodexApprovalDecisions()
 	}
@@ -770,6 +850,113 @@ func codexApprovalDecisions(method string, params json.RawMessage) map[string]js
 		}
 	}
 	return decisions
+}
+
+func codexMCPApprovalDecisions(params json.RawMessage) map[string]json.RawMessage {
+	var input struct {
+		Mode       string                     `json:"mode"`
+		ThreadID   string                     `json:"threadId"`
+		ServerName string                     `json:"serverName"`
+		Message    string                     `json:"message"`
+		Schema     map[string]json.RawMessage `json:"requestedSchema"`
+		Meta       struct {
+			Kind    string          `json:"codex_approval_kind"`
+			Persist json.RawMessage `json:"persist"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.Mode != "form" || input.ThreadID == "" ||
+		input.ServerName == "" || input.Message == "" || input.Meta.Kind != "mcp_tool_call" {
+		return nil
+	}
+	var schemaType string
+	var properties map[string]json.RawMessage
+	if json.Unmarshal(input.Schema["type"], &schemaType) != nil || schemaType != "object" ||
+		json.Unmarshal(input.Schema["properties"], &properties) != nil || properties == nil || len(properties) != 0 {
+		return nil
+	}
+	for key, value := range input.Schema {
+		switch key {
+		case "type", "properties":
+		case "required":
+			var required []string
+			if json.Unmarshal(value, &required) != nil || len(required) != 0 {
+				return nil
+			}
+		case "$schema":
+			var schema *string
+			if json.Unmarshal(value, &schema) != nil {
+				return nil
+			}
+		default:
+			return nil
+		}
+	}
+	decisions := map[string]json.RawMessage{
+		"approveOnce": encodedCodexDecision("accept"),
+		"deny":        encodedCodexDecision("decline"),
+	}
+	var persist string
+	var scopes []string
+	if json.Unmarshal(input.Meta.Persist, &persist) == nil {
+		scopes = []string{persist}
+	} else {
+		_ = json.Unmarshal(input.Meta.Persist, &scopes)
+	}
+	for _, scope := range scopes {
+		if scope == "session" {
+			decisions["approveSession"] = encodedCodexDecision("acceptForSession")
+		}
+	}
+	return decisions
+}
+
+// Retain the confirmation identity and advertised scope before publish's event
+// cap can replace it with a generic omission. Arguments remain explicitly omitted.
+func boundedCodexMCPApproval(message codexRPCMessage, decisions map[string]json.RawMessage) json.RawMessage {
+	var input struct {
+		ThreadID   string `json:"threadId"`
+		TurnID     string `json:"turnId"`
+		ServerName string `json:"serverName"`
+		Message    string `json:"message"`
+		Meta       struct {
+			Description string `json:"tool_description"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(message.Params, &input) != nil || len(message.ID) > 256 ||
+		len(input.ThreadID) > 256 || len(input.TurnID) > 256 || len(input.ServerName) > 256 {
+		return nil
+	}
+	boundedText := func(value string) string {
+		if len(value) <= 4<<10 {
+			return value
+		}
+		return strings.ToValidUTF8(value[:4<<10], "") + "… (truncated)"
+	}
+	meta := map[string]any{
+		"codex_approval_kind": "mcp_tool_call",
+		"tool_description":    boundedText(input.Meta.Description),
+	}
+	if _, session := decisions["approveSession"]; session {
+		meta["persist"] = "session"
+	}
+	raw, err := json.Marshal(map[string]any{
+		"id":         message.ID,
+		"method":     message.Method,
+		"rawOmitted": true,
+		"params": map[string]any{
+			"threadId":        input.ThreadID,
+			"turnId":          input.TurnID,
+			"serverName":      input.ServerName,
+			"mode":            "form",
+			"message":         boundedText(input.Message),
+			"requestedSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+			"_meta":           meta,
+		},
+	})
+	if err != nil || len(raw) > codexEventMaxBytes {
+		return nil
+	}
+	return raw
 }
 
 func structuredCodexDecisionHasField(decision map[string]json.RawMessage, variant, field string) bool {

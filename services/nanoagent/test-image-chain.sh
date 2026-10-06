@@ -61,13 +61,13 @@ debugfs -R "rdump / $work/seeds" "$seed_directory/nanoagent-seeds.ext4"
 expected_digest="$(awk '{ print $1 }' "$seed_directory/nanoagent-seeds.ext4.sha256")"
 test "$(docker run --rm --network none "$controller_image" --validate-tool-seeds)" = "seed_image_sha256=$expected_digest"
 
-# Copy the verified disk readback into a private Docker volume as root. This
-# preserves the production seed ownership while the guest runs as UID 1000.
+# Stream the verified disk readback into a private Docker volume. The daemon
+# may be outside the runner filesystem, so no runner path is bind-mounted.
+# Restore production seed ownership while the guest itself runs as UID 1000.
 seed_volume="$(docker volume create)"
-docker run --rm --network none --user 0:0 \
-  --mount "type=bind,source=$work/seeds,target=/source,readonly" \
+tar --create --file - --directory "$work/seeds" . | docker run --rm --interactive --network none --user 0:0 \
   --mount "type=volume,source=$seed_volume,target=/seeds" \
-  --entrypoint /bin/sh "$image" -ceu 'cp -a /source/. /seeds/; chown -R 0:0 /seeds'
+  --entrypoint /bin/sh "$image" -ceu 'tar --extract --file - --directory /seeds; chown -R 0:0 /seeds'
 docker run --rm --network none --user 1000:1000 \
   --mount "type=volume,source=$seed_volume,target=/usr/share/nanoagent,readonly" \
   --entrypoint /bin/bash "$image" -ceu '

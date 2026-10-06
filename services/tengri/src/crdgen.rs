@@ -90,6 +90,12 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
     )?;
 
     let resources = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources";
+    insert(
+        &mut crd,
+        "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/power/properties/idleTimeoutMinutes",
+        "maximum",
+        json!(1440),
+    )?;
     for (field, allowed) in [
         ("cpuMillis", json!([crd::CPU_MILLIS])),
         ("memoryMib", json!([crd::MEMORY_MIB])),
