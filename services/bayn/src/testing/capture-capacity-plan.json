@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "frozenAt": "2026-10-04T19:59:23Z",
+  "purpose": "Bounded diagnostic capacity evidence for one approved capture; not Ceph peak qualification",
+  "worker": {
+    "cpus": 2,
+    "memoryBytes": 1073741824,
+    "pids": 128,
+    "readOnlyRoot": true,
+    "image": "node:24.11.1-bookworm-slim@sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57"
+  },
+  "benchmarkTimeoutMs": 240000,
+  "outerNativeFixtureTimeoutMs": 480000,
+  "normal": {
+    "pairedRepetitions": 3,
+    "recordsPerArm": 50000,
+    "targetRecordsPerSecond": 5000,
+    "minimumObservedRecordsPerSecond": 4100,
+    "producerBatchSize": 100
+  },
+  "burst": {
+    "pairedRepetitions": 1,
+    "recordsPerArm": 10000,
+    "producerBatchSize": 500,
+    "delayBetweenBatchesMs": 0
+  },
+  "faults": {
+    "recordsPerArm": 10000,
+    "targetRecordsPerSecond": 5000,
+    "triggerAfterRecords": 1000,
+    "cases": ["postgres-table-lock-delay", "s3-get-body-stall", "s3-put-committed-connection-drop"]
+  },
+  "limits": {
+    "maximumTotalRecords": 350000,
+    "maximumRawBytesPerArm": 33554432,
+    "maximumCombinedAttemptedSinkBytesPerArm": 201326592,
+    "maximumObjectBodyBytes": 4194304,
+    "maximumRetainedReceipts": 1024,
+    "maximumRetainedPayloadBytes": 4194304,
+    "maximumReceiptBytes": 65536,
+    "writeTimeoutMs": 1000
+  },
+  "functionalPass": [
+    "Every arm incorporates exactly its declared fixed native input count with matching reducer outcomes",
+    "Normal enabled arms persist all admitted receipts with exact SQL/object readback, one seal and no capture invalidation",
+    "Burst capture may invalidate only with explicit incomplete evidence; native input progress must continue",
+    "Faults occur after raw admission and exercise actual PostgreSQL or S3 HTTP transport, not an in-memory failure shortcut",
+    "Fault writes abort within 1100ms; unknown writes are not retried or treated as acknowledged",
+    "Faulted capture is incomplete and releases its bounded queue while native input and same-pool SELECT 1 probes continue",
+    "No production credential, broker/provider endpoint, RGW endpoint, role or network mutation is used"
+  ],
+  "performancePass": {
+    "allArmsNoOomOrRestart": true,
+    "maximumCgroupMemoryPeakBytes": 805306368,
+    "maximumAverageWorkerCpuCores": 1.5,
+    "maximumNormalEnabledIncrementalCpuCores": 0.5,
+    "heartbeatPeriodMs": 10,
+    "maximumHeartbeatP99DelayMs": 100,
+    "maximumNormalEnabledP99IncreaseMs": 50,
+    "maximumHeartbeatDelayMs": 500,
+    "maximumDrainAfterProducerMs": 5000,
+    "maximumSqlProbeLatencyMs": 1000
+  },
+  "interpretation": [
+    "All three normal pairs must pass independently; do not average away a failure",
+    "A missed offered-rate floor is inconclusive, not a capacity pass",
+    "Do not relax thresholds, shorten input or remove failing cases after results",
+    "Report the fixture-only controller/PG responsiveness proxy and the absence of real Ceph latency evidence",
+    "The real Monday startup claim remains the first authorized RGW path check before raw admission",
+    "The activation P1 remains unresolved until independent review assesses this evidence against the storage gate"
+  ],
+  "dataset": {
+    "profile": "existing five-topic 25-partition native fixture; quotes use all 13 quote partitions",
+    "symbols": [
+      "AAPL",
+      "AMD",
+      "AMZN",
+      "AVGO",
+      "COHR",
+      "CRDO",
+      "IWM",
+      "LITE",
+      "MRVL",
+      "MU",
+      "NVDA",
+      "QQQ",
+      "SMH",
+      "SNDK",
+      "SPY",
+      "WDC"
+    ],
+    "symbolIndex": "zero-based input ordinal modulo 16",
+    "quotePartition": "symbolIndex modulo 13; each symbol stays on one partition",
+    "offsets": "fresh fixture topic; native broker offsets must strictly advance and match exact per-partition counts",
+    "eventTime": "one shared anchor per paired case plus inputOrdinal * 200000 nanoseconds; nine fractional digits; ingest time equals event time",
+    "price": "bidUnits = (100 + symbolIndex) * 10000 + (inputOrdinal modulo 1000); bid = bidUnits / 10000; ask = (bidUnits + 100) / 10000",
+    "size": "bidSize = 100 + (inputOrdinal modulo 7); askSize = 101 + (inputOrdinal modulo 11)",
+    "payload": "existing version-2 alpaca/iex/regular quote envelope with advancing eventTs/ingestTs/payload.t and payload prices/sizes",
+    "uniqueness": "every encoded payload hash is unique; input schema validation, symbol coverage and monotonic per-symbol times are asserted before transport",
+    "expectedDispositions": "all input records accepted; zero rejected, ignored, tombstone, duplicate or backward-offset inputs",
+    "expectedHistory": "16 current quotes; 512 retained quotes per symbol for every arm; normal arms exercise eviction beyond the 512-entry history",
+    "stateComparison": "exact hash of the deterministic native market state: total sequence, full source offsets, current quote values and raw hashes, every retained quote value/raw hash in native order, and empty unrelated/rejection maps",
+    "nuisanceFields": "normalize only the known fixture topic prefix; exclude random epoch, actual arrival-clock fields and cross-partition global observation ordinals from the deterministic hash, while separately asserting native validity and monotonic progress; these necessarily vary between independent real-time arms"
+  },
+  "datasetFrozenAt": "2026-10-04T20:05:09Z",
+  "measurement": {
+    "frozenAt": "2026-10-04T20:46:00Z",
+    "process": "Native consumer, fixture producer and localhost object HTTP server share the capped container; CPU and RSS conservatively include fixture overhead",
+    "cpuWindow": "From first producer batch through exact native incorporation, bounded persistence drain and explicit recorder finalization; excludes fixture setup and final deterministic hash verification",
+    "memory": "Lifetime cgroup memory.peak across all sequential arms, including setup, data generation, transport, object buffers and state verification; no reset between arms",
+    "heartbeat": "Actual 10ms timer interval minus 10ms; each arm reports p99 and maximum, with the same instrumentation in both paired arms",
+    "faultAbort": "Elapsed active faulted transport stage: SQL append to failed exit, stalled GET first byte to response close, or dropped committed PUT socket to failed exit; complete-write cancellation is separately covered by recorder tests",
+    "progress": "After each native async-iterator yield returns, assert the current quote matches that exact source partition, offset and raw hash; every input must advance native projection sequence",
+    "state": "Compare deterministic quote/history/coordinate state across paired arms and each fault arm against the same burst-disabled data; no claim of opaque runtime or controller execution equality"
+  }
+}
