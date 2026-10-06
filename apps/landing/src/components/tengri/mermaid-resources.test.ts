@@ -9,15 +9,12 @@ import {
 
 describe('Mermaid resource policy', () => {
   test('accepts only formats with audited pre-layout resource checks', () => {
-    for (const type of ['flowchart-v2', 'sequence', 'classDiagram', 'block'])
-      expect(isSupportedMermaidDiagram(type)).toBe(true)
-    for (const type of ['stateDiagram', 'pie', 'gantt', 'unknown']) expect(isSupportedMermaidDiagram(type)).toBe(false)
+    for (const type of ['flowchart-v2', 'sequence', 'classDiagram']) expect(isSupportedMermaidDiagram(type)).toBe(true)
+    for (const type of ['block', 'stateDiagram', 'pie', 'gantt', 'unknown'])
+      expect(isSupportedMermaidDiagram(type)).toBe(false)
   })
 
-  test('checks closure-backed block styles, sequence paint and sequence icons', () => {
-    expect(() =>
-      assertMermaidSpecializedResources({ getBlocksFlat: () => [{ styles: ['fill:url(/remote.svg)'] }] }),
-    ).toThrow()
+  test('checks sequence paint and icons without scanning ordinary messages', () => {
     expect(() =>
       assertMermaidSpecializedResources({
         LINETYPE: { RECT_START: 22 },
@@ -31,7 +28,6 @@ describe('Mermaid resource policy', () => {
     ).toThrow('Diagram images are disabled')
     expect(() =>
       assertMermaidSpecializedResources({
-        getBlocksFlat: () => [{ label: 'URL(value)', styles: ['fill:#fff'] }],
         LINETYPE: { RECT_START: 22 },
         getMessages: () => [
           { type: 22, message: 'rgb(230, 230, 250)' },

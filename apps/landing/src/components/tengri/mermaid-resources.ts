@@ -1,6 +1,6 @@
 // Only pass CSS/configuration values here, never diagram labels or source text.
 // DOMPurify does not filter CSS resource URLs.
-const supportedDiagramTypes = new Set(['flowchart-v2', 'sequence', 'classDiagram', 'block'])
+const supportedDiagramTypes = new Set(['flowchart-v2', 'sequence', 'classDiagram'])
 
 export function isSupportedMermaidDiagram(type: string) {
   return supportedDiagramTypes.has(type)
@@ -78,16 +78,13 @@ export function assertMermaidSvgResources(svg: Element) {
 }
 
 type DiagramResourceDatabase = {
-  getBlocksFlat?: () => unknown
   getMessages?: () => { type: number; message: unknown }[]
   getActors?: () => Map<string, { properties?: { icon?: unknown } }>
   LINETYPE?: { RECT_START: number }
 }
 
-// Some Mermaid databases keep parsed fields in closures instead of on the DB.
 // Sequence background paint is a typed message, distinct from ordinary labels.
 export function assertMermaidSpecializedResources(db: DiagramResourceDatabase) {
-  assertMermaidStyleFields(db.getBlocksFlat?.())
   const rectType = db.LINETYPE?.RECT_START
   for (const message of db.getMessages?.() ?? []) {
     if (message.type === rectType) {

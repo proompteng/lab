@@ -4226,7 +4226,9 @@ A[Resource] --> B[Safe]`,
       expect(await diagram.evaluate((svg) => svg.outerHTML)).not.toContain('mermaid-css-canary')
       continue
     }
-    await expect(response.getByRole('status')).toContainText('Diagram unavailable')
+    await expect(response.getByRole('status')).toContainText(
+      sources[index].startsWith('block-beta') ? 'Diagram type not supported' : 'Diagram unavailable',
+    )
     await expect(response.locator('pre code')).toContainText('/mermaid-css-canary')
     await expect(response.getByRole('img', { name: 'Mermaid diagram', exact: true })).toHaveCount(0)
   }
@@ -4307,8 +4309,13 @@ test('renders Mermaid labels that name URL, image and src APIs', async ({ page }
   await expect(diagrams.last()).toContainText('call src(input)')
 })
 
-test('renders ordinary Mermaid blocks and preserves source for unaudited diagram types', async ({ page }) => {
-  const sources = ['block-beta\nA["URL(value)"] B["Finish"]', 'pie\n"One": 1', 'stateDiagram-v2\nStart --> Finish']
+test('renders verified Mermaid types and preserves source for unaudited formats', async ({ page }) => {
+  const sources = [
+    'flowchart LR\nA["URL(value)"] --> B["Finish"]',
+    'block-beta\nA["Start"] B["Finish"]',
+    'pie\n"One": 1',
+    'stateDiagram-v2\nStart --> Finish',
+  ]
   await mockTengri(page, {
     resumeThreadRawJson: JSON.stringify({
       thread: {
@@ -4329,9 +4336,9 @@ test('renders ordinary Mermaid blocks and preserves source for unaudited diagram
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
   await page.goto('/')
   const responses = page.getByRole('article', { name: 'Codex response' })
-  await expect(responses).toHaveCount(3)
+  await expect(responses).toHaveCount(4)
   await expect(responses.first().getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText('URL(value)')
-  for (const index of [1, 2]) {
+  for (const index of [1, 2, 3]) {
     await expect(responses.nth(index).getByRole('status')).toHaveText('Diagram type not supported; showing source.')
     await expect(responses.nth(index).locator('pre code')).toContainText(sources[index])
     await expect(responses.nth(index).getByRole('button', { name: 'Copy code block' })).toBeVisible()
