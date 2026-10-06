@@ -43,8 +43,8 @@ were observed. These point-in-time checks must be repeated while writers are sto
 
 | Host  | Parent files | Allocated parent bytes | Cache backup minimum including scratch | Worst-case added allocation | Host available bytes |
 | ----- | -----------: | ---------------------: | -------------------------------------: | --------------------------: | -------------------: |
-| Ryzen |           61 |            32749600768 |                            33286471680 |        33285996544 (31 GiB) |          68217516032 |
-| Turin |          312 |           167515217920 |                           168052088832 |    168040595456 (156.5 GiB) |        3020151169024 |
+| Ryzen |           61 |            32749600768 |                            33286995968 |        33285996544 (31 GiB) |          68217516032 |
+| Turin |          312 |           167515217920 |                           168054185984 |    168040595456 (156.5 GiB) |        3020151169024 |
 | Altra |            1 |              536875008 |                             1074008064 |          1073741824 (1 GiB) |         160086773760 |
 
 Backup minima include allocated parent/scratch bytes and blockfile `metadata.db`, but exclude the matching CRI
