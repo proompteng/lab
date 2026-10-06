@@ -112,7 +112,10 @@ the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without su
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
 for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
-Subsequent boots reuse installed packages and install missing baseline formulae. Neovim is upgraded when it is below
+Successful installation writes a receipt tied to the bootstrap script, bundled Neovim configuration, and XDG paths.
+Subsequent boots check that receipt and the supplied executables without starting Homebrew or Neovim. A missing
+executable, changed configuration path, or new bootstrap invalidates the receipt and runs installation again.
+The installer checks all baseline formulae in one Homebrew invocation. Neovim is upgraded when it is below
 AstroNvim's required 0.11 minimum; other installed baseline formulae are reused.
 Cold installation requires GitHub and Homebrew registry access and fails startup if installation or validation fails.
 
@@ -122,11 +125,13 @@ and Neovim configuration are preserved. `EDITOR` and `VISUAL` default to `nvim` 
 configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
 and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. Text icons work with the web
 terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
-or `:TSInstall` to add language support. Existing configurations remain user-owned. Repeated boots install missing
-plugins in the supplied default without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
+or `:TSInstall` to add language support. Existing configurations remain user-owned. The default plugin setup runs when
+the installation receipt is invalid, without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
 configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
-bootstrap before the rootfs check.
+bootstrap before the rootfs check. The cache regression replaces Homebrew and Neovim with failing executables and
+proves that a prepared home still boots. Stale receipts, missing commands, and changed XDG paths must run installation
+and must not retain a successful receipt after a failure.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
 `/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development

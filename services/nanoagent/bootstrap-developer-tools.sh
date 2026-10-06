@@ -15,11 +15,20 @@ install_tools() {
   [[ "$(id -u)" != 0 ]] || fail 'Homebrew must run as the guest user'
   [[ -n "${HOME:-}" && "$HOME" == /* ]] || fail 'HOME must be an absolute path'
   local prefix="$HOME/.linuxbrew"
+  local config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
+  local receipt="$HOME/.local/share/nanoagent/developer-tools-ready"
+  local fingerprint
+  fingerprint="$(sha256sum "${BASH_SOURCE[0]}" /usr/share/nanoagent/astronvim-init.lua)"
+  fingerprint+=$'\n'"$config"$'\n'"${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
   [[ "${#prefix}" -le 26 ]] || fail 'Homebrew prefix exceeds the supported Linux bottle relocation length'
   export HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_SUDO=1
   export HOMEBREW_CACHE="$HOME/.cache/Homebrew"
   umask 022
   mkdir -p "$HOME/.cache" "$HOME/.local/bin"
+  if [[ -f "$receipt" && "$(cat "$receipt")" == "$fingerprint" ]] && tools_present "$prefix" "$config"; then
+    return
+  fi
+  rm -f -- "$receipt"
   if [[ ! -x "$prefix/bin/brew" ]]; then
     installer="$(mktemp "$HOME/.cache/homebrew-install.XXXXXX")"
     trap cleanup EXIT HUP INT TERM
@@ -37,9 +46,11 @@ install_tools() {
   eval "$("$prefix/bin/brew" shellenv bash)"
   # Preserve the pinned language toolchains ahead of optional Homebrew packages.
   export PATH="$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH"
+  local installed
+  installed="$("$prefix/bin/brew" list --formula --versions)"
   local missing=()
   for formula in "${FORMULAE[@]}"; do
-    if ! "$prefix/bin/brew" list --versions "$formula" >/dev/null 2>&1; then
+    if ! grep -q "^$formula " <<< "$installed"; then
       missing+=("$formula")
     fi
   done
@@ -76,7 +87,6 @@ install_tools() {
     "$prefix/bin/nvim" --headless -u NONE '+lua assert(vim.fn.has("nvim-0.11") == 1)' \
       '+if v:errmsg != "" | cquit 1 | endif' +qa
   fi
-  local config="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
   mkdir -p "$config"
   if [[ ! -e "$config/init.lua" && ! -e "$config/init.vim" ]]; then
     local init
@@ -89,6 +99,28 @@ install_tools() {
       "+lua require('lazy').install({wait=true,show=false}); for name,plugin in pairs(require('lazy.core.config').plugins) do assert(plugin._.installed,name .. ' is missing'); for _,task in ipairs(plugin._.tasks or {}) do assert(not task:has_errors(),name .. ' failed installation') end end" \
       "+lua assert(require('astronvim').version() == 'v6.1.0'); assert(vim.v.errmsg == '',vim.v.errmsg)" \
       '+if v:errmsg != "" | cquit 1 | endif' +qa
+  fi
+  mkdir -p "$(dirname "$receipt")"
+  local staging
+  staging="$(mktemp "${receipt}.XXXXXX")"
+  printf '%s\n' "$fingerprint" > "$staging"
+  mv -Tf "$staging" "$receipt"
+}
+
+tools_present() {
+  local prefix="$1" config="$2" command
+  [[ -x "$prefix/bin/brew" && "$(stat -c %u "$prefix")" == "$(id -u)" ]] || return 1
+  for command in nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
+    [[ -x "$prefix/bin/$command" ]] || return 1
+  done
+  [[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || return 1
+  local compilers=("$prefix"/opt/gcc/bin/g++-*)
+  [[ "${#compilers[@]}" == 1 && -x "${compilers[0]}" ]] || return 1
+  [[ -f "$HOME/.local/go/../c/sysroot/usr/include/features.h" ]] || return 1
+  [[ -e "$config/init.lua" || -e "$config/init.vim" ]] || return 1
+  if cmp -s /usr/share/nanoagent/astronvim-init.lua "$config/init.lua"; then
+    local data="${XDG_DATA_HOME:-$HOME/.local/share}/nvim/lazy"
+    [[ -f "$config/lazy-lock.json" && -d "$data/lazy.nvim" && -d "$data/AstroNvim" ]] || return 1
   fi
 }
 

@@ -398,6 +398,7 @@ RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
       /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v
 
 FROM runtime-with-toolchain AS developer-tools-smoke
+COPY --chmod=0555 test-developer-tools-cache.sh /usr/local/bin/test-developer-tools-cache
 USER 1000:1000
 RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-only && \
     . /etc/profile.d/tengri-development.sh && \
@@ -415,6 +416,7 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     test "$(g++ /tmp/cpp-smoke.cpp -o /tmp/cpp-smoke && /tmp/cpp-smoke)" = cpp-ok && \
     brew install --formula --force-bottle hello && \
     test "$(hello)" = 'Hello, world!' && \
+    test-developer-tools-cache && \
     sha256sum "$HOME/.config/nvim/init.lua" "$HOME/.config/nvim/lazy-lock.json" > /tmp/astronvim-config.sha256 && \
     bootstrap-developer-tools --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
     mkdir -p "$HOME/.custom-config/nvim" && \
