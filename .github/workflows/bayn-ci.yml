@@ -268,6 +268,8 @@ jobs:
         with:
           node-version: 24.11.1
       - name: Verify bounded capture capacity with isolated native transports
+        env:
+          BAYN_TEST_CAPTURE_CPU_PROFILE: '1'
         run: timeout --kill-after=5s 475s bash services/bayn/scripts/test-native-receipts.sh --capture-capacity
       - name: Start isolated TigerBeetle for durable replay acceptance
         run: |
