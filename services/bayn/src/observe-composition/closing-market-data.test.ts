@@ -32,7 +32,11 @@ import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { currentUtcInstant } from '../time'
 import { CandidateObservationStore } from './candidate-observation'
-import { checkAdvancedMarketProjection, closeQuoteContinuationDelayMs } from './recovery-driver'
+import {
+  checkAdvancedMarketProjection,
+  closeQuoteContinuationDelayMs,
+  reconciliationForPreparation,
+} from './recovery-driver'
 import { advanceExecutionOnce } from '../execution/advance'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import {
@@ -240,6 +244,7 @@ const fixture = async () => {
 describe('closing market-data fallback boundaries', () => {
   test.each([
     'filled',
+    'filled reuses preflight',
     'denied',
     'unknown',
     'inexact-accounting',
@@ -305,7 +310,6 @@ describe('closing market-data fallback boundaries', () => {
           input: { ...request.input, executionCycleClosureStore: store },
           closeWindow,
           reconcile: Effect.succeed(factsAt(before, true)),
-          refreshReconciliation: Effect.die('an uncommitted close has no terminal evidence to refresh'),
           existing: undefined,
           ...(exitTarget === undefined ? {} : { exitTarget }),
         })
@@ -394,6 +398,12 @@ describe('closing market-data fallback boundaries', () => {
                 : fresh,
           )
         })
+        const terminalReconciliation = yield* reconciliationForPreparation(
+          fresh,
+          refreshReconciliation,
+          Effect.succeed(fresh.riskContext.authority ?? undefined),
+          30_000,
+        )
         const recoverClose = ensureExecutionCycleClosure({
           ...request,
           input: {
@@ -404,8 +414,7 @@ describe('closing market-data fallback boundaries', () => {
               : {}),
           },
           closeWindow,
-          reconcile: Effect.succeed(factsAt(before, true)),
-          refreshReconciliation,
+          reconcile: scenario === 'filled reuses preflight' ? terminalReconciliation.read : refreshReconciliation,
           existing: closure,
         })
         for (let pass = 0; pass < (fallbackFlat ? 3 : 2); pass++) {
@@ -414,7 +423,9 @@ describe('closing market-data fallback boundaries', () => {
           else {
             if (Exit.isFailure(result)) throw new Error('terminal close fixture unexpectedly failed')
             expect(result.value._tag).toBe(
-              scenario === 'filled' || scenario === 'denied' || (fallbackFlat && pass === 2) ? 'Complete' : 'Wait',
+              scenario.startsWith('filled') || scenario === 'denied' || (fallbackFlat && pass === 2)
+                ? 'Complete'
+                : 'Wait',
             )
             if (result.value._tag === 'Wait' && !fallbackFlat) {
               if (result.value.waitReason === undefined) throw new Error('Expected a lifecycle publication wait')
@@ -437,7 +448,9 @@ describe('closing market-data fallback boundaries', () => {
               ).toBe(pending ? 1_000 : undefined)
             }
           }
-          expect(freshReads).toBe(fallbackFlat ? Math.min((pass + 1) * 2, 5) : pass + 1)
+          expect(freshReads).toBe(
+            scenario === 'filled reuses preflight' ? 0 : fallbackFlat ? Math.min((pass + 1) * 2, 5) : pass + 1,
+          )
           expect(residualBinds).toBe(0)
           expect(records.size).toBe(expectedIntentCount)
         }
@@ -456,6 +469,7 @@ describe('closing market-data fallback boundaries', () => {
   test.each([
     'expiry',
     'partial fill',
+    'partial fill reuses preflight',
     'partial fill without archive',
     'fallback becomes unknown',
     'fallback loses accounting',
@@ -465,7 +479,8 @@ describe('closing market-data fallback boundaries', () => {
     'fallback read is invalid',
   ] as const)('residual close uses fresh remaining exposure after %s', async (scenario) => {
     const terminalOutcome = scenario === 'expiry' ? TerminalOutcome.Expired : TerminalOutcome.Canceled
-    const unavailableArchive = scenario !== 'expiry' && scenario !== 'partial fill'
+    const unavailableArchive =
+      scenario !== 'expiry' && scenario !== 'partial fill' && scenario !== 'partial fill reuses preflight'
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
@@ -571,7 +586,6 @@ describe('closing market-data fallback boundaries', () => {
           input: { ...request.input, executionCycleClosureStore: store },
           closeWindow,
           reconcile,
-          refreshReconciliation: reconcile,
           existing: undefined,
         })
         if (first._tag !== 'Close') throw new Error('fresh owned position should produce a close')
@@ -633,6 +647,12 @@ describe('closing market-data fallback boundaries', () => {
             )
           }),
         )
+        const residualReconciliation = yield* reconciliationForPreparation(
+          yield* reconcile,
+          refreshResidual,
+          Effect.suspend(() => reconcile.pipe(Effect.map((facts) => facts.riskContext.authority ?? undefined))),
+          30_000,
+        )
         const recoverResidual = ensureExecutionCycleClosure({
           ...request,
           input: {
@@ -643,8 +663,7 @@ describe('closing market-data fallback boundaries', () => {
               : {}),
           },
           closeWindow,
-          reconcile: Effect.succeed(factsAt(first.document.createdAt, unavailableArchive)),
-          refreshReconciliation: refreshResidual,
+          reconcile: scenario === 'partial fill reuses preflight' ? residualReconciliation.read : refreshResidual,
           existing: closure,
         })
         if (scenario === 'fallback read is invalid') {
@@ -688,6 +707,7 @@ describe('closing market-data fallback boundaries', () => {
         })
         expect(closeCommits).toBe(2)
         expect(restrictions).toBe(1)
+        if (scenario === 'partial fill reuses preflight') expect(residualReads).toBe(0)
         yield* TestClock.setTime(Date.parse(closeWindow.expiresAt))
         expect(yield* prepare(next.document)).toMatchObject({
           _tag: 'Block',

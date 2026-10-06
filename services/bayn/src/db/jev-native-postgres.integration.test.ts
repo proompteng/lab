@@ -1228,7 +1228,6 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           entryDocument: document,
           closeWindow,
           reconcile: Effect.die('Existing unsubmitted close unexpectedly reconciled'),
-          refreshReconciliation: Effect.die('An unsubmitted close has no terminal state to refresh'),
           existing: Option.getOrUndefined(yield* store.read(nativeInput.cycleId)),
         })
         expect(recovered).toEqual({ _tag: 'Close', document: close.document })
@@ -1297,7 +1296,6 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           entryDocument: document,
           closeWindow,
           reconcile: Effect.die('Existing unsubmitted residual close unexpectedly reconciled'),
-          refreshReconciliation: Effect.die('An unsubmitted residual close has no terminal state to refresh'),
           existing: Option.getOrUndefined(yield* store.read(nativeInput.cycleId)),
         })
         expect(recoveredReplan).toEqual({ _tag: 'Close', document: residual.document })

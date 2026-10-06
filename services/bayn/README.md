@@ -81,6 +81,10 @@ fresh durable cycle read. Already committed intents retain exact immutable inten
 repeating their writer-fenced commit transaction. Missing intents still use that atomic transaction; a persisted
 `PLANNED` row is rejected as incomplete atomic persistence. Mutable intent state is read again after reconciliation,
 and close planning reuses only the closure read by its owning pass.
+Terminal close completion and residual planning use the pass-owned reconciliation read instead of replaying the same
+broker history through accounting and PostgreSQL. Reuse still checks evidence age and current authority; the broker
+observations must cover the close intent's settlement time. The pass discards that evidence after a broker mutation,
+and the next command reconciles again.
 
 Untouched expired entry approvals can retire under restricted submission authority only in canonical intent order.
 A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation

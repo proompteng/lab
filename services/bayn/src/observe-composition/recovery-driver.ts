@@ -499,13 +499,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
         const result = yield* runMutationPassWithinTimeout(
-          runRecoveryFirstCyclePass(
-            input,
-            policy,
-            context,
-            { read: reconcileForAdvance, refresh: reconcile },
-            capability,
-          ),
+          runRecoveryFirstCyclePass(input, policy, context, reconcileForAdvance, capability),
           cyclePassTimeoutMs,
         )
         if (isPostMutationReconciliation(result)) {
