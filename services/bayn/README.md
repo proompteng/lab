@@ -7,6 +7,22 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
+## Profitability goal
+
+Demonstrate repeatable positive net profit after execution, model, and allocated data costs on untouched prospective
+sessions. The working target remains the frozen
+[`jev-migration-acceptance-v2`](../../docs/bayn/jev-migration-acceptance-v2.json) contract: at least $5,000 net over
+20 consecutive registered sessions on the existing $100,000 PAPER allocation, maximum session loss $1,000, and
+maximum marked drawdown $2,500. Its paired-control, uncertainty, execution-stress, activity, and evidence requirements
+all remain in force. Activity targets never require an otherwise unjustified order.
+
+The immediate priorities are reliable recovery and complete cost accounting, then the existing
+[`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
+sizing, and exits. Historical trades are development evidence. A selected confidence score, a positive day, or an
+engineering improvement cannot complete economic qualification. Freeze any candidate revision and its cost and
+execution assumptions before its next untouched evaluation; retain failed and inconclusive attempts. Preserve the
+current broker, capital, and risk limits throughout this work.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
