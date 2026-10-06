@@ -25,6 +25,12 @@ engineering improvement cannot complete economic qualification. Freeze any candi
 execution assumptions before its next untouched evaluation; retain failed and inconclusive attempts. Preserve the
 current broker, capital, and risk limits throughout this work.
 
+The [retained session export](../../docs/bayn/study-evidence-export.md) supplies complete native Jev observations,
+plans and results for these diagnostics through a bounded read-only command. It retains exclusions, abstentions,
+pending results and no-batch cycles; its receipt explicitly remains unqualified.
+The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
+assumptions to primary research and define which hypotheses still require an untouched economic experiment.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed

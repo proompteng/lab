@@ -1,8 +1,9 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Config, Effect, FileSystem, Redacted, Result, Schema, Stdio, Stream } from 'effect'
+import { Effect, FileSystem, Redacted, Result, Schema, Stdio, Stream } from 'effect'
 
 import { PostgresClientLive } from './db/postgres-client'
+import { researchReaderConfig } from './db/research-reader-config'
 import { canonicalJsonV1Result } from './hash'
 import { InferenceCostError, makeInferenceCostReport } from './inference-costs'
 import { readInferenceCostEvidence } from './inference-costs-postgres'
@@ -66,17 +67,10 @@ const readJson = (path: string) =>
     Effect.mapError(() => new InferenceCostError({ message: 'Inference cost input file is unavailable or invalid' })),
   )
 
-export const inferenceCostConfig = Config.all({
-  accountId: Config.Redacted('BAYN_ALPACA_ACCOUNT_ID'),
-  url: Config.Redacted('BAYN_POSTGRES_URL'),
-  tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
-  caPath: Config.String('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
-})
-
 const readSession = (sessionDate: string) =>
   Effect.gen(function* () {
     // Deliberately require no broker key or model key: this command has no broker or inference client.
-    const config = yield* inferenceCostConfig
+    const config = yield* researchReaderConfig
     const read = Effect.gen(function* () {
       const sql = yield* PgClient.PgClient
       return yield* readInferenceCostEvidence(sql, Redacted.value(config.accountId), sessionDate)
