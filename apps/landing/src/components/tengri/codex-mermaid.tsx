@@ -4,7 +4,7 @@ import DOMPurify from 'dompurify'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 
 import { CodexCopyButton } from './codex-copy-button'
-import { assertMermaidResourcePolicy } from './mermaid-resources'
+import { assertMermaidStyleFields, assertMermaidSvgResources } from './mermaid-resources'
 
 async function loadMermaid() {
   const { default: mermaid } = await import('mermaid')
@@ -57,39 +57,53 @@ export function CodexMermaid({ source, children }: { source: string; children: R
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     const render = async () => {
       if (cancelled) return
+      let loadingModule = true
       try {
-        assertMermaidResourcePolicy(source)
-        const mermaid = await getMermaid().catch((error) => {
-          // Completed responses may never change source. Retry transient imports
-          // twice with backoff, without retrying invalid syntax or unsafe diagrams.
-          if (!cancelled && loadRetries < 2) {
-            retryTimer = setTimeout(
-              () => {
-                renderQueue = renderQueue.then(render)
-              },
-              500 * 2 ** loadRetries++,
-            )
-          }
-          throw error
-        })
+        const mermaid = await getMermaid()
+        loadingModule = false
         if (cancelled) return
+        const parsed = await mermaid.parse(source)
+        assertMermaidStyleFields(parsed.config, true)
         // Mermaid fetches image nodes during layout, before SVG sanitization.
         const diagram = await mermaid.mermaidAPI.getDiagramFromText(source)
         const data = (diagram.db as { getData?: () => { nodes?: { img?: unknown }[] } }).getData?.()
         if (Array.isArray(data?.nodes) && data.nodes.some((node) => node.img)) {
           throw new Error('Diagram images are disabled')
         }
+        // Generated CSS is also applied to temporary SVGs during layout.
+        assertMermaidStyleFields(diagram.db)
+        assertMermaidStyleFields(data)
+        assertMermaidStyleFields(diagram.renderer.getClasses?.(source, diagram))
         if (cancelled) return
         const { svg } = await mermaid.render(id, source)
         if (cancelled) return
         const sanitized = DOMPurify.sanitize(svg, {
+          RETURN_DOM_FRAGMENT: true,
           USE_PROFILES: { svg: true, svgFilters: true },
           ADD_TAGS: ['style'],
-          FORBID_TAGS: ['foreignObject', 'a', 'image'],
+          FORBID_TAGS: ['foreignObject', 'a', 'image', 'feImage'],
         })
-        assertMermaidResourcePolicy(sanitized)
-        setResult({ source, svg: sanitized })
-      } catch {
+        const svgElement = sanitized.querySelector('svg')
+        if (!svgElement) throw new Error('Diagram SVG is missing')
+        assertMermaidSvgResources(svgElement)
+        setResult({ source, svg: svgElement.outerHTML })
+      } catch (error) {
+        // Diagram-specific modules are lazy-loaded during parse/render too.
+        const chunkLoadFailure =
+          error instanceof Error &&
+          /ChunkLoadError|loading chunk .+ failed|failed to (?:load chunk|fetch dynamically imported module)|importing a module script failed/i.test(
+            `${error.name} ${error.message}`,
+          )
+        // Completed responses may never change source. Retry transient imports
+        // twice with backoff, without retrying invalid syntax or unsafe diagrams.
+        if (!cancelled && loadRetries < 2 && (loadingModule || chunkLoadFailure)) {
+          retryTimer = setTimeout(
+            () => {
+              renderQueue = renderQueue.then(render)
+            },
+            500 * 2 ** loadRetries++,
+          )
+        }
         if (!cancelled) setResult({ source, svg: null })
       }
     }

@@ -1,5 +1,5 @@
-// Mermaid applies styles to live temporary SVGs during layout. Check the source
-// before rendering as well as the sanitized output; DOMPurify does not filter CSS.
+// Only pass CSS/configuration values here, never diagram labels or source text.
+// DOMPurify does not filter CSS resource URLs.
 export function assertMermaidResourcePolicy(value: string) {
   const normalized = value
     // Directives/frontmatter may encode CSS characters before Mermaid parses them.
@@ -22,5 +22,51 @@ export function assertMermaidResourcePolicy(value: string) {
 
   if (/url\s*\(|@import\b|(?:image(?:-set)?|cross-fade|src)\s*\(/i.test(normalized)) {
     throw new Error('Diagram resource URLs are disabled')
+  }
+}
+
+// Mermaid diagram databases expose styles in maps, node/edge data and class defs.
+// Inspect those fields before layout, while leaving ordinary label text alone.
+export function assertMermaidStyleFields(value: unknown, allStrings = false) {
+  const ancestors = new WeakSet<object>()
+  const visit = (entry: unknown, css: boolean) => {
+    if (typeof entry === 'string') {
+      if (css) assertMermaidResourcePolicy(entry)
+      return
+    }
+    if (!entry || typeof entry !== 'object' || ancestors.has(entry)) return
+    ancestors.add(entry)
+    if (entry instanceof Map || Array.isArray(entry)) {
+      for (const child of entry.values()) visit(child, css)
+    } else {
+      for (const [key, child] of Object.entries(entry)) visit(child, css || /style|css|config/i.test(key))
+    }
+    ancestors.delete(entry)
+  }
+  visit(value, allStrings)
+}
+
+export function assertMermaidSvgResources(svg: Element) {
+  const cssAttributes = new Set([
+    'style',
+    'fill',
+    'stroke',
+    'filter',
+    'clip-path',
+    'mask',
+    'cursor',
+    'marker',
+    'marker-start',
+    'marker-mid',
+    'marker-end',
+  ])
+  for (const element of [svg, ...svg.querySelectorAll('*')]) {
+    if (element.localName === 'style') assertMermaidResourcePolicy(element.textContent ?? '')
+    for (const attribute of element.attributes) {
+      if (cssAttributes.has(attribute.name)) assertMermaidResourcePolicy(attribute.value)
+      if ((attribute.name === 'href' || attribute.name === 'xlink:href') && !attribute.value.startsWith('#')) {
+        throw new Error('Diagram resource URLs are disabled')
+      }
+    }
   }
 }

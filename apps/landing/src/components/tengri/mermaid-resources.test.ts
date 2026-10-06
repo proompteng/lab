@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { assertMermaidResourcePolicy } from './mermaid-resources'
+import { assertMermaidResourcePolicy, assertMermaidStyleFields } from './mermaid-resources'
 
 describe('Mermaid resource policy', () => {
   test.each([
@@ -33,5 +33,24 @@ describe('Mermaid resource policy', () => {
     String.raw`marker-end:url(\23 local)`,
   ])('preserves ordinary styles and fragment references: %s', (value) => {
     expect(() => assertMermaidResourcePolicy(value)).not.toThrow()
+  })
+
+  test('ignores ordinary labels and members while checking parsed style fields', () => {
+    const data = {
+      nodes: [{ label: 'Parse URL(value)', members: ['src(input)', 'image(input)'], styles: ['fill:#fff'] }],
+      classes: new Map([['A', { label: 'image(value)', textStyles: ['fill:#fff'] }]]),
+    }
+    expect(() => assertMermaidStyleFields(data)).not.toThrow()
+    data.nodes[0].styles.push('filter:url(/remote.svg)')
+    expect(() => assertMermaidStyleFields(data)).toThrow('Diagram resource URLs are disabled')
+  })
+
+  test('checks style maps, edge styles and configuration values before layout', () => {
+    for (const data of [
+      new Map([['remote', { styles: ['filter:url(/remote.svg)'] }]]),
+      { edges: [{ style: 'stroke:url(/remote.svg)' }] },
+      { config: { themeCSS: '.node { filter:url(/remote.svg) }' } },
+    ])
+      expect(() => assertMermaidStyleFields(data)).toThrow('Diagram resource URLs are disabled')
   })
 })
