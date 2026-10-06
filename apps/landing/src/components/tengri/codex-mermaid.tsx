@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 
 import { CodexCopyButton } from './codex-copy-button'
+import { assertMermaidResourcePolicy } from './mermaid-resources'
 
 async function loadMermaid() {
   const { default: mermaid } = await import('mermaid')
@@ -25,6 +26,10 @@ async function loadMermaid() {
       'dompurifyConfig',
       'htmlLabels',
       'flowchart',
+      'themeCSS',
+      'themeVariables',
+      'fontFamily',
+      'altFontFamily',
     ],
     flowchart: { htmlLabels: false },
   })
@@ -51,6 +56,7 @@ export function CodexMermaid({ source, children }: { source: string; children: R
     const render = async () => {
       if (cancelled) return
       try {
+        assertMermaidResourcePolicy(source)
         const mermaid = await getMermaid()
         if (cancelled) return
         // Mermaid fetches image nodes during layout, before SVG sanitization.
@@ -67,6 +73,7 @@ export function CodexMermaid({ source, children }: { source: string; children: R
           ADD_TAGS: ['style'],
           FORBID_TAGS: ['foreignObject', 'a', 'image'],
         })
+        assertMermaidResourcePolicy(sanitized)
         setResult({ source, svg: sanitized })
       } catch {
         if (!cancelled) setResult({ source, svg: null })

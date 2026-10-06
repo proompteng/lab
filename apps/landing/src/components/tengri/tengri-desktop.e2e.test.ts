@@ -4155,6 +4155,93 @@ test('rejects Mermaid image nodes before fetching their URLs', async ({ page }) 
   await expect(response.locator('pre code')).toContainText('/mermaid-image-canary')
 })
 
+test('rejects Mermaid CSS resource URLs before making requests', async ({ page }) => {
+  const sources = [
+    'flowchart LR\nA[Resource] --> B[Safe]\nclassDef remote filter:url(/mermaid-css-canary#filter);\nclass A remote',
+    'flowchart LR\nA[Resource] --> B[Safe]\nstyle A fill:url(https://example.invalid/mermaid-css-canary.svg#paint)',
+    'flowchart LR\nA[Resource] --> B[Safe]\nclassDef remote filter:url("/mermaid-css-canary#filter");\nclass A remote',
+    String.raw`flowchart LR
+A[Resource] --> B[Safe]
+classDef remote filter:u\72l(/mermaid-css-canary#filter);
+class A remote`,
+    String.raw`%%{init: {"themeCSS": ".node { filter: \u0075rl(/mermaid-css-canary#filter) }"}}%%
+flowchart LR
+A[Resource] --> B[Safe]`,
+  ]
+  const resourceRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('mermaid-css-canary')) resourceRequests.push(request.url())
+  })
+  await page.route('**/*mermaid-css-canary*', (route) =>
+    route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"/>' }),
+  )
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: sources.map((source, index) => ({
+              id: `css-${index}`,
+              type: 'agentMessage',
+              text: `\`\`\`mermaid\n${source}\n\`\`\``,
+            })),
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const responses = page.getByRole('article', { name: 'Codex response' })
+  await expect(responses).toHaveCount(sources.length)
+  for (const response of await responses.all()) {
+    await expect(response.getByRole('status')).toContainText('Diagram unavailable')
+    await expect(response.locator('pre code')).toContainText('/mermaid-css-canary')
+    await expect(response.locator('svg')).toHaveCount(0)
+  }
+  await page.waitForTimeout(200)
+  expect(resourceRequests).toEqual([])
+})
+
+test('preserves Mermaid fragment-only CSS and arrow markers', async ({ page }) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: [
+              {
+                id: 'local-css',
+                type: 'agentMessage',
+                text: '```mermaid\nflowchart LR\nA[Start] --> B[Finish]\nclassDef local filter:url(#local-filter);\nclass A local\n```',
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const diagram = page.getByRole('img', { name: 'Mermaid diagram', exact: true }).locator('svg')
+  await expect(diagram).toBeVisible()
+  await expect(diagram).toContainText('Finish')
+  await expect(diagram.locator('style')).toContainText(/filter:\s*url\(["']?#local-filter["']?\)/)
+  const arrows = await diagram.locator('[marker-end]').evaluateAll((elements) =>
+    elements.map((element) => {
+      const reference = element.getAttribute('marker-end') ?? ''
+      const id = reference.match(/^url\(#([\w-]+)\)$/)?.[1]
+      return Boolean(id && element.closest('svg')?.querySelector(`[id="${id}"]`))
+    }),
+  )
+  expect(arrows.length).toBeGreaterThan(0)
+  expect(arrows.every(Boolean)).toBe(true)
+})
+
 test('keeps Mermaid configuration and markup from enabling active content', async ({ page }) => {
   const text =
     '```mermaid\n%%{init: {"securityLevel": "loose", "htmlLabels": true, "flowchart": {"htmlLabels": true}, "dompurifyConfig": {"ADD_TAGS": ["script"], "ADD_ATTR": ["onerror"]}}}%%\nflowchart LR\n  A["<img src=x onerror=alert(1)>"] --> B[Safe]\n  click B "javascript:alert(1)"\n```'
