@@ -140,7 +140,7 @@ for any real-data fit; a command build does not establish that such a corpus exi
 ## Offline paired portfolio
 
 `bayn.control-study-input.v6` opts into `SIX_BAR_RIDGE_V1` versus `SIX_BAR_TRAINING_MEAN_V1` through the
-existing `tools/control-study.ts` command. It requires mechanical management and a v2 artifact. The baseline
+existing `bayn-control-study` command. It requires mechanical management and a v2 artifact. The baseline
 assigns the training-only weighted target mean to every admissible candidate. It does not use the full model
 intercept. Strictly positive scores beat cash; exact ties choose ascending symbol order.
 
