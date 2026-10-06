@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
 import type { CodexApprovalDecision } from './codex-events'
 import { CodexCopyButton } from './codex-copy-button'
+import { CodexMermaid } from './codex-mermaid'
 
 type CodexEventCardProps = {
   approvalDecisions?: readonly CodexApprovalDecision[]
@@ -263,7 +264,20 @@ const markdownComponents: Components = {
     </a>
   ),
   img: ({ alt }) => <span className="text-white/42">[Image{alt ? `: ${alt}` : ''}]</span>,
-  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  pre: ({ children, node }) => {
+    const code = node?.children[0]
+    const fallback = <CodeBlock>{children}</CodeBlock>
+    if (
+      code?.type === 'element' &&
+      code.tagName === 'code' &&
+      Array.isArray(code.properties.className) &&
+      code.properties.className.includes('language-mermaid')
+    ) {
+      const source = code.children.map((child) => (child.type === 'text' ? child.value : '')).join('')
+      return <CodexMermaid source={source}>{fallback}</CodexMermaid>
+    }
+    return fallback
+  },
   table: ({ children }) => (
     <div className="my-4 overflow-x-auto rounded-lg border border-zinc-700/60">
       <table className="w-full border-collapse text-left text-xs [&_td]:border-t [&_td]:border-zinc-800 [&_td]:px-3 [&_td]:py-2 [&_th]:bg-zinc-800/60 [&_th]:px-3 [&_th]:py-2 [&_th]:font-medium [&_th]:text-zinc-200">

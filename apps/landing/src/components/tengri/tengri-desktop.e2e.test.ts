@@ -3906,6 +3906,141 @@ test('prepares suggested prompts and grows multiline drafts without sending them
   await expect(chrome.getByRole('button', { name: 'Stop response' })).toBeEnabled()
 })
 
+test('renders restored and streamed Mermaid diagrams and recovers from incomplete syntax', async ({
+  page,
+}, testInfo) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  const flowchart = 'flowchart LR\n  A[Start] --> B[Finish]\n'
+  const sequence = 'sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Ready\n'
+  const restored = `\`\`\`mermaid\n${flowchart}\`\`\`\n\n\`\`\`mermaid\n${sequence}\`\`\`\n\n\`\`\`sh\nbun test\n\`\`\``
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          { id: 'turn-1', status: 'inProgress', items: [{ id: 'restored', type: 'agentMessage', text: restored }] },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-1')
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: async (text: string) => {
+          ;(window as typeof window & { copiedCode?: string }).copiedCode = text
+        },
+      },
+    })
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const response = chrome.getByRole('article', { name: 'Codex response' }).first()
+  await expect(response.locator('pre code.language-mermaid, [aria-label="Mermaid diagram"]')).toHaveCount(2)
+  await testInfo.attach('restored-mermaid', {
+    body: await response.screenshot(),
+    contentType: 'image/png',
+  })
+  const diagrams = response.getByRole('img', { name: 'Mermaid diagram', exact: true })
+  await expect(diagrams).toHaveCount(2)
+  for (const [index, diagram] of (await diagrams.all()).entries()) {
+    await expect(diagram.locator('svg')).toBeVisible()
+    expect(await diagram.locator('svg').evaluate((svg) => svg.getBoundingClientRect().height)).toBeGreaterThan(50)
+    expect(await diagram.locator('svg path').count()).toBeGreaterThan(0)
+    const diagramPath = testInfo.outputPath(`mermaid-${index}.png`)
+    await diagram.screenshot({ path: diagramPath })
+    await testInfo.attach(`diagram-${index}`, { path: diagramPath, contentType: 'image/png' })
+  }
+  const ids = await diagrams.locator('svg').evaluateAll((svgs) => svgs.map((svg) => svg.id))
+  expect(new Set(ids).size).toBe(2)
+  await expect(response.locator('pre code.language-sh')).toHaveText('bun test\n')
+  await expect(response.getByRole('button', { name: 'Copy code block' })).toHaveCount(1)
+  await response.getByRole('button', { name: 'Copy diagram source' }).first().click()
+  expect(await page.evaluate(() => (window as typeof window & { copiedCode?: string }).copiedCode)).toBe(flowchart)
+  const renderedPath = testInfo.outputPath('rendered-mermaid.png')
+  await response.screenshot({ path: renderedPath })
+  await testInfo.attach('rendered-mermaid', { path: renderedPath, contentType: 'image/png' })
+
+  const event = {
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    approvalId: '',
+    rawJson: '{}',
+    itemId: 'streamed',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+  }
+  await emitCodexEvent(page, { ...event, sequence: 1, text: '```mermaid\nflowchart LR\n  X[' })
+  const streamed = chrome.getByRole('article', { name: 'Codex response' }).last()
+  await expect(streamed.locator('pre code')).toContainText('X[')
+  await expect(streamed.getByRole('status')).toContainText('Diagram unavailable')
+  await emitCodexEvent(page, { ...event, sequence: 2, text: 'Streaming] --> Y[Complete]\n' })
+  await emitCodexEvent(page, { ...event, sequence: 3, text: '  Y --> Z[Latest]\n```' })
+  const streamedDiagram = streamed.getByRole('img', { name: 'Mermaid diagram', exact: true }).locator('svg')
+  await expect(streamedDiagram).toBeVisible()
+  await expect(streamedDiagram).toContainText('Latest')
+  await expect(streamed.getByRole('status')).toHaveCount(0)
+  await expect(streamed.locator('pre')).toHaveCount(0)
+  await expect(diagrams).toHaveCount(2)
+  const streamedPath = testInfo.outputPath('streamed-mermaid.png')
+  await streamed.screenshot({ path: streamedPath })
+  await testInfo.attach('streamed-mermaid', { path: streamedPath, contentType: 'image/png' })
+  const streamedId = await streamedDiagram.getAttribute('id')
+  await emitCodexEvent(page, { ...event, sequence: 4, text: '\n\nTail after diagram.' })
+  await expect(streamed).toContainText('Tail after diagram.')
+  await expect(streamedDiagram).toHaveAttribute('id', streamedId!)
+  await expect(streamed.getByRole('status')).toHaveCount(0)
+
+  await emitCodexEvent(page, { ...event, sequence: 5, itemId: 'invalid', text: '```mermaid\nnot a diagram\n```' })
+  const invalid = chrome.getByRole('article', { name: 'Codex response' }).last()
+  await expect(invalid.getByRole('status')).toContainText('Diagram unavailable')
+  await expect(invalid.locator('pre code')).toHaveText('not a diagram\n')
+  await expect(chrome.getByRole('img', { name: 'Mermaid diagram', exact: true })).toHaveCount(3)
+  await expect(page.locator('body > [id^="dtengri-mermaid-"]')).toHaveCount(0)
+
+  await page.setViewportSize({ width: 700, height: 900 })
+  for (const diagram of await diagrams.all()) {
+    expect(
+      await diagram.evaluate((container) => {
+        const svg = container.querySelector('svg')!
+        return svg.getBoundingClientRect().width <= container.getBoundingClientRect().width
+      }),
+    ).toBe(true)
+  }
+  expect(pageErrors).toEqual([])
+})
+
+test('keeps Mermaid configuration and markup from enabling active content', async ({ page }) => {
+  const text =
+    '```mermaid\n%%{init: {"securityLevel": "loose", "htmlLabels": true, "flowchart": {"htmlLabels": true}, "dompurifyConfig": {"ADD_TAGS": ["script"], "ADD_ATTR": ["onerror"]}}}%%\nflowchart LR\n  A["<img src=x onerror=alert(1)>"] --> B[Safe]\n  click B "javascript:alert(1)"\n```'
+  const dialogs: string[] = []
+  page.on('dialog', async (dialog) => {
+    dialogs.push(dialog.message())
+    await dialog.dismiss()
+  })
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-1', status: 'completed', items: [{ id: 'unsafe', type: 'agentMessage', text }] }] },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const response = page.getByRole('article', { name: 'Codex response' })
+  const diagram = response.getByRole('img', { name: 'Mermaid diagram', exact: true }).locator('svg')
+  await expect(diagram).toBeVisible()
+  await expect(response.locator('svg foreignObject, svg script, svg img, svg a')).toHaveCount(0)
+  expect(
+    await diagram.evaluate((svg) =>
+      [...svg.querySelectorAll('*')].some((element) =>
+        [...element.attributes].some(
+          (attribute) => /^on/i.test(attribute.name) || /javascript:/i.test(attribute.value),
+        ),
+      ),
+    ),
+  ).toBe(false)
+  expect(dialogs).toEqual([])
+})
+
 test('keeps opened tool output stable during streaming and renders copyable structured responses', async ({ page }) => {
   await mockTengri(page, {
     resumeThreadRawJson: JSON.stringify({

@@ -66,7 +66,9 @@ by saved conversations.
 Active turns show a Thinking label with a one-second highlight moving left to right; reduced motion keeps the label still.
 Usage shows the remaining weekly percentage and rounds credits up to a whole number. The dock keeps its blurred
 material stationary while its outline and icons magnify, with labels appearing without an opacity animation.
-Responses support Markdown tables, task lists, and code blocks with copy feedback. The conversation follows new events
+Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid` blocks render as
+diagrams and update as responses stream; invalid or incomplete diagrams keep their copyable source visible.
+The conversation follows new events
 while the reader is at the bottom. Reading earlier messages preserves the scroll position until the reader chooses
 **Jump to latest**.
 
