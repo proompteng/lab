@@ -166,6 +166,40 @@ test('capture admission is synchronous, immutable, and finalized exactly once', 
     }),
   ))
 
+test.each(['candidate', 'serialized'] as const)(
+  'receipt admission preserves the %s validation boundary',
+  async (boundary) => {
+    const saved = memory()
+    let serializations = 0
+    const event = { ...marketEvent, ...(boundary === 'candidate' ? { unexpected: true } : {}) }
+    Object.setPrototypeOf(event, {
+      toJSON: () => {
+        serializations++
+        return boundary === 'candidate' ? marketEvent : { ...marketEvent, consumerSequence: -1 }
+      },
+    })
+    const result = await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(100)
+        const recorder = yield* makeResearchCaptureRecorder(saved.store, options)
+        expect(recorder.record(event, 100)).toBeUndefined()
+        const status = yield* recorder.status
+        expect(status.invalidations).toEqual([CaptureInvalidation.InvalidEvent])
+        expect(status.retainedReceipts).toBe(0)
+        expect(status.retainedPayloadBytes).toBe(0)
+        const seal = requireSeal(yield* recorder.finish)
+        expect(seal.persistedReceipts).toBe(0)
+        expect(yield* recorder.finish).toEqual(seal)
+        return 'trading result'
+      }),
+    )
+    expect(result).toBe('trading result')
+    expect(serializations).toBe(boundary === 'candidate' ? 0 : 1)
+    expect(saved.chunks).toHaveLength(0)
+    expect(saved.seals).toHaveLength(1)
+  },
+)
+
 test.each(['throw', 'timeout'] as const)(
   'committed seals with a lost %s acknowledgement stay durably unqualified',
   (mode) =>

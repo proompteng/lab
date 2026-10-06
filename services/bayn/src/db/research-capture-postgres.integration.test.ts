@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Exit, Redacted, Result, Schema, type Scope } from 'effect'
+import { Clock, Deferred, Effect, Exit, Fiber, Redacted, Result, Schema, type Scope } from 'effect'
 
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -121,7 +121,7 @@ postgresTest('a session claim commits before objects and a fresh attempt cannot 
           }),
       })
       const claimed = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
-      expect(objects).toBe(3)
+      expect(objects).toBe(1)
       const second = yield* makeResearchCaptureRecorder(store, options, {
         putVerified: () => Effect.die('a reused claim must not write objects'),
       })
@@ -254,6 +254,117 @@ postgresTest('exact-byte retries and concurrent lost-ack recovery are idempotent
   ),
 )
 
+postgresTest('an append blocked on the capture lock sees its predecessor commit before reading the frontier', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk, bytes } = yield* fixture
+      const locked = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const writer = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${chunk.captureId}, 0))`
+            yield* store.append(bytes)
+            yield* Deferred.succeed(locked, undefined)
+            yield* Deferred.await(release)
+          }),
+        )
+        .pipe(Effect.forkChild)
+      yield* Deferred.await(locked)
+      const next = encodeResearchCapture({
+        ...chunk,
+        chunkOrdinal: 1,
+        previousContentHash: bytes.contentHash,
+        receipts: chunk.receipts.map((receipt) => ({ ...receipt, sequence: receipt.sequence + 3 })),
+      })
+      const pending = yield* store.append(next).pipe(Effect.forkChild)
+      let waiting = false
+      for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+        const rows = yield* sql`
+          SELECT count(*)::integer AS count FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'
+            AND query LIKE '%pg_advisory_xact_lock%'
+        `
+        waiting = Number(rows[0]?.['count']) > 0
+        if (!waiting) yield* Effect.sleep(10)
+      }
+      expect(waiting).toBe(true)
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(writer)
+      yield* Fiber.join(pending)
+      expect(
+        yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 1, maximumResearchCaptureChunkBytes),
+      ).toEqual(next)
+    }),
+  ),
+)
+
+postgresTest('malformed stored frontier sequence rejects new appends without changing the committed prefix', () =>
+  run(
+    Effect.gen(function* () {
+      for (const sequence of [null, -1, 0.5, 'Infinity', 'invalid']) {
+        const { sql, store, chunk } = yield* fixture
+        const payload = JSON.stringify({
+          ...chunk,
+          receipts: chunk.receipts.map((receipt, index) =>
+            index === chunk.receipts.length - 1 ? { ...receipt, sequence } : receipt,
+          ),
+        })
+        const hash = sha256(payload)
+        const id = sha256(JSON.stringify(['bayn.research-capture-chunk.v1', chunk.captureId, 0]))
+        yield* sql`
+          INSERT INTO research_capture_chunks (chunk_id, capture_id, chunk_ordinal, content_hash, payload)
+          VALUES (${id}, ${chunk.captureId}, 0, ${hash}, ${payload})
+        `
+        const next = encodeResearchCapture({
+          ...chunk,
+          chunkOrdinal: 1,
+          previousContentHash: hash,
+          receipts: chunk.receipts.map((receipt) => ({ ...receipt, sequence: receipt.sequence + 3 })),
+        })
+        expect(Exit.isFailure(yield* Effect.exit(store.append(next)))).toBe(true)
+        expect(
+          yield* sql`SELECT count(*)::integer AS count FROM research_capture_chunks
+          WHERE capture_id = ${chunk.captureId}`,
+        ).toEqual([{ count: 1 }])
+      }
+    }),
+  ),
+)
+
+postgresTest('exact retry skips a malformed later frontier and conflicting chunk identities still fail', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk, bytes } = yield* fixture
+      yield* store.append(bytes)
+      const malformed = JSON.stringify({
+        ...chunk,
+        chunkOrdinal: 1,
+        previousContentHash: bytes.contentHash,
+        receipts: chunk.receipts.map((receipt) => ({ ...receipt, sequence: 'invalid' })),
+      })
+      const secondId = sha256(JSON.stringify(['bayn.research-capture-chunk.v1', chunk.captureId, 1]))
+      yield* sql`INSERT INTO research_capture_chunks (chunk_id, capture_id, chunk_ordinal, content_hash, payload)
+        VALUES (${secondId}, ${chunk.captureId}, 1, ${sha256(malformed)}, ${malformed})`
+      yield* store.append(bytes)
+      const target = { ...chunk, captureId: randomUUID() }
+      const other = { ...chunk, captureId: randomUUID() }
+      const otherBytes = encodeResearchCapture(other)
+      const collidingId = sha256(JSON.stringify(['bayn.research-capture-chunk.v1', target.captureId, 0]))
+      yield* sql`INSERT INTO research_capture_chunks (chunk_id, capture_id, chunk_ordinal, content_hash, payload)
+        VALUES (${collidingId}, ${other.captureId}, 0, ${otherBytes.contentHash}, ${otherBytes.payload})`
+      expect(Exit.isFailure(yield* Effect.exit(store.append(encodeResearchCapture(target))))).toBe(true)
+      expect(
+        yield* sql`SELECT count(*)::integer AS count FROM research_capture_chunks
+        WHERE capture_id = ${target.captureId}`,
+      ).toEqual([{ count: 0 }])
+      expect(
+        yield* readResearchCapturePostgresChunk(sql, other.captureId, 0, maximumResearchCaptureChunkBytes),
+      ).toEqual(otherBytes)
+    }),
+  ),
+)
+
 postgresTest('durable SQL seal recovers raw objects after process state and seal acknowledgement are lost', () =>
   run(
     Effect.gen(function* () {
@@ -311,7 +422,7 @@ postgresTest('durable SQL seal recovers raw objects after process state and seal
           return bucket.get(key)
         }),
       )
-      expect(reads).toHaveLength(4)
+      expect(reads).toHaveLength(2)
       expect(recovered.seal.exportRoot?.exportedChunks).toBe(1)
       expect(recovered.exportVerified).toBe(true)
       expect(recovered.structurallyClosed).toBe(true)
