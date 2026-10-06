@@ -108,6 +108,14 @@ const marketVolumeError = (cause: unknown): ForwardPerformanceMarketVolumeError 
     cause,
   })
 
+const missingHistoricalMarketConfig = () =>
+  new ForwardPerformanceMarketVolumeError({
+    operation: 'read',
+    message:
+      'Legacy daily SIP evidence requires all eight BAYN_SIGNAL_* settings; native-only reports may use --authority-generation without historical settings',
+    cause: 'MISSING_HISTORICAL_SIGNAL_CONFIG',
+  })
+
 const fixedDecimalMicros = (value: string): string | undefined => {
   const match = /^(0|[1-9][0-9]*)[.]([0-9]{8})$/.exec(value)
   if (match === null || match[1] === undefined || match[2] === undefined || !match[2].endsWith('00')) return undefined
@@ -318,6 +326,8 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
   ClickhouseClient.ClickhouseClient
 > => {
   if (requests.length === 0) return Effect.succeed([])
+  if (config.historicalSignal === undefined && requests.some((request) => request.sourceFeed === 'sip'))
+    return Effect.fail(missingHistoricalMarketConfig())
   return Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
     const groups = yield* Effect.forEach(
@@ -326,13 +336,19 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
         Effect.gen(function* () {
           const request = group[0]
           if (request === undefined) return []
-          const queries = makeMarketDataQueries(sql, config, {
-            universeId: request.universeId,
-            universeSymbolHash: request.universeSymbolHash,
-            universe: request.symbols,
-            historyStart: request.requestedStart,
-            evaluationStart: config.historicalSignal.bounds.evaluationStart,
-          })
+          const historicalSignal = config.historicalSignal
+          if (historicalSignal === undefined) return yield* missingHistoricalMarketConfig()
+          const queries = makeMarketDataQueries(
+            sql,
+            { historicalSignal },
+            {
+              universeId: request.universeId,
+              universeSymbolHash: request.universeSymbolHash,
+              universe: request.symbols,
+              historyStart: request.requestedStart,
+              evaluationStart: historicalSignal.bounds.evaluationStart,
+            },
+          )
           const candidateRows = yield* sql<Record<string, unknown>>`
             SELECT
               snapshot_id,
@@ -407,16 +423,12 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
           const verified = verifyForwardPerformanceMarketSnapshot(
             request,
             { bars: rows.bars, sessions: rows.sessions, manifests },
-            config.historicalSignal.bounds.evaluationStart,
+            historicalSignal.bounds.evaluationStart,
           )
           if (verified === undefined) return []
           const projected = yield* Effect.forEach(group, (item) =>
             Effect.fromResult(
-              projectForwardPerformanceMarketVolumeEvidence(
-                item,
-                verified,
-                config.historicalSignal.bounds.evaluationStart,
-              ),
+              projectForwardPerformanceMarketVolumeEvidence(item, verified, historicalSignal.bounds.evaluationStart),
             ),
           )
           return projected.filter((item): item is ForwardPerformanceDailyMarketVolumeEvidence => item !== undefined)
@@ -458,6 +470,8 @@ const readForwardPerformanceMarketVolumeDataFirst = (
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
 ): Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError> => {
   if (requests.length === 0) return Effect.succeed([])
+  if (config.historicalSignal === undefined && requests.some((request) => request.sourceFeed === 'sip'))
+    return Effect.fail(missingHistoricalMarketConfig())
   const client = ClickhouseClient.layer({
     url: config.clickhouse.url,
     username: config.clickhouse.username,

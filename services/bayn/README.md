@@ -403,6 +403,7 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   30-second budget gives statements 25 seconds, reserving five seconds for cancellation and rollback. Smaller budgets
   reserve half their time. The client closes a connection with no network activity halfway through that remaining
   allowance (27.5 seconds for the current budget), so a lost response cannot leave transaction cleanup waiting forever.
+  Its custom socket factory retains the SQL adapter's `TCP_NODELAY` setting for ordinary and cancellation connections.
   The aggregate execution deadline remains unchanged, and an uncertain mutation still requires durable lookup and reconciliation.
 - Connection acquisition and transaction startup are cancellable, including when both pool connections are occupied
   or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
@@ -497,9 +498,9 @@ required for archive health and evidence reads; this separation does not alter b
 configuration. The three live manifests omit all eight historical settings below; a running service container does
 not supply a historical report context implicitly.
 
-The read-only forward-performance command has an explicit historical snapshot configuration in addition to its
-account-bound runtime configuration. Supply all eight settings from the intended immutable daily publication, even
-when invoking the command from a running service container:
+Native intraday forward-performance reports need only the account-bound runtime configuration. They reconstruct
+their market evidence from each retained native snapshot, without an unrelated daily snapshot. Reports whose scope
+includes legacy daily SIP requests also require all eight settings from the intended immutable daily publication:
 
 | Setting                        | Historical input                 |
 | ------------------------------ | -------------------------------- |
@@ -512,9 +513,11 @@ when invoking the command from a running service container:
 | `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
 | `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
 
-After supplying these values, use `node dist/forward-performance-command.js --authority-generation <generation-hash>`
-to scope the report. Missing or malformed historical settings, including inconsistent evaluation bounds, fail
-configuration before evidence reads. They never select a default snapshot or imply zero trades or zero performance.
+Use `node dist/forward-performance-command.js --authority-generation <generation-hash>` to scope the report to a
+native mandate without these settings. Only complete absence is optional: partial or malformed historical settings,
+including inconsistent evaluation bounds, still fail configuration before evidence reads. A legacy or mixed-history
+scope without historical settings fails with an explicit error before any market query or ClickHouse acquisition;
+it never omits legacy requests, selects a default snapshot, or implies zero trades or zero performance.
 Historical SIP verification retains its explicit evaluation start; intraday archive evidence and immutable receipt
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
@@ -688,6 +691,15 @@ Native content hashes bind the cycle, authority generation, protocol, snapshot m
 portfolio. Entry and management decisions additionally bind the completed inference batch. The corresponding log
 contains that hash, candidate symbols, and source exclusions. A failed audit write fails the pass.
 
+Protective exits also emit `bayn.jev-protective-quote-diagnostics.v1`. Its
+`IEX_EXCHANGE_ONLY_NOT_NBBO` reference scope and `pairedFeedComparisonAvailable=false` make clear that the trigger was
+observed on the configured exchange-only feed, not proved against a consolidated quote. The event retains the exact
+quote timestamp, approximate spread in basis points, and the entry spread threshold for comparison, without quote
+prices, inventory, or account identifiers. A wide spread does not suppress a protective exit: entry eligibility and
+risk-reducing liquidation have different purposes. This diagnostic does not change the stop, decision identity,
+quote freshness, model input, data entitlement, or broker/capital authority. Consolidated-price comparisons require
+separately verified evidence and cannot be inferred from a subsequent paper fill.
+
 Execution latency metrics use separate clocks:
 
 | Metric suffix (`bayn_cycle_…_latency_seconds`) | Start                        | End                           |
@@ -732,6 +744,9 @@ node dist/forward-performance-command.js --authority-generation <generation-hash
 ```
 
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
+An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
+Native-only account history does not. A native scope without completed executions remains unqualified; successful
+configuration loading is not a profitability result.
 The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
 binds both. This read-only report never changes an immutable per-generation receipt or requires mixed-version replicas
