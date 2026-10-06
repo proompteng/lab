@@ -53,12 +53,19 @@ export function CodexMermaid({ source, children }: { source: string; children: R
       try {
         const mermaid = await getMermaid()
         if (cancelled) return
+        // Mermaid fetches image nodes during layout, before SVG sanitization.
+        const diagram = await mermaid.mermaidAPI.getDiagramFromText(source)
+        const data = (diagram.db as { getData?: () => { nodes?: { img?: unknown }[] } }).getData?.()
+        if (Array.isArray(data?.nodes) && data.nodes.some((node) => node.img)) {
+          throw new Error('Diagram images are disabled')
+        }
+        if (cancelled) return
         const { svg } = await mermaid.render(id, source)
         if (cancelled) return
         const sanitized = DOMPurify.sanitize(svg, {
           USE_PROFILES: { svg: true, svgFilters: true },
           ADD_TAGS: ['style'],
-          FORBID_TAGS: ['foreignObject', 'a'],
+          FORBID_TAGS: ['foreignObject', 'a', 'image'],
         })
         setResult({ source, svg: sanitized })
       } catch {

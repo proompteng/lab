@@ -4109,6 +4109,52 @@ test('retries Mermaid loading after a failed lazy chunk request', async ({ page 
   await expect(response.locator('pre')).toHaveCount(0)
 })
 
+test('rejects Mermaid image nodes before fetching their URLs', async ({ page }) => {
+  const imageRequests: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/mermaid-image-canary')) imageRequests.push(request.url())
+  })
+  await page.route('**/mermaid-image-canary*', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="white"/></svg>',
+    }),
+  )
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: [
+              {
+                id: 'image',
+                type: 'agentMessage',
+                text: '```mermaid\nflowchart LR\nA@{ img: "/mermaid-image-canary", label: "Image" } --> B[Safe]\n```',
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const response = page.getByRole('article', { name: 'Codex response' })
+  await expect
+    .poll(
+      async () =>
+        (await response.locator('svg').count()) > 0 ||
+        (await response.getByRole('status').textContent())?.includes('Diagram unavailable'),
+    )
+    .toBeTruthy()
+  expect(imageRequests).toEqual([])
+  await expect(response.locator('svg image')).toHaveCount(0)
+  await expect(response.getByRole('status')).toContainText('Diagram unavailable')
+  await expect(response.locator('pre code')).toContainText('/mermaid-image-canary')
+})
+
 test('keeps Mermaid configuration and markup from enabling active content', async ({ page }) => {
   const text =
     '```mermaid\n%%{init: {"securityLevel": "loose", "htmlLabels": true, "flowchart": {"htmlLabels": true}, "dompurifyConfig": {"ADD_TAGS": ["script"], "ADD_ATTR": ["onerror"]}}}%%\nflowchart LR\n  A["<img src=x onerror=alert(1)>"] --> B[Safe]\n  click B "javascript:alert(1)"\n```'
