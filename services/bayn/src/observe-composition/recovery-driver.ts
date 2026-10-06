@@ -367,15 +367,25 @@ const observeMutationCycleResult = (
 export const recoveryFirstCycleNextDelayMs = (input: {
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
-}): number => Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
+  readonly postMutationDelayMs?: number
+}): number => {
+  const cadence = Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
+  return input.postMutationDelayMs === undefined
+    ? cadence
+    : Math.min(cadence, Math.max(mutationConsistencyDelayMs, input.postMutationDelayMs))
+}
 
-/** Only verified quote staleness gets a short continuation; source failures retain the normal cadence. */
+/** Expected quote or broker publication waits use a short continuation; source failures keep their backoff. */
 export const closeQuoteContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
   observedAt: string,
 ): number | undefined => {
-  if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.waitReason !== 'CLOSE_QUOTE_PENDING')
+  if (
+    result.outcome !== 'RECOVERED' ||
+    result.action !== 'WAITING' ||
+    (result.waitReason !== 'CLOSE_QUOTE_PENDING' && result.waitReason !== 'BROKER_OBSERVATION_PENDING')
+  )
     return undefined
   const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
@@ -506,7 +516,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           yield* Ref.set(cadence, {})
           return {
             result: deferPostMutationReconciliation(result),
-            ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
+            nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),
           }
         }
         return { result }
