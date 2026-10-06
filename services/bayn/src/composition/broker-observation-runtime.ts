@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Result, Scope, ScopedRef } from 'effect'
+import { Cause, Effect, Layer, ManagedRuntime, Option, Result, Scope, ScopedRef } from 'effect'
 import { HttpClient } from 'effect/http'
 
 import type { ApplicationPlanFor } from '../app'
@@ -9,9 +9,25 @@ import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { brokerSnapshotCacheConfig, captureBrokerObservation } from '../broker/alpaca/snapshot-cache'
 import { observedBrokerSnapshotHash, observationUnavailable } from '../broker/alpaca/observed-snapshot'
+import type { BrokerReadError } from '../broker/alpaca/failures'
 import { makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
-import type { BrokerObservationRuntime } from '../restate/restate-broker-observations'
+import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
+
+export const settleCompletedBrokerObservationPoll = <R>(
+  poll: Effect.Effect<BrokerObservationPoll, BrokerReadError, R>,
+  nextPollNotBeforeMs: Effect.Effect<number>,
+) =>
+  poll.pipe(
+    Effect.catchCause((cause) => {
+      const failure = Cause.findErrorOption(cause)
+      if (Cause.hasDies(cause) || Cause.hasInterrupts(cause) || Option.isNone(failure)) return Effect.failCause(cause)
+      return Effect.gen(function* () {
+        yield* Effect.logWarning('Broker observation poll completed without publication', cause)
+        return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* nextPollNotBeforeMs } as const
+      })
+    }),
+  )
 
 export const acquireBrokerObservationRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -69,66 +85,75 @@ export const acquireBrokerObservationRuntime = (
                   nextPollNotBeforeMs: Math.max(reservation.interruptedNotBeforeMs, yield* budget.nextPollNotBeforeMs),
                 } as const
               }
-              yield* budget.beginCapture
-              const persistence = yield* store
-              const ticket = yield* persistence.begin
-              const capture = Effect.gen(function* () {
-                const broker = yield* ScopedRef.get(brokerRuntimes)
-                return yield* Effect.tryPromise({
-                  try: (captureSignal) =>
-                    broker.runPromise(
-                      Effect.gen(function* () {
-                        return yield* captureBrokerObservation(
-                          (yield* BrokerSession).read,
-                          ticket.startedAt,
-                          captureTimeoutMs,
-                        )
+              // Only a claimed worker can replace its interruption reservation with measured usage.
+              // Typed, completed persistence failures have no broker request still in flight.
+              return yield* settleCompletedBrokerObservationPoll(
+                Effect.gen(function* () {
+                  yield* budget.beginCapture
+                  const persistence = yield* store
+                  const ticket = yield* persistence.begin
+                  const capture = Effect.gen(function* () {
+                    const broker = yield* ScopedRef.get(brokerRuntimes)
+                    return yield* Effect.tryPromise({
+                      try: (captureSignal) =>
+                        broker.runPromise(
+                          Effect.gen(function* () {
+                            return yield* captureBrokerObservation(
+                              (yield* BrokerSession).read,
+                              ticket.startedAt,
+                              captureTimeoutMs,
+                            )
+                          }),
+                          { signal: captureSignal },
+                        ),
+                      catch: (cause) => observationUnavailable('Verified broker observation acquisition failed', cause),
+                    })
+                  })
+                  const result = yield* capture.pipe(
+                    Effect.timeoutOrElse({
+                      duration: captureTimeoutMs,
+                      orElse: () =>
+                        Effect.fail(observationUnavailable('Broker observation acquisition exceeded its deadline')),
+                    }),
+                    Effect.result,
+                  )
+                  if (Result.isFailure(result)) {
+                    // ManagedRuntime's lazy layer build can outlive the canceled capture effect.
+                    // Stop it before a persistence failure may release the measured request budget.
+                    yield* ScopedRef.set(brokerRuntimes, acquireBroker)
+                    yield* persistence.failed(ticket)
+                    yield* Effect.logWarning('Broker observation poll failed').pipe(
+                      Effect.annotateLogs({
+                        'broker.operation': result.failure.operation,
+                        'broker.failure_kind': result.failure.kind,
                       }),
-                      { signal: captureSignal },
-                    ),
-                  catch: (cause) => observationUnavailable('Verified broker observation acquisition failed', cause),
-                })
-              })
-              const result = yield* capture.pipe(
-                Effect.timeoutOrElse({
-                  duration: captureTimeoutMs,
-                  orElse: () =>
-                    Effect.fail(observationUnavailable('Broker observation acquisition exceeded its deadline')),
+                    )
+                    return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
+                  }
+                  const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
+                  const publication = yield* persistence.publish(ticket, result.success).pipe(Effect.result)
+                  if (Result.isFailure(publication)) {
+                    yield* persistence.failed(ticket)
+                    yield* Effect.logWarning('Broker observation publication failed')
+                    return { _tag: 'Unavailable', nextPollNotBeforeMs } as const
+                  }
+                  if (!publication.success) return { _tag: 'Invalidated', nextPollNotBeforeMs } as const
+                  yield* Effect.logInfo('Broker observation published').pipe(
+                    Effect.annotateLogs({
+                      'broker.snapshot_hash': observedBrokerSnapshotHash(result.success),
+                      'broker.observed_at': result.success.observedAt,
+                      'broker.source_revision': plan.config.build.sourceRevision,
+                      'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
+                    }),
+                  )
+                  return {
+                    _tag: 'Published',
+                    snapshotHash: observedBrokerSnapshotHash(result.success),
+                    nextPollNotBeforeMs,
+                  } as const
                 }),
-                Effect.result,
+                budget.nextPollNotBeforeMs,
               )
-              const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
-              if (Result.isFailure(result)) {
-                yield* persistence.failed(ticket)
-                yield* ScopedRef.set(brokerRuntimes, acquireBroker)
-                yield* Effect.logWarning('Broker observation poll failed').pipe(
-                  Effect.annotateLogs({
-                    'broker.operation': result.failure.operation,
-                    'broker.failure_kind': result.failure.kind,
-                  }),
-                )
-                return { _tag: 'Unavailable', nextPollNotBeforeMs } as const
-              }
-              const publication = yield* persistence.publish(ticket, result.success).pipe(Effect.result)
-              if (Result.isFailure(publication)) {
-                yield* persistence.failed(ticket)
-                yield* Effect.logWarning('Broker observation publication failed')
-                return { _tag: 'Unavailable', nextPollNotBeforeMs } as const
-              }
-              if (!publication.success) return { _tag: 'Invalidated', nextPollNotBeforeMs } as const
-              yield* Effect.logInfo('Broker observation published').pipe(
-                Effect.annotateLogs({
-                  'broker.snapshot_hash': observedBrokerSnapshotHash(result.success),
-                  'broker.observed_at': result.success.observedAt,
-                  'broker.source_revision': plan.config.build.sourceRevision,
-                  'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
-                }),
-              )
-              return {
-                _tag: 'Published',
-                snapshotHash: observedBrokerSnapshotHash(result.success),
-                nextPollNotBeforeMs,
-              } as const
             }).pipe(Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate))),
             { signal },
           ),
