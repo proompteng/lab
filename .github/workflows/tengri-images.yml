@@ -10,8 +10,6 @@ on:
       - 'argocd/applications/tengri/crd.yaml'
       - 'packages/scripts/src/tengri/**'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/package.json'
-      - 'bun.lock'
   push:
     branches:
       - main
@@ -23,8 +21,6 @@ on:
       - 'argocd/applications/tengri/crd.yaml'
       - 'packages/scripts/src/tengri/**'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/package.json'
-      - 'bun.lock'
   workflow_dispatch:
 
 concurrency:
