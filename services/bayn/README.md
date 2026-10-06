@@ -7,6 +7,22 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
+## Profitability goal
+
+Demonstrate repeatable positive net profit after execution, model, and allocated data costs on untouched prospective
+sessions. The working target remains the frozen
+[`jev-migration-acceptance-v2`](../../docs/bayn/jev-migration-acceptance-v2.json) contract: at least $5,000 net over
+20 consecutive registered sessions on the existing $100,000 PAPER allocation, maximum session loss $1,000, and
+maximum marked drawdown $2,500. Its paired-control, uncertainty, execution-stress, activity, and evidence requirements
+all remain in force. Activity targets never require an otherwise unjustified order.
+
+The immediate priorities are reliable recovery and complete cost accounting, then the existing
+[`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
+sizing, and exits. Historical trades are development evidence. A selected confidence score, a positive day, or an
+engineering improvement cannot complete economic qualification. Freeze any candidate revision and its cost and
+execution assumptions before its next untouched evaluation; retain failed and inconclusive attempts. Preserve the
+current broker, capital, and risk limits throughout this work.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
@@ -43,6 +59,10 @@ A mutation or newer retained broker event can invalidate a successful cut before
 still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
 Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
 normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
+The same continuation applies when a terminal close needs a newer exact broker cut, including partial-fill recovery.
+Transport failures, inexact accounting and unresolved order or mutation evidence retain the normal retry cadence.
+An advanced mutation with no remaining consistency delay still schedules its reconciliation continuation rather than
+falling back to the idle interval. Every continuation rechecks existing evidence, quantity and submission deadlines.
 Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
 wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
 authority restriction.
@@ -202,8 +222,13 @@ Historical momentum targets remain readable for audit.
 Entry and position-management observations each commit at most once per completed signal window within a cycle.
 Later polls and process restarts consult the retained observation before creating another inference batch. The next
 evaluation requires the next completed minute and its decision delay. An interrupted or failed observation does not
-authorize another inference attempt on the same window. Protective stops and the holding limit remain eligible on
-every management pass.
+authorize another inference attempt on the same window. Entry recovers pending batches and checks the retained window
+before loading full signal history, so a consumed window can wait without rebuilding an unusable snapshot. New entry
+windows still require verified source evidence before observation or inference. Protective stops and the holding limit
+remain eligible on every management pass. Position management checks those protections first, then recovers pending
+batches and checks the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
+signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
+the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
 
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
@@ -421,8 +446,8 @@ source matching, replay and delivery requirements.
 
 Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a complete
 `@platformatic/kafka` projection for the 16-symbol core universe. Dorvud/Flink independently publishes rolling
-features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
-candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
+features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The strategy
+evaluates the fifteen non-SPY symbols, with SPY supplying the benchmark. The public status service does not consume Kafka.
 
 The projection yields to the Node event loop every 256 consumed records, including records discarded after an
 assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope

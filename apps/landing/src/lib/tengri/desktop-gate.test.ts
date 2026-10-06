@@ -12,6 +12,7 @@ const agent: TengriAgent = {
   cpuMillis: 2_000,
   memoryMib: 4_096,
   workspaceGib: 16,
+  power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',
   createdAt: '2026-08-26T00:00:00Z',

@@ -257,7 +257,7 @@ const readLatestExecutionCycleCloseReplan = (
 
 type TerminalCloseEvidence =
   | { readonly _tag: 'Unsettled' }
-  | { readonly _tag: 'Unavailable' }
+  | { readonly _tag: 'Unavailable'; readonly observationPending: boolean }
   | { readonly _tag: 'Settled'; readonly reconciliation: ReconciliationPassResult; readonly settledAt: string }
 
 const readTerminalCloseReconciliation = <R>(
@@ -288,7 +288,10 @@ const readTerminalCloseReconciliation = <R>(
     const refreshed = yield* Effect.result(reconcile)
     if (Result.isFailure(refreshed)) {
       if (refreshed.failure._tag === 'BrokerReadError' && refreshed.failure.retryable)
-        return { _tag: 'Unavailable' } as const
+        return {
+          _tag: 'Unavailable',
+          observationPending: refreshed.failure.kind === BrokerReadErrorKind.ObservationPending,
+        } as const
       return yield* reconciliationRunnerError(refreshed.failure, 'execution terminal close reconciliation failed')
     }
     const settledAt = records.reduce(
@@ -537,10 +540,20 @@ export const ensureExecutionCycleClosure = <R>({
       return { _tag: 'Close', document: active.document } as const
     }
     if (terminal._tag === 'Unavailable')
-      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'BROKER_OBSERVATION_PENDING' } as const
+      return {
+        _tag: 'Wait',
+        observedAt: yield* currentUtcInstant,
+        waitReason: terminal.observationPending ? 'BROKER_OBSERVATION_PENDING' : 'COMPLETION_EVIDENCE_PENDING',
+      } as const
     const residualReconciliation = terminal.reconciliation
     if (!isTerminalCloseReconciliationReady(residualReconciliation, terminal.settledAt))
-      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'COMPLETION_EVIDENCE_PENDING' } as const
+      return {
+        _tag: 'Wait',
+        observedAt: yield* currentUtcInstant,
+        waitReason: isExecutionCycleReconciled(residualReconciliation)
+          ? 'BROKER_OBSERVATION_PENDING'
+          : 'COMPLETION_EVIDENCE_PENDING',
+      } as const
     if (isExecutionCycleReconciledFlat(residualReconciliation)) {
       const terminalization = decideReconciledExecutionCycleTerminalization(
         residualReconciliation,
@@ -590,7 +603,7 @@ export const ensureExecutionCycleClosure = <R>({
       ),
     )
     if (prepared === undefined)
-      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'BROKER_OBSERVATION_PENDING' } as const
+      return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'COMPLETION_EVIDENCE_PENDING' } as const
     const document = prepared.document
     const decision = decideExecutionCycleCloseDocument(document)
     if (decision._tag !== 'Bind') {

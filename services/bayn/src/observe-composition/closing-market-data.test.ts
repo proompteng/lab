@@ -244,6 +244,7 @@ describe('closing market-data fallback boundaries', () => {
     'unknown',
     'inexact-accounting',
     'failed-refresh',
+    'pending-refresh',
     'invalid-refresh',
     'older-cut',
     'fallback-flat',
@@ -371,14 +372,18 @@ describe('closing market-data fallback boundaries', () => {
         const refreshReconciliation = Effect.suspend(() => {
           freshReads += 1
           if (fallbackFlat && freshReads <= 4 && freshReads % 2 === 1) return Effect.succeed(factsAt(terminalAt, true))
-          if (scenario === 'failed-refresh' || scenario === 'invalid-refresh')
+          if (scenario === 'failed-refresh' || scenario === 'pending-refresh' || scenario === 'invalid-refresh')
             return Effect.fail(
               new BrokerReadError({
                 operation: 'preflight',
                 kind:
-                  scenario === 'failed-refresh' ? BrokerReadErrorKind.Transport : BrokerReadErrorKind.InvalidResponse,
+                  scenario === 'pending-refresh'
+                    ? BrokerReadErrorKind.ObservationPending
+                    : scenario === 'failed-refresh'
+                      ? BrokerReadErrorKind.Transport
+                      : BrokerReadErrorKind.InvalidResponse,
                 message: 'synthetic terminal-close refresh unavailable',
-                retryable: scenario === 'failed-refresh',
+                retryable: scenario !== 'invalid-refresh',
               }),
             )
           return Effect.succeed(
@@ -411,6 +416,26 @@ describe('closing market-data fallback boundaries', () => {
             expect(result.value._tag).toBe(
               scenario === 'filled' || scenario === 'denied' || (fallbackFlat && pass === 2) ? 'Complete' : 'Wait',
             )
+            if (result.value._tag === 'Wait' && !fallbackFlat) {
+              if (result.value.waitReason === undefined) throw new Error('Expected a lifecycle publication wait')
+              const pending = scenario === 'pending-refresh' || scenario === 'older-cut'
+              expect(result.value.waitReason).toBe(
+                pending ? 'BROKER_OBSERVATION_PENDING' : 'COMPLETION_EVIDENCE_PENDING',
+              )
+              expect(
+                closeQuoteContinuationDelayMs(
+                  {
+                    outcome: 'RECOVERED',
+                    action: 'WAITING',
+                    cycle: request.cycle,
+                    observedAt: result.value.observedAt,
+                    waitReason: result.value.waitReason,
+                  },
+                  30_000,
+                  result.value.observedAt,
+                ),
+              ).toBe(pending ? 1_000 : undefined)
+            }
           }
           expect(freshReads).toBe(fallbackFlat ? Math.min((pass + 1) * 2, 5) : pass + 1)
           expect(residualBinds).toBe(0)
@@ -630,7 +655,7 @@ describe('closing market-data fallback boundaries', () => {
         }
         let next = yield* recoverResidual
         if (unstableFallback) {
-          expect(next._tag).toBe('Wait')
+          expect(next).toMatchObject({ _tag: 'Wait', waitReason: 'COMPLETION_EVIDENCE_PENDING' })
           expect(replan).toBeUndefined()
           expect(closeCommits).toBe(1)
           expect((yield* recoverResidual)._tag).toBe('Wait')
@@ -963,6 +988,24 @@ describe('closing market-data fallback boundaries', () => {
     ).toBeUndefined()
     expect(closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'JEV_POSITION_HELD' }, 30_000, at)).toBeUndefined()
     expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+  })
+
+  test('nested broker observation waits use the durable short continuation without relaxing the close deadline', () => {
+    const waiting = {
+      outcome: 'RECOVERED',
+      action: 'WAITING',
+      waitReason: 'BROKER_OBSERVATION_PENDING',
+      observedAt: at,
+      cycle: activeCycle,
+    } as const
+    expect(closeQuoteContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
+    expect(closeQuoteContinuationDelayMs(waiting, 500, at)).toBe(500)
+    const close = Date.parse(activeCycle.window.executionCloseAt)
+    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+    expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+    expect(
+      closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
+    ).toBeUndefined()
   })
 
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {

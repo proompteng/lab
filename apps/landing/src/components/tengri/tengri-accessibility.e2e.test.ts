@@ -10,6 +10,7 @@ const readyAgent = {
   cpuMillis: 2_000,
   memoryMib: 4_096,
   workspaceGib: 16,
+  power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',
   createdAt: '2026-08-26T12:00:00.000Z',

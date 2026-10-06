@@ -12,7 +12,13 @@ test('Restate image promotion requires both native fault proofs and uploaded rel
   const publish = workflow.jobs.publish
   const mainOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
   expect(workflow.on.push.branches).toEqual(['main'])
-  expect(workflow.on.pull_request.paths).toEqual(workflow.on.push.paths)
+  expect(workflow.on.pull_request.paths).toEqual([
+    '.github/actions/affected-inputs/**',
+    'packages/scripts/src/ci/**',
+    ...workflow.on.push.paths,
+  ])
+  expect(build.needs).toBe('changes')
+  expect(build.if).toBe("needs.changes.outputs.changed == 'true'")
   expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
     'amd64',
     'arm64',

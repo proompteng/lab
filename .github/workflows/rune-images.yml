@@ -6,16 +6,12 @@ on:
       - 'services/rune/**'
       - '.github/workflows/rune-images.yml'
       - 'argocd/applications/rune/**'
-      - 'argocd/applications/kargo/**'
-      - 'argocd/applicationsets/platform.yaml'
   push:
     branches: [main]
     paths:
       - 'services/rune/**'
       - '.github/workflows/rune-images.yml'
       - 'argocd/applications/rune/**'
-      - 'argocd/applications/kargo/**'
-      - 'argocd/applicationsets/platform.yaml'
 
 concurrency:
   group: rune-images-${{ github.ref }}

@@ -53,6 +53,8 @@ on:
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
   pull_request:
     paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
       - '!packages/scripts/src/torghut/__tests__/**'
@@ -101,7 +103,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/signal-publisher-build-push.yml
+          workspaces: |
+            service: ['', 'services/signal-publisher']
+
   dependency-closure:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: signal-publisher
