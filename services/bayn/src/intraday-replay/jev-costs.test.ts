@@ -115,3 +115,16 @@ test('does not infer charges from missing, changed, mismatched or malformed usag
     knownCostMicros: '0',
   })
 })
+
+test('retained HTTP failure usage is included while status failure remains unusable', () => {
+  const response = { model: jevModel, usage: { input_tokens: 7858, output_tokens: 150 }, error: 'fixture rejection' }
+  const retained = rejectedCall(response, JevFailure.Status)
+  expect(calculateReplayJevCosts([retained], costs)).toMatchObject({
+    callCount: 1,
+    unresolvedCallCount: 0,
+    inputTokens: '7858',
+    outputTokens: '150',
+    knownCostMicros: '331',
+  })
+  expect(retained.outcome.status).toBe('FAILED')
+})
