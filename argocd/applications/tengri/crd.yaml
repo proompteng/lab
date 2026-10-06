@@ -64,6 +64,19 @@ spec:
               ownerHash:
                 pattern: ^[a-f0-9]{64}$
                 type: string
+              power:
+                default:
+                  idleTimeoutMinutes: 60
+                properties:
+                  idleTimeoutMinutes:
+                    description: Zero disables automatic sleep. Manual sleep remains available.
+                    format: uint32
+                    maximum: 1440.0
+                    minimum: 0.0
+                    type: integer
+                required:
+                - idleTimeoutMinutes
+                type: object
               resources:
                 properties:
                   cpuMillis:

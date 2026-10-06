@@ -21,6 +21,7 @@ const readyAgent = {
   cpuMillis: 2_000,
   memoryMib: 4_096,
   workspaceGib: 16,
+  power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',
   createdAt: '2026-08-26T12:00:00.000Z',
@@ -750,6 +751,23 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         agent = agent ? { ...agent, phase: 'ready' } : agent
         result = agent
         break
+      case 'update-power-settings': {
+        const power = action.power
+        if (typeof power !== 'object' || power === null || !('idleTimeoutMinutes' in power)) {
+          throw new Error('Missing power settings')
+        }
+        agent = agent
+          ? {
+              ...agent,
+              power: {
+                idleTimeoutMinutes: Number(power.idleTimeoutMinutes),
+              },
+              idleDeadline: power.idleTimeoutMinutes === 0 ? '' : agent.idleDeadline,
+            }
+          : agent
+        result = agent
+        break
+      }
       case 'delete-agent':
         if (options.holdLifecycleAction === 'delete-agent') {
           markHeldLifecycleActionStarted()
@@ -3868,6 +3886,57 @@ test('renders native Finder and Settings layouts with accessible navigation', as
   expect(bounds).not.toBeNull()
   expect(bounds!.width).toBeLessThanOrEqual(390)
   await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeVisible()
+})
+
+test('saves power settings, validates idle limits, and reads them back after reload', async ({ page }) => {
+  const fixture = await mockTengri(page)
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()
+  const automaticSleep = settings.getByRole('switch', { name: 'Automatic sleep' })
+  const timeout = settings.getByLabel('Idle timeout in minutes')
+  await expect(automaticSleep).toBeChecked()
+  await expect(timeout).toHaveValue('60')
+  await timeout.fill('1441')
+  await settings.getByRole('button', { name: 'Save power settings' }).click()
+  await expect(timeout).toHaveAttribute('aria-invalid', 'true')
+  expect(fixture.actions.filter((action) => action.action === 'update-power-settings')).toHaveLength(0)
+  await automaticSleep.click()
+  await settings.getByRole('button', { name: 'Save power settings' }).click()
+  await expect(settings.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
+  expect(fixture.actions.filter((action) => action.action === 'update-power-settings')).toEqual([
+    {
+      action: 'update-power-settings',
+      agentId: readyAgent.id,
+      power: { idleTimeoutMinutes: 0 },
+    },
+  ])
+  await page.reload()
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  await settings.getByRole('button', { name: 'Lifecycle', exact: true }).click()
+  await expect(automaticSleep).not.toBeChecked()
+  await expect(timeout).toHaveValue('0')
+  await automaticSleep.click()
+  await timeout.fill('5')
+  await settings.getByRole('button', { name: 'Save power settings' }).click()
+  await expect(settings.getByRole('status').filter({ hasText: /^Saved$/ })).toBeVisible()
+  expect(fixture.actions.filter((action) => action.action === 'update-power-settings').at(-1)).toEqual({
+    action: 'update-power-settings',
+    agentId: readyAgent.id,
+    power: { idleTimeoutMinutes: 5 },
+  })
+  await settings.screenshot({ path: test.info().outputPath('tengri-power-settings.png') })
+  await page.setViewportSize({ width: 390, height: 680 })
+  await settings.getByRole('button', { name: 'Maximize Settings' }).click()
+  await automaticSleep.scrollIntoViewIfNeeded()
+  await expect(automaticSleep).toBeVisible()
+  await expect(timeout).toBeVisible()
+  const accessibility = await new AxeBuilder({ page }).analyze()
+  expect(
+    accessibility.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical'),
+  ).toEqual([])
 })
 
 test('prepares suggested prompts and grows multiline drafts without sending them', async ({ page }) => {
