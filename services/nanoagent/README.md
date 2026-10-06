@@ -27,7 +27,7 @@ certificate and bundle updates, so new connections use renewed credentials witho
 
 The agent binary is installed under the persistent home from a versioned, SHA-256-pinned musl release archive. Build
 stages verify both the native binary and the generated agent configuration. Only the installer and version receipt
-enter the 1 GiB rootfs. Agent keys, attestation token, and data remain in private `/tmp/nanoagent-spire` files.
+enter the 512 MiB rootfs. Agent keys, attestation token, and data remain in private `/tmp/nanoagent-spire` files.
 Tengri refreshes the token and public bundle over mTLS; the refresh RPC rejects another Pod UID and private material
 in place of CA certificates. Terminal and Codex children receive no SPIFFE or SPIRE configuration variables. A guest
 administrator owns that guest's identity; its Pod-bound parent cannot attest another guest or the controller.
@@ -86,19 +86,30 @@ a shared `OPENAI_API_KEY`.
 
 ## Firecracker rootfs and persistent tools
 
-The guest's first filesystem layer contains the complete rootfs and starts a fresh OCI chain. Containerd's
-Firecracker snapshotter copies the persistent scratch rather than an existing 512 MiB Ubuntu parent. Prepare only the approved canary host's
-scratch for 1 GiB; existing snapshots, metadata and homes stay intact. Normal promotion still requires every
-eligible scheduling target to have sufficient scratch capacity. The Dockerfile enforces
-a real 1 GiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+The guest's first filesystem layer contains a parentless, stripped Ubuntu rootfs that fits the installed
+512 MiB Firecracker scratch. No node extension, scratch resize, cached-layer replacement, or host maintenance is
+required. The Dockerfile populates a real 512 MiB ext4 filesystem and checks it, reserving at least 16 MiB and 256
+inodes for extraction overhead. Tool seeds live outside this root on a private 1 GiB raw-block PVC mounted at
+`/usr/share/nanoagent` through the installed Kata persistent-block contract.
+
+Each native image build exports the exact image-built seed filesystem and SHA-256 receipt into the matching
+architecture's Tengri controller image. Before starting a new guest, a short-lived container runs as UID 0 to open
+only its private block device, with every capability dropped, no privilege escalation, and a read-only root. It writes
+the verified artifact to the MicroVM-owned tool PVC and verifies the full readback. It mounts no host paths, uses no
+Kubernetes token, and adds no API permission. Existing matching tool disks are reused on resume. Release changes
+replace only the disposable tool disk after the guest has stopped; the retained 16 GiB home is never populated or
+reformatted by this initializer. There is no shared seed source, CSI clone cache, or runtime package download.
+Nanoagent compares the disk's manifest with `/etc/nanoagent-seed-files.sha256` before any bootstrap helper runs.
+Missing or mismatched seed disks fail startup visibly.
+
 Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
 executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
 The check runs in a separate build stage and copies only its receipt into the image. Final-image CI verifies a
 parentless layer, unchanged runtime configuration and source filesystem ownership, modes, symlinks and capabilities.
 Packaged manuals, translated
 messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
-The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
-compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.2, uv 0.11.14, Go 1.25.5, Rust/Cargo
+The guest image contains a minimal Ubuntu 24.04 shell environment and Nanoagent. Its paired tool disk carries a
+compressed native bundle for the pinned Node 24.11.1, Bun 1.4.2, uv 0.11.14, Go 1.25.5, Rust/Cargo
 1.90.0, and native GCC 13.3.0 guest toolchain. Ubuntu's system `bubblewrap` package satisfies Codex's Linux sandbox
 prerequisite instead of showing a bundled-helper fallback warning after device login.
 
@@ -117,7 +128,7 @@ the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without su
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
 for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
-The image includes compressed Homebrew and AstroNvim seeds outside the mounted home. `bootstrap-developer-tools`
+The tool disk includes compressed Homebrew and AstroNvim seeds outside the mounted home. `bootstrap-developer-tools`
 verifies and extracts these local files into the PVC as UID 1000, filling missing files without replacing existing
 files, symlinks, ownership, or directory modes. A completed seed receipt avoids repeated Homebrew extraction.
 Boot checks the supplied commands and Neovim's required 0.11 minimum without running Homebrew, Lazy, or Mason installers.
@@ -134,11 +145,14 @@ terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion`
 or `:TSInstall` to add language support. Existing configurations, lockfiles and plugin data remain user-owned.
 The default configuration and matching plugin seed are supplied only when no Neovim/Vim configuration exists,
 including custom XDG locations. Homebrew's Cellar, cache, and Neovim configuration, plugin lockfile, plugin data,
-and undo files survive sleep/resume; only compressed seeds enter the 1 GiB rootfs.
+and undo files survive sleep/resume; compressed seeds remain on the separate tool disk.
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and offline
-clean-home, existing-home and restart checks before the rootfs check. PR image verification repeats these checks
-with networking disabled and an empty home mount, so baked home files cannot mask a missing seed.
-If the 1 GiB capacity gate fails, the build fails and produces no final image or validation receipt.
+clean-home, existing-home and restart checks before the rootfs check. Final-image CI verifies the exported disk
+checksum and filesystem, reads it back with `debugfs` without a host mount,
+and supplies that readback to the final guest image with networking disabled and an empty home mount. It records
+fresh-install and retained-home helper timings; these are not whole-VM startup timings. Baked home files cannot mask
+a missing seed.
+If either the 512 MiB root or 1 GiB seed capacity gate fails, the build produces no final verified image pair.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
 `/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
@@ -154,7 +168,7 @@ token. Codex threads and turns use `danger-full-access` inside this same guest.
 Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
 omitted options preserve an existing thread's settings.
 
-The operating-system root remains the 1 GiB Firecracker image filesystem. Its changes are ephemeral;
+The operating-system root remains the installed 512 MiB Firecracker image filesystem. Its changes are ephemeral;
 container recreation, sleep/resume, or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
@@ -218,7 +232,7 @@ controller and guest; the automatic Tengri Warehouse and Stage promote only the 
 
 Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
 the image seed before installing into `$HOME/.tengri/code-server`. The complete installed payload stays on the
-persistent home volume; its compact seed lives in the 1 GiB rootfs. Image creation verifies the upstream SHA-256
+persistent home volume; its compact seed lives on the separate 1 GiB tool disk. Image creation verifies the upstream SHA-256
 and native package. First use and retained-home resume work without package-download access.
 
 `CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one

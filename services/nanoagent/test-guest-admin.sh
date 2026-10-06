@@ -9,7 +9,7 @@ import errno, hashlib, json, os, stat
 
 excluded = {"/dev", "/proc", "/sys", "/run", "/tmp", "/.dockerenv",
             "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/mtab",
-            "/usr/share/nanoagent/guest-filesystem.sha256"}
+            "/usr/share/nanoagent", "/etc/nanoagent-filesystem.sha256"}
 entries = []
 def fail(error):
     raise error
@@ -46,7 +46,7 @@ esac
 test "$(id -u)" = 1000
 test "$(sudo -n id -u)" = 0
 if [[ "${1:-}" == --runtime ]]; then
-  test "$(filesystem_metadata)" = "$(cat /usr/share/nanoagent/guest-filesystem.sha256)"
+  test "$(filesystem_metadata)" = "$(cat /etc/nanoagent-filesystem.sha256)"
   printf 'Guest filesystem ownership, modes, symlinks and capabilities match the build stage.\n'
 fi
 admin_etc_file="$(sudo -n mktemp /etc/tengri-admin.XXXXXX)"

@@ -7,7 +7,7 @@ a `kata-fc` Pod with guest administrator access and a 16 GiB persistent home PVC
 Every guest uses 4 vCPU, 8 GiB memory, and a 16 GiB workspace. Admission rejects any other profile. There is no
 controller compatibility or automatic resource upgrade path. Correct any existing MicroVM resource values once
 during the deployment cutover, then sleep/resume it to apply the profile while preserving its home PVC. The namespace
-quota accommodates six guests plus Kata overhead and the controller.
+quota accommodates six guests, six homes, six tool disks, Kata overhead, and the controller.
 
 The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
 the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
@@ -224,10 +224,25 @@ Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the comm
 
 Tengri supports one storage layout:
 `runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation and one 16 GiB
-`volumeMode: Block` PVC. The Pod exposes it as `/dev/tengri-home`; the reviewed Kata persistent-block contract formats
+`volumeMode: Block` home PVC plus a private, disposable 1 GiB tool PVC. The Pod exposes the home as `/dev/tengri-home`; the reviewed Kata persistent-block contract formats
 a provably new device once, mounts it at `/home/nanoagent`, applies GID 1000, and reuses the same filesystem on later
 boots. Nanoagent exposes the persistent `workspace/` subdirectory through `/workspace`. There is one application
 container and no init container.
+
+The tool disk is mounted at `/usr/share/nanoagent` through the same installed Kata block-volume contract. The paired
+native image build exports an ext4 artifact into the controller image. A short-lived initializer Pod verifies and
+copies it directly into each new MicroVM-owned tool claim, then verifies the readback and exits before the guest Pod
+is created. The helper uses UID 0 only to open the private device, drops every capability, disables privilege
+escalation, and uses a read-only root. It has no host mounts, host namespaces, Kubernetes token, or API permissions.
+A same-image resume reuses the disk without copying. An image change replaces only that disposable claim after the
+guest has stopped; every existing home PVC and its contents stay unchanged. Seed preparation failures are reported
+in MicroVM status. Interrupted infrastructure helpers can retry their same owned disk; checksum and ownership
+failures remain visible. There is no shared source claim, CSI cloning, or seed-cache garbage collector.
+
+The guest root remains within the installed 512 MiB scratch. This path changes no Talos or Kata installation, node
+scheduling, containerd state, or host filesystem. Before bootstrap, Nanoagent checks that its root manifest matches
+the attached tool disk; per-archive checks continue to protect fresh tool installation. The controller and guest
+images must therefore be promoted as the existing paired Kargo release.
 
 The Pod requires both `runtime.proompteng.ai/kata-fc=ready` and
 `runtime.proompteng.ai/kata-fc-persistent-block=ready`. The second capability must be applied only after the signed r5

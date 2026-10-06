@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -52,6 +53,9 @@ func run(logger *slog.Logger) error {
 	bootstrapToken, err := loadBootstrapToken()
 	if err != nil {
 		return err
+	}
+	if err := validateToolSeedManifest(os.Getenv("NANOAGENT_TOOL_SEED_MANIFEST"), os.ReadFile); err != nil {
+		return fmt.Errorf("validate image-built tool disk: %w", err)
 	}
 	homeRoot, workspaceRoot := runtimeRoots(
 		os.Getenv("NANOAGENT_HOME"),
@@ -171,6 +175,25 @@ func run(logger *slog.Logger) error {
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
 	}
+}
+
+func validateToolSeedManifest(expectedPath string, readFile fileReader) error {
+	if expectedPath == "" {
+		// Native development has no packaged tool disk; the final image sets this path.
+		return nil
+	}
+	expected, err := readFile(expectedPath)
+	if err != nil {
+		return fmt.Errorf("read guest seed manifest: %w", err)
+	}
+	actual, err := readFile("/usr/share/nanoagent/seed-files.sha256")
+	if err != nil {
+		return fmt.Errorf("read mounted seed manifest: %w", err)
+	}
+	if len(expected) == 0 || !bytes.Equal(expected, actual) {
+		return errors.New("mounted tool disk does not match the guest image")
+	}
+	return nil
 }
 
 func bootstrapCodex(ctx context.Context, command string, timeout time.Duration) error {

@@ -76,6 +76,7 @@ ENV CARGO_HOME=/home/nanoagent/.cargo \
     NANOAGENT_HOME=/home/nanoagent \
     NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
     NANOAGENT_WORKSPACE=/workspace \
+    NANOAGENT_TOOL_SEED_MANIFEST=/etc/nanoagent-seed-files.sha256 \
     NPM_CONFIG_PREFIX=/home/nanoagent/.local \
     PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
@@ -464,25 +465,45 @@ COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoag
 COPY --chown=0:0 --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
 COPY --from=developer-seed-smoke /tmp/developer-seed-validation.txt /usr/share/nanoagent/developer-seed-validation.txt
 
-FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
-
+FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS filesystem-tools
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-COPY --from=guest-rootfs / /rootfs/
+
+# Tool archives are built once and exported separately from the small guest root.
+# The manifest excludes itself and is identical inside the disk and guest image.
+FROM filesystem-tools AS seed-filesystem
+COPY --from=guest-rootfs /usr/share/nanoagent/ /seeds/
+RUN cd /seeds && find . -type f -print0 | sort -z | xargs -0 sha256sum > /seed-files.sha256 && \
+    cp /seed-files.sha256 /seeds/seed-files.sha256 && \
+    mkdir -p /out && truncate -s 1073741824 /out/nanoagent-seeds.ext4 && \
+    E2FSPROGS_FAKE_TIME=0 mkfs.ext4 -F -q -m 0 -b 4096 -N 32768 -J size=16 \
+      -U 00000000-0000-0000-0000-000000000000 \
+      -E lazy_itable_init=0,lazy_journal_init=0 -d /seeds /out/nanoagent-seeds.ext4 && \
+    e2fsck -f -n /out/nanoagent-seeds.ext4 && \
+    cd /out && sha256sum nanoagent-seeds.ext4 > nanoagent-seeds.ext4.sha256
+
+# This exact native artifact is a named context in the paired controller build.
+FROM scratch AS seed-artifact
+COPY --from=seed-filesystem /out/ /
+
+FROM guest-rootfs AS guest-without-seeds
+RUN rm -rf /usr/share/nanoagent && mkdir -p /usr/share/nanoagent
+COPY --from=seed-filesystem /seed-files.sha256 /etc/nanoagent-seed-files.sha256
+
+FROM filesystem-tools AS rootfs-check
+COPY --from=guest-without-seeds / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
 RUN validate-rootfs /rootfs /rootfs-validation.txt
 
-FROM guest-rootfs AS guest-image
-
-COPY --from=rootfs-check /rootfs-validation.txt /usr/share/nanoagent/rootfs-validation.txt
+FROM guest-without-seeds AS guest-image
+COPY --from=rootfs-check /rootfs-validation.txt /etc/nanoagent-rootfs-validation.txt
 RUN --network=none --mount=type=bind,source=test-guest-admin.sh,target=/tmp/test-guest-admin.sh,readonly \
-    bash /tmp/test-guest-admin.sh --metadata > /usr/share/nanoagent/guest-filesystem.sha256
+    bash /tmp/test-guest-admin.sh --metadata > /etc/nanoagent-filesystem.sha256
 
-# A fresh first layer uses the snapshotter's scratch rather than a cached 512 MiB
-# Ubuntu parent. COPY from a build stage retains filesystem ownership and xattrs.
-# Image configuration is explicit because FROM scratch does not inherit it.
-FROM scratch
+# Every populated file is in one layer, which fits the installed 512 MiB scratch.
+# COPY from a build stage retains filesystem ownership and xattrs.
+FROM scratch AS nanoagent
 ENV CARGO_HOME=/home/nanoagent/.cargo \
     CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
     SPIRE_AGENT_BINARY=/home/nanoagent/.local/bin/spire-agent \
@@ -497,6 +518,7 @@ ENV CARGO_HOME=/home/nanoagent/.cargo \
     NANOAGENT_HOME=/home/nanoagent \
     NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
     NANOAGENT_WORKSPACE=/workspace \
+    NANOAGENT_TOOL_SEED_MANIFEST=/etc/nanoagent-seed-files.sha256 \
     NPM_CONFIG_PREFIX=/home/nanoagent/.local \
     PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \

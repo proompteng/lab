@@ -64,7 +64,7 @@ pub fn pvc_name(microvm: &MicroVM) -> String {
     bounded_child_name(&microvm.name_any(), "home")
 }
 
-fn bounded_child_name(parent: &str, suffix: &str) -> String {
+pub(crate) fn bounded_child_name(parent: &str, suffix: &str) -> String {
     let candidate = format!("{parent}-{suffix}");
     if candidate.len() <= MAX_DNS_SUBDOMAIN_LENGTH
         && candidate

@@ -5,8 +5,9 @@ metadata:
 spec:
   hard:
     count/microvms.runtime.proompteng.ai: "6"
-    persistentvolumeclaims: "6"
-    requests.storage: 96Gi
+    # Six retained 16 GiB homes plus six private 1 GiB image-built tool disks.
+    persistentvolumeclaims: "12"
+    requests.storage: 102Gi
     pods: "8"
     secrets: "8"
     # Six 4 CPU/8 GiB guests, kata-fc's 250m/130Mi fixed overhead per guest,

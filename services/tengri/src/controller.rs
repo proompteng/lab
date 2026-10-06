@@ -49,6 +49,7 @@ pub struct ControllerContext {
     pub namespace: String,
     pub tickets: TicketStore,
     pub guest_image: Arc<str>,
+    pub seed_image: Arc<str>,
     pub identity: crate::identity::WorkloadIdentity,
 }
 
@@ -228,6 +229,40 @@ async fn reconcile(
             return Err(error.into());
         }
     };
+    let tool_claim = if existing.is_none() {
+        match crate::tool_seeds::ensure_ready(
+            context.client.clone(),
+            &namespace,
+            &microvm,
+            &context.seed_image,
+        )
+        .await
+        {
+            Ok(Some(claim)) => Some(claim),
+            Ok(None) => {
+                let status = preparing_tools_status(&microvm, &home_claim.name, now);
+                if microvm.status.as_ref() != Some(&status) {
+                    patch_status(&microvms, &microvm, status).await?;
+                }
+                return Ok(Action::requeue(Duration::from_secs(1)));
+            }
+            Err(error) => {
+                report_provisioning_failure(
+                    &microvms,
+                    &pods,
+                    &microvm,
+                    "ToolSeedsRejected",
+                    "private tool seed disk",
+                    &error,
+                    now,
+                )
+                .await;
+                return Err(error.into());
+            }
+        }
+    } else {
+        None
+    };
     let pod = match ensure_runtime_pod(
         &pods,
         &microvm,
@@ -235,6 +270,7 @@ async fn reconcile(
         &bootstrap_secret,
         &home_claim.name,
         home_claim.initialization,
+        tool_claim.as_deref(),
     )
     .await
     {
@@ -328,6 +364,7 @@ async fn ensure_runtime_pod(
     bootstrap_secret: &str,
     home_claim: &str,
     initialization: PersistentBlockInitialization,
+    tool_claim: Option<&str>,
 ) -> Result<Pod, kube::Error> {
     let name = microvm.name_any();
     if let Some(existing) = pods.get_opt(&name).await? {
@@ -365,13 +402,27 @@ async fn ensure_runtime_pod(
         ));
     }
 
-    let desired = build_pod(
+    let mut desired = build_pod(
         microvm,
         namespace,
         bootstrap_secret,
         home_claim,
         initialization,
     )?;
+    crate::tool_seeds::attach(
+        &mut desired,
+        tool_claim.ok_or_else(|| {
+            kube::Error::Api(
+                kube::core::Status {
+                    code: 422,
+                    reason: "ToolSeedsUnavailable".into(),
+                    message: "a verified tool seed disk is required before guest creation".into(),
+                    ..Default::default()
+                }
+                .boxed(),
+            )
+        })?,
+    );
     pods.patch(
         &name,
         &PatchParams::apply(MANAGER_NAME).force(),
@@ -1286,13 +1337,38 @@ fn condition(
     }
 }
 
+fn preparing_tools_status(
+    microvm: &MicroVM,
+    home_claim: &str,
+    now: DateTime<Utc>,
+) -> MicroVMStatus {
+    let message = "Preparing the verified image-built tool disk";
+    MicroVMStatus {
+        phase: MicroVMPhase::Booting,
+        pvc_name: Some(home_claim.to_owned()),
+        guest_ready: false,
+        last_activity_at: last_activity_at(microvm),
+        message: Some(message.to_owned()),
+        observed_generation: microvm.metadata.generation.unwrap_or_default(),
+        conditions: vec![condition(
+            microvm,
+            "Ready",
+            "False",
+            "PreparingToolSeeds",
+            message,
+            now,
+        )],
+        ..MicroVMStatus::default()
+    }
+}
+
 fn next_requeue() -> Duration {
     // Retained agents have no lifecycle expiry to schedule around. Reconcile periodically for
     // idle sleep and controller-owned status changes while leaving lifecycle wakeups to events.
     Duration::from_secs(30)
 }
 
-fn container_failure(status: &ContainerStatus) -> Option<(String, String)> {
+pub(crate) fn container_failure(status: &ContainerStatus) -> Option<(String, String)> {
     let state = status.state.as_ref()?;
     if let Some(waiting) = &state.waiting {
         let reason = waiting.reason.as_deref().unwrap_or_default();
@@ -1369,8 +1445,36 @@ mod tests {
             tickets: TicketStore::new("https://tengri.example.test".to_owned(), "t".repeat(32))
                 .expect("test ticket store"),
             guest_image: guest_image.into(),
+            seed_image: "registry.ide-newton.ts.net/lab/tengri@sha256:test".into(),
             identity: crate::identity::WorkloadIdentity::Fixture,
         })
+    }
+
+    #[test]
+    fn preparing_tools_status_is_stable_and_clears_stale_ready_state() {
+        let now = Utc::now();
+        let mut vm = test_microvm(now);
+        vm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            pod_name: Some("old-pod".into()),
+            ready_at: Some(now.to_rfc3339()),
+            failure_reason: Some("old-error".into()),
+            ..Default::default()
+        });
+        let status = preparing_tools_status(&vm, "agent-home", now);
+        assert_eq!(status.phase, MicroVMPhase::Booting);
+        assert!(!status.guest_ready);
+        assert!(
+            status.pod_name.is_none()
+                && status.ready_at.is_none()
+                && status.failure_reason.is_none()
+        );
+        vm.status = Some(status.clone());
+        assert_eq!(
+            preparing_tools_status(&vm, "agent-home", now + chrono::Duration::seconds(1)),
+            status
+        );
     }
 
     fn mock_response(status: StatusCode, body: impl Into<Vec<u8>>) -> Response<KubeBody> {
@@ -2721,6 +2825,7 @@ mod tests {
                 "agent-bootstrap",
                 "agent-home",
                 PersistentBlockInitialization::Pending,
+                None,
             )
             .await
         });
