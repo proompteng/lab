@@ -431,6 +431,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Forward performance deducts delayed fees by their trading date when that date belongs to one authority generation.
   Fees on dates shared by generations leave the receipt insufficient until allocation is supported. Account-wide
   ledger verification includes all fees; cash-yield calculations account for their actual observation window.
+  Fees first observed or posted after the selected reconciliation retain their economic-date attribution and
+  amounts, but leave the report `INSUFFICIENT_EVIDENCE` with `UNCLOSED_WINDOW`. A closed reconciliation cut cannot
+  certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
   authority.
