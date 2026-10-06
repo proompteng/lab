@@ -36,6 +36,7 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 receipt="$HOME/.tengri/developer-tools-seed.sha256"
+pending="$HOME/.tengri/developer-tools-seed.pending"
 expected="$(cat "$SEED_ROOT/developer-tools.tar.xz.sha256")"
 prefix="$HOME/.linuxbrew"
 needs_seed=false
@@ -45,8 +46,13 @@ done
 [[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || needs_seed=true
 # A complete retained home predating image seeds needs no archive extraction.
 # Recheck a changed image receipt, and always repair missing commands locally.
-if [[ "$needs_seed" == true || ( -f "$receipt" && "$(cat "$receipt")" != "$expected" ) ]]; then
+if [[ "$needs_seed" == true || -e "$pending" || -L "$pending" || ( -f "$receipt" && "$(cat "$receipt")" != "$expected" ) ]]; then
   (cd "$SEED_ROOT" && sha256sum --check --status developer-tools.tar.xz.sha256)
+  # Retain an interrupted seed marker until all files and the receipt are
+  # complete. Executable links alone cannot prove a killed copy finished.
+  temporary_receipt="$(mktemp "$HOME/.tengri/.developer-tools-seed.XXXXXX")"
+  printf '%s\n' "$expected" > "$temporary_receipt"
+  mv -Tf "$temporary_receipt" "$pending"
   seed_archive "$SEED_ROOT/developer-tools.tar.xz" "$HOME"
 fi
 
@@ -76,3 +82,4 @@ done
 temporary_receipt="$(mktemp "$HOME/.tengri/.developer-tools-seed.XXXXXX")"
 printf '%s\n' "$expected" > "$temporary_receipt"
 mv -Tf "$temporary_receipt" "$receipt"
+rm -f -- "$pending"

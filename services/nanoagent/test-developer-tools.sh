@@ -82,9 +82,18 @@ PATH="$HOME/.tengri/no-seed-bin:$PATH" bootstrap-developer-tools --install-only
 legacy_done="$(date +%s%N)"
 test -f "$HOME/.tengri/developer-tools-seed.sha256"
 sha256sum --check /tmp/developer-home.sha256
+# An interrupted seed is retried even if every executable is already present.
+printf 'interrupted seed\n' > "$HOME/.tengri/developer-tools-seed.pending"
+if PATH="$HOME/.tengri/no-seed-bin:$PATH" bootstrap-developer-tools --install-only \
+  > /tmp/interrupted-developer-seed.log 2>&1; then
+  printf 'bootstrap skipped an interrupted developer seed\n' >&2
+  exit 1
+fi
+test -f "$HOME/.tengri/developer-tools-seed.pending"
 rm "$HOME/.tengri/developer-tools-seed.sha256" "$HOME/.linuxbrew/bin/fd"
 bootstrap-developer-tools --install-only
 test -x "$HOME/.linuxbrew/bin/fd"
+test ! -e "$HOME/.tengri/developer-tools-seed.pending"
 test ! -e "$HOME/.linuxbrew/Homebrew/.git/shallow"
 # A missing command is repaired locally even when the seed receipt exists.
 rm "$HOME/.linuxbrew/bin/fd"
