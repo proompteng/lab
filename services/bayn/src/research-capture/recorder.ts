@@ -100,6 +100,11 @@ export const makeResearchCaptureRecorder = (
         message: 'Raw capture buffer cannot hold its bounded export envelopes',
       })
     const clock = yield* Clock.Clock
+    const decodeReceipt = Schema.decodeUnknownResult(ResearchCaptureReceiptSchema, strictParseOptions)
+    const decodeReceiptJson = Schema.decodeUnknownResult(
+      Schema.fromJsonString(ResearchCaptureReceiptSchema),
+      strictParseOptions,
+    )
     const captureId = options.captureId ?? (yield* Effect.sync(randomUUID))
     const queue = yield* Queue.make<RetainedCaptureEntry>({
       capacity: options.maximumQueuedReceipts,
@@ -156,16 +161,13 @@ export const makeResearchCaptureRecorder = (
           return
         }
         const candidate = { sequence: observedReceipts, observedAtMs: atMs, event }
-        const decoded = Schema.decodeUnknownResult(ResearchCaptureReceiptSchema, strictParseOptions)(candidate)
+        const decoded = decodeReceipt(candidate)
         if (Result.isFailure(decoded)) {
           invalidate(CaptureInvalidation.InvalidEvent)
           return
         }
         const payload = JSON.stringify(candidate)
-        const retained = Schema.decodeUnknownResult(
-          Schema.fromJsonString(ResearchCaptureReceiptSchema),
-          strictParseOptions,
-        )(payload)
+        const retained = decodeReceiptJson(payload)
         if (Result.isFailure(retained)) {
           invalidate(CaptureInvalidation.InvalidEvent)
           return
