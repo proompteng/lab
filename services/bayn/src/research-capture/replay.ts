@@ -21,6 +21,7 @@ import {
 } from './capture'
 import {
   deriveResearchCaptureExportManifest,
+  decodeResearchCaptureExportEnvelope,
   ResearchCaptureByteIndexSchema,
   ResearchCaptureExportManifestSchema,
   verifyResearchCaptureExportPrefix,
@@ -325,7 +326,26 @@ export const readResearchCaptureInterval = (input: {
     let hash = manifest.lastIndexHash
     for (let ordinal = manifest.exportedChunks - 1; ordinal >= 0; ordinal--) {
       if (hash === null) return yield* fail('Capture index chain omits its declared tail')
-      const indexBytes = asText(yield* read(hash))
+      const storedIndex = yield* read(hash)
+      if (manifest.schemaVersion === 'bayn.research-capture-export.v2') {
+        const chunk = yield* Effect.fromResult(decodeResearchCaptureExportEnvelope(storedIndex))
+        const metadataBytes = Buffer.byteLength(chunk.metadata.payload, 'utf8')
+        if (metadataBytes > remaining) return yield* fail('SQL metadata exceeds the remaining capture read budget')
+        const sqlMetadata = yield* input.readMetadataChunk(ordinal, metadataBytes)
+        const sqlBytes = Buffer.byteLength(sqlMetadata.payload, 'utf8')
+        if (sqlBytes > metadataBytes) return yield* fail('SQL metadata reader exceeded its byte limit')
+        remaining -= sqlBytes
+        if (chunk.metadata.contentHash !== sqlMetadata.contentHash || chunk.metadata.payload !== sqlMetadata.payload)
+          return yield* fail('Exported metadata differs from its exact SQL chunk')
+        const index = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(ResearchCaptureByteIndexSchema),
+          strictParseOptions,
+        )(chunk.index.payload)
+        chunks.push(chunk)
+        hash = index.previousIndexHash
+        continue
+      }
+      const indexBytes = asText(storedIndex)
       const index = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(ResearchCaptureByteIndexSchema),
         strictParseOptions,

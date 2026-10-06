@@ -249,7 +249,10 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
 const ResearchCaptureExportRootSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v1'),
+  schemaVersion: Schema.Union([
+    Schema.Literal('bayn.research-capture-export-root.v1'),
+    Schema.Literal('bayn.research-capture-export-root.v2'),
+  ]),
   lastIndexHash: Schema.NullOr(Sha256Schema),
   exportedChunks: NonNegativeIntegerSchema,
 })
@@ -286,15 +289,18 @@ export const encodeResearchCapture = (value: ResearchCaptureChunk | ResearchCapt
 
 const fail = (message: string) => new ResearchCaptureFailure({ message })
 
+const decodeChunkJson = Schema.decodeUnknownResult(
+  Schema.fromJsonString(ResearchCaptureChunkSchema),
+  strictParseOptions,
+)
+const decodeSealJson = Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureSealSchema), strictParseOptions)
+
 export const decodeResearchCaptureChunk = (input: ResearchCaptureBytes) =>
   Result.gen(function* () {
     if (Buffer.byteLength(input.payload, 'utf8') > maximumResearchCaptureChunkBytes)
       return yield* Result.fail(fail('Capture chunk exceeds the exact UTF8 payload limit'))
     if (sha256(input.payload) !== input.contentHash) return yield* Result.fail(fail('Capture chunk hash mismatch'))
-    return yield* Schema.decodeUnknownResult(
-      Schema.fromJsonString(ResearchCaptureChunkSchema),
-      strictParseOptions,
-    )(input.payload)
+    return yield* decodeChunkJson(input.payload)
   })
 
 export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
@@ -302,10 +308,7 @@ export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
     if (Buffer.byteLength(input.payload, 'utf8') > maximumResearchCaptureSealBytes)
       return yield* Result.fail(fail('Capture seal exceeds the exact UTF8 payload limit'))
     if (sha256(input.payload) !== input.contentHash) return yield* Result.fail(fail('Capture seal hash mismatch'))
-    const seal = yield* Schema.decodeUnknownResult(
-      Schema.fromJsonString(ResearchCaptureSealSchema),
-      strictParseOptions,
-    )(input.payload)
+    const seal = yield* decodeSealJson(input.payload)
     if (
       seal.exportRoot !== undefined &&
       (seal.exportRoot.exportedChunks !== seal.persistedChunks ||
