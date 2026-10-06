@@ -31,12 +31,14 @@ import { parseTengriSigningSecrets, signTengriMetadata } from './internal-auth'
 import { readTengriBffSecret } from './runtime-secrets'
 import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
 import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
+import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
 const NO_PRESERVED_SCALAR_DEFAULTS = new Set<string>()
 const WATCH_FILES_PRESERVED_SCALAR_DEFAULTS = new Set(['afterSequence'])
+const POWER_SETTINGS_PRESERVED_SCALAR_DEFAULTS = new Set(['idleTimeoutMinutes'])
 
 type RawRecord = Record<string, unknown>
 type RawAgent = RawRecord & {
@@ -47,6 +49,7 @@ type RawAgent = RawRecord & {
   cpuMillis?: number
   memoryMib?: number
   workspaceGib?: number
+  idleTimeoutMinutes?: number
   nodeName?: string
   message?: string
   createdAt?: string
@@ -129,6 +132,22 @@ export async function sleepAgent(subject: string, id: string) {
 
 export async function resumeAgent(subject: string, id: string) {
   return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject, 130_000))
+}
+
+export async function updatePowerSettings(subject: string, id: string, power: TengriPowerSettings) {
+  return normalizeAgent(
+    await unary<RawAgent>(
+      'updatePowerSettings',
+      {
+        id,
+        idleTimeoutMinutes: power.idleTimeoutMinutes,
+      },
+      subject,
+      DEFAULT_GRPC_DEADLINE_MS,
+      undefined,
+      POWER_SETTINGS_PRESERVED_SCALAR_DEFAULTS,
+    ),
+  )
 }
 
 export async function deleteAgent(subject: string, id: string) {
@@ -502,11 +521,12 @@ async function unary<Response = RawRecord>(
   subject: string,
   deadlineMs = DEFAULT_GRPC_DEADLINE_MS,
   signal?: AbortSignal,
+  preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
 ): Promise<Response> {
   const client = await getClient()
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
-  const canonicalRequest = canonicalizeProto3Request(request)
+  const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortedRequestError())
@@ -770,6 +790,11 @@ function decodeUtf8File(content: Uint8Array) {
 }
 
 function normalizeAgent(agent: RawAgent): TengriAgent {
+  const power = tengriPowerSettingsSchema.safeParse({
+    idleTimeoutMinutes: agent.idleTimeoutMinutes,
+  })
+  if (!power.success)
+    throw new TengriUnavailableError('The runtime returned invalid power settings. Update Tengri and refresh.')
   return {
     id: stringValue(agent.id),
     displayName: stringValue(agent.displayName, 'Unnamed agent'),
@@ -778,6 +803,7 @@ function normalizeAgent(agent: RawAgent): TengriAgent {
     cpuMillis: numberValue(agent.cpuMillis),
     memoryMib: numberValue(agent.memoryMib),
     workspaceGib: numberValue(agent.workspaceGib),
+    power: power.data,
     nodeName: stringValue(agent.nodeName),
     message: stringValue(agent.message),
     createdAt: stringValue(agent.createdAt),

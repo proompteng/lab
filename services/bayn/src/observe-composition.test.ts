@@ -12,7 +12,7 @@ import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
 import { JevPositionStore } from './jev/portfolio'
-import { nativeJevBatchResult } from './jev/native.test-support'
+import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
 import type { CycleDecisionDocument } from './shadow-decision-contract'
@@ -1399,6 +1399,134 @@ const prepareStoredExecutionStep = async (
 }
 
 describe('OBSERVE runtime composition', () => {
+  test.each(['consumed', 'pending', 'source-unavailable', 'window-failure', 'mismatched-window', 'fresh'] as const)(
+    'Jev entry observation admission preserves the source boundary: %s',
+    async (mode) => {
+      const calls = { signal: 0, pricing: 0, pending: 0, finish: 0, window: 0, record: 0, batch: 0 }
+      const sourceFailure = retryableOperationalError({
+        component: 'market-data',
+        operation: 'snapshot',
+        message: 'entry signal history unavailable',
+      })
+      const databaseFailure = operationalError({
+        component: 'database',
+        operation: 'window',
+        message: 'entry window read failed',
+      })
+      const pendingEvidence = mode === 'pending' ? nativeJevDecisionEvidence() : null
+      const policy = await Effect.runPromise(loadStrategyExecutionRiskPolicy(accountId, currentIntradayRuntime))
+      const result = await Effect.runPromise(
+        TestClock.setTime(Date.parse(evaluatedAt)).pipe(
+          Effect.andThen(
+            buildMutationShadowCycleDecision({
+              authorityGenerationHash: generationHash,
+              cycle,
+              executionModel: currentIntradayProtocol.executionModel,
+              policy,
+              reconcile: Effect.succeed(reconciliationResult(generationHash, Authority.Execution)),
+              strategy: currentIntradayRuntime,
+              intradayMarketData: {
+                check: Effect.void,
+                verifyReference: fixtureStreamingReference,
+                loadSnapshot: (query) =>
+                  Effect.suspend(() => {
+                    if (query.purpose === undefined) calls.signal += 1
+                    else calls.pricing += 1
+                    if (mode !== 'fresh' && mode !== 'mismatched-window') return Effect.fail(sourceFailure)
+                    const loaded = streamingFixtureFromRaw(
+                      makeIntradayMomentumTestSnapshot(
+                        currentIntradayProtocol,
+                        { ...query, archiveWatermarks: [] },
+                        { NVDA: 0.02 },
+                        10,
+                      ),
+                      query,
+                    ).snapshot
+                    return Effect.succeed(
+                      mode === 'mismatched-window'
+                        ? { ...loaded, manifest: { ...loaded.manifest, rangeEndAt: '2020-05-01T12:44:00.000Z' } }
+                        : loaded,
+                    )
+                  }),
+              },
+            }).pipe(
+              Effect.provideService(CandidateObservationStore, {
+                record: () =>
+                  Effect.sync(() => {
+                    calls.record += 1
+                  }),
+                latestJevWindowEnd: () =>
+                  Effect.suspend(() => {
+                    calls.window += 1
+                    return mode === 'window-failure'
+                      ? Effect.fail(databaseFailure)
+                      : Effect.succeed(mode === 'consumed' ? Option.some('2020-05-01T12:45:00.000Z') : Option.none())
+                  }),
+              }),
+              Effect.provideService(JevBatchStore, {
+                read: () => Effect.die('Unexpected batch read'),
+                pending: () =>
+                  Effect.sync(() => {
+                    calls.pending += 1
+                    return mode === 'pending' ? ['pending-entry'] : []
+                  }),
+                finish: () =>
+                  Effect.suspend(() => {
+                    calls.finish += 1
+                    return pendingEvidence === null
+                      ? Effect.die('Unexpected batch recovery')
+                      : Effect.succeed({ plan: pendingEvidence.batchPlan, result: null })
+                  }),
+                begin: (plan) =>
+                  Clock.currentTimeMillis.pipe(
+                    Effect.map((now) => {
+                      calls.batch += 1
+                      return {
+                        plan,
+                        result: nativeJevBatchResult(plan, utcInstantFromEpochMillis(now), (symbol) =>
+                          symbol === 'NVDA' ? 'enter' : 'wait',
+                        ),
+                      }
+                    }),
+                  ),
+              }),
+              provideJevTestServices,
+              Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
+              Effect.result,
+            ),
+          ),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+      if (mode === 'fresh') {
+        expect(Result.isSuccess(result)).toBe(true)
+        expect(calls).toEqual({ signal: 1, pricing: 1, pending: 1, finish: 0, window: 1, record: 1, batch: 1 })
+      } else {
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isSuccess(result)) throw new Error('Expected entry observation to remain unavailable')
+        if (mode === 'consumed' || mode === 'pending')
+          expect(result.failure).toMatchObject({
+            _tag: 'ObserveDecisionAwaitingSignal',
+            readiness: { reason: mode === 'consumed' ? 'SIGNAL_WINDOW_OBSERVED' : 'DECISION_PENDING' },
+          })
+        else if (mode === 'mismatched-window')
+          expect(result.failure).toMatchObject({
+            cause: { message: 'Jev signal snapshot differs from its admitted window' },
+          })
+        else expect(result.failure).toBe(mode === 'window-failure' ? databaseFailure : sourceFailure)
+        expect(calls).toEqual({
+          signal: mode === 'source-unavailable' || mode === 'mismatched-window' ? 1 : 0,
+          pricing: 0,
+          pending: 1,
+          finish: mode === 'pending' ? 1 : 0,
+          window: mode === 'pending' ? 0 : 1,
+          record: 0,
+          batch: 0,
+        })
+      }
+    },
+  )
+
   test('recovers an unfinished intraday cycle only with the current source-controlled risk policy', async () => {
     const fixture = await executionLifecycleFixture()
     const currentProtocol = fixtureProtocol

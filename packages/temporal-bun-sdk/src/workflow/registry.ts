@@ -2,7 +2,7 @@ import * as Schema from 'effect/Schema'
 
 import { defineWorkflow, type WorkflowDefinition, type WorkflowDefinitions, type WorkflowHandler } from './definition'
 
-const defaultSchema = Schema.Array(Schema.Unknown) as Schema.Schema<readonly unknown[]>
+const defaultSchema = Schema.Array(Schema.Unknown) as Schema.Codec<readonly unknown[]>
 
 export class WorkflowRegistry {
   #definitions = new Map<string, WorkflowDefinition<unknown, unknown>>()

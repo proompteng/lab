@@ -1,8 +1,8 @@
 # Workflow suspension and replay
 
 Activities, Nexus operations, durable timers, and signal waits suspend an Effect
-fiber until Temporal supplies a result. Waiting does not enter `Effect.catchAll`
-or `Effect.catchAllCause`, and it does not run `Effect.ensuring` finalizers. A real
+fiber until Temporal supplies a result. Waiting does not enter `Effect.catch`
+or `Effect.catchCause`, and it does not run `Effect.ensuring` finalizers. A real
 activity failure still enters the recoverable error channel. Normal Effect
 completion and interruption retain their finalizer behavior.
 
@@ -45,21 +45,25 @@ fibers. Once replay reaches a durable wait, the worker discards those fibers
 without interrupting them. Interrupting at this point would run workflow
 finalizers before the workflow had finished.
 
-Effect 3 keeps unfinished root fibers in a strong global set. The SDK removes
-only its owned fibers from that set so discarded tasks can be collected. This
-uses Effect's internal `effect/FiberScope/Global` registration contract through
-`effect/GlobalValue`. The adapter checks the registry shape and fails explicitly
-if the contract is unavailable. It never clears the whole registry.
+The SDK uses Effect 4's public scheduler and dispatcher interfaces. Callback
+resumption yields outside the activation drain, so startup, activation delivery
+and late callbacks remain under the task's scheduler. Disposal closes that
+scheduler without interruption. Effect 4 does not require the old global-root
+registry mutation. Scheduler replacement and disabling scheduler yields inside
+workflow code are unsupported.
 
-The SDK pins Effect to `3.22.1` because this ownership contract is internal.
+The SDK pins Effect to `4.0.0` to keep the validated execution contract stable.
 An Effect upgrade must pass `tests/workflow/activation-runtime.test.ts` as well
 as the executor and integration suites. The lifecycle tests exercise real
 interruption, late delivery after disposal, garbage collection of suspended
-parent and daemon fibers, and preservation of unrelated Effect roots.
+parent and detached fibers, and preservation of unrelated Effect fibers.
 
 ## Upgrade validation
 
-Replay representative running workflows before deploying this runtime change.
+Read the [Effect 4 migration guide](effect-4-migration.md) before deploying.
+Effect 3's internal fiber clock samples make existing histories incompatible
+with the new runtime. Keep those executions on their original worker build.
+Replay representative running workflows before any later runtime change.
 Pay particular attention to workflows whose cause handlers or finalizers
 previously emitted commands when an activity or signal was merely pending.
 Those commands reflected the suspension defect and can differ from the corrected
