@@ -4,6 +4,9 @@ Status: Proposal, 2026-10-06. This document defines the next runtime migration. 
 production desired state. [PR #14787](https://github.com/proompteng/lab/pull/14787) delivers startup improvements and
 power settings while the [current controller](../../services/tengri/README.md) still recreates Kata guests on resume.
 
+Validation and cutover must not drain, cordon, reboot, or change scheduling on shared nodes. Stop or replace only the
+affected Tengri guest Pods. Keep unrelated workloads running.
+
 ## The target is a usable guest within one second
 
 Creation and resume must complete below one second at p95, measured from the authenticated BFF lifecycle request to a
@@ -171,6 +174,9 @@ an authorized operation. Verify that the original process cannot execute or writ
 and the storage backend's exclusive-writer state. Do not force-detach the home or clear storage locks to bypass an
 unproven fence. A partitioned node must not regain write access after its home has moved.
 
+Do not automate shared-node fencing. If the affected VMM and its storage access cannot be fenced without disrupting
+unrelated workloads, retain the claim and report recovery blocked pending a separately authorized operation.
+
 Only after those checks may explicit recovery cold-boot the retained home. It cannot masquerade as a successful
 snapshot resume. The journal records the fencing evidence and successor incarnation before the claim admits new work.
 
@@ -225,10 +231,10 @@ claim state. Replace the controller's guest Pod recreation with that lifecycle. 
 guest attestation and token-refresh paths, and old runtime negotiation from Tengri. Do not carry two runtime engines
 or add a sleep mode that keeps guest RAM resident.
 
-Keep existing homes intact during cutover. Drain running Kata guests at an explicitly approved owner or maintenance
-boundary, then replace their Pods with slots that reuse the same home PVC. Prepare those retained homes before opening
-the new lifecycle to requests. Guest processes restart once at this hard cutover because the old Kata path supplies
-no transferable memory snapshot. Do not reformat, resize, or replace retained home claims.
+Keep existing homes intact during cutover. Stop only the affected Kata guests at an explicitly approved owner or
+maintenance boundary, then replace their Pods with slots that reuse the same home PVC. Prepare those retained homes
+before opening the new lifecycle to requests. Guest processes restart once at this hard cutover because the old Kata
+path supplies no transferable memory snapshot. Do not reformat, resize, or replace retained home claims.
 
 Update protobuf contracts, CRD/status fields, BFF callers, ownership validation, image builders, Kargo artifact grouping,
 network policy, and SPIRE admission together. Publish the guest boot artifacts and host supervisor through the existing
