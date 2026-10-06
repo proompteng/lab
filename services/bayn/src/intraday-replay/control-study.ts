@@ -1,5 +1,10 @@
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
+import {
+  RidgeTrainingOutcome,
+  type RidgeTrainingAttempt,
+  type RidgeTrainingSelection,
+} from './ridge-training-selection'
 
 import { AssetStatus, type MarketCalendarObservation, type MarketCalendarSession } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -246,7 +251,7 @@ export const makeControlEntryQuery = (input: {
   }
 }
 
-const failureDetails = (cause: unknown) =>
+export const failureDetails = (cause: unknown) =>
   Result.try({
     try: () => JSON.stringify(cause),
     catch: (error) => new ControlStudyFailure({ message: 'Cannot retain control failure details', cause: error }),
@@ -265,6 +270,11 @@ export const runControlSession = (input: {
     readonly select: (
       query: IntradaySnapshotQuery,
     ) => Effect.Effect<Result.Result.Success<ReturnType<typeof selectBoundRidge>>, ControlStudyFailure>
+  }
+  readonly training?: {
+    readonly candidateSymbol: string
+    readonly allocationBudgetMicros: string
+    readonly select: (query: IntradaySnapshotQuery) => Effect.Effect<RidgeTrainingSelection, ControlStudyFailure>
   }
   readonly protocol: JevProtocol
   readonly risk: Policy
@@ -297,6 +307,20 @@ export const runControlSession = (input: {
       return yield* new ControlStudyFailure({
         message: 'Ridge sessions require bound mechanical fixed-budget entry and opportunity accounting',
       })
+    if (
+      (input.policy === ControlPolicy.FixedCandidateTraining) !== (input.training !== undefined) ||
+      (input.training !== undefined &&
+        (input.ridge !== undefined ||
+          input.management !== null ||
+          input.targetWeight !== 1 ||
+          input.accountScheduledOpportunities !== true ||
+          !protocol.candidateSymbols.includes(input.training.candidateSymbol)))
+    )
+      return yield* new ControlStudyFailure({
+        message: 'Training requires a fixed native candidate and mechanical fixed-budget execution',
+      })
+    const fixedPrincipalBudget =
+      input.ridge?.bound.artifact.allocationBudgetMicros ?? input.training?.allocationBudgetMicros
     if (input.ridge !== undefined) {
       const labelHash = yield* Effect.fromResult(
         canonicalHashV1Result(
@@ -427,6 +451,30 @@ export const runControlSession = (input: {
       requestedQuantityMicros: string
       outcome: unknown
     }[] = []
+    const trainingAttempts: RidgeTrainingAttempt[] = []
+    let pendingTraining:
+      | (Omit<RidgeTrainingAttempt, 'outcome' | 'reason' | 'completeAt' | 'netExecutionPnlMicros' | 'orders'> & {
+          firstOrder: number
+        })
+      | null = null
+    const finishTraining = (outcome: RidgeTrainingOutcome, reason: string, atMs: number) => {
+      if (pendingTraining === null) return
+      const { firstOrder, ...attempt } = pendingTraining
+      trainingAttempts.push({
+        ...attempt,
+        outcome,
+        reason,
+        completeAt: outcome === RidgeTrainingOutcome.Unresolved ? null : utcInstantFromEpochMillis(atMs),
+        netExecutionPnlMicros:
+          outcome === RidgeTrainingOutcome.Unresolved
+            ? null
+            : outcome === RidgeTrainingOutcome.NoEntryFill
+              ? '0'
+              : String(BigInt(portfolio.ledger.cashMicros) - BigInt(attempt.openingCashMicros)),
+        orders: orders.slice(firstOrder),
+      })
+      pendingTraining = null
+    }
     const marks: {
       observedAt: string
       brokerEquityMicros: string | null
@@ -604,7 +652,8 @@ export const runControlSession = (input: {
         const rangeEndMs = Math.floor((atMs - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
         if (rangeEndMs > lastWindow) {
           const observedAt = utcInstantFromEpochMillis(atMs)
-          const candidates = controlCandidates(input.policy, protocol)
+          const candidates =
+            input.training === undefined ? controlCandidates(input.policy, protocol) : [input.training.candidateSymbol]
           const query = makeControlEntryQuery({
             protocol,
             sessionDate,
@@ -612,10 +661,20 @@ export const runControlSession = (input: {
             observedAtMs: atMs,
             candidates,
           })
+          const adapter:
+            | {
+                readonly select: (
+                  query: IntradaySnapshotQuery,
+                ) => Effect.Effect<
+                  Result.Result.Success<ReturnType<typeof selectBoundRidge>> | RidgeTrainingSelection,
+                  ControlStudyFailure
+                >
+              }
+            | undefined = input.ridge ?? input.training
           const observed =
-            input.ridge === undefined
+            adapter === undefined
               ? yield* market.snapshot(query)
-              : yield* input.ridge
+              : yield* adapter
                   .select(query)
                   .pipe(
                     Effect.map((selection) =>
@@ -651,6 +710,7 @@ export const runControlSession = (input: {
                       Result.Result.Success<ReturnType<typeof selectBoundRidge>>,
                       { status: 'AVAILABLE' }
                     >['evidence']
+                  | Extract<RidgeTrainingSelection, { status: 'AVAILABLE' }>['evidence']
                   | null
               },
               ControlStudyFailure
@@ -690,6 +750,25 @@ export const runControlSession = (input: {
                   ...selectionIdentity,
                 }),
               )
+              if (
+                input.training !== undefined &&
+                'ridge' in observed &&
+                'feature' in observed.ridge.evidence &&
+                observed.ridge.evidence.feature !== null
+              ) {
+                if (pendingTraining !== null)
+                  return yield* new ControlStudyFailure({
+                    message: 'Training attempted to replace an unresolved entry binding',
+                  })
+                pendingTraining = {
+                  features: observed.ridge.evidence.feature,
+                  decisionHash: lastEntryDecisionHash,
+                  selectionHash: observed.ridge.evidenceHash,
+                  openingCashMicros: portfolio.ledger.cashMicros,
+                  openingTurnoverMicros: String(portfolio.tradedNotionalMicros),
+                  firstOrder: orders.length,
+                }
+              }
               decisions.push({
                 observedAt,
                 status: symbol === null ? 'NO_SIGNAL' : 'SELECTED',
@@ -702,6 +781,7 @@ export const runControlSession = (input: {
               yield* advanceTo(atMs)
               if (atMs >= cutoffMs || input.decisionLatencyMs >= protocol.inferenceValidityMs) {
                 decisions.push({ observedAt: utcInstantFromEpochMillis(atMs), status: 'DECISION_EXPIRED' })
+                finishTraining(RidgeTrainingOutcome.NoEntryFill, 'DECISION_EXPIRED', atMs)
                 symbol = null
               }
             }
@@ -725,6 +805,7 @@ export const runControlSession = (input: {
             symbol,
             cause: rejection,
           })
+          if (side === OrderSide.Buy) finishTraining(RidgeTrainingOutcome.Unresolved, 'MISSING_PRICING', atMs)
         } else {
           const riskBlocked =
             side === OrderSide.Buy &&
@@ -746,9 +827,9 @@ export const runControlSession = (input: {
                     atMs,
                     feeMultiplierPpm: assumptions.feeMultiplierPpm,
                     ...(input.turnoverPolicy === undefined ? {} : { turnoverPolicy: input.turnoverPolicy }),
-                    ...(input.ridge === undefined
+                    ...(fixedPrincipalBudget === undefined
                       ? {}
-                      : { allocationBudgetMicros: BigInt(input.ridge.bound.artifact.allocationBudgetMicros) }),
+                      : { allocationBudgetMicros: BigInt(fixedPrincipalBudget) }),
                   }),
                 )
           if (quantity > 0n) {
@@ -783,8 +864,21 @@ export const runControlSession = (input: {
               requestedQuantityMicros: String(quantity),
               outcome: result.outcome,
             })
-          } else
+            if (side === OrderSide.Buy && result.outcome.status !== 'FILLED')
+              finishTraining(
+                result.outcome.status === 'CANCELED'
+                  ? RidgeTrainingOutcome.NoEntryFill
+                  : RidgeTrainingOutcome.Unresolved,
+                result.outcome.status,
+                atMs,
+              )
+            else if (side === OrderSide.Sell && portfolio.inventory.status === 'FLAT')
+              finishTraining(RidgeTrainingOutcome.Resolved, 'FLAT', atMs)
+          } else {
             decisions.push({ observedAt: utcInstantFromEpochMillis(atMs), status: 'RISK_OR_CAPITAL_BLOCKED', symbol })
+            if (side === OrderSide.Buy)
+              finishTraining(RidgeTrainingOutcome.NoEntryFill, 'RISK_OR_CAPITAL_BLOCKED', atMs)
+          }
         }
       }
       nextPollMs += Math.max(1, Math.ceil((atMs - nextPollMs) / input.pollIntervalMs)) * input.pollIntervalMs
@@ -804,6 +898,7 @@ export const runControlSession = (input: {
     if (opportunities !== null && opportunities.accountedPollCount !== opportunities.scheduledPollCount)
       return yield* new ControlStudyFailure({ message: 'Control opportunity coverage does not reach session close' })
     yield* advanceTo(Math.max(atMs, closeMs))
+    finishTraining(RidgeTrainingOutcome.Unresolved, 'SESSION_ENDED_BEFORE_RESOLUTION', atMs)
     const sessionModelCosts = yield* modelCosts(Number.POSITIVE_INFINITY)
     const totalExternalCost = accruedExternalCost + BigInt(sessionModelCosts.knownCostMicros)
     const issues = [
@@ -824,12 +919,12 @@ export const runControlSession = (input: {
       policy: input.policy,
       completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
       issues,
-      ...(input.ridge === undefined
+      ...(fixedPrincipalBudget === undefined
         ? { targetWeight: input.targetWeight }
         : {
             sizing: {
               mode: 'FIXED_PRINCIPAL_BUDGET' as const,
-              allocationBudgetMicros: input.ridge.bound.artifact.allocationBudgetMicros,
+              allocationBudgetMicros: fixedPrincipalBudget,
             },
           }),
       completedEpisodes: portfolio.episodes.length,
@@ -861,6 +956,9 @@ export const runControlSession = (input: {
       orders,
       marks,
       ...(opportunities === null ? {} : { simulatedOpportunityAccounting: opportunities }),
+      ...(input.training === undefined
+        ? {}
+        : { trainingCandidateSymbol: input.training.candidateSymbol, trainingAttempts }),
     }
   }).pipe(Effect.mapError((cause) => new ControlStudyFailure({ message: 'Control session failed', cause })))
 
