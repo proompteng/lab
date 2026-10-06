@@ -4298,38 +4298,6 @@ test('renders Mermaid labels that name URL, image and src APIs', async ({ page }
     }),
   })
 
-  test('renders ordinary Mermaid blocks and preserves source for unaudited diagram types', async ({ page }) => {
-    const sources = ['block-beta\nA["URL(value)"] B["Finish"]', 'pie\n"One": 1', 'stateDiagram-v2\nStart --> Finish']
-    await mockTengri(page, {
-      resumeThreadRawJson: JSON.stringify({
-        thread: {
-          turns: [
-            {
-              id: 'turn-1',
-              status: 'completed',
-              items: sources.map((source, index) => ({
-                id: `format-${index}`,
-                type: 'agentMessage',
-                text: `\`\`\`mermaid\n${source}\n\`\`\``,
-              })),
-            },
-          ],
-        },
-      }),
-    })
-    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
-    await page.goto('/')
-    const responses = page.getByRole('article', { name: 'Codex response' })
-    await expect(responses).toHaveCount(3)
-    await expect(responses.first().getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText(
-      'URL(value)',
-    )
-    for (const index of [1, 2]) {
-      await expect(responses.nth(index).getByRole('status')).toHaveText('Diagram type not supported; showing source.')
-      await expect(responses.nth(index).locator('pre code')).toContainText(sources[index])
-      await expect(responses.nth(index).getByRole('button', { name: 'Copy code block' })).toBeVisible()
-    }
-  })
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
   await page.goto('/')
   const diagrams = page.getByRole('img', { name: 'Mermaid diagram', exact: true })
@@ -4337,6 +4305,37 @@ test('renders Mermaid labels that name URL, image and src APIs', async ({ page }
   await expect(diagrams.first()).toContainText('Parse URL(value)')
   await expect(diagrams.first()).toContainText('image(input)')
   await expect(diagrams.last()).toContainText('call src(input)')
+})
+
+test('renders ordinary Mermaid blocks and preserves source for unaudited diagram types', async ({ page }) => {
+  const sources = ['block-beta\nA["URL(value)"] B["Finish"]', 'pie\n"One": 1', 'stateDiagram-v2\nStart --> Finish']
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: sources.map((source, index) => ({
+              id: `format-${index}`,
+              type: 'agentMessage',
+              text: `\`\`\`mermaid\n${source}\n\`\`\``,
+            })),
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const responses = page.getByRole('article', { name: 'Codex response' })
+  await expect(responses).toHaveCount(3)
+  await expect(responses.first().getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText('URL(value)')
+  for (const index of [1, 2]) {
+    await expect(responses.nth(index).getByRole('status')).toHaveText('Diagram type not supported; showing source.')
+    await expect(responses.nth(index).locator('pre code')).toContainText(sources[index])
+    await expect(responses.nth(index).getByRole('button', { name: 'Copy code block' })).toBeVisible()
+  }
 })
 
 test('keeps Mermaid configuration and markup from enabling active content', async ({ page }) => {
