@@ -9,6 +9,7 @@ service MicroVMControlPlane {
   rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
   rpc SleepAgent(SleepAgentRequest) returns (Agent);
   rpc ResumeAgent(ResumeAgentRequest) returns (Agent);
+  rpc UpdatePowerSettings(UpdatePowerSettingsRequest) returns (Agent);
   rpc DeleteAgent(DeleteAgentRequest) returns (Empty);
 
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
@@ -90,6 +91,12 @@ message Agent {
   // Set while a newer configured Nanoagent digest is waiting for a safe
   // sleep/resume boundary. The running guest remains on its current image.
   string pending_image = 16;
+  optional uint32 idle_timeout_minutes = 17;
+}
+
+message UpdatePowerSettingsRequest {
+  string id = 1;
+  optional uint32 idle_timeout_minutes = 2;
 }
 
 message CreateAgentRequest { string display_name = 1; }

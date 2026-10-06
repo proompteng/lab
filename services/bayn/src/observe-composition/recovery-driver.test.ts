@@ -11,8 +11,24 @@ import { operationalError } from '../errors'
 import { IntradaySnapshotFailure } from '../market-data'
 import { IntradayIngestionDelayDirection } from '../market-data/intraday/model'
 import { ObserveDecisionAwaitingSignal, decisionBuildError, reconciliationRunnerError } from './decision-builder'
-import { runRestateAdvanceWithinTimeout } from './recovery-driver'
+import { recoveryFirstCycleNextDelayMs, runRestateAdvanceWithinTimeout } from './recovery-driver'
 import { shouldRestrictMutationLoopFailure } from './mutation-interpreter'
+
+test.each([
+  [0, 30_000, 1_000],
+  [1_000, 30_000, 1_000],
+  [1_250, 30_000, 1_250],
+  [60_000, 30_000, 30_000],
+  [0, 500, 500],
+] as const)('post-mutation delay %i uses cadence %i without falling back to idle (%i)', (delay, cadence, expected) => {
+  expect(
+    recoveryFirstCycleNextDelayMs({
+      pollIntervalMs: cadence,
+      reconciliationIntervalMs: 30_000,
+      postMutationDelayMs: delay,
+    }),
+  ).toBe(expected)
+})
 
 test('retries an oldest-unfinished preflight read without permanently restricting execution authority', () => {
   expect(

@@ -57,9 +57,34 @@ import type { StrategyRuntime } from '../strategy'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { ReconciliationError } from '../simulation-reconciliation/broker-reconciler-model'
 import { ReconciliationClock } from '../reconciler'
-import { operationalError, type OperationalError } from '../errors'
+import { CapitalActivationReconciliationNotExact, operationalError, OperationalError } from '../errors'
 import { currentUtcInstant } from '../time'
 import { ReplayBrokerFailure, type makeReplayBroker } from './broker'
+
+const replayGenerationRecoveryError = (cause: unknown): OperationalError =>
+  operationalError({
+    component: 'strategy',
+    operation: 'replay-generation-recovery',
+    message: 'Replay generation recovery failed',
+    cause,
+  })
+
+export const reconcileReplayForActivation = <R>(
+  now: ExecutionProgramDependencies['currentUtcInstant'],
+  reconcile: Effect.Effect<unknown, OperationalError, R>,
+): Effect.Effect<void, OperationalError, R> =>
+  now.pipe(
+    Effect.andThen(reconcile),
+    Effect.andThen(now),
+    Effect.asVoid,
+    Effect.mapError((cause) =>
+      cause instanceof OperationalError &&
+      cause.operation === 'capital-activation' &&
+      cause.cause instanceof CapitalActivationReconciliationNotExact
+        ? cause
+        : replayGenerationRecoveryError(cause),
+    ),
+  )
 
 export interface ReplayExecutionRuntimeInput {
   readonly currentUtcInstant: ExecutionProgramDependencies['currentUtcInstant']
@@ -200,19 +225,10 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
     const readAuthorityState = store.authorityGeneration.readAuthorityState
     if (readAuthorityState === undefined)
       return yield* new ReplayBrokerFailure({ message: 'Replay runtime requires durable authority reads' })
-    const asOperational = (cause: unknown) =>
-      operationalError({
-        component: 'strategy',
-        operation: 'replay-generation-recovery',
-        message: 'Replay generation recovery failed',
-        cause,
-      })
-    const readAuthority = readAuthorityState.pipe(Effect.mapError(asOperational))
-    const reconcileForActivation = input.currentUtcInstant.pipe(
-      Effect.andThen(refreshResearchCapitalActivationReconciliation(reconcile, input.reconciliationPassTimeoutMs)),
-      Effect.andThen(input.currentUtcInstant),
-      Effect.asVoid,
-      Effect.mapError(asOperational),
+    const readAuthority = readAuthorityState.pipe(Effect.mapError(replayGenerationRecoveryError))
+    const reconcileForActivation = reconcileReplayForActivation(
+      input.currentUtcInstant,
+      refreshResearchCapitalActivationReconciliation(reconcile, input.reconciliationPassTimeoutMs),
     )
     const settle = recoverTerminalGenerationToObserve({
       accountId: identity.accountId,
@@ -284,7 +300,7 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
           },
           driver,
         ).pipe(Effect.provideContext(resources))
-      }).pipe(Effect.mapError(asOperational))
+      }).pipe(Effect.mapError(replayGenerationRecoveryError))
     let owned = yield* startGeneration(activated.generationHash)
     const initialDriver = owned.driver
     const permit = yield* Semaphore.make(1)

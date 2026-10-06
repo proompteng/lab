@@ -1,7 +1,6 @@
 import { create } from '@bufbuild/protobuf'
 import { Effect, Exit, type Fiber } from 'effect'
 import * as Cause from 'effect/Cause'
-import * as Chunk from 'effect/Chunk'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 
@@ -208,7 +207,7 @@ export class WorkflowExecutor {
 
     const definition = this.#registry.get(input.workflowType)
     const normalizedArguments = this.#normalizeArguments(input.arguments, definition.decodeArgumentsAsArray)
-    const decodedEffect = Schema.decodeUnknown(definition.schema)(normalizedArguments)
+    const decodedEffect = Schema.decodeUnknownEffect(definition.schema)(normalizedArguments)
     const guard = new DeterminismGuard({ previousState: input.determinismState, mode: executionMode })
     const logContext: WorkflowLogContext = {
       info,
@@ -222,7 +221,7 @@ export class WorkflowExecutor {
     let lastWorkflowContext: WorkflowContext<unknown> | undefined
     let lastUpdateRegistry: WorkflowUpdateRegistry | undefined
     let applyActivationJob: ((job: WorkflowActivationJob) => void) | undefined
-    const pendingUpdates = new Set<Fiber.RuntimeFiber<unknown, unknown>>()
+    const pendingUpdates = new Set<Fiber.Fiber<unknown, unknown>>()
     const updateDispatches: WorkflowUpdateDispatch[] = []
     const activations: readonly WorkflowActivation[] = input.activations?.length
       ? input.activations
@@ -295,7 +294,7 @@ export class WorkflowExecutor {
           await runtime.drain(settleLocalActivities)
         }
       }
-      return fiber.unsafePoll()
+      return fiber.pollUnsafe()
     })
     const executionError = exit && Exit.isFailure(exit) ? this.#resolveError(exit.cause) : undefined
     const nondeterminismError = executionError
@@ -470,7 +469,7 @@ export class WorkflowExecutor {
     guard: DeterminismGuard
     runtime: WorkflowActivationRuntime
     dispatches: WorkflowUpdateDispatch[]
-    pendingUpdates: Set<Fiber.RuntimeFiber<unknown, unknown>>
+    pendingUpdates: Set<Fiber.Fiber<unknown, unknown>>
   }): Promise<void> {
     if (!updates.length) {
       return
@@ -511,7 +510,7 @@ export class WorkflowExecutor {
 
       let decodedInput: unknown
       try {
-        decodedInput = await Effect.runPromise(Schema.decodeUnknown(registered.input)(invocation.payload))
+        decodedInput = await Effect.runPromise(Schema.decodeUnknownEffect(registered.input)(invocation.payload))
       } catch (error) {
         const failure = this.#normalizeUpdateError(error)
         dispatches.push({
@@ -645,13 +644,13 @@ export class WorkflowExecutor {
     if (cause === undefined) {
       return new Error('Workflow failed')
     }
-    const failure = Cause.failureOption(cause)
+    const failure = Cause.findErrorOption(cause)
     if (Option.isSome(failure)) {
       return failure.value
     }
-    const defects = Cause.defects(cause)
-    if (Chunk.isNonEmpty(defects)) {
-      return Chunk.unsafeHead(defects)
+    const defects = cause.reasons.filter(Cause.isDieReason)
+    if (defects.length > 0) {
+      return defects[0]!.defect
     }
     return new Error(Cause.pretty(cause))
   }

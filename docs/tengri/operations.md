@@ -118,7 +118,10 @@ active agents into existence. The server selects the architecture, 4 CPU, 8 GiB 
 digest-pinned guest image.
 
 - `Running`: the controller creates or retains the PVC, bootstrap Secret, and `kata-fc` Pod.
-- `Sleeping`: after 60 idle minutes the controller deletes only the Pod; the CR and PVC remain.
+- `Sleeping`: manual sleep or the configured idle timeout deletes only the guest Pod, releases its RAM, and retains
+  the CR and PVC. System Settings → Lifecycle controls the timeout in `spec.power.idleTimeoutMinutes`: the default
+  is 60 minutes, whole minutes up to 1440 are accepted, and zero disables automatic sleep. Saving a timeout starts
+  a new idle interval; subsequent authenticated activity extends it by that timeout.
 - Resume: any authenticated file, terminal, preview, lifecycle, or Codex action sets the desired state to `Running` and
   waits for observed guest readiness before continuing.
 - Resource profile: every guest uses 4 CPU, 8 GiB memory, and a 16 GiB workspace. The controller does not upgrade
