@@ -473,9 +473,36 @@ COPY --from=guest-rootfs / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
 RUN validate-rootfs /rootfs /rootfs-validation.txt
 
-FROM guest-rootfs
+FROM guest-rootfs AS guest-image
 
 COPY --from=rootfs-check /rootfs-validation.txt /usr/share/nanoagent/rootfs-validation.txt
+RUN --network=none --mount=type=bind,source=test-guest-admin.sh,target=/tmp/test-guest-admin.sh,readonly \
+    bash /tmp/test-guest-admin.sh --metadata > /usr/share/nanoagent/guest-filesystem.sha256
+
+# A fresh first layer uses the snapshotter's scratch rather than a cached 512 MiB
+# Ubuntu parent. COPY from a build stage retains filesystem ownership and xattrs.
+# Image configuration is explicit because FROM scratch does not inherit it.
+FROM scratch
+ENV CARGO_HOME=/home/nanoagent/.cargo \
+    CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
+    SPIRE_AGENT_BINARY=/home/nanoagent/.local/bin/spire-agent \
+    SPIRE_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-spire-agent \
+    CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
+    CODEX_BINARY=/home/nanoagent/.local/bin/codex \
+    CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
+    CODEX_HOME=/home/nanoagent/.codex \
+    BUN_INSTALL=/home/nanoagent/.local \
+    GOROOT=/home/nanoagent/.local/go \
+    HOME=/home/nanoagent \
+    NANOAGENT_HOME=/home/nanoagent \
+    NANOAGENT_REEXEC_WRAPPER=/usr/bin/tini \
+    NANOAGENT_WORKSPACE=/workspace \
+    NPM_CONFIG_PREFIX=/home/nanoagent/.local \
+    PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain \
+    DEVELOPER_TOOLS_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-developer-tools \
+    XDG_CACHE_HOME=/home/nanoagent/.cache
+COPY --from=guest-image / /
 USER 1000:1000
 WORKDIR /home/nanoagent
 EXPOSE 8080

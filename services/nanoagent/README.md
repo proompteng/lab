@@ -86,12 +86,16 @@ a shared `OPENAI_API_KEY`.
 
 ## Firecracker rootfs and persistent tools
 
-Kata's r6 Firecracker snapshotter extracts the guest OCI image into a 1 GiB blockfile. Roll out the
-host extension and migrate its existing scratch/cache disks before publishing this guest image. The Dockerfile therefore enforces
+The guest's first filesystem layer contains the complete rootfs and starts a fresh OCI chain. Containerd's
+Firecracker snapshotter copies the persistent scratch rather than an existing 512 MiB Ubuntu parent. Prepare only the approved canary host's
+scratch for 1 GiB; existing snapshots, metadata and homes stay intact. Normal promotion still requires every
+eligible scheduling target to have sufficient scratch capacity. The Dockerfile enforces
 a real 1 GiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
 Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
 executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
-The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
+The check runs in a separate build stage and copies only its receipt into the image. Final-image CI verifies a
+parentless layer, unchanged runtime configuration and source filesystem ownership, modes, symlinks and capabilities.
+Packaged manuals, translated
 messages, and documentation other than copyright notices are omitted to keep the guest within that limit.
 The image contains a minimal Ubuntu 24.04 shell environment, Nanoagent, and a
 compressed multi-architecture bundle for the pinned Node 24.11.1, Bun 1.4.2, uv 0.11.14, Go 1.25.5, Rust/Cargo
@@ -134,8 +138,7 @@ and undo files survive sleep/resume; only compressed seeds enter the 1 GiB rootf
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and offline
 clean-home, existing-home and restart checks before the rootfs check. PR image verification repeats these checks
 with networking disabled and an empty home mount, so baked home files cannot mask a missing seed.
-If the 1 GiB capacity gate fails, a build-only diagnostic measures the minimum ext4 size with the same
-filesystem settings and headroom. The build still fails and produces no final image or validation receipt.
+If the 1 GiB capacity gate fails, the build fails and produces no final image or validation receipt.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
 `/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
