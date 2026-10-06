@@ -4183,6 +4183,9 @@ test('rejects Mermaid CSS resource URLs before making requests', async ({ page }
 class A:::remote
 classDef remote filter:u\72l(/mermaid-css-canary#filter);
 `,
+    'block-beta\nA["Resource"]\nstyle A fill:url(/mermaid-css-canary.svg)',
+    'sequenceDiagram\nrect url(/mermaid-css-canary.svg)\nAlice->>Bob: Safe\nend',
+    'sequenceDiagram\nparticipant Alice\nparticipant Bob\nproperties Alice: {"icon":"/mermaid-css-canary.svg"}\nAlice->>Bob: Safe',
     String.raw`%%{init: {"themeCSS": ".node { filter: \u0075rl(/mermaid-css-canary#filter) }"}}%%
 flowchart LR
 A[Resource] --> B[Safe]`,
@@ -4293,6 +4296,39 @@ test('renders Mermaid labels that name URL, image and src APIs', async ({ page }
         ],
       },
     }),
+  })
+
+  test('renders ordinary Mermaid blocks and preserves source for unaudited diagram types', async ({ page }) => {
+    const sources = ['block-beta\nA["URL(value)"] B["Finish"]', 'pie\n"One": 1', 'stateDiagram-v2\nStart --> Finish']
+    await mockTengri(page, {
+      resumeThreadRawJson: JSON.stringify({
+        thread: {
+          turns: [
+            {
+              id: 'turn-1',
+              status: 'completed',
+              items: sources.map((source, index) => ({
+                id: `format-${index}`,
+                type: 'agentMessage',
+                text: `\`\`\`mermaid\n${source}\n\`\`\``,
+              })),
+            },
+          ],
+        },
+      }),
+    })
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+    await page.goto('/')
+    const responses = page.getByRole('article', { name: 'Codex response' })
+    await expect(responses).toHaveCount(3)
+    await expect(responses.first().getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText(
+      'URL(value)',
+    )
+    for (const index of [1, 2]) {
+      await expect(responses.nth(index).getByRole('status')).toHaveText('Diagram type not supported; showing source.')
+      await expect(responses.nth(index).locator('pre code')).toContainText(sources[index])
+      await expect(responses.nth(index).getByRole('button', { name: 'Copy code block' })).toBeVisible()
+    }
   })
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
   await page.goto('/')

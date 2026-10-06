@@ -4,7 +4,12 @@ import DOMPurify from 'dompurify'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 
 import { CodexCopyButton } from './codex-copy-button'
-import { assertMermaidStyleFields, assertMermaidSvgResources } from './mermaid-resources'
+import {
+  assertMermaidSpecializedResources,
+  assertMermaidStyleFields,
+  assertMermaidSvgResources,
+  isSupportedMermaidDiagram,
+} from './mermaid-resources'
 
 async function loadMermaid() {
   const { default: mermaid } = await import('mermaid')
@@ -49,7 +54,7 @@ function getMermaid() {
 export function CodexMermaid({ source, children }: { source: string; children: ReactNode }) {
   const reactId = useId()
   const id = `tengri-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`
-  const [result, setResult] = useState<{ source: string; svg: string | null } | null>(null)
+  const [result, setResult] = useState<{ source: string; svg: string | null; unsupported?: boolean } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -63,6 +68,11 @@ export function CodexMermaid({ source, children }: { source: string; children: R
         loadingModule = false
         if (cancelled) return
         const parsed = await mermaid.parse(source)
+        if (cancelled) return
+        if (!isSupportedMermaidDiagram(parsed.diagramType)) {
+          setResult({ source, svg: null, unsupported: true })
+          return
+        }
         assertMermaidStyleFields(parsed.config, true)
         // Mermaid fetches image nodes during layout, before SVG sanitization.
         const diagram = await mermaid.mermaidAPI.getDiagramFromText(source)
@@ -74,6 +84,7 @@ export function CodexMermaid({ source, children }: { source: string; children: R
         assertMermaidStyleFields(diagram.db)
         assertMermaidStyleFields(data)
         assertMermaidStyleFields(diagram.renderer.getClasses?.(source, diagram))
+        assertMermaidSpecializedResources(diagram.db as Parameters<typeof assertMermaidSpecializedResources>[0])
         if (cancelled) return
         const { svg } = await mermaid.render(id, source)
         if (cancelled) return
@@ -123,7 +134,11 @@ export function CodexMermaid({ source, children }: { source: string; children: R
     return (
       <div>
         <p className="mt-3 text-xs text-zinc-400" role="status">
-          {current ? 'Diagram unavailable; showing source.' : 'Rendering diagram…'}
+          {current?.unsupported
+            ? 'Diagram type not supported; showing source.'
+            : current
+              ? 'Diagram unavailable; showing source.'
+              : 'Rendering diagram…'}
         </p>
         {children}
       </div>

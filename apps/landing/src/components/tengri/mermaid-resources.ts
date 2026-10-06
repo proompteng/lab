@@ -1,5 +1,11 @@
 // Only pass CSS/configuration values here, never diagram labels or source text.
 // DOMPurify does not filter CSS resource URLs.
+const supportedDiagramTypes = new Set(['flowchart-v2', 'sequence', 'classDiagram', 'block'])
+
+export function isSupportedMermaidDiagram(type: string) {
+  return supportedDiagramTypes.has(type)
+}
+
 export function assertMermaidResourcePolicy(value: string) {
   const normalized = value
     // Directives/frontmatter may encode CSS characters before Mermaid parses them.
@@ -68,5 +74,28 @@ export function assertMermaidSvgResources(svg: Element) {
         throw new Error('Diagram resource URLs are disabled')
       }
     }
+  }
+}
+
+type DiagramResourceDatabase = {
+  getBlocksFlat?: () => unknown
+  getMessages?: () => { type: number; message: unknown }[]
+  getActors?: () => Map<string, { properties?: { icon?: unknown } }>
+  LINETYPE?: { RECT_START: number }
+}
+
+// Some Mermaid databases keep parsed fields in closures instead of on the DB.
+// Sequence background paint is a typed message, distinct from ordinary labels.
+export function assertMermaidSpecializedResources(db: DiagramResourceDatabase) {
+  assertMermaidStyleFields(db.getBlocksFlat?.())
+  const rectType = db.LINETYPE?.RECT_START
+  for (const message of db.getMessages?.() ?? []) {
+    if (message.type === rectType) {
+      if (typeof message.message !== 'string') throw new Error('Unsupported diagram background')
+      assertMermaidResourcePolicy(message.message)
+    }
+  }
+  for (const actor of db.getActors?.().values() ?? []) {
+    if (actor.properties?.icon) throw new Error('Diagram images are disabled')
   }
 }

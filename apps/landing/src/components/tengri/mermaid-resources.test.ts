@@ -1,8 +1,47 @@
 import { describe, expect, test } from 'bun:test'
 
-import { assertMermaidResourcePolicy, assertMermaidStyleFields } from './mermaid-resources'
+import {
+  assertMermaidResourcePolicy,
+  assertMermaidStyleFields,
+  assertMermaidSpecializedResources,
+  isSupportedMermaidDiagram,
+} from './mermaid-resources'
 
 describe('Mermaid resource policy', () => {
+  test('accepts only formats with audited pre-layout resource checks', () => {
+    for (const type of ['flowchart-v2', 'sequence', 'classDiagram', 'block'])
+      expect(isSupportedMermaidDiagram(type)).toBe(true)
+    for (const type of ['stateDiagram', 'pie', 'gantt', 'unknown']) expect(isSupportedMermaidDiagram(type)).toBe(false)
+  })
+
+  test('checks closure-backed block styles, sequence paint and sequence icons', () => {
+    expect(() =>
+      assertMermaidSpecializedResources({ getBlocksFlat: () => [{ styles: ['fill:url(/remote.svg)'] }] }),
+    ).toThrow()
+    expect(() =>
+      assertMermaidSpecializedResources({
+        LINETYPE: { RECT_START: 22 },
+        getMessages: () => [{ type: 22, message: 'url(/remote.svg)' }],
+      }),
+    ).toThrow()
+    expect(() =>
+      assertMermaidSpecializedResources({
+        getActors: () => new Map([['Alice', { properties: { icon: '/remote.svg' } }]]),
+      }),
+    ).toThrow('Diagram images are disabled')
+    expect(() =>
+      assertMermaidSpecializedResources({
+        getBlocksFlat: () => [{ label: 'URL(value)', styles: ['fill:#fff'] }],
+        LINETYPE: { RECT_START: 22 },
+        getMessages: () => [
+          { type: 22, message: 'rgb(230, 230, 250)' },
+          { type: 0, message: 'call src(input)' },
+        ],
+        getActors: () => new Map([['Alice', { properties: {} }]]),
+      }),
+    ).not.toThrow()
+  })
+
   test.each([
     'filter:url(/api/tengri/events)',
     'fill:URL(https://example.com/image.svg)',
