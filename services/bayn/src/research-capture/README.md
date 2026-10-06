@@ -131,6 +131,20 @@ must acknowledge before the recorder advances its frontier. An immutable export 
 metadata seal. Every index, manifest and seal is `UNQUALIFIED`, including stored objects whose acknowledgements are lost.
 The verifier checks the existing metadata chain plus every binary range and always reports `complete: false`.
 
+Normal raw drainage may export one next chunk while the current chunk's SQL append is pending. SQL appends remain
+serial: the next append requires its own object readbacks and the preceding SQL acknowledgement. The provisional
+successor hashes do not advance either committed frontier. Queued receipts, the current SQL batch, and that single
+lookahead share the existing receipt and byte reservation limits. An acknowledged batch releases its references and
+reservation before waiting for its successor. At most one object export is active, and the existing 64 KiB envelope
+reserve covers the two bounded chunk headers and the single active SDK response; per-entry reservations remain charged
+through each batch's assembly, readback, and SQL acknowledgement.
+
+Each raw chunk retains one absolute monotonic write deadline from the beginning of its export through predecessor waiting and
+its own SQL acknowledgement. A stage transition never resets that deadline. Failure or unknown acknowledgement stops
+later SQL appends, cancels the scoped lookahead, and releases its reservation only after cancellation completes.
+An already exported successor remains an orphan if its predecessor fails. The session claim and final manifest-before-
+SQL-seal ordering remain sequential, and an unknown committed SQL tail still prevents a seal that omits it.
+
 Raw-mode SQL seals also retain `bayn.research-capture-export-root.v1`, binding the last verified index hash and chunk
 count to the immutable metadata frontier. The manifest references the exact seal bytes; the seal does not reference its
 own manifest hash. `deriveResearchCaptureExportManifest` is the single writer/reader representation. Given the exact
