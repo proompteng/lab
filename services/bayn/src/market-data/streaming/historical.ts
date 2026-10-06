@@ -60,6 +60,7 @@ export const HistoricalMarketArrivalSchema = Schema.Union([
   }),
 ])
 export type HistoricalMarketArrival = typeof HistoricalMarketArrivalSchema.Type
+const decodeHistoricalMarketArrival = Schema.decodeUnknownResult(HistoricalMarketArrivalSchema, strictParseOptions)
 
 /** Explicit counterfactual delivery; computedAt and the published payload are never rewritten. */
 export const HistoricalStreamingInputSchema = Schema.Struct({
@@ -224,7 +225,7 @@ export const createHistoricalMarketCursor = (
 
 export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, input: unknown) =>
   Result.gen(function* () {
-    const event = yield* Schema.decodeUnknownResult(HistoricalMarketArrivalSchema, strictParseOptions)(input)
+    const event = yield* decodeHistoricalMarketArrival(input)
     const { record } = event
     const last = cursor.lastArrival
     const receipt = 'receipt' in event ? event.receipt : undefined
@@ -256,7 +257,8 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
       )
     const partitionKey = topicPartitionKey(record.topic, record.partition)
     const offset = cursor.suppliedOffsets.get(partitionKey)
-    const order = last === null ? 1 : compareArrivalPositions(arrivalPosition(event), last)
+    const position = arrivalPosition(event)
+    const order = last === null ? 1 : compareArrivalPositions(position, last)
     if (order < 0 || (offset !== undefined && BigInt(record.offset) < BigInt(offset)))
       return yield* Result.fail(
         new HistoricalMarketArrivalFailure({
@@ -331,6 +333,6 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
       projection,
       processedRecords: cursor.processedRecords + 1,
       suppliedOffsets: new Map(cursor.suppliedOffsets).set(partitionKey, record.offset),
-      lastArrival: arrivalPosition(event),
+      lastArrival: position,
     } satisfies HistoricalMarketCursor
   })

@@ -466,6 +466,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
 
   test('a recorded hold evaluates only once for the same completed signal window', async () => {
     let calls = 0
+    let signalReads = 0
+    let protectiveReads = 0
     let adverseQuote = false
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -482,18 +484,21 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             check: Effect.void,
             verifyReference: fixtureStreamingReference,
             loadSnapshot: (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
-              Effect.succeed(
-                query.purpose === undefined
-                  ? managed.snapshot
-                  : streamingFixtureFromRaw(
-                      makeIntradayMomentumTestSnapshot(
-                        fixture.protocol,
-                        { ...query, archiveWatermarks: [] },
-                        { AAPL: adverseQuote ? -0.02 : 0.02 },
-                      ),
-                      query,
-                    ).snapshot,
-              ),
+              Effect.sync(() => {
+                if (query.purpose === undefined) {
+                  signalReads += 1
+                  return managed.snapshot
+                }
+                protectiveReads += 1
+                return streamingFixtureFromRaw(
+                  makeIntradayMomentumTestSnapshot(
+                    fixture.protocol,
+                    { ...query, archiveWatermarks: [] },
+                    { AAPL: adverseQuote ? -0.02 : 0.02 },
+                  ),
+                  query,
+                ).snapshot
+              }),
           },
         }
         expect(yield* evaluateJevPositionManagement(input)).toEqual({
@@ -505,12 +510,16 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           details: { readiness: { reason: 'SIGNAL_WINDOW_OBSERVED' } },
         })
         expect(calls).toBe(1)
+        expect(signalReads).toBe(1)
+        expect(protectiveReads).toBe(2)
         adverseQuote = true
         expect(yield* evaluateJevPositionManagement(input)).toMatchObject({
           _tag: 'Exit',
           target: { reason: JevExitReason.ProtectiveStop },
         })
         expect(calls).toBe(1)
+        expect(signalReads).toBe(1)
+        expect(protectiveReads).toBe(3)
       }).pipe(
         Effect.provideService(JevClient, {
           evaluate: (request) =>

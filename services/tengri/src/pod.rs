@@ -619,8 +619,8 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..ContainerPort::default()
             },
         ]),
-        readiness_probe: Some(http_probe("/readyz", 5, 3)),
-        startup_probe: Some(http_probe("/readyz", 5, 420)),
+        readiness_probe: Some(http_probe("/readyz", 1, 15)),
+        startup_probe: Some(http_probe("/readyz", 1, 2100)),
         liveness_probe: Some(http_probe("/livez", 15, 3)),
         resources: Some(ResourceRequirements {
             limits: Some(fixed.clone()),
@@ -696,7 +696,7 @@ fn http_probe(path: &str, period_seconds: i32, failure_threshold: i32) -> Probe 
         }),
         period_seconds: Some(period_seconds),
         failure_threshold: Some(failure_threshold),
-        timeout_seconds: Some(2),
+        timeout_seconds: Some(period_seconds.min(2)),
         ..Probe::default()
     }
 }
@@ -719,6 +719,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "a".repeat(64)),
                 architecture: MicroVMArchitecture::Arm64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: "2026-08-26T00:00:00Z".to_owned(),
                 idle_deadline: "2026-08-26T01:00:00Z".to_owned(),
                 expires_at: "2026-08-26T04:00:00Z".to_owned(),
@@ -1217,15 +1218,24 @@ mod tests {
             Some("/readyz"),
         );
         let startup_probe = container.startup_probe.as_ref().expect("startup probe");
-        assert_eq!(startup_probe.period_seconds, Some(5));
-        assert_eq!(startup_probe.failure_threshold, Some(420));
+        assert_eq!(startup_probe.period_seconds, Some(1));
+        assert_eq!(startup_probe.timeout_seconds, Some(1));
+        assert_eq!(startup_probe.failure_threshold, Some(2100));
         assert_eq!(
             startup_probe.period_seconds.unwrap() * startup_probe.failure_threshold.unwrap(),
             2100,
         );
+        let readiness_probe = container.readiness_probe.as_ref().expect("readiness probe");
+        assert_eq!(readiness_probe.period_seconds, Some(1));
+        assert_eq!(readiness_probe.timeout_seconds, Some(1));
+        assert_eq!(readiness_probe.failure_threshold, Some(15));
         assert_eq!(
             probe_path(container.liveness_probe.as_ref().expect("liveness probe")),
             Some("/livez"),
+        );
+        assert_eq!(
+            container.liveness_probe.as_ref().unwrap().timeout_seconds,
+            Some(2),
         );
     }
 

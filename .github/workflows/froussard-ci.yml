@@ -29,6 +29,8 @@ on:
       - 'argocd/applications/froussard/**'
   pull_request:
     paths:
+      - '.github/actions/affected-inputs/**'
+      - 'packages/scripts/src/ci/**'
       - 'apps/froussard/**'
       - 'packages/agent-contracts/**'
       - 'nix/images/froussard.nix'
@@ -55,7 +57,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ fromJSON(steps.filter.outputs.affected).service }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/affected-inputs
+        id: filter
+        with:
+          workflow: .github/workflows/froussard-ci.yml
+          workspaces: |
+            service: ['', 'apps/froussard']
+
   test:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     uses: ./.github/workflows/common-monorepo.yml
     with:
       install-command: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/agent-contracts --filter froussard --filter @proompteng/codex --filter @proompteng/discord --filter @proompteng/otel && bun run --filter @proompteng/agent-contracts build && bun run --filter @proompteng/otel build && bun run --filter @proompteng/codex build && bun run --filter @proompteng/discord build
@@ -66,6 +85,8 @@ jobs:
     secrets: inherit
 
   dependency-closure:
+    needs: changes
+    if: needs.changes.outputs.changed == 'true'
     uses: ./.github/workflows/nix-bun-dependency-closure.yml
     with:
       service: froussard
