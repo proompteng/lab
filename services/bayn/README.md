@@ -43,6 +43,10 @@ A mutation or newer retained broker event can invalidate a successful cut before
 still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
 Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
 normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
+The same continuation applies when a terminal close needs a newer exact broker cut, including partial-fill recovery.
+Transport failures, inexact accounting and unresolved order or mutation evidence retain the normal retry cadence.
+An advanced mutation with no remaining consistency delay still schedules its reconciliation continuation rather than
+falling back to the idle interval. Every continuation rechecks existing evidence, quantity and submission deadlines.
 Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
 wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
 authority restriction.
