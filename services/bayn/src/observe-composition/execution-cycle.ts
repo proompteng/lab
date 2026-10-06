@@ -263,6 +263,7 @@ type TerminalCloseEvidence =
 const readTerminalCloseReconciliation = <R>(
   document: ExecutionDecisionDocument,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
+  refreshReconciliation: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
 ): Effect.Effect<TerminalCloseEvidence, CycleRunnerError, R | IntentStore> =>
   Effect.gen(function* () {
     const intentStore = yield* IntentStore
@@ -285,7 +286,13 @@ const readTerminalCloseReconciliation = <R>(
     ) {
       return { _tag: 'Unsettled' } as const
     }
-    const refreshed = yield* Effect.result(reconcile)
+    const settledAt = records.reduce(
+      (latest, record) => (Option.isSome(record) && record.value.updatedAt > latest ? record.value.updatedAt : latest),
+      document.createdAt,
+    )
+    let refreshed = yield* Effect.result(reconcile)
+    if (Result.isSuccess(refreshed) && !isTerminalCloseReconciliationReady(refreshed.success, settledAt))
+      refreshed = yield* Effect.result(refreshReconciliation)
     if (Result.isFailure(refreshed)) {
       if (refreshed.failure._tag === 'BrokerReadError' && refreshed.failure.retryable)
         return {
@@ -294,10 +301,6 @@ const readTerminalCloseReconciliation = <R>(
         } as const
       return yield* reconciliationRunnerError(refreshed.failure, 'execution terminal close reconciliation failed')
     }
-    const settledAt = records.reduce(
-      (latest, record) => (Option.isSome(record) && record.value.updatedAt > latest ? record.value.updatedAt : latest),
-      document.createdAt,
-    )
     return { _tag: 'Settled', reconciliation: refreshed.success, settledAt } as const
   })
 
@@ -535,7 +538,7 @@ export const ensureExecutionCycleClosure = <R>({
 
     const latestReplan = yield* readLatestExecutionCycleCloseReplan(cycle.identity.cycleId, store)
     const active = latestReplan ?? existing
-    const terminal = yield* readTerminalCloseReconciliation(active.document, refreshReconciliation)
+    const terminal = yield* readTerminalCloseReconciliation(active.document, reconcile, refreshReconciliation)
     if (terminal._tag === 'Unsettled') {
       return { _tag: 'Close', document: active.document } as const
     }

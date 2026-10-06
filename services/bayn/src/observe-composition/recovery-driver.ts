@@ -104,7 +104,12 @@ export const reconciliationForPreparation = <R>(
   Effect.gen(function* () {
     const previous = yield* Ref.make(initial)
     const preflightAvailable = yield* Ref.make(initial !== undefined)
+    const refreshAndRemember = refresh.pipe(
+      Effect.tap((facts) => Ref.set(previous, facts)),
+      Effect.tap(() => Ref.set(preflightAvailable, false)),
+    )
     return {
+      refresh: refreshAndRemember,
       read: Effect.gen(function* () {
         const cached = yield* Ref.get(previous)
         const firstUse = yield* Ref.getAndSet(preflightAvailable, false)
@@ -120,9 +125,7 @@ export const reconciliationForPreparation = <R>(
           return cached
         if (cached !== undefined && now < (reconciliationReusableUntil(cached, authority, now, maximumAgeMs) ?? now))
           return cached
-        const current = yield* refresh
-        yield* Ref.set(previous, current)
-        return current
+        return yield* refreshAndRemember
       }),
       readForPricing: (minimumRemainingMs: number) =>
         Effect.gen(function* () {
@@ -142,8 +145,7 @@ export const reconciliationForPreparation = <R>(
             now + minimumRemainingMs < Math.min(reusableUntil, freshUntil)
           )
             return { reconciliation: cached, freshUntil: Math.min(reusableUntil, freshUntil) }
-          const reconciliation = yield* refresh
-          yield* Ref.set(previous, reconciliation)
+          const reconciliation = yield* refreshAndRemember
           const refreshedAuthority = yield* readAuthority
           const refreshedAt = yield* Clock.currentTimeMillis
           // Cadence controls reuse, not broker validity: short cadences may still refresh again after pricing.
@@ -481,7 +483,11 @@ const makeRecoveryFirstCycleDriverEffect = (
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
         const authorityStore = yield* AuthorityGenerationStore
-        const { read: reconcileForAdvance, readForPricing } = yield* reconciliationForPreparation(
+        const {
+          read: reconcileForAdvance,
+          refresh: refreshForAdvance,
+          readForPricing,
+        } = yield* reconciliationForPreparation(
           preflight,
           reconcile,
           authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
@@ -503,7 +509,7 @@ const makeRecoveryFirstCycleDriverEffect = (
             input,
             policy,
             context,
-            { read: reconcileForAdvance, refresh: reconcile },
+            { read: reconcileForAdvance, refresh: refreshForAdvance },
             capability,
           ),
           cyclePassTimeoutMs,

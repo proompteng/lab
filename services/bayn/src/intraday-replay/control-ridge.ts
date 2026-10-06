@@ -182,7 +182,7 @@ export const prepareBoundRidge = (
 
 export type BoundRidge = Result.Result.Success<ReturnType<typeof prepareBoundRidge>>
 type Observation = Result.Result.Success<ReturnType<typeof extractSixBarResearchObservation>>
-const isCandidateExclusion = (observation: Observation) =>
+export const isCandidateExclusion = (observation: Observation) =>
   observation.status !== SixBarResearchStatus.Available &&
   observation.symbol === observation.candidateSymbol &&
   (observation.status === SixBarResearchStatus.Excluded ||
@@ -190,7 +190,9 @@ const isCandidateExclusion = (observation: Observation) =>
     observation.reason === SixBarUnavailableReason.Quote ||
     observation.reason === SixBarUnavailableReason.Trade ||
     observation.reason === SixBarUnavailableReason.Freshness)
-const featureRowFromObservation = (observation: Extract<Observation, { status: SixBarResearchStatus.Available }>) => ({
+export const featureRowFromObservation = (
+  observation: Extract<Observation, { status: SixBarResearchStatus.Available }>,
+) => ({
   sessionDate: observation.query.sessionDate,
   symbol: observation.candidateSymbol,
   featureDefinitionHash: observation.definitionHash,
