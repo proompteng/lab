@@ -3,7 +3,8 @@ set -euo pipefail
 
 readonly prefix="$HOME/.linuxbrew"
 readonly receipt="$HOME/.local/share/nanoagent/developer-tools-ready"
-readonly work="$(mktemp -d "$HOME/.cache/developer-tools-test.XXXXXX")"
+work="$(mktemp -d "$HOME/.cache/developer-tools-test.XXXXXX")"
+readonly work
 readonly bootstrap="${1:-/usr/local/bin/bootstrap-developer-tools}"
 
 cleanup() {
