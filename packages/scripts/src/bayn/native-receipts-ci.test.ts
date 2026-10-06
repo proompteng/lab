@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import YAML from 'yaml'
@@ -101,7 +101,23 @@ esac
         new Response(child.stdout).text(),
         new Response(child.stderr).text(),
       ])
-      expect({ exit, stdout, stderr }).toEqual({ exit: 125, stdout: '', stderr: '' })
+      const fixtureNames = (await readdir(directory)).filter((name) => name.startsWith('bayn-receipts-')).sort()
+      const kafkaName = fixtureNames[0]
+      if (kafkaName === undefined) throw new Error('Expected a created Kafka fixture')
+      expect(kafkaName).toMatch(/^bayn-receipts-kafka-[0-9a-f]{16}$/)
+      const restateName = kafkaName.replace('bayn-receipts-kafka-', 'bayn-receipts-restate-')
+      const expectedNames = mode === 'restate' ? [kafkaName, restateName] : [kafkaName]
+      expect(fixtureNames).toEqual(expectedNames)
+      expect({ exit, stdout, stderr }).toEqual({
+        exit: 125,
+        stdout:
+          mode === 'foreign'
+            ? ''
+            : expectedNames
+                .map((name, index) => `Fixture cleanup removed ${name} (${(index === 0 ? 'a' : 'b').repeat(64)})\n`)
+                .join(''),
+        stderr: mode === 'foreign' ? `Fixture cleanup refused unowned container ${kafkaName}\n` : '',
+      })
       const removed = (await readFile(join(directory, 'removed'), 'utf8')).trim().split('\n').filter(Boolean)
       expect(removed).toEqual(
         mode === 'foreign' ? [] : mode === 'kafka' ? ['a'.repeat(64)] : ['a'.repeat(64), 'b'.repeat(64)],

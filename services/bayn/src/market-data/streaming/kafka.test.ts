@@ -105,6 +105,161 @@ class FakeTransport implements KafkaProjectionTransport {
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
 
+test('projection cuts preserve current offsets and fresh advancing outputs', async () => {
+  await program(
+    Effect.gen(function* () {
+      const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
+      yield* TestClock.adjust(1000)
+      const initial = yield* market.readForLiquidation
+      const position = initial.positions.find((row) => row.topic === 'quotes')
+      if (position === undefined) throw new Error('missing quote position')
+      const offsets = initial.projection.offsets as Map<string, string>
+      const key = 'quotes:0'
+      Object.assign(position, { offset: '10' })
+      const runSync = Effect.runSyncWith(yield* Effect.context<never>())
+      const read = () => runSync(market.readForLiquidation).positions
+      yield* Effect.sync(() => {
+        for (const last of ['9', '10', '12', '12', '8']) {
+          offsets.set(key, last)
+          const actual = read()
+          const quote = actual.find((row) => row.topic === 'quotes')
+          const advances = BigInt(last) >= 10n
+          expect(quote?.offset).toBe(advances ? String(BigInt(last) + 1n) : '10')
+          expect(quote === position).toBe(!advances)
+          expect(actual).not.toBe(initial.positions)
+        }
+        offsets.set(key, '12')
+        const first = read().find((row) => row.topic === 'quotes')
+        const second = read().find((row) => row.topic === 'quotes')
+        expect(first).not.toBe(second)
+        Object.assign(first ?? {}, { offset: '999', topic: 'mutated-output' })
+        expect(read().find((row) => row.topic === 'quotes')?.offset).toBe('13')
+        Object.assign(position, { offset: '14' })
+        expect(read().find((row) => row.topic === 'quotes')).toBe(position)
+        for (const [base, last, expected] of [
+          ['9007199254740992', '9007199254740992', '9007199254740993'],
+          ['9223372036854775806', '9223372036854775806', '9223372036854775807'],
+          ['9223372036854775807', '9223372036854775806', '9223372036854775807'],
+        ] as const) {
+          Object.assign(position, { offset: base })
+          offsets.set(key, last)
+          expect(read().find((row) => row.topic === 'quotes')?.offset).toBe(expected)
+          expect(read().find((row) => row.topic === 'quotes')?.offset).toBe(expected)
+        }
+        offsets.delete(key)
+        Object.defineProperty(position, 'offset', {
+          configurable: true,
+          enumerable: true,
+          get: () => {
+            throw new Error('missing last must not read base')
+          },
+        })
+        expect(read().find((row) => row.topic === 'quotes')).toBe(position)
+        Object.defineProperty(position, 'offset', { configurable: true, enumerable: true, writable: true, value: '0' })
+      })
+    }),
+  )
+})
+
+test('projection cut offset coercions preserve failure and spread ordering', async () => {
+  await program(
+    Effect.gen(function* () {
+      const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
+      yield* TestClock.adjust(1000)
+      const initial = yield* market.readForLiquidation
+      const position = initial.positions.find((row) => row.topic === 'quotes')
+      if (position === undefined) throw new Error('missing quote position')
+      const offsets = initial.projection.offsets as Map<string, unknown>
+      const calls: string[] = []
+      const runSync = Effect.runSyncWith(yield* Effect.context<never>())
+      const read = () => runSync(market.readForLiquidation)
+      yield* Effect.sync(() => {
+        offsets.set('quotes:0', 'invalid')
+        Object.defineProperty(position, 'offset', {
+          configurable: true,
+          enumerable: true,
+          get: () => {
+            calls.push('base:get')
+            return '0'
+          },
+        })
+        expect(read).toThrow()
+        expect(calls).toEqual([])
+        let conversions = 0
+        offsets.set('quotes:0', {
+          [Symbol.toPrimitive]: () => {
+            calls.push(`last:${++conversions}`)
+            return conversions === 1 ? '2' : '3'
+          },
+        })
+        Object.defineProperty(position, 'offset', {
+          configurable: true,
+          enumerable: true,
+          get: () => {
+            calls.push('base:get')
+            return {
+              [Symbol.toPrimitive]: () => {
+                calls.push('base:convert')
+                return '1'
+              },
+            }
+          },
+        })
+        expect(read().positions.find((row) => row.topic === 'quotes')?.offset).toBe('4')
+        expect(calls).toEqual(['last:1', 'base:get', 'base:convert', 'base:get', 'last:2'])
+        calls.length = 0
+        offsets.set('quotes:0', '3')
+        Object.defineProperty(position, 'offset', {
+          configurable: true,
+          enumerable: true,
+          get: () => {
+            calls.push('base:get')
+            return 'invalid'
+          },
+        })
+        expect(read).toThrow()
+        expect(calls).toEqual(['base:get'])
+        Object.defineProperty(position, 'offset', { configurable: true, enumerable: true, writable: true, value: '0' })
+        expect(read().positions.find((row) => row.topic === 'quotes')?.offset).toBe('4')
+        offsets.set('quotes:0', 'invalid')
+        expect(read).toThrow()
+        offsets.set('quotes:0', '4')
+        expect(read().positions.find((row) => row.topic === 'quotes')?.offset).toBe('5')
+      })
+    }),
+  )
+})
+
+test('projection cuts follow replaced positions and reject an invalidated epoch', async () => {
+  const transports: FakeTransport[] = []
+  await program(
+    Effect.gen(function* () {
+      const market = yield* makeKafkaMarketProjection(config, universe, () => {
+        const transport = new FakeTransport()
+        transports.push(transport)
+        return transport
+      })
+      yield* TestClock.adjust(1000)
+      const initial = yield* market.readForLiquidation
+      ;(initial.projection.offsets as Map<string, string>).set('quotes:0', '9')
+      expect((yield* market.readForLiquidation).positions.find((row) => row.topic === 'quotes')?.offset).toBe('10')
+      const transport = transports[0]
+      if (transport === undefined) throw new Error('missing transport')
+      transport.drained = positions('20')
+      yield* TestClock.adjust(1000)
+      const replaced = yield* market.readForLiquidation
+      expect(replaced.positions.find((row) => row.topic === 'quotes')?.offset).toBe('20')
+      transport.invalidated?.(new Error('replace test epoch'))
+      expect(Result.isFailure(yield* market.readForLiquidation.pipe(Effect.result))).toBe(true)
+      yield* TestClock.adjust(3000)
+      const recovered = yield* market.readForLiquidation
+      expect(recovered.projection.epoch).not.toBe(initial.projection.epoch)
+      expect(recovered.positions.every((row) => row.offset === '0')).toBe(true)
+      expect(transports.length).toBe(2)
+    }),
+  )
+})
+
 for (const scenario of [
   'ready',
   'queued',
