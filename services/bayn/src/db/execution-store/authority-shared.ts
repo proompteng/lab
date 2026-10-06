@@ -155,10 +155,10 @@ export const makeAuthorityPostgres = (sql: PgClient.PgClient, clock: DatabaseClo
     )
 
   const nextAuthorityInstant = sql<Record<string, unknown>>`
-    SELECT greatest(
+    SELECT to_char(greatest(
       ${clock.now},
       updated_at + interval '1 millisecond'
-    ) AS activated_at
+    ) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS activated_at
     FROM authority_state
     WHERE singleton
   `.pipe(

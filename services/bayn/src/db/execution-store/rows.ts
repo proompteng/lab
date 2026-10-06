@@ -20,6 +20,7 @@ import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
+  UtcSourceTimestampSchema,
   strictParseOptions,
 } from '../../schemas'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../accounting-rows'
@@ -197,7 +198,7 @@ export const MutationBaselineRow = Schema.Tuple([
     latest_mutation_at: Schema.NullOr(Schema.Date),
   }),
 ])
-export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: Schema.Date })])
+export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: UtcSourceTimestampSchema })])
 export const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 const decodeEventInputDataFirst = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
