@@ -20,7 +20,7 @@ guest VM.
 - `/usr/local/bin/containerd-shim-kata-v2`: the shared Kata `runtime-rs` shim;
 - QEMU, Cloud Hypervisor, Firecracker, jailer, and virtiofsd executables;
 - the Kata guest image, standard guest kernel, and Dragonball guest kernel;
-- a deterministic 512 MiB ext4 scratch image for containerd's blockfile snapshotter;
+- a deterministic 1 GiB ext4 scratch image for containerd's blockfile snapshotter;
 - architecture-specific QEMU firmware and data files.
 
 The Kata `4.1.0` arm64 release archive contains the Cloud Hypervisor binary but omits its generated configuration.
@@ -68,10 +68,15 @@ docker buildx build \
   devices/galactic/extensions/kata
 ```
 
-The checked-in workflow validates both architectures on pull requests. On `main`, it publishes the extension and the
-three signed installers under `registry.ide-newton.ts.net/lab/talos-kata-runtimes`. Ryzen installed and accepted its
-immutable r5 installer on 2026-08-30. Turin and Altra remain pinned to their accepted r4 GHCR receipts until each gets
-a separately authorized, one-node-at-a-time r5 rollout and live acceptance.
+The checked-in workflow validates both architectures on pull requests and uploads unsigned OCI archives for review.
+On `main`, it publishes the extension and three signed Talos 1.14 installers under
+`registry.ide-newton.ts.net/lab/talos-kata-runtimes`. The current installed factory receipts are maintained in
+[`../../releases/talos-v1.14.0.json`](../../releases/talos-v1.14.0.json).
+
+The r6 template uses 4 KiB blocks, 32768 inodes, a 16 MiB journal, and no reserved blocks, matching Nanoagent's
+image capacity gate. Native builds check the actual template and test offline cached-parent growth and backup restore.
+Existing persistent scratch and parent snapshots retain their old capacity after an extension replacement.
+Follow the [staged 1 GiB rollout plan](ROOTFS-1G-ROLLOUT.md) before deploying the larger Nanoagent image.
 
 To reproduce an existing installer, use only the immutable extension digest recorded in the release receipt:
 
@@ -280,8 +285,8 @@ kubectl --context galactic-lan -n kata exec -it nanoagent-example -c nanoagent -
 ```
 
 Firecracker cannot use an overlayfs root inside the guest. Its handler alone selects containerd `2.2`'s built-in
-`blockfile` snapshotter. The bundled 512 MiB scratch filesystem limits each ephemeral container root filesystem to
-512 MiB; persistent data belongs on Kubernetes volumes. The Firecracker configuration caps `default_maxvcpus` at
+`blockfile` snapshotter. The r6 bundled 1 GiB scratch filesystem limits each ephemeral container root filesystem to
+1 GiB; existing caches require migration and persistent data belongs on Kubernetes volumes. The Firecracker configuration caps `default_maxvcpus` at
 32, matching Firecracker `1.12.1`; leaving Kata's generated value at `0` expands it to the host CPU count and makes
 runtime validation fail on Turin's 128-CPU host. It also uses a 100 ms initial VMM socket dial with a 45-second
 reconnect budget so runtime-rs can wait for Firecracker startup without sleeping 45 seconds between attempts.
