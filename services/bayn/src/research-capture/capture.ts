@@ -1,4 +1,5 @@
 import { Data, Result, Schema } from 'effect'
+import * as SchemaJITCompiler from 'effect/schema/SchemaJITCompiler'
 
 import { ExecutionControllerTickSchema } from '../execution/controller'
 import { JevObservationReferencesSchema } from '../cycle/runner/pass-observation'
@@ -247,6 +248,10 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
   receipts: Schema.Array(ResearchCaptureReceiptSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
 })
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
+
+// Compile only these hot boundaries, retaining strict decoding and diagnostic fallback.
+SchemaJITCompiler.enable(ResearchCaptureReceiptSchema.ast)
+SchemaJITCompiler.enable(ResearchCaptureChunkSchema.ast)
 
 const ResearchCaptureExportRootSchema = Schema.Struct({
   schemaVersion: Schema.Union([

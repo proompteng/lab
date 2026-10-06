@@ -3,6 +3,7 @@ import { Result, Schema } from 'effect'
 import fc from 'fast-check'
 import { sha256 } from '../hash'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
+import { strictParseOptions } from '../schemas'
 
 import { captureEvent, marketEvent } from './capture.test-support'
 import {
@@ -10,6 +11,7 @@ import {
   CaptureQualification,
   CaptureTimestampKind,
   OriginalKafkaTransportSchema,
+  ResearchCaptureReceiptSchema,
   captureKafkaTransport,
   restoreKafkaTransportTimestamp,
   decodeResearchCaptureChunk,
@@ -73,6 +75,60 @@ const captureFixture = () => {
   }
   return { chunk, bytes, seal }
 }
+
+test.each(['receipt', 'event', 'transport', 'prototype', 'symbol'] as const)(
+  'compiled capture validation rejects excess %s properties before serialization',
+  (location) => {
+    const receipt = {
+      sequence: 1,
+      observedAtMs: 100,
+      event: { ...marketEvent, originalTransport: captureKafkaTransport(100) },
+    }
+    const target =
+      location === 'event' ? receipt.event : location === 'transport' ? receipt.event.originalTransport : receipt
+    Object.defineProperty(
+      target,
+      location === 'prototype' ? '__proto__' : location === 'symbol' ? Symbol('extra') : 'extra',
+      {
+        value: true,
+        enumerable: true,
+      },
+    )
+    expect(
+      Result.isFailure(Schema.decodeUnknownResult(ResearchCaptureReceiptSchema, strictParseOptions)(receipt)),
+    ).toBe(true)
+    if (location !== 'symbol') {
+      const { chunk } = captureFixture()
+      expect(
+        Result.isFailure(decodeResearchCaptureChunk(encodeResearchCapture({ ...chunk, receipts: [receipt] }))),
+      ).toBe(true)
+    }
+  },
+)
+
+test.each([undefined, null, -1, 0, 1.5, NaN, Infinity])(
+  'compiled receipt and chunk validation reject malformed sequence %s',
+  (sequence) => {
+    const { chunk } = captureFixture()
+    const receipt = { sequence, observedAtMs: 100, event: marketEvent }
+    expect(
+      Result.isFailure(Schema.decodeUnknownResult(ResearchCaptureReceiptSchema, strictParseOptions)(receipt)),
+    ).toBe(true)
+    const payload = JSON.stringify({ ...chunk, receipts: [receipt] })
+    expect(Result.isFailure(decodeResearchCaptureChunk({ payload, contentHash: sha256(payload) }))).toBe(true)
+  },
+)
+
+test('compiled receipt decoding retains prototype-independent values without sharing the input', () => {
+  const event = Object.assign(Object.create(null), marketEvent)
+  const receipt = Object.assign(Object.create(null), { sequence: 1, observedAtMs: 100, event })
+  const decoded = Result.getOrThrow(
+    Schema.decodeUnknownResult(ResearchCaptureReceiptSchema, strictParseOptions)(receipt),
+  )
+  expect(decoded).toEqual({ sequence: 1, observedAtMs: 100, event: marketEvent })
+  expect(decoded).not.toBe(receipt)
+  expect(decoded.event).not.toBe(event)
+})
 
 test('controller observation references survive retained capture encoding and decoding', () => {
   const { chunk } = captureFixture()
