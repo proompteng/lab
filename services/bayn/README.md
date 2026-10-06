@@ -206,9 +206,11 @@ Historical momentum targets remain readable for audit.
 Entry and position-management observations each commit at most once per completed signal window within a cycle.
 Later polls and process restarts consult the retained observation before creating another inference batch. The next
 evaluation requires the next completed minute and its decision delay. An interrupted or failed observation does not
-authorize another inference attempt on the same window. Protective stops and the holding limit remain eligible on
-every management pass. Position management checks those protections first, then recovers pending batches and checks
-the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
+authorize another inference attempt on the same window. Entry recovers pending batches and checks the retained window
+before loading full signal history, so a consumed window can wait without rebuilding an unusable snapshot. New entry
+windows still require verified source evidence before observation or inference. Protective stops and the holding limit
+remain eligible on every management pass. Position management checks those protections first, then recovers pending
+batches and checks the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
 signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
 the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
 
