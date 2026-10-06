@@ -269,6 +269,7 @@ export const makeAutonomousServiceRuntime = (
                                 Effect.flatMap((brokerMutation) =>
                                   makeTradingEngine({
                                     authority,
+                                    riskPolicyHash: generation.riskPolicyHash,
                                     cycle: {
                                       accountId: realizedPlan.config.alpaca.expectedAccountId,
                                       authorityGenerationHash: generation.generationHash,

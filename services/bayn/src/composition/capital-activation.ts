@@ -300,7 +300,12 @@ export const validateResearchCapitalRiskPolicy = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchCapitalActivationRequest,
 ): Effect.Effect<void, OperationalError> =>
-  loadStrategyExecutionRiskPolicy(request.broker.accountId, plan.strategy).pipe(
+  loadStrategyExecutionRiskPolicy(
+    request.broker.accountId,
+    plan.strategy,
+    request.broker.environment,
+    request.riskPolicyHash,
+  ).pipe(
     Effect.mapError((cause) =>
       capitalActivationOperationalError('source-controlled capital risk policy is invalid', cause),
     ),

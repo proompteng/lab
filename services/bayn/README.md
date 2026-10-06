@@ -142,6 +142,15 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
+Sandbox execution can select a $1,000,000 daily gross-turnover budget through its exact immutable mandate hash;
+the retained sandbox mandate stays at $200,000 until explicitly rebound. Live and unspecified environments stay at $200,000.
+At $100,000 equity and a 20% target, the sandbox budget supports about 25 full-size round trips across the entry
+window. This is bounded research capacity, not a profitability assumption. All other sizing, cost and risk checks
+are unchanged. The existing sandbox request remains usable across the code rollout; the increase requires a newly
+reviewed research request bound to the new policy hash. Unknown hashes and the increased hash on live fail closed.
+Durable account/session turnover is retained across policy and worker changes, and completed
+decisions are not reopened. The image's policy-hash annotation verifies the available increased sandbox policy for its
+build-account sentinel; the durable mandate remains the authority for the active account policy.
 The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
 exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
 yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
