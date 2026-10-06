@@ -312,7 +312,7 @@ RUN --mount=type=bind,source=fetch-runtime-tools.sh,target=/tmp/fetch-runtime-to
     bash /tmp/fetch-runtime-tools.sh /tmp/runtime-tool-seeds
 
 FROM runtime AS runtime-with-runtime-tools
-COPY --from=runtime-tools-downloads /tmp/runtime-tool-seeds/ /usr/share/nanoagent/
+COPY --chown=0:0 --from=runtime-tools-downloads /tmp/runtime-tool-seeds/ /usr/share/nanoagent/
 
 FROM runtime-with-runtime-tools AS runtime-with-toolchain
 
@@ -446,7 +446,7 @@ RUN --mount=type=bind,source=compact-developer-tools.sh,target=/tmp/compact-deve
     stat --printf='%n_bytes=%s\n' /usr/share/nanoagent/development-toolchain.tar.xz /tmp/developer-seed/*
 
 FROM runtime-with-toolchain AS runtime-with-developer-tools
-COPY --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
+COPY --chown=0:0 --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
 
 FROM runtime-with-developer-tools AS developer-seed-smoke
 USER 1000:1000
@@ -461,7 +461,7 @@ COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
 COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoagent/developer-tools-version
-COPY --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
+COPY --chown=0:0 --from=developer-tools-bundle /tmp/developer-seed/ /usr/share/nanoagent/
 COPY --from=developer-seed-smoke /tmp/developer-seed-validation.txt /usr/share/nanoagent/developer-seed-validation.txt
 
 FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check

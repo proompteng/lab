@@ -5,6 +5,8 @@ set -euo pipefail
 # empty /home/nanoagent mount. The build smoke stage also starts with a clean home.
 [[ "$(id -u)" == 1000 && "$HOME" == /home/nanoagent ]]
 [[ ! -e "$HOME/.linuxbrew" && ! -e "$HOME/.config/nvim/init.lua" ]]
+test "$(stat -c %u /usr/share/nanoagent/*.tar.xz | sort -u)" = 0
+for archive in /usr/share/nanoagent/*.tar.xz; do test ! -w "$archive"; done
 started="$(date +%s%N)"
 bootstrap-spire-agent --install-only
 spire_done="$(date +%s%N)"
