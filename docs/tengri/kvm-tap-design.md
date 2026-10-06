@@ -63,15 +63,15 @@ The controller recovers an interrupted claim by checking both the MicroVM and Le
 only after the matching claim is durable. Filesystem paths and VMM arguments are derived from this record, never from
 browser input.
 
-| Slot state | Guest process                 | Owner                    | Allowed transition                                            |
-| ---------- | ----------------------------- | ------------------------ | ------------------------------------------------------------- |
-| Preparing  | Booting or provisioning       | Vacant or retained owner | Commit a private ready snapshot                               |
-| Vacant     | Stopped                       | None                     | Claim once, then restore                                      |
-| Restoring  | Starting from a snapshot      | One fenced MicroVM UID   | Become Awake after usable-guest checks                        |
-| Awake      | Running                       | Same owner               | Quiesce for sleep or terminate for explicit deletion          |
-| Saving     | Paused during snapshot commit | Same owner               | Stop and become Sleeping, or resume the live guest on failure |
-| Sleeping   | Stopped                       | Same owner               | Restore the committed snapshot                                |
-| Failed     | Stopped or fenced             | Claim retained           | Explicit recovery or deletion                                 |
+| Slot state | Guest process                             | Owner                    | Allowed transition                                            |
+| ---------- | ----------------------------------------- | ------------------------ | ------------------------------------------------------------- |
+| Preparing  | Booting or provisioning                   | Vacant or retained owner | Commit a private ready snapshot                               |
+| Vacant     | Stopped                                   | None                     | Claim once, then restore                                      |
+| Restoring  | Starting from a snapshot                  | One fenced MicroVM UID   | Become Awake after usable-guest checks                        |
+| Awake      | Running                                   | Same owner               | Quiesce for sleep or terminate for explicit deletion          |
+| Saving     | Paused during snapshot commit             | Same owner               | Stop and become Sleeping, or resume the live guest on failure |
+| Sleeping   | Stopped                                   | Same owner               | Restore the committed snapshot                                |
+| Failed     | Stopped or unproven after loss of contact | Claim retained           | Fence the old instance before recovery or deletion            |
 
 A prepared snapshot belongs to one slot and is never cloned into another owner's VM. Deletion revokes terminal and
 preview sessions, fences the claim, stops the VMM, and removes that owner's disks and snapshots. The replacement
@@ -164,7 +164,15 @@ after all usable-guest checks pass.
 A failed restore becomes Failed with its private home retained. A controller restart reconstructs journal and lease
 state. It identifies VMM processes by process identity, not a reusable PID alone, and completes an interrupted save
 before serving requests. A runner restart or lost node invalidates an active snapshot whose disks may have advanced.
-Recovery then cold-boots the retained home explicitly. It cannot masquerade as a successful snapshot resume.
+
+Loss of contact, an expired Lease, or a missing readiness signal does not prove that the old VMM stopped. Keep recovery
+blocked while its execution state is unknown. Before starting a replacement, establish old-VMM or node fencing through
+an authorized operation. Verify that the original process cannot execute or write, then prove safe volume detachment
+and the storage backend's exclusive-writer state. Do not force-detach the home or clear storage locks to bypass an
+unproven fence. A partitioned node must not regain write access after its home has moved.
+
+Only after those checks may explicit recovery cold-boot the retained home. It cannot masquerade as a successful
+snapshot resume. The journal records the fencing evidence and successor incarnation before the claim admits new work.
 
 ## Bound storage and distinguish RAM from reservations
 
@@ -204,6 +212,7 @@ profile, and the measurement boundary. Keep fixture storage separate from every 
 | Network behavior             | DNS and permitted egress work after restore; protected destinations and supervisor/identity listeners stay blocked                                             |
 | Expired credentials and time | Resume after SVID and PSAT lifetimes; host identity rotates, guest clock is current, and transports reconnect                                                  |
 | Failure handling             | Stop each save/restore stage; corrupt state files and missing, mismatched, or consumed generations fail visibly with the home retained                         |
+| Partition recovery           | Keep an old guest writing while its node loses controller contact; no replacement or volume reattachment starts before fencing and exclusive-writer proof      |
 | Capacity                     | Six guests can restore concurrently within the same limits; exhausted or preparing capacity returns a truthful error                                           |
 
 Measure snapshot-save time separately. Full memory writes can make sleep slower than resume. Report the time until
