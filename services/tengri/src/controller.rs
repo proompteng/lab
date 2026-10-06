@@ -726,16 +726,20 @@ fn finalizers_without_tengri(microvm: &MicroVM) -> Vec<String> {
 fn sleeping_status(microvm: &MicroVM, idle: bool, now: DateTime<Utc>) -> MicroVMStatus {
     let reason = if idle { "IdleTimeout" } else { "Requested" };
     let message = if idle {
-        "Agent slept after 60 minutes without authenticated activity"
+        format!(
+            "Agent slept after {} minutes without authenticated activity; guest RAM is released",
+            microvm.spec.power.idle_timeout_minutes
+        )
     } else {
-        "Agent is sleeping; persistent home and workspace are retained"
+        "Agent is sleeping; guest RAM is released and the persistent workspace is retained"
+            .to_owned()
     };
     MicroVMStatus {
         phase: MicroVMPhase::Sleeping,
         pvc_name: Some(pvc_name(microvm)),
         message: Some(message.to_owned()),
         last_activity_at: last_activity_at(microvm),
-        conditions: vec![condition(microvm, "Ready", "False", reason, message, now)],
+        conditions: vec![condition(microvm, "Ready", "False", reason, &message, now)],
         observed_generation: microvm.meta().generation.unwrap_or_default(),
         ..MicroVMStatus::default()
     }
@@ -1353,6 +1357,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "a".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
                 expires_at: (now + chrono::Duration::hours(4)).to_rfc3339(),

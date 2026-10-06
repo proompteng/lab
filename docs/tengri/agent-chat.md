@@ -97,6 +97,12 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
   prior snapshot for the same thread and turn.
 - A resolved approval removes the matching pending approval card. The UI presents only the decisions advertised by the
   request, including command-policy and network-policy amendments when supplied.
+- Codex's empty-form MCP tool confirmations use the same approval card, showing the requested tool and arguments.
+  Oversized confirmations retain bounded display and scope metadata and explicitly report omitted arguments.
+  Approve once allows that call; advertised session approval remembers the tool in the current session. Deny declines
+  the call, and Stop interrupts the turn and invalidates its pending controls. Read-only tools retain Codex's normal
+  approval behavior. Input forms and URL/access elicitation are not interpreted as tool approvals: the desktop reports
+  the unsupported request and cancels it without attributing a decision to the user.
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
   outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the
