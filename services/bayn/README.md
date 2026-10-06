@@ -412,6 +412,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   return their pool slots. The integration regression cancels two queued writers and verifies that every pool slot
   remains usable; proving only one subsequent query misses a one-slot leak.
   Pool maintenance and connection deadlines use the live clock, so replay time jumps do not drive transport timers.
+- Authority transition timestamps retain PostgreSQL microsecond precision as UTC strings through SQL comparisons and
+  writes. Converting the transition cut through JavaScript `Date` can place it before a fresh reconciliation within the
+  same millisecond and leave recovery restricted. Public authority observations keep their canonical millisecond format.
 - The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
   with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
   transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
