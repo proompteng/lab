@@ -15,8 +15,8 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      bayn: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.bayn || steps.filter.outputs.bayn }}
-      image: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.image || steps.filter.outputs.image }}
+      bayn: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.bayn || fromJSON(steps.filter.outputs.affected).bayn }}
+      image: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.image || fromJSON(steps.filter.outputs.affected).image }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -25,76 +25,75 @@ jobs:
       - name: Detect Bayn release inputs
         id: filter
         if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          bayn=false
-          image=false
-          while IFS= read -r path; do
-            case "${path}" in
-              services/bayn/* | \
-              services/dorvud/* | \
-              packages/scripts/src/bayn/* | \
-              packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts | \
-              argocd/applications/bayn/* | \
-              argocd/applications/torghut/clickhouse/* | \
-              argocd/applicationsets/product.yaml | \
-              nix/images/bayn.nix | \
-              nix/images/bayn-runtime-root.nix | \
-              nix/images/bun-workspace-service.nix | \
-              nix/images/bun-workspace-deps-source.nix | \
-              nix/images/bun-workspace-deps-source.test.sh | \
-              nix/images/prune-bun-dependency-metadata.sh | \
-              nix/packages.nix | \
-              nix/cache-push.sh | \
-              nix/ci-nix-oci-summary.sh | \
-              nix/ci-run-timed.sh | \
-              nix/oci-inspect-archive.sh | \
-              nix/oci-push.sh | \
-              nix/oci-release-contract.sh | \
-              nix/verify-bayn-image-command.sh | \
-              nix/verify-bayn-image-command.test.sh | \
-              flake.nix | flake.lock | bun.lock | package.json | */package.json | \
-              .npmrc | bunfig.toml | patches/* | tsconfig.base.json | \
-              .github/actions/setup-nix-toolchain/* | \
-              .github/workflows/bayn-*.yml | \
-              .github/workflows/common-monorepo.yml | \
-              .github/workflows/nix-oci-build-common.yml)
-                bayn=true
-                ;;
-            esac
-            case "${path}" in
-              services/bayn/* | \
-              nix/images/bayn.nix | \
-              nix/images/bayn-runtime-root.nix | \
-              nix/images/bun-workspace-service.nix | \
-              nix/images/bun-workspace-deps-source.nix | \
-              nix/packages.nix | \
-              nix/images/prune-bun-dependency-metadata.sh | \
-              nix/cache-push.sh | \
-              nix/ci-nix-oci-summary.sh | \
-              nix/ci-run-timed.sh | \
-              nix/oci-inspect-archive.sh | \
-              nix/oci-push.sh | \
-              nix/verify-bayn-image-command.sh | \
-              nix/verify-bayn-image-command.test.sh | \
-              flake.nix | flake.lock | bun.lock | package.json | */package.json | \
-              .npmrc | bunfig.toml | patches/* | tsconfig.base.json)
-                image=true
-                ;;
-              .github/actions/setup-nix-toolchain/* | \
-              .github/workflows/bayn-*.yml | \
-              .github/workflows/nix-oci-build-common.yml)
-                image=true
-                ;;
-            esac
-          done < <(git diff --no-renames --name-only "${BASE_SHA}...${HEAD_SHA}")
-          {
-            echo "bayn=${bayn}"
-            echo "image=${image}"
-          } >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/affected-inputs
+        with:
+          workspaces: |
+            bayn: ['', 'services/bayn', 'packages/scripts']
+            image: ['', 'services/bayn']
+          filters: |
+            bayn:
+              - 'services/bayn/**'
+              - 'services/dorvud/**'
+              - 'packages/scripts/src/bayn/**'
+              - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
+              - 'argocd/applications/bayn/**'
+              - 'argocd/applications/torghut/clickhouse/**'
+              - 'argocd/applicationsets/product.yaml'
+              - 'nix/images/bayn.nix'
+              - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/images/bun-workspace-deps-source.test.sh'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'nix/packages.nix'
+              - 'nix/cache-push.sh'
+              - 'nix/ci-nix-oci-summary.sh'
+              - 'nix/ci-run-timed.sh'
+              - 'nix/oci-inspect-archive.sh'
+              - 'nix/oci-push.sh'
+              - 'nix/oci-release-contract.sh'
+              - 'nix/verify-bayn-image-command.sh'
+              - 'nix/verify-bayn-image-command.test.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - '*/package.json'
+              - '.npmrc'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - 'tsconfig.base.json'
+              - '.github/actions/setup-nix-toolchain/**'
+              - '.github/workflows/bayn-*.yml'
+              - '.github/workflows/common-monorepo.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
+            image:
+              - 'services/bayn/**'
+              - 'nix/images/bayn.nix'
+              - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/images/bun-workspace-deps-source.nix'
+              - 'nix/packages.nix'
+              - 'nix/images/prune-bun-dependency-metadata.sh'
+              - 'nix/cache-push.sh'
+              - 'nix/ci-nix-oci-summary.sh'
+              - 'nix/ci-run-timed.sh'
+              - 'nix/oci-inspect-archive.sh'
+              - 'nix/oci-push.sh'
+              - 'nix/verify-bayn-image-command.sh'
+              - 'nix/verify-bayn-image-command.test.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - '*/package.json'
+              - '.npmrc'
+              - 'bunfig.toml'
+              - 'patches/**'
+              - 'tsconfig.base.json'
+              - '.github/actions/setup-nix-toolchain/**'
+              - '.github/workflows/bayn-*.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
 
       - name: Select all checks for manual validation
         id: manual
