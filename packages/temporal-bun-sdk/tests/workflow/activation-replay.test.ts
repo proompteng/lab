@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Fiber, Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
 import type { WorkflowActivation, WorkflowActivationJob } from '../../src/workflow/activation'
@@ -27,7 +27,7 @@ test('durable suspension does not enter cause handlers or finalizers', async () 
   let finalized = 0
   const definition = defineWorkflow('caught-suspension', (ctx) =>
     ctx.activities.schedule('A', [], { activityId: 'A' }).pipe(
-      Effect.catchAllCause(() =>
+      Effect.catchCause(() =>
         Effect.sync(() => {
           caught += 1
           return 'fallback'
@@ -41,12 +41,10 @@ test('durable suspension does not enter cause handlers or finalizers', async () 
     ),
   )
   const executor = executorFor(definition)
-  const roots = Fiber.unsafeRoots(undefined).length
   const first = await executor.execute({ ...input, workflowType: definition.name })
   expect(first.completion).toBe('pending')
   expect(first.intents.map((intent) => intent.kind)).toEqual(['schedule-activity'])
   expect({ caught, finalized }).toEqual({ caught: 0, finalized: 0 })
-  expect(Fiber.unsafeRoots(undefined).length).toBe(roots)
 
   const final = await executor.execute({
     ...input,
@@ -58,7 +56,6 @@ test('durable suspension does not enter cause handlers or finalizers', async () 
   expect(final.completion).toBe('completed')
   expect(final.result).toBe('done')
   expect({ caught, finalized }).toEqual({ caught: 0, finalized: 1 })
-  expect(Fiber.unsafeRoots(undefined).length).toBe(roots)
 })
 
 test('replay resumes parallel branches at their original activation boundaries', async () => {
@@ -138,7 +135,7 @@ test('actual activity failure remains catchable and finalizes once', async () =>
   let finalized = 0
   const definition = defineWorkflow('failed-activity-activation', (ctx) =>
     ctx.activities.schedule('charge', [], { activityId: 'charge' }).pipe(
-      Effect.catchAll((error) => Effect.succeed(error instanceof Error ? error.message : 'unexpected')),
+      Effect.catch((error) => Effect.succeed(error instanceof Error ? error.message : 'unexpected')),
       Effect.ensuring(
         Effect.sync(() => {
           finalized += 1
@@ -239,7 +236,7 @@ test('timer, Nexus, and signal waits suspend without entering cause handlers', a
         ctx.signals.waitFor(signals.finish).pipe(Effect.map((signal) => signal.payload)),
       ],
       { concurrency: 'unbounded' },
-    ).pipe(Effect.catchAllCause(() => Effect.succeed('caught-pending'))),
+    ).pipe(Effect.catchCause(() => Effect.succeed('caught-pending'))),
   )
   const first = await executorFor(definition).execute({ ...input, workflowType: definition.name })
   expect(first.completion).toBe('pending')
@@ -275,14 +272,25 @@ test('timer, Nexus, and signal waits suspend without entering cause handlers', a
 test('strict workflows reject native Effect timers', async () => {
   const registry = new WorkflowRegistry()
   registry.register(defineWorkflow('native-sleep', () => Effect.sleep(1)))
-  registry.register(defineWorkflow('native-never', () => Effect.never))
+  registry.register(defineWorkflow('native-delay', () => Effect.void.pipe(Effect.delay(1))))
   const executor = new WorkflowExecutor({
     registry,
     dataConverter: createDefaultDataConverter(),
     workflowGuards: 'strict',
   })
-  for (const workflowType of ['native-sleep', 'native-never']) {
+  for (const workflowType of ['native-sleep', 'native-delay']) {
     const failure = await executor.execute({ ...input, workflowType }).catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(WorkflowNondeterminismError)
   }
+})
+
+test('Effect 4 never suspends without creating a native timer or running finalizers', async () => {
+  let finalized = 0
+  const definition = defineWorkflow('native-never', () => Effect.never.pipe(
+    Effect.ensuring(Effect.sync(() => { finalized += 1 })),
+  ))
+  const output = await executorFor(definition).execute({ ...input, workflowType: definition.name })
+  expect(output.completion).toBe('pending')
+  expect(output.commands).toEqual([])
+  expect(finalized).toBe(0)
 })

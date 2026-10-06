@@ -853,6 +853,7 @@ export function ReadyDesktop({
                   instanceId={desktopWindow.id}
                   lifecycleDisabled={guestOperationActive}
                   onDelete={openDeleteConfirmation}
+                  onChanged={onChanged}
                   onSignOut={handleSignOut}
                   onSleep={handleSleep}
                   user={user}

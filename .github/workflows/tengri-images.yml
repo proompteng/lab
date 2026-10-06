@@ -10,8 +10,6 @@ on:
       - 'argocd/applications/tengri/crd.yaml'
       - 'packages/scripts/src/tengri/**'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/package.json'
-      - 'bun.lock'
   push:
     branches:
       - main
@@ -23,8 +21,6 @@ on:
       - 'argocd/applications/tengri/crd.yaml'
       - 'packages/scripts/src/tengri/**'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/package.json'
-      - 'bun.lock'
   workflow_dispatch:
 
 concurrency:
@@ -103,6 +99,7 @@ jobs:
           set -euo pipefail
           bash -n bootstrap-codex.sh
           bash -n bootstrap-toolchain.sh
+          bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
           bash -n validate-rootfs.sh validate-rootfs.test.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest

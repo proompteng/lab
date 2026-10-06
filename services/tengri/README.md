@@ -158,6 +158,21 @@ agent. The legacy four-hour `spec.expiresAt` field remains valid for old CRs but
 new agents leave it empty and the gRPC `Agent.expiresAt` field is empty for retained workspaces. Idle sleep still
 deletes only the guest Pod and preserves the workspace for resume.
 
+System Settings → Lifecycle controls automatic sleep and its idle timeout. The controller stores the timeout in
+`spec.power.idleTimeoutMinutes`, defaults it to 60 minutes, and accepts whole minutes from 0 through 1440.
+Zero disables automatic sleep. Manual sleep always releases guest RAM and retains the workspace. Changing the timeout
+starts a new idle interval. Authenticated activity extends that interval by the selected timeout.
+
+`UpdatePowerSettings` uses the same signed, owner-scoped gRPC transport as other lifecycle requests. Its timeout must
+be explicitly present, including zero. An old controller response without power settings fails visibly in the new
+BFF. Deploy the controller and web changes together.
+
+Resume waits for MicroVM readiness watch events. Guest startup and readiness probes run every second, preserving
+the 35-minute cold-install startup allowance and 15-second readiness failure window. These changes remove polling
+delays and repeated installers. RAM-releasing resume still creates a new Kata guest and does not meet a subsecond
+target. The [pinned runtime-rs Firecracker driver](https://github.com/kata-containers/kata-containers/blob/894e1956bb340752b30f7ad49879972234a0098c/src/runtime-rs/crates/hypervisor/src/firecracker/inner_hypervisor.rs)
+has no implemented pause, save, or resume operation.
+
 Release changes preserve a running guest's image and processes. When the configured Nanoagent digest differs, the
 controller reports it as `Agent.pendingImage` while the owned guest is running. It adopts the digest only after the
 guest has been safely slept or there is no running owned guest, then creates the next Pod from the configured image.

@@ -1,5 +1,5 @@
 import { Code, ConnectError } from '@connectrpc/connect'
-import { Effect } from 'effect'
+import { Effect, Random } from 'effect'
 import * as Duration from 'effect/Duration'
 import type { Effect as EffectType } from 'effect/Effect'
 import * as Schedule from 'effect/Schedule'
@@ -47,8 +47,8 @@ const unwrapRetryError = (error: unknown): unknown => {
     if (error instanceof Error && error.name === 'TemporalTlsHandshakeError') {
       return error
     }
-    // Effect.tryPromise failures arrive as UnknownException; surface the underlying cause when present.
-    if (candidate._tag === 'UnknownException') {
+    // Effect.tryPromise failures arrive as UnknownError; surface the underlying cause when present.
+    if (candidate._tag === 'UnknownError') {
       return candidate.cause ?? candidate.error ?? error
     }
     if ('cause' in candidate && candidate.cause) {
@@ -90,14 +90,16 @@ const shouldRetryError = (policy: TemporalRpcRetryPolicy) => {
 }
 
 const makeRetrySchedule = (policy: TemporalRpcRetryPolicy): Schedule.Schedule<Duration.Duration, unknown, never> => {
-  const backoff = Schedule.exponential(Duration.millis(policy.initialDelayMs), policy.backoffCoefficient)
-  const capped = Schedule.delayed(backoff, (delay) => Duration.min(delay, Duration.millis(policy.maxDelayMs)))
   const jitter = clampJitter(policy.jitterFactor)
-  const jittered = jitter === 0 ? capped : Schedule.jitteredWith({ min: 1 - jitter, max: 1 + jitter })(capped)
-  const attempts = Math.max(0, Math.trunc(policy.maxAttempts) - 1)
-  const limited = Schedule.intersect(Schedule.recurs(attempts))(jittered)
-  const normalized = Schedule.map(limited, ([delay]) => delay)
-  return Schedule.whileInput<unknown>(shouldRetryError(policy))(normalized)
+  return Schedule.exponential(Duration.millis(policy.initialDelayMs), policy.backoffCoefficient).pipe(
+    Schedule.modifyDelay(({ duration }) => {
+      const capped = Math.min(Duration.toMillis(duration), policy.maxDelayMs)
+      return jitter === 0
+        ? Effect.succeed(Duration.millis(capped))
+        : Effect.map(Random.next, (random) => Duration.millis(capped * (1 - jitter + 2 * jitter * random)))
+    }),
+    Schedule.upTo({ times: Math.max(0, Math.trunc(policy.maxAttempts) - 1) }),
+  )
 }
 
 export const withTemporalRetry = <A, E>(
@@ -105,5 +107,5 @@ export const withTemporalRetry = <A, E>(
   policy: TemporalRpcRetryPolicy = defaultRetryPolicy,
 ): EffectType<A, E, never> => {
   const schedule = makeRetrySchedule(policy)
-  return Effect.retry(effect as Effect.Effect<A, E, never>, schedule) as EffectType<A, E, never>
+  return Effect.retry(effect, { schedule, while: shouldRetryError(policy) })
 }

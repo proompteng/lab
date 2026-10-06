@@ -9,7 +9,7 @@ import { decodeJevProtocol } from '../jev/protocol'
 import { decodeJevPortfolio, JevPurpose } from '../jev/portfolio'
 import {
   compileJevEntry,
-  evaluateJevObservation,
+  evaluateJevObservationFromSnapshot,
   JevAwaitingEvidence,
   JevAwaitingFreshWindow,
   jevObservationQuery,
@@ -868,23 +868,25 @@ const compileObserveStrategyDecision = <R>(
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt),
     )
-    const snapshot = yield* loadIntradaySnapshot(marketData, query).pipe(
-      Effect.mapError((cause) =>
-        classifyIntradayEntrySnapshotFailure(
-          cause,
-          initialFacts.evaluatedAt,
-          input.cycle.window.submissionCutoffAt,
-          query,
+    const { snapshot, evidence } = yield* evaluateJevObservationFromSnapshot(
+      {
+        cycleId: input.cycle.identity.cycleId,
+        authorityGenerationHash: input.authorityGenerationHash,
+        protocol,
+        portfolio,
+      },
+      query.rangeEndAt,
+      Effect.suspend(() => loadIntradaySnapshot(marketData, query)).pipe(
+        Effect.mapError((cause) =>
+          classifyIntradayEntrySnapshotFailure(
+            cause,
+            initialFacts.evaluatedAt,
+            input.cycle.window.submissionCutoffAt,
+            query,
+          ),
         ),
       ),
     )
-    const evidence = yield* evaluateJevObservation({
-      cycleId: input.cycle.identity.cycleId,
-      authorityGenerationHash: input.authorityGenerationHash,
-      protocol,
-      portfolio,
-      snapshot,
-    })
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
     if (
       decision.selectedSymbols.length === 0 &&

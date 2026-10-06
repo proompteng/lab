@@ -6,7 +6,7 @@ import { defineWorkflowSignals } from '../../../src/workflow/inbound'
 export const caughtActivityWorkflow = defineWorkflow('integrationCaughtActivityWorkflow', ({ activities }) =>
   activities
     .schedule('integrationEchoActivity', ['activity-result'])
-    .pipe(Effect.catchAllCause(() => Effect.succeed('caught-pending'))),
+    .pipe(Effect.catchCause(() => Effect.succeed('caught-pending'))),
 )
 
 export const parallelActivityWorkflow = defineWorkflow('integrationParallelActivityWorkflow', ({ activities }) =>
