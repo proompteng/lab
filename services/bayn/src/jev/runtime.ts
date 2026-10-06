@@ -10,6 +10,7 @@ import {
 } from '../cycle/runner/readiness'
 import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type IntradayMarketDataService } from '../market-data'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
+import type { OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../reconciliation'
 import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -158,7 +159,13 @@ export const jevPricingQuery = (
   })
 }
 
-export const evaluateJevObservation = (input: Parameters<typeof recordJevObservation>[0]) =>
+// Admit the durable decision window before materializing expensive signal history.
+// The supplied effect stays lazy; position protection is evaluated by the caller first.
+const evaluateJevObservationFromSnapshot = (
+  input: Omit<Parameters<typeof recordJevObservation>[0], 'snapshot'>,
+  rangeEndAt: string,
+  loadSnapshot: Effect.Effect<Parameters<typeof recordJevObservation>[0]['snapshot'], OperationalError>,
+) =>
   Effect.gen(function* () {
     if (!(yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)))
       return yield* new JevAwaitingEvidence({
@@ -169,20 +176,23 @@ export const evaluateJevObservation = (input: Parameters<typeof recordJevObserva
       cycleId: input.cycleId,
       purpose: input.portfolio.purpose,
     })
-    if (Option.isSome(latest) && latest.value >= input.snapshot.manifest.rangeEndAt)
+    if (Option.isSome(latest) && latest.value >= rangeEndAt)
       return yield* new JevAwaitingFreshWindow({
         message: 'Jev already committed an observation for this completed signal window',
         availableAt: utcInstantFromEpochMillis(
           Date.parse(latest.value) + 60_000 + input.protocol.decisionDelaySeconds * 1000,
         ),
       })
-    const staleSymbols = jevStalePricingSymbols(input.snapshot)
+    const snapshot = yield* loadSnapshot
+    if (snapshot.manifest.rangeEndAt !== rangeEndAt)
+      return yield* new JevContractError({ message: 'Jev signal snapshot differs from its admitted window' })
+    const staleSymbols = jevStalePricingSymbols(snapshot)
     if (staleSymbols.length > 0)
       return yield* new JevAwaitingEvidence({
         message: `Jev is waiting for fresh signal pricing for ${staleSymbols.join(', ')}`,
         readiness: DecisionReadinessReason.SnapshotStale,
       })
-    const observation = yield* recordJevObservation(input)
+    const observation = yield* recordJevObservation({ ...input, snapshot })
     const batchPlan = yield* Effect.fromResult(
       makeJevTradingSignalBatch({
         observation: observation.payload,
@@ -211,6 +221,9 @@ export const evaluateJevObservation = (input: Parameters<typeof recordJevObserva
       })
     return { observation: observation.payload, batchPlan: saved.plan, batchResult: saved.result, decidedAt }
   })
+
+export const evaluateJevObservation = (input: Parameters<typeof recordJevObservation>[0]) =>
+  evaluateJevObservationFromSnapshot(input, input.snapshot.manifest.rangeEndAt, Effect.succeed(input.snapshot))
 
 export const compileJevEntry = (
   decision: JevEntryTarget,
@@ -331,14 +344,16 @@ export const evaluateJevPositionManagement = (input: {
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, input.protocol, input.calendar, observedAt, [position.symbol]),
     )
-    const snapshot = yield* loadIntradaySnapshot(input.marketData, query)
-    const inference = yield* evaluateJevObservation({
-      cycleId: input.cycle.identity.cycleId,
-      authorityGenerationHash: input.authorityGenerationHash,
-      protocol: input.protocol,
-      portfolio,
-      snapshot,
-    })
+    const inference = yield* evaluateJevObservationFromSnapshot(
+      {
+        cycleId: input.cycle.identity.cycleId,
+        authorityGenerationHash: input.authorityGenerationHash,
+        protocol: input.protocol,
+        portfolio,
+      },
+      query.rangeEndAt,
+      Effect.suspend(() => loadIntradaySnapshot(input.marketData, query)),
+    )
     if (inference.decidedAt >= input.cycle.window.submissionCutoffAt) return undefined
     const decision = yield* Effect.fromResult(decideJevManagement(inference))
     return decision.action === JevManagementAction.Exit
