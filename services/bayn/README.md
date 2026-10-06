@@ -23,6 +23,12 @@ engineering improvement cannot complete economic qualification. Freeze any candi
 execution assumptions before its next untouched evaluation; retain failed and inconclusive attempts. Preserve the
 current broker, capital, and risk limits throughout this work.
 
+The [retained session export](../../docs/bayn/study-evidence-export.md) supplies complete native Jev observations,
+plans and results for these diagnostics through a bounded read-only command. It retains exclusions, abstentions,
+pending results and no-batch cycles; its receipt explicitly remains unqualified.
+The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
+assumptions to primary research and define which hypotheses still require an untouched economic experiment.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
@@ -170,6 +176,11 @@ version-three batch must finish within its ten-second evidence lifetime. After t
 the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
 quote deadline for version-three decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
+
+After selecting a candidate, entry planning reapplies the same spread and positive displayed-size rules to its
+refreshed execution quote. A quote that widened or lost either side's displayed liquidity leaves the entry waiting
+for fresh evidence before an intent is built. The accepted model evidence remains immutable; quote freshness,
+quantity caps and final submission deadlines still apply. This entry check never suppresses a position-reducing exit.
 
 Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
 headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
@@ -562,6 +573,12 @@ Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has
 `inputMicrosPerMillionTokens` / `outputMicrosPerMillionTokens` as unsigned decimal integer strings. Supply the tariff
 applicable to the requested period; a list price is an estimate, not proof of a negotiated rate or an invoice. Model
 intervals may not overlap. Missing model/date coverage is unpriced, not free. An explicit zero output rate is valid.
+
+For non-200 Jev responses, the client reads at most 8 KiB within the original inference deadline and retains only
+validated pinned-model and input/output usage fields. The failed receipt's response hash binds that exact metering
+projection, not the complete HTTP error body. Error text, echoed prompts, credentials and arbitrary fields are not
+retained. Missing, malformed, oversized or interrupted bodies remain unknown; status failures never authorize a
+decision or trigger an inference retry. Previously saved receipts and their missing usage remain unchanged.
 
 The report verifies immutable request, receipt, rejected-response, and resolution hashes. A rejected or abandoned
 decision can still carry billable usage. A claim without retained usage stays unknown: it does not prove either that
