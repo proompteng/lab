@@ -29,6 +29,7 @@ spire-agent --version
 for command in brew tree-sitter gh fd fzf tmux make cmake pkg-config; do
   command -v "$command"
 done
+git -C "$HOME/.linuxbrew/Homebrew" fsck --no-reflogs
 nvim --headless \
   '+lua assert(require("astronvim").version() == "v6.1.0"); for name,plugin in pairs(require("lazy.core.config").plugins) do assert(plugin._.installed,name .. " is missing") end' \
   '+if v:errmsg != "" | cquit 1 | endif' +qa

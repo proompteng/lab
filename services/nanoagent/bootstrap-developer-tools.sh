@@ -18,6 +18,14 @@ seed_archive() {
   temporary_directory="$(mktemp -d "$staging_root/.developer-seed.XXXXXX")"
   tar --extract --xz --file "$archive" --directory "$temporary_directory" \
     --no-same-owner --no-same-permissions "${exclusions[@]}"
+  if [[ "$destination" == "$HOME" && -d "$temporary_directory/.linuxbrew/Homebrew/.git" ]]; then
+    # Publish a new manager's complete Git metadata atomically. A killed file
+    # copy must not leave partial metadata that a retry treats as a user repo.
+    mkdir -p "$HOME/.linuxbrew/Homebrew"
+    mv --no-clobber --no-target-directory "$temporary_directory/.linuxbrew/Homebrew/.git" \
+      "$HOME/.linuxbrew/Homebrew/.git"
+    rm -rf -- "$temporary_directory/.linuxbrew/Homebrew/.git"
+  fi
   # Link complete staged files atomically, preserving existing files and directory
   # metadata. A killed copy cannot leave a partially written executable in HOME.
   cp -a --link --no-clobber --no-preserve=mode,ownership,timestamps \
