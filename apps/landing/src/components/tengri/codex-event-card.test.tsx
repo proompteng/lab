@@ -6,6 +6,32 @@ import { CodexLogin } from './agent-chat'
 import { CodexEventCard } from './codex-event-card'
 
 describe('Codex event rows', () => {
+  test('recognizes Mermaid fences while retaining source for server rendering and loading', () => {
+    const html = renderToString(
+      createElement(CodexEventCard, {
+        kind: 'assistant-text',
+        text: '```mermaid\nflowchart LR\nA --> B\n```',
+      }),
+    )
+    expect(html).toContain('Rendering diagram…')
+    expect(html).toContain('language-mermaid')
+    expect(html).toContain('A --&gt; B')
+    expect(html).not.toContain('aria-label="Mermaid diagram"')
+  })
+
+  test('preserves ordinary code, inline code and escaped markup', () => {
+    const html = renderToString(
+      createElement(CodexEventCard, {
+        kind: 'assistant-text',
+        text: '`mermaid`\n\n```sh\necho hello\n```\n\n```\nflowchart LR\nA --> B\n```\n\n<script>alert(1)</script>',
+      }),
+    )
+    expect(html).toContain('language-sh')
+    expect(html.match(/aria-label="Copy code block"/g)).toHaveLength(2)
+    expect(html).not.toContain('Rendering diagram')
+    expect(html).not.toContain('<script>')
+  })
+
   test('describes searches and other tool calls as activity', () => {
     for (const text of ['Web search: Codex app screenshots', 'MCP tool: list_resources', 'View image: preview.png']) {
       const html = renderToString(createElement(CodexEventCard, { kind: 'tool-call', text }))
