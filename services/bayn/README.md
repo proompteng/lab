@@ -85,6 +85,9 @@ allowed capture start and invocation abort bound before issuing requests. A lost
 deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
 its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
 timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
+Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
+quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
+Defects, interruption, and lost or expired capture tickets retain the conservative reservation.
 Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
