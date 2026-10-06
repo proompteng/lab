@@ -1,119 +1,90 @@
-# Firecracker 1 GiB rootfs preparation
+# Ryzen fresh-chain Firecracker canary
 
-This prepares Kata r6 for Nanoagent PR14781's image-time developer tools. It does not authorize host maintenance.
-Keep the larger Nanoagent image unpublished until every eligible Firecracker host and its existing cache passes
-the 1 GiB gate. Do not reset a user VM or alter its home/PVC to test this release.
+This replaces the previous mass-cache migration proposal. Do not execute the earlier whole-cache backup/growth
+steps. No host maintenance or canary is authorized by this preparation.
 
-## Changes and artifact gates
+## Boundary and prerequisites
 
-The extension changes only the root scratch size/explicit ext4 geometry and its r6 version. Runtime handlers,
-security, networking, identity, guest memory, and the persistent 16 GiB home remain configured as before.
-Installer inputs preserve the currently installed Talos 1.14.0 and official extension digests from the locked
-Talos 1.14 catalog. Existing installed receipts and the active factory catalog remain unchanged in this preparation.
+Nanoagent PR14781 packages the tested compressed tools in a single filesystem layer starting from scratch.
+Containerd 2.3.4 applies the first OCI layer with an empty parent and copies the persistent scratch. Its existing
+512 MiB parent chains remain usable and are not selected for this new first layer. Later snapshots copy their own
+parent, so old and new root sizes can coexist in the same snapshotter.
 
-PR builds produce native AMD64/ARM64 OCI archives with build-time template checks, patched Kata tests and an offline
-512 MiB cached-parent growth/restore test. These archives are unsigned review artifacts. Main-only publication
-produces signed r6 extension/installers; it does not install them on a host. Before any maintenance approval,
-record that exact main head, workflow/run, extension index and both platform digests, and all three signed installer
-digests. Retain the current r5 factory installer indexes/platform manifests from
-[`../../releases/talos-v1.14.0.json`](../../releases/talos-v1.14.0.json) and download recovery artifacts off-node.
-Use the current [same-schematic replacement procedure](../../releases/README.md#same-schematic-artifact-replacement).
-The legacy Talos 1.13.9 receipts are not rollback targets for these hosts.
+Keep the existing root_path, snapshot metadata, numeric parent files and user-home PVCs intact. Do not rename,
+purge, grow or reinitialize existing snapshots, restore old metadata over normal containerd updates, or introduce
+a second snapshotter/cache directory. Unreferenced images/snapshots may retire through ordinary GC; no expiry time
+or forced cleanup is promised.
 
-## Read-only inventory, 2026-10-06 02:10–02:27 UTC
+The first canary targets only Ryzen: Kubernetes node talos-192-168-1-194, Talos address 100.100.244.141, AMD64.
+Turin and Altra are outside this approval. No existing VM is stopped, reset or used as a test identity.
 
-All three Kubernetes nodes report Ready, Talos 1.14.0, containerd 2.3.4, and ready Firecracker/persistent-block labels.
-Running Pod counts include system workloads and are a maintenance impact snapshot, not a prediction of evictions.
+The current runtime has recreate_scratch=false and therefore retains a grown persistent scratch even with its
+installed r5 template. The smallest canary changes only that persistent scratch, not the Talos installer/template.
+PR14782's signed r6 extension remains preparation for a separately approved durable template rollout; it is not
+a prerequisite for this scratch-only experiment. Do not change OS/Kubernetes versions, runtime handlers, security,
+networking, identity, memory or PVC defaults.
 
-| Host  | Node                | Talos API       | Architecture | Running Pods | Allocatable ephemeral storage |
-| ----- | ------------------- | --------------- | ------------ | -----------: | ----------------------------: |
-| Ryzen | talos-192-168-1-194 | 100.100.244.141 | amd64        |           73 |            179542345021 bytes |
-| Turin | turin               | 100.100.244.190 | amd64        |          248 |           3682977987016 bytes |
-| Altra | talos-192-168-1-85  | 100.100.244.142 | arm64        |          149 |            268974865987 bytes |
+Required before execution:
 
-No running kata-fc Pod appeared in this inventory. The Tengri controller runs on Turin. Several PDBs, including
-Tengri and singleton database primaries, permit zero disruptions. Ceph reports Ready/HEALTH_WARN; classify its
-specific warning and recovery safety at preflight. Do not infer free host disk space from allocatable storage.
+- Exact-head native image checks and one-layer/configuration/metadata checks pass on AMD64 and ARM64.
+- The AMD64 review artifact's SHA256SUMS, source_head, build_revision, image ID and sole first diff ID are verified.
+  PR CI retains the tested Docker archive and receipt; these are unsigned review artifacts, not deployment receipts.
+- An operator supplies reviewed access that survives Ryzen CRI/containerd shutdown, the existing Talos credentials,
+  an off-node scratch-backup destination and recovery access. Agents Shell and CSI Pods on the paused CRI are
+  insufficient. These access/backup inputs are currently missing.
+- Refresh node, workload, PDB, Ceph and Firecracker inventory. In the 2026-10-06 04:08 UTC metadata inventory,
+  Ryzen had 73 Running Pods, no running Firecracker Pod, and zero-disruption PDBs hermes/hermes and restate/restate.
+  Its drain affects Hermes, Restate member 2, Bayn ledger/database replica, Kafka brokers, Temporal replicas,
+  Ceph monitor/MDS and Argo controllers. Inspect the current selectors/volumes and name any permitted interruption.
+  The earlier Ceph HEALTH_WARN must be classified by the storage operator; do not assume safe recovery.
+- Confirm both peer nodes maintain etcd/storage availability and no Omni operation is active. Save normal peer
+  etcd/recovery evidence. Do not read user-home contents. Exact downtime is not yet bounded; reserve an attended
+  window for the writer pause and workload recovery.
 
-Read-only inspection through the existing privileged CSI node Pods verified the following cache files and their
-host filesystem. No inspector was created and no privileges/configuration were changed. Each bundled and persistent
-scratch is 536870912 bytes, clean ext4 with 131072 4 KiB blocks, 32768 inodes and a 16 MiB journal. All numeric parent
-files are 512 MiB, UID/GID 0:0, mode 0644, single-linked; no unexpected parent filenames or attached blockfile loops
-were observed. These point-in-time checks must be repeated while writers are stopped before any migration.
+## Proposed single-host experiment — explicit approval required
 
-| Host  | Parent files | Allocated parent bytes | Cache backup minimum including scratch | Worst-case added allocation | Host available bytes |
-| ----- | -----------: | ---------------------: | -------------------------------------: | --------------------------: | -------------------: |
-| Ryzen |           61 |            32749600768 |                            33286995968 |        33285996544 (31 GiB) |          68217516032 |
-| Turin |          312 |           167515217920 |                           168054185984 |    168040595456 (156.5 GiB) |        3020151169024 |
-| Altra |            1 |              536875008 |                             1074008064 |          1073741824 (1 GiB) |         160086773760 |
+1. Publish only the verified AMD64 PR archive to the existing nanoagent repository under
+   canary-tengri-chain-<source-head>-amd64. Record its immutable manifest digest and verify the pulled config/first
+   diff ID against the receipt. This preparation tag is excluded by the existing Kargo ^kargo-sha-[0-9a-f]{40}$
+   selection. Do not merge PR14781, publish a Kargo alias, or change the normal Tengri image.
+2. Cordon and drain only talos-192-168-1-194 under its existing maintenance procedure. Respect PDBs; any exceptions
+   for hermes/hermes or restate/restate, emptyDir loss, checkpoint interruption or singleton downtime require named
+   approval. No blanket force drain or existing VM termination. Abort if any Firecracker VM is active.
+3. Pause Ryzen kubelet/CRI writers through the reviewed maintenance channel. Verify scratch is not open for copying
+   and no relevant pull/unpack is active. Leave existing snapshots/metadata in place. Capture their IDs, sizes,
+   ownership/modes and filesystem UUIDs as evidence, plus normal namespace/snapshot records.
+4. Back up only /var/lib/containerd/io.containerd.snapshotter.v1.blockfile/scratch off-node, preserving its mode,
+   ownership and sparse layout. Record checksum, UUID, 512 MiB size and ext4 geometry; verify the copy and restoration
+   on a disposable copy. Allow at least 512 MiB for this backup, at worst another 512 MiB for scratch growth, plus
+   candidate image content, new snapshots and the disposable home PVC. Do not allocate the former 31 GiB parent
+   growth budget or copy the 61 old parent files: none is modified.
+5. With writers stopped, grow only that scratch: e2fsck -f -n, truncate -s 1073741824, resize2fs, then e2fsck -f -n.
+   Require 262144 blocks of 4096 bytes, clean ext4, preserved UUID/owner/mode and unchanged existing parent files.
+   Native scratch tests already cover growth and backup restoration. Do not format or shrink any filesystem.
+6. Resume the existing writers, keep Ryzen cordoned, and verify its current runtime, peers, storage and workload
+   recovery. No installer replacement or reboot is part of this first approval. Stop on a failed gate.
+7. Create one node-pinned disposable test Pod in kata, using the current Tengri kata-fc guest configuration and
+   the immutable candidate image, with one new labeled 16 GiB Block home PVC mounted by the existing home annotations.
+   Names: tengri-chain-<source-head-prefix> and tengri-chain-<source-head-prefix>-home. Override only the test command
+   to keep the guest available for its test driver; do not create a real account or MicroVM business resource.
+   Verify the actual guest root is 1 GiB and the first cached layer has the receipt's diff ID and no parent.
+   Execute the checked-in fresh-home test as UID1000 in an isolated guest network namespace using existing guest
+   administrator capabilities; do not apply network policy or change node/guest security configuration.
+   Record fresh/retained helper durations and fixture hashes. Recreate this owned Pod once with the same test PVC,
+   validate all five helpers and retained fixtures, and verify old 512 MiB chains still have their original IDs/sizes.
+8. Export receipts and results, delete only this run's Pod and newly created test PVC, recover the named workloads,
+   then uncordon Ryzen. Retain the scratch backup pending separately approved cleanup. Stop after this canary.
+   No Turin/Altra operation, cluster migration or global promotion follows automatically.
 
-Backup minima include allocated parent/scratch bytes and blockfile `metadata.db`, but exclude the matching CRI
-metadata store and manifests. Require an off-node backup destination: Ryzen's cache backup plus full growth alone
-would consume nearly all of its available space. Actual growth allocation depends on filesystem sparse/extent
-behavior; future cached layers add further allocation. The environment still has no Talos client/configuration
-or approved maintenance access that survives CRI shutdown. Before maintenance approval, the host operator must capture:
+## Failure and rollback
 
-- the installed extension version, bundled template size, and ext4 geometry;
-- `/var/lib/containerd/io.containerd.snapshotter.v1.blockfile/scratch`, `metadata.db`, and each regular numeric
-  file directly under `snapshots/`: byte size, allocated bytes, inode, ownership, mode, link count and filesystem UUID;
-- matching containerd namespace/snapshot records and all running sandboxes/tasks; mounted/loop-attached files;
-- free bytes/inodes on the host filesystem and backup destination, and the backup volume's location and restore access.
+Abort for unhealthy peers/storage, an active user VM, missing approved access, inadequate space, unexpected scratch
+size/type/link count/mount, failed backup proof/fsck, or failed runtime/canary/workload recovery. Keep the node cordoned
+and stop progression. While writers are paused, restore the saved scratch file at the same path if required; never
+truncate a grown ext4 back to 512 MiB. Withdraw/clean only owned canary resources. Leave existing snapshots and both
+snapshotter/CRI metadata stores intact; new 1 GiB parents can coexist with the old runtime. No complete-cache restore
+or factory/installer rollback is part of this experiment.
 
-The [containerd 2.3.4 implementation](https://github.com/containerd/containerd/blob/v2.3.4/plugins/snapshots/blockfile/blockfile.go)
-retains existing `scratch` when `recreate_scratch=false` and copies cached parent blockfiles for new snapshots.
-Changing only the template or enabling scratch recreation leaves cached parents at 512 MiB. Numeric snapshots are
-regular files, not `snapshots/<id>/fs`. Keep containerd metadata/IDs and its configured root path intact.
-
-## Proposed disruptive stages — separate approval required
-
-Use Ryzen, Turin, Altra order, one node at a time, following the current cluster runbook. Run the coordinator
-outside the target node; Turin hosts agents-shell, Tengri and CI infrastructure. Complete native CI before its phase.
-Reserve an operator-attended maintenance window; exact downtime cannot be bounded until backup throughput and
-workload recovery are measured. Singleton applications can be unavailable during drain and recovery. Never proceed to a second node before
-the first is accepted. Pause if either peer cannot maintain Kubernetes/etcd quorum.
-
-1. Verify signed candidate/recovery digests and current inventory. Confirm no Omni operation is active, then lock
-   `galactic` without changing desired Talos/Kubernetes versions. Save a peer etcd snapshot and private configuration/
-   workload/storage evidence. Transfer etcd leadership away from the target if needed. Verify PVC backup/recovery
-   availability using existing storage operations; do not read or change user-home contents.
-2. Cordon and drain only the selected node. Any PDB bypass, emptyDir loss, VM termination or checkpoint interruption
-   must be named in the approval. Do not blanket force drain. Wait for all Firecracker users and loop mounts to stop.
-3. Stage the exact signed Talos 1.14 r6 installer with `talosctl upgrade --drain=false --no-reboot --wait`, using the
-   verified target address and immutable candidate installer from the artifact gate. Require success before continuing.
-4. Stop the target's CRI/containerd and kubelet writers through existing approved host maintenance access. Verify they
-   remain stopped and that no relevant task, loop device, mount or open file references the blockfile cache. An access
-   method that survives CRI being stopped must be reviewed before this phase; a Kubernetes Pod on that CRI is insufficient.
-5. Back up the entire blockfile directory plus the matching CRI containerd metadata store and records to an off-node
-   location, preserving sparse files, IDs, ownership, permissions and hardlinks. Verify manifest/checksums and prove a
-   restoration on copies before modifying any original. Budget backup bytes from actual allocation, plus at worst
-   512 MiB additional allocation for each scratch/snapshot file and room for the candidate image layers. Abort on a
-   space shortfall, unexpected file size/type/link count, mounted file or fsck error.
-6. Grow only the inventoried unmounted ext4 scratch and numeric snapshot files currently at 536870912 bytes:
-   `e2fsck -f -n "$file"`, `truncate -s 1073741824 "$file"`, `resize2fs "$file"`, then `e2fsck -f -n "$file"`.
-   Verify 262144 blocks of 4096 bytes and preserved UUID/ownership/modes/content. Leave already validated 1 GiB files
-   alone. Do not format, shrink, delete, move, rename or hand-edit metadata. Old grown files can have 65536 inodes;
-   the new empty template has 32768. Containerd's cached usage accounting is approximate; compare actual allocation
-   during acceptance. Keep a per-file completion journal so any partial failure remains recoverable.
-7. Perform one controlled reboot. Keep the node cordoned. Verify r6 and both bundled/persistent scratch geometry,
-   all inventoried parent sizes, disks/identity/network, etcd, storage, GPU and all four Kata runtime canaries.
-   A separately approved disposable non-user Firecracker canary must exercise cached-parent extraction of an image
-   over 512 MiB, inspect its actual guest root capacity, and complete offline fresh-home/restart checks.
-8. Verify workload and PVC recovery, then uncordon the target and finish its acceptance before moving on. Preserve
-   the Omni lock until the direct replacements finish; unlock/converge under the existing runbook without changing
-   OS/Kubernetes or application desired versions.
-9. Only after all eligible hosts pass, coordinate PR14781's reviewed merge and ordinary Kargo promotion. Its exact
-   published digest, offline clean/existing-home/restart tests and real cold-start critical path must be verified in a
-   separately approved disposable test account/VM. Preparation does not authorize account/VM creation.
-
-## Recovery and rollback
-
-Stop at the first failing gate and leave the target cordoned. If any growth operation fails, keep writers stopped,
-restore the **complete paired** cache/CRI metadata backup at the same paths, verify checksums/fsck, and restore the
-old signed Talos 1.14 r5 installer using the existing recovery procedure. Never truncate a grown ext4 back to 512 MiB.
-Do not mix metadata from one checkpoint with blockfiles from another. Original user homes/PVCs remain outside this
-cache operation; loss of an unbacked ephemeral root or interrupted emptyDir workload is nevertheless a data risk.
-
-The r5 template can also coexist with already-grown cached files if needed for recovery. Do not claim complete
-rollback until a canary and workload recovery pass. Once the larger Nanoagent image is promoted, roll it back through
-the existing Kargo path before restoring a 512 MiB cache. Retain off-node backups and original installer receipts until
-post-rollout acceptance and a separately authorized retention cleanup.
+Normal Tengri scheduling currently lacks a root-capacity selector. One successful pinned canary therefore does not
+authorize global promotion. Any later durable template installation or additional host requires separate review
+and approval. The larger image remains out of ordinary Kargo discovery until eligible scheduling targets are ready.
