@@ -185,7 +185,7 @@ bash generate-proto.sh
 bash -n bootstrap-codex.sh
 bash -n bootstrap-toolchain.sh
 bash -n bootstrap-developer-tools.sh install-developer-tools.sh compact-developer-tools.sh test-developer-tools.sh developer-profile.sh
-bash -n validate-rootfs.sh validate-rootfs.test.sh measure-rootfs-size.sh
+bash -n validate-rootfs.sh validate-rootfs.test.sh
 # On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
 bash validate-rootfs.test.sh
 bash bootstrap-codex.sh --validate-manifest

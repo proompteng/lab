@@ -104,7 +104,7 @@ jobs:
           bash -n bootstrap-codex.sh
           bash -n bootstrap-toolchain.sh
           bash -n bootstrap-developer-tools.sh install-developer-tools.sh compact-developer-tools.sh test-developer-tools.sh developer-profile.sh
-          bash -n validate-rootfs.sh validate-rootfs.test.sh measure-rootfs-size.sh
+          bash -n validate-rootfs.sh validate-rootfs.test.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
           test -z "$(gofmt -l .)"
