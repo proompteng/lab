@@ -31,6 +31,8 @@ pub struct MicroVMSpec {
     pub image: String,
     pub architecture: MicroVMArchitecture,
     pub resources: MicroVMResources,
+    #[serde(default)]
+    pub power: MicroVMPowerSettings,
     pub created_at: String,
     pub idle_deadline: String,
     /// Legacy compatibility field. New retained agents leave this empty; it
@@ -43,6 +45,21 @@ pub struct MicroVMSpec {
 pub enum MicroVMDesiredState {
     Running,
     Sleeping,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MicroVMPowerSettings {
+    /// Zero disables automatic sleep. Manual sleep remains available.
+    pub idle_timeout_minutes: u32,
+}
+
+impl Default for MicroVMPowerSettings {
+    fn default() -> Self {
+        Self {
+            idle_timeout_minutes: IDLE_MINUTES as u32,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]

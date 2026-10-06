@@ -1,5 +1,14 @@
 import { Data } from 'effect'
 
+import type { ReconciliationStatus } from './execution/contracts'
+
+/** A completed reconciliation still has discrepancies; it is not a database or transport failure. */
+export class CapitalActivationReconciliationNotExact extends Data.TaggedError(
+  'CapitalActivationReconciliationNotExact',
+)<{
+  readonly status: Exclude<ReconciliationStatus, ReconciliationStatus.Exact>
+}> {}
+
 export type Component = 'config' | 'database' | 'http' | 'market-data' | 'strategy' | 'journal'
 
 export class OperationalError extends Data.TaggedError('OperationalError')<{

@@ -112,6 +112,7 @@ function guestActionAgentId(action: TengriAction) {
     case 'revoke-editor-sessions':
     case 'revoke-preview-session':
     case 'sleep-agent':
+    case 'update-power-settings':
       return null
     default:
       return action.agentId
