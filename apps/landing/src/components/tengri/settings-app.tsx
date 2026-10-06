@@ -7,6 +7,7 @@ import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/t
 
 import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
+import { PowerSettingsForm } from './power-settings-form'
 import { formatAgentDate, formatAgentResources, formatAgentUptime, shouldRefreshCodexAccount } from './settings-model'
 
 type BusyAction = 'delete' | 'sign-out' | 'sleep' | null
@@ -33,6 +34,7 @@ export function SettingsApp({
   instanceId,
   lifecycleDisabled,
   onDelete,
+  onChanged,
   onSignOut,
   onSleep,
   user,
@@ -44,6 +46,7 @@ export function SettingsApp({
   instanceId: string
   lifecycleDisabled: boolean
   onDelete: () => void
+  onChanged: () => Promise<void>
   onSignOut: () => void
   onSleep: () => void
   user: TengriUser
@@ -52,6 +55,7 @@ export function SettingsApp({
   const [accountRefreshing, setAccountRefreshing] = useState(false)
   const [now, setNow] = useState<number | null>(null)
   const [selectedSection, setSelectedSection] = useState<SettingsSectionId>('general')
+  const [powerSaving, setPowerSaving] = useState(false)
   const refreshAbortRef = useRef<AbortController | null>(null)
   const refreshGenerationRef = useRef(0)
   const sectionRefs = useRef<Record<SettingsSectionId, HTMLElement | null>>({
@@ -150,7 +154,7 @@ export function SettingsApp({
           ? currentAccountState.account.email || currentAccountState.account.plan || 'Connected'
           : 'Not connected'
   const busy = lifecycleBusy
-  const lifecycleBlocked = lifecycleBusy || accountRefreshing || lifecycleDisabled
+  const lifecycleBlocked = lifecycleBusy || accountRefreshing || lifecycleDisabled || powerSaving
   const hydrated = now !== null
   const agentHeadingId = `${instanceId}-settings-agent-heading`
   const generalHeadingId = `${instanceId}-settings-general-heading`
@@ -271,7 +275,10 @@ export function SettingsApp({
               <SettingRow label="Created" value={formatAgentDate(agent.createdAt, hydrated)} />
               <SettingRow label="Uptime" value={formatAgentUptime(agent, now)} />
               <SettingRow label="Last activity" value={formatAgentDate(agent.lastActivityAt, hydrated)} />
-              <SettingRow label="Idle sleep" value={formatAgentDate(agent.idleDeadline, hydrated)} />
+              <SettingRow
+                label="Idle sleep"
+                value={agent.power.idleTimeoutMinutes === 0 ? 'Never' : formatAgentDate(agent.idleDeadline, hydrated)}
+              />
               <SettingRow
                 label="Workspace retention"
                 value={
@@ -319,6 +326,15 @@ export function SettingsApp({
                 <ShieldCheck aria-hidden="true" className="h-4 w-4 text-emerald-400/80" />
                 Unprivileged guest · no cluster credential · private workspace
               </h2>
+              <div className="mb-4">
+                <PowerSettingsForm
+                  agent={agent}
+                  disabled={lifecycleBusy || lifecycleDisabled}
+                  instanceId={instanceId}
+                  onChanged={onChanged}
+                  onSavingChange={setPowerSaving}
+                />
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"

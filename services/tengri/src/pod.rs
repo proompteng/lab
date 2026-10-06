@@ -619,8 +619,8 @@ fn build_container(microvm: &MicroVM, bootstrap_secret: &str) -> Container {
                 ..ContainerPort::default()
             },
         ]),
-        readiness_probe: Some(http_probe("/readyz", 5, 3)),
-        startup_probe: Some(http_probe("/readyz", 5, 420)),
+        readiness_probe: Some(http_probe("/readyz", 1, 15)),
+        startup_probe: Some(http_probe("/readyz", 1, 2100)),
         liveness_probe: Some(http_probe("/livez", 15, 3)),
         resources: Some(ResourceRequirements {
             limits: Some(fixed.clone()),
@@ -719,6 +719,7 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "a".repeat(64)),
                 architecture: MicroVMArchitecture::Arm64,
                 resources: MicroVMResources::default(),
+                power: Default::default(),
                 created_at: "2026-08-26T00:00:00Z".to_owned(),
                 idle_deadline: "2026-08-26T01:00:00Z".to_owned(),
                 expires_at: "2026-08-26T04:00:00Z".to_owned(),
@@ -1217,8 +1218,8 @@ mod tests {
             Some("/readyz"),
         );
         let startup_probe = container.startup_probe.as_ref().expect("startup probe");
-        assert_eq!(startup_probe.period_seconds, Some(5));
-        assert_eq!(startup_probe.failure_threshold, Some(420));
+        assert_eq!(startup_probe.period_seconds, Some(1));
+        assert_eq!(startup_probe.failure_threshold, Some(2100));
         assert_eq!(
             startup_probe.period_seconds.unwrap() * startup_probe.failure_threshold.unwrap(),
             2100,

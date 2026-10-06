@@ -7,6 +7,24 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('power settings enforce integer idle limits and reject modes that retain RAM', () => {
+    const action = { action: 'update-power-settings', agentId: 'agent-test' }
+    for (const idleTimeoutMinutes of [0, 5, 60, 1440]) {
+      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(true)
+    }
+    for (const idleTimeoutMinutes of [-1, 0.5, 1441, '60', null]) {
+      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(false)
+    }
+    expect(
+      tengriActionSchema.safeParse({ ...action, power: { sleepMode: 'hibernate', idleTimeoutMinutes: 60 } }).success,
+    ).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        ...action,
+        power: { idleTimeoutMinutes: 60, ownerHash: 'other' },
+      }).success,
+    ).toBe(false)
+  })
   test('accepts model options on conversation operations and rejects invalid choices', () => {
     for (const action of [
       { action: 'create-thread', agentId: 'agent-test' },
