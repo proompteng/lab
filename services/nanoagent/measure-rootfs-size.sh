@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build-only failure diagnostic. This never changes the production capacity gate
-# or emits its validation receipt. Search above the rejected 512 MiB limit using
+# or emits its validation receipt. Search above the rejected 1 GiB limit using
 # the same ext4 settings and spare blocks/inodes as validate-rootfs.sh.
 [[ "$#" == 1 && -d "$1" ]]
 rootfs="$1"
@@ -24,8 +24,8 @@ fits() {
   (( free_blocks >= 4097 && free_inodes >= 257 ))
 }
 
-lower=131072
-upper=262144
+lower=262144
+upper=524288
 if fits "$lower"; then
   printf 'Rootfs already fits the production limit; size diagnosis is unnecessary.\n' >&2
   exit 1

@@ -27,7 +27,7 @@ certificate and bundle updates, so new connections use renewed credentials witho
 
 The agent binary is installed under the persistent home from a versioned, SHA-256-pinned musl release archive. Build
 stages verify both the native binary and the generated agent configuration. Only the installer and version receipt
-enter the 512 MiB rootfs. Agent keys, attestation token, and data remain in private `/tmp/nanoagent-spire` files.
+enter the 1 GiB rootfs. Agent keys, attestation token, and data remain in private `/tmp/nanoagent-spire` files.
 Tengri refreshes the token and public bundle over mTLS; the refresh RPC rejects another Pod UID and private material
 in place of CA certificates. Terminal and Codex children receive no SPIFFE or SPIRE configuration variables. A guest
 administrator owns that guest's identity; its Pod-bound parent cannot attest another guest or the controller.
@@ -86,8 +86,9 @@ a shared `OPENAI_API_KEY`.
 
 ## Firecracker rootfs and persistent tools
 
-Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
-a real 512 MiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+Kata's r6 Firecracker snapshotter extracts the guest OCI image into a 1 GiB blockfile. Roll out the
+host extension and migrate its existing scratch/cache disks before publishing this guest image. The Dockerfile therefore enforces
+a real 1 GiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
 Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
 executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
 The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
@@ -129,11 +130,11 @@ terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion`
 or `:TSInstall` to add language support. Existing configurations, lockfiles and plugin data remain user-owned.
 The default configuration and matching plugin seed are supplied only when no Neovim/Vim configuration exists,
 including custom XDG locations. Homebrew's Cellar, cache, and Neovim configuration, plugin lockfile, plugin data,
-and undo files survive sleep/resume; only compressed seeds enter the 512 MiB rootfs.
+and undo files survive sleep/resume; only compressed seeds enter the 1 GiB rootfs.
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and offline
 clean-home, existing-home and restart checks before the rootfs check. PR image verification repeats these checks
 with networking disabled and an empty home mount, so baked home files cannot mask a missing seed.
-If the 512 MiB capacity gate fails, a build-only diagnostic measures the minimum ext4 size with the same
+If the 1 GiB capacity gate fails, a build-only diagnostic measures the minimum ext4 size with the same
 filesystem settings and headroom. The build still fails and produces no final image or validation receipt.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
@@ -150,7 +151,7 @@ token. Codex threads and turns use `danger-full-access` inside this same guest.
 Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
 omitted options preserve an existing thread's settings.
 
-The operating-system root remains the 512 MiB Firecracker image filesystem. Its changes are ephemeral;
+The operating-system root remains the 1 GiB Firecracker image filesystem. Its changes are ephemeral;
 container recreation, sleep/resume, or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
@@ -212,7 +213,7 @@ controller and guest; the automatic Tengri Warehouse and Stage promote only the 
 
 Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
 platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
-on the persistent home volume, outside Firecracker's 512 MiB rootfs. Each image build verifies the native Linux archive;
+on the persistent home volume, outside Firecracker's 1 GiB rootfs. Each image build verifies the native Linux archive;
 first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
 
 `CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
