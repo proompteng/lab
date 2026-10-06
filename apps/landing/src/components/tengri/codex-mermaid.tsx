@@ -32,6 +32,14 @@ async function loadMermaid() {
 }
 
 let mermaidPromise: ReturnType<typeof loadMermaid> | undefined
+let renderQueue = Promise.resolve()
+
+function getMermaid() {
+  return (mermaidPromise ??= loadMermaid().catch((error) => {
+    mermaidPromise = undefined
+    throw error
+  }))
+}
 
 export function CodexMermaid({ source, children }: { source: string; children: ReactNode }) {
   const reactId = useId()
@@ -41,10 +49,10 @@ export function CodexMermaid({ source, children }: { source: string; children: R
   useEffect(() => {
     let cancelled = false
     const render = async () => {
+      if (cancelled) return
       try {
-        const mermaid = await (mermaidPromise ??= loadMermaid())
+        const mermaid = await getMermaid()
         if (cancelled) return
-        // The public render API serializes Mermaid's shared renderer across diagrams.
         const { svg } = await mermaid.render(id, source)
         if (cancelled) return
         const sanitized = DOMPurify.sanitize(svg, {
@@ -57,9 +65,13 @@ export function CodexMermaid({ source, children }: { source: string; children: R
         if (!cancelled) setResult({ source, svg: null })
       }
     }
-    void render()
+    // Coalesce streaming bursts and skip obsolete work before Mermaid queues a layout.
+    const timer = setTimeout(() => {
+      renderQueue = renderQueue.then(render)
+    }, 150)
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
   }, [id, source])
 

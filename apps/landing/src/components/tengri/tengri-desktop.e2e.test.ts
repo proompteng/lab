@@ -4010,6 +4010,105 @@ test('renders restored and streamed Mermaid diagrams and recovers from incomplet
   expect(pageErrors).toEqual([])
 })
 
+test('coalesces Mermaid streaming updates before rendering the latest source', async ({ page }) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: [{ id: 'warm', type: 'agentMessage', text: '```mermaid\nflowchart LR\nA --> B\n```' }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  await expect(page.getByRole('img', { name: 'Mermaid diagram', exact: true })).toBeVisible()
+  await page.evaluate(() => {
+    const renders: string[] = []
+    ;(window as typeof window & { mermaidRenders?: string[] }).mermaidRenders = renders
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof Element && node.id.startsWith('dtengri-mermaid-')) renders.push(node.id)
+        }
+      }
+    }).observe(document.body, { childList: true })
+  })
+  const event = {
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    approvalId: '',
+    rawJson: '{}',
+    itemId: 'burst',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+  }
+  await emitCodexEvent(page, { ...event, sequence: 1, text: '```mermaid\nflowchart LR\nA[Start]\n' })
+  for (let sequence = 2; sequence <= 9; sequence++) {
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+    await emitCodexEvent(page, { ...event, sequence, text: `A --> N${sequence}[Update ${sequence}]\n` })
+  }
+  await emitCodexEvent(page, { ...event, sequence: 10, text: 'A --> Z[Latest burst]\n```' })
+  const response = page.getByRole('article', { name: 'Codex response' }).last()
+  await expect(response.getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText('Latest burst')
+  expect(
+    await page.evaluate(() => (window as typeof window & { mermaidRenders?: string[] }).mermaidRenders),
+  ).toHaveLength(1)
+})
+
+test('retries Mermaid loading after a failed lazy chunk request', async ({ page }) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: [{ id: 'warm', type: 'agentMessage', text: 'Ready to stream.' }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  await expect(page.getByRole('article', { name: 'Codex response' })).toContainText('Ready to stream.')
+  const chunkPattern = '**/_next/static/chunks/**'
+  let blockedChunk: string | undefined
+  let blockedRequests = 0
+  await page.route(chunkPattern, (route) => {
+    if (route.request().resourceType() !== 'script') return route.continue()
+    blockedChunk ??= route.request().url()
+    // Also fail the development loader's automatic retry of the same chunk.
+    if (route.request().url() === blockedChunk) {
+      blockedRequests++
+      return route.abort('failed')
+    }
+    return route.continue()
+  })
+  const event = {
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    approvalId: '',
+    rawJson: '{}',
+    itemId: 'retry',
+    kind: 'assistant-text',
+    method: 'item/agentMessage/delta',
+  }
+  await emitCodexEvent(page, { ...event, sequence: 1, text: '```mermaid\nflowchart LR\nA[Retry]\n' })
+  const response = page.getByRole('article', { name: 'Codex response' }).last()
+  await expect(response.getByRole('status')).toContainText('Diagram unavailable')
+  expect(blockedRequests).toBeGreaterThan(0)
+  await page.unroute(chunkPattern)
+  await emitCodexEvent(page, { ...event, sequence: 2, text: 'A --> B[Recovered]\n```' })
+  await expect(response.getByRole('img', { name: 'Mermaid diagram', exact: true })).toContainText('Recovered')
+  await expect(response.locator('pre')).toHaveCount(0)
+})
+
 test('keeps Mermaid configuration and markup from enabling active content', async ({ page }) => {
   const text =
     '```mermaid\n%%{init: {"securityLevel": "loose", "htmlLabels": true, "flowchart": {"htmlLabels": true}, "dompurifyConfig": {"ADD_TAGS": ["script"], "ADD_ATTR": ["onerror"]}}}%%\nflowchart LR\n  A["<img src=x onerror=alert(1)>"] --> B[Safe]\n  click B "javascript:alert(1)"\n```'
