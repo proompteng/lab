@@ -43,7 +43,9 @@ for command in brew nvim tree-sitter gh fd fzf tmux make cmake pkg-config; do
   [[ -x "$prefix/bin/$command" ]] || needs_seed=true
 done
 [[ -x "$HOME/.local/bin/g++" && -x "$HOME/.local/bin/c++" ]] || needs_seed=true
-if [[ "$needs_seed" == true || ! -f "$receipt" || "$(cat "$receipt")" != "$expected" ]]; then
+# A complete retained home predating image seeds needs no archive extraction.
+# Recheck a changed image receipt, and always repair missing commands locally.
+if [[ "$needs_seed" == true || ( -f "$receipt" && "$(cat "$receipt")" != "$expected" ) ]]; then
   (cd "$SEED_ROOT" && sha256sum --check --status developer-tools.tar.xz.sha256)
   seed_archive "$SEED_ROOT/developer-tools.tar.xz" "$HOME"
 fi

@@ -69,6 +69,17 @@ sha256sum "$HOME/.bashrc" "$HOME/.config/nvim/"* "$HOME/.local/share/nvim/user-d
   "$HOME/.linuxbrew/user-settings" "$HOME/.linuxbrew/Homebrew/.git/user-settings" > /tmp/developer-home.sha256
 sha256sum "$HOME/.codex/retained-session-fixture" "$HOME/.tengri/vscode/User/settings.json" \
   >> /tmp/developer-home.sha256
+# A complete pre-seed home has no receipt. Deny package verification to prove it
+# is adopted without reading/extracting the developer package on first resume.
+rm "$HOME/.tengri/developer-tools-seed.sha256"
+mkdir -p "$HOME/.tengri/no-seed-bin"
+printf '#!/bin/bash\nexit 97\n' > "$HOME/.tengri/no-seed-bin/sha256sum"
+chmod 0700 "$HOME/.tengri/no-seed-bin/sha256sum"
+legacy_started="$(date +%s%N)"
+PATH="$HOME/.tengri/no-seed-bin:$PATH" bootstrap-developer-tools --install-only
+legacy_done="$(date +%s%N)"
+test -f "$HOME/.tengri/developer-tools-seed.sha256"
+sha256sum --check /tmp/developer-home.sha256
 rm "$HOME/.tengri/developer-tools-seed.sha256" "$HOME/.linuxbrew/bin/fd"
 bootstrap-developer-tools --install-only
 test -x "$HOME/.linuxbrew/bin/fd"
@@ -127,8 +138,9 @@ test -f "$HOME/.fresh-config/nvim/lazy-lock.json"
 test -d "$HOME/.fresh-data/nvim/lazy/lazy.nvim"
 XDG_CONFIG_HOME="$HOME/.fresh-config" XDG_DATA_HOME="$HOME/.fresh-data" nvim --headless \
   '+lua assert(require("astronvim").version() == "v6.1.0")' '+if v:errmsg != "" | cquit 1 | endif' +qa
-printf 'offline_spire_seed_ms=%s\noffline_toolchain_ms=%s\noffline_developer_seed_ms=%s\noffline_fresh_tools_ms=%s\noffline_developer_restart_ms=%s\noffline_retained_home_resume_ms=%s\n' \
+printf 'offline_spire_seed_ms=%s\noffline_toolchain_ms=%s\noffline_developer_seed_ms=%s\noffline_fresh_tools_ms=%s\noffline_legacy_developer_resume_ms=%s\noffline_developer_restart_ms=%s\noffline_retained_home_resume_ms=%s\n' \
   "$(((spire_done-started)/1000000))" "$(((toolchain_done-spire_done)/1000000))" \
   "$(((seed_done-toolchain_done)/1000000))" "$(((runtime_tools_done-started)/1000000))" \
+  "$(((legacy_done-legacy_started)/1000000))" \
   "$(((developer_restart_done-developer_restart_started)/1000000))" \
   "$(((restart_done-restart_started)/1000000))"
