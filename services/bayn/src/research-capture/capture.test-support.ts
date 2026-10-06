@@ -2,19 +2,74 @@ import { sha256 } from '../hash'
 import { Result, Schema } from 'effect'
 import {
   CaptureDisposition,
+  CaptureQualification,
   ResearchCaptureFailure,
   maximumResearchCaptureChunkBytes,
   type ResearchCaptureEvent,
   type ResearchCaptureBytes,
+  type ResearchCaptureChunk,
 } from './capture'
 import {
   deriveResearchCaptureExportManifest,
+  decodeResearchCaptureExportEnvelope,
   ResearchCaptureByteIndexSchema,
   ResearchCaptureExportManifestSchema,
   researchCaptureObjectKey,
+  researchCaptureObject,
   verifyResearchCaptureExport,
   type ResearchCaptureObject,
+  type ResearchCaptureExportEntry,
 } from './export'
+
+/** Retained v1 fixture writer; production writes only v2 envelopes. */
+export const buildResearchCaptureExportChunk = (
+  chunk: ResearchCaptureChunk,
+  metadataBytes: ResearchCaptureBytes,
+  entries: readonly ResearchCaptureExportEntry[],
+  previousIndexHash: string | null,
+) => {
+  const parts: Uint8Array[] = []
+  const ranges: Array<(typeof ResearchCaptureByteIndexSchema.Type.ranges)[number]> = []
+  let offset = 0
+  for (const entry of entries) {
+    if (entry.receipt.event.kind !== 'market-record') continue
+    const raw = entry.rawValue
+    if (raw === undefined)
+      throw new ResearchCaptureFailure({ message: 'Admitted market receipt lost its original bytes' })
+    const range = {
+      receiptSequence: entry.receipt.sequence,
+      byteOffset: raw === null ? null : offset,
+      byteLength: raw === null ? null : raw.byteLength,
+    }
+    if (Buffer.byteLength(JSON.stringify(range)) > 128)
+      throw new ResearchCaptureFailure({ message: 'Byte range exceeds its admission reservation' })
+    ranges.push(range)
+    if (raw !== null) {
+      parts.push(raw)
+      offset += raw.byteLength
+    }
+  }
+  const raw = researchCaptureObject(Buffer.concat(parts, offset))
+  const metadata = researchCaptureObject(metadataBytes.payload)
+  const reference = (object: ResearchCaptureObject) => ({
+    contentHash: object.contentHash,
+    byteLength: object.payload.byteLength,
+  })
+  const index = researchCaptureObject(
+    JSON.stringify({
+      schemaVersion: 'bayn.research-capture-byte-index.v1',
+      qualification: CaptureQualification.Unqualified,
+      captureId: chunk.captureId,
+      sourceRevision: chunk.sourceRevision,
+      chunkOrdinal: chunk.chunkOrdinal,
+      previousIndexHash,
+      metadata: reference(metadata),
+      raw: reference(raw),
+      ranges,
+    } satisfies typeof ResearchCaptureByteIndexSchema.Type),
+  )
+  return { raw, metadata, index }
+}
 
 export const recoverCaptureFromStoredObjects = (
   sqlChunks: readonly ResearchCaptureBytes[],
@@ -49,19 +104,29 @@ export const recoverCaptureFromStoredObjects = (
     )
     if (manifest.exportedChunks !== sqlChunks.length)
       return yield* Result.fail(fail('SQL frontier differs from export root'))
-    const chunks: Array<{ metadata: ResearchCaptureBytes; index: ResearchCaptureBytes; raw: Uint8Array }> = []
+    const chunks: Array<{
+      metadata: ResearchCaptureBytes
+      index: ResearchCaptureBytes
+      raw: Uint8Array
+      envelope?: ResearchCaptureObject
+    }> = []
     let hash = manifest.lastIndexHash
     for (let ordinal = sqlChunks.length - 1; ordinal >= 0; ordinal--) {
       if (hash === null) return yield* Result.fail(fail('Missing index tail'))
-      const indexBytes = asText(yield* read(hash))
+      const object = yield* read(hash)
+      const envelope =
+        manifest.schemaVersion === 'bayn.research-capture-export.v2'
+          ? yield* decodeResearchCaptureExportEnvelope(object)
+          : undefined
+      const indexBytes = envelope?.index ?? asText(object)
       const index = yield* Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureByteIndexSchema))(
         indexBytes.payload,
       )
-      const metadata = asText(yield* read(index.metadata.contentHash))
+      const metadata = envelope?.metadata ?? asText(yield* read(index.metadata.contentHash))
       if (metadata.payload !== sqlChunks[ordinal]?.payload || metadata.contentHash !== sqlChunks[ordinal]?.contentHash)
         return yield* Result.fail(fail('SQL and exported metadata differ'))
-      const raw = yield* read(index.raw.contentHash)
-      chunks.unshift({ metadata, index: indexBytes, raw: raw.payload })
+      const raw = envelope?.raw ?? (yield* read(index.raw.contentHash)).payload
+      chunks.unshift({ metadata, index: indexBytes, raw, ...(envelope === undefined ? {} : { envelope: object }) })
       hash = index.previousIndexHash
     }
     if (hash !== null) return yield* Result.fail(fail('Index chain exceeds SQL frontier'))

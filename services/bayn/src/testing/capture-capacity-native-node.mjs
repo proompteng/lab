@@ -22,6 +22,7 @@ import { decodeRawMarketRecord, RawMarketEventKind } from '../market-data/stream
 import { CaptureDisposition, CaptureInvalidation, restoreKafkaTransportTimestamp } from '../research-capture/capture.ts'
 import {
   deriveResearchCaptureExportManifest,
+  decodeResearchCaptureExportEnvelope,
   researchCaptureObjectKey,
   verifyResearchCaptureExportPrefix,
 } from '../research-capture/export.ts'
@@ -1057,12 +1058,28 @@ const program = Effect.gen(function* () {
         }
         assert.equal(object(sealBytes.contentHash).toString('utf8'), sealBytes.payload)
         const chunks = []
-        // This candidate retains the deployed three-object v1 format.
-        assert.equal(seal.exportRoot.schemaVersion, 'bayn.research-capture-export-root.v1')
         let indexHash = seal.exportRoot.lastIndexHash
         let readBytes = 0
         while (indexHash !== null) {
           assert.ok(chunks.length < seal.persistedChunks)
+          if (seal.exportRoot.schemaVersion === 'bayn.research-capture-export-root.v2') {
+            const envelope = { contentHash: indexHash, payload: object(indexHash) }
+            const chunk = Result.getOrThrow(decodeResearchCaptureExportEnvelope(envelope))
+            const index = JSON.parse(chunk.index.payload)
+            const metadata = yield* readResearchCapturePostgresChunk(
+              sql,
+              result.captureId,
+              index.chunkOrdinal,
+              plan.limits.maximumObjectBodyBytes,
+            )
+            assert.equal(chunk.metadata.payload, metadata.payload)
+            assert.equal(chunk.metadata.contentHash, metadata.contentHash)
+            readBytes += envelope.payload.byteLength + Buffer.byteLength(metadata.payload)
+            assert.ok(readBytes <= plan.limits.maximumCombinedAttemptedSinkBytesPerArm)
+            chunks.push(chunk)
+            indexHash = index.previousIndexHash
+            continue
+          }
           const indexBytes = { contentHash: indexHash, payload: object(indexHash).toString('utf8') }
           const index = JSON.parse(indexBytes.payload)
           const metadata = yield* readResearchCapturePostgresChunk(

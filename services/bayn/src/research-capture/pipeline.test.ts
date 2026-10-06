@@ -13,9 +13,11 @@ import {
 import { captureEvent } from './capture.test-support'
 import {
   ResearchCaptureByteIndexSchema,
+  decodeResearchCaptureExportEnvelope,
   researchCaptureExportEnvelopeReservation,
   researchCaptureExportEntryReservation,
   type ResearchCaptureObjectStore,
+  type ResearchCaptureObject,
 } from './export'
 import { makeResearchCaptureRecorder, type ResearchCaptureStore } from './recorder'
 
@@ -30,8 +32,12 @@ const options = {
 }
 const run = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
-const indexOf = (bytes: Uint8Array) =>
-  Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureByteIndexSchema))(Buffer.from(bytes).toString('utf8'))
+const indexOf = (object: ResearchCaptureObject) =>
+  decodeResearchCaptureExportEnvelope(object).pipe(
+    Result.flatMap((decoded) =>
+      Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureByteIndexSchema))(decoded.index.payload),
+    ),
+  )
 
 test('the next raw chunk verifies while current SQL waits, without appending it before the current acknowledgement', () =>
   run(
@@ -60,7 +66,7 @@ test('the next raw chunk verifies while current SQL waits, without appending it 
       const objects: ResearchCaptureObjectStore = {
         putVerified: (object) =>
           Effect.gen(function* () {
-            const decoded = indexOf(object.payload)
+            const decoded = indexOf(object)
             if (Result.isFailure(decoded)) return
             const ordinal = decoded.success.chunkOrdinal
             if (ordinal === 0) {
@@ -157,7 +163,7 @@ const blockedPipeline = (
     const objects: ResearchCaptureObjectStore = {
       putVerified: (object) =>
         Effect.gen(function* () {
-          const index = indexOf(object.payload)
+          const index = indexOf(object)
           if (Result.isFailure(index)) return
           if (index.success.chunkOrdinal === 0) {
             yield* Deferred.succeed(firstObject, undefined)

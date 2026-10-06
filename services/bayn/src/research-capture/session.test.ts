@@ -6,7 +6,11 @@ import { provideTestLayer } from '../effect-test-support'
 import { KafkaMarketFailure } from '../market-data/streaming/kafka'
 import { CaptureInvalidation, CaptureQualification, ResearchCaptureFailure, type CaptureIntervalCut } from './capture'
 import { captureEvent, recoverCaptureFromStoredObjects } from './capture.test-support'
-import { researchCaptureObjectKey, verifyResearchCaptureExportPrefix } from './export'
+import {
+  decodeResearchCaptureExportEnvelope,
+  researchCaptureObjectKey,
+  verifyResearchCaptureExportPrefix,
+} from './export'
 import { makeResearchCaptureSession } from './session'
 import { decodeResearchCaptureSessionConfig, researchCaptureSessionConfig } from './session-config'
 import { sessionConfig, sessionMemory, sessionStart, sessionUniverse } from './session.test-support'
@@ -133,7 +137,7 @@ test('one successful native cut closes once while the worker remains alive and e
       expect(status.phase).toBe('finished')
       expect(status.phase === 'finished' && status.seal?.qualification).toBe(CaptureQualification.Unqualified)
       expect(status.phase === 'finished' && status.seal?.invalidations).toEqual([])
-      expect(saved.writes.slice(0, 4)).toEqual(['sql-chunk', 'object', 'object', 'object'])
+      expect(saved.writes.slice(0, 2)).toEqual(['sql-chunk', 'object'])
       expect(saved.writes.slice(-3)).toEqual(['object', 'object', 'sql-seal'])
       const receiptCount = status.phase === 'finished' ? status.seal?.observedReceipts : undefined
       session.observer.record(captureEvent('STOPPED'))
@@ -150,14 +154,11 @@ test('one successful native cut closes once while the worker remains alive and e
       if (sealed === undefined || manifest === undefined) throw new Error('Expected sealed export')
       const verified = verifyResearchCaptureExportPrefix(
         saved.chunks.map((metadata, ordinal) => {
-          const raw = saved.objects[ordinal * 3]
-          const index = saved.objects[ordinal * 3 + 2]
-          if (raw === undefined || index === undefined) throw new Error('Expected exported prefix objects')
-          return {
-            metadata,
-            raw: raw.payload,
-            index: { contentHash: index.contentHash, payload: Buffer.from(index.payload).toString('utf8') },
-          }
+          const envelope = saved.objects[ordinal]
+          if (envelope === undefined) throw new Error('Expected exported prefix envelope')
+          const decoded = Result.getOrThrow(decodeResearchCaptureExportEnvelope(envelope))
+          expect(decoded.metadata).toEqual(metadata)
+          return decoded
         }),
         sealed,
         { contentHash: manifest.contentHash, payload: Buffer.from(manifest.payload).toString('utf8') },

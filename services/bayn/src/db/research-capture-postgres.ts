@@ -18,12 +18,27 @@ const Rows = Schema.Array(Schema.Struct({ content_hash: Sha256Schema, payload: S
   Schema.isMaxLength(1),
 )
 const decodeRows = Schema.decodeUnknownEffect(Rows, strictParseOptions)
-const FrontierRows = Schema.Array(
-  Schema.Struct({
-    ordinal: NonNegativeIntegerSchema,
-    sequence: NonNegativeIntegerSchema,
-    content_hash: Sha256Schema,
-  }),
+const FrontierRow = Schema.Struct({
+  ordinal: NonNegativeIntegerSchema,
+  sequence: NonNegativeIntegerSchema,
+  content_hash: Sha256Schema,
+})
+const FrontierRows = Schema.Array(FrontierRow).check(Schema.isMaxLength(1))
+const AppendRows = Schema.Array(
+  Schema.Union([
+    Schema.Struct({
+      inserted: Schema.Literal(true),
+      content_hash: Schema.Null,
+      payload: Schema.Null,
+      frontier: Schema.NullOr(FrontierRow),
+    }),
+    Schema.Struct({
+      inserted: Schema.Literal(false),
+      content_hash: Sha256Schema,
+      payload: StrictNonEmptyStringSchema,
+      frontier: Schema.Null,
+    }),
+  ]),
 ).check(Schema.isMaxLength(1))
 const frontier = (sql: PgClient.PgClient, captureId: string) =>
   sql`
@@ -102,21 +117,44 @@ export const makeResearchCapturePostgresStore = (sql: PgClient.PgClient): Resear
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${chunk.captureId}, 0))`
-            const prior = yield* sql`
-              SELECT content_hash, payload FROM research_capture_chunks
-              WHERE capture_id = ${chunk.captureId} AND chunk_ordinal = ${chunk.chunkOrdinal}
-            `.pipe(Effect.flatMap(decodeRows))
-            if (prior.length !== 0) return yield* verifyExisting(prior, bytes)
-            const previous = yield* frontier(sql, chunk.captureId)
-            if (
-              chunk.chunkOrdinal !== (previous === undefined ? 0 : previous.ordinal + 1) ||
-              chunk.previousContentHash !== (previous?.content_hash ?? null)
-            )
+            // Keep this statement after the lock await: its snapshot must include the preceding writer's commit.
+            const rows = yield* sql`
+              WITH candidate AS MATERIALIZED (
+                SELECT ${chunkId}::text AS chunk_id, ${chunk.captureId}::text AS capture_id,
+                  ${chunk.chunkOrdinal}::bigint AS chunk_ordinal, ${bytes.contentHash}::text AS content_hash,
+                  ${bytes.payload}::text AS payload, ${chunk.previousContentHash}::text AS previous_hash
+              ), prior AS MATERIALIZED (
+                SELECT stored.content_hash, stored.payload
+                FROM research_capture_chunks stored CROSS JOIN candidate
+                WHERE stored.capture_id = candidate.capture_id AND stored.chunk_ordinal = candidate.chunk_ordinal
+              ), latest AS MATERIALIZED (
+                SELECT stored.chunk_ordinal, stored.content_hash, stored.payload
+                FROM research_capture_chunks stored CROSS JOIN candidate
+                WHERE stored.capture_id = candidate.capture_id
+                ORDER BY stored.chunk_ordinal DESC LIMIT 1
+              ), inserted AS (
+                INSERT INTO research_capture_chunks (chunk_id, capture_id, chunk_ordinal, content_hash, payload)
+                SELECT chunk_id, capture_id, chunk_ordinal, content_hash, payload FROM candidate
+                WHERE NOT EXISTS (SELECT 1 FROM prior)
+                  AND chunk_ordinal = COALESCE((SELECT chunk_ordinal + 1 FROM latest), 0)
+                  AND convert_to(previous_hash, 'UTF8') IS NOT DISTINCT FROM
+                    (SELECT convert_to(content_hash, 'UTF8') FROM latest)
+                RETURNING true AS inserted
+              )
+              SELECT inserted, NULL::text AS content_hash, NULL::text AS payload,
+                (SELECT jsonb_build_object(
+                  'ordinal', chunk_ordinal::double precision,
+                  'sequence', (payload::jsonb->'receipts'->-1->>'sequence')::double precision,
+                  'content_hash', content_hash
+                ) FROM latest) AS frontier
+              FROM inserted
+              UNION ALL
+              SELECT false AS inserted, content_hash, payload, NULL::jsonb AS frontier FROM prior
+            `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AppendRows, strictParseOptions)))
+            const outcome = rows[0]
+            if (outcome === undefined)
               return yield* failure('Research capture chunk does not extend its exact committed prefix')
-            yield* sql`
-              INSERT INTO research_capture_chunks (chunk_id, capture_id, chunk_ordinal, content_hash, payload)
-              VALUES (${chunkId}, ${chunk.captureId}, ${chunk.chunkOrdinal}, ${bytes.contentHash}, ${bytes.payload})
-            `
+            if (!outcome.inserted) yield* verifyExisting([outcome], bytes)
           }),
         )
       }),

@@ -32,8 +32,8 @@ credentials as part of this implementation. Mounting credentials or granting acc
 
 Before any object write or consumer observation, the recorder writes an ordinal-zero `session-attempt` chunk to SQL.
 It contains the frozen declaration and a fresh attempt nonce. This sole control receipt claims the fixed capture ID.
-It is the only chunk whose SQL write precedes object export. SQL must acknowledge the claim before its empty raw object,
-metadata, and index can be exported, and all must acknowledge before raw admission begins. The marker participates in
+It is the only chunk whose SQL write precedes object export. SQL must acknowledge the claim before its v2 envelope
+(metadata, ranges and an empty raw section) is exported and verified, before raw admission begins. The marker participates in
 the ordinary hash and export chains but represents no consumer start or market delivery. Readers reject a marker in
 any other position. Normal data chunks retain object-readback-before-SQL ordering.
 The claim's complete SQL-and-export operation uses the smaller of the one-second write timeout and the remaining
@@ -46,7 +46,7 @@ process never retries the claim, selects a new ID, or repairs it. Every process 
 start and bootstrap-deadline window. A failed claim or its export leaves no qualified seal and does not change native work.
 
 The configured `maximumObjectBytes` and `maximumSqlBytes` are cumulative logical-payload ceilings. They must not exceed
-24 GiB and 10 GiB respectively. Every attempted raw, metadata, index, seal, and manifest object is charged before its
+24 GiB and 10 GiB respectively. Every attempted chunk envelope, seal, and manifest object is charged before its
 write. SQL charges each chunk and seal's UTF8 payload before its write. Failed or unknown writes keep their charge.
 The recorder uses two counters, not a per-event history. It refuses a write that would exceed its ceiling and invalidates
 capture. A limit may prevent the final seal, leaving an unknown tail. These are failure ceilings, not evidence of
@@ -84,6 +84,11 @@ Admission is synchronous and bounded by receipt count and UTF8 byte size. A scop
 outside execution. Chunks bind the preceding exact-byte hash. The append-only database identity is capture plus ordinal;
 duplicate retries compare both SHA-256 and exact payload text. Different formatting is different evidence. Seals bind
 the committed frontier. PostgreSQL triggers reject updates, deletes, truncation, and appends after a seal.
+
+The append transaction awaits its advisory lock in a separate SQL statement before reading the committed prefix.
+Its next statement checks the exact duplicate and latest frontier and conditionally inserts the chunk together.
+Keeping the lock await separate gives that statement a fresh snapshot after a preceding writer commits. Strict
+frontier validation still runs inside the transaction, so malformed evidence rolls the insertion back.
 
 Every metadata seal durably declares `qualification: UNQUALIFIED` before its write begins. A successful acknowledgement
 does not upgrade it. If the database commits a seal and its acknowledgement is lost, the stored bytes still cannot claim
@@ -124,11 +129,19 @@ charged through in-flight writes, as does the receipt-count limit. It bounds app
 JavaScript or SDK RSS. A raw recorder needs a buffer larger than the envelope reserve; the existing 4 MiB maximum still
 applies. Overflow rejects admission synchronously and invalidates only capture. There is no queue wait in execution.
 
-Each drained chunk writes a content-addressed binary object, the exact metadata JSON, and a hash-linked range index.
-Indexes bind receipt sequence to binary offset/length; the metadata binds original arrival, consumer epoch/sequence,
-topic/partition/offset, disposition and hash. All three objects must pass readback before the SQL append, and that append
-must acknowledge before the recorder advances its frontier. An immutable export manifest binds the last index and exact
-metadata seal. Every index, manifest and seal is `UNQUALIFIED`, including stored objects whose acknowledgements are lost.
+Each drained chunk now writes one content-addressed v2 binary envelope containing the exact metadata JSON, original raw
+bytes and a hash-linked range header. Its framing is the eight-byte `BAYNCAP2` magic, a four-byte big-endian header length,
+strict UTF8 JSON header, exact UTF8 metadata bytes and exact raw bytes. The header binds component hashes/lengths, receipt
+sequence ranges and the previous envelope hash; the envelope's own hash is external. The complete frame is bounded to
+4 MiB before allocation. Header framing/identity overhead is bounded to 4096 bytes plus 128 bytes per admitted entry.
+Metadata is written directly into the final allocation, with no intermediate raw concatenation or base64 expansion.
+The existing admission reservation remains charged through assembly, readback and SQL acknowledgement.
+
+The envelope must pass one Put and verified Get before the normal SQL append, and that append must acknowledge before
+either frontier advances. The session-claim exception still commits SQL identity before any object write. An immutable
+export manifest binds the last envelope and exact metadata seal. Every header, manifest and seal is `UNQUALIFIED`,
+including stored objects whose acknowledgements are lost. This reduces per-chunk object requests from six to two;
+it does not establish throughput or relax the frozen capacity gate.
 The verifier checks the existing metadata chain plus every binary range and always reports `complete: false`.
 
 Normal raw drainage may export one next chunk while the current chunk's SQL append is pending. SQL appends remain
@@ -145,12 +158,16 @@ later SQL appends, cancels the scoped lookahead, and releases its reservation on
 An already exported successor remains an orphan if its predecessor fails. The session claim and final manifest-before-
 SQL-seal ordering remain sequential, and an unknown committed SQL tail still prevents a seal that omits it.
 
-Raw-mode SQL seals also retain `bayn.research-capture-export-root.v1`, binding the last verified index hash and chunk
+New raw-mode SQL seals retain `bayn.research-capture-export-root.v2`, binding the last verified envelope hash and chunk
 count to the immutable metadata frontier. The manifest references the exact seal bytes; the seal does not reference its
 own manifest hash. `deriveResearchCaptureExportManifest` is the single writer/reader representation. Given the exact
 durably read SQL seal, it derives the expected manifest bytes and content address. Derivation alone does not prove the
-object exists. A reader must Get that object from the known bucket, traverse the index chain by content-addressed keys,
-and verify every referenced raw/metadata object against the durable SQL chunks. No List or recorder status is needed.
+object exists. A reader must Get that object from the known bucket, traverse the envelope chain by content-addressed keys,
+and verify every extracted metadata payload against the exact durable SQL chunk. No List or recorder status is needed.
+Readers retain v1 support for the previous separate raw/metadata/index objects. The authoritative root and manifest
+select one format per capture; missing envelopes or mixed chains cannot fall back to legacy verification.
+New v2 captures require a v2-aware reader; older binaries cannot read them. This reader continues to verify existing
+v1 captures without rewriting their objects or metadata.
 
 A committed SQL seal remains recoverable if its acknowledgement or process state is lost. Reconstruction does not prove
 that acknowledgement arrived and never upgrades `UNQUALIFIED`. A failed or unknown manifest write prevents the SQL seal;

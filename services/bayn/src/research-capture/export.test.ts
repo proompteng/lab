@@ -18,12 +18,13 @@ import {
   type ResearchCaptureSeal,
 } from './capture'
 import {
+  buildResearchCaptureExportChunk,
   captureEvent,
   marketEvent as metadataMarketEvent,
   recoverCaptureFromStoredObjects,
 } from './capture.test-support'
 import {
-  buildResearchCaptureExportChunk,
+  decodeResearchCaptureExportEnvelope,
   deriveResearchCaptureExportManifest,
   ResearchCaptureByteIndexSchema,
   researchCaptureObject,
@@ -77,11 +78,12 @@ const memory = () => {
     const seal = seals[0]
     const manifest = objects.at(-1)
     if (seal === undefined || manifest === undefined) throw new Error('Expected finalized export')
-    const exported = chunks.map((metadata, index) => {
-      const raw = objects[index * 3]
-      const rangeIndex = objects[index * 3 + 2]
-      if (raw === undefined || rangeIndex === undefined) throw new Error('Expected exported chunk')
-      return { metadata, index: text(rangeIndex), raw: raw.payload }
+    const exported = chunks.map((metadata, ordinal) => {
+      const envelope = objects[ordinal]
+      if (envelope === undefined) throw new Error('Expected exported envelope')
+      const decoded = Result.getOrThrow(decodeResearchCaptureExportEnvelope(envelope))
+      expect(decoded.metadata).toEqual(metadata)
+      return decoded
     })
     return verifyResearchCaptureExport(exported, seal, text(manifest))
   }
@@ -120,7 +122,7 @@ test.each(['acknowledged', 'seal-ack-lost', 'manifest-ack-lost', 'interrupted-pr
                   ...object,
                   payload: Buffer.from(object.payload),
                 })
-                if (fault === 'manifest-ack-lost' && puts === 5)
+                if (fault === 'manifest-ack-lost' && puts === 3)
                   return yield* new ResearchCaptureFailure({ message: 'Manifest committed, acknowledgement lost' })
               }),
           },
@@ -139,7 +141,7 @@ test.each(['acknowledged', 'seal-ack-lost', 'manifest-ack-lost', 'interrupted-pr
     })
     expect(saved.seals).toHaveLength(fault === 'manifest-ack-lost' ? 0 : 1)
     if (fault === 'manifest-ack-lost') {
-      expect(bucket.size).toBe(5)
+      expect(bucket.size).toBe(3)
       expect(Result.isFailure(recovered)).toBe(true)
       expect(reads).toEqual([])
     } else {
@@ -147,12 +149,12 @@ test.each(['acknowledged', 'seal-ack-lost', 'manifest-ack-lost', 'interrupted-pr
       expect(result.complete).toBe(false)
       expect(result.structurallyClosed).toBe(fault !== 'interrupted-prefix')
       expect(result.seal.qualification).toBe(CaptureQualification.Unqualified)
-      expect(reads).toHaveLength(fault === 'empty' ? 1 : 4)
+      expect(reads).toHaveLength(fault === 'empty' ? 1 : 2)
     }
   },
 )
 
-test.each(['manifest', 'index', 'metadata', 'raw', 'corrupt-raw'] as const)(
+test.each(['manifest', 'envelope', 'corrupt-envelope'] as const)(
   'durable root cannot conceal a missing or corrupt %s object',
   (fault) =>
     run(
@@ -168,11 +170,11 @@ test.each(['manifest', 'index', 'metadata', 'raw', 'corrupt-raw'] as const)(
           }),
         )
         const bucket = new Map(saved.objects.map((object) => [researchCaptureObjectKey(object.contentHash), object]))
-        const position = { manifest: 4, index: 2, metadata: 1, raw: 0, 'corrupt-raw': 0 }[fault]
+        const position = { manifest: 2, envelope: 0, 'corrupt-envelope': 0 }[fault]
         const target = saved.objects[position]
         if (target === undefined) throw new Error('Expected persisted object')
         const key = researchCaptureObjectKey(target.contentHash)
-        if (fault === 'corrupt-raw') bucket.set(key, { ...target, payload: Buffer.from('wrong') })
+        if (fault === 'corrupt-envelope') bucket.set(key, { ...target, payload: Buffer.from('wrong') })
         else bucket.delete(key)
         expect(
           Result.isFailure(recoverCaptureFromStoredObjects(saved.chunks, saved.seals[0], (key) => bucket.get(key))),
@@ -287,15 +289,17 @@ test('raw capture owns exact malformed, ignored, empty and tombstone bytes while
       const seal = yield* recorder.finish
       expect(yield* recorder.finish).toEqual(seal)
       expect(saved.seals).toHaveLength(1)
-      expect(saved.objects).toHaveLength(5)
+      expect(saved.objects).toHaveLength(3)
       expect(seal).toMatchObject({
         exportRoot: {
-          schemaVersion: 'bayn.research-capture-export-root.v1',
+          schemaVersion: 'bayn.research-capture-export-root.v2',
           exportedChunks: 1,
-          lastIndexHash: saved.objects[2]?.contentHash,
+          lastIndexHash: saved.objects[0]?.contentHash,
         },
       })
-      expect(saved.objects[0]?.payload).toEqual(Buffer.from([0x80, 0x81]))
+      const envelope = saved.objects[0]
+      if (envelope === undefined) throw new Error('Expected persisted envelope')
+      expect(Result.getOrThrow(decodeResearchCaptureExportEnvelope(envelope)).raw).toEqual(Buffer.from([0x80, 0x81]))
       const verified = Result.getOrThrow(saved.verify())
       expect(verified.structurallyClosed).toBe(true)
       expect(verified.exportVerified).toBe(true)
@@ -411,7 +415,7 @@ test.each(['sql-append', 'object-ack', 'object-defect', 'object-throw', 'object-
         expect(seal?.persistedReceipts).toBe(0)
         expect(seal?.invalidations).toContain(CaptureInvalidation.Persistence)
         expect((yield* recorder.status).retainedReceipts).toBe(0)
-        expect(attempts).toBe(fault === 'sql-append' ? 5 : 3)
+        expect(attempts).toBe(3)
         const durableManifest = JSON.parse(text(saved.objects.at(-1) ?? researchCaptureObject('{}')).payload)
         expect(durableManifest.lastIndexHash).toBeNull()
         expect(durableManifest.qualification).toBe(CaptureQualification.Unqualified)
@@ -420,7 +424,7 @@ test.each(['sql-append', 'object-ack', 'object-defect', 'object-throw', 'object-
     ),
 )
 
-test('property: immutable byte ranges round-trip arbitrary binary payloads and detect mutation', () => {
+test('property: legacy v1 byte ranges recover arbitrary binary payloads and reject missing or mutated objects', () => {
   fc.assert(
     fc.property(fc.array(fc.option(fc.uint8Array({ maxLength: 64 }), { nil: null }), { maxLength: 24 }), (values) => {
       const entries = [
@@ -473,6 +477,26 @@ test('property: immutable byte ranges round-trip arbitrary binary payloads and d
       const manifest = text(Result.getOrThrow(deriveResearchCaptureExportManifest(sealBytes)))
       const exported = [{ metadata, raw: objects.raw.payload, index: text(objects.index) }]
       expect(Result.getOrThrow(verifyResearchCaptureExport(exported, sealBytes, manifest)).complete).toBe(false)
+      const bucket = new Map(
+        [...Object.values(objects), researchCaptureObject(manifest.payload)].map((object) => [
+          researchCaptureObjectKey(object.contentHash),
+          object,
+        ]),
+      )
+      expect(
+        Result.getOrThrow(recoverCaptureFromStoredObjects([metadata], sealBytes, (key) => bucket.get(key)))
+          .exportVerified,
+      ).toBe(true)
+      for (const object of Object.values(objects)) {
+        const missingKey = researchCaptureObjectKey(object.contentHash)
+        expect(
+          Result.isFailure(
+            recoverCaptureFromStoredObjects([metadata], sealBytes, (key) =>
+              key === missingKey ? undefined : bucket.get(key),
+            ),
+          ),
+        ).toBe(true)
+      }
       const rawLength = values.reduce((sum, value) => sum + (value?.byteLength ?? 0), 0)
       const reservation =
         researchCaptureExportEnvelopeReservation +
@@ -491,6 +515,15 @@ test('property: immutable byte ranges round-trip arbitrary binary payloads and d
         Buffer.byteLength(metadata.payload)
       expect(allocatedWireBytes).toBeLessThanOrEqual(reservation)
       const changed = Buffer.concat([objects.raw.payload, Buffer.from([1])])
+      expect(
+        Result.isFailure(
+          recoverCaptureFromStoredObjects([metadata], sealBytes, (key) =>
+            key === researchCaptureObjectKey(objects.raw.contentHash)
+              ? { ...objects.raw, payload: changed }
+              : bucket.get(key),
+          ),
+        ),
+      ).toBe(true)
       expect(
         Result.isFailure(verifyResearchCaptureExport([{ ...exported[0]!, raw: changed }], sealBytes, manifest)),
       ).toBe(true)
@@ -555,10 +588,10 @@ test('maximum JSON-escaped capture identities fit the chunk and terminal envelop
       yield* recorder.finish
       expect(Result.getOrThrow(saved.verify()).structurallyClosed).toBe(true)
       expect(
-        3 * saved.objects.slice(0, 3).reduce((sum, object) => sum + object.payload.byteLength, 0),
+        3 * saved.objects.slice(0, 1).reduce((sum, object) => sum + object.payload.byteLength, 0),
       ).toBeLessThanOrEqual(reserved)
       expect(
-        3 * saved.objects.slice(3).reduce((sum, object) => sum + object.payload.byteLength, 0),
+        3 * saved.objects.slice(1).reduce((sum, object) => sum + object.payload.byteLength, 0),
       ).toBeLessThanOrEqual(researchCaptureExportEnvelopeReservation)
     }),
   ))
@@ -576,6 +609,7 @@ test('periodic drains form one immutable index chain and a different worker cann
       recorder.record(captureEvent('STOPPED'), 110)
       yield* recorder.finish
       expect(saved.chunks).toHaveLength(2)
+      expect(saved.objects).toHaveLength(4)
       expect(Result.getOrThrow(saved.verify()).structurallyClosed).toBe(true)
       const bucket = new Map(saved.objects.map((object) => [researchCaptureObjectKey(object.contentHash), object]))
       const reads: string[] = []
@@ -588,11 +622,26 @@ test('periodic drains form one immutable index chain and a different worker cann
       expect(recovered.seal.exportRoot?.exportedChunks).toBe(2)
       expect(recovered.structurallyClosed).toBe(true)
       expect(recovered.complete).toBe(false)
-      expect(reads).toHaveLength(7)
-      const second = saved.objects[5]
-      const first = saved.objects[2]
-      if (second === undefined || first === undefined) throw new Error('Expected two indexes')
-      expect(JSON.parse(text(second).payload).previousIndexHash).toBe(first.contentHash)
+      const second = saved.objects[1]
+      const first = saved.objects[0]
+      const manifest = saved.objects.at(-1)
+      if (second === undefined || first === undefined || manifest === undefined)
+        throw new Error('Expected two envelopes and manifest')
+      expect(reads).toEqual([manifest, second, first].map((object) => researchCaptureObjectKey(object.contentHash)))
+      expect(
+        JSON.parse(Result.getOrThrow(decodeResearchCaptureExportEnvelope(second)).index.payload).previousIndexHash,
+      ).toBe(first.contentHash)
+      const firstMetadata = saved.chunks[0]
+      if (firstMetadata === undefined) throw new Error('Expected durable metadata')
+      for (const changedChunks of [
+        [...saved.chunks].reverse(),
+        [text(researchCaptureObject(`${firstMetadata.payload}\n`)), ...saved.chunks.slice(1)],
+        [{ ...firstMetadata, contentHash: 'f'.repeat(64) }, ...saved.chunks.slice(1)],
+        saved.chunks.slice(1),
+      ])
+        expect(
+          Result.isFailure(recoverCaptureFromStoredObjects(changedChunks, saved.seals[0], (key) => bucket.get(key))),
+        ).toBe(true)
       const restarted = memory()
       const replacement = yield* makeResearchCaptureRecorder(
         restarted.store,
@@ -661,7 +710,7 @@ test.each(['manifest', 'sql-seal'] as const)(
               Effect.gen(function* () {
                 attempts++
                 yield* saved.objectStore.putVerified(object)
-                if (fault === 'manifest' && attempts === 5)
+                if (fault === 'manifest' && attempts === 3)
                   return yield* new ResearchCaptureFailure({ message: 'Manifest acknowledgement lost' })
               }),
           },
@@ -670,7 +719,7 @@ test.each(['manifest', 'sql-seal'] as const)(
         recorder.record(captureEvent('STOPPED'), 100)
         const seal = yield* recorder.finish
         expect(yield* recorder.finish).toEqual(seal)
-        expect(attempts).toBe(5)
+        expect(attempts).toBe(3)
         expect(seal?.invalidations).toContain(CaptureInvalidation.Persistence)
         expect((yield* recorder.status).exportManifestHash).toBeNull()
         const last = saved.objects.at(-1)
