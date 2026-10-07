@@ -28,7 +28,7 @@ def verify_ha(context):
         "PostgreSQL is not fully ready"
     )
     for selector in (
-        "app.kubernetes.io/name=spire-server,app.kubernetes.io/instance=spire",
+        "app.kubernetes.io/name=server,app.kubernetes.io/instance=spire",
         "cnpg.io/cluster=spire-db",
     ):
         replicas = json.loads(
