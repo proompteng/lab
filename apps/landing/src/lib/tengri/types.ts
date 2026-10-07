@@ -32,8 +32,6 @@ export type TengriAgent = {
   readyAt: string
   lastActivityAt: string
   idleDeadline: string
-  expiresAt: string
-  pendingImage?: string
   conditions: TengriCondition[]
 }
 

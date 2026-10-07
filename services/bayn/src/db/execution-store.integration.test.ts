@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
+import type { Statement } from 'effect/sql/Statement'
 
 import {
   sourceTimestamp,
@@ -26,7 +27,7 @@ import {
   ReconciliationStatus,
   TimeInForce,
 } from '../execution/contracts'
-import { WriterFenceLive } from '../execution/writer-fence'
+import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
 import { canonicalHashV1 } from '../hash'
 import { Journal, type JournalService } from '../ledger'
@@ -43,7 +44,7 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
-import { verifyBrokerStateVersion } from './reconciliation'
+import { makeReconciliation, verifyBrokerStateVersion } from './reconciliation'
 import { accountBrokerFees } from './broker-fees'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 
@@ -422,6 +423,123 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
   })
 
+  test('reuses the writer transaction for snapshot persistence and completed accounting verification', async () => {
+    const fill = fillEvent('transaction-fill', OrderSide.Buy, '3000000', '100000000')
+    const sourceHash = hash('transaction-positions')
+    const positions = [positionEvent(sourceHash, 'NVDA', '3000000', '300000000')]
+    const spanEvents: string[] = []
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options)
+        const event = span.event.bind(span)
+        span.event = (name, time, attributes) => {
+          spanEvents.push(name)
+          event(name, time, attributes)
+        }
+        return span
+      },
+    })
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const authority = yield* AuthorityGenerationStore
+        if (authority.readOrInitializeObserveAuthority === undefined) throw new Error('Missing authority initializer')
+        yield* authority.readOrInitializeObserveAuthority({
+          generationHash: hash('transaction-generation'),
+          maximum: Authority.Observe,
+        })
+        const events = yield* BrokerEventStore
+        const accounting = yield* FillAccountingStore
+        const valuations = yield* ValuationStore
+        const reconciliation = yield* ReconciliationStore
+        const fence = yield* WriterFence
+        const opening = flatAccountEvent()
+        const openingAt = '2026-08-28T14:00:00.000Z'
+        const openingAccount = { ...opening.account, observedAt: openingAt }
+        yield* events.ingest({
+          ...opening,
+          account: openingAccount,
+          contentHash: canonicalHashV1(openingAccount),
+          observedAt: openingAt,
+          occurredAt: openingAt,
+        })
+        yield* accounting.account(fill)
+        yield* fence
+          .transaction(
+            Effect.gen(function* () {
+              const originalAccount = accountEvent()
+              const account = {
+                ...originalAccount,
+                account: { ...originalAccount.account, cashMicros: '699999900', equityMicros: '999999900' },
+              }
+              const accountReceipt = yield* events.ingest(account)
+              const snapshot = yield* events.ingestPositions(positionSnapshot(sourceHash, positions))
+              const completed = yield* events.completeHistory([fill])
+              expect(completed.has(fill.sourceEventId)).toBeTrue()
+              yield* accounting.verifyCompleted([fill])
+              const valuation = yield* valuations.value({
+                accountEventId: accountReceipt.eventId,
+                positionSnapshotId: snapshot.snapshotId,
+              })
+              const reconciled = yield* reconciliation.reconcile({
+                account: account.account,
+                positions: positions.map((event) => event.position),
+                positionsObservedAt: observedAt,
+                orders: [],
+                ordersObservedAt: observedAt,
+                fills: [fill.fill],
+                fees: [],
+                valuation,
+                reconciledAt: '2026-08-28T14:32:00.000Z',
+              })
+              expect(reconciled.reconciliation.status).toBe(ReconciliationStatus.Exact)
+            }),
+          )
+          .pipe(Effect.provideService(Tracer.Tracer, tracer))
+      }),
+    )
+    expect(spanEvents.filter((name) => name === 'db.transaction.savepoint')).toHaveLength(0)
+  })
+
+  for (const failure of ['typed', 'defect', 'interruption'] as const) {
+    test(`rolls back the entire writer transaction after ${failure} failure`, async () => {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const events = yield* BrokerEventStore
+          const valuations = yield* ValuationStore
+          const fence = yield* WriterFence
+          const exit = yield* fence
+            .transaction(
+              Effect.gen(function* () {
+                const accountReceipt = yield* events.ingest(flatAccountEvent())
+                const snapshot = yield* events.ingestPositions(positionSnapshot(hash('rollback-positions'), []))
+                yield* valuations.value({
+                  accountEventId: accountReceipt.eventId,
+                  positionSnapshotId: snapshot.snapshotId,
+                })
+                return yield* failure === 'typed'
+                  ? Effect.fail('injected failure')
+                  : failure === 'defect'
+                    ? Effect.die('injected defect')
+                    : Effect.interrupt
+              }),
+            )
+            .pipe(Effect.exit)
+          const sql = yield* PgClient.PgClient
+          const [counts] = yield* sql<{
+            events: number
+            snapshots: number
+            valuations: number
+          }>`SELECT (SELECT count(*)::integer FROM broker_events) AS events, (SELECT count(*)::integer FROM position_snapshots) AS snapshots, (SELECT count(*)::integer FROM valuations) AS valuations`
+          const recovered = yield* events.ingest(flatAccountEvent())
+          return { exit, counts, recovered }
+        }),
+      )
+      expect(Exit.isFailure(result.exit)).toBeTrue()
+      expect(result.counts).toEqual({ events: 0, snapshots: 0, valuations: 0 })
+      expect(result.recovered.deduplicated).toBeFalse()
+    })
+  }
+
   test('persists exact broker cost basis beside legacy position history', async () => {
     const sourceHash = hash('position-cost-basis-v2')
     const legacy = positionEvent(sourceHash, 'NVDA', '3000000', '303000000')
@@ -530,6 +648,113 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
   })
 
+  test('opening cash and fee baselines avoid scanning account history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const authority = yield* AuthorityGenerationStore
+        const events = yield* BrokerEventStore
+        const valuations = yield* ValuationStore
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        if (authority.readOrInitializeObserveAuthority === undefined)
+          throw new Error('Missing native authority initializer')
+        yield* authority.readOrInitializeObserveAuthority({
+          generationHash: hash('opening-history-generation'),
+          maximum: Authority.Observe,
+        })
+        const account = flatAccountEvent()
+        const accountReceipt = yield* events.ingest(account)
+        const positionsReceipt = yield* events.ingestPositions(positionSnapshot(hash('opening-empty-positions'), []))
+        const valuation = yield* valuations.value({
+          accountEventId: accountReceipt.eventId,
+          positionSnapshotId: positionsReceipt.snapshotId,
+        })
+        yield* fence.transaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING ALL) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE account_snapshots (LIKE public.account_snapshots INCLUDING ALL) ON COMMIT DROP`
+            yield* sql`INSERT INTO broker_events
+              (event_id, schema_version, content_hash, event_kind, broker, account_id, source_event_id,
+                source_sequence, occurred_at, observed_at)
+              SELECT md5(n::text) || md5('event-' || n::text), 'bayn.paper-broker-event.v1',
+                md5(n::text) || md5('content-' || n::text), CASE WHEN n = 0 THEN 'ERROR' ELSE 'ACCOUNT' END,
+                'ALPACA', CASE WHEN n < 8192 THEN ${accountId} ELSE 'foreign-account' END,
+                'history-' || n, n, '2026-08-27T14:30:59.000Z'::timestamptz,
+                CASE WHEN n < 2 OR n >= 8192 THEN '2026-08-29T14:31:00.000Z'::timestamptz
+                  WHEN n = 2 THEN ${observedAt}::timestamptz
+                  ELSE '2026-08-27T14:31:00.000Z'::timestamptz END
+              FROM generate_series(0, 16383) AS n`
+            yield* sql`INSERT INTO account_snapshots
+              (event_id, account_id, schema_version, status, currency, cash_micros, equity_micros, buying_power_micros)
+              SELECT event_id, account_id, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                CASE WHEN source_sequence = 2 THEN 1000000000 ELSE 999000000 END,
+                CASE WHEN source_sequence = 2 THEN 1000000000 ELSE 999000000 END, 2000000000
+              FROM broker_events WHERE event_kind = 'ACCOUNT' AND source_sequence <> 1`
+            yield* sql`ANALYZE broker_events`
+            yield* sql`ANALYZE account_snapshots`
+            const lookups: Statement<Record<string, unknown>>[] = []
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                const query = statement.compile()[0]
+                if (
+                  query.includes('FROM account_snapshots AS snapshot') &&
+                  query.includes('ORDER BY event.source_sequence')
+                )
+                  lookups.push(statement)
+                return statement
+              },
+            })
+            const fee = {
+              value: { accountId, activityId: 'opening-fee', date: '2026-08-28', netAmountMicros: '0' },
+              evidence: { requestId: 'opening-fee-request', status: 200, contentHash: hash('opening-fee'), observedAt },
+            }
+            const exact = yield* makeReconciliation(monitored, journal(journalControl), config, fence).reconcile({
+              account: account.account,
+              positions: [],
+              positionsObservedAt: observedAt,
+              orders: [],
+              ordersObservedAt: observedAt,
+              fills: [],
+              fees: [fee],
+              valuation,
+              reconciledAt: '2026-08-28T14:32:00.000Z',
+            })
+            expect(exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
+            expect(lookups).toHaveLength(2)
+            for (const lookup of lookups) {
+              const [query, parameters] = lookup.compile()
+              const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+              const plans = yield* Schema.decodeUnknownEffect(
+                Schema.Array(
+                  Schema.Struct({
+                    'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+                  }),
+                ),
+              )(explanation)
+              const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+              if (root === undefined) throw new Error('PostgreSQL did not return the opening query plan')
+              const touchedBlocks = [
+                'Shared Hit Blocks',
+                'Shared Read Blocks',
+                'Local Hit Blocks',
+                'Local Read Blocks',
+              ].reduce((sum, key) => sum + Number(root[key] ?? 0), 0)
+              expect(touchedBlocks).toBeLessThan(32)
+            }
+            const prebaseline = { ...fee, value: { ...fee.value, date: '2026-08-27' } }
+            expect(
+              yield* accountBrokerFees(sql, journal(journalControl), accountId, [prebaseline], config.tigerBeetle).pipe(
+                Effect.flip,
+              ),
+            ).toMatchObject({ failure: 'invariant', message: expect.stringContaining('predates') })
+          }),
+        )
+      }),
+    )
+    expect(journalControl.postCount).toBe(0)
+  })
+
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
     await runtime.runPromise(Effect.flatMap(BrokerEventStore, (events) => events.ingest(flatAccountEvent())))
     const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
@@ -576,6 +801,28 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(forward.brokerFeeRecords).toHaveLength(3)
     expect(forward.generationBrokerFeeIds).toEqual(['fee-0', 'fee-1', 'fee-2'])
     expect(forward.ambiguousBrokerFeeCount).toBe(0)
+    const cuts = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const reports = []
+        for (const cut of [occurredAt, observedAt]) {
+          yield* sql`INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${hash(`fee-cut-${cut}`)}, 'bayn.paper-reconciliation.v1', ${accountId}, ${hash('fee-cut-state')},
+            ${hash('fee-cut-state')}, ${hash(`fee-cut-content-${cut}`)}, 'EXACT', '[]'::jsonb, ${cut}::timestamptz
+          )`
+          reports.push(yield* readForwardPerformancePostgres(sql, accountId))
+        }
+        return reports
+      }),
+    )
+    expect(cuts.map((report) => report.postReconciliationActivityCount)).toEqual([3, 0])
+    for (const report of cuts) {
+      expect(report.brokerFeeRecords).toEqual(forward.brokerFeeRecords)
+      expect(report.generationBrokerFeeIds).toEqual(forward.generationBrokerFeeIds)
+    }
   })
 
   test('binds the submit cache to the latest exact reconciliation, broker observations and authority version', async () => {

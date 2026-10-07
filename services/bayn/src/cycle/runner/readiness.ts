@@ -1,7 +1,7 @@
 import { Schema } from 'effect'
 
-import { Sha256Schema, UtcInstantSchema } from '../../schemas'
-import { MarketFeatureDefinition } from '../../market-data/features/contract'
+import { UtcInstantSchema } from '../../schemas'
+import { RequiredMarketFeatureSchema } from '../../market-data/features/contract'
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
 
 export enum DecisionReadinessReason {
@@ -16,20 +16,13 @@ export enum DecisionReadinessReason {
   SignalWindowObserved = 'SIGNAL_WINDOW_OBSERVED',
 }
 
-export const RequiredFeatureReadinessSchema = Schema.Struct({
-  definitionId: Schema.Enum(MarketFeatureDefinition),
-  definitionHash: Sha256Schema,
-  windowStartAt: UtcInstantSchema,
-  windowEndAt: UtcInstantSchema,
-})
-
 export const DecisionReadinessSchema = Schema.Struct({
   reason: Schema.Enum(DecisionReadinessReason),
   message: Schema.NonEmptyString,
   availableAt: Schema.optionalKey(UtcInstantSchema),
   symbol: Schema.optionalKey(Schema.NonEmptyString),
   eventAt: Schema.optionalKey(UtcInstantSchema),
-  requiredFeature: Schema.optionalKey(RequiredFeatureReadinessSchema),
+  requiredFeature: Schema.optionalKey(RequiredMarketFeatureSchema),
   snapshotQuery: Schema.optionalKey(
     Schema.Struct({
       rangeStartAt: UtcInstantSchema,
@@ -55,7 +48,7 @@ export const snapshotReadiness = (failure: IntradaySnapshotFailure): DecisionRea
     message: failure.message,
     ...(typeof symbol === 'string' && symbol.length > 0 ? { symbol } : {}),
     ...(Schema.is(UtcInstantSchema)(eventAt) ? { eventAt } : {}),
-    ...(Schema.is(RequiredFeatureReadinessSchema)(requiredFeature) ? { requiredFeature } : {}),
+    ...(Schema.is(RequiredMarketFeatureSchema)(requiredFeature) ? { requiredFeature } : {}),
   }
 }
 

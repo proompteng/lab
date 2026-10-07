@@ -33,6 +33,7 @@ import { MutationStore, MutationStoreError, type MutationEvent } from './mutatio
 import type { WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { Pipeable } from '../pipeable'
+import { withObservedStage } from '../telemetry'
 
 export enum ExecutionFailure {
   IntentNotFound = 'INTENT_NOT_FOUND',
@@ -311,7 +312,11 @@ const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
-  }).pipe(Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)))
+  }).pipe(
+    Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)),
+    withObservedStage('bayn.execution.submit', { operation: closeOnly ? 'close' : 'entry' }),
+    Effect.annotateLogs({ intentId, closeOnly }),
+  )
 
 export const submit = Pipeable.by<
   (consistencyDelayMs: number, closeOnly?: boolean) => (intentId: string) => ReturnType<typeof submitDataFirst>,

@@ -1,10 +1,95 @@
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import { errorCodes, findErrorBy, protocolErrorsCodesById, TimeoutError } from '@platformatic/kafka'
 import type { TechnicalMarketFeature } from '../features/technical-contract'
 import type { RollingMarketFeature } from '../features/contract'
 import type { KafkaPartitionPosition } from './bootstrap'
-import { featureMatchesBars } from '../features/contract'
+import { featureMatchesBars, RequiredMarketFeatureSchema } from '../features/contract'
 import { observedBarsAt, topicPartitionKey, type ObservedFeature, type StreamingProjection } from './projection'
+import type { IntradaySnapshotFailure, IntradaySnapshotQuery } from '../intraday/model'
+import { UtcInstantSchema, UtcOrderTimestampSchema } from '../../schemas'
+import { intradayInstantNanos } from '../intraday/time'
+
+const snapshotInstant = Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema])
+const isRequiredFeature = Schema.is(RequiredMarketFeatureSchema)
+/** Only query-bound identities, timestamps and finite publication durations leave the failure boundary. */
+export const snapshotFailureMeasurement = (
+  failure: IntradaySnapshotFailure,
+  query: IntradaySnapshotQuery,
+  projection: StreamingProjection,
+) => {
+  const facts = failure.facts
+  const symbol = facts?.['symbol']
+  const sourceTopic = facts?.['sourceTopic']
+  const eventAt = facts?.['eventAt']
+  const ingestedAt = facts?.['ingestedAt']
+  const requiredFeature = facts?.['requiredFeature']
+  const feature =
+    typeof symbol === 'string' &&
+    query.universe.includes(symbol) &&
+    isRequiredFeature(requiredFeature) &&
+    requiredFeature.windowStartAt === query.rangeStartAt &&
+    requiredFeature.windowEndAt === query.rangeEndAt
+      ? {
+          definitionId: requiredFeature.definitionId,
+          definitionHash: requiredFeature.definitionHash,
+          windowStartAt: requiredFeature.windowStartAt,
+          windowEndAt: requiredFeature.windowEndAt,
+        }
+      : undefined
+  const windowStartMs = Date.parse(query.rangeStartAt)
+  const windowEndMs = Date.parse(query.rangeEndAt)
+  const expectedBars = (windowEndMs - windowStartMs) / 60_000
+  let coverage: { expectedBars: number; observedBars: number; missingBarEventAts: readonly string[] } | undefined
+  if (
+    feature !== undefined &&
+    typeof symbol === 'string' &&
+    Number.isInteger(expectedBars) &&
+    expectedBars > 0 &&
+    expectedBars <= 30 &&
+    windowStartMs % 60_000 === 0 &&
+    windowEndMs % 60_000 === 0
+  ) {
+    const start = BigInt(windowStartMs) * 1_000_000n
+    const end = BigInt(windowEndMs) * 1_000_000n
+    const present = new Set(
+      observedBarsAt(projection, symbol, start, end, Date.parse(query.observedAt)).map((entry) =>
+        intradayInstantNanos(entry.value.eventAt),
+      ),
+    )
+    const missingBarEventAts: string[] = []
+    for (let at = start; at < end; at += 60_000_000_000n)
+      if (!present.has(at)) missingBarEventAts.push(new Date(Number(at / 1_000_000n)).toISOString())
+    coverage = { expectedBars, observedBars: expectedBars - missingBarEventAts.length, missingBarEventAts }
+  }
+  const durations: {
+    publicationDelayMs?: number
+    minimumPublicationDelayMs?: number
+    maximumPublicationDelayMs?: number
+  } = {}
+  for (const key of ['publicationDelayMs', 'minimumPublicationDelayMs', 'maximumPublicationDelayMs'] as const) {
+    const value = facts?.[key]
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) durations[key] = value
+  }
+  return {
+    schemaVersion: 'bayn.market-snapshot-failure.v1',
+    failureReason: failure.reason,
+    ...(failure.ingestionDelayDirection === undefined
+      ? {}
+      : { ingestionDelayDirection: failure.ingestionDelayDirection }),
+    observedAt: query.observedAt,
+    rangeStartAt: query.rangeStartAt,
+    rangeEndAt: query.rangeEndAt,
+    ...(typeof symbol === 'string' && query.universe.includes(symbol) ? { symbol } : {}),
+    ...(typeof sourceTopic === 'string' && Object.values(query.sourceTopics).includes(sourceTopic)
+      ? { sourceTopic }
+      : {}),
+    ...(Schema.is(snapshotInstant)(eventAt) ? { eventAt } : {}),
+    ...(Schema.is(snapshotInstant)(ingestedAt) ? { ingestedAt } : {}),
+    ...(feature === undefined ? {} : { requiredFeature: feature, sourceTopic: query.sourceTopics.bars }),
+    ...(coverage === undefined ? {} : { barCoverage: coverage }),
+    ...durations,
+  }
+}
 
 /** Offset distance includes control records and is not a count of market messages. */
 export const partitionLagMeasurements = (

@@ -20,7 +20,7 @@ export interface RuntimeHealth {
   readonly checkedAt: string | null
   readonly dependencies: {
     readonly postgresql: DependencyHealth
-    readonly signal: DependencyHealth
+    readonly signal?: DependencyHealth
     readonly tigerBeetle: DependencyHealth
     readonly cycle: DependencyHealth
     readonly cycleRunner: DependencyHealth

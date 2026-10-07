@@ -171,10 +171,6 @@ export interface IntradayMarketDataService {
   ) => Effect.Effect<MarketSnapshotReference, OperationalError>
 }
 
-export class MarketDataHealth extends Context.Service<MarketDataHealth, Pick<IntradayMarketDataService, 'check'>>()(
-  'bayn/MarketDataHealth',
-) {}
-
 export class IntradayMarketData extends Context.Service<IntradayMarketData, IntradayMarketDataService>()(
   '@proompteng/bayn/market-data/intraday/IntradayMarketData',
 ) {}

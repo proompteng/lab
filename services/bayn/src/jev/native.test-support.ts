@@ -21,7 +21,7 @@ import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import { jevBehaviorHash } from './protocol'
+import { jevBehaviorHash, momentumFirstJevBehaviorHash } from './protocol'
 import { prepareJevRequest, decodeJevResponse, type JevResponse } from './contract'
 import {
   JevBatchPlanVersion,
@@ -38,9 +38,11 @@ export const nativeJevFixture = (
   purpose: JevPurpose = JevPurpose.Entry,
   observedAt?: string,
   accountId = 'jev-native-test',
+  protocolDocument: unknown = defaultJevProtocolDocument,
+  cycleBindingId = 'a'.repeat(64),
 ) => {
   const base = streamingFixture()
-  const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
+  const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
   const end =
     Math.floor((Date.parse(observedAt ?? base.query.observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) *
     60_000
@@ -174,12 +176,13 @@ export const nativeJevFixture = (
   const draft = Result.getOrThrow(
     makeIntradayCycleDraft(
       {
-        cycleBindingId: 'a'.repeat(64),
+        cycleBindingId,
         strategyName: 'jev',
         strategyProtocolHash: Result.getOrThrow(
           makeStrategyProtocolHashResult({
             name: 'jev',
-            behaviorHash: jevBehaviorHash,
+            behaviorHash:
+              protocol.schemaVersion === 'bayn.jev.protocol.v2' ? momentumFirstJevBehaviorHash : jevBehaviorHash,
             parameterHash: canonicalHashV1(protocol),
             parameterSchemaVersion: protocol.schemaVersion,
           }),

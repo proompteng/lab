@@ -14,6 +14,7 @@ import { KafkaMarketProjection } from './kafka'
 import { recoverStreamingSnapshotReference, streamingSnapshotReference } from './reference'
 import { reproduceStreamingSnapshot } from './replay'
 import { constructStreamingSnapshot, type StreamingVerifiedMarketSnapshot } from './snapshot'
+import { snapshotFailureMeasurement } from './telemetry'
 
 export const StreamingIntradayMarketDataLive = Layer.effect(
   IntradayMarketData,
@@ -29,6 +30,11 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
           Effect.mapError((cause) => marketDataOperationError('load', 'Kafka market projection is not ready', cause)),
         )
         const snapshot = yield* Effect.fromResult(constructStreamingSnapshot(cut, query)).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning('Streaming market snapshot rejected').pipe(
+              Effect.annotateLogs(snapshotFailureMeasurement(cause, query, cut.projection)),
+            ),
+          ),
           Effect.mapError((cause) => marketDataOperationError('load', 'Streaming snapshot verification failed', cause)),
         )
         observed.set(snapshot.manifest.snapshotId, snapshot)

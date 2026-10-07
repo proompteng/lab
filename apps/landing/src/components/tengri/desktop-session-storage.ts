@@ -120,7 +120,11 @@ export function clearDeletedDesktopState(agentId: string) {
   }
 
   try {
-    for (const key of [`tengri-thread:${agentId}`, `tengri:spotlight:${agentId}:recents`]) {
+    for (const key of [
+      `tengri-thread:${agentId}`,
+      `tengri-conversations:${agentId}`,
+      `tengri:spotlight:${agentId}:recents`,
+    ]) {
       localStorage.removeItem(key)
     }
   } catch {

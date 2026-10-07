@@ -3,7 +3,7 @@ import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
 import { intradayInstantNanos } from '../intraday/time'
-import { strictParseOptions } from '../../schemas'
+import { strictParseOptions, UtcInstantSchema } from '../../schemas'
 
 export enum MarketFeatureContract {
   V1 = 'dorvud.market-feature.v1',
@@ -36,6 +36,13 @@ const SafeInteger = Schema.Int.check(
 )
 const Timestamp = SafeInteger.check(Schema.isLessThanOrEqualTo(253402300799999))
 const Identity = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/))
+
+export const RequiredMarketFeatureSchema = Schema.Struct({
+  definitionId: Schema.Enum(MarketFeatureDefinition),
+  definitionHash: Hash,
+  windowStartAt: UtcInstantSchema,
+  windowEndAt: UtcInstantSchema,
+})
 
 export const MarketFeatureInputSchema = Schema.Struct({
   eventTimeNanos: IntegerString,

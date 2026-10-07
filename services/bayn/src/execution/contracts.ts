@@ -9,6 +9,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
   UtcInstantSchema as UtcInstant,
+  UtcDatabaseInstantSchema,
   UtcOrderTimestampSchema as UtcOrderTimestamp,
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
@@ -910,7 +911,7 @@ const AuthorityStateBase = Schema.Struct({
   kill: Schema.Enum(KillState),
   reason: Schema.optionalKey(NonEmptyString),
   version: Version,
-  updatedAt: UtcInstant,
+  updatedAt: UtcDatabaseInstantSchema,
 })
 
 export const AuthorityStateSchema = AuthorityStateBase.check(
