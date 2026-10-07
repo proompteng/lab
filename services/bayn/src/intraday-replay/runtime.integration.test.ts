@@ -98,6 +98,7 @@ durableTest.each(
       'fallback',
       'missing-benchmark',
       'no-trade',
+      'no-signal-missing-source',
       'no-trade-finalization',
       'missing-calendar',
       'failed-model-response',
@@ -141,7 +142,10 @@ durableTest.each(
     const clockDelay = scenario === 'measured-clock-delay-reentry'
     const slippedExit = scenario === 'measured-slipped-exit-reentry'
     const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || clockDelay || slippedExit
-    const noTrade = scenario === 'no-trade' || scenario === 'no-trade-finalization'
+    const noTrade =
+      scenario === 'no-trade' || scenario === 'no-trade-finalization' || scenario === 'no-signal-missing-source'
+    // Only these two symbols have positive own and benchmark-relative fixture momentum.
+    const eligibleEntrySymbols = ['AAPL', 'AMZN']
     const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
     const measuredCalls: ReplayJevCall[] = []
@@ -187,9 +191,11 @@ durableTest.each(
                 ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
                 : []),
             ]
-          : scenario === 'no-trade-finalization'
-            ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
-            : []
+          : scenario === 'no-trade'
+            ? [{ at: initialAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0 }]
+            : scenario === 'no-trade-finalization'
+              ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+              : []
     const lifecycleArrivals = lifecycleObservations
       .flatMap(({ at, fullWindow, offset, bidSize, premium }) => {
         const windowEnd = Math.floor(at / 60_000) * 60_000
@@ -205,7 +211,7 @@ durableTest.each(
         const original = makeIntradayMomentumTestSnapshot(
           protocol,
           { ...query, archiveWatermarks: [] },
-          { AAPL: premium, AMZN: 0.01 },
+          noTrade ? {} : { AAPL: premium, AMZN: 0.01 },
           100,
           { AAPL: bidSize },
         )
@@ -398,7 +404,7 @@ durableTest.each(
               retain: (call) =>
                 Effect.gen(function* () {
                   measuredCalls.push(call)
-                  if (scenario === 'measured-entry-expired' && measuredCalls.length === 15)
+                  if (scenario === 'measured-entry-expired' && measuredCalls.length === eligibleEntrySymbols.length)
                     yield* providerClock.adjust(11_000)
                 }),
             })
@@ -759,7 +765,7 @@ durableTest.each(
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
           }
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
-          expect(measuredCalls).toHaveLength(30)
+          expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length * 2)
           expect(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
@@ -818,7 +824,13 @@ durableTest.each(
           ).toEqual({ completion: 'COMPLETE', issues: [] })
           return { _tag: 'Coverage' as const }
         }
-        if (scenario === 'missing-benchmark' || scenario === 'no-trade' || scenario === 'failed-model-response') {
+        if (
+          scenario === 'missing-benchmark' ||
+          scenario === 'no-trade' ||
+          scenario === 'no-signal-missing-source' ||
+          scenario === 'failed-model-response'
+        ) {
+          if (scenario === 'no-trade') yield* advanceMarketTo(initialMs + 1)
           const schedule = yield* driveReplaySession(
             runtime,
             (at) =>
@@ -848,7 +860,7 @@ durableTest.each(
           if (scenario !== 'no-trade') {
             expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
             expect(assessment).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
-            if (scenario === 'failed-model-response') {
+            if (scenario === 'failed-model-response' || scenario === 'no-signal-missing-source') {
               expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
               expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
             }
@@ -856,6 +868,10 @@ durableTest.each(
             expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeGreaterThan(0)
             expect(schedule.unavailableDecisionPassCount).toBe(0)
             expect(assessment).toEqual({ completion: 'COMPLETE', issues: [] })
+          }
+          if (scenario === 'no-trade' || scenario === 'no-signal-missing-source') {
+            expect(yield* sql`SELECT count(*)::int AS calls FROM jev_evaluation_requests`).toEqual([{ calls: 0 }])
+            expect(yield* sql`SELECT count(*)::int AS batches FROM jev_batch_results`).toEqual([{ batches: 1 }])
           }
           return { _tag: 'Coverage' as const }
         }
@@ -1168,7 +1184,7 @@ durableTest.each(
         yield* runtime.reconcile
         if (scenario === 'measured-entry-expired') {
           const state = yield* broker.snapshot
-          expect(measuredCalls).toHaveLength(15)
+          expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length)
           expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
           expect(state.orders).toHaveLength(0)
           expect(state.fills).toHaveLength(0)
@@ -1178,7 +1194,7 @@ durableTest.each(
             yield* sql`SELECT (SELECT count(*)::int FROM intents) AS intents,
               (SELECT count(*)::int FROM jev_evaluation_requests) AS requests,
               (SELECT count(*)::int FROM jev_batch_results) AS batches`,
-          ).toEqual([{ intents: 0, requests: 15, batches: 1 }])
+          ).toEqual([{ intents: 0, requests: eligibleEntrySymbols.length, batches: 1 }])
           return { _tag: 'Expired' as const }
         }
         if (
@@ -1235,12 +1251,12 @@ durableTest.each(
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
-            expect(measuredCalls).toHaveLength(16)
+            expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length + 1)
             const entryCalls = measuredCalls.filter((call) => {
               const action = call.request.questions['action']
               return action?.type === 'choice' && 'enter' in action.criteria
             })
-            expect(entryCalls).toHaveLength(15)
+            expect(entryCalls).toHaveLength(eligibleEntrySymbols.length)
             for (const call of measuredCalls) {
               expect(call.outcome.status).toBe('RECEIVED')
               expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBeGreaterThanOrEqual(

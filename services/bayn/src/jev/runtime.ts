@@ -23,7 +23,7 @@ import {
 } from '../observe-composition/intraday-market-data'
 import type { EntryQuoteFreshness } from '../risk'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
-import { JevBatchPlanVersion, JevCandidateResultStatus } from './batch'
+import { JevBatchPlanVersion, usableJevBatchInferences } from './batch'
 import { evaluateJevBatch, recoverPendingJevBatches } from './batch-evaluation'
 import { JevContractError } from './contract'
 import {
@@ -42,8 +42,6 @@ import {
 } from './exit'
 import { JevPositionStore } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
-import { JevOutcome } from './evidence'
-import { JevResolutionStatus } from './resolution'
 import { jevSnapshotSymbols, type JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
 
@@ -207,14 +205,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
     const decidedAt = yield* currentUtcInstant
     if (
       saved.result === null ||
-      decidedAt >= batchPlan.expiresAt ||
-      saved.result.candidates.some(
-        (candidate) =>
-          candidate.status !== JevCandidateResultStatus.Excluded &&
-          (candidate.status !== JevCandidateResultStatus.Resolved ||
-            candidate.resolution.status !== JevResolutionStatus.Recorded ||
-            candidate.receipt?.outcome.status !== JevOutcome.Received),
-      )
+      Result.isFailure(usableJevBatchInferences(saved.plan, saved.result, Date.parse(decidedAt)))
     )
       return yield* new JevAwaitingEvidence({
         message: 'The complete committed Jev batch is not usable within its deadline',

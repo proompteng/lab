@@ -38,11 +38,21 @@ import { makeJevTradingSignalBatch, reproduceJevTradingSignalBatch } from './tra
 const fixture = (
   premiums: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
   purpose = JevPurpose.Entry,
+  unavailableSource = false,
 ) => {
   const base = nativeJevFixture(purpose)
   const protocol = Result.getOrThrow(decodeJevProtocol(momentumFirstJevProtocolDocument))
+  const raw = makeIntradayMomentumTestSnapshot(protocol, { ...base.query, archiveWatermarks: [] }, premiums)
+  const staleAt = new Date(Date.parse(base.query.observedAt) - 20_000).toISOString()
   const { snapshot } = streamingFixtureFromRaw(
-    makeIntradayMomentumTestSnapshot(protocol, { ...base.query, archiveWatermarks: [] }, premiums),
+    {
+      ...raw,
+      quotes: unavailableSource
+        ? raw.quotes.map((quote) =>
+            quote.symbol === 'AMD' ? { ...quote, eventAt: staleAt, ingestedAt: staleAt } : quote,
+          )
+        : raw.quotes,
+    },
     base.query,
   )
   const observation = Result.getOrThrow(
@@ -155,53 +165,66 @@ describe('momentum-first Jev admission', () => {
     expect(Result.isFailure(decideJevEntry({ ...common, decidedAt: f.plan.expiresAt }))).toBe(true)
   })
 
-  test('all valid non-signals run through the native runtime with zero provider calls', async () => {
-    const f = fixture({})
-    const unused = Effect.die('Excluded candidates must never call the provider or claim evaluations')
-    let committed = 0
-    const observed = await Effect.runPromise(
-      TestClock.setTime(Date.parse(f.at)).pipe(
-        Effect.andThen(
-          evaluateJevObservationFromSnapshot(
-            {
-              cycleId: f.observation.payload.cycleId,
-              authorityGenerationHash: f.observation.payload.authorityGenerationHash,
-              protocol: f.protocol,
-              portfolio: f.portfolio,
-            },
-            f.snapshot.manifest.rangeEndAt,
-            Effect.succeed(f.snapshot),
+  test.each([false, true])(
+    'zero-call runtime distinguishes verified non-signals from unavailable source: %s',
+    async (unavailableSource) => {
+      const f = fixture({}, JevPurpose.Entry, unavailableSource)
+      const unused = Effect.die('Excluded candidates must never call the provider or claim evaluations')
+      let committed = 0
+      const observed = await Effect.runPromise(
+        TestClock.setTime(Date.parse(f.at)).pipe(
+          Effect.andThen(
+            evaluateJevObservationFromSnapshot(
+              {
+                cycleId: f.observation.payload.cycleId,
+                authorityGenerationHash: f.observation.payload.authorityGenerationHash,
+                protocol: f.protocol,
+                portfolio: f.portfolio,
+              },
+              f.snapshot.manifest.rangeEndAt,
+              Effect.succeed(f.snapshot),
+            ),
           ),
+          Effect.provideService(CandidateObservationStore, {
+            record: () => Effect.void,
+            latestJevWindowEnd: () => Effect.succeed(Option.none()),
+          }),
+          Effect.provideService(JevBatchStore, {
+            pending: () => Effect.succeed([]),
+            read: () => unused,
+            begin: (plan) =>
+              Effect.sync(() => {
+                committed += 1
+                expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V4)
+                expect(plan.candidates.every(({ status }) => status === JevCandidatePlanStatus.Excluded)).toBe(true)
+                return { plan, result: null }
+              }),
+            finish: () => Effect.succeed({ plan: f.plan, result: nativeJevBatchResult(f.plan, f.at) }),
+          }),
+          Effect.provideService(JevEvaluationStore, {
+            read: () => unused,
+            begin: () => unused,
+            record: () => unused,
+            abandon: () => unused,
+          }),
+          Effect.provideService(JevClient, { evaluate: () => unused }),
+          Effect.result,
+          Effect.provide(TestClock.layer()),
         ),
-        Effect.provideService(CandidateObservationStore, {
-          record: () => Effect.void,
-          latestJevWindowEnd: () => Effect.succeed(Option.none()),
-        }),
-        Effect.provideService(JevBatchStore, {
-          pending: () => Effect.succeed([]),
-          read: () => unused,
-          begin: (plan) =>
-            Effect.sync(() => {
-              committed += 1
-              expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V4)
-              expect(plan.candidates.every(({ status }) => status === JevCandidatePlanStatus.Excluded)).toBe(true)
-              return { plan, result: null }
-            }),
-          finish: () => Effect.succeed({ plan: f.plan, result: nativeJevBatchResult(f.plan, f.at) }),
-        }),
-        Effect.provideService(JevEvaluationStore, {
-          read: () => unused,
-          begin: () => unused,
-          record: () => unused,
-          abandon: () => unused,
-        }),
-        Effect.provideService(JevClient, { evaluate: () => unused }),
-        Effect.provide(TestClock.layer()),
-      ),
-    )
-    expect(committed).toBe(1)
-    expect(Result.getOrThrow(decideJevEntry(observed.evidence)).selectedSymbols).toEqual([])
-  })
+      )
+      expect(committed).toBe(1)
+      if (unavailableSource) {
+        expect(Result.isFailure(observed)).toBe(true)
+        if (Result.isFailure(observed))
+          expect(observed.failure).toMatchObject({
+            _tag: 'JevAwaitingEvidence',
+            readiness: 'INFERENCE_UNAVAILABLE',
+          })
+      } else {
+        expect(Result.getOrThrow(decideJevEntry(Result.getOrThrow(observed).evidence)).selectedSymbols).toEqual([])
+      }
+    },
+  )
 
   test('fails closed on unknown input and forged exclusions', () => {
     const f = fixture()
