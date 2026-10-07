@@ -224,6 +224,10 @@ describe('inference-cost operator command', () => {
 
   test('accepts an explicit session or offline evidence and requires a rate card', () => {
     expect(Result.getOrThrow(parseInferenceCostArgs(['--help']))._tag).toBe('Help')
+    expect(Result.getOrThrow(parseInferenceCostArgs(['--ledger-session', '2026-10-06']))).toEqual({
+      _tag: 'LedgerSession',
+      sessionDate: '2026-10-06',
+    })
     expect(
       Result.getOrThrow(parseInferenceCostArgs(['--session', '2026-01-02', '--rate-card', 'rates.json']))._tag,
     ).toBe('Session')
@@ -235,6 +239,8 @@ describe('inference-cost operator command', () => {
       ['--session', '2026-02-30', '--rate-card', 'rates.json'],
       ['--session', '2026-01-02'],
       ['--evidence', '--session', '--rate-card', 'rates.json'],
+      ['--ledger-session', '2026-02-30'],
+      ['--ledger-session', '2026-10-06', '--rate-card', 'replacement.json'],
     ])
       expect(Result.isFailure(parseInferenceCostArgs(args))).toBe(true)
   })
