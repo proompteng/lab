@@ -202,6 +202,77 @@ pub(super) async fn serve(config: SlotConfig) -> anyhow::Result<()> {
     }
 }
 
+pub(super) async fn stage_root_disk(
+    config: &SlotConfig,
+    root_image: &std::path::Path,
+    token_file: &std::path::Path,
+    initialize_home: bool,
+) -> anyhow::Result<()> {
+    ensure!(
+        fs::try_exists(config.directory.join("journal.json")).await?,
+        "root staging requires a preparation journal"
+    );
+    let directory = &config.directory;
+    let root_disk = &config.root_disk;
+    let identity = &config.identity;
+    fs::copy(root_image, root_disk)
+        .await
+        .context("stage guest root disk")?;
+    let token = fs::read_to_string(token_file)
+        .await
+        .context("read guest bootstrap token")?;
+    let config_file = directory.join("guest-config.json");
+    fs::write(
+        &config_file,
+        serde_json::to_vec(&json!({
+            "podUid": identity.pod_uid, "token": token,
+            "initializeHome": initialize_home
+        }))?,
+    )
+    .await?;
+    for (source, destination) in [
+        (&config_file, "/etc/tengri-slot.json"),
+        (&PathBuf::from("/etc/resolv.conf"), "/etc/resolv.conf"),
+    ] {
+        let output = Command::new("debugfs")
+            .args(["-w", "-R"])
+            .arg(format!("write {} {destination}", source.display()))
+            .arg(root_disk)
+            .output()
+            .await?;
+        ensure!(
+            output.status.success()
+                && !String::from_utf8_lossy(&output.stderr).contains("Could not allocate"),
+            "write guest boot configuration failed"
+        );
+        let readback = Command::new("debugfs")
+            .args(["-R"])
+            .arg(format!("cat {destination}"))
+            .arg(root_disk)
+            .output()
+            .await?;
+        ensure!(
+            readback.status.success() && readback.stdout == fs::read(source).await?,
+            "guest boot configuration readback failed"
+        );
+    }
+    let output = Command::new("debugfs")
+        .args([
+            "-w",
+            "-R",
+            "set_inode_field /etc/tengri-slot.json mode 0100600",
+        ])
+        .arg(root_disk)
+        .output()
+        .await?;
+    ensure!(
+        output.status.success(),
+        "set private guest configuration mode failed"
+    );
+    fs::remove_file(config_file).await?;
+    Ok(())
+}
+
 async fn configuration() -> anyhow::Result<SlotConfig> {
     let directory = PathBuf::from("/var/lib/tengri/slot");
     let root_disk = directory.join("rootfs.ext4");
@@ -225,53 +296,6 @@ async fn configuration() -> anyhow::Result<SlotConfig> {
             !fs::try_exists(&root_disk).await?,
             "uncommitted root disk exists; require explicit cleanup"
         );
-        fs::copy("/guest/rootfs.ext4", &root_disk).await?;
-        let token = fs::read_to_string("/run/guest-bootstrap/token").await?;
-        let config_file = directory.join("guest-config.json");
-        fs::write(&config_file, serde_json::to_vec(&json!({
-            "podUid": identity.pod_uid, "token": token,
-            "initializeHome": env::var("TENGRI_INITIALIZE_HOME").context("TENGRI_INITIALIZE_HOME is required")? == "true"
-        }))?).await?;
-        for (source, destination) in [
-            (&config_file, "/etc/tengri-slot.json"),
-            (&PathBuf::from("/etc/resolv.conf"), "/etc/resolv.conf"),
-        ] {
-            let output = Command::new("debugfs")
-                .args(["-w", "-R"])
-                .arg(format!("write {} {destination}", source.display()))
-                .arg(&root_disk)
-                .output()
-                .await?;
-            ensure!(
-                output.status.success()
-                    && !String::from_utf8_lossy(&output.stderr).contains("Could not allocate"),
-                "write guest boot configuration failed"
-            );
-            let readback = Command::new("debugfs")
-                .args(["-R"])
-                .arg(format!("cat {destination}"))
-                .arg(&root_disk)
-                .output()
-                .await?;
-            ensure!(
-                readback.status.success() && readback.stdout == fs::read(source).await?,
-                "guest boot configuration readback failed"
-            );
-        }
-        let output = Command::new("debugfs")
-            .args([
-                "-w",
-                "-R",
-                "set_inode_field /etc/tengri-slot.json mode 0100600",
-            ])
-            .arg(&root_disk)
-            .output()
-            .await?;
-        ensure!(
-            output.status.success(),
-            "set private guest configuration mode failed"
-        );
-        fs::remove_file(config_file).await?;
     }
     Ok(SlotConfig {
         identity,

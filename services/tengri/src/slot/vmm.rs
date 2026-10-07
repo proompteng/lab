@@ -25,6 +25,14 @@ pub struct Vmm {
 }
 
 impl Vmm {
+    #[cfg(test)]
+    pub(super) fn from_child(child: Child) -> Self {
+        Self {
+            child,
+            api: Client::new(),
+        }
+    }
+
     async fn start(config: &SlotConfig) -> anyhow::Result<Self> {
         #[cfg(test)]
         let started = Instant::now();

@@ -154,11 +154,17 @@ impl SlotConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SleepCommit {
+    Saved(Snapshot),
+    Recovered,
+}
+
 pub struct Slot {
     config: SlotConfig,
     journal: Journal,
     vm: Option<Vmm>,
-    pending_sleep: Option<Snapshot>,
+    pending_sleep: Option<SleepCommit>,
     state_tx: watch::Sender<SlotState>,
 }
 
@@ -289,6 +295,17 @@ impl Slot {
     }
 
     async fn prepare_vm(&mut self) -> anyhow::Result<()> {
+        if !fs::try_exists(&self.config.root_disk).await? {
+            runner::stage_root_disk(
+                &self.config,
+                std::path::Path::new("/guest/rootfs.ext4"),
+                std::path::Path::new("/run/guest-bootstrap/token"),
+                std::env::var("TENGRI_INITIALIZE_HOME")
+                    .context("TENGRI_INITIALIZE_HOME is required")?
+                    == "true",
+            )
+            .await?;
+        }
         self.vm = Some(Vmm::boot(&self.config).await?);
         self.vm
             .as_mut()
@@ -376,11 +393,15 @@ impl Slot {
             return Ok(());
         }
         if matches!(self.state(), SlotState::Saving { claim: owner } if owner == claim) {
-            let snapshot = self
+            let outcome = self
                 .pending_sleep
                 .clone()
-                .context("sleep has no completed snapshot to commit")?;
-            return self.commit_sleep(claim, snapshot).await;
+                .context("sleep has no completed outcome to commit")?;
+            self.commit_sleep(claim, outcome.clone()).await?;
+            if outcome == SleepCommit::Recovered {
+                bail!("previous snapshot save failed; guest recovered, retry sleep");
+            }
+            return Ok(());
         }
         ensure!(
             self.state().serves(claim),
@@ -392,7 +413,7 @@ impl Slot {
         .await?;
         let generation = self.journal.next_generation;
         match self.save_vm().await {
-            Ok(snapshot) => self.commit_sleep(claim, snapshot).await,
+            Ok(snapshot) => self.commit_sleep(claim, SleepCommit::Saved(snapshot)).await,
             Err(error) => {
                 // Only the still-live VM can recover. An older snapshot has stale disk state.
                 let recovered = match &mut self.vm {
@@ -412,10 +433,7 @@ impl Slot {
                     _ => false,
                 };
                 if recovered {
-                    self.transition(SlotState::Awake {
-                        claim: claim.clone(),
-                    })
-                    .await?;
+                    self.commit_sleep(claim, SleepCommit::Recovered).await?;
                 } else {
                     self.fail(&error).await;
                 }
@@ -433,19 +451,35 @@ impl Slot {
         }
     }
 
-    async fn commit_sleep(&mut self, claim: &Claim, snapshot: Snapshot) -> anyhow::Result<()> {
+    async fn commit_sleep(&mut self, claim: &Claim, outcome: SleepCommit) -> anyhow::Result<()> {
         ensure!(
-            self.vm.is_none()
-                && matches!(self.state(), SlotState::Saving { claim: owner } if owner == claim),
-            "completed sleep requires a stopped VMM and the same owner"
+            matches!(self.state(), SlotState::Saving { claim: owner } if owner == claim),
+            "sleep commit requires the same owner and epoch"
         );
-        self.pending_sleep = Some(snapshot.clone());
-        self.remove_old_snapshots(snapshot.generation).await?;
-        self.transition(SlotState::Sleeping {
-            claim: claim.clone(),
-            snapshot,
-        })
-        .await?;
+        self.pending_sleep = Some(outcome.clone());
+        let completed = match outcome {
+            SleepCommit::Saved(snapshot) => {
+                ensure!(self.vm.is_none(), "completed save requires a stopped VMM");
+                self.remove_old_snapshots(snapshot.generation).await?;
+                SlotState::Sleeping {
+                    claim: claim.clone(),
+                    snapshot,
+                }
+            }
+            SleepCommit::Recovered => {
+                ensure!(
+                    self.vm
+                        .as_mut()
+                        .context("recovered VMM is missing")?
+                        .running()?,
+                    "recovered VMM has exited"
+                );
+                SlotState::Awake {
+                    claim: claim.clone(),
+                }
+            }
+        };
+        self.transition(completed).await?;
         self.pending_sleep = None;
         Ok(())
     }
@@ -671,7 +705,7 @@ mod tests {
             snapshot: Snapshot { generation: 1 },
         };
         assert!(
-            slot.commit_sleep(&owner, Snapshot { generation: 1 })
+            slot.commit_sleep(&owner, SleepCommit::Saved(Snapshot { generation: 1 }))
                 .await
                 .is_err()
         );
@@ -718,12 +752,15 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            slot.commit_sleep(&owner, Snapshot { generation: 1 })
+            slot.commit_sleep(&owner, SleepCommit::Saved(Snapshot { generation: 1 }))
                 .await
                 .is_err()
         );
         assert_eq!(slot.state(), &saving);
-        assert_eq!(slot.pending_sleep, Some(Snapshot { generation: 1 }));
+        assert_eq!(
+            slot.pending_sleep,
+            Some(SleepCommit::Saved(Snapshot { generation: 1 }))
+        );
         assert!(slot.sleep(&owner).await.is_err());
         assert!(slot.sleep(&claim("owner-b", 1)).await.is_err());
         assert!(slot.sleep(&claim("owner-a", 2)).await.is_err());
@@ -750,6 +787,100 @@ mod tests {
         assert!(slot.pending_sleep.is_none());
         drop(slot);
         assert_eq!(Slot::open(config.clone()).await.unwrap().state(), &sleeping);
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_root_staging_remains_visible_and_retireable() {
+        let config = config();
+        let source = config.directory.with_extension("root-template");
+        fs::write(&source, b"root template").await.unwrap();
+        let token = config.directory.join("missing-token");
+        assert!(
+            runner::stage_root_disk(&config, &source, &token, true)
+                .await
+                .is_err()
+        );
+        assert!(!fs::try_exists(&config.root_disk).await.unwrap());
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let error = runner::stage_root_disk(&config, &source, &token, true)
+            .await
+            .unwrap_err();
+        assert_eq!(fs::read(&config.root_disk).await.unwrap(), b"root template");
+        slot.fail(&error).await;
+        assert!(matches!(
+            slot.state(),
+            SlotState::Failed { claim: None, .. }
+        ));
+        drop(slot);
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        assert!(matches!(
+            slot.state(),
+            SlotState::Failed { claim: None, .. }
+        ));
+        slot.stop(&claim("retirement-lease", 1)).await.unwrap();
+        assert!(matches!(slot.state(), SlotState::Stopped { .. }));
+        fs::remove_dir_all(config.directory).await.unwrap();
+        fs::remove_file(source).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recovered_sleep_commit_stays_fenced_until_durable_and_retryable() {
+        let config = config();
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let owner = claim("owner-a", 1);
+        let saving = SlotState::Saving {
+            claim: owner.clone(),
+        };
+        slot.transition(saving.clone()).await.unwrap();
+        slot.vm = Some(Vmm::from_child(
+            tokio::process::Command::new("sleep")
+                .arg("30")
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+        ));
+        let updates = slot.subscribe();
+        fs::create_dir(config.directory.join("journal.next"))
+            .await
+            .unwrap();
+        assert!(
+            slot.commit_sleep(&owner, SleepCommit::Recovered)
+                .await
+                .is_err()
+        );
+        assert_eq!(*updates.borrow(), saving);
+        assert_eq!(slot.pending_sleep, Some(SleepCommit::Recovered));
+        assert!(slot.sleep(&claim("owner-b", 1)).await.is_err());
+        assert!(slot.sleep(&claim("owner-a", 2)).await.is_err());
+        assert!(slot.sleep(&owner).await.is_err());
+        assert_eq!(slot.state(), &saving);
+        fs::remove_dir(config.directory.join("journal.next"))
+            .await
+            .unwrap();
+        let error = slot.sleep(&owner).await.unwrap_err();
+        assert!(error.to_string().contains("guest recovered, retry sleep"));
+        assert_eq!(
+            *updates.borrow(),
+            SlotState::Awake {
+                claim: owner.clone()
+            }
+        );
+        assert!(slot.vm.as_mut().unwrap().running().unwrap());
+        assert!(slot.pending_sleep.is_none());
+        let journal: Journal = serde_json::from_slice(
+            &fs::read(config.directory.join("journal.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            journal.state,
+            SlotState::Awake {
+                claim: owner.clone()
+            }
+        );
+        slot.stop(&owner).await.unwrap();
         fs::remove_dir_all(config.directory).await.unwrap();
     }
 

@@ -27,8 +27,12 @@ only the still-live guest. Older memory is never restored against disks that may
 
 If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
 Obsolete-generation cleanup also runs after retaining the completed snapshot, so a transient pruning failure can
-retry that same commit. Only the same owner and epoch can retry it; the slot remains fenced until the journal is durable. A runner restart
-still requires explicit fenced recovery for an interrupted save.
+retry that same commit. A failed save that resumes the live guest also retains its pending `Awake` commit until durable;
+a retry publishes that recovered state and reports the failed sleep without claiming RAM release.
+Only the same owner and epoch can retry either outcome. A runner restart still requires explicit fenced recovery for an interrupted save.
+
+Initial root staging runs after the preparation journal and control socket exist. Token or `debugfs` failures become
+visible unclaimed failures that the pool can retire; a restart keeps that failure instead of poisoning the slot before its journal exists.
 
 Loss of an active runner, Pod, or node retains the owner and home for explicit fenced recovery. Lease age, missing
 Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
