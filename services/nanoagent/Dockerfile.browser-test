@@ -4,8 +4,10 @@ LABEL ai.proompteng.tengri.browser-test=true
 RUN apt-get update && apt-get install --yes --no-install-recommends \
     curl jq tigervnc-standalone-server openbox scrot x11-utils xauth xclip xdotool \
     && rm -rf /var/lib/apt/lists/* \
-    && install -o root -g root -m 4755 /ms-playwright/chromium-1217/chrome-linux/chrome_sandbox /usr/local/sbin/chrome-devel-sandbox \
-    && ln -s /usr/local/sbin/chrome-devel-sandbox /ms-playwright/chromium-1217/chrome-linux/chrome-sandbox \
+    && set -- /ms-playwright/chromium-*/chrome-linux*/chrome_sandbox \
+    && test "$#" -eq 1 && test -x "$1" \
+    && install -o root -g root -m 4755 "$1" /usr/local/sbin/chrome-devel-sandbox \
+    && ln -s /usr/local/sbin/chrome-devel-sandbox "${1%/*}/chrome-sandbox" \
     && install -d -o 1000 -g 1000 /home/nanoagent /usr/share/nanoagent/novnc \
     && curl --fail --location --silent --show-error --retry 3 \
        https://registry.npmjs.org/@novnc/novnc/-/novnc-1.7.0.tgz -o /tmp/novnc.tgz \
