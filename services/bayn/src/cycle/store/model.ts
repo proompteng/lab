@@ -30,6 +30,14 @@ export interface CycleDecisionBindingEvidence {
   readonly streamingSnapshotReferences?: readonly StreamingVerifiedSnapshotReference[]
 }
 
+export enum DecisionEvidenceMismatch {
+  Reconciliation = 'RECONCILIATION',
+  DecisionMarketData = 'DECISION_MARKET_DATA',
+  ExecutionMarketData = 'EXECUTION_MARKET_DATA',
+  Jev = 'JEV',
+  RiskContext = 'RISK_CONTEXT',
+}
+
 interface CycleAuthoritySlotScope {
   readonly qualificationRunId: string
   readonly accountId: string
