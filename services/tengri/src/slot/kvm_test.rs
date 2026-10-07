@@ -187,17 +187,27 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         epoch: 1,
     };
     let started = Instant::now();
+    let stage = |name: &str| {
+        eprintln!(
+            "real KVM create {name}: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    };
     client.lifecycle("restore", &claim).await?;
+    stage("restore");
     let rpc = guest(&identity, &claim, &token)?;
     rpc.verify_identity("interop-agent").await?;
     rpc.write_file("/continuity.txt", b"private-home-continuity", "missing")
         .await?;
+    stage("files");
     let terminal = rpc
         .create_terminal("fixture-terminal-continuity", "/", 80, 24)
         .await?
         .session;
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
+    stage("terminal");
     rpc.codex_call("model/list", json!({})).await?;
+    stage("codex");
     let create_ms = started.elapsed().as_secs_f64() * 1000.0;
     eprintln!("real KVM prepared creation: {create_ms:.2} ms");
     let mut foreign = claim.clone();
@@ -264,18 +274,29 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             tokio::time::sleep(Duration::from_secs(3 * 60)).await;
         }
         let started = Instant::now();
+        let stage = |name: &str| {
+            eprintln!(
+                "real KVM resume {} {name}: {:.2} ms cumulative",
+                index + 1,
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+        };
         client.lifecycle("restore", &claim).await?;
+        stage("restore");
         let rpc = guest(&identity, &claim, &token)?;
         rpc.verify_identity("interop-agent").await?;
         ensure!(
             rpc.read_file("/continuity.txt").await?.content == b"private-home-continuity",
             "retained file changed"
         );
+        stage("files");
         let (restored_pid, next_token) =
             terminal_round_trip(&rpc, &terminal.id, &reconnect, index + 2).await?;
         ensure!(restored_pid == pid, "resume replaced the shell process");
         reconnect = next_token;
+        stage("terminal");
         rpc.codex_call("model/list", json!({})).await?;
+        stage("codex");
         let resume_ms = started.elapsed().as_secs_f64() * 1000.0;
         timings.push(resume_ms);
         eprintln!("real KVM resume {}: {resume_ms:.2} ms", index + 1);

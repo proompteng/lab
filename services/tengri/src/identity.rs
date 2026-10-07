@@ -227,7 +227,10 @@ pub fn tls_incoming(
     let acceptor = TlsAcceptor::from(tls);
     async_stream::stream! {
         loop {
-            yield listener.accept().await.map(|(stream, _)| stream);
+            yield listener.accept().await.and_then(|(stream, _)| {
+                stream.set_nodelay(true)?;
+                Ok(stream)
+            });
         }
     }
     .map(move |connection| {
