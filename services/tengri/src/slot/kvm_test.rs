@@ -210,17 +210,13 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         .session;
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
     stage("terminal");
-    let models = rpc.codex_call("model/list", json!({})).await?;
+    rpc.codex_call("model/list", json!({})).await?;
     stage("codex");
     let create_ms = started.elapsed().as_secs_f64() * 1000.0;
     eprintln!("real KVM prepared creation: {create_ms:.2} ms");
     eprintln!(
         "real KVM create CPU after:\n{}",
         fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
-    );
-    eprintln!(
-        "real KVM Codex model result: {} bytes",
-        serde_json::to_vec(&models.result)?.len()
     );
     let mut foreign = claim.clone();
     foreign.microvm_uid = "another-owner-uid".into();
