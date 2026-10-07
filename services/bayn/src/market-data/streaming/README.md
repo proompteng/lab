@@ -116,7 +116,15 @@ the session's expected windows so absent arrivals remain missing coverage rather
 
 Every 30 seconds, `Kafka market projection measurements` reports the queue high-water mark and observed depth,
 per-partition incorporated and sampled end offsets, raw quote/trade ages, current-window bar coverage, feature matches,
-and unmatched feature revisions. Offset lag is an exact decimal string and includes Kafka control-record positions;
+and unmatched feature revisions. `consumerSequence` counts records delivered to the incorporation owner, including
+ignored and rejected records; `sequence` counts unique incorporated coordinates. `consumerKnownRawBytes` sums exact
+Kafka value byte lengths before UTF-8 decoding, excluding keys, headers, compression and protocol overhead.
+`consumerUnknownRawByteLengthRecords` counts delivered non-tombstone records without a valid length; their sizes
+remain unknown. Tombstones contribute zero value bytes. These cumulative counters reset with each consumer epoch.
+Compute interval rates from counter differences within the same epoch and the actual `observedAtMs` difference.
+Thirty-second samples do not prove peak rates, continuity or original-session capture coverage. Payload lengths
+remain available with capture disabled; hashing and raw-byte retention run only when requested by the capture observer.
+Offset lag is an exact decimal string and includes Kafka control-record positions;
 it is not a market-message count. A failed end-offset lookup produces null lag with allowlisted SDK and broker error
 codes; raw exception messages are omitted. Missing
 symbols have null event ages. These measurements describe input coverage; the existing snapshot, calendar, strategy,

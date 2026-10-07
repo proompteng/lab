@@ -374,12 +374,21 @@ test('Kafka capture hashes exact bytes before UTF8 replacement and distinguishes
     rawByteLength: 0,
   })
   expect(() => decodeKafkaTransportValue(undefined)).toThrow('Kafka market message has no payload')
-  expect(decodeKafkaTransportValue(Buffer.from('é'))).toEqual({ value: 'é' })
+  expect(decodeKafkaTransportValue(Buffer.from('é'))).toEqual({ value: 'é', rawByteLength: 2 })
   const binary = Buffer.from([0x80])
   expect(decodeKafkaTransportValue(binary, true, true).rawValue).toBe(binary)
   expect(decodeKafkaTransportValue(undefined, true, true).rawValue).toBeNull()
   expect(decodeKafkaTransportValue(Buffer.alloc(0), true, true).rawValue).toEqual(Buffer.alloc(0))
   expect(decodeKafkaTransportValue(binary, true).rawValue).toBeUndefined()
+})
+
+test('Kafka payload sizes are exact without enabling hashes or raw-value retention', () => {
+  for (const bytes of [Buffer.from('é'), Buffer.from([0x80]), Buffer.alloc(0)]) {
+    expect(decodeKafkaTransportValue(bytes)).toEqual({
+      value: bytes.toString('utf-8'),
+      rawByteLength: bytes.byteLength,
+    })
+  }
 })
 
 test.each([false, true])('capture observes dispositions and exact transport time (rawValues=%s)', async (rawValues) => {
@@ -660,6 +669,75 @@ describe('Kafka bootstrap and scoped consumption', () => {
       }).pipe(Effect.provide(Logger.layer([logger]))),
     )
     expect(transport.closeCount).toBe(1)
+  })
+
+  test('delivery measurements count ignored and rejected payloads and reset with the consumer epoch', async () => {
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    const transports: FakeTransport[] = []
+    const payloads = [Buffer.from([0x80]), Buffer.from([0x80]), Buffer.alloc(0)]
+    await program(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
+        const market = yield* makeKafkaMarketProjection(config, universe, () => {
+          const transport = new FakeTransport()
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('2 seconds')
+        const first = transports[0]
+        if (first === undefined) throw new Error('first transport missing')
+        const firstEpoch = (yield* market.read).projection.epoch
+        payloads.forEach((bytes, index) =>
+          first.send({
+            topic: 'quotes',
+            partition: 0,
+            offset: String(Math.max(0, index - 1)),
+            timestampMs: 0,
+            leaderEpoch: 1,
+            ...decodeKafkaTransportValue(bytes),
+          }),
+        )
+        first.send({ topic: 'quotes', partition: 0, offset: '2', value: '', timestampMs: 0, leaderEpoch: 1 })
+        first.send({
+          topic: 'quotes',
+          partition: 0,
+          offset: '3',
+          value: '',
+          timestampMs: 0,
+          leaderEpoch: 1,
+          rawByteLength: -1,
+        })
+        yield* TestClock.adjust('30 seconds')
+        expect(logs).toContainEqual([
+          'Kafka market projection measurements',
+          expect.objectContaining({
+            epoch: firstEpoch,
+            sequence: 4,
+            consumerSequence: 5,
+            consumerKnownRawBytes: 2,
+            consumerUnknownRawByteLengthRecords: 2,
+          }),
+        ])
+        first.invalidated?.(new Error('assignment changed'))
+        yield* TestClock.adjust('3 seconds')
+        const replacementEpoch = (yield* market.read).projection.epoch
+        expect(replacementEpoch).not.toBe(firstEpoch)
+        yield* TestClock.adjust('30 seconds')
+        expect(logs).toContainEqual([
+          'Kafka market projection measurements',
+          expect.objectContaining({
+            epoch: replacementEpoch,
+            sequence: 0,
+            consumerSequence: 0,
+            consumerKnownRawBytes: 0,
+            consumerUnknownRawByteLengthRecords: 0,
+          }),
+        ])
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+    expect(transports).toHaveLength(2)
+    expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
   test.each(['rolling', 'technical'] as const)(
