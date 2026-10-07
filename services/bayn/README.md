@@ -313,6 +313,12 @@ validity window; a slow, failed, or missing result still makes the batch unusabl
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
+The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, to avoid
+repeating pure source replay immediately after binding. Every reread still queries PostgreSQL and requires full
+JSONB equality with that retained body; changed documents take complete validation. Returned documents are detached,
+and completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result
+does not prove that its binding committed and cannot create a missing database row.
+
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
 or capital authority. Economic qualification uses the frozen protocol in
