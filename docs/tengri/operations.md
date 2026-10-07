@@ -17,7 +17,7 @@ is part of this lifecycle.
 - Tengri desired state lives under `argocd/applications/tengri/`.
 - Device allocation lives under `argocd/applications/tengri-devices/`, enrolled in the platform ApplicationSet at wave 1.
 - SPIRE registers only the host slot supervisor, with the exact Pod UID and container selector.
-- Existing guest `nanoagent` ServiceAccount, attestation and bundle publication remain configured until the last old guest is stopped at cutover.
+- Existing guest `nanoagent` ServiceAccount, token and registration RBAC, admission restrictions, attestation and bundle publication remain configured until the last old guest is stopped at cutover.
 - The existing guest NetworkPolicy and controller egress remain through cutover; prepared slots use `tengri-slots`.
 - `tengri` namespace admission is already `privileged`; slot admission constrains the device/capability profile.
 
@@ -174,7 +174,8 @@ A reviewed cutover follows this order:
 5. Promote the matching new runtime/guest through Kargo and reconcile its generated branch. The pool prepares the
    reserved retained home, records the new Pod UID, and binds/adopts it. Open lifecycle traffic only after those slots
    are prepared. The old Kata path has no transferable snapshot, so existing processes restart once at cutover.
-6. Remove the old `nanoagent` ServiceAccount, guest PSAT/token-renewal resources, `tengri-microvm-guests`, and its controller egress rule only after
+6. Remove the old `nanoagent` ServiceAccount, its token-issuance Role rule, `tengri-guest-identities` ClusterRole/Binding
+   and admission policy/binding, guest PSAT/token-renewal resources, `tengri-microvm-guests`, and its controller egress rule only after
    their last approved old guest is stopped. Verify authenticated
    create/resume through files, a real terminal, initialized Codex, previews, and editor content. Confirm unchanged
    retained PVC UIDs and unchanged shared-node scheduling. Accept no health-only substitute.

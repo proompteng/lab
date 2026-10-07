@@ -102,6 +102,35 @@ test('source delivery preserves guest attestation and published trust until cuto
       automountServiceAccountToken: false,
     })
   }
+  const controller = rbac.find((document) => document.kind === 'Role' && document.metadata?.name === 'tengri')
+  expect(controller?.rules?.find((rule) => rule.resources?.includes('serviceaccounts/token'))).toEqual({
+    apiGroups: [''],
+    resources: ['serviceaccounts/token'],
+    resourceNames: ['nanoagent'],
+    verbs: ['create'],
+  })
+  expect(
+    rbac.find((document) => document.kind === 'ClusterRole' && document.metadata?.name === 'tengri-guest-identities')
+      ?.rules,
+  ).toEqual([
+    {
+      apiGroups: ['spire.spiffe.io'],
+      resources: ['clusterstaticentries'],
+      verbs: ['get', 'list', 'create', 'patch', 'delete'],
+    },
+  ])
+  expect(
+    rbac.find(
+      (document) => document.kind === 'ClusterRoleBinding' && document.metadata?.name === 'tengri-guest-identities',
+    ),
+  ).toMatchObject({
+    metadata: { name: 'tengri-guest-identities' },
+    subjects: [{ kind: 'ServiceAccount', name: 'tengri', namespace: 'tengri' }],
+    roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'tengri-guest-identities' },
+  })
+  const tengriResources = manifest('argocd/applications/tengri/kustomization.yaml').get('resources')
+  if (!isSeq(tengriResources)) throw new Error('Tengri resources must be a sequence')
+  expect(tengriResources.toJSON()).toContain('spire-admission.yaml')
   const values = manifest('argocd/applications/spire-server/values.yaml')
   const plugins = ['spire-server', 'unsupportedBuiltInPlugins']
   const guest = values.getIn([...plugins, 'nodeAttestor', 'k8s_psat', 'plugin_data', 'clusters', 0, 'galactic-guests'])
