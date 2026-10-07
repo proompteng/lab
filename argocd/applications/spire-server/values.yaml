@@ -31,7 +31,7 @@ spire-server:
       requiredDuringSchedulingIgnoredDuringExecution:
         - labelSelector:
             matchLabels:
-              app.kubernetes.io/name: spire-server
+              app.kubernetes.io/name: server
               app.kubernetes.io/instance: spire
           topologyKey: kubernetes.io/hostname
   terminationGracePeriodSeconds: 60

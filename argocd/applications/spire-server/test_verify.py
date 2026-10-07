@@ -13,7 +13,13 @@ class HighAvailabilityVerification(unittest.TestCase):
         self.pods = {
             "items": [
                 {
-                    "metadata": {"name": f"replica-{i}"},
+                    "metadata": {
+                        "name": f"replica-{i}",
+                        "labels": {
+                            "app.kubernetes.io/name": "server",
+                            "app.kubernetes.io/instance": "spire",
+                        },
+                    },
                     "spec": {"nodeName": f"node-{i}"},
                 }
                 for i in range(3)
@@ -28,7 +34,17 @@ class HighAvailabilityVerification(unittest.TestCase):
         if args[1] == "cluster":
             result = self.database
         elif args[1] == "pods":
-            result = self.pods
+            result = copy.deepcopy(self.pods)
+            selector = args[3]
+            if selector.startswith("app.kubernetes.io/"):
+                labels = dict(pair.split("=", 1) for pair in selector.split(","))
+                result["items"] = [
+                    pod
+                    for pod in result["items"]
+                    if all(
+                        pod["metadata"]["labels"].get(k) == v for k, v in labels.items()
+                    )
+                ]
         else:
             result = {
                 "data": {
