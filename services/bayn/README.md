@@ -820,6 +820,16 @@ configured runtime:
 node dist/forward-performance-command.js --authority-generation <generation-hash>
 ```
 
+That invocation remains read-only. To append the generation report to the durable forward-performance receipt table,
+opt in explicitly after the evidence window has closed:
+
+```sh
+node dist/forward-performance-command.js --authority-generation <generation-hash> --persist-receipt
+```
+
+Receipt persistence is append-only and idempotent for unchanged evidence; a conflicting receipt for the same
+authority generation fails closed.
+
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
