@@ -25,8 +25,11 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
    explicit restart invalidates that attempt.
 3. Nanoagent persists the resulting Codex login under the PVC-backed user home. Tengri does not inject or share an
    `OPENAI_API_KEY`.
-4. The first message creates a thread. Later messages resume the browser's persisted thread ID, and **New
-   conversation** starts a separate thread without deleting earlier guest-side thread state.
+4. The first message creates a thread. The browser keeps the **active** thread id in `tengri-thread:${agentId}` and a
+   client-side conversation registry in `tengri-conversations:${agentId}` (`{ id, title, updatedAt }[]`, title from the
+   first user message). Later messages resume the active thread. The left sidebar lists registry entries (newest first);
+   choosing one sets the active thread and resumes it. **New conversation** clears the active thread and transcript UI
+   without removing other registry entries or guest-side thread state. There is no `ListCodexThreads` gRPC yet.
 5. A message starts a turn. While that turn is active, subsequent input steers it and the stop control interrupts it.
 6. Typed app-server events update assistant text, reasoning summaries, plans, tools, file changes, approvals, usage,
    warnings, and errors in place.
@@ -105,8 +108,11 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
   outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the
-  error. Only that explicit action clears the browser's selection; the next message creates a thread in the same
-  guest workspace. Temporary failures remain retryable without replacing the conversation or resetting the agent.
+  error. Only that explicit action clears the browser's active selection; the next message creates a thread in the same
+  guest workspace. The matching registry entry can be marked unavailable without wiping other conversations. Temporary
+  failures remain retryable without replacing the conversation or resetting the agent.
+- Deleting an agent clears `tengri-thread:${agentId}` and `tengri-conversations:${agentId}` alongside other desktop
+  local/session keys for that agent.
 - Account refreshes and login-completion events are tied to the current device-login attempt so stale responses cannot
   overwrite a newer login.
 - A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent
