@@ -22,7 +22,48 @@ global:
   deleteHooks:
     enabled: false
 spire-server:
-  replicaCount: 1
+  replicaCount: 3
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: server
+              app.kubernetes.io/instance: spire
+          topologyKey: kubernetes.io/hostname
+  terminationGracePeriodSeconds: 60
+  dataStore:
+    sql:
+      databaseType: postgres
+      databaseName: spire
+      host: spire-db-rw.spire-server.svc.cluster.local
+      port: 5432
+      username: spire
+      externalSecret:
+        enabled: true
+        name: spire-db-app
+        key: password
+      rootCAPath: /run/spire/postgres/ca.crt
+      options:
+        - sslmode: verify-full
+        - connect_timeout: 10
+      maxOpenConns: 20
+      maxIdleConns: 2
+      connMaxLifetime: 5m
+  extraVolumes:
+    - name: postgres-ca
+      secret:
+        secretName: spire-db-ca
+        items:
+          - key: ca.crt
+            path: ca.crt
+  extraVolumeMounts:
+    - name: postgres-ca
+      mountPath: /run/spire/postgres
+      readOnly: true
   persistence:
     type: pvc
     storageClass: rook-ceph-block

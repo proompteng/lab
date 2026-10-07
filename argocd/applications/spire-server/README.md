@@ -62,12 +62,25 @@ the agents through a reviewed GitOps pod-template change so they load the replac
 
 ## Persistence and availability
 
-One server stores its SQLite database and signing keys on a 1 GiB `rook-ceph-block` PVC. The StatefulSet retains its
-PVC when removed or scaled down. Namespace and CRD pruning are disabled. This is a single-server deployment;
-server downtime prevents new issuance and renewal, while previously issued credentials remain valid until expiry.
-Multiple server replicas require a shared supported database before increasing the replica count.
+Three SPIRE servers share the dedicated `spire-db` PostgreSQL datastore through its primary Service. The CloudNativePG
+cluster has three PostgreSQL 18.6 instances on distinct hosts, one synchronous standby, generated application
+credentials, automatic primary failover, and daily Ceph volume-snapshot backups. The connection validates the server
+certificate and hostname with the CNPG CA; no password is stored in Git or the server ConfigMap. No Prometheus server
+is introduced.
+
+SPIRE Pods also require distinct hosts and have a disruption budget keeping two servers available. Each server retains
+its own signing keys on a 1 GiB `rook-ceph-block` PVC in the existing `proompteng.ai` subdirectory. The StatefulSet retains
+PVCs when removed or scaled down. Namespace, datastore, and CRD pruning remain disabled. PostgreSQL stores the shared
+registrations, attested agents, and trust bundles; it does not replace the signing-key volumes.
+
+This configuration is the activation layer and must not reconcile until the offline SQLite import has committed and
+the original signing-key volume is preserved. See [the migration procedure](migrate/README.md) for database preparation,
+the maintenance window, activation order, failover verification, and recovery boundaries.
 
 ## Validation and recovery
+
+The following trust-domain cutover notes describe the earlier migration. The PostgreSQL HA cutover preserves the
+current trust domain, imports its existing datastore, and reuses the existing signing-key directory instead of resetting it.
 
 The hard trust-domain cutover starts SPIRE with an empty `proompteng.ai` subdirectory on its retained server PVC.
 An unprivileged init container prepares the directory, and the server mounts it as its complete data directory.

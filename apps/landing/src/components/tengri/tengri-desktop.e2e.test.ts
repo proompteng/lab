@@ -4603,6 +4603,51 @@ test('keeps streamed output expanded when replay recovery moves it into restored
   await expect(output.locator('pre')).toHaveText(text)
 })
 
+test('keeps the composer stable while typing and resizing multiline drafts', async ({ page }) => {
+  await mockTengri(page)
+  await page.addInitScript(() => {
+    const state = { observations: 0 }
+    Object.defineProperty(window, '__composerResizeState', { value: state })
+    const NativeResizeObserver = window.ResizeObserver
+    window.ResizeObserver = class extends NativeResizeObserver {
+      observe(target: Element, options?: ResizeObserverOptions) {
+        if (target instanceof HTMLTextAreaElement) state.observations += 1
+        super.observe(target, options)
+      }
+    }
+  })
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent' })
+  await expect(prompt).toBeEnabled()
+  const observationCount = () =>
+    page.evaluate(
+      () =>
+        (window as typeof window & { __composerResizeState: { observations: number } }).__composerResizeState
+          .observations,
+    )
+  await expect.poll(observationCount).toBeGreaterThan(0)
+  const observations = await observationCount()
+  await prompt.pressSequentially('A draft that stays in place', { delay: 20 })
+  await expect(prompt).toBeFocused()
+  await expect(prompt).toHaveValue('A draft that stays in place')
+  expect(await observationCount()).toBe(observations)
+  await prompt.fill('Line of a long draft\n'.repeat(16))
+  await expect(prompt).toHaveCSS('height', '160px')
+  await prompt.press('ControlOrMeta+End')
+  await prompt.pressSequentially('typing at the bottom', { delay: 20 })
+  await expect(prompt).toBeFocused()
+  await expect(prompt).toHaveCSS('height', '160px')
+  expect(await prompt.evaluate((element: HTMLTextAreaElement) => element.scrollTop)).toBeGreaterThan(0)
+  await prompt.fill('Short again')
+  await expect(prompt).toHaveCSS('height', '48px')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await prompt.fill('A wrapped draft '.repeat(20))
+  await expect(prompt).toHaveCSS('height', '160px')
+  await prompt.pressSequentially(' more', { delay: 20 })
+  await expect(prompt).toBeFocused()
+  expect(await observationCount()).toBe(observations)
+})
+
 test('preserves the reading position while new events arrive and returns to the latest message on request', async ({
   page,
 }) => {

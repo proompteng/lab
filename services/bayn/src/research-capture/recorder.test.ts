@@ -49,6 +49,35 @@ const requireSeal = (seal: ResearchCaptureSeal | undefined): ResearchCaptureSeal
   return seal
 }
 
+test('a failed idle timer invalidates capture without waiting for a notification or failing its owner', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const clock = yield* Clock.Clock
+      const entered = yield* Deferred.make<void>()
+      const result = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const recorder = yield* makeResearchCaptureRecorder(saved.store, options)
+          yield* Deferred.await(entered)
+          yield* Effect.yieldNow
+          expect((yield* recorder.status).invalidations).toContain(CaptureInvalidation.Interrupted)
+          return 'owner succeeded'
+        }),
+      ).pipe(
+        Effect.provideService(Clock.Clock, {
+          currentTimeMillisUnsafe: clock.currentTimeMillisUnsafe.bind(clock),
+          currentTimeMillis: clock.currentTimeMillis,
+          currentTimeNanosUnsafe: clock.currentTimeNanosUnsafe.bind(clock),
+          currentTimeNanos: clock.currentTimeNanos,
+          monotonicTimeNanosUnsafe: clock.monotonicTimeNanosUnsafe.bind(clock),
+          monotonicTimeNanos: clock.monotonicTimeNanos,
+          sleep: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.die('idle timer defect'))),
+        }),
+      )
+      expect(result).toBe('owner succeeded')
+    }),
+  ))
+
 test.each(['automatic', 'explicit', 'cancelled'] as const)(
   'a clock defect during %s finalization creates no invented seal and cannot change owner outcome',
   async (mode) => {
