@@ -1,8 +1,8 @@
 # KVM and TAP lifecycle for Tengri
 
-Status: Proposal, 2026-10-06. This document defines the next runtime migration. It does not grant host access or change
-production desired state. [PR #14787](https://github.com/proompteng/lab/pull/14787) delivers startup improvements and
-power settings while the [current controller](../../services/tengri/README.md) still recreates Kata guests on resume.
+Status: Runtime design, 2026-10-06. The [source implementation](../../services/tengri/README.md) follows this design.
+Permission grants, isolated execution, and production cutover require their scoped authorization and evidence.
+This document does not establish a deployed migration or measured authenticated latency.
 
 Validation and cutover must not drain, cordon, reboot, or change scheduling on shared nodes. Stop or replace only the
 affected Tengri guest Pods. Keep unrelated workloads running.
@@ -45,7 +45,7 @@ flowchart LR
 ```
 
 Use two containers in the slot Pod. The supervisor owns SPIRE identity, controller authorization, and API proxying.
-The runner owns TAP setup, the Firecracker API socket, and the VMM child. The runner has no SPIRE socket, credentials,
+The runner owns the Firecracker API socket, disks, journal, and VMM child. A separate short-lived init container creates TAP. The runner has no SPIRE socket, credentials,
 Kubernetes token, or Kubernetes roles. The containers share only that slot's private control sockets and runtime files.
 Keep separate PID namespaces and disable service-account token mounting.
 
@@ -60,8 +60,8 @@ Store six slot claims in Kubernetes Leases, updated with `resourceVersion` compa
 MicroVM UID and a monotonically increasing lease epoch. The existing deterministic MicroVM name continues to prevent
 two agents for one owner. Retries reuse the claim for the same MicroVM UID. A conflicting owner or epoch fails closed.
 
-The supervisor maintains one local journal per slot. Its record binds the lease epoch, Pod UID, VMM process identity,
-image and kernel digests, Firecracker version, CPU compatibility, disk identities, and snapshot generation.
+The runner maintains one local journal per slot. Its record binds the lease epoch, Pod UID, image and kernel digests,
+Firecracker version, CPU compatibility, disk identities, and snapshot generation.
 The controller recovers an interrupted claim by checking both the MicroVM and Lease. A supervisor authorizes work
 only after the matching claim is durable. Filesystem paths and VMM arguments are derived from this record, never from
 browser input.
@@ -90,27 +90,29 @@ device-plugin service separate from user guests and limit its node mounts to its
 The [Kubernetes device-plugin contract](https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/device-plugins/)
 defines the runtime allocation boundary.
 
-Run the runner under a non-root UID with `CAP_NET_ADMIN` for its own Pod network namespace. It creates and owns the TAP
-before any lifecycle request arrives. Firecracker runs as a separate non-root child with capabilities dropped and its
+Run TAP initialization with NET_ADMIN only in the private Pod network namespace, before any lifecycle request.
+The runner starts with MKNOD/SETUID/SETGID to create its private allocated-home inode, then irreversibly drops to UID/GID
+65532 with no capabilities. It never chmods the node device. Firecracker runs as a separate non-root child with its
 default seccomp filter enabled. Verify the child has no effective, permitted, or ambient capabilities. The container
 root filesystem is read-only and exposes only that slot's devices, disks, and sockets. Device allocation must give
 the runner UID access without changing ownership or modes of the node's device files. The runner closes inherited
 control descriptors before starting the VMM. Guest root access remains inside the guest.
 
 Use the OCI container's mount, PID, network, and cgroup isolation for the VMM process. Validate that boundary in the
-isolated fixture before accepting it. The upstream [jailer](https://github.com/firecracker-microvm/firecracker/blob/v1.12.1/docs/jailer.md)
+isolated fixture before accepting it. The upstream [jailer](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/jailer.md)
 also creates mount namespaces and manages cgroups. Adding it would require a separately reviewed privilege contract.
 Do not silently add `privileged: true`, `CAP_SYS_ADMIN`, host PID, host network, or a writable host root to make a test pass.
 
-| Component         | Proposed host access                                      | Authority                                   |
-| ----------------- | --------------------------------------------------------- | ------------------------------------------- |
-| Tengri controller | Existing Kubernetes lifecycle and claim operations        | Signed GitHub ownership and replay checks   |
-| Slot supervisor   | SPIFFE CSI socket and that slot's control directory       | Exact Tengri SPIFFE peer plus current lease |
-| VMM runner        | KVM, TUN, Pod-local network administration, private disks | Supervisor commands for one fenced slot     |
-| Firecracker child | Allocated devices and that slot's backing files           | Non-root UID, no capabilities, seccomp      |
-| Guest Nanoagent   | Guest kernel, private home, private vsock                 | No Kubernetes or host SPIRE identity        |
+| Component         | Proposed host access                                   | Authority                                   |
+| ----------------- | ------------------------------------------------------ | ------------------------------------------- |
+| Tengri controller | Existing Kubernetes lifecycle and claim operations     | Signed GitHub ownership and replay checks   |
+| Slot supervisor   | SPIFFE CSI socket and that slot's control directory    | Exact Tengri SPIFFE peer plus current lease |
+| TAP initializer   | TUN and NET_ADMIN in the Pod namespace                 | Runs once before lifecycle requests         |
+| VMM runner        | Allocated KVM/TUN, private disks and startup UID setup | Supervisor commands for one fenced slot     |
+| Firecracker child | Allocated devices and that slot's backing files        | Non-root UID, no capabilities, seccomp      |
+| Guest Nanoagent   | Guest kernel, private home, private vsock              | No Kubernetes or host SPIRE identity        |
 
-These permission and identity changes need explicit approval before implementation or a KVM test workload is created.
+The user authorized source implementation. New permission/identity grants and a KVM test workload still require their scoped approval before execution.
 This design does not authorize namespace policy changes, node configuration, or additional host devices.
 
 ## Keep TAP, routes, and identity stable through sleep
@@ -125,7 +127,7 @@ filtering that blocks guest traffic to supervisor listeners, Firecracker control
 Allow DNS through the reviewed resolver path. Controller and preview traffic reaches the supervisor's authenticated
 listener, then enters the guest through private vsock. TAP carries guest application egress.
 
-TAP setup follows the pinned [Firecracker networking contract](https://github.com/firecracker-microvm/firecracker/blob/v1.12.1/docs/network-setup.md).
+TAP setup follows the pinned [Firecracker networking contract](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/network-setup.md).
 Validate CNI policy enforcement and any mesh interception with this NAT path. Exclude the guest TAP path from mesh
 redirection where required by the verified packet flow. An unexpected bypass blocks release.
 
@@ -134,13 +136,13 @@ or projected PSAT token that expires during sleep. Remove guest PSAT renewal, gu
 RBAC and admission rules during the hard migration. Preserve exact controller peer checks and per-owner authorization.
 
 Treat existing network and vsock connections as closed on restore. Reconnect terminal, events, editor, preview, and
-Codex transports without repeating guest provisioning. The pinned [vsock contract](https://github.com/firecracker-microvm/firecracker/blob/v1.12.1/docs/vsock.md)
+Codex transports without repeating guest provisioning. The pinned [vsock contract](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/vsock.md)
 supplies the host-to-guest transport. Readiness requires the new connections to work.
 
 ## Commit a snapshot before reporting sleep
 
 Begin with full snapshots only. Pin the VMM, kernel, guest image, CPU configuration, and snapshot format in the journal.
-Keep a memory file while a restored VMM maps it. The pinned [snapshot API](https://github.com/firecracker-microvm/firecracker/blob/v1.12.1/docs/snapshotting/snapshot-support.md)
+Keep a memory file while a restored VMM maps it. The pinned [snapshot API](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/snapshotting/snapshot-support.md)
 loads file-backed memory on demand. A pause alone retains guest RAM.
 
 Sleep follows one serialized transition:
@@ -149,9 +151,9 @@ Sleep follows one serialized transition:
    guest hook that remains reachable while writes are frozen.
 2. Pause vCPUs with `PATCH /vm`. Flush the backing disks and verify that guest writes have stopped.
 3. Write `Full` memory and device-state files into a new private generation with `PUT /snapshot/create`.
-4. Sync the files, backing disks, journal, and parent directories. Atomically commit the generation and disk identities.
+4. Sync the files, backing disks, journal, and parent directories.
 5. Terminate and reap the VMM. Evict clean snapshot pages with file-scoped `POSIX_FADV_DONTNEED` after the mapping closes.
-6. Report Sleeping only after no VMM remains and resident guest memory has been released.
+6. Commit Sleeping atomically and report it only after no VMM remains and resident guest memory has been released.
 
 Keep the previous mapped memory file until its process exits. It is not a recovery snapshot once the guest has written
 to its disks. If saving fails, discard the partial generation, thaw the filesystems, and resume the still-live guest.
@@ -164,9 +166,10 @@ connections. The boot artifact must enable VMGenID and its guest kernel entropy 
 identifiers and one-use tokens remain subject to the lease and incarnation checks. The supervisor returns Ready only
 after all usable-guest checks pass.
 
-A failed restore becomes Failed with its private home retained. A controller restart reconstructs journal and lease
-state. It identifies VMM processes by process identity, not a reusable PID alone, and completes an interrupted save
-before serving requests. A runner restart or lost node invalidates an active snapshot whose disks may have advanced.
+A failed restore becomes Failed with its private home retained. A controller restart reads MicroVM bindings and
+Leases, then queries the existing runner. Only the runner's live child handle proves process termination. It never
+adopts a process by a reusable PID after restart. A runner restart during an active save or restore fails closed because
+the disks may have advanced. Committed sleeping journals can reopen only with unchanged identities.
 
 Loss of contact, an expired Lease, or a missing readiness signal does not prove that the old VMM stopped. Keep recovery
 blocked while its execution state is unknown. Before starting a replacement, establish old-VMM or node fencing through
@@ -183,16 +186,15 @@ snapshot resume. The journal records the fencing evidence and successor incarnat
 ## Bound storage and distinguish RAM from reservations
 
 Keep each 16 GiB home on the existing shared Ceph raw-block PVC. Guest root and snapshots use a private disk-backed
-`emptyDir`, not tmpfs. Propose a 24 GiB ephemeral-storage limit per slot for the private root, two 8 GiB memory
-generations, and metadata. Check full allocation rather than assuming sparse files stay sparse. Six slots require up
-to 144 GiB of local disk in addition to the existing 96 GiB home capacity.
+`emptyDir`, not tmpfs. Use a 24 GiB disk-backed snapshot/root volume for the private root, two 8 GiB memory
+generations, and metadata, plus a 2 GiB artifact volume. Each runner reserves and limits 26 GiB ephemeral storage. Check full allocation rather than assuming sparse files stay sparse. Six slots require up
+to 156 GiB of local disk in addition to the existing 96 GiB home capacity.
 
 Local snapshots intentionally survive sleep and controller restarts, but not loss of their Pod or node. The home PVC
 remains the durable recovery boundary. This choice removes remote snapshot reads from normal resume and leaves shared
 Ceph ownership unchanged. Cross-node snapshot migration is outside this design.
 
-Account for all VMM and supervisor overhead within the existing 50 GiB namespace budget before choosing final container
-limits. Preallocated Pod requests reserve capacity for prompt resume even when a guest is stopped. Sleep releases
+Account for all VMM and supervisor overhead within the 51 GiB namespace limit, including all six 8320 MiB runners, six 128 MiB supervisors, and controller limits. Preallocated Pod requests reserve capacity for prompt resume even when a guest is stopped. Sleep releases
 physical guest RAM; it does not return the stable Pod's memory request to the Kubernetes scheduler. Report both values
 in the acceptance evidence. Do not claim scheduler capacity was released because guest RSS fell.
 
@@ -245,6 +247,6 @@ Recovery preserves the home even when snapshot compatibility or node availabilit
 compatible image set and an explicit retained-home cold boot. A snapshot with different VMM, CPU, kernel, image, or disk
 identity is never accepted by a compatibility fallback.
 
-Implementation and privileged fixture execution remain outside the present design-only scope. The next approval must
-cover the device-plugin boundary, Pod-local network administration, changed workload identity, isolated test target,
-and hard cutover behavior. Production rollout remains a separate authorization.
+Source implementation does not authorize new device or identity grants. Review the exact permission diff and isolated
+test script before their execution. Production cutover remains separately authorized; do not merge changes that
+automatically remove live guest identity or promote the new runtime without that authorization.

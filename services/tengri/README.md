@@ -1,77 +1,95 @@
 # Tengri control plane
 
-Tengri is the standalone Rust owner of `runtime.proompteng.ai/v1alpha1 MicroVM` resources. It accepts only signed,
-authenticated internal gRPC calls, derives one deterministic MicroVM name per GitHub subject, and projects each CR into
-a `kata-fc` Pod with guest administrator access and a 16 GiB persistent home PVC.
+Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
+4 vCPU, 8 GiB RAM, a private 1 GiB root disk, and a retained 16 GiB Ceph home. Creation restores a prepared snapshot;
+resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
+kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 
-Every guest uses 4 vCPU, 8 GiB memory, and a 16 GiB workspace. Admission rejects any other profile. There is no
-controller compatibility or automatic resource upgrade path. Correct any existing MicroVM resource values once
-during the deployment cutover, then sleep/resume it to apply the profile while preserving its home PVC. The namespace
-quota accommodates six guests plus Kata overhead and the controller.
+Sleep freezes and snapshots the guest, flushes its disks, stops and reaps the VMM, and evicts the snapshot's file pages
+before acknowledging completion. The stable slot Pod, home PVC, TAP, and small host supervisor remain. Kubernetes
+resource requests still reserve resume capacity even while resident guest RAM is released.
 
-The control plane also brokers scoped, one-use terminal tickets and localhost preview sessions. It does not run inside
-the guest and does not use AgentRun, KubeVirt, host devices, privileged launchers, or node mutations.
+This source uses one runtime. The previous Kata Pod lifecycle and guest SPIRE/token-refresh implementation are
+removed. The hard cutover is separately authorized and must preserve existing home PVC UIDs. Source and local tests
+do not establish a deployed migration or the authenticated p95 latency target.
 
-The Rust control plane calls the Go guest through the shared
-[`NanoagentService` protobuf contract](proto/proompteng/runtime/guest/v1/nanoagent.proto). File operations, editor
-startup, terminal lifecycle, Codex calls, and approvals use unary gRPC. File and Codex events use server streams;
-terminal input, output, resize, signals, and replay use one bidirectional stream. Tengri translates that stream into
-the existing browser WebSocket frames. Application previews and editor content keep their HTTP/WebSocket proxy.
+## Slot ownership and failure handling
 
-Tengri authenticates directly to gRPC `GetInfo` on guest TLS port 8443 and verifies the current guest Pod UID and protocol
-version. Nanoagent's `MICROVM_ID` comes from the Pod's downward-API `metadata.uid`; the controller compares it with
-`status.podUid`, binding the connection to the current guest incarnation. Guest control is gRPC-only: HTTP discovery,
-REST calls, NDJSON streams, and the guest terminal WebSocket
-transport have been removed. Failed or unsupported RPCs fail visibly. Existing HTTP-only guests must sleep/resume
-with a compatible guest image; an older HTTP-only controller cannot operate the new guest. SPIRE mutual TLS authenticates
-both application hops. The per-MicroVM bootstrap secret remains additional RPC authorization. Plain port 8080 serves
-only health probes; application/VS Code content uses HTTPS and secure WebSockets on the same authenticated guest listener.
+Each slot has a Kubernetes Lease and one private Pod. `MicroVM.spec.slot` records the slot, Pod UID, home name/UID,
+and epoch. The controller binds the MicroVM with resourceVersion compare-and-swap before claiming the Lease. Concurrent
+claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
+consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
-## SPIRE workload identity
+The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker 1.16.1, CPU identity,
+snapshot generation, and owner/epoch. Snapshot restore consumes the generation before vCPUs run, then thaws root/home,
+sets the guest clock, binds the owner, and checks files, a PTY round trip, and initialized Codex. A failed save may resume
+only the still-live guest. Older memory is never restored against disks that may have advanced.
 
-The trust domain is `proompteng.ai`. Tengri's identity is
-`spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051 accepts only
-`spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. The BFF verifies the exact Tengri identity, and signed HMAC
-metadata authenticates the GitHub subject and enforces replay protection. There is no plaintext production gRPC listener
-or transport fallback.
+If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
+Snapshot page eviction and obsolete-generation cleanup run after retaining the completed snapshot, so either failure can
+retry that same commit without saving again. A failed save that resumes the live guest also retains its pending `Awake` commit until durable;
+a retry publishes that recovered state and reports the failed sleep without claiming RAM release.
+Only the same owner and epoch can retry either outcome. A runner restart still requires explicit fenced recovery for an interrupted save.
 
-Normal Kubernetes workloads obtain their rotating X.509-SVID and trust bundle through the SPIFFE CSI Workload API socket.
-Tengri requires `SPIFFE_ENDPOINT_SOCKET` and `SPIFFE_TRUST_DOMAIN` before it binds its public listeners. Each Firecracker
-guest supervises its own SPIRE agent because host process attestation cannot see processes inside the guest kernel.
-Its identity is `spiffe://proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>`. Nanoagent accepts only Tengri's
-identity; Tengri's gRPC, HTTPS, and WebSocket clients verify the exact current guest Pod identity.
+Initial root staging runs after the preparation journal and control socket exist. Token or `debugfs` failures become
+visible unclaimed failures that the pool can retire; a restart keeps that failure instead of poisoning the slot before its journal exists.
 
-The controller creates one `ClusterStaticEntry` per guest Pod. Its parent is the guest's `galactic-guests` PSAT agent,
-its sole workload selector is `unix:uid:1000`, and its SVID lifetime is two minutes. Pod replacement removes the old
-entry; sleep and deletion remove all entries owned by that MicroVM. Kubernetes admission confines the controller's
-registration permissions to this identity pattern and prohibits SPIRE administration, delegation, and federation.
+Loss of an active runner, Pod, or node retains the owner and home for explicit fenced recovery. Lease age, missing
+Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
+unchanged runtime and disk identities. An exited VMM fences traffic and reports failure.
 
-The `nanoagent` service account has no Kubernetes API roles and disables normal token mounting. Its projected PSAT
-has audience `spire-server`, is bound to the Pod, and initially lasts one hour to cover a cold toolchain installation.
-After readiness, Tengri refreshes it with a ten-minute Pod-bound TokenRequest before five minutes remain, sending the
-new token and public CA bundle over authenticated gRPC. Nanoagent atomically replaces only its private temporary
-bootstrap files. This avoids depending on host projected-volume updates crossing Kata's VM boundary. Agent keys and
-data stay under `/tmp/nanoagent-spire`, outside the retained home PVC.
+Deletion of a claimed slot persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
+and resourceVersion preconditions. A retry after Pod deletion uses the durable receipt. No stop proof means no disk
+or finalizer removal for an owned slot. A replacement slot always gets a fresh Pod, home, token, and snapshot. Image updates recycle
+only unused slots; claimed guests retain their runtime through ordinary sleep/resume.
 
-The VM administrator can access that VM's workload identity because the guest user owns the entire VM and has sudo.
-The Pod-bound parent and exact peer authorization prevent that identity from becoming another guest or the controller.
-SPIRE downtime prevents new issuance and renewal; valid certificates last until expiry. A removed registration does
-not invalidate an already issued certificate before expiry.
+## Host and guest boundaries
 
-Rust bindings are generated by `build.rs`; committed Go bindings are regenerated with
-`bash services/nanoagent/generate-proto.sh` from the repository root. Run `bash services/tengri/test-rpc-interop.sh`
-with the pinned Rust and Go toolchains to exercise the actual Rust client against a Go guest test server. CI runs this
-wire test alongside each component's tests before publishing the paired images. The native fixture exercises mutual
-TLS, exact peer rejection, and live SVID renewal with the standard Workload API schema. BFF tests separately verify
-signed-stream continuity during certificate rotation.
+The slot runs under the normal OCI runtime with separate container PID namespaces, no host networking/mounts,
+and no Kubernetes API token. The supervisor mounts only the SPIFFE CSI socket and private control sockets. The runner
+mounts only its boot artifacts, disks, token, and sockets.
 
-The guest user retains UID/GID 1000 and can become root with passwordless `sudo`. The writable root filesystem,
-privilege escalation, full Linux capabilities, and unconfined guest syscalls allow administration inside the VM.
-`privileged: false`, the `kata-fc` runtime, absent host namespaces/mounts, and disabled Kubernetes API token mounting retain
-the VM boundary. System-root changes are ephemeral and reset when the guest container is recreated; the home and
-workspace survive sleep/resume.
-The ApplicationSet permits this guest profile through Tengri's namespace admission policy. The control-plane
-Deployment retains its non-root UID, dropped capabilities, read-only root, and disabled privilege escalation.
+The short-lived TAP init container receives NET_ADMIN inside the Pod network namespace. It creates `tengri0`, private
+10.250.0.0/30 addressing, NAT, and protected-destination filtering. It asserts CNI forwarding is already enabled and
+never changes node sysctls, routes, bridges, scheduling, or machine configuration.
+
+The runner briefly starts as root with MKNOD/SETUID/SETGID. It creates a private device inode in its container's `/dev`
+for the allocated raw home device, then drops to UID/GID 65532 with no effective, permitted, inheritable, or ambient
+capabilities. It never chmods a node device. Firecracker inherits that unprivileged identity, no environment secrets,
+no capabilities, NoNewPrivs, and its default seccomp filter.
+
+The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) delegates only KVM and TUN
+through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
+the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
+already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
+attestation, the `nanoagent` ServiceAccount, token/registration RBAC, admission restrictions and bundle publication remain
+until the final old guest has stopped.
+
+The image workflow withholds both Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
+is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
+retained homes against the staged immutable image pair. Kargo's existing automatic promotion policy remains in place.
+
+Nanoagent runs as UID 1000 in the guest, with passwordless sudo inside that guest. Guest root edits and processes
+survive snapshot sleep. Root and memory are local to the slot Pod and reset after an explicitly fenced cold replacement;
+the home PVC remains the durable boundary. No guest process receives the host Workload API socket or host identity.
+
+## Transport and workload identity
+
+Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
+SPIRE mTLS authenticates both host hops. Tengri's identity is `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051
+accepts only `spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. Every slot supervisor has
+`spiffe://proompteng.ai/ns/tengri/slot/pod/<Pod UID>` and accepts only Tengri. Certificates rotate outside guest memory.
+
+The supervisor serves mTLS port 8443 and requires the exact MicroVM UID/epoch before forwarding files, terminals,
+Codex, previews, or editor content over vsock port 1024. Nanoagent additionally validates the unique slot credential.
+Lifecycle commands use a private host Unix socket; guest freeze/resume uses separate vsock port 1025. Guest health
+binds only loopback port 8080. Supervisor health on host port 8080 never dispatches guest RPCs.
+
+The [NanoagentService contract](proto/proompteng/runtime/guest/v1/nanoagent.proto) carries unary operations, server
+streams, and the bidirectional terminal stream. Tengri translates terminal frames into browser WebSockets; application
+and editor previews retain HTTP/WebSocket proxying. Rust bindings are generated by build.rs. Regenerate committed Go
+bindings with `bash services/nanoagent/generate-proto.sh`. `bash services/tengri/test-rpc-interop.sh` exercises the real
+Rust/Go wire protocol, exact peer rejection, and SVID renewal.
 
 Terminal creation has one protocol: every client supplies a stable 16-to-128-character `creation_id`, and Nanoagent
 returns that exact identity with the session. Retries reuse the same identity and are idempotent. Tengri rejects
@@ -167,7 +185,11 @@ bounded exponential retry absorbs an external write conflict without rejecting a
 Only live receipts are retained and the bounded store fails closed. The deployment RBAC grants only `get` and `update`
 on that named ConfigMap.
 
-## GitOps rollout and rollback
+## Lifecycle settings and delivery
+
+System Settings → Lifecycle controls `spec.power.idleTimeoutMinutes`. The default is 60 minutes, values through 1440
+are accepted, and zero disables automatic sleep. Manual sleep always releases resident guest RAM. Changing the timeout
+starts a new idle interval; authenticated activity extends it. Retained homes have no expiry or automatic deletion deadline.
 
 The authorization cutover requires the Ofz service, its existing API key, the controller-only NetworkPolicy rule,
 and `tengri-spicedb-key` before the new controller starts. The committed strict-scope SealedSecret is generated with
@@ -178,139 +200,42 @@ Verify exact deployed revisions, enrollment annotations, allowed and denied work
 revocation after an authorized rollout. Preserve SpiceDB's PostgreSQL data and the enrollment annotations during
 recovery; do not clear them to recover an intentionally revoked grant.
 
-Deploy the SPIRE prerequisites first: host workload registrations and CSI mounts, the guest PSAT profile, the public
-bundle publisher, the `nanoagent` service account, and constrained registration/token RBAC. Verify the bundle in
-`tengri/spire-guest-bundle` and the existing node canaries before deploying the secure application images. The SPIRE
-Application owns and pre-creates the cross-namespace bundle before restarting its server with the guest publisher;
-Argo ignores the generated
-bundle data while retaining desired ownership of the ConfigMap and publisher Role.
+Normal delivery uses the paired image publisher, Kargo, and Argo. Native AMD64/ARM64 guest artifacts contain the
+checksummed kernel/root disk. The controller image also supplies the host runner, supervisor, TAP script, and pinned
+Firecracker. Keep the paired source revision and immutable image digests together. Withhold discoverable Kargo aliases
+until real KVM acceptance passes. See the [operations runbook](../../docs/tengri/operations.md) for the permission
+review, retained-home enrollment, release boundary, and recovery procedure. Do not run historical node-mutating spikes.
 
-Then publish reviewed controller, guest, and BFF images through their existing CI and Kargo Stages. The hard TLS switch
-briefly interrupts callers while the two application Stages converge. Sleep/resume existing guests so their new Pod
-receives the agent and attestation mounts, preserving the PVC. Verify both exact deployed image revisions, identity
-issuance and renewal, and logged-in Finder, Codex, Terminal, and editor behavior. Recovery re-promotes compatible Freight
-for both application Stages; preserve the SPIRE datastore and workspace PVCs.
-
-Tengri is a singleton `Recreate` Deployment. A GitOps rollout terminates the old control-plane Pod before the new Pod
-becomes ready, so gRPC, event streams, PTY WebSockets, and preview proxy connections are briefly unavailable. Clients
-reconnect after the Service has a ready endpoint, while an operation submitted during the gap returns a truthful
-service-unavailable response and must be retried.
-
-The replacement controller keeps every MicroVM CR, bootstrap Secret, and PVC until the owner explicitly deletes the
-agent. The legacy four-hour `spec.expiresAt` field remains valid for old CRs but is ignored for lifecycle decisions;
-new agents leave it empty and the gRPC `Agent.expiresAt` field is empty for retained workspaces. Idle sleep still
-deletes only the guest Pod and preserves the workspace for resume.
-
-System Settings → Lifecycle controls automatic sleep and its idle timeout. The controller stores the timeout in
-`spec.power.idleTimeoutMinutes`, defaults it to 60 minutes, and accepts whole minutes from 0 through 1440.
-Zero disables automatic sleep. Manual sleep always releases guest RAM and retains the workspace. Changing the timeout
-starts a new idle interval. Authenticated activity extends that interval by the selected timeout.
-
-`UpdatePowerSettings` uses the same signed, owner-scoped gRPC transport as other lifecycle requests. Its timeout must
-be explicitly present, including zero. An old controller response without power settings fails visibly in the new
-BFF. Deploy the controller and web changes together.
-
-Resume waits for MicroVM readiness watch events. Guest startup and readiness probes run every second, preserving
-the 35-minute cold-install startup allowance and 15-second readiness failure window. These changes remove polling
-delays and repeated installers. RAM-releasing resume still creates a new Kata guest and does not meet a subsecond
-target. The [pinned runtime-rs Firecracker driver](https://github.com/kata-containers/kata-containers/blob/894e1956bb340752b30f7ad49879972234a0098c/src/runtime-rs/crates/hypervisor/src/firecracker/inner_hypervisor.rs)
-has no implemented pause, save, or resume operation.
-
-Release changes preserve a running guest's image and processes. When the configured Nanoagent digest differs, the
-controller reports it as `Agent.pendingImage` while the owned guest is running. It adopts the digest only after the
-guest has been safely slept or there is no running owned guest, then creates the next Pod from the configured image.
-Previously initiated image updates and agents with no Pod converge through the same safe boundary. The migration never
-changes Kata, Talos, node scheduling, or any cluster node.
-
-Before opening its public listeners, a replacement controller recovers durable provisional-terminal leases from
-Kubernetes. Transient transport failures, HTTP 408/429 responses, and API server 5xx responses use a bounded
-eight-attempt exponential retry with a five-second maximum delay. Authorization, validation, and other permanent
-failures still stop startup immediately, so the retry absorbs a brief Kubernetes Service race without masking broken
-RBAC or configuration.
-
-Roll out through the `Tengri images` publisher, Kargo, and Argo reconciliation. On `main`, `Tengri images` validates
-both services, builds native `linux/amd64` and `linux/arm64` images, publishes signed multi-architecture indexes at
-`registry.ide-newton.ts.net/lab/{tengri,nanoagent}:kargo-sha-<40>` only after each final index succeeds; the images
-carry `org.opencontainers.image.created` (source commit RFC3339 time) and `org.opencontainers.image.revision` (full
-source SHA), and their immutable digests are uploaded in the `tengri-release-contract` artifact. The Kargo `tengri` Stage consumes the controller and Nanoagent Freight together,
-copies the exact source commit and full digest/build metadata to `kargo/tengri`, and pushes that branch without a pull
-request. The Argo Applications track the generated branch; no promotion PR or manifest SHA bump is required:
-
-1. Merge the controller or guest source and wait for `Tengri images` validation, both native builds, index publication,
-   and keyless signature verification to pass.
-2. In `lab-delivery`, verify that Kargo discovered both immutable images, created the matching Freight, and promoted the
-   exact automatic `tengri` Stage. Verify that `kargo/tengri` contains the complete source commit, digests, and build
-   provenance, and that the Argo Applications track it at `Synced`/`Healthy`.
-3. Confirm Argo starts one `tengri` Deployment replacement. Record every `MicroVM`, guest Pod, and PVC UID before the
-   rollout. Confirm running guests keep their Pod UID and report `pendingImage` when the promoted digest is newer;
-   after an owner-requested or idle sleep/resume, confirm the next Pod uses that digest. Confirm every PVC UID remains
-   unchanged and no node is mutated.
-4. From a configured `galactic-lan` client, verify the replacement and its control path:
-
-   ```bash
-   set -euo pipefail
-
-   kubectl --context galactic-lan -n tengri rollout status deployment/tengri --timeout=5m
-   kubectl --context galactic-lan -n tengri get pods -l app.kubernetes.io/name=tengri -o wide
-   kubectl --context galactic-lan -n tengri get endpointslice -l kubernetes.io/service-name=tengri-grpc
-   kubectl --context galactic-lan -n tengri port-forward service/tengri-gateway 18080:8080 &
-   tengri_port_forward_pid=$!
-   trap 'kill "$tengri_port_forward_pid" 2>/dev/null || true' EXIT INT TERM
-   for tengri_attempt in {1..30}; do
-     if curl --fail --silent --output /dev/null http://127.0.0.1:18080/livez; then
-       break
-     fi
-     sleep 1
-   done
-   curl --fail --silent --show-error http://127.0.0.1:18080/livez
-   curl --fail --silent --show-error http://127.0.0.1:18080/readyz
-   kill "$tengri_port_forward_pid"
-   wait "$tengri_port_forward_pid" 2>/dev/null || true
-   trap - EXIT INT TERM
-   ```
-
-5. Confirm the pre-rollout `MicroVM` count is unchanged, wait for running agents to return to `Ready`, then exercise one
-   authenticated read-only control-plane request and verify persistent workspace contents. Do not create a canary
-   DaemonSet or mutate node scheduling to verify this rollout.
-
-If the replacement cannot become ready, inspect the Kargo Stage, Freight, generated `kargo/tengri` branch, and Argo
-Applications and correct the source-owned failure. Re-promote a previously proven controller/guest Freight pair through
-Kargo; never use `kubectl rollout undo`, directly apply manifests, or create a digest promotion PR. Never revert to a controller predating
-`home-workspace-v2` while any v2 `MicroVM` exists: the predecessor cannot safely resume those guests. Delete v2 agents
-through their owner-scoped lifecycle, verify that no v2 CR remains, and only then re-promote the matching known-good pair.
-Verify the restored Pod, Service endpoint, `/livez`, and `/readyz` with the commands above.
-
-Tengri supports one storage layout:
-`runtime.proompteng.ai/storage-layout=home-workspace-v2`. Every new agent receives that annotation and one 16 GiB
-`volumeMode: Block` PVC. The Pod exposes it as `/dev/tengri-home`; the reviewed Kata persistent-block contract formats
-a provably new device once, mounts it at `/home/nanoagent`, applies GID 1000, and reuses the same filesystem on later
-boots. Nanoagent exposes the persistent `workspace/` subdirectory through `/workspace`. There is one application
-container and no init container.
-
-The Pod requires both `runtime.proompteng.ai/kata-fc=ready` and
-`runtime.proompteng.ai/kata-fc-persistent-block=ready`. The second capability must be applied only after the signed r5
-Kata extension is installed and its raw-block persistence acceptance passes on that node. Stock r4 nodes are
-deliberately ineligible rather than receiving a Pod whose PVC would be copied into Firecracker's 512 MiB rootfs.
-
-The failed `home-workspace-v1` experiment never produced a working guest and is not a compatibility contract. A CR with
-any other layout is rejected and must be deleted and recreated; Tengri does not migrate or fall back to the broken
-topology. A v2 CR backed by a legacy filesystem-mode claim is also rejected and must be deleted and recreated; the
-controller never mutates or reformats that claim. Never roll back past the v2 controller while a v2 CR exists.
-
-## Local validation
+## Validation
 
 ```bash
 cargo fmt --manifest-path services/tengri/Cargo.toml --check
 cargo clippy --manifest-path services/tengri/Cargo.toml --locked --all-targets -- -D warnings
 cargo test --manifest-path services/tengri/Cargo.toml --locked --all-targets
-cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen \
-  > /tmp/tengri-crd.yaml
+bash services/tengri/test-rpc-interop.sh
+cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
 diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
+shellcheck services/tengri/network.sh services/tengri/test-kvm*.sh
 ```
 
-Runtime configuration is documented in [`../../docs/tengri/operations.md`](../../docs/tengri/operations.md). The
-protobuf contract is [`proto/proompteng/runtime/v1/microvm.proto`](proto/proompteng/runtime/v1/microvm.proto).
+The ignored Linux KVM test requires explicitly authorized device grants and native paired boot/test images.
+The AMD64 PR image jobs retain `tengri-kvm-fixture-tengri-amd64` and
+`tengri-kvm-fixture-nanoagent-amd64` artifacts. Download both from the same workflow run and merge their contents into
+one directory. Check both `*-SHA256SUMS` files there, then load both `*-images.tar.gz` archives with `docker load`.
+The JSON receipts record the PR head, checked-out build revision, image reference, and saved image configuration digest.
+Verify that both receipts match the requested PR head and build revision, and that the loaded configurations match
+`configDigest`. Docker's containerd image store can report an image index as its image ID; the configuration digest
+remains the same after loading the archive into a classic image store.
+CI builds these artifacts without executing the KVM fixture. It requires no SSH devbox. Device execution still
+requires the scoped approval below.
+`TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
+absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. It uses a private Docker
+network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
+It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
+diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
+creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
+concurrent guests.
 
 ## Editor sessions
 
