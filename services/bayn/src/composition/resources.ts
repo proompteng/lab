@@ -81,10 +81,42 @@ export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpC
 const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
   Layer.merge(HttpServerLive(config), ApplicationPlatformLive)
 
+const workerStreamingUniverse = (plan: ApplicationIdentity) => {
+  const protocol = defaultJevProtocolDocument
+  return {
+    universeId: protocol.universeId,
+    universeSymbolHash: protocol.universeSymbolHash,
+    symbols: protocol.universe,
+    topics: {
+      ...protocol.sourceTopics,
+      features: intradayFeatureTopic,
+      ...(plan.config.kafka?.technicalFeaturesTopic === undefined
+        ? {}
+        : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
+    },
+  }
+}
+
+/** Read-only Kafka consumption; no persistence, capture, broker, model or trading-driver acquisition. */
+export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
+  plan.config.kafka === undefined
+    ? Layer.effect(
+        KafkaMarketProjection,
+        Effect.fail(
+          operationalError({
+            component: 'config',
+            operation: 'market-data',
+            message: 'Trading requires configured Kafka market data',
+          }),
+        ),
+      )
+    : KafkaMarketProjectionLive(plan.config.kafka, workerStreamingUniverse(plan))
+
 const WorkerMarketDataLive = (
   plan: ApplicationIdentity,
   postgres: ReturnType<typeof PostgresLive>,
   capture?: ResearchCaptureSession,
+  prewarmedProjection?: Layer.Layer<KafkaMarketProjection>,
 ) => {
   if (plan.config.kafka === undefined)
     return Layer.effect(
@@ -97,23 +129,11 @@ const WorkerMarketDataLive = (
         }),
       ),
     )
-  const protocol = defaultJevProtocolDocument
-  const universe = {
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
-    symbols: protocol.universe,
-    topics: {
-      ...protocol.sourceTopics,
-      features: intradayFeatureTopic,
-      ...(plan.config.kafka.technicalFeaturesTopic === undefined
-        ? {}
-        : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
-    },
-  }
+  const universe = workerStreamingUniverse(plan)
   const config = plan.config.kafka
   const kafka =
     capture === undefined
-      ? KafkaMarketProjectionLive(config, universe)
+      ? (prewarmedProjection ?? KafkaMarketProjectionLive(config, universe))
       : Layer.effect(
           KafkaMarketProjection,
           Effect.gen(function* () {
@@ -174,11 +194,12 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
 export const AutonomousWorkerApplicationResourcesLive = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   capture?: ResearchCaptureSession,
+  prewarmedProjection?: Layer.Layer<KafkaMarketProjection>,
 ) => {
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    WorkerMarketDataLive(plan, postgres, capture),
+    WorkerMarketDataLive(plan, postgres, capture, prewarmedProjection),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
