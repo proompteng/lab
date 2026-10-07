@@ -1,36 +1,26 @@
 # Nanoagent guest API
 
-Nanoagent is the unprivileged guest process inside every Tengri `kata-fc` microVM. It is not a Kubernetes controller,
-AgentRun runtime, privileged launcher, or node daemon. The Rust Tengri control plane is its only caller.
+Nanoagent runs as UID 1000 inside each Tengri Firecracker guest. Tengri owns the VMM outside the guest, in a normal OCI
+slot Pod. The guest has its own Linux kernel, root disk, and retained 16 GiB home. See the
+[runtime lifecycle](../tengri/README.md) for the host boundary and snapshot protocol.
 
-The process requires `MICROVM_ID` and a bootstrap-only `MICROVM_BOOTSTRAP_TOKEN`. Before starting any API or terminal,
-the short-lived container entry process passes that credential through a one-use anonymous pipe and replaces itself
-with a clean-environment Nanoagent process. The long-lived process disables Linux dumpability, closes the pipe after
+The guest `guest-init` helper reads the runner's private boot configuration, mounts the home, and starts Nanoagent as
+UID 1000. It passes the slot credential through a one-use anonymous pipe, with a sanitized child environment.
+Nanoagent disables Linux dumpability, closes the pipe after
 reading it, and never returns, hashes into public metadata, or logs the credential. Public health probes remain
 unauthenticated.
 
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
-[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves authenticated gRPC
-over HTTP/2 with SPIRE mutual TLS on port 8443. Each unary and streaming RPC also checks the per-MicroVM bootstrap
-credential in `authorization` metadata. Port 8080 serves only unauthenticated health probes and cannot dispatch RPCs
-or previews. No Talos machine configuration or service mesh change is required.
+[`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves HTTP/2 gRPC and preview
+HTTP over private vsock port 1024. Every RPC checks the slot's unique bootstrap credential. Only the host supervisor
+can reach this transport, after authenticating the exact Tengri SPIFFE identity and current owner/epoch headers.
+Port 8080 binds guest loopback and serves health probes. Host mTLS terminates at the supervisor on port 8443.
 
-Nanoagent supervises SPIRE 1.15.3 inside the Firecracker guest. Its `galactic-guests` PSAT agent is attested with a
-Pod-bound token for audience `spire-server`; its workload selector is Unix UID 1000. The issued identity includes the
-current Pod UID. It connects to `spire-server.spire-server.svc.cluster.local:443`; the Kubernetes Service forwards that
-connection to the SPIRE Pod's listener on port 8081. The TLS listener accepts only
-`spiffe://proompteng.ai/ns/tengri/sa/tengri`; the controller pins
-the guest's exact `spiffe://proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>` identity. The Go SPIFFE source watches
-certificate and bundle updates, so new connections use renewed credentials without restarting Nanoagent.
-
-The agent binary is installed under the persistent home from a versioned, SHA-256-pinned musl release archive. Build
-stages verify both the native binary and the generated agent configuration. Only the installer and version receipt
-enter the 512 MiB rootfs. Agent keys, attestation token, and data remain in private `/tmp/nanoagent-spire` files.
-Tengri refreshes the token and public bundle over mTLS; the refresh RPC rejects another Pod UID and private material
-in place of CA certificates. Terminal and Codex children receive no SPIFFE or SPIRE configuration variables. A guest
-administrator owns that guest's identity; its Pod-bound parent cannot attest another guest or the controller.
+SPIRE credentials and its CSI socket stay in the host supervisor. Guest memory contains no SVID, PSAT token, Kubernetes
+token, or host Workload API socket. Certificates can rotate while the guest sleeps. The guest administrator can control
+the guest, including its bootstrap credential, but cannot authorize another slot or call host lifecycle endpoints.
 
 The service covers editor startup, bounded file discovery and atomic mutations, PTY lifecycle, Codex calls and
 approvals, file/Codex server streams, and a bidirectional terminal stream. File content travels as protobuf bytes.
@@ -39,14 +29,12 @@ this preserves numeric IDs and the pinned app-server schema. Browser terminal fr
 
 Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and protocol version. Guest control is
 gRPC-only: the former REST, NDJSON event streams, and terminal WebSocket endpoints have been removed. There is no
-HTTP discovery, negotiation, or fallback. Guests without this protocol must sleep/resume with the current image.
-Controller and guest releases must use a compatible protobuf contract; an older HTTP-only controller cannot operate
-this guest.
+HTTP discovery, negotiation, or fallback. Controller and guest artifacts must come from the same validated release.
 
 HTTP remains for process probes and application content:
 
-- `GET /livez`, `GET /readyz`, and `GET /healthz`: process probes on plain port 8080;
-- `/v1/preview/{port}/{path...}`: mTLS-authenticated HTTPS and secure WebSocket proxying on port 8443 to an allowed loopback application or VS Code.
+- `GET /livez`, `GET /readyz`, and `GET /healthz` are process probes on guest loopback port 8080.
+- `/v1/preview/{port}/{path...}` proxies an allowed loopback application or VS Code through the host's authenticated vsock connection.
 
 Filesystem operations are confined with `os.Root`, reject symlink escapes, and hide `.codex` and `.tengri` internal
 state. Editable files are capped at 4 MiB, directory traversal and watcher subscriptions are bounded, and cancellation
@@ -86,8 +74,8 @@ a shared `OPENAI_API_KEY`.
 
 ## Firecracker rootfs and persistent tools
 
-Kata's Firecracker snapshotter extracts the guest OCI image into a 512 MiB blockfile. The Dockerfile therefore enforces
-a real 512 MiB ext4 population and filesystem check, with at least 16 MiB and 256 inodes left for extraction overhead.
+The final OCI artifact carries a pinned boot kernel and a populated 1 GiB ext4 root disk under `/guest`. The Dockerfile
+checks the populated filesystem with at least 16 MiB and 256 inodes free, then writes a SHA-256 manifest.
 Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
 executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
 The check runs in a separate build stage and copies only its receipt into the image. Packaged manuals, translated
@@ -129,7 +117,7 @@ and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes 
 terminal's system monospace font. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
 or `:TSInstall` to add language support. Existing configurations remain user-owned. The default plugin setup runs when
 the installation receipt is invalid, without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
-configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 512 MiB rootfs.
+configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 1 GiB rootfs.
 Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
 bootstrap before the rootfs check. The cache regression replaces Homebrew and Neovim with failing executables and
 proves that a prepared home still boots. Stale receipts, missing commands, changed XDG paths, and a changed toolchain root must run installation
@@ -142,25 +130,25 @@ continue to use the pinned GCC 13.3.0 toolchain.
 
 The guest's operating-system root filesystem is writable. The `nanoagent` user has passwordless `sudo` for guest
 administration, including `sudo apt-get install`, system-file edits, mounts, and guest network configuration. The
-controller allows privilege escalation, grants the guest Linux capabilities, and leaves guest syscalls unconfined
-inside the `kata-fc` VM. The Pod has no host namespace or host filesystem mounts, and no Kubernetes service-account
-token. Codex threads and turns use `danger-full-access` inside this same guest.
+guest has Linux administration capabilities inside the VM. The host VMM runs without capabilities, with Firecracker's
+default seccomp filter, and with no host namespace or filesystem mounts in its Pod. Codex threads and turns use
+`danger-full-access` inside the guest.
 
 Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
 omitted options preserve an existing thread's settings.
 
-The operating-system root remains the 512 MiB Firecracker image filesystem. Its changes are ephemeral;
-container recreation, sleep/resume, or guest replacement restores the image. The 16 GiB home, `/workspace`, Codex account, and
+The operating-system root is the private 1 GiB Firecracker disk. Snapshot sleep/resume retains its changes and running
+processes. An explicitly fenced cold replacement resets the root from the image. The 16 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
-Linux container with the guest capability and seccomp settings to also exercise mounts and network administration.
+real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
 
 On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 16 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
-Codex app server is available, and the `MicroVM` startup probe allows 35 minutes for SPIRE, language-toolchain,
-developer-tool, and Codex cold installation. The language toolchain has a two-minute deadline, developer tools fifteen
+Codex app server is available. Preparing a vacant slot allows 35 minutes for language-toolchain, developer-tool,
+and Codex cold installation, before any user can claim it. The language toolchain has a two-minute deadline, developer tools fifteen
 minutes, and Codex nine minutes. Image builds run
 the same verified bootstrap without copying its payload into the final image, so a bad checksum or package layout fails
 CI before publication. Nanoagent invokes the installer only after its bootstrap credential has moved through the
@@ -191,15 +179,8 @@ go test ./...
 go test -race ./...
 ```
 
-Start a local instance with a temporary persistent workspace:
-
-```bash
-MICROVM_ID=local \
-MICROVM_BOOTSTRAP_TOKEN=development-only \
-NANOAGENT_HOME=/tmp/nanoagent-home \
-NANOAGENT_WORKSPACE=/tmp/nanoagent-home/workspace \
-go run .
-```
+Use the wire interoperability test for local RPC validation. The production guest requires Linux vsock and the private
+boot configuration injected by the slot runner. It has no alternate TCP development transport.
 
 The Nanoagent workflow runs the focused Go validation. Tengri's image workflow then builds native `linux/amd64` and
 `linux/arm64` Nanoagent images alongside the controller, publishes and keylessly signs
@@ -211,7 +192,7 @@ controller and guest; the automatic Tengri Warehouse and Stage promote only the 
 
 Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
 platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
-on the persistent home volume, outside Firecracker's 512 MiB rootfs. Each image build verifies the native Linux archive;
+on the persistent home volume, outside Firecracker's 1 GiB rootfs. Each image build verifies the native Linux archive;
 first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
 
 `CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
@@ -228,5 +209,6 @@ bundle is absent from the standalone release. Existing user settings are preserv
 The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
 workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
 
-See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Existing running guests built
-before this API must be slept and resumed onto the current image; the editor reports that requirement explicitly.
+See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Sleep and resume retain the
+slot's image and live editor process. An image change requires the explicit fenced recovery procedure in
+[the operations guide](../../docs/tengri/operations.md).

@@ -165,6 +165,21 @@ spire-server:
             - k8s:container-name:tengri
           ttl: 2m
           fallback: false
+        tengri-slot:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/slot/pod/{{ .PodMeta.UID }}
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri-slot
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:tengri-slot
+            - k8s:container-name:supervisor
+          ttl: 2m
+          fallback: false
         proompteng-proxy:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng

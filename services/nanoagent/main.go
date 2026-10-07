@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mdlayher/vsock"
 )
 
 const (
@@ -41,6 +43,13 @@ type fileReader func(string) ([]byte, error)
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if len(os.Args) == 2 && os.Args[1] == "guest-init" {
+		if err := runGuestInit(logger); err != nil {
+			logger.Error("guest init stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(logger); err != nil {
 		logger.Error("nanoagent stopped", "error", err)
 		os.Exit(1)
@@ -59,17 +68,6 @@ func run(logger *slog.Logger) error {
 	)
 	if err := bootstrapUserHome(homeRoot); err != nil {
 		return fmt.Errorf("bootstrap persistent user home: %w", err)
-	}
-	identityStarted := time.Now()
-	identity, err := startGuestIdentity(context.Background(), microVMID, logger)
-	if err != nil {
-		return err
-	}
-	defer identity.close()
-	logger.Info("nanoagent startup stage finished", "stage", "identity", "durationMs", time.Since(identityStarted).Milliseconds())
-	tlsConfig, err := identity.tlsConfig()
-	if err != nil {
-		return fmt.Errorf("configure SPIFFE TLS: %w", err)
 	}
 	if err := configureToolchainEnvironment(homeRoot); err != nil {
 		return fmt.Errorf("configure persistent toolchain environment: %w", err)
@@ -110,10 +108,11 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("nanoagent guest booted", "evidence", json.RawMessage(encoded))
 
-	listenAddress := strings.TrimSpace(os.Getenv("LISTEN_ADDRESS"))
-	if listenAddress == "" {
-		listenAddress = ":8443"
+	listener, err := vsock.Listen(1024, nil)
+	if err != nil {
+		return fmt.Errorf("listen on private guest vsock: %w", err)
 	}
+	defer listener.Close()
 	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
 	if codexBinary == "" {
 		codexBinary = "codex"
@@ -121,7 +120,6 @@ func run(logger *slog.Logger) error {
 
 	api, err := newAPIServer(apiConfig{
 		bootstrapToken:      bootstrapToken,
-		identity:            identity,
 		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
 		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
 		codexBinary:         codexBinary,
@@ -137,10 +135,8 @@ func run(logger *slog.Logger) error {
 	defer api.close()
 
 	server := &http.Server{
-		Addr:              listenAddress,
 		Handler:           newHandler(api),
 		Protocols:         guestHTTPProtocols(),
-		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -148,23 +144,17 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	healthAddress := strings.TrimSpace(os.Getenv("HEALTH_LISTEN_ADDRESS"))
-	if healthAddress == "" {
-		healthAddress = ":8080"
-	}
-	health := &http.Server{Addr: healthAddress, Handler: newHealthHandler(api), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
+	health := &http.Server{Addr: "127.0.0.1:8080", Handler: newHealthHandler(api), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
 	serverErrors := make(chan error, 2)
 	go func() {
-		logger.Info("nanoagent listening", "address", listenAddress)
-		serverErrors <- server.ListenAndServeTLS("", "")
+		logger.Info("nanoagent listening", "vsockPort", 1024)
+		serverErrors <- server.Serve(listener)
 	}()
 
 	go func() { serverErrors <- health.ListenAndServe() }()
 	defer health.Close()
 	defer server.Close()
 	select {
-	case err := <-identity.exited:
-		return fmt.Errorf("SPIRE agent exited: %v", err)
 	case <-ctx.Done():
 		api.beginShutdown()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -399,7 +389,7 @@ func newHealthHandler(api *apiServer) http.Handler {
 		_, _ = writer.Write([]byte("{\"status\":\"ok\"}\n"))
 	}
 	ready := func(writer http.ResponseWriter, _ *http.Request) {
-		if (api.codex != nil && !api.codex.isReady()) || (api.identity != nil && !api.identity.ready()) {
+		if api.codex != nil && !api.codex.isReady() {
 			writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"status": "starting"})
 			return
 		}
