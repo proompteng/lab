@@ -3,6 +3,7 @@ import { Headers, HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
+import { withObservedStage } from '../telemetry'
 import {
   decodeJevResponse,
   jevEndpoint,
@@ -174,6 +175,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                     cause: Redacted.make(cause),
                   }),
             ),
+            withObservedStage('bayn.jev.inference', { dependency: 'jev', operation: 'evaluate' }),
             Effect.provideService(Headers.CurrentRedactedNames, ['authorization']),
           )
         })

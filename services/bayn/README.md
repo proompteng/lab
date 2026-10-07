@@ -678,6 +678,15 @@ reviewed input assertions. This read-only import never mutates broker cash, Tige
 
 ### Operational diagnostics
 
+Every native execution advance emits one correlated completion or failure record with its controller key, epoch,
+sequence, source revision, wall elapsed time, outcome, receipt and next delay when available, and a per-pass
+`stageTimings` profile. Each stage includes its dependency and operation, call count, inclusive elapsed time, maximum
+call time, failures and interruptions. Nested stages overlap; their times must not be added to estimate wall time.
+The profile uses the existing stage clocks and in-memory pass scope, without additional database or network work.
+Broker submission distinguishes `entry` and `close`, while its transport stage records `SUBMIT` or `CANCEL` through
+the complete response and classification. SQL transaction acquisition, lease checks, begin, commit and rollback have
+separate spans. See the [critical-path investigation](../../docs/runbooks/bayn-cycle-operations.md#execution-critical-path).
+
 Jev observation reconstruction failures retain a bounded `observationCheck` and, for broker snapshots, an
 `observationField`. The top-level error identifies schema, source reconstruction, observation time, universe/feed/topic,
 window, decision lag, session boundary, premature/stale portfolio evidence, feature definition or content identity.
