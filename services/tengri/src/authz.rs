@@ -116,7 +116,12 @@ impl WorkspaceAuthorization {
                         .successful("/v1/schema/write", json!({"schema": SCHEMA}))
                         .await?;
                 } else {
-                    response.error_for_status().context("read SpiceDB schema")?;
+                    let response = response.error_for_status().context("read SpiceDB schema")?;
+                    anyhow::ensure!(
+                        response.status().is_success(),
+                        "unexpected SpiceDB schema status {}",
+                        response.status()
+                    );
                 }
             }
             #[cfg(test)]
@@ -249,10 +254,17 @@ impl SpiceDb {
     }
 
     async fn successful(&self, path: &str, body: Value) -> anyhow::Result<reqwest::Response> {
-        self.request(path, body)
+        let response = self
+            .request(path, body)
             .await?
             .error_for_status()
-            .with_context(|| format!("SpiceDB request {path} was rejected"))
+            .with_context(|| format!("SpiceDB request {path} was rejected"))?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "SpiceDB request {path} returned {}",
+            response.status()
+        );
+        Ok(response)
     }
 
     async fn check(&self, resource_id: &str, owner_hash: &str) -> anyhow::Result<bool> {
@@ -464,6 +476,19 @@ pub(crate) mod tests {
             fixture.mode.store(mode, Ordering::SeqCst);
             assert_eq!(access.require().await.unwrap_err().code(), code);
         }
+    }
+
+    #[tokio::test]
+    async fn relationship_mutations_reject_redirects_instead_of_recording_completion() {
+        let fixture = SpiceFixture::new().await;
+        fixture.mode.store(5, Ordering::SeqCst);
+        assert!(
+            fixture
+                .authorization
+                .remove("tengri", "agent-example")
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -18,7 +18,7 @@ fixture_port="$(docker port "$fixture_container" 8443/tcp | sed 's/.*://')"
 fixture_endpoint="http://127.0.0.1:$fixture_port"
 fixture_ready=false
 for _ in $(seq 1 60); do
-  if curl --silent --fail "$fixture_endpoint/healthz" >/dev/null; then
+  if curl --silent --fail --max-time 1 "$fixture_endpoint/healthz" >/dev/null; then
     fixture_ready=true
     break
   fi
