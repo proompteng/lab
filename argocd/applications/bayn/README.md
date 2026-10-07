@@ -91,6 +91,18 @@ catch-up completed in 223 seconds on the slower worker. Freshness and entry chec
 content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
 progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
 
+Without a configured research capture, each worker starts its existing read-only Kafka projection when the endpoint
+starts. The trading driver, broker session, model client and capital activation remain lazy. The same server-scoped
+projection is reused by the first execution runtime and its replacements, without another consumer. Bootstrap remains
+asynchronous: an accepting TCP endpoint does not imply complete signal history, and existing snapshot checks still
+reject rebuilding, missing or late input. A configured capture retains its existing lazy recorder/consumer lifecycle;
+prewarm does not start SQL/S3 recording on standby replicas.
+
+Prewarm moves the eventual per-replica consumption earlier. Both current replicas, and old/new replicas overlapping
+during rollout, can consume concurrently; it is not a claim of zero additional aggregate CPU or memory. Keep the
+existing resource limits and verify aggregate CPU/RSS, queue/backlog recovery and scoped consumer cleanup. Warming a
+replica does not make an upstream bar published outside its permitted finalization window admissible.
+
 ## Regular-session trading boundaries
 
 Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
