@@ -37,6 +37,15 @@ export type IsoDate = typeof IsoDateSchema.Type
 export const UtcInstantSchema = Schema.String.check(
   Schema.makeFilter(isUtcInstant, { expected: 'a canonical UTC instant (YYYY-MM-DDTHH:mm:ss.sssZ)' }),
 )
+/** PostgreSQL identity timestamps retain microseconds; exact millisecond values keep their historical encoding. */
+export const UtcDatabaseInstantSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) =>
+      isUtcInstant(value) ||
+      (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value) && isUtcInstant(`${value.slice(0, 23)}Z`)),
+    { expected: 'a valid UTC database instant with three or six fractional digits' },
+  ),
+)
 export const UtcOrderTimestampSchema = Schema.String.check(
   Schema.makeFilter(isUtcOrderTimestamp, {
     expected: 'a canonical UTC ordering timestamp (YYYY-MM-DDTHH:mm:ss.nnnnnnnnnZ)',

@@ -287,11 +287,12 @@ const validateCurrentGenerationHistoryDataFirst = <History extends AuthorityGene
     })
   }
   const historyActivatedAt = DateTime.formatIso(DateTime.makeUnsafe(historyActivatedAtEpochMillis))
+  // Historical observations remain millisecond-resolution; authority identity is not truncated for storage or binding.
   if (
     history.generationHash !== current.generationHash ||
     history.maximum !== current.maximum ||
     historyVersion > current.version ||
-    historyActivatedAt > current.updatedAt
+    historyActivatedAtEpochMillis > Date.parse(current.updatedAt)
   ) {
     return fail({
       _tag: 'CurrentGenerationHistoryMismatch',

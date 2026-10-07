@@ -1,5 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect } from 'effect'
+import { databaseUtcInstant } from '../clock'
 
 import { BrokerEnvironment } from '../../broker/identity'
 import {
@@ -188,7 +189,7 @@ const makeCapitalGrantInterpreterDataFirst = (
       WHERE singleton
       RETURNING
         schema_version, generation_hash, maximum, effective, kill_state, reason,
-        version::text AS version, updated_at
+        version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
     `.pipe(
       Effect.flatMap(decodeAuthorityStateRows),
       Effect.flatMap((rows) => {

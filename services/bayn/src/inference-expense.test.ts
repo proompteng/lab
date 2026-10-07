@@ -213,6 +213,7 @@ describe('scoped inference expense background loop', () => {
   test('does not turn a defect into successful accounting', async () => {
     const exit = await Effect.runPromiseExit(inferenceExpenseLoop(Effect.die('synthetic accounting defect')))
     expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('synthetic accounting defect')
+    if (Exit.isFailure(exit))
+      expect(Result.getOrThrow(Cause.findDie(exit.cause)).defect).toBe('synthetic accounting defect')
   })
 })

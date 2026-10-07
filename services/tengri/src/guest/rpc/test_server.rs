@@ -26,12 +26,6 @@ pub(crate) struct TestService {
 
 #[tonic::async_trait]
 impl proto::nanoagent_service_server::NanoagentService for TestService {
-    async fn refresh_spire_bootstrap(
-        &self,
-        _: Request<proto::SpireBootstrap>,
-    ) -> Result<Response<proto::Empty>, Status> {
-        Err(Status::unimplemented("fixture has no SPIRE agent"))
-    }
     async fn get_info(
         &self,
         request: Request<proto::Empty>,
@@ -223,6 +217,7 @@ impl TestServer {
                 token: "fixture-token".into(),
                 http: reqwest::Client::new(),
                 preview_tls: None,
+                claim_headers: Default::default(),
             },
             server,
         }

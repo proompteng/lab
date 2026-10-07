@@ -123,7 +123,7 @@ export interface RiskContextRow {
   readonly authority_kill: KillState | null
   readonly authority_reason: string | null
   readonly authority_version: string | null
-  readonly authority_updated_at: Date | null
+  readonly authority_updated_at: string | null
   readonly authority_observed_at: Date | null
   readonly daily_traded_notional_micros: string
   readonly day_start_equity_micros: string
@@ -210,7 +210,7 @@ export type ReconciliationAlgebraFailure =
   | { readonly _tag: 'AuthorityStateDecodeFailed'; readonly cause: unknown }
   | {
       readonly _tag: 'RiskContextTimestampFailed'
-      readonly field: 'authority_observed_at' | 'authority_updated_at'
+      readonly field: 'authority_observed_at'
       readonly epochMillis: number
     }
 
@@ -639,10 +639,7 @@ const validateReconciliationReadbackDataFirst = (
 
 export const validateReconciliationReadback = Pipeable.dual(2, validateReconciliationReadbackDataFirst)
 
-const timestamp = (
-  field: 'authority_observed_at' | 'authority_updated_at',
-  value: Date,
-): Result.Result<string, ReconciliationAlgebraFailure> =>
+const timestamp = (field: 'authority_observed_at', value: Date): Result.Result<string, ReconciliationAlgebraFailure> =>
   Number.isFinite(value.getTime())
     ? Result.succeed(value.toISOString())
     : fail({ _tag: 'RiskContextTimestampFailed', field, epochMillis: value.getTime() })
@@ -717,7 +714,6 @@ const riskContextFromRowDataFirst = (
       })
     }
 
-    const authorityUpdatedAt = yield* timestamp('authority_updated_at', row.authority_updated_at)
     const authority = yield* Result.mapError(
       decodeAuthorityState({
         schemaVersion: row.authority_schema_version,
@@ -727,12 +723,13 @@ const riskContextFromRowDataFirst = (
         kill: row.authority_kill,
         ...(row.authority_reason === null ? {} : { reason: row.authority_reason }),
         version,
-        updatedAt: authorityUpdatedAt,
+        updatedAt: row.authority_updated_at,
       }),
       (cause): ReconciliationAlgebraFailure => ({ _tag: 'AuthorityStateDecodeFailed', cause }),
     )
     const authorityObservedAt = yield* timestamp('authority_observed_at', row.authority_observed_at)
-    if (authority.updatedAt > authorityObservedAt) {
+    // Observation clocks remain millisecond-resolution; the unmodified timestamp still binds exact SQL identity.
+    if (Date.parse(authority.updatedAt) > Date.parse(authorityObservedAt)) {
       return yield* fail({
         _tag: 'InvalidRiskContext',
         reason: 'authority-update-after-observation',

@@ -8,10 +8,8 @@ use std::{
 };
 
 use anyhow::{Context as _, bail};
-use base64::Engine as _;
 use futures::{Stream, StreamExt};
 use hyper_util::rt::TokioIo;
-use spiffe::bundle::BundleSource as _;
 use spiffe::{SpiffeId, TrustDomain, X509Source, X509Svid, x509_source::SvidPicker};
 use spiffe_rustls::{LocalOnly, authorizer, mtls_client, mtls_server};
 use tokio::{
@@ -35,7 +33,7 @@ pub enum WorkloadIdentity {
         domain: TrustDomain,
     },
     #[cfg(test)]
-    Fixture,
+    Fixture(u16),
 }
 
 struct ExactIdentity(SpiffeId);
@@ -66,6 +64,14 @@ impl WorkloadIdentity {
         namespace: &str,
     ) -> anyhow::Result<Self> {
         let own_id: SpiffeId = format!("spiffe://{domain}/ns/{namespace}/sa/tengri").parse()?;
+        Self::from_endpoint_with_id(endpoint, domain, own_id).await
+    }
+
+    pub(crate) async fn from_endpoint_with_id(
+        endpoint: String,
+        domain: TrustDomain,
+        own_id: SpiffeId,
+    ) -> anyhow::Result<Self> {
         let source = X509Source::builder()
             .endpoint(endpoint)
             .picker(ExactIdentity(own_id))
@@ -80,7 +86,7 @@ impl WorkloadIdentity {
         let domain = match self {
             Self::Spiffe { domain, .. } => domain.to_string(),
             #[cfg(test)]
-            Self::Fixture => "proompteng.ai".to_owned(),
+            Self::Fixture(_) => "proompteng.ai".to_owned(),
         };
         if pod_uid.is_empty()
             || !pod_uid
@@ -89,7 +95,36 @@ impl WorkloadIdentity {
         {
             bail!("invalid guest Pod UID");
         }
-        Ok(format!("spiffe://{domain}/ns/{namespace}/nanoagent/pod/{pod_uid}").parse()?)
+        Ok(format!("spiffe://{domain}/ns/{namespace}/slot/pod/{pod_uid}").parse()?)
+    }
+
+    pub async fn for_slot(namespace: &str, pod_uid: &str) -> anyhow::Result<Self> {
+        let domain: TrustDomain = env::var("SPIFFE_TRUST_DOMAIN")?.parse()?;
+        let endpoint = env::var("SPIFFE_ENDPOINT_SOCKET")?;
+        if !endpoint.starts_with("unix:///") || endpoint.contains(['\0', '?', '#']) {
+            bail!("SPIFFE Workload API requires an absolute Unix socket");
+        }
+        let own_id: SpiffeId =
+            format!("spiffe://{domain}/ns/{namespace}/slot/pod/{pod_uid}").parse()?;
+        Self::from_endpoint_with_id(endpoint, domain, own_id).await
+    }
+
+    pub fn slot_server_tls(&self, namespace: &str) -> anyhow::Result<Arc<rustls::ServerConfig>> {
+        match self {
+            Self::Spiffe { source, domain } => {
+                let peer: SpiffeId =
+                    format!("spiffe://{domain}/ns/{namespace}/sa/tengri").parse()?;
+                Ok(Arc::new(
+                    mtls_server(source.clone())
+                        .authorize(authorizer::exact([peer])?)
+                        .trust_domain_policy(LocalOnly(domain.clone()))
+                        .with_alpn_protocols([b"h2".as_slice(), b"http/1.1".as_slice()])
+                        .build()?,
+                ))
+            }
+            #[cfg(test)]
+            Self::Fixture(_) => bail!("fixture identity cannot serve a production supervisor"),
+        }
     }
 
     pub fn guest_tls(&self, peer: SpiffeId) -> anyhow::Result<Option<Arc<rustls::ClientConfig>>> {
@@ -102,7 +137,7 @@ impl WorkloadIdentity {
                     .build()?,
             ))),
             #[cfg(test)]
-            Self::Fixture => Ok(None),
+            Self::Fixture(_) => Ok(None),
         }
     }
 
@@ -112,7 +147,7 @@ impl WorkloadIdentity {
         tls: Option<Arc<rustls::ClientConfig>>,
     ) -> anyhow::Result<Channel> {
         #[cfg(test)]
-        if matches!(self, Self::Fixture) {
+        if matches!(self, Self::Fixture(_)) {
             return Ok(Endpoint::from_shared(format!("http://{address}"))?.connect_lazy());
         }
         let tls = tls.context("Nanoagent requires SPIFFE mutual TLS")?;
@@ -131,30 +166,6 @@ impl WorkloadIdentity {
             })))
     }
 
-    pub fn bundle_pem(&self) -> anyhow::Result<Vec<u8>> {
-        match self {
-            Self::Spiffe { source, domain } => {
-                let bundle = source
-                    .bundle_for_trust_domain(domain)?
-                    .context("SPIRE trust bundle is unavailable")?;
-                let mut pem = String::new();
-                for authority in bundle.authorities() {
-                    let encoded =
-                        base64::engine::general_purpose::STANDARD.encode(authority.as_ref());
-                    pem.push_str("-----BEGIN CERTIFICATE-----\n");
-                    for chunk in encoded.as_bytes().chunks(64) {
-                        pem.push_str(std::str::from_utf8(chunk)?);
-                        pem.push('\n');
-                    }
-                    pem.push_str("-----END CERTIFICATE-----\n");
-                }
-                Ok(pem.into_bytes())
-            }
-            #[cfg(test)]
-            Self::Fixture => bail!("fixture identity has no production bundle"),
-        }
-    }
-
     pub fn server_tls(&self) -> anyhow::Result<Arc<rustls::ServerConfig>> {
         match self {
             Self::Spiffe { source, domain } => {
@@ -169,7 +180,7 @@ impl WorkloadIdentity {
                 ))
             }
             #[cfg(test)]
-            Self::Fixture => bail!("fixture identity cannot serve the production control plane"),
+            Self::Fixture(_) => bail!("fixture identity cannot serve the production control plane"),
         }
     }
 }
@@ -216,7 +227,10 @@ pub fn tls_incoming(
     let acceptor = TlsAcceptor::from(tls);
     async_stream::stream! {
         loop {
-            yield listener.accept().await.map(|(stream, _)| stream);
+            yield listener.accept().await.and_then(|(stream, _)| {
+                stream.set_nodelay(true)?;
+                Ok(stream)
+            });
         }
     }
     .map(move |connection| {
