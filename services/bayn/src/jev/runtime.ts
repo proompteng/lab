@@ -23,6 +23,7 @@ import {
 } from '../observe-composition/intraday-market-data'
 import type { EntryQuoteFreshness } from '../risk'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
+import { withObservedStage } from '../telemetry'
 import { JevBatchPlanVersion, usableJevBatchInferences } from './batch'
 import { evaluateJevBatch, recoverPendingJevBatches } from './batch-evaluation'
 import { JevContractError } from './contract'
@@ -191,16 +192,18 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         readiness: DecisionReadinessReason.SnapshotStale,
       })
     const observation = yield* recordJevObservation({ ...input, snapshot })
-    const batchPlan = yield* Effect.fromResult(
-      makeJevTradingSignalBatch({
-        observation: observation.payload,
-        expiresAt: utcInstantFromEpochMillis(
-          Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
-        ),
-        planVersion:
-          input.protocol.schemaVersion === 'bayn.jev.protocol.v2' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V3,
-      }),
-    )
+    const batchPlan = yield* Effect.suspend(() =>
+      Effect.fromResult(
+        makeJevTradingSignalBatch({
+          observation: observation.payload,
+          expiresAt: utcInstantFromEpochMillis(
+            Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
+          ),
+          planVersion:
+            input.protocol.schemaVersion === 'bayn.jev.protocol.v2' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V3,
+        }),
+      ),
+    ).pipe(withObservedStage('bayn.jev.batch-plan'))
     const saved = yield* evaluateJevBatch(batchPlan)
     const decidedAt = yield* currentUtcInstant
     if (

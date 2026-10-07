@@ -6,7 +6,7 @@ import { persistIntradayRecordRows } from './market-data/intraday/verification'
 import { intradayMomentumPlanningTargetWeights } from './strategy/intraday-momentum/model'
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { CycleStore, CycleStoreLive } from './cycle/store'
@@ -55,16 +55,24 @@ import { reconciledStateHash } from './reconciliation'
 import { BrokerMode, Gate, PolicySchema, Reason, decodeState, evaluate, type Policy } from './risk'
 import { strictParseOptions } from './schemas'
 import {
+  ActiveExecutionStages,
+  ExecutionStageTimings,
+  type ActiveExecutionStage,
+  type ExecutionStageTiming,
+} from './telemetry'
+import {
   buildExecutionDecision,
   buildObserveShadowDecision,
   type ExecutionDecisionInput,
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
+  type ShadowDecisionError,
 } from './shadow-decision'
 import {
   decodeExecutionDecisionDocument,
   decodeObserveShadowDecisionDocument,
   makeExecutionDecisionDocument,
+  type CycleDecisionDocument,
 } from './shadow-decision-contract'
 import { decideIntradayMomentum } from './strategy/intraday-momentum/decision'
 import { deriveIntradayMomentumSignalMetrics } from './strategy/intraday-momentum/decision-core'
@@ -1078,6 +1086,102 @@ describe('intraday shadow decision', () => {
       },
       deltaRisk: [],
     })
+  })
+
+  test.each([Authority.Observe, Authority.Execution])(
+    'starts %s decision construction inside its observed Effect and retains identical evidence',
+    async (authority) => {
+      const input = fixture()
+      const cycle = input.cycle
+      let cycleReads = 0
+      const executionInput = {
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }
+      const build = (): Effect.Effect<CycleDecisionDocument, ShadowDecisionError> =>
+        authority === Authority.Execution ? buildExecutionDecision(executionInput) : buildObserveShadowDecision(input)
+      const expected = await Effect.runPromise(build())
+      Object.defineProperty(authority === Authority.Execution ? executionInput : input, 'cycle', {
+        enumerable: true,
+        get: () => {
+          cycleReads += 1
+          return cycle
+        },
+      })
+      const program = build()
+      expect(cycleReads).toBe(0)
+      const timings = new Map<string, ExecutionStageTiming>()
+      const active = new Map<symbol, ActiveExecutionStage>()
+      const actual = await Effect.runPromise(
+        program.pipe(
+          Effect.provideService(ExecutionStageTimings, timings),
+          Effect.provideService(ActiveExecutionStages, active),
+        ),
+      )
+      expect(cycleReads).toBeGreaterThan(0)
+      expect(actual).toEqual(expected)
+      expect([...timings.values()]).toMatchObject([
+        {
+          stage: 'bayn.execution.decision-build',
+          operation: authority,
+          count: 1,
+          failures: 0,
+          interruptions: 0,
+        },
+      ])
+      expect(active.size).toBe(0)
+    },
+  )
+
+  test('retains a decision validation failure in its construction stage', async () => {
+    const input = fixture()
+    const timings = new Map<string, ExecutionStageTiming>()
+    const active = new Map<symbol, ActiveExecutionStage>()
+    const exit = await Effect.runPromiseExit(
+      buildObserveShadowDecision({ ...input, snapshot: { ...input.snapshot, contentHash: hash('0') } }).pipe(
+        Effect.provideService(ExecutionStageTimings, timings),
+        Effect.provideService(ActiveExecutionStages, active),
+      ),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect([...timings.values()]).toMatchObject([
+      { stage: 'bayn.execution.decision-build', operation: Authority.Observe, count: 1, failures: 1 },
+    ])
+    expect(active.size).toBe(0)
+  })
+
+  test('retains an execution construction defect inside its observed Effect', async () => {
+    const input = fixture()
+    const executionInput = {
+      ...input,
+      authorityGenerationHash: hash('6'),
+      riskContext: fixtureRiskContext(input),
+      executionSession: executionSession(input),
+    }
+    const defect = new Error('test construction defect')
+    Object.defineProperty(executionInput, 'cycle', {
+      enumerable: true,
+      get: () => {
+        throw defect
+      },
+    })
+    const timings = new Map<string, ExecutionStageTiming>()
+    const active = new Map<symbol, ActiveExecutionStage>()
+    const program = buildExecutionDecision(executionInput)
+    const exit = await Effect.runPromiseExit(
+      program.pipe(
+        Effect.provideService(ExecutionStageTimings, timings),
+        Effect.provideService(ActiveExecutionStages, active),
+      ),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.hasDies(exit.cause)).toBe(true)
+    expect([...timings.values()]).toMatchObject([
+      { stage: 'bayn.execution.decision-build', operation: Authority.Execution, count: 1, failures: 1 },
+    ])
+    expect(active.size).toBe(0)
   })
 
   test('assembles the same no-trade material under execution authority without broker intents', async () => {
