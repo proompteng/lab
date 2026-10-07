@@ -13,7 +13,6 @@ import { CycleStore, CycleStoreLive } from './cycle/store'
 import { PostgresClientLive } from './db/postgres-client'
 import { postgresMigrations } from './db/postgres-migrations'
 import { baynTestPostgresUrl } from './test-environment.test-support'
-import { config as fixtureConfig } from './testing/runtime-fixtures'
 
 import {
   CycleState,
@@ -546,7 +545,8 @@ describe('intraday shadow decision', () => {
         CycleStoreLive.pipe(
           Layer.provideMerge(
             PostgresClientLive({
-              ...fixtureConfig,
+              // Schema setup has its own budget; expiry is checked against the explicit decision timestamps below.
+              operationTimeoutMs: 30_000,
               postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
             }),
           ),
