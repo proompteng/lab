@@ -220,6 +220,8 @@ async fn forward(
 ) -> Result<Response, (StatusCode, String)> {
     // The status read and transport admission cannot overlap a sleep fence.
     let guard = supervisor.gate.try_lock().map_err(|_| busy())?;
+    #[cfg(test)]
+    let started = std::time::Instant::now();
     let status = runner::command(&CommandRequest::Status)
         .await
         .map_err(lifecycle_error)?;
@@ -248,11 +250,21 @@ async fn forward(
         ));
     }
     supervisor.state.send_replace(status.state);
+    #[cfg(test)]
+    eprintln!(
+        "real KVM proxy status: {:.2} ms cumulative",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
     let mut state = supervisor.state.subscribe();
     let socket = runner::sockets_directory().join("guest.vsock");
     let stream = connect_vsock(&socket, GUEST_API_PORT)
         .await
         .map_err(lifecycle_error)?;
+    #[cfg(test)]
+    eprintln!(
+        "real KVM proxy vsock: {:.2} ms cumulative",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
     drop(guard);
     let mut parts = request.uri().clone().into_parts();
     parts.scheme = Some(axum::http::uri::Scheme::HTTP);
@@ -269,6 +281,11 @@ async fn forward(
             hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
                 .await
                 .map_err(|error| lifecycle_error(error.into()))?;
+        #[cfg(test)]
+        eprintln!(
+            "real KVM proxy HTTP/2: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         tokio::spawn(async move {
             tokio::pin!(connection);
             tokio::select! {
@@ -280,6 +297,11 @@ async fn forward(
             .send_request(request)
             .await
             .map_err(|error| lifecycle_error(error.into()))?;
+        #[cfg(test)]
+        eprintln!(
+            "real KVM proxy reply: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         Ok(response.map(Body::new))
     } else {
         let downstream_upgrade = hyper::upgrade::on(&mut request);

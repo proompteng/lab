@@ -186,6 +186,10 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         microvm_uid: "fixture-owner-uid".into(),
         epoch: 1,
     };
+    eprintln!(
+        "real KVM create CPU before:\n{}",
+        fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
+    );
     let started = Instant::now();
     let stage = |name: &str| {
         eprintln!(
@@ -206,10 +210,18 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         .session;
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
     stage("terminal");
-    rpc.codex_call("model/list", json!({})).await?;
+    let models = rpc.codex_call("model/list", json!({})).await?;
     stage("codex");
     let create_ms = started.elapsed().as_secs_f64() * 1000.0;
     eprintln!("real KVM prepared creation: {create_ms:.2} ms");
+    eprintln!(
+        "real KVM create CPU after:\n{}",
+        fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
+    );
+    eprintln!(
+        "real KVM Codex model result: {} bytes",
+        serde_json::to_vec(&models.result)?.len()
+    );
     let mut foreign = claim.clone();
     foreign.microvm_uid = "another-owner-uid".into();
     ensure!(
@@ -273,6 +285,11 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         if index == 0 {
             tokio::time::sleep(Duration::from_secs(3 * 60)).await;
         }
+        eprintln!(
+            "real KVM resume {} CPU before:\n{}",
+            index + 1,
+            fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
+        );
         let started = Instant::now();
         let stage = |name: &str| {
             eprintln!(
@@ -300,6 +317,11 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         let resume_ms = started.elapsed().as_secs_f64() * 1000.0;
         timings.push(resume_ms);
         eprintln!("real KVM resume {}: {resume_ms:.2} ms", index + 1);
+        eprintln!(
+            "real KVM resume {} CPU after:\n{}",
+            index + 1,
+            fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
+        );
     }
     client.lifecycle("stop", &claim).await?;
     timings.sort_by(f64::total_cmp);
@@ -307,12 +329,17 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     fs::write("/work/result.json", serde_json::to_vec_pretty(&json!({
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
-        "createSamples":1,"createMs":create_ms,"resumeSamples":samples,"resumeP95Ms":p95,"resumeMs":timings,
+        "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
+        "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
         "memoryAndSleep":memory,"guestAdministration":true
     }))?).await?;
     runner_task.abort();
     supervisor_task.abort();
+    ensure!(
+        create_ms < 1000.0,
+        "slot prepared creation is {create_ms:.2} ms"
+    );
     ensure!(p95 < 1000.0, "slot resume p95 is {p95:.2} ms");
     Ok(())
 }

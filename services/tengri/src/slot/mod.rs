@@ -294,13 +294,25 @@ impl Slot {
     }
 
     async fn restore_vm(&mut self, snapshot: &Snapshot, claim: &Claim) -> anyhow::Result<()> {
+        #[cfg(test)]
+        let started = std::time::Instant::now();
         self.vm =
             Some(Vmm::load(&self.config, &self.config.snapshot_dir(snapshot.generation)).await?);
+        #[cfg(test)]
+        eprintln!(
+            "real KVM runner loaded: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         self.vm
             .as_ref()
             .context("missing restored VMM")?
             .resume()
             .await?;
+        #[cfg(test)]
+        eprintln!(
+            "real KVM runner resumed: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         let reply = vmm::guest_command(&self.config.vsock(), &serde_json::json!({
             "action": "resume", "claim": claim, "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt().context("host clock overflow")?
         })).await?;
@@ -308,10 +320,21 @@ impl Slot {
             reply.get("claim") == Some(&serde_json::to_value(claim)?),
             "restored guest claim does not match its slot"
         );
+        #[cfg(test)]
+        eprintln!(
+            "real KVM runner guest ready: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         self.transition(SlotState::Awake {
             claim: claim.clone(),
         })
-        .await
+        .await?;
+        #[cfg(test)]
+        eprintln!(
+            "real KVM runner journal committed: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
     }
 
     pub async fn sleep(&mut self, claim: &Claim) -> anyhow::Result<()> {

@@ -26,6 +26,8 @@ pub struct Vmm {
 
 impl Vmm {
     async fn start(config: &SlotConfig) -> anyhow::Result<Self> {
+        #[cfg(test)]
+        let started = Instant::now();
         let api_socket = config.directory.join("firecracker.sock");
         remove_socket(&api_socket).await?;
         remove_socket(&config.vsock()).await?;
@@ -88,11 +90,21 @@ impl Vmm {
             });
         }
         let child = command.spawn().context("launch Firecracker")?;
+        #[cfg(test)]
+        eprintln!(
+            "real KVM VMM spawn: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         let api = Client::builder()
             .unix_socket(api_socket.as_path())
             .no_proxy()
             .timeout(Duration::from_secs(300))
             .build()?;
+        #[cfg(test)]
+        eprintln!(
+            "real KVM VMM API client: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         let mut vm = Self { child, api };
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -106,6 +118,11 @@ impl Vmm {
             );
             sleep(Duration::from_millis(1)).await;
         }
+        #[cfg(test)]
+        eprintln!(
+            "real KVM VMM API open: {:.2} ms cumulative",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         Ok(vm)
     }
 
