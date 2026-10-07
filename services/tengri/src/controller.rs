@@ -135,7 +135,14 @@ async fn reconcile(
             last_transition_at: Utc::now().to_rfc3339(),
         }];
         status.observed_generation = microvm.metadata.generation.unwrap_or_default();
-        let _ = patch_status(&context.client, &context.namespace, &current, &status).await;
+        let _ = patch_status(
+            &context.client,
+            &context.namespace,
+            &current,
+            &status,
+            metrics::global(),
+        )
+        .await;
     }
     result?;
     Ok(Action::requeue(Duration::from_secs(5)))
@@ -212,7 +219,7 @@ pub async fn converge(
             "agent is terminating"
         );
         let status = status_for(&current, &pod, &state.state);
-        match patch_status(client, namespace, &current, &status).await {
+        match patch_status(client, namespace, &current, &status, metrics::global()).await {
             Ok(updated) => {
                 if status.phase == MicroVMPhase::Ready
                     && current.status.as_ref().is_none_or(|s| !s.guest_ready)
@@ -307,6 +314,7 @@ async fn patch_status(
     namespace: &str,
     microvm: &MicroVM,
     status: &MicroVMStatus,
+    metrics: &metrics::Metrics,
 ) -> anyhow::Result<MicroVM> {
     if microvm.status.as_ref() == Some(status) {
         return Ok(microvm.clone());
@@ -324,7 +332,7 @@ async fn patch_status(
             .as_ref()
             .is_none_or(|s| s.phase != MicroVMPhase::Failed)
     {
-        metrics::global().record_guest_failure();
+        metrics.record_guest_failure();
     }
     Ok(updated)
 }
@@ -1606,8 +1614,9 @@ mod tests {
 
     #[tokio::test]
     async fn persisted_failure_transitions_increment_the_counter_once() {
+        let metrics = metrics::Metrics::default();
         let failures = || {
-            metrics::global()
+            metrics
                 .render(&[], Default::default())
                 .lines()
                 .find_map(|line| line.strip_prefix("tengri_guest_failures_total "))
@@ -1616,6 +1625,7 @@ mod tests {
                 .unwrap()
         };
         let before = failures();
+        metrics::global().record_guest_failure();
         let microvm = agent();
         let mut failed = microvm.clone();
         failed.status = Some(MicroVMStatus {
@@ -1633,15 +1643,22 @@ mod tests {
             body: None,
         };
         let (client, pending) = mock(vec![patch(&failed), patch(&still_failed)]);
-        let updated = patch_status(&client, "tengri", &microvm, failed.status.as_ref().unwrap())
-            .await
-            .unwrap();
+        let updated = patch_status(
+            &client,
+            "tengri",
+            &microvm,
+            failed.status.as_ref().unwrap(),
+            &metrics,
+        )
+        .await
+        .unwrap();
         assert_eq!(failures(), before + 1);
         patch_status(
             &client,
             "tengri",
             &updated,
             still_failed.status.as_ref().unwrap(),
+            &metrics,
         )
         .await
         .unwrap();
@@ -1660,10 +1677,16 @@ mod tests {
         assert_eq!(status_for(&microvm, &Pod::default(), &state), status);
         let (client, pending) = mock(vec![]);
         assert_eq!(
-            patch_status(&client, "tengri", &microvm, &status)
-                .await
-                .unwrap()
-                .resource_version(),
+            patch_status(
+                &client,
+                "tengri",
+                &microvm,
+                &status,
+                &metrics::Metrics::default()
+            )
+            .await
+            .unwrap()
+            .resource_version(),
             Some("10".into())
         );
         assert!(pending.lock().unwrap().is_empty());
