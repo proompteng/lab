@@ -15,8 +15,8 @@ browser_root="$HOME/.tengri/browser"
 package_root="$browser_root/playwright-$PLAYWRIGHT_VERSION"
 export PLAYWRIGHT_BROWSERS_PATH="$browser_root/engines"
 mkdir -p "$browser_root" "$HOME/.local/bin"
-if [[ -n "${BROWSER_RUNTIME_MANIFEST:-}" ]]; then
-  /usr/local/bin/bootstrap-browser-runtime "$BROWSER_RUNTIME_MANIFEST"
+if [[ -n "${BROWSER_RUNTIME_ARCHIVE:-}" ]]; then
+  /usr/local/bin/bootstrap-browser-runtime "$BROWSER_RUNTIME_ARCHIVE"
 fi
 if [[ ! -f "$package_root/.verified" ]]; then
   browser_temporary="$(mktemp -d "$browser_root/.install.XXXXXX")"

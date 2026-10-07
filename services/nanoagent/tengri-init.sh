@@ -23,7 +23,7 @@ export CARGO_HOME=/home/nanoagent/.cargo CODEX_HOME=/home/nanoagent/.codex
 export CODEX_BINARY=/home/nanoagent/.local/bin/codex CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex
 export CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server
 export BROWSER_BINARY=/usr/local/bin/launch-browser BROWSER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-browser
-export BROWSER_ASSETS_DIRECTORY=/usr/share/nanoagent/novnc BROWSER_RUNTIME_MANIFEST=/usr/share/nanoagent/browser-runtime.manifest
+export BROWSER_ASSETS_DIRECTORY=/usr/share/nanoagent/novnc BROWSER_RUNTIME_ARCHIVE=/usr/share/nanoagent/browser-runtime.tar.xz
 export CHROMIUM_BINARY=/home/nanoagent/.local/bin/chromium
 export TOOLCHAIN_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-toolchain DEVELOPER_TOOLS_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-developer-tools
 export PATH=/home/nanoagent/.local/bin:/home/nanoagent/go/bin:/home/nanoagent/.cargo/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

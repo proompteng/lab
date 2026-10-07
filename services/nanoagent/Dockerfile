@@ -65,7 +65,7 @@ FROM ${UV_BASE_IMAGE}:${UV_VERSION} AS uv-runtime
 FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
-    BROWSER_RUNTIME_MANIFEST=/usr/share/nanoagent/browser-runtime.manifest \
+    BROWSER_RUNTIME_ARCHIVE=/usr/share/nanoagent/browser-runtime.tar.xz \
     BROWSER_BINARY=/usr/local/bin/launch-browser \
     BROWSER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-browser \
     BROWSER_ASSETS_DIRECTORY=/usr/share/nanoagent/novnc \
@@ -164,14 +164,13 @@ RUN chmod 0755 /usr/share/nanoagent
 COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
-# Resolve exact Ubuntu package URLs and digests without adding the graphical
-# stack to the 1 GiB guest rootfs. The guest extracts it on its retained home.
-FROM runtime AS browser-runtime-manifest
-COPY browser-runtime-manifest.py /tmp/browser-runtime-manifest.py
+# Keep the verified graphics packages in the immutable image instead of relying
+# on superseded Ubuntu archive URLs. Extract the bundle on the retained home.
+FROM runtime AS browser-runtime-bundle
 RUN set -eux; \
     apt-get update -o Acquire::Retries=3; \
-    mkdir -p /out /tmp/browser-debs; \
-    apt-get -o Dir::Cache::archives=/tmp/browser-debs --print-uris --yes --no-install-recommends install \
+    mkdir -p /out/runtime /tmp/browser-debs; \
+    apt-get -o Dir::Cache::archives=/tmp/browser-debs --download-only --yes --no-install-recommends install \
       fonts-liberation \
       libasound2t64 \
       libatk-bridge2.0-0 \
@@ -191,10 +190,14 @@ RUN set -eux; \
       x11-utils \
       xauth \
       xclip \
-      xdotool > /tmp/browser-packages; \
-    apt-cache dumpavail > /tmp/browser-available; \
-    python3 /tmp/browser-runtime-manifest.py /tmp/browser-packages /tmp/browser-available > /out/browser-runtime.manifest; \
-    test -s /out/browser-runtime.manifest
+      xdotool; \
+    for package in /tmp/browser-debs/*.deb; do dpkg-deb --extract "$package" /out/runtime; done; \
+    rm -rf /out/runtime/usr/share/man /out/runtime/usr/share/locale; \
+    find /out/runtime/usr/share/doc -type f ! -name copyright -delete; \
+    test -x /out/runtime/usr/bin/Xtigervnc; \
+    test -x /out/runtime/usr/bin/xclip; \
+    XZ_OPT='-T2 -8' tar --create --xz --file /out/browser-runtime.tar.xz \
+      --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner --directory /out/runtime .
 
 FROM runtime AS guest-admin-smoke
 
@@ -366,10 +369,12 @@ RUN test -x /usr/local/bin/bootstrap-toolchain && bootstrap-toolchain --validate
     ln -s /home/nanoagent/.local/bin/gcc /usr/bin/gcc && \
     ln -s /home/nanoagent/.linuxbrew/bin/make /usr/bin/make
 
-COPY --from=browser-runtime-manifest /out/browser-runtime.manifest /usr/share/nanoagent/browser-runtime.manifest
+COPY --from=browser-runtime-bundle /out/browser-runtime.tar.xz /usr/share/nanoagent/browser-runtime.tar.xz
 
 FROM runtime-with-toolchain AS browser-smoke
 USER 1000:1000
+RUN --network=none bootstrap-browser-runtime "$BROWSER_RUNTIME_ARCHIVE" && \
+    test -s "$HOME/.tengri/browser/runtime-path"
 RUN bootstrap-toolchain --install-only && bootstrap-browser --install-only && \
     launch-browser --validate-install > /tmp/browser-version
 

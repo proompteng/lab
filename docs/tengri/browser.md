@@ -43,14 +43,16 @@ control. The display does not forward audio.
 
 The guest image includes a checksummed noVNC `1.7.0` client and bootstrap scripts. Playwright Core `1.59.1` selects
 the Chromium build. The first launch installs the engine under `~/.tengri/browser` from Microsoft's browser download
-service. `browser-runtime-manifest.py` records exact Ubuntu graphics package URLs and SHA-256 hashes during the
-image build. The guest verifies those hashes before extracting packages into a private directory on the retained
-home. The graphics runtime has scoped library, font, and keyboard paths. The `xkbcomp` wrapper handles TigerVNC's
+service. APT verifies the Ubuntu graphics packages during the image build, and the image bundles the extracted
+libraries in `browser-runtime.tar.xz`. The guest keys its private retained-home installation by the archive's SHA-256
+hash. Cold guests therefore use the packages in their immutable image, even after Ubuntu removes superseded versions.
+The graphics runtime has scoped library, font, and keyboard paths. The `xkbcomp` wrapper handles TigerVNC's
 compiled absolute executable path.
 
-This arrangement keeps the graphical runtime outside the private 1 GiB root filesystem and preserves its enforced headroom. The image build
-validates the engine and extracted runtime through `browser-smoke`. A cold start requires network access to the
-pinned Ubuntu packages and Chromium download service. Startup failures remain visible and retryable.
+The compressed graphics bundle fits inside the private 1 GiB root filesystem with enforced headroom; the expanded
+runtime resides on the retained home. The image build verifies cold extraction without network access, then
+validates the engine and extracted runtime through `browser-smoke`. A cold engine install requires network access to
+the pinned Playwright package and Chromium download service. Startup failures remain visible and retryable.
 Downloads use the owner's `Downloads` folder. Closing the desktop view does not erase the profile.
 
 ## Agent computer tool

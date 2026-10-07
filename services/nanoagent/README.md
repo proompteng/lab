@@ -217,7 +217,7 @@ slot's image and live editor process. An image change requires the explicit fenc
 ## Chrome and agent computer use
 
 The guest runs a persistent headed Chromium browser with a private TigerVNC display. The desktop and Codex's
-`computer` MCP tool share that display. The graphics runtime and engine install on the retained home with
-checksummed package pins outside the enforced 1 GiB root filesystem. The boot init configures these browser paths
-before starting Nanoagent and its Codex MCP server.
+`computer` MCP tool share that display. The immutable image bundles a compressed graphics archive inside the
+enforced 1 GiB root filesystem. Its expanded libraries and pinned Chromium build install on the retained home.
+The boot init configures these browser paths before starting Nanoagent and its Codex MCP server.
 See [browser architecture and research](../../docs/tengri/browser.md).
