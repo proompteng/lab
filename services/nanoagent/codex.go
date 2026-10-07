@@ -190,6 +190,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "never",
+		"-c", `approval_policy="never"`,
 		"-c", `apps._default.default_tools_approval_mode="approve"`,
 		"-c", `mcp_servers.relay.command="/usr/local/bin/nanoagent"`,
 		"-c", `mcp_servers.relay.args=["--relay-mcp"]`,

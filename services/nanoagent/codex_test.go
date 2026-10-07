@@ -714,6 +714,7 @@ sleep 30
 				t.Fatalf("Codex process did not require the Relay MCP adapter: %q", args)
 			}
 			for _, setting := range []string{
+				`approval_policy="never"`,
 				`apps._default.default_tools_approval_mode="approve"`,
 				`mcp_servers.relay.default_tools_approval_mode="approve"`,
 			} {
