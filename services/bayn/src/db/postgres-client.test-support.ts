@@ -66,6 +66,7 @@ try {
       statementTimeoutMs: 25_000,
       socketTimeoutMs: 27_500,
       destination: { host: 'postgres.example', port: 5433 },
+      clientTarget: { host: 'postgres.example', port: 5433, username: 'fixture', database: 'database' },
       options: '-c lock_timeout=1000 -c statement_timeout=25000',
     },
     {
@@ -76,6 +77,7 @@ try {
       statementTimeoutMs: 3_000,
       socketTimeoutMs: 4_500,
       destination: { host: 'secure-postgres.example', port: 5432 },
+      clientTarget: { host: 'secure-postgres.example', port: 5432, username: 'fixture', database: 'database' },
       options: '-c statement_timeout=3000',
     },
     {
@@ -86,6 +88,29 @@ try {
       statementTimeoutMs: 5_000,
       socketTimeoutMs: 7_500,
       destination: { path: '/tmp/fixture-pg/.s.PGSQL.5544' },
+      clientTarget: { host: '/tmp/fixture-pg', port: 5544, username: 'fixture', database: 'database' },
+      options: '-c statement_timeout=5000',
+    },
+    {
+      name: 'target-overrides',
+      url: 'postgresql://ignored@original.example:5433/path%20database?host=first.example&host=selected.example&port=5434&port=5545&user=first-user&user=selected-user&dbname=first-db&dbname=selected-db',
+      tls: false,
+      budgetMs: 10_000,
+      statementTimeoutMs: 5_000,
+      socketTimeoutMs: 7_500,
+      destination: { host: 'selected.example', port: 5545 },
+      clientTarget: { host: 'selected.example', port: 5545, username: 'selected-user', database: 'selected-db' },
+      options: '-c statement_timeout=5000',
+    },
+    {
+      name: 'encoded-target',
+      url: 'postgresql://fixture%20owner@[::1]:5546/path%20database',
+      tls: false,
+      budgetMs: 10_000,
+      statementTimeoutMs: 5_000,
+      socketTimeoutMs: 7_500,
+      destination: { host: '::1', port: 5546 },
+      clientTarget: { host: '::1', port: 5546, username: 'fixture owner', database: 'path database' },
       options: '-c statement_timeout=5000',
     },
   ] as const
@@ -115,6 +140,10 @@ try {
     const options = configured.shift()
     assert.ok(options?.stream)
     assert.ok(options.url)
+    assert.deepEqual(
+      { host: options.host, port: options.port, username: options.username, database: options.database },
+      fixture.clientTarget,
+    )
     assert.equal(options.connectTimeout, fixture.statementTimeoutMs)
     assert.equal(new URL(Redacted.value(options.url)).searchParams.get('options'), fixture.options)
     assert.deepEqual(options.ssl, fixture.tls ? { ca: 'fixture-ca', rejectUnauthorized: true } : undefined)

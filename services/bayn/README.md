@@ -693,7 +693,9 @@ call time, failures and interruptions. Nested stages overlap; their times must n
 The profile uses the existing stage clocks and in-memory pass scope, without additional database or network work.
 Broker submission distinguishes `entry` and `close`, while its transport stage records `SUBMIT` or `CANCEL` through
 the complete response and classification. SQL transaction acquisition, lease checks, begin, commit and rollback have
-separate spans. See the [critical-path investigation](../../docs/runbooks/bayn-cycle-operations.md#execution-critical-path).
+separate spans. SQL `server.address`, `server.port` and `db.namespace` identify the configured connection target,
+including URI host, port, user and database overrides. See the
+[critical-path investigation](../../docs/runbooks/bayn-cycle-operations.md#execution-critical-path).
 
 Jev observation reconstruction failures retain a bounded `observationCheck` and, for broker snapshots, an
 `observationField`. The top-level error identifies schema, source reconstruction, observation time, universe/feed/topic,
