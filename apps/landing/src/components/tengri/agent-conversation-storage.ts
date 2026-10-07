@@ -17,46 +17,76 @@ export function truncateConversationTitle(value: string) {
   return title.length > 48 ? `${title.slice(0, 45).trimEnd()}…` : title
 }
 
-export function readStoredConversations(agentId: string, storage: Storage = localStorage): StoredConversation[] {
+function parseStoredConversations(raw: string | null): StoredConversation[] {
+  if (!raw) return []
+  const parsed = JSON.parse(raw)
+  if (!Array.isArray(parsed)) return []
+  return parsed
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return []
+      const candidate = entry as Record<string, unknown>
+      if (typeof candidate.id !== 'string' || !candidate.id) return []
+      if (typeof candidate.title !== 'string' || !candidate.title.trim()) return []
+      if (typeof candidate.updatedAt !== 'number' || !Number.isFinite(candidate.updatedAt)) return []
+      const conversation: StoredConversation = {
+        id: candidate.id,
+        title: candidate.title.trim(),
+        updatedAt: candidate.updatedAt,
+      }
+      if (candidate.unavailable === true) conversation.unavailable = true
+      return [conversation]
+    })
+    .slice(0, MAX_STORED_CONVERSATIONS)
+}
+
+/** Merge this tab's desired registry with whatever another tab already persisted. */
+export function mergePersistedConversationRegistry(
+  preferred: readonly StoredConversation[],
+  persisted: readonly StoredConversation[],
+): StoredConversation[] {
+  const byId = new Map<string, StoredConversation>()
+  for (const entry of persisted) byId.set(entry.id, entry)
+  for (const entry of preferred) {
+    const existing = byId.get(entry.id)
+    if (!existing) {
+      byId.set(entry.id, entry)
+      continue
+    }
+    byId.set(entry.id, mergeConversationRegistry([existing], entry)[0]!)
+  }
+  return [...byId.values()]
+    .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+    .slice(0, MAX_STORED_CONVERSATIONS)
+}
+
+export function readStoredConversations(agentId: string, storage?: Storage): StoredConversation[] {
   try {
-    const raw = storage.getItem(conversationsStorageKey(agentId))
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .flatMap((entry) => {
-        if (!entry || typeof entry !== 'object') return []
-        const candidate = entry as Record<string, unknown>
-        if (typeof candidate.id !== 'string' || !candidate.id) return []
-        if (typeof candidate.title !== 'string' || !candidate.title.trim()) return []
-        if (typeof candidate.updatedAt !== 'number' || !Number.isFinite(candidate.updatedAt)) return []
-        const conversation: StoredConversation = {
-          id: candidate.id,
-          title: candidate.title.trim(),
-          updatedAt: candidate.updatedAt,
-        }
-        if (candidate.unavailable === true) conversation.unavailable = true
-        return [conversation]
-      })
-      .slice(0, MAX_STORED_CONVERSATIONS)
+    // Resolve localStorage inside the try — accessing the global can throw SecurityError
+    // before a default-parameter expression would ever enter this function body.
+    const store = storage ?? localStorage
+    return parseStoredConversations(store.getItem(conversationsStorageKey(agentId)))
   } catch {
     return []
   }
 }
 
-/** Persist best-effort; always returns the in-memory registry slice that should stay in React state. */
+/** Persist best-effort; always returns the registry slice that should stay in React state. */
 export function writeStoredConversations(
   agentId: string,
   conversations: readonly StoredConversation[],
-  storage: Storage = localStorage,
+  storage?: Storage,
 ): StoredConversation[] {
   const next = conversations.slice(0, MAX_STORED_CONVERSATIONS)
   try {
-    storage.setItem(conversationsStorageKey(agentId), JSON.stringify(next))
+    const store = storage ?? localStorage
+    const persisted = parseStoredConversations(store.getItem(conversationsStorageKey(agentId)))
+    const merged = mergePersistedConversationRegistry(next, persisted)
+    store.setItem(conversationsStorageKey(agentId), JSON.stringify(merged))
+    return merged
   } catch {
     // Persistence is best-effort; callers keep `next` as the React source of truth.
+    return next
   }
-  return next
 }
 
 export function mergeConversationRegistry(
@@ -83,7 +113,7 @@ export function upsertStoredConversation(
   agentId: string,
   next: StoredConversation,
   current: readonly StoredConversation[],
-  storage: Storage = localStorage,
+  storage?: Storage,
 ): StoredConversation[] {
   return writeStoredConversations(agentId, mergeConversationRegistry(current, next), storage)
 }
@@ -93,7 +123,7 @@ export function touchStoredConversation(
   threadId: string,
   current: readonly StoredConversation[],
   now = Date.now(),
-  storage: Storage = localStorage,
+  storage?: Storage,
 ): StoredConversation[] {
   const existing = current.find((conversation) => conversation.id === threadId)
   const updated: StoredConversation = existing
@@ -111,7 +141,7 @@ export function markStoredConversationUnavailable(
   threadId: string,
   current: readonly StoredConversation[],
   now = Date.now(),
-  storage: Storage = localStorage,
+  storage?: Storage,
 ): StoredConversation[] {
   if (!current.some((conversation) => conversation.id === threadId)) {
     return writeStoredConversations(

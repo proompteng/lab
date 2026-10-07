@@ -1,10 +1,11 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 
 import {
   MAX_STORED_CONVERSATIONS,
   conversationsStorageKey,
   markStoredConversationUnavailable,
   mergeConversationRegistry,
+  mergePersistedConversationRegistry,
   readStoredConversations,
   touchStoredConversation,
   truncateConversationTitle,
@@ -15,6 +16,7 @@ import {
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
   failWrites = false
+  failReads = false
 
   get length() {
     return this.values.size
@@ -25,6 +27,7 @@ class MemoryStorage implements Storage {
   }
 
   getItem(key: string) {
+    if (this.failReads) throw new Error('storage read failed')
     return this.values.get(key) ?? null
   }
 
@@ -42,6 +45,16 @@ class MemoryStorage implements Storage {
     this.values.set(key, value)
   }
 }
+
+const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+
+afterEach(() => {
+  if (originalLocalStorage) {
+    Object.defineProperty(globalThis, 'localStorage', originalLocalStorage)
+  } else {
+    Reflect.deleteProperty(globalThis, 'localStorage')
+  }
+})
 
 describe('agent conversation storage', () => {
   test('truncates titles and caps the registry', () => {
@@ -90,5 +103,65 @@ describe('agent conversation storage', () => {
     )
     expect(next[0]).toEqual({ id: 'thread-a', title: 'Alpha', updatedAt: 2 })
     expect(readStoredConversations('agent-1', storage)).toEqual(next)
+  })
+
+  test('merges registry writes with persisted entries from another tab', () => {
+    const storage = new MemoryStorage()
+    writeStoredConversations('agent-1', [{ id: 'from-tab-b', title: 'Tab B', updatedAt: 1 }], storage)
+
+    // Tab A only knows about its own in-memory registry (stale relative to storage).
+    const tabA = upsertStoredConversation('agent-1', { id: 'from-tab-a', title: 'Tab A', updatedAt: 2 }, [], storage)
+    expect(tabA.map((conversation) => conversation.id)).toEqual(['from-tab-a', 'from-tab-b'])
+    expect(readStoredConversations('agent-1', storage).map((conversation) => conversation.id)).toEqual([
+      'from-tab-a',
+      'from-tab-b',
+    ])
+
+    // Tab B upserts again with a stale local snapshot that omits Tab A's thread.
+    const tabB = upsertStoredConversation(
+      'agent-1',
+      { id: 'from-tab-b', title: 'Tab B updated', updatedAt: 3 },
+      [{ id: 'from-tab-b', title: 'Tab B', updatedAt: 1 }],
+      storage,
+    )
+    expect(tabB.map((conversation) => conversation.id)).toEqual(['from-tab-b', 'from-tab-a'])
+    expect(tabB[0]).toEqual({ id: 'from-tab-b', title: 'Tab B updated', updatedAt: 3 })
+    expect(readStoredConversations('agent-1', storage)).toEqual(tabB)
+  })
+
+  test('mergePersistedConversationRegistry keeps preferred titles and sorts by recency', () => {
+    const merged = mergePersistedConversationRegistry(
+      [{ id: 'a', title: 'New conversation', updatedAt: 5 }],
+      [
+        { id: 'a', title: 'Alpha', updatedAt: 1 },
+        { id: 'b', title: 'Beta', updatedAt: 4 },
+      ],
+    )
+    expect(merged).toEqual([
+      { id: 'a', title: 'Alpha', updatedAt: 5 },
+      { id: 'b', title: 'Beta', updatedAt: 4 },
+    ])
+  })
+
+  test('survives SecurityError when resolving the localStorage global', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('Denied', 'SecurityError')
+      },
+    })
+
+    expect(readStoredConversations('agent-1')).toEqual([])
+    expect(writeStoredConversations('agent-1', [{ id: 'thread-a', title: 'Alpha', updatedAt: 1 }])).toEqual([
+      { id: 'thread-a', title: 'Alpha', updatedAt: 1 },
+    ])
+    expect(
+      upsertStoredConversation('agent-1', { id: 'thread-b', title: 'Beta', updatedAt: 2 }, [
+        { id: 'thread-a', title: 'Alpha', updatedAt: 1 },
+      ]),
+    ).toEqual([
+      { id: 'thread-b', title: 'Beta', updatedAt: 2 },
+      { id: 'thread-a', title: 'Alpha', updatedAt: 1 },
+    ])
   })
 })
