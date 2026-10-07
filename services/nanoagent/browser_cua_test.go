@@ -137,6 +137,46 @@ func TestBrowserWebSocketBridgesOnlyThePrivateDisplay(t *testing.T) {
 	}
 }
 
+func TestBrowserMCPFramesMaximumEscapedTextWithoutExiting(t *testing.T) {
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	browser.userControl = true
+	if err := browser.listenCUA(); err != nil {
+		t.Fatal(err)
+	}
+	defer browser.close()
+	for _, character := range []string{"\\", "\x1f"} {
+		action := computerAction{Action: "type", Text: strings.Repeat(character, 65536)}
+		if err := validateComputerAction(action); err != nil {
+			t.Fatal(err)
+		}
+		request, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "computer", "arguments": action}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := append(request, []byte("\n{\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"computer\",\"arguments\":{\"action\":\"status\"}}}\n")...)
+		var output bytes.Buffer
+		if err := runBrowserMCP(bytes.NewReader(input), &output, browser.home); err != nil {
+			t.Fatalf("valid escaped text terminated MCP: %v", err)
+		}
+		decoder := json.NewDecoder(&output)
+		var actionResult, statusResult struct {
+			Error  json.RawMessage `json:"error"`
+			Result struct {
+				IsError           bool `json:"isError"`
+				StructuredContent struct {
+					UserControl bool `json:"userControl"`
+				} `json:"structuredContent"`
+			} `json:"result"`
+		}
+		if err := decoder.Decode(&actionResult); err != nil || len(actionResult.Error) > 0 || !actionResult.Result.IsError {
+			t.Fatalf("valid request did not reach the takeover check: %v %s", err, output.Bytes())
+		}
+		if err := decoder.Decode(&statusResult); err != nil || len(statusResult.Error) > 0 || !statusResult.Result.StructuredContent.UserControl {
+			t.Fatalf("MCP did not continue after large request: %v %s", err, output.Bytes())
+		}
+	}
+}
+
 func browserTestHome(t *testing.T) string {
 	t.Helper()
 	home, err := os.MkdirTemp("/tmp", "browser-test-")

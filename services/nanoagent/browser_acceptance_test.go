@@ -17,7 +17,7 @@ func installBrowserAcceptance(mux *http.ServeMux, browser *browserSupervisor, ho
 	var mu sync.Mutex
 	var loaded, submitted, input map[string]any
 	mux.HandleFunc("POST /_test/computer", func(w http.ResponseWriter, r *http.Request) {
-		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
+		data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxComputerRequestBytes))
 		if err != nil {
 			http.Error(w, err.Error(), 400)
 			return

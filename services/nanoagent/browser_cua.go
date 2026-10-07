@@ -36,6 +36,8 @@ type computerAction struct {
 	URL       string `json:"url"`
 }
 
+const maxComputerRequestBytes = 512 << 10
+
 var computerKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_+]+$`)
 
 func (browser *browserSupervisor) listenCUA() error {
@@ -65,7 +67,7 @@ func (browser *browserSupervisor) listenCUA() error {
 			return
 		}
 		var action computerAction
-		decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 128<<10))
+		decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, maxComputerRequestBytes))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&action); err != nil {
 			writeAPIError(writer, http.StatusBadRequest, "invalid computer action")
@@ -276,7 +278,7 @@ func runBrowserMCP(input io.Reader, output io.Writer, home string) error {
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Minute}
 	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 4096), 128<<10)
+	scanner.Buffer(make([]byte, 4096), maxComputerRequestBytes)
 	encoder := json.NewEncoder(output)
 	for scanner.Scan() {
 		var request struct {
