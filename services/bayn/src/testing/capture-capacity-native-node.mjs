@@ -12,6 +12,7 @@ import { observeConsumedRecords } from './capture-capacity-iterator.ts'
 import { observeCapacityIo } from './capture-capacity-io.mjs'
 import { capacityAttributionCase, capacityCorpusHash, terminalHeartbeatMaximum } from './capture-capacity-metrics.mjs'
 import { startCapacityCpuProfile, wholeProcessCpuMicros } from './capture-capacity-profile.mjs'
+import { readCapacityAppendWaiters } from './capture-capacity-postgres.ts'
 import { makeCapacitySqlProbes } from './capture-capacity-sql-probes.ts'
 import { assertUnfaultedCapacitySeal } from './capture-capacity-seal.ts'
 import { PostgresClientLive } from '../db/postgres-client.ts'
@@ -733,8 +734,7 @@ const program = Effect.gen(function* () {
                     let cancelled = false
                     while (performance.now() < releaseAt) {
                       yield* sql`SELECT pg_stat_clear_snapshot()`
-                      const waiting =
-                        yield* sql`SELECT pid, query_start::text AS query_start FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND application_name = 'bayn' AND state = 'active' AND wait_event_type = 'Lock' AND query LIKE '%FROM research_capture_chunks%' AND query LIKE '%AND chunk_ordinal =%'`
+                      const waiting = yield* readCapacityAppendWaiters(sql)
                       if (waiting.length) {
                         assert.equal(waiting.length, 1)
                         assert.equal(

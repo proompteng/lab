@@ -34,6 +34,7 @@ import {
 import { researchCaptureObjectKey, type ResearchCaptureObject } from '../research-capture/export'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder'
 import { sessionConfig } from '../research-capture/session.test-support'
+import { readCapacityAppendWaiters } from '../testing/capture-capacity-postgres'
 
 const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
 const fixture = Effect.gen(function* () {
@@ -298,6 +299,102 @@ postgresTest('an append blocked on the capture lock sees its predecessor commit 
     }),
   ),
 )
+
+for (const operation of ['append', 'seal', 'other-relation'] as const)
+  postgresTest(
+    `capacity lock observation identifies only its production append: ${operation}`,
+    () =>
+      run(
+        Effect.gen(function* () {
+          const { sql, store, chunk, bytes, seal } = yield* fixture
+          const locked = yield* Deferred.make<void>()
+          const observed = yield* Deferred.make<{ pid: number; query_start: string; query: string }>()
+          const cancelled = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const decodeBlocked = Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ pid: Schema.Int, query_start: Schema.String, query: Schema.String })),
+          )
+          const readBlocked = () =>
+            sql`
+            SELECT activity.pid, activity.query_start::text AS query_start, activity.query
+            FROM pg_stat_activity activity
+            WHERE activity.pid <> pg_backend_pid()
+              AND activity.application_name = 'bayn' AND activity.state = 'active'
+              AND activity.wait_event_type = 'Lock'
+              AND pg_backend_pid() = ANY(pg_blocking_pids(activity.pid))
+          `.pipe(Effect.flatMap(decodeBlocked))
+          const holder = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                if (operation === 'other-relation')
+                  yield* sql`LOCK TABLE research_capture_seals IN ACCESS EXCLUSIVE MODE`
+                else yield* sql`LOCK TABLE research_capture_chunks IN ACCESS EXCLUSIVE MODE`
+                yield* Deferred.succeed(locked, undefined)
+                let blocked: { pid: number; query_start: string; query: string } | undefined
+                for (let attempt = 0; attempt < 100 && blocked === undefined; attempt++) {
+                  yield* sql`SELECT pg_stat_clear_snapshot()`
+                  const rows = yield* readBlocked()
+                  expect(rows.length).toBeLessThanOrEqual(1)
+                  blocked = rows[0]
+                  if (blocked === undefined) yield* Effect.sleep(10)
+                }
+                if (blocked === undefined) throw new Error('Fixture operation did not wait on its table lock')
+                const waiters = yield* readCapacityAppendWaiters(sql)
+                if (operation === 'append') {
+                  expect(waiters).toEqual([{ pid: blocked.pid, query_start: blocked.query_start }])
+                  // The legacy predicate misses this real CTE at PostgreSQL's default activity-text bound.
+                  expect(blocked.query.slice(0, 1023)).not.toContain('AND chunk_ordinal =')
+                  expect(blocked.query).toMatch(/^\s*WITH candidate AS MATERIALIZED/)
+                } else expect(waiters).toEqual([])
+                yield* Deferred.succeed(observed, blocked)
+                let disappeared = false
+                for (let attempt = 0; attempt < 110 && !disappeared; attempt++) {
+                  yield* sql`SELECT pg_stat_clear_snapshot()`
+                  const rows = yield* readBlocked()
+                  if (rows.length === 0) disappeared = true
+                  else expect(rows).toEqual([blocked])
+                  if (!disappeared) yield* Effect.sleep(10)
+                }
+                expect(disappeared).toBe(true)
+                expect(yield* readCapacityAppendWaiters(sql)).toEqual([])
+                yield* Deferred.succeed(cancelled, undefined)
+                yield* Deferred.await(release)
+                yield* sql`SELECT pg_stat_clear_snapshot()`
+                expect(yield* readBlocked()).toEqual([])
+              }),
+            )
+            .pipe(Effect.forkChild)
+          yield* Deferred.await(locked)
+          const startedAt = yield* Clock.currentTimeMillis
+          const write = Effect.gen(function* () {
+            if (operation === 'append') yield* store.append(bytes)
+            else if (operation === 'seal') yield* store.seal(encodeResearchCapture(seal))
+            else
+              yield* sql`
+                WITH candidate AS MATERIALIZED (SELECT 1 AS value)
+                SELECT candidate.value FROM candidate CROSS JOIN research_capture_seals
+              `
+          })
+          const pending = yield* write.pipe(Effect.timeout('1 second'), Effect.exit, Effect.forkChild)
+          yield* Deferred.await(observed)
+          // This connection is not the lock holder, even though the actual append is currently waiting.
+          expect(yield* readCapacityAppendWaiters(sql)).toEqual([])
+          if (operation !== 'append') yield* Fiber.interrupt(pending)
+          else expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true)
+          yield* Deferred.await(cancelled)
+          if (operation === 'append') expect((yield* Clock.currentTimeMillis) - startedAt).toBeLessThanOrEqual(1100)
+          yield* Deferred.succeed(release, undefined)
+          yield* Fiber.join(holder)
+          expect(
+            yield* sql`SELECT chunk_id FROM research_capture_chunks WHERE capture_id = ${chunk.captureId}`,
+          ).toEqual([])
+          expect(
+            yield* sql`SELECT capture_id FROM research_capture_seals WHERE capture_id = ${chunk.captureId}`,
+          ).toEqual([])
+        }).pipe(Effect.timeout('6 seconds')),
+      ),
+    10_000,
+  )
 
 postgresTest('malformed stored frontier sequence rejects new appends without changing the committed prefix', () =>
   run(
