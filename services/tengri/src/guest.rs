@@ -20,6 +20,7 @@ use crate::{
 };
 
 mod codex_history;
+pub use codex_history::CodexHistoryPart;
 mod codex_options;
 pub(crate) mod rpc;
 
