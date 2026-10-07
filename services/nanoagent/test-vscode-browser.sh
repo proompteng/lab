@@ -126,7 +126,7 @@ fixture_pids="$fixture_pids $!"
 ) >"$fixture_root/desktop.log" 2>&1 &
 fixture_pids="$fixture_pids $!"
 python3 - <<'PY'
-import socket, sys, time
+import http.client, json, socket, sys, time
 # Linux probe source ports can overlap fixture listeners and even self-connect.
 # A distinct loopback address avoids both without changing fixture ports.
 source_address = ('127.0.0.2', 0) if sys.platform == 'linux' else None
@@ -134,8 +134,20 @@ for port in (8080, 33082, 33083, 3143, 3443):
     deadline = time.monotonic() + 300
     while True:
         try:
-            with socket.create_connection(('127.0.0.1', port), timeout=1, source_address=source_address): break
-        except OSError:
+            if port == 8080:
+                # Docker accepts TCP before the guest finishes bootstrapping.
+                guest = http.client.HTTPConnection('127.0.0.1', port, timeout=1, source_address=source_address)
+                try:
+                    guest.request('GET', '/readyz')
+                    response = guest.getresponse()
+                    if response.status != 200 or json.loads(response.read()) != {'status': 'ok'}:
+                        raise OSError('guest is not ready')
+                finally:
+                    guest.close()
+            else:
+                with socket.create_connection(('127.0.0.1', port), timeout=1, source_address=source_address): pass
+            break
+        except (OSError, http.client.HTTPException, ValueError):
             if time.monotonic() > deadline: raise RuntimeError(f'Fixture on port {port} failed to start')
             time.sleep(.2)
 PY
