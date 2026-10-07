@@ -186,7 +186,8 @@ export function markStoredConversationUnavailable(
   return writeStoredConversations(
     agentId,
     current.map((conversation) =>
-      conversation.id === threadId ? { ...conversation, unavailable: true } : conversation,
+      // Stamp the transition so it wins the cross-tab merge against a stale persisted record.
+      conversation.id === threadId ? { ...conversation, unavailable: true, updatedAt: now } : conversation,
     ),
     storage,
   )
@@ -200,8 +201,27 @@ export function conversationTitleFromRegistry(current: readonly StoredConversati
  * Sidebar title for a resumed thread. A real (non-default) registry title wins, because the
  * restored transcript is bounded and may have evicted the thread's actual first user message.
  */
-export function resolveConversationTitle(registryTitle: string, transcriptTitle: string, titleHint = '') {
+export function resolveConversationTitle(registryTitle: string, transcriptTitle: string) {
   const stored = registryTitle.trim()
   if (stored && stored !== 'New conversation') return truncateConversationTitle(stored)
-  return truncateConversationTitle(transcriptTitle || titleHint || stored)
+  return truncateConversationTitle(transcriptTitle || stored)
+}
+
+/**
+ * Promote an accepted first prompt to the sidebar title. Only call this after the turn was
+ * accepted, so a failed send (whose draft the user may edit) never becomes authoritative.
+ */
+export function promoteAcceptedConversationTitle(
+  agentId: string,
+  threadId: string,
+  acceptedText: string,
+  current: readonly StoredConversation[],
+  now = Date.now(),
+  storage?: Storage,
+): StoredConversation[] {
+  const stored = conversationTitleFromRegistry(current, threadId).trim()
+  if (stored && stored !== 'New conversation') return [...current]
+  const title = truncateConversationTitle(acceptedText)
+  if (title === 'New conversation') return [...current]
+  return upsertStoredConversation(agentId, { id: threadId, title, updatedAt: now }, current, storage)
 }

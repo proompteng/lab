@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils'
 import {
   conversationTitleFromRegistry,
   markStoredConversationUnavailable,
+  promoteAcceptedConversationTitle,
   readStoredConversations,
   resolveConversationTitle,
   touchStoredConversation,
@@ -365,7 +366,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [account?.authenticated, active, login, refreshAccount])
 
   const commitThreadState = useCallback(
-    (thread: TengriCodexThread, commitActiveTurn = true, titleHint = '') => {
+    (thread: TengriCodexThread, commitActiveTurn = true) => {
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
       const sequence = thread.eventSequence
       const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
@@ -382,7 +383,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         const title = resolveConversationTitle(
           conversationTitleFromRegistry(current, thread.id),
           titleFromTranscript(restored.historyItems),
-          titleHint,
         )
         return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt: Date.now() }, current)
       })
@@ -665,7 +665,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setPrompt('')
     commitImages([])
     try {
-      const currentThread = await ensureThread(text)
+      const currentThread = await ensureThread()
       if (currentThread.activeTurnId) {
         await runTengriAction<TengriCodexTurn>({
           action: 'steer-turn',
@@ -686,6 +686,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         })
         if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
       }
+      // The turn was accepted, so its prompt can now title a still-untitled conversation.
+      if (text) {
+        setConversations((current) => promoteAcceptedConversationTitle(agentId, currentThread.id, text, current))
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Message could not be sent')
       setPrompt(text)
@@ -695,7 +699,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     }
   }
 
-  async function ensureThread(titleHint = '') {
+  async function ensureThread() {
     if (threadId && threadReady) {
       setConversations((current) => touchStoredConversation(agentId, threadId, current))
       return { id: threadId, activeTurnId: activeTurnIdRef.current }
@@ -704,7 +708,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const thread = threadId
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
-    const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence, titleHint)
+    const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
     setThreadReady(true)
     return { id: thread.id, activeTurnId: state.activeTurnId }
   }

@@ -7,6 +7,7 @@ import {
   mergeConversationRegistry,
   mergePersistedConversationRegistry,
   mergeSameIdStoredConversations,
+  promoteAcceptedConversationTitle,
   readStoredConversations,
   resolveConversationTitle,
   touchStoredConversation,
@@ -206,16 +207,47 @@ describe('agent conversation storage', () => {
 
 describe('resolveConversationTitle', () => {
   test('keeps an existing real registry title over a truncated transcript title', () => {
-    expect(resolveConversationTitle('Original first prompt', 'A later prompt', 'hint')).toBe('Original first prompt')
+    expect(resolveConversationTitle('Original first prompt', 'A later prompt')).toBe('Original first prompt')
   })
 
   test('uses the transcript title when the registry only has the default title', () => {
-    expect(resolveConversationTitle('New conversation', 'First prompt', 'hint')).toBe('First prompt')
+    expect(resolveConversationTitle('New conversation', 'First prompt')).toBe('First prompt')
     expect(resolveConversationTitle('', 'First prompt')).toBe('First prompt')
   })
 
-  test('falls back to the hint, then the default title', () => {
-    expect(resolveConversationTitle('', '', 'Typed prompt')).toBe('Typed prompt')
+  test('falls back to the default title', () => {
     expect(resolveConversationTitle('', '')).toBe('New conversation')
+  })
+})
+
+describe('promoteAcceptedConversationTitle', () => {
+  test('titles an untitled conversation only from the accepted prompt', () => {
+    const storage = new MemoryStorage()
+    const created = writeStoredConversations(
+      'agent-1',
+      [{ id: 'thread-a', title: 'New conversation', updatedAt: 1 }],
+      storage,
+    )
+    const promoted = promoteAcceptedConversationTitle('agent-1', 'thread-a', '  Edited   prompt ', created, 2, storage)
+    expect(promoted[0]).toEqual({ id: 'thread-a', title: 'Edited prompt', updatedAt: 2 })
+    expect(readStoredConversations('agent-1', storage)[0]?.title).toBe('Edited prompt')
+  })
+
+  test('never replaces an existing real title', () => {
+    const current = [{ id: 'thread-a', title: 'Original', updatedAt: 1 }]
+    expect(promoteAcceptedConversationTitle('agent-1', 'thread-a', 'Later', current, 2, new MemoryStorage())).toEqual(
+      current,
+    )
+  })
+})
+
+describe('markStoredConversationUnavailable cross-tab merge', () => {
+  test('stamps the transition so it beats a newer stale persisted record', () => {
+    const storage = new MemoryStorage()
+    const loaded = [{ id: 'thread-a', title: 'Alpha', updatedAt: 1 }]
+    writeStoredConversations('agent-1', [{ id: 'thread-a', title: 'Alpha', updatedAt: 5 }], storage)
+    const marked = markStoredConversationUnavailable('agent-1', 'thread-a', loaded, 10, storage)
+    expect(marked[0]).toMatchObject({ id: 'thread-a', unavailable: true, updatedAt: 10 })
+    expect(readStoredConversations('agent-1', storage)[0]?.unavailable).toBe(true)
   })
 })
