@@ -176,11 +176,16 @@ export async function POST(request: Request) {
         })
         break
       case 'resume-thread':
-        result = await resumeCodexThread(identity.subject, action.agentId, action.threadId, {
-          model: action.model,
-          reasoningEffort: action.reasoningEffort,
-        })
-        break
+        return await resumeCodexThread(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          {
+            model: action.model,
+            reasoningEffort: action.reasoningEffort,
+          },
+          request.signal,
+        )
       case 'send-turn':
         result = await sendCodexTurn(
           identity.subject,

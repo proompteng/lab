@@ -154,6 +154,10 @@ acceptance and can publish verified immutable `sha-<source>` images and their re
 discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY` is exactly
 `true`; an unset or false value keeps the current automatic Kargo policy from selecting this migration. Leave it held
 until the approved old writers are fenced and every retained home is enrolled with the exact staged guest digest.
+The Proompteng image workflow uses the same hold for its Kargo alias because conversation recovery now requires the
+streaming Tengri RPC. Stage its immutable image too, then release both applications from the same reviewed source
+within the approved maintenance window. Open the desktop only after the existing conversation loads through the new
+stream. A rollback across this RPC change must move both applications together within a maintenance window.
 
 The device plugin supplies only KVM/TUN, using existing ready-node labels. The TAP init container gets NET_ADMIN only in
 the Pod network namespace. The runner starts with MKNOD/SETUID/SETGID only to create its private block-device inode and

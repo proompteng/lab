@@ -33,6 +33,9 @@ import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore, CycleStoreLive } from '.'
 import { makeCycleQueries } from './queries'
 import { DecisionEvidenceMismatch } from './model'
+import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
+import { databaseUtcInstant } from '../../db/clock'
 import { decideJevEntry } from '../../jev/decision'
 import { nativeJevDecisionEvidence } from '../../jev/native.test-support'
 
@@ -429,7 +432,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     const authorityGenerationHash = '2'.repeat(64)
     const policyHash = 'a'.repeat(64)
     const parentAuthorityUpdatedAt = '2026-08-28T14:57:30.000Z'
-    const authorityUpdatedAt = '2026-08-28T14:58:00.000Z'
+    const authorityUpdatedAt = '2026-08-28T14:58:00.038402Z'
     const forgedReconciledAt = '2026-08-28T14:57:00.000Z'
     const reconciledAt = '2026-08-28T14:59:00.000Z'
     const observedAt = '2026-08-28T15:00:00.000Z'
@@ -679,7 +682,34 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             })}
           )
         `
-        const exact = yield* queries.decisionEvidenceMismatch(document)
+        // Exercise the production PostgreSQL read/decoder: Date conversion used to truncate this identity.
+        const storedAuthority = yield* makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), undefined)
+          .readAuthorityState
+        expect(storedAuthority.updatedAt).toBe(authorityUpdatedAt)
+        const exact = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: { ...document.bindings, riskContext: { ...riskContext, authority: storedAuthority } },
+        })
+        const changedTimestamp = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...storedAuthority, updatedAt: '2026-08-28T14:58:00.038403Z' },
+            },
+          },
+        })
+        const truncatedTimestamp = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...storedAuthority, updatedAt: new Date(authorityUpdatedAt).toISOString() },
+            },
+          },
+        })
         const missingReconciliation = yield* queries.decisionEvidenceMismatch({
           ...document,
           bindings: { ...document.bindings, reconciliationId: '9'.repeat(64) },
@@ -747,9 +777,16 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           ...document,
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
+        const nonemptyPlanMissingRiskFacts = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          deltaRisk: [],
+          targetPlan: { intentTargets: [{}] },
+        } as unknown as ExecutionDecisionDocument)
         return {
           missingStreamReference,
           exact,
+          changedTimestamp,
+          truncatedTimestamp,
           missingReconciliation,
           prematureDecision,
           missingPricing,
@@ -759,6 +796,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           forgedEquity,
           forgedPolicyHash,
           forgedReconciliationCutoff,
+          nonemptyPlanMissingRiskFacts,
         }
       }),
     )
@@ -766,6 +804,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(result).toEqual({
       missingStreamReference: DecisionEvidenceMismatch.DecisionMarketData,
       exact: null,
+      changedTimestamp: DecisionEvidenceMismatch.RiskContext,
+      truncatedTimestamp: DecisionEvidenceMismatch.RiskContext,
       missingReconciliation: DecisionEvidenceMismatch.Reconciliation,
       prematureDecision: DecisionEvidenceMismatch.Reconciliation,
       missingPricing: DecisionEvidenceMismatch.ExecutionMarketData,
@@ -775,7 +815,32 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       forgedEquity: DecisionEvidenceMismatch.RiskContext,
       forgedPolicyHash: DecisionEvidenceMismatch.RiskContext,
       forgedReconciliationCutoff: DecisionEvidenceMismatch.RiskContext,
+      nonemptyPlanMissingRiskFacts: DecisionEvidenceMismatch.RiskContext,
     })
+  })
+
+  test('reads exact PostgreSQL authority instants in UTC without changing historical millisecond encodings', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SET LOCAL TIME ZONE 'America/Los_Angeles'`
+            for (const [stored, expected] of [
+              ['2026-08-28T14:58:00.038402Z', '2026-08-28T14:58:00.038402Z'],
+              ['2026-08-28T14:58:00.038000Z', '2026-08-28T14:58:00.038Z'],
+              ['2026-08-28T14:58:00.000000Z', '2026-08-28T14:58:00.000Z'],
+            ]) {
+              const [row] = yield* sql<{ value: string; exact: boolean }>`
+                SELECT ${databaseUtcInstant(sql, sql`${stored}::timestamptz`)} AS value,
+                  ${databaseUtcInstant(sql, sql`${stored}::timestamptz`)}::timestamptz = ${stored}::timestamptz AS exact
+              `
+              expect(row).toEqual({ value: expected, exact: true })
+            }
+          }),
+        )
+      }),
+    )
   })
 
   test('bounds terminal recovery reads over a large history without admitting stale or incomplete evidence', async () => {

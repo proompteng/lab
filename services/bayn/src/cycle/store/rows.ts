@@ -114,7 +114,8 @@ const DecisionEvidenceMismatchSchema = Schema.Tuple([
 ])
 const StoredDecisionDocumentRowsSchema = Schema.Array(
   Schema.Struct({
-    document: CycleDecisionDocumentSchema,
+    document: Schema.Unknown,
+    matches_retained_document: Schema.Boolean,
     execution_completion_evidence_matches: Schema.Boolean,
     execution_generation_is_superseded: Schema.Boolean,
   }),

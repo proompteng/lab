@@ -20,6 +20,7 @@ import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
+  UtcDatabaseInstantSchema,
   UtcSourceTimestampSchema,
   strictParseOptions,
 } from '../../schemas'
@@ -119,7 +120,7 @@ export const AuthorityStateRow = Schema.Struct({
   kill_state: Schema.Enum(KillState),
   reason: Schema.NullOr(NonEmptyString),
   version: Schema.String,
-  updated_at: Schema.Date,
+  updated_at: UtcDatabaseInstantSchema,
 })
 export type AuthorityStateRow = typeof AuthorityStateRow.Type
 

@@ -2,6 +2,7 @@ import { Context, Effect, Option, Result } from 'effect'
 
 import { operationalError, type OperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
+import { withObservedStage } from '../telemetry'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import type { IntradayMomentumTargetPortfolio } from '../strategy/intraday-momentum/model'
@@ -102,4 +103,4 @@ export const recordJevObservation = (input: Parameters<typeof makeJevObservation
     yield* (yield* CandidateObservationStore).record(observation)
     yield* Effect.logInfo(candidateObservationLog(observation))
     return observation
-  })
+  }).pipe(withObservedStage('bayn.jev.observation'))

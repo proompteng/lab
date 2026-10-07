@@ -313,6 +313,12 @@ validity window; a slow, failed, or missing result still makes the batch unusabl
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
 
+The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, to avoid
+repeating pure source replay immediately after binding. Every reread still queries PostgreSQL and requires full
+JSONB equality with that retained body; changed documents take complete validation. Returned documents are detached,
+and completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result
+does not prove that its binding committed and cannot create a missing database row.
+
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
 or capital authority. Economic qualification uses the frozen protocol in
@@ -457,9 +463,24 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
   with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
   transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
+- Bayn enables SQL span propagation. The pinned PostgreSQL adapter records `postgresql.pid` from the backend startup
+  packet on statement and writer-control spans. Transaction startup and finalization stay under their owning
+  `sql.transaction` span, including empty and failed transactions. Streams that acquire another connection report
+  that connection's PID. Correlate the PID, database pod and exact span interval with PostgreSQL logs and wait samples;
+  process IDs can be reused after a connection ends. This adds no SQL, network requests, polling or metric labels.
+  Clients without SQL propagation leave shared caller spans unlabelled, and tracing-disabled calls keep their results.
+  Slow and failed stage logs retain the PID when their own span carries it, including native writer controls, so
+  PostgreSQL correlation survives an unavailable trace. Other span data is omitted and fast successful stages stay quiet.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
+- Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
+  telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
+  headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
+  quiet. These diagnostics run in the existing background
+  exporter and preserve its retry and shutdown limits; they add no execution or closure calls. The pinned exporter can
+  discard telemetry and disable exports for 60 seconds after failure, so retained structured pass profiles remain
+  necessary when Tempo coverage is incomplete. A failed attempt alone does not establish permanent trace loss.
 - A pass deadline records interruption request time and every active stage/dependency with elapsed time before joining
   cancellation. Nested deadlines share the pass's active-stage map; independent passes have separate maps. Its final warning separates
   `executionElapsedMs` from `cancellationElapsedMs`; `bayn.execution.timeout-recovery` and
@@ -691,6 +712,8 @@ sequence, source revision, wall elapsed time, outcome, receipt and next delay wh
 `stageTimings` profile. Each stage includes its dependency and operation, call count, inclusive elapsed time, maximum
 call time, failures and interruptions. Nested stages overlap; their times must not be added to estimate wall time.
 The profile uses the existing stage clocks and in-memory pass scope, without additional database or network work.
+Execution-document construction uses the complete durable-document decoder's active-strategy check and returns its
+validated document directly. Durable reads retain the same evidence, identity and risk validation.
 Broker submission distinguishes `entry` and `close`, while its transport stage records `SUBMIT` or `CANCEL` through
 the complete response and classification. SQL transaction acquisition, lease checks, begin, commit and rollback have
 separate spans. SQL `server.address`, `server.port` and `db.namespace` identify the configured connection target,

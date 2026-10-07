@@ -65,9 +65,11 @@ already permits this narrowly constrained profile; no namespace policy change is
 attestation, the `nanoagent` ServiceAccount, token/registration RBAC, admission restrictions and bundle publication remain
 until the final old guest has stopped.
 
-The image workflow withholds both Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
+The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
 is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
 retained homes against the staged immutable image pair. Kargo's existing automatic promotion policy remains in place.
+Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
+cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
 Nanoagent runs as UID 1000 in the guest, with passwordless sudo inside that guest. Guest root edits and processes
 survive snapshot sleep. Root and memory are local to the slot Pod and reset after an explicitly fenced cold replacement;
@@ -107,8 +109,11 @@ the new path, size, and revision.
 Paginated Codex conversations resume with `excludeTurns: true`, then load `thread/items/list` and metadata-only
 `thread/turns/list` in ascending pages. Each item carries the event cursor captured with its page; the desktop uses
 that cursor to discard covered replay while retaining updates that arrive after an earlier page. The initial resume
-cursor remains the baseline for new items. Retrieval is bounded to 90 seconds, 256 pages, and 10 MiB, and any failed
-page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
+cursor remains the baseline for new items. The controller streams metadata, item pages, and turn pages through `ResumeCodexThread`; the BFF forwards bounded
+NDJSON records and the desktop assembles the complete snapshot. Retrieval is bounded to 90 seconds, 256 pages,
+10 MiB per native page, and 64 MiB of total native JSON. The desktop enforces the same aggregate byte budget before
+parsing each page. An explicit completion record is required, and any
+failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
 The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
