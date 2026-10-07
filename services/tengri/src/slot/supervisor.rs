@@ -218,10 +218,10 @@ async fn forward(
     State(supervisor): State<Supervisor>,
     mut request: Request<Body>,
 ) -> Result<Response, (StatusCode, String)> {
-    // The status read and transport admission cannot overlap a sleep fence.
-    let guard = supervisor.gate.try_lock().map_err(|_| busy())?;
     #[cfg(test)]
     let started = std::time::Instant::now();
+    // The status read and transport admission cannot overlap a sleep fence.
+    let guard = supervisor.gate.lock().await;
     let status = runner::command(&CommandRequest::Status)
         .await
         .map_err(lifecycle_error)?;
@@ -343,6 +343,32 @@ async fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn concurrent_guest_requests_wait_for_transport_admission() {
+        let (state, _) = watch::channel(SlotState::Awake {
+            claim: Claim {
+                microvm_id: "agent-a".into(),
+                microvm_uid: "owner-a".into(),
+                epoch: 7,
+            },
+        });
+        let gate = Arc::new(Mutex::new(()));
+        let _admission = gate.lock().await;
+        let request = Request::builder()
+            .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
+            .header(CLAIM_UID_HEADER, "owner-a")
+            .header(CLAIM_EPOCH_HEADER, "7")
+            .body(Body::empty())
+            .unwrap();
+        let supervisor = Supervisor {
+            state,
+            gate: gate.clone(),
+        };
+        let response = forward(State(supervisor), request);
+        futures::pin_mut!(response);
+        assert!(futures::poll!(response).is_pending());
+    }
 
     #[test]
     fn stale_lifecycle_requests_do_not_close_the_current_owners_streams() {

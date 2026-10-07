@@ -218,6 +218,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         "real KVM create CPU after:\n{}",
         fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
     );
+    let (_, file, _) = tokio::try_join!(
+        rpc.verify_identity("interop-agent"),
+        rpc.read_file("/continuity.txt"),
+        rpc.codex_call("model/list", json!({})),
+    )?;
+    ensure!(
+        file.content == b"private-home-continuity",
+        "concurrent guest requests changed the retained file"
+    );
+    eprintln!("real KVM concurrent guest requests passed");
     let mut foreign = claim.clone();
     foreign.microvm_uid = "another-owner-uid".into();
     ensure!(
@@ -328,7 +338,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
         "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
-        "memoryAndSleep":memory,"guestAdministration":true
+        "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true
     }))?).await?;
     runner_task.abort();
     supervisor_task.abort();
