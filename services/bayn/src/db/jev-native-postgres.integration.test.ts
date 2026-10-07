@@ -8,9 +8,11 @@ import {
   Exit,
   Fiber,
   Layer,
+  Logger,
   ManagedRuntime,
   Option,
   Redacted,
+  References,
   Result,
   Schema,
 } from 'effect'
@@ -422,6 +424,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   test.each([JevExitReason.MaximumHold, JevExitReason.ProtectiveStop])(
     'deterministic %s exits do not call Jev',
     async (reason) => {
+      const diagnostics: Readonly<Record<string, unknown>>[] = []
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations)
+        if (annotations['schemaVersion'] === 'bayn.jev-protective-quote-diagnostics.v1') diagnostics.push(annotations)
+      })
       await runtime.runPromise(
         Effect.gen(function* () {
           const { portfolio, managed } = yield* seedManagedPosition(
@@ -459,8 +466,21 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             evaluate: () => Effect.die('Deterministic exit unexpectedly called Jev'),
           }),
           atObservation,
+          Effect.provide(Logger.layer([logger])),
         ),
       )
+      if (reason === JevExitReason.ProtectiveStop) {
+        expect(diagnostics).toHaveLength(1)
+        expect(diagnostics[0]).toMatchObject({
+          referenceScope: 'IEX_EXCHANGE_ONLY_NOT_NBBO',
+          feed: 'iex',
+          pairedFeedComparisonAvailable: false,
+          entrySpreadLimitBps: fixture.protocol.maximumSpreadBps,
+        })
+        expect(diagnostics[0]).not.toHaveProperty('bidPrice')
+        expect(diagnostics[0]).not.toHaveProperty('askPrice')
+        expect(diagnostics[0]).not.toHaveProperty('accountId')
+      } else expect(diagnostics).toHaveLength(0)
     },
   )
 

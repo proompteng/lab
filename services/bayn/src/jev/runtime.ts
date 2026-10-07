@@ -41,10 +41,11 @@ import {
   type JevExitTarget,
 } from './exit'
 import { JevPositionStore } from './portfolio'
+import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
 import { JevOutcome } from './evidence'
 import { JevResolutionStatus } from './resolution'
 import { jevSnapshotSymbols, type JevProtocol } from './protocol'
-import { jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
+import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
 
 export class JevAwaitingEvidence extends Data.TaggedError('JevAwaitingEvidence')<{
   readonly message: string
@@ -244,6 +245,14 @@ export const compileJevEntry = (
       const quote = pricingSnapshot.latestQuotes[symbol]
       if (quote === undefined)
         return yield* Result.fail(new JevContractError({ message: `Jev target ${symbol} lacks execution pricing` }))
+      const exclusion = yield* jevEntryQuoteExclusion(quote, decision.evidence.observation.protocol.maximumSpreadBps)
+      if (exclusion !== null)
+        return yield* Result.fail(
+          new JevAwaitingEvidence({
+            message: `Jev target ${symbol} no longer has an eligible execution quote: ${exclusion}`,
+            readiness: DecisionReadinessReason.NoEligibleCandidate,
+          }),
+        )
       entryQuotes[symbol] = {
         eventAt: quote.eventAt,
         maximumAgeMs: jevEntryQuoteMaximumAgeMs(decision, quote.eventAt, pricingSnapshot.manifest.maximumQuoteAgeMs),
@@ -334,8 +343,8 @@ export const evaluateJevPositionManagement = (input: {
         bid,
         input.protocol.protectiveStopBps,
       )
-    )
-      return yield* Effect.fromResult(
+    ) {
+      const target = yield* Effect.fromResult(
         decideJevExit({
           ...evidence,
           trigger: {
@@ -345,6 +354,15 @@ export const evaluateJevPositionManagement = (input: {
           },
         }),
       )
+      yield* Effect.logWarning('Jev protective exit price reference').pipe(
+        Effect.annotateLogs({
+          ...jevProtectiveQuoteDiagnostics(quote, input.protocol.maximumSpreadBps),
+          cycleId: input.cycle.identity.cycleId,
+          observedAt,
+        }),
+      )
+      return target
+    }
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, input.protocol, input.calendar, observedAt, [position.symbol]),
     )

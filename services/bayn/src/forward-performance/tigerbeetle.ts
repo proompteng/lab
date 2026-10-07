@@ -56,7 +56,8 @@ const generationLedgerTotals = (plan: LedgerPlan): ForwardPerformanceLedgerTotal
   brokerExecutionFeesMicros: (
     planAmount(plan, AccountCode.feeExpense, 'debit') - planAmount(plan, AccountCode.feeExpense, 'credit')
   ).toString(),
-  otherChargedCostsMicros: '0',
+  // Trading transfers contain no inference or operating-expense coverage; exactness cannot prove those costs zero.
+  otherChargedCostsMicros: null,
   cashYieldMicros: '0',
 })
 

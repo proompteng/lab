@@ -34,6 +34,7 @@ export enum ControlPolicy {
   ResidualShock = ResidualShockCandidate.SpyRelativeShockRebound60s,
   Ridge = RidgeControlPolicy.Ridge,
   TrainingMean = RidgeControlPolicy.TrainingMean,
+  FixedCandidateTraining = 'SIX_BAR_FIXED_CANDIDATE_TRAINING_V1',
 }
 
 export enum ControlExit {
@@ -93,7 +94,11 @@ export const controlCandidates = (policy: ControlPolicy, protocol: JevProtocol) 
 
 export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: ControlPolicy, protocol: JevProtocol) =>
   Result.gen(function* () {
-    if (policy === ControlPolicy.Ridge || policy === ControlPolicy.TrainingMean)
+    if (
+      policy === ControlPolicy.Ridge ||
+      policy === ControlPolicy.TrainingMean ||
+      policy === ControlPolicy.FixedCandidateTraining
+    )
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Ridge controls require their bound entry adapter' }),
       )

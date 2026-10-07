@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test'
-import { Cause, Effect, Exit, Fiber, Redacted, Result } from 'effect'
+import { Cause, Effect, Exit, Fiber, Redacted, Result, Stream } from 'effect'
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
+import { makeInferenceCostReport } from '../inference-costs'
+import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevClient, JevClientLive, JevError } from './client'
 import { JevFailure, jevEndpoint } from './contract'
-import { requestFixture, responseFixture } from './test-support'
+import { evaluationRequestFixture, requestFixture, responseFixture } from './test-support'
 
 const key = Redacted.make('test-secret-never-log')
 const run = <A, E>(effect: Effect.Effect<A, E, JevClient>, http: HttpClient.HttpClient, timeout = 1000) =>
@@ -45,6 +47,232 @@ describe('Jev inference transport', () => {
       expect(result.failure.status).toBe(status)
       expect(JSON.stringify(result.failure)).not.toContain(Redacted.value(key))
     }
+  })
+
+  test.each([422, 503, 529])(
+    'preserves metered failure body for status %i without authorizing inference',
+    async (status) => {
+      const usage = { model: requestFixture.model, usage: { input_tokens: 7858, output_tokens: 150 } }
+      const body = {
+        ...usage,
+        error: 'fixture rejection',
+        echoedRequest: requestFixture,
+        authorization: Redacted.value(key),
+      }
+      let calls = 0
+      const http = HttpClient.make((request) => {
+        calls += 1
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(body), { status })))
+      })
+      const result = await Effect.runPromise(run(Effect.result(evaluate), http))
+      expect(calls).toBe(1)
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure.failure).toBe(JevFailure.Status)
+        expect(result.failure.status).toBe(status)
+        expect(result.failure.responseHash).toBe(Result.getOrThrow(canonicalHashV1Result(usage)))
+        expect(result.failure.rejectedResponse).toBeDefined()
+        if (result.failure.rejectedResponse !== undefined)
+          expect(Redacted.value(result.failure.rejectedResponse)).toEqual(usage)
+        expect(JSON.stringify(result.failure)).not.toContain('fixture rejection')
+      }
+    },
+  )
+
+  test.each([
+    '',
+    '<html>unavailable</html>',
+    '{invalid',
+    JSON.stringify({ error: 'unavailable' }),
+    JSON.stringify({ model: 'unexpected-model', usage: { input_tokens: 10, output_tokens: 1 } }),
+    JSON.stringify({ model: requestFixture.model, usage: { input_tokens: -1, output_tokens: 1 } }),
+    JSON.stringify({ model: requestFixture.model, usage: { input_tokens: 1.5, output_tokens: 1 } }),
+  ])('keeps missing or invalid HTTP failure usage unknown: %s', async (body) => {
+    const http = HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 503 }))),
+    )
+    const result = await Effect.runPromise(run(Effect.result(evaluate), http))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.failure).toBe(JevFailure.Status)
+      expect(result.failure.status).toBe(503)
+      expect(result.failure.responseHash).toBeUndefined()
+      expect(result.failure.rejectedResponse).toBeUndefined()
+    }
+  })
+
+  test.each([8192, 8193])('bounds failure JSON to %i bytes before retaining usage', async (length) => {
+    const usage = { model: requestFixture.model, usage: { input_tokens: 10, output_tokens: 1 } }
+    const prefix = JSON.stringify({ ...usage, padding: '' })
+    const body = JSON.stringify({ ...usage, padding: 'x'.repeat(length - prefix.length) })
+    expect(new TextEncoder().encode(body).byteLength).toBe(length)
+    const http = HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 503 }))),
+    )
+    const result = await Effect.runPromise(run(Effect.result(evaluate), http))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.failure).toBe(JevFailure.Status)
+      expect(result.failure.status).toBe(503)
+      expect(result.failure.responseHash).toBe(
+        length === 8192 ? Result.getOrThrow(canonicalHashV1Result(usage)) : undefined,
+      )
+      if (result.failure.rejectedResponse !== undefined)
+        expect(Redacted.value(result.failure.rejectedResponse)).toEqual(usage)
+      else expect(length).toBe(8193)
+    }
+  })
+
+  test('cancels an oversized unfinished failure body after the byte ceiling', async () => {
+    let cancelled = 0
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(8193))
+      },
+      cancel() {
+        cancelled += 1
+      },
+    })
+    const http = HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 503 }))),
+    )
+    const result = await Effect.runPromise(run(Effect.result(evaluate), http))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.failure).toBe(JevFailure.Status)
+      expect(result.failure.rejectedResponse).toBeUndefined()
+    }
+    expect(cancelled).toBe(1)
+  })
+
+  test.each(['deadline', 'interruption'] as const)('cancels an unfinished failure body once on %s', async (end) => {
+    let reading = false
+    let cancelled = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull() {
+        reading = true
+      },
+      cancel() {
+        cancelled += 1
+      },
+    })
+    const http = HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 503 }))),
+    )
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fiber = yield* run(Effect.result(evaluate), http).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Effect.yieldNow
+          expect(reading).toBe(true)
+          if (end === 'deadline') {
+            yield* TestClock.adjust(1000)
+            const result = yield* Fiber.join(fiber)
+            expect(Result.isFailure(result)).toBe(true)
+            if (Result.isFailure(result)) {
+              expect(result.failure.failure).toBe(JevFailure.Timeout)
+              expect(result.failure.rejectedResponse).toBeUndefined()
+            }
+          } else yield* Fiber.interrupt(fiber)
+          expect(cancelled).toBe(1)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+  })
+
+  test('preserves HTTP status when reading its error body fails', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('synthetic stream failure'))
+      },
+    })
+    const http = HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 503 }))),
+    )
+    const result = await Effect.runPromise(run(Effect.result(evaluate), http))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.failure).toBe(JevFailure.Status)
+      expect(result.failure.status).toBe(503)
+      expect(result.failure.rejectedResponse).toBeUndefined()
+    }
+  })
+
+  test('propagates failure-body stream defects rather than converting them to unknown usage', async () => {
+    const defect = new Error('synthetic failure-body defect')
+    const http = HttpClient.make((request) => {
+      const response = HttpClientResponse.fromWeb(request, new Response('', { status: 503 }))
+      Object.defineProperty(response, 'stream', { value: Stream.die(defect) })
+      return Effect.succeed(response)
+    })
+    const exit = await Effect.runPromiseExit(run(evaluate, http))
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect)
+  })
+
+  test('meters the exact retained failure projection once while missing prices remain unknown', async () => {
+    const request = evaluationRequestFixture()
+    const usage = { model: request.request.model, usage: { input_tokens: 7858, output_tokens: 150 } }
+    const body = {
+      ...usage,
+      error: 'fixture rejection',
+      echoedRequest: request.request,
+      authorization: Redacted.value(key),
+    }
+    const result = await Effect.runPromise(run(Effect.result(evaluate), responseClient(body, 503)))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isSuccess(result)) return
+    const receipt = Result.getOrThrow(
+      makeJevEvaluationReceipt(request, {
+        schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+        requestId: request.requestId,
+        startedAt: request.observedAt,
+        completedAt: request.observedAt,
+        outcome: {
+          status: JevOutcome.Failed,
+          failure: result.failure.failure,
+          httpStatus: result.failure.status,
+          responseHash: result.failure.responseHash,
+          rejectedResponse:
+            result.failure.rejectedResponse === undefined ? null : Redacted.value(result.failure.rejectedResponse),
+        },
+      }),
+    )
+    const row = {
+      requestId: request.requestId,
+      cycleId: request.cycleId,
+      authorityGenerationHash: request.authorityGenerationHash,
+      request,
+      receipt,
+      resolution: null,
+    }
+    const report = Result.getOrThrow(
+      makeInferenceCostReport(
+        {
+          schemaVersion: 'bayn.inference-cost-evidence.v1',
+          accountBindingHash: 'a'.repeat(64),
+          sessionDate: '1970-01-01',
+          asOf: request.expiresAt,
+          requests: [row, row],
+        },
+        { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
+      ),
+    )
+    expect(report).toMatchObject({
+      requestCount: 1,
+      meteredRequestCount: 1,
+      rejectedResponseUsageCount: 1,
+      unknownUsageCount: 0,
+      unpricedUsageCount: 1,
+      inputTokens: '7858',
+      outputTokens: '150',
+      estimatedTotalCostMicros: null,
+      invoiceReconciled: false,
+    })
+    expect(receipt.outcome.status).toBe(JevOutcome.Failed)
+    expect(JSON.stringify(receipt)).not.toContain('fixture rejection')
+    expect(JSON.stringify(receipt)).not.toContain(Redacted.value(key))
+    expect(JSON.stringify(receipt)).not.toContain('echoedRequest')
   })
 
   test('retains approximately normalized probabilities and their original response hash', async () => {
