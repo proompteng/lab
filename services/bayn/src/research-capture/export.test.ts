@@ -25,6 +25,7 @@ import {
 import {
   buildResearchCaptureExportChunk,
   deriveResearchCaptureExportManifest,
+  persistResearchCaptureExportChunk,
   ResearchCaptureByteIndexSchema,
   researchCaptureObject,
   researchCaptureObjectKey,
@@ -87,6 +88,148 @@ const memory = () => {
   }
   return { chunks, seals, objects, store, objectStore, verify }
 }
+
+test('verifies all immutable chunk objects concurrently and withholds completion until every acknowledgement', () =>
+  run(
+    Effect.gen(function* () {
+      const objects = {
+        raw: researchCaptureObject('raw'),
+        metadata: researchCaptureObject('metadata'),
+        index: researchCaptureObject('index'),
+      }
+      const rawStarted = yield* Deferred.make<void>()
+      const metadataStarted = yield* Deferred.make<void>()
+      const indexStarted = yield* Deferred.make<void>()
+      const indexVerified = yield* Deferred.make<void>()
+      const completed = yield* Deferred.make<void>()
+      const releaseRaw = yield* Deferred.make<void>()
+      const releaseMetadata = yield* Deferred.make<void>()
+      const verified: string[] = []
+      const store: ResearchCaptureObjectStore = {
+        putVerified: (object) =>
+          Effect.gen(function* () {
+            if (object === objects.raw) {
+              yield* Deferred.succeed(rawStarted, undefined)
+              yield* Deferred.await(releaseRaw)
+            } else if (object === objects.metadata) {
+              yield* Deferred.succeed(metadataStarted, undefined)
+              yield* Deferred.await(releaseMetadata)
+            } else {
+              yield* Deferred.succeed(indexStarted, undefined)
+              yield* Deferred.succeed(indexVerified, undefined)
+            }
+            verified.push(object.contentHash)
+          }),
+      }
+      const fiber = yield* persistResearchCaptureExportChunk(store, objects).pipe(
+        Effect.tap(() => Deferred.succeed(completed, undefined)),
+        Effect.forkScoped,
+      )
+      yield* Deferred.await(rawStarted)
+      yield* Effect.yieldNow
+      expect(yield* Deferred.isDone(metadataStarted)).toBe(true)
+      expect(yield* Deferred.isDone(indexStarted)).toBe(true)
+      yield* Deferred.await(indexVerified)
+      expect(verified).toEqual([objects.index.contentHash])
+      expect(yield* Deferred.isDone(completed)).toBe(false)
+      yield* Deferred.succeed(releaseRaw, undefined)
+      yield* Effect.yieldNow
+      expect(yield* Deferred.isDone(completed)).toBe(false)
+      yield* Deferred.succeed(releaseMetadata, undefined)
+      expect(yield* Fiber.join(fiber)).toBe(objects.index.contentHash)
+      expect(verified).toHaveLength(3)
+    }),
+  ))
+
+test.each(['raw', 'metadata', 'index'] as const)(
+  'a failed %s write interrupts both in-flight siblings and withholds chunk completion',
+  (failed) =>
+    run(
+      Effect.gen(function* () {
+        const objects = {
+          raw: researchCaptureObject('raw'),
+          metadata: researchCaptureObject('metadata'),
+          index: researchCaptureObject('index'),
+        }
+        const started = {
+          raw: yield* Deferred.make<void>(),
+          metadata: yield* Deferred.make<void>(),
+          index: yield* Deferred.make<void>(),
+        }
+        const interrupted: string[] = []
+        const store: ResearchCaptureObjectStore = {
+          putVerified: (object) => {
+            const kind = object === objects.raw ? 'raw' : object === objects.metadata ? 'metadata' : 'index'
+            return Effect.gen(function* () {
+              yield* Deferred.succeed(started[kind], undefined)
+              if (kind === failed) {
+                yield* Effect.all(Object.values(started).map(Deferred.await), { concurrency: 3 })
+                return yield* new ResearchCaptureFailure({ message: `${kind} write failed` })
+              }
+              return yield* Effect.never
+            }).pipe(Effect.onInterrupt(() => Effect.sync(() => interrupted.push(kind))))
+          },
+        }
+        const result = yield* persistResearchCaptureExportChunk(store, objects).pipe(Effect.result)
+        expect(Result.isFailure(result)).toBe(true)
+        expect(interrupted.sort()).toEqual(
+          Object.keys(objects)
+            .filter((kind) => kind !== failed)
+            .sort(),
+        )
+      }),
+    ),
+)
+
+test('an early index acknowledgement followed by raw failure never reaches SQL or the durable export frontier', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = memory()
+      const indexVerified = yield* Deferred.make<void>()
+      let metadataInterrupted = false
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, options, {
+        putVerified: (object) => {
+          if (object.payload.byteLength === 0)
+            return Deferred.await(indexVerified).pipe(
+              Effect.andThen(Effect.fail(new ResearchCaptureFailure({ message: 'raw acknowledgement lost' }))),
+            )
+          const value = JSON.parse(text(object).payload)
+          if (value.schemaVersion === 'bayn.research-capture-chunk.v1')
+            return Effect.never.pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  metadataInterrupted = true
+                }),
+              ),
+            )
+          return saved.objectStore
+            .putVerified(object)
+            .pipe(
+              Effect.andThen(
+                value.schemaVersion === 'bayn.research-capture-byte-index.v1'
+                  ? Deferred.succeed(indexVerified, undefined)
+                  : Effect.void,
+              ),
+            )
+        },
+      })
+      recorder.record(captureEvent('STARTED'), 100)
+      recorder.record(captureEvent('STOPPED'), 100)
+      const seal = yield* recorder.finish
+      expect(yield* Deferred.isDone(indexVerified)).toBe(true)
+      expect(metadataInterrupted).toBe(true)
+      expect(saved.chunks).toEqual([])
+      expect(seal?.persistedChunks).toBe(0)
+      expect(seal?.persistedReceipts).toBe(0)
+      expect(seal?.invalidations).toContain(CaptureInvalidation.Persistence)
+      expect(seal?.exportRoot?.lastIndexHash).toBeNull()
+      const orphanIndex = saved.objects
+        .map((object) => JSON.parse(text(object).payload))
+        .find((object) => object.schemaVersion === 'bayn.research-capture-byte-index.v1')
+      expect(orphanIndex?.qualification).toBe(CaptureQualification.Unqualified)
+      expect(orphanIndex?.raw.contentHash).toBe(researchCaptureObject('').contentHash)
+    }),
+  ))
 
 test.each(['acknowledged', 'seal-ack-lost', 'manifest-ack-lost', 'interrupted-prefix', 'empty'] as const)(
   'process-loss recovery uses only durable SQL and content-addressed Gets (%s)',
@@ -555,10 +698,10 @@ test('maximum JSON-escaped capture identities fit the chunk and terminal envelop
       yield* recorder.finish
       expect(Result.getOrThrow(saved.verify()).structurallyClosed).toBe(true)
       expect(
-        3 * saved.objects.slice(0, 3).reduce((sum, object) => sum + object.payload.byteLength, 0),
+        3 * saved.objects.slice(0, 3).reduce((sum, object) => sum + object.payload.byteLength, 0) + 3 * 8 * 1024,
       ).toBeLessThanOrEqual(reserved)
       expect(
-        3 * saved.objects.slice(3).reduce((sum, object) => sum + object.payload.byteLength, 0),
+        3 * saved.objects.slice(3).reduce((sum, object) => sum + object.payload.byteLength, 0) + 3 * 8 * 1024,
       ).toBeLessThanOrEqual(researchCaptureExportEnvelopeReservation)
     }),
   ))

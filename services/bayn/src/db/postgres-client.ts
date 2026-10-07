@@ -61,6 +61,7 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
                 connectTimeout: statementTimeoutMs,
                 stream: () => {
                   const socket = new Socket()
+                  socket.setNoDelay(true)
                   socket.setTimeout(socketTimeoutMs, () => {
                     socket.destroy(new Error('PostgreSQL connection exceeded its inactivity deadline'))
                   })

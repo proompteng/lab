@@ -11,6 +11,7 @@ import { decideJevExit, jevProtectiveQuoteIsFresh, JevExitReason, JevExitTargetS
 import { nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import { makeJevObservation } from './observation'
 import { JevPurpose } from './portfolio'
+import { jevProtectiveQuoteDiagnostics, JevQuoteReferenceScope } from './quote-diagnostics'
 import { jevPricingQuery } from './runtime'
 
 const fixture = nativeJevFixture(JevPurpose.Manage)
@@ -44,6 +45,82 @@ const portfolioWithBrokerAge = (ageMs: number) => {
 }
 
 describe('native Jev exit targets', () => {
+  test('an exchange-only wide-spread stop is diagnosed without suppressing the protective exit', () => {
+    const held = nativeJevFixture(JevPurpose.Manage, '2026-09-04T14:30:32.000Z')
+    const observedAt = held.observation.payload.observedAt
+    const query = Result.getOrThrow(
+      jevPricingQuery(
+        held.draft,
+        held.protocol,
+        held.snapshot.manifest.calendar,
+        observedAt,
+        ['AAPL'],
+        IntradaySnapshotPurpose.Liquidation,
+      ),
+    )
+    const raw = makeIntradayMomentumTestSnapshot(held.protocol, { ...query, archiveWatermarks: [] }, { AAPL: -0.02 })
+    const snapshot = streamingFixtureFromRaw(
+      { ...raw, quotes: raw.quotes.map((quote) => ({ ...quote, askPrice: quote.bidPrice * 1.02 })) },
+      query,
+    ).snapshot
+    const material = {
+      cycleId: held.draft.identity.cycleId,
+      sessionDate: held.snapshot.manifest.sessionDate,
+      protocol: held.protocol,
+      portfolio: held.portfolio,
+      observedAt,
+      trigger: {
+        reason: JevExitReason.ProtectiveStop,
+        manifest: snapshot.manifest,
+        rows: Result.getOrThrow(persistIntradayRecordRows(snapshot)),
+      },
+    }
+    const target = Result.getOrThrow(decideJevExit(material))
+    const quote = snapshot.latestQuotes['AAPL']
+    if (quote === undefined) throw new Error('Missing synthetic protective quote')
+    const diagnostic = jevProtectiveQuoteDiagnostics(quote, held.protocol.maximumSpreadBps)
+    expect(diagnostic).toMatchObject({
+      referenceScope: JevQuoteReferenceScope.ExchangeOnly,
+      pairedFeedComparisonAvailable: false,
+      quoteEventAt: quote.eventAt,
+      entrySpreadLimitBps: held.protocol.maximumSpreadBps,
+    })
+    expect(diagnostic.spreadBpsApprox).toBeGreaterThan(held.protocol.maximumSpreadBps)
+    expect(diagnostic).not.toHaveProperty('bidPrice')
+    expect(diagnostic).not.toHaveProperty('askPrice')
+    expect(target.targetWeights).toEqual({ AAPL: 0 })
+    expect(Result.getOrThrow(decideJevExit(material))).toEqual(target)
+    expect(Result.getOrThrow(Schema.decodeUnknownResult(JevExitTargetSchema)(target))).toEqual(target)
+  })
+
+  test('a narrow or locked venue quote never claims consolidated-price observation', () => {
+    for (const askPrice of [100, 100.01]) {
+      const diagnostic = jevProtectiveQuoteDiagnostics(
+        { feed: 'iex', bidPrice: 100, askPrice, eventAt: '2026-09-04T14:30:31.999999999Z' },
+        5,
+      )
+      expect(diagnostic.pairedFeedComparisonAvailable).toBe(false)
+      expect(diagnostic.spreadBpsApprox).toBeGreaterThanOrEqual(0)
+      expect(diagnostic.spreadBpsApprox).toBeLessThan(5)
+      expect(diagnostic.quoteEventAt).toBe('2026-09-04T14:30:31.999999999Z')
+    }
+  })
+
+  test('delayed consolidated quotes are not relabelled as current NBBO or IEX', () => {
+    const diagnostic = jevProtectiveQuoteDiagnostics(
+      { feed: 'delayed_sip', bidPrice: 100, askPrice: 100.01, eventAt: '2026-09-04T14:15:31.000Z' },
+      5,
+    )
+    expect(diagnostic.referenceScope).toBe(JevQuoteReferenceScope.DelayedConsolidated)
+    expect(diagnostic.pairedFeedComparisonAvailable).toBe(false)
+    expect(
+      jevProtectiveQuoteDiagnostics(
+        { feed: 'sip', bidPrice: 100, askPrice: 100.01, eventAt: '2026-09-04T14:30:31.000Z' },
+        5,
+      ).referenceScope,
+    ).toBe(JevQuoteReferenceScope.Consolidated)
+  })
+
   test.each([
     [23_039, true],
     [59_999, true],

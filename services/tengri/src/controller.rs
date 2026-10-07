@@ -50,6 +50,7 @@ pub struct ControllerContext {
     pub tickets: TicketStore,
     pub guest_image: Arc<str>,
     pub identity: crate::identity::WorkloadIdentity,
+    pub authorization: crate::authz::WorkspaceAuthorization,
 }
 
 #[derive(Debug, Error)]
@@ -60,6 +61,8 @@ pub enum ReconcileError {
     MissingNamespace(String),
     #[error("Tengri capability cleanup failed: {0}")]
     TicketStore(String),
+    #[error("workspace authorization cleanup failed: {0}")]
+    Authorization(String),
     #[error("timed out deleting owned resource {0}")]
     CleanupTimeout(String),
     #[error("failed waiting for owned resource deletion: {0}")]
@@ -100,6 +103,11 @@ async fn reconcile(
     let pods: Api<Pod> = Api::namespaced(context.client.clone(), &namespace);
 
     if microvm.meta().deletion_timestamp.is_some() {
+        context
+            .authorization
+            .remove(&namespace, &name)
+            .await
+            .map_err(|error| ReconcileError::Authorization(format!("{error:#}")))?;
         crate::guest_identity::remove_registrations(&context, &microvm, None).await?;
         let status = terminating_status(&microvm, Utc::now());
         if microvm.status.as_ref() != Some(&status) {
@@ -1375,6 +1383,7 @@ mod tests {
                 .expect("test ticket store"),
             guest_image: guest_image.into(),
             identity: crate::identity::WorkloadIdentity::Fixture,
+            authorization: crate::authz::WorkspaceAuthorization::Fixture,
         })
     }
 

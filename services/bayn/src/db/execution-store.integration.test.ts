@@ -2,7 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import type { Statement } from 'effect/sql/Statement'
 
 import {
   sourceTimestamp,
@@ -43,7 +44,7 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
-import { verifyBrokerStateVersion } from './reconciliation'
+import { makeReconciliation, verifyBrokerStateVersion } from './reconciliation'
 import { accountBrokerFees } from './broker-fees'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 
@@ -530,6 +531,112 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
   })
 
+  test('opening cash and fee baselines avoid scanning account history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const authority = yield* AuthorityGenerationStore
+        const events = yield* BrokerEventStore
+        const valuations = yield* ValuationStore
+        const sql = yield* PgClient.PgClient
+        if (authority.readOrInitializeObserveAuthority === undefined)
+          throw new Error('Missing native authority initializer')
+        yield* authority.readOrInitializeObserveAuthority({
+          generationHash: hash('opening-history-generation'),
+          maximum: Authority.Observe,
+        })
+        const account = flatAccountEvent()
+        const accountReceipt = yield* events.ingest(account)
+        const positionsReceipt = yield* events.ingestPositions(positionSnapshot(hash('opening-empty-positions'), []))
+        const valuation = yield* valuations.value({
+          accountEventId: accountReceipt.eventId,
+          positionSnapshotId: positionsReceipt.snapshotId,
+        })
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING ALL) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE account_snapshots (LIKE public.account_snapshots INCLUDING ALL) ON COMMIT DROP`
+            yield* sql`INSERT INTO broker_events
+              (event_id, schema_version, content_hash, event_kind, broker, account_id, source_event_id,
+                source_sequence, occurred_at, observed_at)
+              SELECT md5(n::text) || md5('event-' || n::text), 'bayn.paper-broker-event.v1',
+                md5(n::text) || md5('content-' || n::text), CASE WHEN n = 0 THEN 'ERROR' ELSE 'ACCOUNT' END,
+                'ALPACA', CASE WHEN n < 8192 THEN ${accountId} ELSE 'foreign-account' END,
+                'history-' || n, n, '2026-08-27T14:30:59.000Z'::timestamptz,
+                CASE WHEN n < 2 OR n >= 8192 THEN '2026-08-29T14:31:00.000Z'::timestamptz
+                  WHEN n = 2 THEN ${observedAt}::timestamptz
+                  ELSE '2026-08-27T14:31:00.000Z'::timestamptz END
+              FROM generate_series(0, 16383) AS n`
+            yield* sql`INSERT INTO account_snapshots
+              (event_id, account_id, schema_version, status, currency, cash_micros, equity_micros, buying_power_micros)
+              SELECT event_id, account_id, 'bayn.paper-account-snapshot.v1', 'ACTIVE', 'USD',
+                CASE WHEN source_sequence = 2 THEN 1000000000 ELSE 999000000 END,
+                CASE WHEN source_sequence = 2 THEN 1000000000 ELSE 999000000 END, 2000000000
+              FROM broker_events WHERE event_kind = 'ACCOUNT' AND source_sequence <> 1`
+            yield* sql`ANALYZE broker_events`
+            yield* sql`ANALYZE account_snapshots`
+            const lookups: Statement<Record<string, unknown>>[] = []
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                const query = statement.compile()[0]
+                if (
+                  query.includes('FROM account_snapshots AS snapshot') &&
+                  query.includes('ORDER BY event.source_sequence')
+                )
+                  lookups.push(statement)
+                return statement
+              },
+            })
+            const fee = {
+              value: { accountId, activityId: 'opening-fee', date: '2026-08-28', netAmountMicros: '0' },
+              evidence: { requestId: 'opening-fee-request', status: 200, contentHash: hash('opening-fee'), observedAt },
+            }
+            const exact = yield* makeReconciliation(monitored, journal(journalControl), config).reconcile({
+              account: account.account,
+              positions: [],
+              positionsObservedAt: observedAt,
+              orders: [],
+              ordersObservedAt: observedAt,
+              fills: [],
+              fees: [fee],
+              valuation,
+              reconciledAt: '2026-08-28T14:32:00.000Z',
+            })
+            expect(exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
+            expect(lookups).toHaveLength(2)
+            for (const lookup of lookups) {
+              const [query, parameters] = lookup.compile()
+              const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+              const plans = yield* Schema.decodeUnknownEffect(
+                Schema.Array(
+                  Schema.Struct({
+                    'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+                  }),
+                ),
+              )(explanation)
+              const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+              if (root === undefined) throw new Error('PostgreSQL did not return the opening query plan')
+              const touchedBlocks = [
+                'Shared Hit Blocks',
+                'Shared Read Blocks',
+                'Local Hit Blocks',
+                'Local Read Blocks',
+              ].reduce((sum, key) => sum + Number(root[key] ?? 0), 0)
+              expect(touchedBlocks).toBeLessThan(32)
+            }
+            const prebaseline = { ...fee, value: { ...fee.value, date: '2026-08-27' } }
+            expect(
+              yield* accountBrokerFees(sql, journal(journalControl), accountId, [prebaseline], config.tigerBeetle).pipe(
+                Effect.flip,
+              ),
+            ).toMatchObject({ failure: 'invariant', message: expect.stringContaining('predates') })
+          }),
+        )
+      }),
+    )
+    expect(journalControl.postCount).toBe(0)
+  })
+
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
     await runtime.runPromise(Effect.flatMap(BrokerEventStore, (events) => events.ingest(flatAccountEvent())))
     const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
@@ -576,6 +683,28 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(forward.brokerFeeRecords).toHaveLength(3)
     expect(forward.generationBrokerFeeIds).toEqual(['fee-0', 'fee-1', 'fee-2'])
     expect(forward.ambiguousBrokerFeeCount).toBe(0)
+    const cuts = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const reports = []
+        for (const cut of [occurredAt, observedAt]) {
+          yield* sql`INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          ) VALUES (
+            ${hash(`fee-cut-${cut}`)}, 'bayn.paper-reconciliation.v1', ${accountId}, ${hash('fee-cut-state')},
+            ${hash('fee-cut-state')}, ${hash(`fee-cut-content-${cut}`)}, 'EXACT', '[]'::jsonb, ${cut}::timestamptz
+          )`
+          reports.push(yield* readForwardPerformancePostgres(sql, accountId))
+        }
+        return reports
+      }),
+    )
+    expect(cuts.map((report) => report.postReconciliationActivityCount)).toEqual([3, 0])
+    for (const report of cuts) {
+      expect(report.brokerFeeRecords).toEqual(forward.brokerFeeRecords)
+      expect(report.generationBrokerFeeIds).toEqual(forward.generationBrokerFeeIds)
+    }
   })
 
   test('binds the submit cache to the latest exact reconciliation, broker observations and authority version', async () => {

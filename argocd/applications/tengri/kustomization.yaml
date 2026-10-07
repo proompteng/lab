@@ -5,6 +5,7 @@ resources:
 - mesh-security.yaml
 - crd.yaml
 - sealed-secret.yaml
+- spicedb-key-sealedsecret.yaml
 - service-account.yaml
 - auth-nonces.yaml
 - rbac.yaml
@@ -18,9 +19,9 @@ resources:
 configMapGenerator:
 - name: tengri-release
   literals:
-  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:830976f452d325ac738e7c6cb5c12ed3968bff43f24c003c63c67730513ddb49
+  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:b4deb97b18a3661d6d98ecc60237216c2bea6ebe8cd1b0a33e48e457a09d2203
 configurations:
 - kustomizeconfig.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/tengri
-  digest: sha256:b47348e24f587bb192d8786b76cadf19568e15224010018124da66278e385892
+  digest: sha256:9bc42abcaf8981bf8c462a27c332c30d2b65504d6c9845d42581208a01df9840

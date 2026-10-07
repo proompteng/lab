@@ -160,11 +160,11 @@ const makeCapitalGrantInterpreterDataFirst = (
 
   const requireFreshCapitalGrantGeneration = (derived: Pick<DerivedResearchCapitalGrantGeneration, 'reconciliation'>) =>
     authority.nextAuthorityInstant.pipe(
-      Effect.flatMap((observedAt) =>
+      Effect.tap((observedAt) =>
         liftAuthorityDecision(
           validateCapitalGrantGenerationFreshness(
             derived.reconciliation,
-            observedAt,
+            new Date(observedAt),
             config.reconciliationStaleThresholdMs,
           ),
         ),
@@ -175,7 +175,7 @@ const makeCapitalGrantInterpreterDataFirst = (
     generationHash: string,
     authorityVersion: number,
     kill: AuthorityState['kill'],
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     sql<Record<string, unknown>>`
       UPDATE authority_state
@@ -243,7 +243,7 @@ const makeCapitalGrantInterpreterDataFirst = (
   const writeResearchCapitalGrantGenerationActivation = (
     decision: Extract<CapitalGrantActivationDecision, { readonly _tag: 'ActivateCapitalGrantGeneration' }>,
     derived: DerivedResearchCapitalGrantGeneration,
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     Effect.gen(function* () {
       const input = derived.generation

@@ -589,6 +589,8 @@ export const makeReconciliation = (
           FROM account_snapshots AS snapshot
           JOIN broker_events AS event ON event.event_id = snapshot.event_id
           WHERE snapshot.account_id = ${accountId}
+            AND event.account_id = snapshot.account_id
+            AND event.event_kind = 'ACCOUNT'
           ORDER BY event.source_sequence
           LIMIT 1
         `.pipe(Effect.flatMap(decodeOpeningCash))

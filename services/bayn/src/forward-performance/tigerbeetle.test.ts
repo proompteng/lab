@@ -222,7 +222,7 @@ describe('forward performance TigerBeetle read', () => {
       realizedGainMicros: '20000000',
       realizedLossMicros: '0',
       brokerExecutionFeesMicros: '1000',
-      otherChargedCostsMicros: '0',
+      otherChargedCostsMicros: null,
       cashYieldMicros: '0',
     })
     expect(evidence.openPositionCount).toBe(0)
@@ -275,7 +275,7 @@ describe('forward performance TigerBeetle read', () => {
         realizedGainMicros: '10000000',
         realizedLossMicros: '0',
         brokerExecutionFeesMicros: '300',
-        otherChargedCostsMicros: '0',
+        otherChargedCostsMicros: null,
         cashYieldMicros: '0',
       },
       ledgerExact: true,
@@ -312,7 +312,7 @@ describe('forward performance TigerBeetle read', () => {
         realizedGainMicros: '10000000',
         realizedLossMicros: '0',
         brokerExecutionFeesMicros: '300',
-        otherChargedCostsMicros: '0',
+        otherChargedCostsMicros: null,
         cashYieldMicros: '0',
       },
       ledgerExact: true,

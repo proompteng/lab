@@ -1,9 +1,22 @@
-import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result } from 'effect'
+import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result, Schema, Stream } from 'effect'
 import { Headers, HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
-import { decodeJevResponse, jevEndpoint, prepareJevRequest, JevFailure, type JevResponse } from './contract'
+import {
+  decodeJevResponse,
+  jevEndpoint,
+  prepareJevRequest,
+  JevFailure,
+  JevResponseSchema,
+  type JevResponse,
+} from './contract'
+
+const failedResponseUsageSchema = Schema.Struct({
+  model: JevResponseSchema.fields.model,
+  usage: JevResponseSchema.fields.usage,
+})
+const maximumFailureBodyBytes = 8192
 
 export class JevError extends Data.TaggedError('JevError')<{
   readonly failure: JevFailure
@@ -54,6 +67,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
           )
           const { requestHash } = prepared
           const started = yield* Clock.currentTimeMillis
+          let failureHttpStatus: number | undefined
           return yield* Effect.gen(function* () {
             const request = HttpClientRequest.post(jevEndpoint).pipe(
               HttpClientRequest.bearerToken(key),
@@ -62,11 +76,47 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
             )
             const response = yield* http.execute(request)
             if (response.status !== 200) {
+              failureHttpStatus = response.status
+              // Retain only validated metering, never provider error text or echoed requests/credentials.
+              // The hash binds this exact projection, not the original error body. No missing usage is invented.
+              const rejected = yield* response.stream.pipe(
+                Stream.runFoldEffect(
+                  () => new Uint8Array(0),
+                  (body, chunk) => {
+                    if (body.byteLength + chunk.byteLength > maximumFailureBodyBytes)
+                      return Effect.fail(
+                        new JevError({ failure: JevFailure.Status, message: 'Jev failure body exceeds its limit' }),
+                      )
+                    const next = new Uint8Array(body.byteLength + chunk.byteLength)
+                    next.set(body)
+                    next.set(chunk, body.byteLength)
+                    return Effect.succeed(next)
+                  },
+                ),
+                Effect.flatMap((body) =>
+                  Effect.try({
+                    try: (): unknown => JSON.parse(new TextDecoder().decode(body)),
+                    catch: (cause) =>
+                      new JevError({
+                        failure: JevFailure.Status,
+                        message: 'Jev failure body is not JSON',
+                        cause: Redacted.make(cause),
+                      }),
+                  }),
+                ),
+                Effect.flatMap(Schema.decodeUnknownEffect(failedResponseUsageSchema)),
+                Effect.result,
+              )
+              const responseHash = Result.isSuccess(rejected) ? canonicalHashV1Result(rejected.success) : undefined
               return yield* new JevError({
                 failure: JevFailure.Status,
                 message: 'Jev evaluation returned an unsuccessful status',
                 requestHash,
                 status: response.status,
+                ...(Result.isSuccess(rejected) && responseHash !== undefined && Result.isSuccess(responseHash)
+                  ? { responseHash: responseHash.success, rejectedResponse: Redacted.make(rejected.success) }
+                  : {}),
+                ...(Result.isFailure(rejected) ? { cause: Redacted.make(rejected.failure) } : {}),
               })
             }
             const raw = yield* response.json
@@ -120,6 +170,7 @@ export const JevClientLive = (key: Redacted.Redacted<string>, timeoutMs: number)
                     failure: Cause.isTimeoutError(cause) ? JevFailure.Timeout : JevFailure.Transport,
                     message: Cause.isTimeoutError(cause) ? 'Jev inference deadline elapsed' : 'Jev transport failed',
                     requestHash,
+                    ...(failureHttpStatus === undefined ? {} : { status: failureHttpStatus }),
                     cause: Redacted.make(cause),
                   }),
             ),

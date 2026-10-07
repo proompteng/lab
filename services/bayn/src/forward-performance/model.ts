@@ -20,6 +20,7 @@ export type ForwardPerformanceReasonCode =
   | 'LEDGER_MISMATCH'
   | 'MISSING_LEDGER_ACCOUNT'
   | 'NON_EXACT_RECONCILIATION'
+  | 'OPERATING_COST_EVIDENCE_GAP'
   | 'OPEN_POSITION'
   | 'STARTING_CAPITAL_GAP'
   | 'UNCLOSED_WINDOW'
@@ -267,7 +268,8 @@ export interface ForwardPerformanceLedgerTotals {
   readonly realizedGainMicros: string
   readonly realizedLossMicros: string
   readonly brokerExecutionFeesMicros: string
-  readonly otherChargedCostsMicros: string
+  /** Null when inference and other operating expenses are outside the verified ledger evidence. */
+  readonly otherChargedCostsMicros: string | null
   readonly cashYieldMicros: string
 }
 
