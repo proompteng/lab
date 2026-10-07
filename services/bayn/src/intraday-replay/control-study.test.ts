@@ -917,7 +917,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
       const args = [
         'bun',
-        new URL('../../tools/control-study.ts', import.meta.url).pathname,
+        new URL('../control-study-command.ts', import.meta.url).pathname,
         '--input',
         `${directory}/input.json`,
         '--input-sha256',
@@ -996,7 +996,7 @@ test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
         yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
         const preflightArgs = [
           'bun',
-          new URL('../../tools/control-study.ts', import.meta.url).pathname,
+          new URL('../control-study-command.ts', import.meta.url).pathname,
           '--input',
           `${directory}/input.json`,
           '--input-sha256',
