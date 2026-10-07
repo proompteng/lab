@@ -2,7 +2,7 @@
 
 Tengri's Chrome home page (`tengri://agent`) is the Codex client for the signed-in user's microVM. It is not a log
 viewer and it does not use AgentRun. The browser talks only to the authenticated Next.js BFF; the BFF signs the GitHub
-subject for the Rust Tengri control plane; Tengri calls the Nanoagent process inside the owner's `kata-fc` guest.
+subject for the Rust Tengri control plane; Tengri reaches Nanoagent through the owner's authenticated Firecracker slot supervisor.
 
 ```text
 Chrome agent tab
@@ -55,13 +55,12 @@ silently substitute a model. A running turn can still be steered or interrupted.
 
 Terminal and Codex operate in a guest with a writable operating-system root and passwordless `sudo` for the
 `nanoagent` user. The owner can install system packages, edit `/etc` and `/usr/local`, manage guest processes, mount
-filesystems, and configure guest networking. Codex uses `danger-full-access`; the `kata-fc` VM provides the isolation
+filesystems, and configure guest networking. Codex uses `danger-full-access`; the Firecracker VM provides the isolation
 boundary around guest administration.
 
-The root filesystem has the image's 512 MiB capacity and is ephemeral. Container recreation, sleep/resume, or guest
-replacement restores that root from the image. Home and `/workspace` use the retained 16 GiB PVC, including Codex
-credentials, threads, and tools installed there. Running guests adopt a new image and Pod template at the next safe
-sleep/resume boundary.
+The root filesystem has 1 GiB capacity. Snapshot sleep/resume preserves root changes and guest processes while releasing
+resident guest RAM. A fenced cold replacement resets the root from the image. Home and `/workspace` use the retained
+16 GiB PVC, including Codex credentials, threads, and installed tools. Ordinary sleep keeps the claimed runtime image.
 
 ## API path
 
@@ -145,7 +144,7 @@ The live acceptance path runs only after the GitOps rollout described in
 [`operations.md`](./operations.md). It must prove the complete owner-scoped path:
 
 1. Sign in with GitHub and create or resume one agent.
-2. Verify its Pod uses `runtimeClassName: kata-fc`, `privileged: false`, and no host namespaces or filesystem mounts.
+2. Verify its slot Pod uses the normal OCI runtime, `privileged: false`, and no host namespaces or filesystem mounts.
    In Terminal, verify `sudo -n id -u` returns `0` and an owner-requested system-file edit or package install succeeds.
 3. Open Chrome at `tengri://agent`, complete a per-user Codex device login, and create a thread.
 4. Select a model and supported reasoning effort. Send a real turn that reads or edits `/workspace`; confirm the
@@ -153,7 +152,8 @@ The live acceptance path runs only after the GitOps rollout described in
 5. Exercise one advertised approval decision, steer or interrupt a running turn, and reload Chrome during a turn to
    prove replay and thread recovery.
 6. Read the changed file in Finder, Code, and Terminal to prove all surfaces share the same guest filesystem.
-7. Sleep and resume the agent; verify the same Codex account and thread remain available from the retained PVC.
+7. Sleep and resume the agent; verify the VMM exited during sleep, then verify the same shell PID, Codex account,
+   thread, root edits, and home files. Measure authenticated creation/resume through file, terminal, and Codex readiness.
 
 Do not substitute fixture output, a manually created Pod, a privileged launcher, or a permanent canary DaemonSet for
 this acceptance path.

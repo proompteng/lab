@@ -72,6 +72,8 @@ message AgentCondition {
 }
 
 message Agent {
+  reserved 14, 16;
+  reserved "expires_at", "pending_image";
   string id = 1;
   string display_name = 2;
   AgentPhase phase = 3;
@@ -85,12 +87,7 @@ message Agent {
   string ready_at = 11;
   string last_activity_at = 12;
   string idle_deadline = 13;
-  // Empty for retained workspaces; legacy CR expiry values are not lifecycle deadlines.
-  string expires_at = 14;
   repeated AgentCondition conditions = 15;
-  // Set while a newer configured Nanoagent digest is waiting for a safe
-  // sleep/resume boundary. The running guest remains on its current image.
-  string pending_image = 16;
   optional uint32 idle_timeout_minutes = 17;
 }
 

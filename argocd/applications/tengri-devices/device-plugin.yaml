@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tengri-kvm-tun
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tengri-kvm-tun
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tengri-kvm-tun
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        runtime.proompteng.ai/kata-fc: ready
+      containers:
+        - name: device-plugin
+          image: squat/generic-device-plugin@sha256:66c8d5c270eb2b721f1064c549b9b7898152a6d2f0163380a5d37dc7636c20ff
+          args:
+            - --domain=runtime.proompteng.ai
+            - --device={"name":"kvm-tun","groups":[{"count":6,"paths":[{"path":"/dev/kvm"},{"path":"/dev/net/tun"}]}]}
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: registration
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: kvm
+              mountPath: /dev/kvm
+              readOnly: true
+            - name: tun
+              mountPath: /dev/net/tun
+              readOnly: true
+      volumes:
+        - name: registration
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: Directory
+        - name: kvm
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice

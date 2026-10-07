@@ -466,8 +466,8 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
   const previousBinding = {
-    planHash: 'd75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0',
-    sourceRevision: '8f4602324111bbb3dd5d8695aabf199f4a5328fa',
+    planHash: 'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
+    sourceRevision: '808bfa84609959712042174b6fd176fc56f8edb2',
   }
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(

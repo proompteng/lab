@@ -6,9 +6,67 @@ import { ConfigProvider, Deferred, Effect, Exit, Fiber, Layer, Logger, Reference
 import { TestClock } from 'effect/testing'
 import { OtlpSerialization, OtlpTracer } from 'effect/observability'
 
-import { decodeOtlpTraceEndpoint, telemetryRuntimeConfig, withObservedSpan, withObservedStage } from './telemetry'
+import {
+  ExecutionStageTimings,
+  type ExecutionStageTiming,
+  decodeOtlpTraceEndpoint,
+  telemetryRuntimeConfig,
+  withObservedSpan,
+  withObservedStage,
+} from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test('aggregates repeated operations without conflating different operations or inclusive time', async () => {
+    const timings = new Map<string, ExecutionStageTiming>()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.adjust(10).pipe(
+          withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation: 'ingest' }),
+        )
+        yield* TestClock.adjust(20).pipe(
+          withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation: 'ingest' }),
+        )
+        yield* TestClock.adjust(40).pipe(
+          withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation: 'valuation' }),
+        )
+      }).pipe(
+        withObservedStage('bayn.reconciliation.persist'),
+        Effect.provideService(ExecutionStageTimings, timings),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect([...timings.values()]).toEqual([
+      {
+        stage: 'bayn.execution-store.operation',
+        dependency: 'postgresql',
+        operation: 'ingest',
+        count: 2,
+        inclusiveElapsedMs: 30,
+        maxElapsedMs: 20,
+        failures: 0,
+        interruptions: 0,
+      },
+      {
+        stage: 'bayn.execution-store.operation',
+        dependency: 'postgresql',
+        operation: 'valuation',
+        count: 1,
+        inclusiveElapsedMs: 40,
+        maxElapsedMs: 40,
+        failures: 0,
+        interruptions: 0,
+      },
+      {
+        stage: 'bayn.reconciliation.persist',
+        count: 1,
+        inclusiveElapsedMs: 70,
+        maxElapsedMs: 70,
+        failures: 0,
+        interruptions: 0,
+      },
+    ])
+  })
+
   test('records the interrupted stage and elapsed time while preserving cancellation and finalization', async () => {
     const annotations: Readonly<Record<string, unknown>>[] = []
     let finalized = false

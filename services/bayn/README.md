@@ -4,8 +4,12 @@ Bayn is a single-writer intraday execution service. Restate schedules one accoun
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
+The source selects one active strategy, `jev`, using momentum-first `bayn.jev.protocol.v2`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
+
+The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a protocol-v2 entry gate:
+exact positive own and SPY-relative momentum before Jev, with current Jev selection, sizing and management preserved.
+The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
 
 ## Profitability goal
 
@@ -47,6 +51,10 @@ projection. Final submission reads account, positions and orders from one payloa
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
+Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
+the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
+without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
 for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
@@ -74,6 +82,12 @@ falling back to the idle interval. Every continuation rechecks existing evidence
 Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
 wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
 authority restriction.
+
+Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
+wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the
+existing continuation qualifies. Elapsed, missing or invalid timestamps, other readiness reasons and failed passes
+keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
+does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
@@ -161,22 +175,24 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
-Sandbox execution can select a $1,000,000 daily gross-turnover budget through its exact immutable mandate hash;
-the retained sandbox mandate stays at $200,000 until explicitly rebound. Live and unspecified environments stay at $200,000.
+The reviewed sandbox mandate selects a $1,000,000 daily gross-turnover budget through its exact immutable policy hash.
+Retained sandbox mandates stay at $200,000 until explicitly rebound. Live and unspecified environments remain at $200,000.
 At $100,000 equity and a 20% target, the sandbox budget supports about 25 full-size round trips across the entry
 window. This is bounded research capacity, not a profitability assumption. All other sizing, cost and risk checks
-are unchanged. The existing sandbox request remains usable across the code rollout; the increase requires a newly
-reviewed research request bound to the new policy hash. Unknown hashes and the increased hash on live fail closed.
+are unchanged. The paired research request binds the new strategy and policy hashes; historical requests and
+decisions remain immutable. Unknown hashes and the increased hash on live fail closed.
 Durable account/session turnover is retained across policy and worker changes, and completed
 decisions are not reopened. The image's policy-hash annotation verifies the available increased sandbox policy for its
 build-account sentinel; the durable mandate remains the authority for the active account policy.
-The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
-exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
-yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
+The runtime writes version-four Jev batches. Exact positive own and SPY-relative momentum gates precede Jev;
+Jev retains its probability-ranked accept/wait/avoid decision among eligible signals. Verified non-signals,
+wide-spread or zero-displayed-size entry quotes become explicit
+exclusions without a Jev call. An entry batch where every candidate is excluded for a verified momentum or entry-quote reason can
+yield a no-entry decision; missing source evidence cannot. Retained version-one through version-three batches keep their
 original identity and quote-deadline binding. Position management still evaluates its held symbol. A complete
-version-three batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
+version-four batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
 the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
-quote deadline for version-three decisions. These parameters have not established an economic advantage under the
+quote deadline for version-three or version-four decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
 
 After selecting a candidate, entry planning reapplies the same spread and positive displayed-size rules to its
@@ -262,6 +278,15 @@ remain eligible on every management pass. Position management checks those prote
 batches and checks the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
 signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
 the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
+
+A newly committed terminal Jev cycle makes one best-effort attempt to seal its own expired pending batches, across
+that cycle's recorded authority generations. This runs after the authoritative cycle mutation and uses the existing
+configured operation timeout and cancellation-aware deadline clock. It never calls the model, waits for an original
+deadline, revives a decision, or scans historical terminal cycles. Unattempted and abandoned outcomes retain the
+original evidence semantics. A missing, unexpired, foreign-cycle or failed cleanup remains explicitly logged as
+incomplete; typed failures, defects and cleanup timeout do not replace the committed terminal receipt. External
+interruption still cancels and joins cleanup without undoing the terminal state. This is evidence closure, not a
+durable retry queue or a guarantee against process death after the terminal commit.
 
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
@@ -473,7 +498,10 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
-  authority.
+  authority. Its readiness checks PostgreSQL, ledger, broker reconciliation, and the bound execution controller.
+  It acquires no archive client and performs no ClickHouse probes. Without a direct market-data observation,
+  `/v1/status` omits the `signal` dependency and reports `data.status: UNKNOWN`; archive connectivity cannot certify
+  live Kafka availability. Trading retains the worker's direct Kafka checks and all entry and position-management gates.
 - Broker egress is restricted to the configured Alpaca endpoint through the dedicated CONNECT proxy. Credentials and
   plaintext account identity must never appear in logs, metrics, traces, or status responses.
 
@@ -510,7 +538,8 @@ recovery behavior, and evidence boundaries.
 
 The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
 does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
-required for archive health and evidence reads; this separation does not alter broker, authority, risk or provenance
+required by the shared configuration for offline evidence reads; they cause no archive acquisition in public status.
+This separation does not alter broker, authority, risk or provenance
 configuration. The three live manifests omit all eight historical settings below; a running service container does
 not supply a historical report context implicitly.
 
@@ -570,6 +599,40 @@ filter execute in a repeatable-read, read-only transaction. More than 10,000 cla
 than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
 endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
 
+The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
+most 64 resolved requests for its bound account, freezes the original request/receipt/resolution hashes and tariff
+in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. That ledger's unit is
+**USD_PICO**: one USD is 1,000,000,000,000 units, so a single input token at the current Jev list price records 42,000
+units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
+estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
+
+This projection starts with sessions on 2026-10-05 and the reviewed, frozen Jev 1.13.0 list-price assumption:
+$0.042 per million input tokens and zero output charge, verified at `https://docs.typesafe.ai/models` on
+2026-10-07 UTC. Its tariff interval identifies where Bayn applies that assumption; it is not evidence that the
+provider has guaranteed future prices. Later reviewed tariff changes apply to new quotes. Existing quotes cannot
+be repriced or deleted. A transfer ID binds the account and request independently of tariff revisions. A lost
+TigerBeetle or PostgreSQL acknowledgement replays the same record and verifies all metadata before completing.
+`verified_at` means the frozen quote was checked against its expected ledger records, not against an invoice.
+Retained rejected or abandoned responses with valid usage are included. Missing usage and unpriced models remain
+explicit quote gaps; they produce no fabricated zero charge. An immutable late receipt can add a priced quote to
+an abandoned gap without posting the request twice. Earlier sessions remain outside this projection's coverage.
+
+The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
+Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
+
+```sh
+node dist/inference-cost-command.js --ledger-session 2026-10-06
+```
+
+This mode needs the database/account settings above plus `BAYN_TIGERBEETLE_ADDRESSES` and the normal cluster ID
+(default 2001). It reads the frozen tariff rather than accepting a replacement rate card. It verifies every original
+request graph, the full scoped TigerBeetle account and transfer sets, and posted balances. `coverage` lists missing
+quotes, pending verification and priced-usage gaps; `completeMeteredCoverage` requires all three to be zero.
+The report gives the source cut and ledger observation times separately. Concurrent posting can fail reconciliation
+and must be retried rather than accepted as a matching subset. Even complete metered coverage remains an estimate:
+`invoiceReconciled` is false. Prepaid credit refills, provider invoice allocation, data, infrastructure and research
+expenses need their own evidence; this projection alone cannot populate complete economic profit or qualify a policy.
+
 Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has `provider: "typesafe"`, an exact `model`,
 `currency: "USD"`, a `source` description, canonical UTC `effectiveFrom` / exclusive `effectiveUntil` instants, and
 `inputMicrosPerMillionTokens` / `outputMicrosPerMillionTokens` as unsigned decimal integer strings. Supply the tariff
@@ -622,6 +685,17 @@ hashes prove file identity, not issuer authenticity, correct classification or c
 reviewed input assertions. This read-only import never mutates broker cash, TigerBeetle, an invoice provider or a bank.
 
 ### Operational diagnostics
+
+Every native execution advance emits one correlated completion or failure record with its controller key, epoch,
+sequence, source revision, wall elapsed time, outcome, receipt and next delay when available, and a per-pass
+`stageTimings` profile. Each stage includes its dependency and operation, call count, inclusive elapsed time, maximum
+call time, failures and interruptions. Nested stages overlap; their times must not be added to estimate wall time.
+The profile uses the existing stage clocks and in-memory pass scope, without additional database or network work.
+Broker submission distinguishes `entry` and `close`, while its transport stage records `SUBMIT` or `CANCEL` through
+the complete response and classification. SQL transaction acquisition, lease checks, begin, commit and rollback have
+separate spans. SQL `server.address`, `server.port` and `db.namespace` identify the configured connection target,
+including URI host, port, user and database overrides. See the
+[critical-path investigation](../../docs/runbooks/bayn-cycle-operations.md#execution-critical-path).
 
 Jev observation reconstruction failures retain a bounded `observationCheck` and, for broker snapshots, an
 `observationField`. The top-level error identifies schema, source reconstruction, observation time, universe/feed/topic,

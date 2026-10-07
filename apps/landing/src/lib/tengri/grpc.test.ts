@@ -35,6 +35,7 @@ let fixture: Awaited<ReturnType<typeof createSpiffeFixture>>
 let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
+let receivedDeadline = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
@@ -79,6 +80,7 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
+      receivedDeadline = Number(call.getDeadline())
       callback(null, {
         id: 'agent-test',
         displayName: String(call.request.displayName),
@@ -88,6 +90,22 @@ beforeAll(async () => {
         memoryMib: 4_096,
         workspaceGib: 16,
         ...(call.request.displayName === 'Old runtime' ? {} : { idleTimeoutMinutes: 60 }),
+      })
+    },
+    resumeAgent(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedDeadline = Number(call.getDeadline())
+      callback(null, {
+        id: call.request.id,
+        displayName: 'Tengri',
+        phase: 'AGENT_PHASE_READY',
+        architecture: 'ARCHITECTURE_AMD64',
+        cpuMillis: 4_000,
+        memoryMib: 8_192,
+        workspaceGib: 16,
+        idleTimeoutMinutes: 60,
       })
     },
     updatePowerSettings(
@@ -622,6 +640,16 @@ describe('Tengri gRPC BFF transport', () => {
         .update(`${subject}\n${timestamp}\n${nonce}\n${method.path}\n${bodyHash}`)
         .digest('hex'),
     )
+  })
+
+  test('creation and resume retain the full synchronous lifecycle deadline', async () => {
+    const { createAgent, resumeAgent } = await import('./grpc')
+    for (const request of [() => createAgent('github:42', 'Tengri'), () => resumeAgent('github:42', 'agent-test')]) {
+      const started = Date.now()
+      expect((await request()).id).toBe('agent-test')
+      expect(receivedDeadline).toBeGreaterThan(started + 300_000)
+      expect(receivedDeadline).toBeLessThanOrEqual(Date.now() + 310_000)
+    }
   })
 
   test('rejects non-UTF-8 files instead of corrupting their bytes', async () => {
