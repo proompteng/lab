@@ -591,6 +591,40 @@ filter execute in a repeatable-read, read-only transaction. More than 10,000 cla
 than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
 endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
 
+The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
+most 64 resolved requests for its bound account, freezes the original request/receipt/resolution hashes and tariff
+in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. That ledger's unit is
+**USD_PICO**: one USD is 1,000,000,000,000 units, so a single input token at the current Jev list price records 42,000
+units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
+estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
+
+This projection starts with sessions on 2026-10-05 and the reviewed, frozen Jev 1.13.0 list-price assumption:
+$0.042 per million input tokens and zero output charge, verified at `https://docs.typesafe.ai/models` on
+2026-10-07 UTC. Its tariff interval identifies where Bayn applies that assumption; it is not evidence that the
+provider has guaranteed future prices. Later reviewed tariff changes apply to new quotes. Existing quotes cannot
+be repriced or deleted. A transfer ID binds the account and request independently of tariff revisions. A lost
+TigerBeetle or PostgreSQL acknowledgement replays the same record and verifies all metadata before completing.
+`verified_at` means the frozen quote was checked against its expected ledger records, not against an invoice.
+Retained rejected or abandoned responses with valid usage are included. Missing usage and unpriced models remain
+explicit quote gaps; they produce no fabricated zero charge. An immutable late receipt can add a priced quote to
+an abandoned gap without posting the request twice. Earlier sessions remain outside this projection's coverage.
+
+The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
+Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
+
+```sh
+node dist/inference-cost-command.js --ledger-session 2026-10-06
+```
+
+This mode needs the database/account settings above plus `BAYN_TIGERBEETLE_ADDRESSES` and the normal cluster ID
+(default 2001). It reads the frozen tariff rather than accepting a replacement rate card. It verifies every original
+request graph, the full scoped TigerBeetle account and transfer sets, and posted balances. `coverage` lists missing
+quotes, pending verification and priced-usage gaps; `completeMeteredCoverage` requires all three to be zero.
+The report gives the source cut and ledger observation times separately. Concurrent posting can fail reconciliation
+and must be retried rather than accepted as a matching subset. Even complete metered coverage remains an estimate:
+`invoiceReconciled` is false. Prepaid credit refills, provider invoice allocation, data, infrastructure and research
+expenses need their own evidence; this projection alone cannot populate complete economic profit or qualify a policy.
+
 Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has `provider: "typesafe"`, an exact `model`,
 `currency: "USD"`, a `source` description, canonical UTC `effectiveFrom` / exclusive `effectiveUntil` instants, and
 `inputMicrosPerMillionTokens` / `outputMicrosPerMillionTokens` as unsigned decimal integer strings. Supply the tariff
