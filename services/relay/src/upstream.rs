@@ -80,11 +80,21 @@ where
     ensure!(result["content"].is_array(), "invalid tool result");
     if let Some(token) = &session.token {
         ensure!(
-            !serde_json::to_string(&result)?.contains(token),
+            !contains_credential(&result, token),
             "connector response contains credentials"
         );
     }
     Ok(result)
+}
+fn contains_credential(value: &Value, token: &str) -> bool {
+    match value {
+        Value::String(text) => text.contains(token),
+        Value::Array(values) => values.iter().any(|value| contains_credential(value, token)),
+        Value::Object(values) => values
+            .iter()
+            .any(|(key, value)| key.contains(token) || contains_credential(value, token)),
+        _ => false,
+    }
 }
 struct Session {
     client: Client,
@@ -219,6 +229,36 @@ fn sse_response(bytes: &[u8], id: i64) -> anyhow::Result<Option<Value>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejects_credentials_in_decoded_strings_and_object_keys() {
+        for token in [
+            "token\"with-quotes",
+            "token\\with-backslash",
+            "ordinary-token",
+        ] {
+            for result in [
+                json!({"content":[{"type":"text","text":format!("echo: {token}") }]}),
+                json!({"content":[],"structuredContent":{"nested":[null, {"value":token}]}}),
+                json!({"content":[],"structuredContent":{(token):true}}),
+            ] {
+                let encoded = serde_json::to_string(&result).unwrap();
+                if token.contains(['"', '\\']) {
+                    assert!(
+                        !encoded.contains(token),
+                        "serialized search reproduces the leak"
+                    );
+                }
+                let decoded: Value = serde_json::from_str(&encoded).unwrap();
+                assert!(contains_credential(&decoded, token));
+            }
+        }
+    }
+    #[test]
+    fn allows_results_without_credentials() {
+        let result = json!({"content":[{"type":"text","text":"public response"}],
+            "structuredContent":{"nested":[null, true, 8, {"value":"safe"}]}});
+        assert!(!contains_credential(&result, "private-token"));
+    }
     #[test]
     fn bounded_sse_handles_chunking_and_rejects_server_requests() {
         assert!(

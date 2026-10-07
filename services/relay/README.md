@@ -98,7 +98,8 @@ private/public DNS answers and pins the checked IPv4 addresses for the session. 
 HTTP proxies, arbitrary destinations supplied in a tool call, and cluster/metadata addresses are rejected.
 Requests are limited to 1 MiB, responses to 2 MiB, calls to 60 seconds, and service concurrency to 32 calls per replica.
 Provider error bodies, arguments, tokens, and response content are not logged. A result containing the literal
-Bearer credential is rejected. Providers remain trusted recipients of their credentials; this check cannot detect
+Bearer credential in a decoded JSON string or object key is rejected, including nested results and JSON escapes.
+Providers remain trusted recipients of their credentials; this check cannot detect
 every transformation a malicious provider could make.
 
 ## Self-service onboarding design
