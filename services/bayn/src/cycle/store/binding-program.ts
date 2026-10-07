@@ -340,6 +340,7 @@ const makeCycleBindingProgramsDataFirst = (
       'bind-decision',
       upgradeDecisionDocumentConstraints(sql).pipe(
         Effect.andThen(decodeDecisionInput({ cycleId, document, observedAt })),
+        Effect.tap((input) => queries.retainValidatedDecision(input.document)),
         Effect.flatMap((input) =>
           sql.withTransaction(
             mutations.readLocked('bind-decision', input.cycleId).pipe(
