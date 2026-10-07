@@ -335,7 +335,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         .codex_call("mcpServerStatus/list", json!({"limit":50}))
         .await?;
     ensure!(
-        browser_mcp["data"]
+        browser_mcp.result["data"]
             .as_array()
             .is_some_and(|servers| servers.iter().any(|server| {
                 server["name"] == "tengri_browser"

@@ -168,7 +168,7 @@ pub struct CodexEvent {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CodexCallResponse {
-    result: Value,
+    pub(crate) result: Value,
     #[serde(default)]
     event_sequence: u64,
 }

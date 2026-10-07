@@ -137,12 +137,14 @@ func (browser *browserSupervisor) perform(ctx context.Context, action computerAc
 	case "key":
 		arguments = []string{"key", "--clearmodifiers", action.Key}
 	case "type":
-		arguments = []string{"type", "--clearmodifiers", "--delay", "0", "--", action.Text}
+		if err := browser.paste(ctx, action.Text); err != nil {
+			return nil, err
+		}
 	case "navigate":
 		if err := browser.input(ctx, "key", "--clearmodifiers", "ctrl+l"); err != nil {
 			return nil, err
 		}
-		if err := browser.input(ctx, "type", "--clearmodifiers", "--delay", "0", "--", action.URL); err != nil {
+		if err := browser.paste(ctx, action.URL); err != nil {
 			return nil, err
 		}
 		arguments = []string{"key", "Return"}
@@ -237,6 +239,16 @@ func (browser *browserSupervisor) input(ctx context.Context, arguments ...string
 		return fmt.Errorf("browser input failed: %w", err)
 	}
 	return nil
+}
+
+func (browser *browserSupervisor) paste(ctx context.Context, text string) error {
+	clipboard := exec.CommandContext(ctx, browser.program("xclip"), "-selection", "clipboard", "-in")
+	clipboard.Env = browser.environment()
+	clipboard.Stdin = strings.NewReader(text)
+	if err := clipboard.Run(); err != nil {
+		return fmt.Errorf("update browser clipboard: %w", err)
+	}
+	return browser.input(ctx, "key", "--clearmodifiers", "ctrl+v")
 }
 
 func (browser *browserSupervisor) screenshot(ctx context.Context) (map[string]any, error) {

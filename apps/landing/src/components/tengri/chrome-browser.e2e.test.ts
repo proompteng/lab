@@ -143,16 +143,18 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   const bytes = Buffer.from(image.data, 'base64')
   expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   await testInfo.attach('agent-sees-shared-chromium', { body: bytes, contentType: 'image/png' })
-  const agentUrl = `http://127.0.0.1:8080/_test/site?agent=1&run=${Date.now()}`
-  await computer({ action: 'navigate', url: agentUrl })
-  await expect.poll(async () => (await state()).loaded?.url).toBe(agentUrl)
+  const agentUrl = `http://127.0.0.1:8080/_test/site?agent=1&language=世界&run=${Date.now()}`
+  const navigated = await computer({ action: 'navigate', url: agentUrl })
+  expect(navigated.isError, JSON.stringify(navigated.content)).not.toBe(true)
+  await expect.poll(async () => (await state()).loaded?.url).toBe(new URL(agentUrl).href)
   expect((await state()).loaded.previousCookie).toContain('browser-proof=persistent')
   expect((await state()).loaded.previousStorage).toBe('persistent')
   const { x, y } = (await state()).loaded.messageCenter
   await computer({ action: 'click', x, y })
-  await computer({ action: 'type', text: 'Agent CUA input works' })
+  const typed = await computer({ action: 'type', text: 'Agent CUA input works: 世界 🌍' })
+  expect(typed.isError, JSON.stringify(typed.content)).not.toBe(true)
   await computer({ action: 'key', key: 'Return' })
-  await expect.poll(async () => (await state()).submitted?.message).toBe('Agent CUA input works')
+  await expect.poll(async () => (await state()).submitted?.message).toBe('Agent CUA input works: 世界 🌍')
   await page.screenshot({ path: testInfo.outputPath('human-and-agent-shared-chromium.png') })
 
   await computer({ action: 'key', key: 'ctrl+t' })

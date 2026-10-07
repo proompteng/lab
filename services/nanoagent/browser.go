@@ -201,14 +201,7 @@ func (browser *browserSupervisor) serve(writer http.ResponseWriter, request *htt
 			writeAPIError(writer, http.StatusServiceUnavailable, err.Error())
 			return
 		}
-		clipboard := exec.CommandContext(ctx, browser.program("xclip"), "-selection", "clipboard", "-in")
-		clipboard.Env = browser.environment()
-		clipboard.Stdin = strings.NewReader(value.Text)
-		if err := clipboard.Run(); err != nil {
-			writeAPIError(writer, http.StatusServiceUnavailable, "Could not update browser clipboard")
-			return
-		}
-		if err := browser.input(ctx, "key", "--clearmodifiers", "ctrl+v"); err != nil {
+		if err := browser.paste(ctx, value.Text); err != nil {
 			writeAPIError(writer, http.StatusServiceUnavailable, err.Error())
 			return
 		}
