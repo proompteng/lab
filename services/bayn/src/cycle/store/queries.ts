@@ -285,10 +285,14 @@ export const makeCycleQueries = (
     const riskContext = document.mode === legacyExecutionAuthorityToken ? document.bindings.riskContext : undefined
     const riskState = document.mode === legacyExecutionAuthorityToken ? document.deltaRisk[0]?.facts?.state : undefined
     const riskContextEvidence =
-      riskContext === undefined || riskState === undefined
-        ? sql`${riskContext === undefined}`
+      riskContext === undefined
+        ? sql`${document.mode !== legacyExecutionAuthorityToken}`
         : sql`
-            reconciliation.reconciled_at = ${riskState.reconciliation.reconciledAt}::timestamptz
+            ${
+              riskState === undefined
+                ? sql`${document.targetPlan.intentTargets.length === 0 && document.deltaRisk.length === 0}`
+                : sql`reconciliation.reconciled_at = ${riskState.reconciliation.reconciledAt}::timestamptz`
+            }
             AND EXISTS (
               SELECT 1
               FROM authority_state AS authority
@@ -310,17 +314,17 @@ export const makeCycleQueries = (
               SELECT sum(transaction.notional_micros)::text
               FROM accounting_transactions AS transaction
               WHERE transaction.account_id = ${document.bindings.accountId}
-                AND transaction.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND transaction.occurred_at <= reconciliation.reconciled_at
                 AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date =
-                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+                  (reconciliation.reconciled_at AT TIME ZONE 'America/New_York')::date
             ), '0') = ${riskContext.dailyTradedNotionalMicros}
             AND (
               SELECT valuation.equity_micros::text
               FROM valuations AS valuation
               WHERE valuation.account_id = ${document.bindings.accountId}
-                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND valuation.as_of <= reconciliation.reconciled_at
                 AND (valuation.as_of AT TIME ZONE 'America/New_York')::date =
-                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+                  (reconciliation.reconciled_at AT TIME ZONE 'America/New_York')::date
               ORDER BY valuation.as_of, valuation.valuation_id COLLATE "C"
               LIMIT 1
             ) = ${riskContext.dayStartEquityMicros}
@@ -328,7 +332,7 @@ export const makeCycleQueries = (
               SELECT max(valuation.equity_micros)::text
               FROM valuations AS valuation
               WHERE valuation.account_id = ${document.bindings.accountId}
-                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND valuation.as_of <= reconciliation.reconciled_at
             ) = ${riskContext.peakEquityMicros}
             AND (
               SELECT count(*)::integer
@@ -337,7 +341,7 @@ export const makeCycleQueries = (
                 SELECT event.operation, event.event_type
                 FROM mutation_events AS event
                 WHERE event.intent_id = intent.intent_id
-                  AND event.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                  AND event.occurred_at <= reconciliation.reconciled_at
                 ORDER BY
                   CASE event.operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC,
                   event.sequence DESC
@@ -354,7 +358,7 @@ export const makeCycleQueries = (
                     AND latest.event_type = 'RECOVERY_FOUND'
                     AND (
                       intent.state <> 'TERMINAL'
-                      OR intent.updated_at > ${riskState.reconciliation.reconciledAt}::timestamptz
+                      OR intent.updated_at > reconciliation.reconciled_at
                     )
                   )
                 )

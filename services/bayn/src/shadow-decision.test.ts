@@ -10,6 +10,8 @@ import { Effect, Exit, Layer, ManagedRuntime, Option, Redacted, Result, Schema }
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { CycleStore, CycleStoreLive } from './cycle/store'
+import { makeCycleQueries } from './cycle/store/queries'
+import { DecisionEvidenceMismatch } from './cycle/store/model'
 import { PostgresClientLive } from './db/postgres-client'
 import { postgresMigrations } from './db/postgres-migrations'
 import { baynTestPostgresUrl } from './test-environment.test-support'
@@ -55,6 +57,7 @@ import { strictParseOptions } from './schemas'
 import {
   buildExecutionDecision,
   buildObserveShadowDecision,
+  type ExecutionDecisionInput,
   type ObserveShadowDecisionInput,
   type ShadowDeltaRiskInput,
 } from './shadow-decision'
@@ -517,8 +520,140 @@ const executionSession = (input: ObserveShadowDecisionInput) => {
   )
 }
 
+const fixtureRiskContext = (
+  input: ObserveShadowDecisionInput,
+  riskInputs = input.riskInputs,
+): ExecutionDecisionInput['riskContext'] => {
+  const state = riskInputs[0]?.state
+  return {
+    authority: state?.authority ?? {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: hash('6'),
+      maximum: Authority.Execution,
+      effective: Authority.Execution,
+      kill: KillState.Clear,
+      version: 1,
+      updatedAt: brokerObservedAt,
+    },
+    authorityObservedAt: state?.authorityObservedAt ?? brokerObservedAt,
+    unknownMutationCount: state?.unknownMutationCount ?? 0,
+    dailyTradedNotionalMicros: state?.dailyTradedNotionalMicros ?? '0',
+    dayStartEquityMicros: state?.dayStartEquityMicros ?? input.plannerInput.brokerState.account.equityMicros,
+    peakEquityMicros: state?.peakEquityMicros ?? input.plannerInput.brokerState.account.equityMicros,
+  }
+}
+
 describe('intraday shadow decision', () => {
   const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
+  postgresTest('migrated cycle guard validates constructed no-trade plans against durable risk facts', async () => {
+    if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
+    const url = new URL(baynTestPostgresUrl)
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test')) {
+      throw new Error('risk-context regression requires a disposable local test database')
+    }
+    const input = fixture()
+    const riskContext = {
+      ...fixtureRiskContext(input),
+      authority: { ...fixtureRiskContext(input).authority, version: 2 },
+    }
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext,
+        executionSession: executionSession(input),
+      }),
+    )
+    expect(input.riskInputs).toEqual([])
+    expect(document.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
+    expect(document.deltaRisk).toEqual([])
+    expect(document.bindings.riskContext).toEqual(riskContext)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+    const runtime = ManagedRuntime.make(
+      PostgresClientLive({
+        operationTimeoutMs: 30_000,
+        postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
+      }).pipe(Layer.provideMerge(NodeServices.layer)),
+    )
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          yield* sql`DROP SCHEMA public CASCADE`
+          yield* sql`CREATE SCHEMA public`
+          yield* postgresMigrations
+          const reconciliation = input.plannerInput.brokerState.reconciliation
+          yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id,
+          expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+          VALUES (${reconciliation.reconciliationId}, ${reconciliation.schemaVersion}, ${accountId},
+          ${reconciliation.expectedHash}, ${reconciliation.observedHash}, ${reconciliation.contentHash},
+          ${reconciliation.status}, '[]'::jsonb, ${reconciliation.reconciledAt})`
+          const initialAt = new Date(Date.parse(brokerObservedAt) - 1000).toISOString()
+          yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
+          VALUES (${hash('1')}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${initialAt})`
+          yield* sql`INSERT INTO authority_generations (
+          generation_hash, schema_version, activation_schema_version, previous_generation_hash,
+          maximum, authority_version, activation_source_revision, activation_image_repository,
+          activation_image_digest, strategy_name, strategy_behavior_hash, strategy_parameter_hash,
+          strategy_parameter_schema_version, strategy_protocol_hash, account_id,
+          broker_identity_schema_version, broker_identity_hash, broker_provider, broker_environment,
+          risk_policy_hash, proof_plan_hash, reconciliation_id, reconciliation_content_hash,
+          research_plan_hash, activated_at
+        ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
+          ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
+          ${`sha256:${hash('4')}`}, 'intraday-momentum', ${hash('5')}, ${hash('7')},
+          'bayn.intraday-momentum.protocol.v2', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
+          ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
+          yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
+          VALUES ('bayn.paper-authority.v1', ${hash('1')}, ${Authority.Observe}, ${Authority.Observe}, ${KillState.Clear}, 1, ${initialAt})`
+          yield* sql`UPDATE authority_state SET generation_hash = ${hash('6')}, maximum = ${Authority.Execution},
+          effective = ${Authority.Execution}, version = 2, updated_at = ${brokerObservedAt} WHERE singleton`
+          yield* sql`INSERT INTO valuations (valuation_id, schema_version, account_id, source_hash,
+          cash_micros, long_market_value_micros, short_market_value_micros, equity_micros, as_of)
+          VALUES (${hash('a')}, 'bayn.paper-valuation.v1', ${accountId}, ${hash('b')},
+          ${riskContext.dayStartEquityMicros}, 0, 0, ${riskContext.dayStartEquityMicros}, ${reconciliation.reconciledAt})`
+          const marketData = document.bindings.executionMarketData
+          if (marketData?.schemaVersion !== 'bayn.execution-market-data-binding.v3')
+            throw new Error('missing streaming fixture binding')
+          yield* sql`INSERT INTO streaming_snapshot_references (snapshot_id, schema_version, content_hash, observed_at, manifest)
+          VALUES (${marketData.snapshotId}, 'bayn.streaming-snapshot-reference.v1', ${marketData.contentHash},
+          ${marketData.observedAt}, ${sql.json({
+            schemaVersion: 'bayn.streaming-market-snapshot.v1',
+            streaming: { schemaVersion: 'bayn.streaming-input-cut.v1' },
+            snapshotId: marketData.snapshotId,
+            contentHash: marketData.contentHash,
+            observedAt: marketData.observedAt,
+          })})`
+          const queries = makeCycleQueries(sql)
+          expect(yield* queries.decisionEvidenceMismatch(document)).toBeNull()
+          const { contentHash: _contentHash, ...material } = document
+          const { riskContext: _riskContext, ...historicalBindings } = material.bindings
+          const historical = value(makeExecutionDecisionDocument({ ...material, bindings: historicalBindings }))
+          expect(Result.isSuccess(decodeExecutionDecisionDocument(historical))).toBe(true)
+          expect(yield* queries.decisionEvidenceMismatch(historical)).toBe(DecisionEvidenceMismatch.RiskContext)
+          for (const forgedContext of [
+            { ...riskContext, authority: { ...riskContext.authority, version: 3 } },
+            { ...riskContext, dayStartEquityMicros: (BigInt(riskContext.dayStartEquityMicros) + 1n).toString() },
+            { ...riskContext, peakEquityMicros: (BigInt(riskContext.peakEquityMicros) + 1n).toString() },
+            { ...riskContext, dailyTradedNotionalMicros: '1' },
+            { ...riskContext, unknownMutationCount: 1 },
+          ]) {
+            const forged = value(
+              makeExecutionDecisionDocument({
+                ...material,
+                bindings: { ...material.bindings, riskContext: forgedContext },
+              }),
+            )
+            expect(Result.isSuccess(decodeExecutionDecisionDocument(forged))).toBe(true)
+            expect(yield* queries.decisionEvidenceMismatch(forged)).toBe(DecisionEvidenceMismatch.RiskContext)
+          }
+        }),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
   postgresTest(
     'migrated cycle guard rejects a later expired bound target before its held SELL predecessor fills',
     async () => {
@@ -532,6 +667,7 @@ describe('intraday shadow decision', () => {
         buildExecutionDecision({
           ...input,
           authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
           executionSession: executionSession(input),
         }),
       )
@@ -626,6 +762,7 @@ describe('intraday shadow decision', () => {
         buildExecutionDecision({
           ...input,
           authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
           executionSession: executionSession(input),
         }),
       )
@@ -778,6 +915,7 @@ describe('intraday shadow decision', () => {
         buildExecutionDecision({
           ...input,
           authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
           executionSession: executionSession(input),
         }),
       )
@@ -874,6 +1012,7 @@ describe('intraday shadow decision', () => {
       buildExecutionDecision({
         ...input,
         authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
         executionSession: executionSession(input),
       })
     const input = fixture({ AAPL: 0.02 }, true, `replay-${hash('b')}`)
@@ -903,6 +1042,7 @@ describe('intraday shadow decision', () => {
       buildExecutionDecision({
         ...input,
         authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
         executionSession: executionSession(input),
       }),
     )
@@ -942,11 +1082,13 @@ describe('intraday shadow decision', () => {
 
   test('assembles the same no-trade material under execution authority without broker intents', async () => {
     const input = fixture()
+    const riskContext = fixtureRiskContext(input)
 
     const document = await Effect.runPromise(
       buildExecutionDecision({
         ...input,
         authorityGenerationHash: hash('6'),
+        riskContext,
         executionSession: executionSession(input),
       }),
     )
@@ -958,6 +1100,8 @@ describe('intraday shadow decision', () => {
       deltaRisk: [],
     })
     expect(document.strategyDecision).toEqual(input.compiledDecision)
+    expect(document.bindings.riskContext).toEqual(riskContext)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
   })
 
   test('rejects retired intraday-v1 and v2 contracts at every execution boundary', async () => {
@@ -966,6 +1110,7 @@ describe('intraday shadow decision', () => {
       buildExecutionDecision({
         ...input,
         authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
         executionSession: executionSession(input),
       }),
     )
@@ -1055,6 +1200,7 @@ describe('intraday shadow decision', () => {
       buildExecutionDecision({
         ...input,
         authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
         executionSession: executionSession(input),
       }),
     )
@@ -1264,6 +1410,7 @@ describe('intraday shadow decision', () => {
         ...input,
         riskInputs,
         authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input, riskInputs),
         executionSession: executionSession(input),
       }),
     )
@@ -1317,6 +1464,7 @@ describe('intraday shadow decision', () => {
       buildExecutionDecision({
         ...input,
         authorityGenerationHash,
+        riskContext: fixtureRiskContext(input),
         executionSession: executionSession(input),
       }),
     )
@@ -1368,6 +1516,7 @@ describe('intraday shadow decision', () => {
       buildExecutionDecision({
         ...input,
         authorityGenerationHash,
+        riskContext: fixtureRiskContext(input),
         executionSession: executionSession(input),
       }),
     )
@@ -1419,6 +1568,7 @@ describe('intraday shadow decision', () => {
       buildExecutionDecision({
         ...input,
         authorityGenerationHash,
+        riskContext: fixtureRiskContext(input),
         executionSession: executionSession(input),
       }),
     )

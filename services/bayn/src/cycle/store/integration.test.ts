@@ -747,6 +747,11 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           ...document,
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
+        const nonemptyPlanMissingRiskFacts = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          deltaRisk: [],
+          targetPlan: { intentTargets: [{}] },
+        } as unknown as ExecutionDecisionDocument)
         return {
           missingStreamReference,
           exact,
@@ -759,6 +764,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           forgedEquity,
           forgedPolicyHash,
           forgedReconciliationCutoff,
+          nonemptyPlanMissingRiskFacts,
         }
       }),
     )
@@ -775,6 +781,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       forgedEquity: DecisionEvidenceMismatch.RiskContext,
       forgedPolicyHash: DecisionEvidenceMismatch.RiskContext,
       forgedReconciliationCutoff: DecisionEvidenceMismatch.RiskContext,
+      nonemptyPlanMissingRiskFacts: DecisionEvidenceMismatch.RiskContext,
     })
   })
 
