@@ -2,7 +2,9 @@
 set -euo pipefail
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
+if ! mountpoint -q /dev; then
+  mount -t devtmpfs devtmpfs /dev
+fi
 mkdir -p /dev/pts /run /tmp
 mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=0755 tmpfs /run

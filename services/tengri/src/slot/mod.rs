@@ -266,7 +266,11 @@ impl Slot {
 
     async fn prepare_vm(&mut self) -> anyhow::Result<()> {
         self.vm = Some(Vmm::boot(&self.config).await?);
-        vmm::wait_guest(&self.config.vsock(), Duration::from_secs(35 * 60)).await?;
+        self.vm
+            .as_mut()
+            .context("missing VMM during preparation")?
+            .wait_guest(&self.config.vsock(), Duration::from_secs(35 * 60))
+            .await?;
         let snapshot = self.save_vm().await?;
         self.transition(SlotState::Vacant { snapshot }).await
     }

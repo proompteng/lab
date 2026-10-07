@@ -201,6 +201,15 @@ impl Vmm {
         Ok(self.child.try_wait()?.is_none())
     }
 
+    pub async fn wait_guest(&mut self, path: &Path, allowance: Duration) -> anyhow::Result<()> {
+        tokio::select! {
+            status = self.child.wait() => {
+                anyhow::bail!("Firecracker exited before guest readiness: {}", status?);
+            }
+            result = wait_guest(path, allowance) => result,
+        }
+    }
+
     pub async fn stop(&mut self) -> anyhow::Result<()> {
         self.child
             .kill()
@@ -276,7 +285,7 @@ pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value
     .context("guest lifecycle timed out")?
 }
 
-pub async fn wait_guest(path: &Path, allowance: Duration) -> anyhow::Result<()> {
+async fn wait_guest(path: &Path, allowance: Duration) -> anyhow::Result<()> {
     let deadline = Instant::now() + allowance;
     loop {
         match guest_command(path, &json!({"action": "ready"})).await {
@@ -333,4 +342,33 @@ pub fn evict_memory(path: &Path) -> anyhow::Result<()> {
 #[cfg(not(target_os = "linux"))]
 pub fn evict_memory(_: &Path) -> anyhow::Result<()> {
     bail!("snapshot RAM release requires Linux")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn exited_vmm_fails_preparation_without_waiting_for_the_guest_deadline() {
+        let child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        let mut vm = Vmm {
+            child,
+            api: Client::new(),
+        };
+        let result = timeout(
+            Duration::from_secs(1),
+            vm.wait_guest(
+                Path::new("/nonexistent-tengri-vmm-test.sock"),
+                Duration::from_secs(35 * 60),
+            ),
+        )
+        .await
+        .expect("an exited VMM must fail preparation promptly");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Firecracker exited")
+        );
+    }
 }
