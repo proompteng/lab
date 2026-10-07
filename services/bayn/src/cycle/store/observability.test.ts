@@ -240,7 +240,7 @@ describe('cycle observability projection', () => {
       authority_effective: Authority.Observe,
       authority_kill: KillState.Clear,
       authority_reason: null,
-      authority_updated_at: sqlTimestamp('2026-07-24T21:02:00.000Z'),
+      authority_updated_at: '2026-07-24T21:02:00.000Z',
       reconciliation_id: '4'.repeat(64),
       reconciliation_account_id: 'paper-account-1',
       reconciliation_status: ReconciliationStatus.Exact,
