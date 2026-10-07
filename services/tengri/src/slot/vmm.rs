@@ -373,6 +373,21 @@ pub fn evict_memory(_: &Path) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn eviction_rejects_empty_snapshots_and_releases_synced_pages() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!("tengri-memory-{}", uuid::Uuid::new_v4()));
+        let mut file = std::fs::File::create(&path).unwrap();
+        assert!(evict_memory(&path).is_err());
+        file.write_all(&[1_u8; 4096]).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        evict_memory(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), [1_u8; 4096]);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[tokio::test]
     async fn exited_vmm_fails_preparation_without_waiting_for_the_guest_deadline() {
         let child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();

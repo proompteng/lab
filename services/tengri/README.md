@@ -26,8 +26,8 @@ sets the guest clock, binds the owner, and checks files, a PTY round trip, and i
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
 If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
-Obsolete-generation cleanup also runs after retaining the completed snapshot, so a transient pruning failure can
-retry that same commit. A failed save that resumes the live guest also retains its pending `Awake` commit until durable;
+Snapshot page eviction and obsolete-generation cleanup run after retaining the completed snapshot, so either failure can
+retry that same commit without saving again. A failed save that resumes the live guest also retains its pending `Awake` commit until durable;
 a retry publishes that recovered state and reports the failed sleep without claiming RAM release.
 Only the same owner and epoch can retry either outcome. A runner restart still requires explicit fenced recovery for an interrupted save.
 
