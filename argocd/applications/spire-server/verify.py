@@ -17,6 +17,46 @@ def kubectl(context, namespace, *args, check=True):
     )
 
 
+def verify_ha(context):
+    database = json.loads(
+        kubectl(
+            context, "spire-server", "get", "cluster", "spire-db", "-o", "json"
+        ).stdout
+    )
+    assert database["spec"]["instances"] == 3, "expected three PostgreSQL instances"
+    assert database["status"].get("readyInstances") == 3, (
+        "PostgreSQL is not fully ready"
+    )
+    for selector in (
+        "app.kubernetes.io/name=spire-server,app.kubernetes.io/instance=spire",
+        "cnpg.io/cluster=spire-db",
+    ):
+        replicas = json.loads(
+            kubectl(
+                context, "spire-server", "get", "pods", "-l", selector, "-o", "json"
+            ).stdout
+        )["items"]
+        replicas = [
+            pod for pod in replicas if not pod["metadata"].get("deletionTimestamp")
+        ]
+        hosts = {pod["spec"].get("nodeName") for pod in replicas}
+        assert len(replicas) == 3 and len(hosts) == 3 and None not in hosts, (
+            selector,
+            "HA replicas must use three distinct hosts",
+        )
+    config = json.loads(
+        kubectl(
+            context, "spire-server", "get", "configmap", "spire-server", "-o", "json"
+        ).stdout
+    )
+    server = json.loads(config["data"]["server.conf"])
+    datastore = server["plugins"]["DataStore"][0]["sql"]["plugin_data"]
+    assert datastore["database_type"] == "postgres", "SPIRE is not using PostgreSQL"
+    assert "sslmode=verify-full" in datastore["connection_string"], (
+        "PostgreSQL TLS is not verified"
+    )
+
+
 def verify(context, timeout):
     expected = "spiffe://proompteng.ai/ns/spire-test/sa/identity-canary"
     nodes = json.loads(
@@ -45,6 +85,10 @@ def verify(context, timeout):
         )
         ready = status.get("numberReady", status.get("readyReplicas", 0))
         assert ready == desired and desired > 0, (name, status)
+        if name == "spire-server":
+            assert desired == 3, (name, "expected three HA replicas")
+            assert status.get("updatedReplicas") == 3, "SPIRE rollout is incomplete"
+    verify_ha(context)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         pods = json.loads(
