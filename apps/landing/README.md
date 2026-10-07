@@ -55,7 +55,8 @@ requires an attested SPIRE identity too. Native tests use a private fixture Work
 
 The Codex view places user messages on the right with left-aligned text and a subtle background, and agent responses
 on the left, without visible speaker headings. The rounded composer uses a subtle border and keeps model and reasoning
-choices beside the send/stop control. Prompt suggestions prepare a
+choices beside the send/stop control. Composer height updates before paint, preserves scrolling within long drafts,
+and observes width changes without restarting the observer on each keystroke. Prompt suggestions prepare a
 draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
