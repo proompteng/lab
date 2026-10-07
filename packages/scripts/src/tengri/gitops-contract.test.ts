@@ -67,7 +67,7 @@ test('Tengri network isolation survives Application deletion', () => {
   expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
     'tengri-control-plane',
     'tengri-default-deny',
-    'tengri-microvm-guests',
+    'tengri-slots',
   ])
   for (const policy of policies) {
     expect(policy.metadata?.annotations?.['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
