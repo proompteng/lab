@@ -99,6 +99,13 @@ These background capture spans are outside the execution-stage profile and retai
 
 ## Alert actions
 
+For `SNAPSHOT_STALE`, correlate `Streaming market snapshot rejected` with the pass's trace ID in Loki. Inspect its
+exact `eventAt` and `ingestedAt`, `ingestionDelayDirection`, `publicationDelayMs`, and minimum or maximum publication
+bound. Fresh quotes and a complete bar/feature join do not establish timely original publication. A late required
+benchmark bar blocks every window that contains it; retain its source timestamps and never backdate a recovery.
+Kafka bootstrap, supervision and 30-second projection measurements use the native worker's structured JSON logger.
+Confirm the current Restate registration's label selector before comparing workers; retained revisions can coexist.
+
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.
   If Bayn failed before HTTP startup, inspect startup logs and compare configured provenance with the embedded
   source revision, image digest, strategy behavior hash, and strategy parameter hash.
