@@ -172,6 +172,50 @@ test.each(['empty', 'idle', 'flushed'] as const)('finalization never waits for a
   ),
 )
 
+test.each([false, true])(
+  'the write deadline invalidates admission before uninterruptible commit cleanup (raw=%s)',
+  (raw) =>
+    run(
+      Effect.gen(function* () {
+        const saved = memory()
+        const entered = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const recorder = yield* makeResearchCaptureRecorder(
+          {
+            ...saved.store,
+            append: (bytes) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined)
+                yield* Deferred.await(release)
+                yield* saved.store.append(bytes)
+              }).pipe(Effect.uninterruptible),
+          },
+          { ...options, maximumQueuedBytes: 131_072 },
+          raw ? { putVerified: () => Effect.void } : undefined,
+        )
+        recorder.record(captureEvent('STARTED'))
+        yield* TestClock.adjust(options.flushIntervalMs)
+        yield* Deferred.await(entered)
+        yield* TestClock.adjust(options.writeTimeoutMs)
+        const deadline = yield* recorder.status
+        recorder.record(captureEvent('STOPPED'))
+        const afterRecord = yield* recorder.status
+        const commitsBeforeRelease = saved.chunks.length
+        yield* Deferred.succeed(release, undefined)
+        yield* TestClock.adjust(1)
+        const cleaned = yield* recorder.status
+        expect(commitsBeforeRelease).toBe(0)
+        expect(saved.chunks).toHaveLength(1)
+        expect(cleaned.persistedReceipts).toBe(0)
+        expect(cleaned.invalidations).toContain(CaptureInvalidation.Persistence)
+        expect(deadline.invalidations).toContain(CaptureInvalidation.Persistence)
+        expect(afterRecord.retainedPayloadBytes).toBe(deadline.retainedPayloadBytes)
+        expect(afterRecord.retainedReceipts).toBe(deadline.retainedReceipts)
+        expect(afterRecord.observedReceipts).toBe(deadline.observedReceipts + 1)
+      }),
+    ),
+)
+
 test('capture admission is synchronous, immutable, and finalized exactly once', () =>
   run(
     Effect.gen(function* () {
