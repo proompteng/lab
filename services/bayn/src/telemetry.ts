@@ -243,12 +243,21 @@ export const withObservedStage =
                 : slow
                   ? Effect.logWarning('Bayn operation exceeded its diagnostic threshold')
                   : Effect.logInfo('Bayn execution stage completed')
-              return log.pipe(
-                Effect.annotateLogs({
-                  service: 'bayn',
-                  ...identity,
-                  elapsedMs,
-                  outcome,
+              return Effect.currentSpan.pipe(
+                Effect.orDie,
+                Effect.flatMap((span) => {
+                  const backendPid = span.attributes.get('postgresql.pid')
+                  return log.pipe(
+                    Effect.annotateLogs({
+                      service: 'bayn',
+                      ...identity,
+                      elapsedMs,
+                      outcome,
+                      ...(typeof backendPid === 'number' && Number.isInteger(backendPid) && backendPid > 0
+                        ? { 'postgresql.pid': backendPid }
+                        : {}),
+                    }),
+                  )
                 }),
               )
             }),
