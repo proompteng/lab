@@ -82,6 +82,14 @@ Check Loki/Tempo retention and query completeness before calling the session rec
 missing CPU throttle metrics or an idle database sample remain UNKNOWN. Database waits and synchronous replication
 require the measurements below; a readiness endpoint or a fast idle pass does not prove session performance.
 
+When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
+exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
+`VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
+therefore remain distinguishable after cancellation. The span records only the dependency, operation, byte length
+and phase; credentials, endpoint, bucket, object keys and raw payloads are excluded. A verified object does not prove
+that its chunk committed to PostgreSQL, and an invalidated capture or unknown write outcome never qualifies a source.
+These background capture spans are outside the execution-stage profile and retain the one-second object deadline.
+
 ## Alert actions
 
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.
