@@ -130,8 +130,10 @@ export const persistResearchCaptureExportChunk = (
   objects: ReturnType<typeof buildResearchCaptureExportChunk>,
 ) =>
   Effect.gen(function* () {
-    yield* store.putVerified(objects.raw)
-    yield* store.putVerified(objects.metadata)
+    yield* Effect.all([store.putVerified(objects.raw), store.putVerified(objects.metadata)], {
+      concurrency: 2,
+      discard: true,
+    })
     yield* store.putVerified(objects.index)
     return objects.index.contentHash
   })
