@@ -104,6 +104,14 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   }
   await expect(chrome.getByText('Starting Chrome…')).not.toBeVisible()
   await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toHaveCount(0)
+  // The initial display is scaled until noVNC finishes resizing the guest.
+  await expect
+    .poll(async () => {
+      const display = (await computer({ action: 'screenshot' })).structuredContent
+      const bounds = await canvas.boundingBox()
+      return bounds && display.width === Math.round(bounds.width) && display.height === Math.round(bounds.height)
+    })
+    .toBe(true)
   await canvas.click({ position: { x: 350, y: 60 } })
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
   const humanUrl = `http://127.0.0.1:8080/_test/site?human=1&run=${Date.now()}`
@@ -135,11 +143,13 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   const bytes = Buffer.from(image.data, 'base64')
   expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   await testInfo.attach('agent-sees-shared-chromium', { body: bytes, contentType: 'image/png' })
-  await computer({ action: 'navigate', url: 'http://127.0.0.1:8080/_test/site?agent=1' })
-  await expect.poll(async () => (await state()).loaded?.url).toContain('?agent=1')
+  const agentUrl = `http://127.0.0.1:8080/_test/site?agent=1&run=${Date.now()}`
+  await computer({ action: 'navigate', url: agentUrl })
+  await expect.poll(async () => (await state()).loaded?.url).toBe(agentUrl)
   expect((await state()).loaded.previousCookie).toContain('browser-proof=persistent')
   expect((await state()).loaded.previousStorage).toBe('persistent')
-  await computer({ action: 'click', x: 150, y: 260 })
+  const { x, y } = (await state()).loaded.messageCenter
+  await computer({ action: 'click', x, y })
   await computer({ action: 'type', text: 'Agent CUA input works' })
   await computer({ action: 'key', key: 'Return' })
   await expect.poll(async () => (await state()).submitted?.message).toBe('Agent CUA input works')
