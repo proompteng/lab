@@ -8,6 +8,7 @@ import {
   mergePersistedConversationRegistry,
   mergeSameIdStoredConversations,
   readStoredConversations,
+  resolveConversationTitle,
   touchStoredConversation,
   truncateConversationTitle,
   upsertStoredConversation,
@@ -200,5 +201,21 @@ describe('agent conversation storage', () => {
       { id: 'thread-b', title: 'Beta', updatedAt: 2 },
       { id: 'thread-a', title: 'Alpha', updatedAt: 1 },
     ])
+  })
+})
+
+describe('resolveConversationTitle', () => {
+  test('keeps an existing real registry title over a truncated transcript title', () => {
+    expect(resolveConversationTitle('Original first prompt', 'A later prompt', 'hint')).toBe('Original first prompt')
+  })
+
+  test('uses the transcript title when the registry only has the default title', () => {
+    expect(resolveConversationTitle('New conversation', 'First prompt', 'hint')).toBe('First prompt')
+    expect(resolveConversationTitle('', 'First prompt')).toBe('First prompt')
+  })
+
+  test('falls back to the hint, then the default title', () => {
+    expect(resolveConversationTitle('', '', 'Typed prompt')).toBe('Typed prompt')
+    expect(resolveConversationTitle('', '')).toBe('New conversation')
   })
 })

@@ -40,6 +40,7 @@ import {
   conversationTitleFromRegistry,
   markStoredConversationUnavailable,
   readStoredConversations,
+  resolveConversationTitle,
   touchStoredConversation,
   truncateConversationTitle,
   upsertStoredConversation,
@@ -378,8 +379,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
       if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
       setConversations((current) => {
-        const title = truncateConversationTitle(
-          titleFromTranscript(restored.historyItems) || titleHint || conversationTitleFromRegistry(current, thread.id),
+        const title = resolveConversationTitle(
+          conversationTitleFromRegistry(current, thread.id),
+          titleFromTranscript(restored.historyItems),
+          titleHint,
         )
         return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt: Date.now() }, current)
       })

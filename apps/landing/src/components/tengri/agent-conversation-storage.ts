@@ -195,3 +195,13 @@ export function markStoredConversationUnavailable(
 export function conversationTitleFromRegistry(current: readonly StoredConversation[], threadId: string) {
   return current.find((conversation) => conversation.id === threadId)?.title || ''
 }
+
+/**
+ * Sidebar title for a resumed thread. A real (non-default) registry title wins, because the
+ * restored transcript is bounded and may have evicted the thread's actual first user message.
+ */
+export function resolveConversationTitle(registryTitle: string, transcriptTitle: string, titleHint = '') {
+  const stored = registryTitle.trim()
+  if (stored && stored !== 'New conversation') return truncateConversationTitle(stored)
+  return truncateConversationTitle(transcriptTitle || titleHint || stored)
+}
