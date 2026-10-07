@@ -92,7 +92,7 @@ const DESKTOP_ID_PATTERN = /^[0-9a-f]{32}$/
 const desktopIdentityLeases = new Map<string, DesktopIdentityLease>()
 
 function desktopLayoutStorageKey(agentId: string, desktopId: string) {
-  return `tengri:windows:${agentId}:${desktopId}`
+  return `tengri:windows:${agentId}:${desktopId}:v2`
 }
 
 function newDesktopId() {

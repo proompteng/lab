@@ -851,6 +851,86 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   }
 }
 
+test('aborts cold browser startup on close so guest lifecycle actions can proceed', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.addInitScript(() => {
+    const nativeFetch = window.fetch.bind(window)
+    const startup = { started: 0, aborted: 0 }
+    Object.assign(window, { browserStartup: startup })
+    window.fetch = Object.assign(
+      (input: RequestInfo | URL, options?: RequestInit) => {
+        if (typeof options?.body === 'string' && JSON.parse(options.body).action === 'browser-session') {
+          startup.started += 1
+          return new Promise<Response>((_resolve, reject) => {
+            const abort = () => {
+              startup.aborted += 1
+              reject(options.signal?.reason)
+            }
+            if (options.signal?.aborted) abort()
+            else options.signal?.addEventListener('abort', abort, { once: true })
+          })
+        }
+        return nativeFetch(input, options)
+      },
+      { preconnect: window.fetch.preconnect },
+    )
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  const chrome = page.getByRole('region', { name: 'Chrome window', exact: true })
+  await expect(chrome.getByRole('status')).toHaveText('Starting Chrome…')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  const settings = page.getByRole('region', { name: 'Settings window', exact: true })
+  const sleep = settings.getByRole('button', { name: 'Sleep Agent', exact: true })
+  await expect(sleep).toBeDisabled()
+  await chrome.getByRole('button', { name: 'Close Chrome', exact: true }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const startup = (window as typeof window & { browserStartup: { started: number; aborted: number } })
+          .browserStartup
+        return startup.aborted > 0 && startup.aborted === startup.started
+      }),
+    )
+    .toBe(true)
+  await expect(sleep).toBeEnabled()
+  await sleep.click()
+  await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
+})
+
+test('resets the previous agent-in-Chrome layout without starting a browser or losing the conversation', async ({
+  page,
+}) => {
+  const mock = await mockTengri(page)
+  await page.addInitScript(() => {
+    const desktopId = '0123456789abcdef0123456789abcdef'
+    const bounds = { x: 300, y: 100, width: 1060, height: 700 }
+    sessionStorage.setItem('tengri:desktop:microvm-ada', desktopId)
+    sessionStorage.setItem(
+      `tengri:windows:microvm-ada:${desktopId}`,
+      JSON.stringify({
+        activeApp: 'chrome',
+        activeWindowId: 'chrome-2',
+        nextWindowId: 3,
+        nextZ: 3,
+        windows: [
+          { id: 'chrome-2', app: 'chrome', title: 'Chrome', bounds, restoredBounds: bounds, z: 2, mode: 'normal' },
+        ],
+      }),
+    )
+    localStorage.setItem('tengri-thread:microvm-ada', 'saved-thread')
+  })
+  await page.goto('/')
+  await expect(page.getByRole('region', { name: 'Tengri window', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Chrome window', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'Message your agent', exact: true })).toBeEnabled()
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'resume-thread' && action.threadId === 'saved-thread'))
+    .toBe(true)
+  expect(mock.actions.some((action) => action.action === 'browser-session')).toBe(false)
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('saved-thread')
+})
+
 test('serializes slow Finder refreshes and reports bounded search results', async ({ page }) => {
   const mock = await mockTengri(page, {
     searchDelays: { missing: 2_100 },
@@ -1793,7 +1873,7 @@ test('refits persisted windows above the Dock after reload and browser resize', 
   await page.evaluate(
     ({ agentId, desktopId, oldBounds }) => {
       if (!desktopId) throw new Error('desktop identity was not persisted')
-      const key = `tengri:windows:${agentId}:${desktopId}`
+      const key = `tengri:windows:${agentId}:${desktopId}:v2`
       const state = JSON.parse(sessionStorage.getItem(key) ?? 'null') as {
         windows?: Array<{ app?: string; bounds?: object; restoredBounds?: object; mode?: string }>
       }

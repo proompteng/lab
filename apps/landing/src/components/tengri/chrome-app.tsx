@@ -24,6 +24,7 @@ export function ChromeApp({
   focus.current = onFocus
 
   useEffect(() => {
+    const controller = new AbortController()
     let disposed = false
     let issued: TengriPreviewSession | null = null
     setReady(false)
@@ -39,7 +40,7 @@ export function ChromeApp({
         },
         { keepalive: true },
       ).catch(() => undefined)
-    void runTengriAction<TengriPreviewSession>({ action: 'browser-session', agentId })
+    void runTengriAction<TengriPreviewSession>({ action: 'browser-session', agentId }, controller.signal)
       .then((value) => {
         issued = value
         if (disposed) {
@@ -56,6 +57,7 @@ export function ChromeApp({
       })
     return () => {
       disposed = true
+      controller.abort()
       if (issued) void revoke(issued)
     }
   }, [agentId, attempt, previewGatewayOrigin])

@@ -4,6 +4,7 @@ Chrome opens a persistent, headed Chromium browser in the owner's MicroVM. The s
 Codex chat. Closing Chrome disconnects its preview and revokes the view grant. The browser process, cookies,
 local storage, profile, and downloaded files remain in the guest until the guest stops. The profile and downloaded
 files survive sleep and resume on the retained workspace.
+The application split resets saved desktop window layouts; saved conversations and guest browser data remain intact.
 
 ## Research
 
