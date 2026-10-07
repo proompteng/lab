@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-test('PostgreSQL deadline sockets preserve immediate writes, deadlines, TLS and Unix paths', async () => {
+test('PostgreSQL trace targets match deadline sockets and URL startup identity', async () => {
   const child = Bun.spawn(['bun', `${import.meta.dir}/postgres-client.test-support.ts`], {
     stdout: 'pipe',
     stderr: 'pipe',
@@ -14,7 +14,7 @@ test('PostgreSQL deadline sockets preserve immediate writes, deadlines, TLS and 
   const line = stdout.split('\n').find((value) => value.startsWith('POSTGRES_SOCKET_RESULT='))
   if (line === undefined) throw new Error(`PostgreSQL socket worker returned no result: ${stdout}`)
   expect(JSON.parse(line.slice('POSTGRES_SOCKET_RESULT='.length))).toEqual({
-    cases: ['tcp', 'tls', 'unix'],
-    sockets: 6,
+    cases: ['tcp', 'tls', 'unix', 'target-overrides', 'encoded-target'],
+    sockets: 10,
   })
 })
