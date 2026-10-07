@@ -9,8 +9,7 @@ import { Authority, type AuthorityState } from '../execution/contracts'
 import { CycleExecutionModelSchema } from '../execution-model-contract'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
-import { strategyDefinition, type StrategyRuntime } from '../strategy'
-import { defaultJevProtocolDocument } from '../jev/protocol'
+import { loadActiveStrategyProtocol, strategyDefinition, type StrategyRuntime } from '../strategy'
 import type {
   MutationAutonomousCycleInput,
   MutationCycleExecutionMode,
@@ -61,7 +60,7 @@ export const prepareObserveStartup = (
       }),
     )
   }
-  const sourceProtocolHash = canonicalHashV1Result(defaultJevProtocolDocument)
+  const sourceProtocolHash = loadActiveStrategyProtocol().pipe(Result.flatMap(canonicalHashV1Result))
   if (Result.isFailure(sourceProtocolHash) || sourceProtocolHash.success !== parameterHash.success) {
     return Result.fail(
       operationalError({

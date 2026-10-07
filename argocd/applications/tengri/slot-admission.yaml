@@ -1,0 +1,60 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tengri-slot-devices
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchConditions:
+    - name: allocated-kvm-tun
+      expression: >-
+        object.spec.containers.exists(c, has(c.resources) && has(c.resources.limits) &&
+          'runtime.proompteng.ai/kvm-tun' in c.resources.limits) ||
+        (has(object.spec.initContainers) && object.spec.initContainers.exists(c,
+          has(c.resources) && has(c.resources.limits) && 'runtime.proompteng.ai/kvm-tun' in c.resources.limits))
+  validations:
+    - expression: object.metadata.namespace == 'tengri' && object.spec.serviceAccountName == 'tengri-slot'
+      message: KVM and TUN allocation is reserved for Tengri slot Pods.
+    - expression: request.operation != 'CREATE' || request.userInfo.username == 'system:serviceaccount:tengri:tengri'
+      message: Only the Tengri controller may create a slot Pod.
+    - expression: >-
+        (!has(object.spec.hostNetwork) || !object.spec.hostNetwork) &&
+        (!has(object.spec.hostPID) || !object.spec.hostPID) &&
+        (!has(object.spec.hostIPC) || !object.spec.hostIPC) &&
+        (!has(object.spec.shareProcessNamespace) || !object.spec.shareProcessNamespace) &&
+        !has(object.spec.runtimeClassName) &&
+        has(object.spec.automountServiceAccountToken) && !object.spec.automountServiceAccountToken &&
+        object.spec.volumes.all(v, !has(v.hostPath) && !has(v.projected))
+      message: Slots require private namespaces, normal OCI execution, and no host mounts or API tokens.
+    - expression: >-
+        object.spec.containers.all(c, c.name in ['runner', 'supervisor'] &&
+          has(c.securityContext) && has(c.securityContext.privileged) && !c.securityContext.privileged &&
+          has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation &&
+          has(c.securityContext.capabilities) && c.securityContext.capabilities.drop == ['ALL'] &&
+          (c.name == 'supervisor' ? !has(c.securityContext.capabilities.add) :
+            c.securityContext.capabilities.add == ['MKNOD', 'SETUID', 'SETGID']))
+      message: Only the runner's brief private-device and UID setup may have startup capabilities.
+    - expression: >-
+        object.spec.initContainers.all(c, c.name in ['tap', 'guest-artifacts'] &&
+          has(c.securityContext) && !c.securityContext.privileged &&
+          !c.securityContext.allowPrivilegeEscalation && c.securityContext.capabilities.drop == ['ALL'] &&
+          (c.name == 'tap' ? c.securityContext.capabilities.add == ['NET_ADMIN'] :
+            !has(c.securityContext.capabilities.add)))
+      message: Only the short-lived TAP init container may have NET_ADMIN.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tengri-slot-devices
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  policyName: tengri-slot-devices
+  validationActions: [Deny]

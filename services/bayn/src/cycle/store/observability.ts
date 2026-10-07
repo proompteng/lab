@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
+import { databaseUtcInstant } from '../../db/clock'
 
 import {
   type CycleEconomicsObservation,
@@ -21,6 +22,7 @@ import {
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
   UtcInstantSchema,
+  UtcDatabaseInstantSchema,
   strictParseOptions,
 } from '../../schemas'
 
@@ -158,7 +160,7 @@ const ProjectionRowSchema = Schema.Struct({
   authority_effective: Schema.NullOr(Schema.Enum(Authority)),
   authority_kill: Schema.NullOr(Schema.Enum(KillState)),
   authority_reason: NullableString,
-  authority_updated_at: NullableDate,
+  authority_updated_at: Schema.NullOr(UtcDatabaseInstantSchema),
   reconciliation_id: NullableSha256,
   reconciliation_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   reconciliation_status: Schema.NullOr(Schema.Enum(ReconciliationStatus)),
@@ -297,7 +299,7 @@ const authorityFromRow = (
     effective: row.authority_effective,
     kill: row.authority_kill,
     reason: row.authority_reason,
-    updatedAt: row.authority_updated_at.toISOString(),
+    updatedAt: row.authority_updated_at,
   })
 }
 
@@ -808,7 +810,7 @@ const makeCycleObservability = Effect.gen(function* () {
             authority.effective AS authority_effective,
             authority.kill_state AS authority_kill,
             authority.reason AS authority_reason,
-            authority.updated_at AS authority_updated_at,
+            ${databaseUtcInstant(sql, sql`authority.updated_at`)} AS authority_updated_at,
             reconciliation.reconciliation_id,
             reconciliation.account_id AS reconciliation_account_id,
             reconciliation.status AS reconciliation_status,

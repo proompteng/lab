@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Exit } from 'effect'
+import { Effect, Exit, Logger, References, Tracer } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { CycleRunnerError, type CycleRunResult } from '../cycle/runner'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
+import { withObservedStage } from '../telemetry'
 import { advanceExecutionOnce } from './advance'
 
 const command = {
@@ -22,6 +24,124 @@ const driver = (observation: AutonomousCyclePassObservation, result?: CycleRunRe
 type RecoveredCycle = Extract<CycleRunResult, { readonly outcome: 'RECOVERED' }>['cycle']
 
 describe('advanceExecutionOnce', () => {
+  for (const failure of ['typed', 'defect', 'interruption'] as const) {
+    test(`reports the final stage profile once after ${failure} failure`, async () => {
+      const records: Readonly<Record<string, unknown>>[] = []
+      let finalized = 0
+      const logger = Logger.make(({ fiber, message }) => {
+        if (JSON.stringify(message).includes('Bayn execution advance did not complete'))
+          records.push(fiber.getRef(References.CurrentLogAnnotations))
+      })
+      const error = new CycleRunnerError({
+        operation: 'run-cycle-pass',
+        failure: 'operational',
+        message: 'injected failure',
+      })
+      const exit = await Effect.runPromise(
+        advanceExecutionOnce(command, {
+          advance: TestClock.adjust(250).pipe(
+            Effect.andThen(
+              failure === 'typed' ? Effect.fail(error) : failure === 'defect' ? Effect.die(error) : Effect.interrupt,
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                finalized += 1
+              }),
+            ),
+            withObservedStage('bayn.alpaca.mutation', { dependency: 'alpaca', operation: 'SUBMIT' }),
+          ),
+          nextDelayMs: 30_000,
+        }).pipe(Effect.exit, Effect.provide(TestClock.layer()), Effect.provide(Logger.layer([logger]))),
+      )
+      expect(Exit.isFailure(exit)).toBeTrue()
+      expect(finalized).toBe(1)
+      expect(records).toHaveLength(1)
+      expect(records[0]).toMatchObject({
+        outcome: failure === 'interruption' ? 'Interrupted' : 'Failed',
+        elapsedMs: 250,
+        stageTimings: [
+          {
+            stage: 'bayn.alpaca.mutation',
+            dependency: 'alpaca',
+            operation: 'SUBMIT',
+            count: 1,
+            inclusiveElapsedMs: 250,
+            maxElapsedMs: 250,
+            failures: failure === 'interruption' ? 0 : 1,
+            interruptions: failure === 'interruption' ? 1 : 0,
+          },
+        ],
+      })
+    })
+  }
+
+  test('reports correlated timings and resets the stage profile for every pass', async () => {
+    const records: Readonly<Record<string, unknown>>[] = []
+    const spans: Tracer.Span[] = []
+    const logger = Logger.make(({ fiber, message }) => {
+      if (
+        Array.isArray(message)
+          ? message.includes('Bayn execution advance completed')
+          : message === 'Bayn execution advance completed'
+      )
+        records.push(fiber.getRef(References.CurrentLogAnnotations))
+    })
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    const observation = { result: 'SUCCESS' as const, outcome: 'WINDOW_CLOSED' as const, observedAt: command.issuedAt }
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        for (const elapsedMs of [250, 10]) {
+          yield* advanceExecutionOnce(command, {
+            advance: TestClock.adjust(elapsedMs).pipe(
+              Effect.as({ observation }),
+              withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql' }),
+            ),
+            nextDelayMs: 30_000,
+          })
+        }
+      }).pipe(
+        Effect.provide(TestClock.layer()),
+        Effect.provide(Logger.layer([logger])),
+        Effect.provideService(Tracer.Tracer, tracer),
+      ),
+    )
+    expect(records).toHaveLength(2)
+    for (const [index, elapsedMs] of [250, 10].entries()) {
+      expect(records[index]).toMatchObject({
+        controllerKey: command.controllerKey,
+        epoch: command.epoch,
+        sequence: command.sequence,
+        sourceRevision: command.sourceRevision,
+        outcome: 'Waiting',
+        nextDelayMs: 30_000,
+        elapsedMs,
+        stageTimings: [
+          {
+            stage: 'bayn.execution-store.operation',
+            dependency: 'postgresql',
+            count: 1,
+            inclusiveElapsedMs: elapsedMs,
+            maxElapsedMs: elapsedMs,
+            failures: 0,
+            interruptions: 0,
+          },
+        ],
+      })
+      expect(records[index]?.['trace_id']).toMatch(/^[0-9a-f]{32}$/)
+    }
+    expect(
+      spans
+        .filter((span) => span.name === 'bayn.execution-store.operation')
+        .every((span) => span.attributes.get('bayn.dependency') === 'postgresql'),
+    ).toBeTrue()
+  })
+
   test('binds retained Jev references without changing legacy receipt bytes', async () => {
     const observation = {
       result: 'SUCCESS' as const,

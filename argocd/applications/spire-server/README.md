@@ -29,11 +29,15 @@ The server authenticates agents with Kubernetes projected service account tokens
 root, and `SYS_PTRACE`, and query the secure kubelet endpoint. The SPIFFE CSI driver mounts the node's Workload API socket
 into the registered application Pods.
 
-Firecracker guest processes use their own rootless agent under `galactic-guests`. Only `tengri:nanoagent` PSATs for
+Existing Kata Firecracker guests use their own rootless agent under `galactic-guests`. Only `tengri:nanoagent` PSATs for
 audience `spire-server` are accepted, and the agent ID contains its attested Pod UID. Tengri creates a `ClusterStaticEntry`
 whose parent is that agent and whose selector is `unix:uid:1000`; a Kubernetes admission policy prevents unrelated or
 privileged registrations. A host `ClusterSPIFFEID` cannot describe this VM-local Unix process, because that controller
 adds a host Kubernetes Pod selector to every registration.
+
+Prepared Tengri slots authenticate their host supervisor with a Pod-UID-specific `ClusterSPIFFEID`. Their Nanoagent
+uses a private slot credential over vsock. Keep the existing `galactic-guests` attestation, bundle publisher, ConfigMap,
+and RBAC through the separately authorized cutover; remove them only after the last old guest has stopped.
 
 The Kubernetes Service exposes SPIRE gRPC only on port 443 and forwards it to the Pod listener on 8081.
 Guest clients use Service port 443. The temporary listener-port alias has been removed.

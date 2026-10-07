@@ -11,9 +11,9 @@ receipt="$2"
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-# Match the 512 MiB, 4 KiB-block, 32768-inode filesystem shipped by the Kata
-# extension. Allocating ext4 catches file rounding and metadata that du omits.
-truncate -s 536870912 "${work}/rootfs.ext4"
+# Allocate the private 1 GiB writable Firecracker root. This catches file
+# rounding and metadata that du omits.
+truncate -s 1073741824 "${work}/rootfs.ext4"
 mkfs.ext4 -F -q -m 0 -b 4096 -N 32768 -J size=16 \
   -E lazy_itable_init=0,lazy_journal_init=0 \
   -d "${rootfs}" "${work}/rootfs.ext4"
@@ -28,6 +28,6 @@ if (( free_blocks < 4097 || free_inodes < 257 )); then
     "${free_blocks}" "${free_inodes}" >&2
   exit 1
 fi
-printf 'filesystem_bytes=536870912\nfree_bytes_before_receipt=%s\nfree_inodes_before_receipt=%s\n' \
+printf 'filesystem_bytes=1073741824\nfree_bytes_before_receipt=%s\nfree_inodes_before_receipt=%s\n' \
   "$((free_blocks * 4096))" "${free_inodes}" > "${receipt}"
 cat "${receipt}"
