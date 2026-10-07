@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { isMap, parseDocument } from 'yaml'
+import { isMap, isSeq, parseDocument } from 'yaml'
 
 type Rule = {
   resources?: string[]
@@ -59,6 +59,65 @@ const rbac = documents<Role>('argocd/applications/tengri/rbac.yaml')
 const services = documents<Service>('argocd/applications/tengri/services.yaml')
 const ingressRoutes = documents<IngressRoute>('argocd/applications/tengri/ingressroute.yaml')
 const networkPolicies = documents<NetworkPolicy>('argocd/applications/tengri/network-policies.yaml')
+
+function manifest(path: string) {
+  const document = parseDocument(readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8'))
+  expect(document.errors).toEqual([])
+  return document
+}
+
+test('the platform enrolls the KVM/TUN prerequisite without changing namespace policy', () => {
+  const elements = manifest('argocd/applicationsets/platform.yaml').getIn([
+    'spec',
+    'generators',
+    0,
+    'matrix',
+    'generators',
+    1,
+    'list',
+    'elements',
+  ])
+  if (!isSeq(elements)) throw new Error('Platform applications must be a sequence')
+  const devices = elements.items.find((entry) => isMap(entry) && entry.get('name') === 'tengri-devices')
+  if (!isMap(devices)) throw new Error('The KVM/TUN application must be enrolled')
+  expect(devices.get('path')).toBe('argocd/applications/tengri-devices')
+  expect(devices.get('namespace')).toBe('kube-system')
+  expect(devices.get('automation')).toBe('auto')
+  expect(devices.get('enabled')).toBe('true')
+  expect(devices.getIn(['annotations', 'argocd.argoproj.io/sync-wave'])).toBe('1')
+  expect(devices.get('managedNamespaceMetadata')).toBeUndefined()
+})
+
+test('source delivery preserves guest attestation and published trust until cutover', () => {
+  const values = manifest('argocd/applications/spire-server/values.yaml')
+  const plugins = ['spire-server', 'unsupportedBuiltInPlugins']
+  const guest = values.getIn([...plugins, 'nodeAttestor', 'k8s_psat', 'plugin_data', 'clusters', 0, 'galactic-guests'])
+  if (!isMap(guest)) throw new Error('Existing guest attestation must remain configured')
+  expect(guest.toJSON()).toEqual({
+    audience: ['spire-server'],
+    service_account_allow_list: ['tengri:nanoagent'],
+    use_pod_uid_for_agent_id: true,
+  })
+  const publisher = values.getIn([
+    ...plugins,
+    'bundlePublisher',
+    'k8s_configmap',
+    'plugin_data',
+    'clusters',
+    0,
+    'galactic-guests',
+  ])
+  if (!isMap(publisher)) throw new Error('Existing guest trust must keep renewing')
+  expect(publisher.toJSON()).toEqual({
+    format: 'pem',
+    namespace: 'tengri',
+    configmap_name: 'spire-guest-bundle',
+    configmap_key: 'bundle.pem',
+  })
+  const resources = manifest('argocd/applications/spire-server/kustomization.yaml').get('resources')
+  if (!isSeq(resources)) throw new Error('SPIRE resources must be a sequence')
+  expect(resources.toJSON()).toContain('guest-bundle.yaml')
+})
 
 test('Tengri can create and clean up agent Pods, Secrets, and PVCs', () => {
   const role = rbac.find((document) => document.kind === 'Role' && document.metadata?.name === 'tengri')
@@ -150,10 +209,7 @@ test('only the controller can reach the shared SpiceDB API', () => {
 })
 
 test('the SpiceDB credential is sealed for the controller namespace and mounted as a file', () => {
-  const manifest = (path: string) =>
-    parseDocument(readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8'))
   const sealed = manifest('argocd/applications/tengri/spicedb-key-sealedsecret.yaml')
-  expect(sealed.errors).toEqual([])
   expect(sealed.get('kind')).toBe('SealedSecret')
   expect(sealed.getIn(['metadata', 'namespace'])).toBe('tengri')
   expect(sealed.getIn(['spec', 'template', 'metadata', 'name'])).toBe('tengri-spicedb-key')

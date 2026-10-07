@@ -3164,25 +3164,24 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
   expect(mock.actions.some((action) => action.action === 'resume-thread')).toBe(false)
 })
 
-test('stops a failed agent without deleting its persistent workspace', async ({ page }) => {
+test('refreshes a failed agent without requesting unsupported recovery or deleting its workspace', async ({ page }) => {
   const failedAgent = {
     ...readyAgent,
     phase: 'failed',
     message: 'No proven Firecracker node can schedule this agent.',
   }
-  const mock = await mockTengri(page, { agent: failedAgent, deferSleepReconciliation: true })
+  const mock = await mockTengri(page, { agent: failedAgent })
   await page.goto('/')
 
   const failed = page.getByRole('dialog', { name: 'Agent could not start' })
-  await failed.getByRole('button', { name: 'Sleep and Keep Workspace' }).click()
-
-  await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
+  await expect(failed.getByRole('button', { name: 'Sleep and Keep Workspace' })).toHaveCount(0)
+  const snapshotsBeforeRefresh = mock.getSnapshotRequestCount()
+  await failed.getByRole('button', { name: 'Refresh Status' }).click()
+  await expect.poll(() => mock.getSnapshotRequestCount()).toBeGreaterThan(snapshotsBeforeRefresh)
+  await expect(failed).toBeVisible()
+  expect(mock.actions.some((action) => action.action === 'sleep-agent')).toBe(false)
   expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
-  await expect(page.getByRole('status', { name: 'Putting agent to sleep' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Delete Failed Agent' })).toHaveCount(0)
-
-  mock.completeSleepReconciliation()
-  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+  await expect(failed.getByRole('button', { name: 'Delete Failed Agent' })).toBeVisible()
 })
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {

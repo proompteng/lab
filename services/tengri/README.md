@@ -17,7 +17,8 @@ do not establish a deployed migration or the authenticated p95 latency target.
 
 Each slot has a Kubernetes Lease and one private Pod. `MicroVM.spec.slot` records the slot, Pod UID, home name/UID,
 and epoch. The controller binds the MicroVM with resourceVersion compare-and-swap before claiming the Lease. Concurrent
-claims cannot assign two slots to one MicroVM UID or start two owners in one slot.
+claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
+consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
 The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker 1.16.1, CPU identity,
 snapshot generation, and owner/epoch. Snapshot restore consumes the generation before vCPUs run, then thaws root/home,
@@ -49,9 +50,10 @@ capabilities. It never chmods a node device. Firecracker inherits that unprivile
 no capabilities, NoNewPrivs, and its default seccomp filter.
 
 The separately reviewed [device allocation](../../argocd/applications/tengri-devices/) delegates only KVM and TUN
-through the official generic device plugin. That directory is not enrolled by the platform ApplicationSet. Its new
-device grants, slot admission, and SPIRE identity must be reviewed before execution. The existing namespace admission
-already permits this narrowly constrained profile; no namespace policy change is required.
+through the official generic device plugin. The platform ApplicationSet enrolls it in `kube-system` at wave 1, before
+the controller's wave 2. Verify actual device allocations before an authorized cutover. The existing namespace admission
+already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
+attestation and bundle publication remain until the final old guest has stopped.
 
 Nanoagent runs as UID 1000 in the guest, with passwordless sudo inside that guest. Guest root edits and processes
 survive snapshot sleep. Root and memory are local to the slot Pod and reset after an explicitly fenced cold replacement;

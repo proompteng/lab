@@ -15,8 +15,9 @@ is part of this lifecycle.
 - Controller/runner/supervisor and generated CRD live under `services/tengri/`.
 - Guest kernel/root and Nanoagent live under `services/nanoagent/`.
 - Tengri desired state lives under `argocd/applications/tengri/`.
-- Proposed device allocation lives under `argocd/applications/tengri-devices/`, currently outside the ApplicationSet.
+- Device allocation lives under `argocd/applications/tengri-devices/`, enrolled in the platform ApplicationSet at wave 1.
 - SPIRE registers only the host slot supervisor, with the exact Pod UID and container selector.
+- Existing guest attestation and bundle publication remain configured until the last old guest is stopped at cutover.
 - `tengri` namespace admission is already `privileged`; slot admission constrains the device/capability profile.
 
 Keep immutable controller and guest digests from the same source revision. CRD and namespace retain their

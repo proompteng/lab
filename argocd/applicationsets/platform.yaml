@@ -37,6 +37,12 @@ spec:
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
                 ignoreDifferences:
+                  - group: ""
+                    kind: ConfigMap
+                    name: spire-guest-bundle
+                    namespace: tengri
+                    jsonPointers:
+                      - /data
                   - group: apps
                     kind: StatefulSet
                     name: spire-server
@@ -240,6 +246,14 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
+              - name: tengri-devices
+                path: argocd/applications/tengri-devices
+                namespace: kube-system
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: auto
+                enabled: "true"
               - name: devbox
                 path: argocd/applications/devbox
                 namespace: codex-devbox

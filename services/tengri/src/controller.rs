@@ -340,6 +340,10 @@ pub async fn ensure_slot(
     let pods = Api::<Pod>::namespaced(client.clone(), namespace);
     let mut current = microvm.clone();
     for _ in 0..SLOT_COUNT + 1 {
+        ensure!(
+            current.metadata.deletion_timestamp.is_none(),
+            "agent is terminating"
+        );
         if let Some(binding) = &current.spec.slot {
             let mut lease = leases.get(&binding.name).await?;
             let expected = claim_for(&current)?;
@@ -373,6 +377,11 @@ pub async fn ensure_slot(
                 }
             } else {
                 let spec = lease.spec.get_or_insert_default();
+                ensure!(
+                    u64::try_from(spec.lease_transitions.unwrap_or_default())?.checked_add(1)
+                        == Some(expected.epoch),
+                    "slot candidate was cancelled"
+                );
                 spec.holder_identity = Some(serde_json::to_string(&expected)?);
                 spec.lease_transitions = Some(i32::try_from(expected.epoch)?);
                 lease.metadata = pod::owned_metadata(lease.metadata, &current);
@@ -687,7 +696,14 @@ async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Resu
     let client = &context.client;
     let namespace = &context.namespace;
     let api = Api::<MicroVM>::namespaced(client.clone(), namespace);
-    if let Some(slot) = &microvm.spec.slot {
+    let unclaimed = if microvm.annotations().contains_key(STOPPED_POD_ANNOTATION) {
+        false
+    } else if let Some(slot) = &microvm.spec.slot {
+        release_unclaimed_slot(client, namespace, microvm, slot).await?
+    } else {
+        false
+    };
+    if !unclaimed && let Some(slot) = &microvm.spec.slot {
         if microvm.annotations().get(STOPPED_POD_ANNOTATION) != Some(&slot.pod_uid) {
             let pod = bound_pod(client, namespace, microvm).await?;
             let supervisor = SlotClient::new(
@@ -731,7 +747,7 @@ async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Resu
                 .delete(&slot.name, &delete_metadata(&lease.metadata)?)
                 .await?;
         }
-    } else {
+    } else if microvm.spec.slot.is_none() {
         ensure!(
             microvm
                 .status
@@ -772,6 +788,55 @@ async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Resu
     )
     .await?;
     Ok(())
+}
+
+async fn release_unclaimed_slot(
+    client: &Client,
+    namespace: &str,
+    microvm: &MicroVM,
+    slot: &MicroVMSlot,
+) -> anyhow::Result<bool> {
+    let leases = Api::<Lease>::namespaced(client.clone(), namespace);
+    let mut lease = leases.get(&slot.name).await?;
+    let holder = lease
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.holder_identity.as_deref())
+        .map(serde_json::from_str::<Claim>)
+        .transpose()?;
+    if holder.as_ref() == Some(&claim_for(microvm)?) {
+        return Ok(false);
+    }
+    ensure!(
+        microvm
+            .status
+            .as_ref()
+            .is_none_or(|status| status.pod_uid.is_none() && status.pvc_name.is_none()),
+        "active slot claim changed; retain owner and disks"
+    );
+    if let Some(holder) = holder {
+        ensure!(
+            holder.epoch > slot.epoch,
+            "slot is claimed by another agent"
+        );
+        // A later epoch can only be claimed after this candidate was cancelled.
+        return Ok(true);
+    }
+    ensure_asset_owner(&lease.metadata, None)?;
+    let spec = lease.spec.get_or_insert_default();
+    let epoch = u64::try_from(spec.lease_transitions.unwrap_or_default())?;
+    ensure!(
+        epoch == slot.epoch || epoch.checked_add(1) == Some(slot.epoch),
+        "slot candidate epoch changed"
+    );
+    if epoch != slot.epoch {
+        // CAS against a concurrent claim, then make its stale candidate unusable.
+        spec.lease_transitions = Some(i32::try_from(slot.epoch)?);
+        leases
+            .replace(&slot.name, &PostParams::default(), &lease)
+            .await?;
+    }
+    Ok(true)
 }
 
 fn delete_uid(uid: &str) -> DeleteParams {
@@ -1311,9 +1376,132 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn deletion_before_claim_fences_the_candidate_and_keeps_prepared_assets() {
+        let microvm = agent();
+        let lease = json!({
+            "metadata": {"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"},
+            "spec": {"leaseTransitions":1}
+        });
+        let fenced = json!({
+            "metadata": {"name":"slot-test", "uid":"lease-uid", "resourceVersion":"21"},
+            "spec": {"leaseTransitions":2}
+        });
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                lease,
+            ),
+            Exchange {
+                method: Method::PUT,
+                path: "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                code: 200,
+                response: fenced,
+                body: Some(json!({
+                    "apiVersion":"coordination.k8s.io/v1", "kind":"Lease",
+                    "metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"},
+                    "spec":{"leaseTransitions":2}
+                })),
+            },
+            get(
+                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                serde_json::to_value(&microvm).unwrap(),
+            ),
+            Exchange {
+                method: Method::PATCH,
+                path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                code: 200,
+                response: serde_json::to_value(&microvm).unwrap(),
+                body: Some(json!({"metadata":{"resourceVersion":"10", "finalizers":[]}})),
+            },
+        ]);
+        cleanup(&context(client), &microvm).await.unwrap();
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_candidate_cannot_claim_the_vacant_slot() {
+        let microvm = agent();
+        let (client, pending) = mock(vec![get(
+            "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+            json!({"metadata":{"uid":"lease-uid", "resourceVersion":"21"}, "spec":{"leaseTransitions":2}}),
+        )]);
+        let error = ensure_slot(
+            &client,
+            "tengri",
+            &microvm,
+            &WorkloadIdentity::Fixture(8080),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("slot candidate was cancelled"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_concurrent_claim_keeps_the_deleting_agents_finalizer() {
+        let microvm = agent();
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                json!({"metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"}, "spec":{"leaseTransitions":1}}),
+            ),
+            Exchange {
+                method: Method::PUT,
+                path: "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                code: 409,
+                response: json!({"apiVersion":"v1", "kind":"Status", "status":"Failure", "reason":"Conflict", "message":"slot claimed concurrently", "code":409}),
+                body: None,
+            },
+        ]);
+        let error = cleanup(&context(client), &microvm).await.unwrap_err();
+        assert!(error.to_string().contains("slot claimed concurrently"));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelled_deletion_retries_do_not_touch_a_later_owners_assets() {
+        let microvm = agent();
+        for holder in [
+            None,
+            Some(Claim {
+                microvm_id: "next-agent".into(),
+                microvm_uid: "next-owner".into(),
+                epoch: 3,
+            }),
+        ] {
+            let (client, pending) = mock(vec![
+                get(
+                    "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                    json!({"metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"21"}, "spec":{
+                        "leaseTransitions": if holder.is_some() {3} else {2},
+                        "holderIdentity": holder.map(|claim| serde_json::to_string(&claim).unwrap())
+                    }}),
+                ),
+                get(
+                    "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    serde_json::to_value(&microvm).unwrap(),
+                ),
+                Exchange {
+                    method: Method::PATCH,
+                    path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                    code: 200,
+                    response: serde_json::to_value(&microvm).unwrap(),
+                    body: Some(json!({"metadata":{"resourceVersion":"10", "finalizers":[]}})),
+                },
+            ]);
+            cleanup(&context(client), &microvm).await.unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn lost_pod_without_a_stop_receipt_keeps_the_home_and_finalizer() {
         let microvm = agent();
         let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&claim_for(&microvm).unwrap()).unwrap()}}),
+            ),
             get(
                 "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
                 json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&claim_for(&microvm).unwrap()).unwrap()}}),
