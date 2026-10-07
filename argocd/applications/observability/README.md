@@ -117,6 +117,9 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn`. Compare their rates with CPU use and limits
+during the same execution trace window. An absent throttle series remains UNKNOWN, rather than zero throttling.
 The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic
 series declared by Bayn's catalog-only monitoring queries, including timing-enabled flags and statistics-reset times.
 It also retains bounded exporter collection errors and durations so a failed built-in collector cannot be mistaken
