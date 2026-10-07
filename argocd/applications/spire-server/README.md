@@ -67,6 +67,12 @@ PVC when removed or scaled down. Namespace and CRD pruning are disabled. This is
 server downtime prevents new issuance and renewal, while previously issued credentials remain valid until expiry.
 Multiple server replicas require a shared supported database before increasing the replica count.
 
+The dedicated `spire-db` CloudNativePG cluster prepares that shared datastore: three PostgreSQL 18.6 instances
+on distinct hosts, one synchronous standby, generated application credentials, and Ceph volume-snapshot backups.
+SPIRE stays on SQLite until the separate server cutover is approved and the offline import is verified. This prevents
+the database preparation rollout from creating an empty identity store. See [the migration procedure](migrate/README.md)
+for the import, maintenance window, activation order, verification, and recovery boundaries.
+
 ## Validation and recovery
 
 The hard trust-domain cutover starts SPIRE with an empty `proompteng.ai` subdirectory on its retained server PVC.
