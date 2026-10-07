@@ -460,9 +460,10 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
-- Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings with the telemetry stage,
-  service, source revision when configured, and HTTP status or transport reason. Collector bodies, headers, endpoints,
-  and raw errors are omitted. Successful exports remain quiet. These diagnostics run in the existing background
+- Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
+  telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
+  headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
+  quiet. These diagnostics run in the existing background
   exporter and preserve its retry and shutdown limits; they add no execution or closure calls. The pinned exporter can
   discard telemetry and disable exports for 60 seconds after failure, so retained structured pass profiles remain
   necessary when Tempo coverage is incomplete. A failed attempt alone does not establish permanent trace loss.

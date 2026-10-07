@@ -87,6 +87,7 @@ const resourceAttributes = (options: TelemetryRuntimeOptions): Record<string, st
 })
 
 const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) => {
+  const exportLoggers = new Set([Logger.withConsoleError(Logger.formatJson)])
   const exportFailure = (
     failureReason: 'http-status' | HttpClientError.HttpClientError['reason']['_tag'],
     httpStatus?: number,
@@ -100,6 +101,7 @@ const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) => {
         failureReason,
         ...(httpStatus === undefined ? {} : { httpStatus }),
       }),
+      Effect.provideService(Logger.CurrentLoggers, exportLoggers),
     )
   const httpClient = Layer.effect(
     HttpClient.HttpClient,

@@ -156,7 +156,12 @@ describe('Bayn telemetry', () => {
 
   test('exports Effect spans as OTLP protobuf', async () => {
     const output: unknown[] = []
-    const testConsole: Console.Console = { ...console, log: (...messages) => output.push(...messages) }
+    const errors: unknown[] = []
+    const testConsole: Console.Console = {
+      ...console,
+      log: (...messages) => output.push(...messages),
+      error: (...messages) => errors.push(...messages),
+    }
     let resolveRequest: ((request: { readonly path: string; readonly body: Uint8Array }) => void) | undefined
     const received = new Promise<{ readonly path: string; readonly body: Uint8Array }>((resolve) => {
       resolveRequest = resolve
@@ -193,6 +198,7 @@ describe('Bayn telemetry', () => {
       expect(Buffer.from(request.body).includes(Buffer.from('bayn-telemetry-test'))).toBe(true)
       expect(Buffer.from(request.body).includes(Buffer.from('bayn.test.export'))).toBe(true)
       expect(output).toHaveLength(0)
+      expect(errors).toHaveLength(0)
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((cause) => (cause === undefined ? resolve() : reject(cause))),
@@ -202,7 +208,12 @@ describe('Bayn telemetry', () => {
 
   test('retains rejected trace exports as bounded warnings without collector response contents', async () => {
     const output: unknown[] = []
-    const testConsole: Console.Console = { ...console, log: (...messages) => output.push(...messages) }
+    const stdout: unknown[] = []
+    const testConsole: Console.Console = {
+      ...console,
+      log: (...messages) => stdout.push(...messages),
+      error: (...messages) => output.push(...messages),
+    }
     let requests = 0
     const server = createServer((request, response) => {
       request.resume()
@@ -217,7 +228,7 @@ describe('Bayn telemetry', () => {
 
     try {
       await Effect.runPromise(
-        Effect.void.pipe(
+        Console.log('{"schemaVersion":"test-report.v1"}').pipe(
           withObservedSpan('bayn.test.rejected-export'),
           Effect.provide(
             makeTelemetryRuntimeLayer({
@@ -230,6 +241,7 @@ describe('Bayn telemetry', () => {
         ),
       )
       expect(requests).toBe(1)
+      expect(stdout).toEqual(['{"schemaVersion":"test-report.v1"}'])
       expect(output).toHaveLength(1)
       expect(JSON.parse(String(output[0]))).toMatchObject({
         level: 'WARN',
@@ -253,7 +265,12 @@ describe('Bayn telemetry', () => {
 
   test('retains trace transport failures without changing the application result or leaking raw errors', async () => {
     const output: unknown[] = []
-    const testConsole: Console.Console = { ...console, log: (...messages) => output.push(...messages) }
+    const stdout: unknown[] = []
+    const testConsole: Console.Console = {
+      ...console,
+      log: (...messages) => stdout.push(...messages),
+      error: (...messages) => output.push(...messages),
+    }
     const server = createServer((request) => {
       request.resume()
       request.on('end', () => request.socket.destroy(new Error('private-collector-transport')))
@@ -276,6 +293,7 @@ describe('Bayn telemetry', () => {
         ),
       )
       expect(result).toBe('application-result')
+      expect(stdout).toHaveLength(0)
       expect(output.length).toBeGreaterThan(0)
       for (const message of output) {
         expect(JSON.parse(String(message))).toMatchObject({
