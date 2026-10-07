@@ -26,7 +26,7 @@ export interface BrokerHealthObservation {
 
 export interface HealthProbeResults {
   readonly postgresql: ProbeResult<void>
-  readonly signal: ProbeResult<void>
+  readonly signal?: ProbeResult<void>
   readonly tigerBeetle: ProbeResult<void>
   readonly cycle: ProbeResult<CycleOperationsProjection>
   readonly broker: ProbeResult<BrokerHealthObservation> | null
@@ -39,7 +39,7 @@ export interface ExecutionControllerProbe {
 }
 
 export interface HealthDependencies {
-  readonly marketData: Pick<IntradayMarketDataService, 'check'>
+  readonly marketData?: Pick<IntradayMarketDataService, 'check'>
   readonly journal: JournalService
   readonly postgresql: Effect.Effect<void, DatabaseError>
   readonly cycleObservability: CycleObservabilityShape
