@@ -149,7 +149,7 @@ export function CodexEventCard({
               className="size-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
               aria-hidden="true"
             />
-            <span className="min-w-0 truncate font-mono text-xs text-zinc-500">{preview}</span>
+            <span className="min-w-0 truncate font-mono text-xs text-zinc-400">{preview}</span>
           </summary>
           <pre className="max-h-80 overflow-auto border-t border-zinc-800/80 bg-zinc-950/50 px-3 py-3 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-zinc-300">
             {kind === 'file-diff'

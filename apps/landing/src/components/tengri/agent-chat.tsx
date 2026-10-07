@@ -364,8 +364,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       const restoredActiveTurnId = codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current)
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
       if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
-      const title =
-        titleFromTranscript(restored.historyItems) || titleHint || existingConversationTitle(agentId, thread.id)
+      const title = truncateConversationTitle(
+        titleFromTranscript(restored.historyItems) || titleHint || existingConversationTitle(agentId, thread.id),
+      )
       setConversations(upsertStoredConversation(agentId, { id: thread.id, title, updatedAt: Date.now() }))
       return { ...restored, activeTurnId }
     },
@@ -576,6 +577,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
     return (
       <CodexEventCard
+        key={codexEventWrapperKey({ event, text })}
         approvalDecisions={codexApprovalDecisions(event)}
         approvalId={event.approvalId}
         kind={event.kind}
@@ -752,6 +754,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     completedTurns.current.clear()
   }
 
+  function closeCompactConversationDrawer() {
+    if (!sidebarWide) setSidebarOpen(false)
+  }
+
   function newConversation() {
     if (
       !codexCanStartNewConversation({
@@ -765,6 +771,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     }
     removeStoredThread(agentId)
     resetTranscriptUi('')
+    closeCompactConversationDrawer()
     requestAnimationFrame(() => promptRef.current?.focus())
   }
 
@@ -782,6 +789,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     }
     writeStoredThread(agentId, nextThreadId)
     resetTranscriptUi(nextThreadId)
+    closeCompactConversationDrawer()
     requestAnimationFrame(() => promptRef.current?.focus())
   }
 
@@ -881,7 +889,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </div>
         <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]">
           {sortedConversations.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-zinc-600">No conversations yet</p>
+            <p className="px-3 py-2 text-xs text-zinc-400">No conversations yet</p>
           ) : (
             <ul className="px-1.5">
               {sortedConversations.map((conversation) => {
@@ -903,7 +911,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     >
                       <span className="truncate text-xs font-medium">{conversation.title}</span>
                       {conversation.unavailable ? (
-                        <span className="mt-0.5 text-[10px] text-zinc-600">Unavailable</span>
+                        <span className="mt-0.5 text-[10px] text-zinc-400">Unavailable</span>
                       ) : null}
                     </button>
                   </li>
@@ -934,11 +942,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               type="button"
               disabled={!canStartNewConversation}
               onClick={newConversation}
+              aria-label="New conversation"
               className="ml-auto inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-zinc-500 outline-none transition-colors hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
             >
               <Plus className="size-3.5" aria-hidden="true" />
-              <span className="hidden @[420px]/agent:inline">New</span>
-              <span className="sr-only"> conversation</span>
+              <span className="hidden @[420px]/agent:inline" aria-hidden="true">
+                New
+              </span>
             </button>
           ) : (
             <span className="ml-auto" />
@@ -979,30 +989,22 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               {[
                 ...historyItems.map((item) => {
                   const update = restoredItemUpdates.get(item.id)
-                  return (
-                    <div key={`history-${item.id}`}>
-                      {update ? renderEvent(update) : <CodexEventCard kind={item.kind} text={item.text} />}
-                    </div>
+                  return update ? (
+                    renderEvent(update)
+                  ) : (
+                    <CodexEventCard
+                      key={`wrap-${threadId}-${item.id}-${item.kind}`}
+                      kind={item.kind}
+                      text={item.text}
+                    />
                   )
                 }),
                 ...renderedEvents
                   .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
-                  .map((update) => (
-                    <div
-                      key={
-                        update.event.approvalId
-                          ? `wrap-approval-${update.event.approvalId}`
-                          : update.event.itemId
-                            ? `wrap-${update.event.threadId}-${update.event.itemId}-${update.event.kind}`
-                            : `wrap-${update.event.sequence}-${update.event.method}`
-                      }
-                    >
-                      {renderEvent(update)}
-                    </div>
-                  )),
+                  .map(renderEvent),
               ]}
               {activeTurnId && !approvalPending ? (
-                <div className="text-sm leading-6 text-zinc-500" role="status" aria-label="Agent activity">
+                <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
                   Thinking…
                 </div>
               ) : null}
@@ -1349,7 +1351,7 @@ function CodexModelPicker({
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
   const triggerClass =
-    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-500 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
   const menuClass =
     'font-system w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
   const itemClass =
@@ -1585,6 +1587,12 @@ function removeStoredThread(agentId: string) {
 
 function conversationsKey(agentId: string) {
   return `tengri-conversations:${agentId}`
+}
+
+function codexEventWrapperKey(update: CodexBufferedEvent) {
+  if (update.event.approvalId) return `wrap-approval-${update.event.approvalId}`
+  if (update.event.itemId) return `wrap-${update.event.threadId}-${update.event.itemId}-${update.event.kind}`
+  return `wrap-${update.event.sequence}-${update.event.method}`
 }
 
 function truncateConversationTitle(value: string) {
