@@ -811,17 +811,36 @@ export const makeKafkaMarketProjection = (
       ),
     )
     yield* supervision.pipe(Effect.forever, Effect.forkIn(owner))
+    let memoPositions = positions
+    let offsetMemo: Array<{ last: string; parsedLast: bigint; base: string; next: string | null } | undefined> = []
     const readCut = (requireHistory: boolean) =>
       Effect.suspend(() => {
+        // Retain only immutable offset calculations for the current position inventory.
+        if (memoPositions !== positions) {
+          memoPositions = positions
+          offsetMemo = []
+        }
+        offsetMemo.length = positions.length
         return (!requireHistory || ready) && bootstrap !== undefined && lastFailure === undefined
           ? Effect.succeed({
               projection,
               bootstrap,
-              positions: positions.map((position) => {
+              positions: positions.map((position, index) => {
                 const last = projection.offsets.get(topicPartitionKey(position.topic, position.partition))
-                return last !== undefined && BigInt(last) >= BigInt(position.offset)
-                  ? { ...position, offset: String(BigInt(last) + 1n) }
-                  : position
+                if (last === undefined) return position
+                const memo = offsetMemo[index]
+                // Preserve conversion before the base getter, and both conversions for non-string inputs.
+                const parsedLast = typeof last === 'string' && memo?.last === last ? memo.parsedLast : BigInt(last)
+                const base = position.offset
+                if (typeof last === 'string' && typeof base === 'string' && memo?.last === last && memo.base === base)
+                  return memo.next === null ? position : { ...position, offset: memo.next }
+                const advances = parsedLast >= BigInt(base)
+                if (typeof last !== 'string' || typeof base !== 'string')
+                  return advances ? { ...position, offset: String(BigInt(last) + 1n) } : position
+                const next = advances ? String(parsedLast + 1n) : null
+                const result = next === null ? position : { ...position, offset: next }
+                offsetMemo[index] = { last, parsedLast, base, next }
+                return result
               }),
             })
           : Effect.fail(lastFailure ?? failure('read', 'Kafka projection is rebuilding required history'))
