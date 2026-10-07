@@ -5,6 +5,7 @@ import { Data, Effect, Result, Schema } from 'effect'
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
+import type { WriterFenceService } from '../execution/writer-fence'
 import type { JournalService } from '../ledger'
 import {
   Authority,
@@ -401,6 +402,7 @@ export const makeReconciliation = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: Pick<RuntimeConfig, 'tigerBeetle'>,
+  writerFence: WriterFenceService,
   clock: DatabaseClock = postgresWallClock(sql),
 ) => {
   const bindings = (accountId: string): Effect.Effect<readonly IntentBinding[], ReconciliationStoreError> =>
@@ -589,6 +591,8 @@ export const makeReconciliation = (
           FROM account_snapshots AS snapshot
           JOIN broker_events AS event ON event.event_id = snapshot.event_id
           WHERE snapshot.account_id = ${accountId}
+            AND event.account_id = snapshot.account_id
+            AND event.event_kind = 'ACCOUNT'
           ORDER BY event.source_sequence
           LIMIT 1
         `.pipe(Effect.flatMap(decodeOpeningCash))
@@ -735,7 +739,7 @@ export const makeReconciliation = (
     )
 
   const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
-    runStore('reconcile', sql.withTransaction(reconcileTransaction(snapshot)))
+    runStore('reconcile', writerFence.transaction(reconcileTransaction(snapshot)))
 
   return { bindings, reconcile }
 }

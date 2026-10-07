@@ -247,7 +247,7 @@ export const makeControlManagementBatch = (input: {
     const batch = yield* makeJevTradingSignalBatch({
       observation: observation.payload,
       expiresAt: utcInstantFromEpochMillis(atMs + protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V3,
+      planVersion: protocol.schemaVersion === 'bayn.jev.protocol.v2' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V3,
     })
     return {
       classification: 'SIMULATED_CONTROL_MANAGEMENT_REQUEST_ONLY' as const,

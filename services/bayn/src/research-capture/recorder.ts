@@ -95,6 +95,9 @@ export const makeResearchCaptureRecorder = (
       capacity: options.maximumQueuedReceipts,
       strategy: 'dropping',
     })
+    const wakeup = yield* Queue.make<void>({ capacity: 1, strategy: 'dropping' })
+    const flushAfterReceipts = Math.max(1, Math.floor(options.maximumQueuedReceipts / 4))
+    const flushAfterBytes = options.maximumQueuedBytes / 4
     const serial = yield* Semaphore.make(1)
     const invalidations = new Set<CaptureInvalidation>()
     let attemptedObjectBytes = 0
@@ -205,6 +208,8 @@ export const makeResearchCaptureRecorder = (
         queuedBytes += reservation
         retainedReceipts++
         lastObservedAtMs = atMs
+        if (retainedReceipts >= flushAfterReceipts || queuedBytes >= flushAfterBytes)
+          Queue.offerUnsafe(wakeup, undefined)
       })
       if (Result.isFailure(result)) invalidate(CaptureInvalidation.InvalidEvent)
     }
@@ -216,15 +221,14 @@ export const makeResearchCaptureRecorder = (
             ? options.session.bootstrapDeadlineMs - clock.currentTimeMillisUnsafe()
             : Number.POSITIVE_INFINITY
         const expired = () => {
+          invalidate(CaptureInvalidation.Persistence)
           if (remaining <= options.writeTimeoutMs) invalidate(CaptureInvalidation.MissedBootstrap)
           return Effect.fail(new ResearchCaptureFailure({ message: 'Capture write outcome is unknown' }))
         }
         if (remaining <= 0) return expired()
-        return Effect.suspend(write).pipe(
-          Effect.timeoutOrElse({
-            duration: Math.min(options.writeTimeoutMs, remaining),
-            orElse: expired,
-          }),
+        return Effect.raceFirst(
+          Effect.suspend(write),
+          Effect.sleep(Math.min(options.writeTimeoutMs, remaining)).pipe(Effect.andThen(expired)),
         )
       }).pipe(
         Effect.catchCause(() =>
@@ -316,7 +320,7 @@ export const makeResearchCaptureRecorder = (
     }
     const worker = Effect.gen(function* () {
       while (accepting) {
-        yield* Effect.sleep(options.flushIntervalMs)
+        yield* Effect.raceFirst(Queue.take(wakeup), Effect.sleep(options.flushIntervalMs))
         yield* serial.withPermit(drain)
       }
     })

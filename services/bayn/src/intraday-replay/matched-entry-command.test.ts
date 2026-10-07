@@ -172,6 +172,8 @@ test('offline command reproduces native observations, prices shared lifecycle on
               'user.name=Test',
               '-c',
               'user.email=test@example.invalid',
+              '-c',
+              'commit.gpgsign=false',
               'commit',
               '--quiet',
               '-m',

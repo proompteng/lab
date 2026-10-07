@@ -6,8 +6,18 @@ import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { CycleState, type AutonomousCycle } from '../model'
 import { attachCycleDecisionStoreEvidence } from './decision-contract'
-import type { CycleAuthoritySlot, CycleRecoveryScope, CycleStoreInternalError } from './model'
-import { decodeDecisionEvidenceMatch, decodeStoredCycles, decodeStoredDecisionDocumentRows } from './rows'
+import {
+  DecisionEvidenceMismatch,
+  type CycleAuthoritySlot,
+  type CycleRecoveryScope,
+  type CycleStoreInternalError,
+} from './model'
+import {
+  decodeDecisionEvidenceMatch,
+  decodeDecisionEvidenceMismatch,
+  decodeStoredCycles,
+  decodeStoredDecisionDocumentRows,
+} from './rows'
 
 export interface CycleQueries {
   readonly selectCycle: (
@@ -23,7 +33,9 @@ export interface CycleQueries {
   readonly selectOldestUnfinishedCycle: (
     scope: CycleRecoveryScope,
   ) => Effect.Effect<readonly AutonomousCycle[], CycleStoreInternalError>
-  readonly decisionEvidenceMatches: (document: CycleDecisionDocument) => Effect.Effect<boolean, CycleStoreInternalError>
+  readonly decisionEvidenceMismatch: (
+    document: CycleDecisionDocument,
+  ) => Effect.Effect<DecisionEvidenceMismatch | null, CycleStoreInternalError>
   readonly executionCompletionEvidenceMatches: (
     document: ExecutionDecisionDocument,
     observedAt: string,
@@ -220,12 +232,16 @@ export const makeCycleQueries = (
             )
           END AS has_mutation_work
         FROM autonomous_cycles AS cycle
-        LEFT JOIN autonomous_cycle_shadow_decisions AS decision
-          ON decision.cycle_id = cycle.cycle_id
-          AND decision.decision_hash = cycle.decision_hash
-          AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
-          AND decision.document ->> 'mode' = 'PAPER'
-          AND decision.document #>> '{targetPlan,status}' = 'PLANNED'
+        LEFT JOIN LATERAL (
+          SELECT stored.document
+          FROM autonomous_cycle_shadow_decisions AS stored
+          WHERE stored.cycle_id = cycle.cycle_id
+            AND stored.decision_hash = cycle.decision_hash
+            AND stored.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+            AND stored.document ->> 'mode' = 'PAPER'
+            AND stored.document #>> '{targetPlan,status}' = 'PLANNED'
+          LIMIT 1
+        ) AS decision ON true
         WHERE cycle.account_id = ${scope.accountId}
           AND cycle.state IN (${CycleState.Pending}, ${CycleState.Active})
       ), eligible_cycles AS (
@@ -263,16 +279,20 @@ export const makeCycleQueries = (
       LIMIT 1
     `.pipe(Effect.flatMap(decodeStoredCycles))
 
-  const decisionEvidenceMatches: CycleQueries['decisionEvidenceMatches'] = (document) => {
+  const decisionEvidenceMismatch: CycleQueries['decisionEvidenceMismatch'] = (document) => {
     const executionMarketData = document.bindings.executionMarketData
     const decisionMarketData = document.bindings.decisionMarketData ?? executionMarketData
     const riskContext = document.mode === legacyExecutionAuthorityToken ? document.bindings.riskContext : undefined
     const riskState = document.mode === legacyExecutionAuthorityToken ? document.deltaRisk[0]?.facts?.state : undefined
     const riskContextEvidence =
-      riskContext === undefined || riskState === undefined
-        ? sql`${riskContext === undefined}`
+      riskContext === undefined
+        ? sql`${document.mode !== legacyExecutionAuthorityToken}`
         : sql`
-            reconciliation.reconciled_at = ${riskState.reconciliation.reconciledAt}::timestamptz
+            ${
+              riskState === undefined
+                ? sql`${document.targetPlan.intentTargets.length === 0 && document.deltaRisk.length === 0}`
+                : sql`reconciliation.reconciled_at = ${riskState.reconciliation.reconciledAt}::timestamptz`
+            }
             AND EXISTS (
               SELECT 1
               FROM authority_state AS authority
@@ -294,17 +314,17 @@ export const makeCycleQueries = (
               SELECT sum(transaction.notional_micros)::text
               FROM accounting_transactions AS transaction
               WHERE transaction.account_id = ${document.bindings.accountId}
-                AND transaction.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND transaction.occurred_at <= reconciliation.reconciled_at
                 AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date =
-                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+                  (reconciliation.reconciled_at AT TIME ZONE 'America/New_York')::date
             ), '0') = ${riskContext.dailyTradedNotionalMicros}
             AND (
               SELECT valuation.equity_micros::text
               FROM valuations AS valuation
               WHERE valuation.account_id = ${document.bindings.accountId}
-                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND valuation.as_of <= reconciliation.reconciled_at
                 AND (valuation.as_of AT TIME ZONE 'America/New_York')::date =
-                  (${riskState.reconciliation.reconciledAt}::timestamptz AT TIME ZONE 'America/New_York')::date
+                  (reconciliation.reconciled_at AT TIME ZONE 'America/New_York')::date
               ORDER BY valuation.as_of, valuation.valuation_id COLLATE "C"
               LIMIT 1
             ) = ${riskContext.dayStartEquityMicros}
@@ -312,7 +332,7 @@ export const makeCycleQueries = (
               SELECT max(valuation.equity_micros)::text
               FROM valuations AS valuation
               WHERE valuation.account_id = ${document.bindings.accountId}
-                AND valuation.as_of <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                AND valuation.as_of <= reconciliation.reconciled_at
             ) = ${riskContext.peakEquityMicros}
             AND (
               SELECT count(*)::integer
@@ -321,7 +341,7 @@ export const makeCycleQueries = (
                 SELECT event.operation, event.event_type
                 FROM mutation_events AS event
                 WHERE event.intent_id = intent.intent_id
-                  AND event.occurred_at <= ${riskState.reconciliation.reconciledAt}::timestamptz
+                  AND event.occurred_at <= reconciliation.reconciled_at
                 ORDER BY
                   CASE event.operation WHEN 'CANCEL' THEN 1 ELSE 0 END DESC,
                   event.sequence DESC
@@ -338,7 +358,7 @@ export const makeCycleQueries = (
                     AND latest.event_type = 'RECOVERY_FOUND'
                     AND (
                       intent.state <> 'TERMINAL'
-                      OR intent.updated_at > ${riskState.reconciliation.reconciledAt}::timestamptz
+                      OR intent.updated_at > reconciliation.reconciled_at
                     )
                   )
                 )
@@ -401,24 +421,26 @@ export const makeCycleQueries = (
         AND plan.cycle_id = ${document.bindings.cycleId}
     )`
     return sql<Record<string, unknown>>`
-      SELECT EXISTS (
-        SELECT 1
-        FROM reconciliations AS reconciliation
-        WHERE ${snapshotEvidence}
-          AND ${pricingEvidence}
-          AND ${jevEvidence}
-          AND ${riskContextEvidence}
-          AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
-          AND reconciliation.account_id = ${document.bindings.accountId}
-          AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}
-          AND reconciliation.observed_hash = ${document.bindings.planningBrokerStateHash}
-          AND reconciliation.content_hash = ${document.bindings.reconciliationHash}
-          AND reconciliation.status = 'EXACT'
-          AND reconciliation.reconciled_at <= ${document.createdAt}
-      ) AS matches
+      SELECT CASE
+        WHEN reconciliation.reconciliation_id IS NULL THEN ${DecisionEvidenceMismatch.Reconciliation}::text
+        WHEN NOT coalesce(${snapshotEvidence}, false) THEN ${DecisionEvidenceMismatch.DecisionMarketData}::text
+        WHEN NOT coalesce(${pricingEvidence}, false) THEN ${DecisionEvidenceMismatch.ExecutionMarketData}::text
+        WHEN NOT coalesce(${jevEvidence}, false) THEN ${DecisionEvidenceMismatch.Jev}::text
+        WHEN NOT coalesce(${riskContextEvidence}, false) THEN ${DecisionEvidenceMismatch.RiskContext}::text
+        ELSE NULL
+      END AS mismatch
+      FROM (VALUES (1)) AS scope(singleton)
+      LEFT JOIN reconciliations AS reconciliation
+        ON reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
+        AND reconciliation.account_id = ${document.bindings.accountId}
+        AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}
+        AND reconciliation.observed_hash = ${document.bindings.planningBrokerStateHash}
+        AND reconciliation.content_hash = ${document.bindings.reconciliationHash}
+        AND reconciliation.status = 'EXACT'
+        AND reconciliation.reconciled_at <= ${document.createdAt}
     `.pipe(
-      Effect.flatMap(decodeDecisionEvidenceMatch),
-      Effect.map(([match]) => match.matches),
+      Effect.flatMap(decodeDecisionEvidenceMismatch),
+      Effect.map(([match]) => match.mismatch),
     )
   }
 
@@ -453,7 +475,7 @@ export const makeCycleQueries = (
     selectCycleByAuthoritySlot,
     selectDecisionDocuments,
     selectOldestUnfinishedCycle,
-    decisionEvidenceMatches,
+    decisionEvidenceMismatch,
     executionCompletionEvidenceMatches,
     executionGenerationIsSuperseded,
   }

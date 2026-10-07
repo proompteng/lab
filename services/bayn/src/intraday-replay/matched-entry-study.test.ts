@@ -1,12 +1,18 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { NodeServices } from '@effect/platform-node'
+import { Effect, FileSystem, Result } from 'effect'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1, sha256 } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
+import { retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { gapSourceFixture } from './gap-recovery.test-support'
+import { sixBarFixture, sixBarOpenMs, sixBarObservedMs } from './six-bar-features.test-support'
+import { openBacktestSource, validateBacktestSourceCuts, validateBacktestSourceReceipt } from './source'
 import {
   matchedEntryDefinition,
   matchedCalendarSessions,
   matchedObservationMaterial,
+  matchedSourceCompletenessProblems,
   MatchedDataRole,
   MatchedRecommendation,
   summarizeMatchedPairs,
@@ -195,4 +201,71 @@ test('source comparison preserves nanoseconds and accepts equivalent timestamp s
     ),
   }
   expect(canonicalHashV1(matchedObservationMaterial(changed))).not.toBe(hash)
+})
+
+test('matched completeness admits a fully verified original-capture source without dropping other gates', async () => {
+  const fixture = sixBarFixture()
+  const data = gapSourceFixture(fixture, sixBarOpenMs, sixBarObservedMs)
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, data.bytes)
+      const source = yield* openBacktestSource(path, data.manifest, 'a'.repeat(64), data.receipt)
+      yield* source.finish
+      expect((yield* source.cursor).processedRecords).toBe(fixture.events.length)
+      expect(matchedSourceCompletenessProblems(data.manifest)).toEqual([])
+      const report = summarizeMatchedPairs(registration, pairs(), matchedSourceCompletenessProblems(data.manifest))
+      expect(report.completion).toBe('COMPLETE')
+      expect(
+        summarizeMatchedPairs(registration, pairs(), [
+          ...matchedSourceCompletenessProblems(data.manifest),
+          'source-does-not-cover-session:2026-09-04',
+        ]).completion,
+      ).toBe('INCOMPLETE')
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('matched source completeness retains captured Kafka and rejects reconstructed or REST availability', () => {
+  const data = retainedReplayFixture()
+  expect(matchedSourceCompletenessProblems(data.manifest)).toEqual([])
+  for (const transport of ['archive-reconstruction', 'alpaca-rest'] as const)
+    expect(matchedSourceCompletenessProblems({ ...data.manifest, transport })).toEqual([
+      'original-stream-arrivals-not-observed',
+    ])
+  expect(
+    matchedSourceCompletenessProblems({
+      ...data.manifest,
+      transport: 'archive-reconstruction',
+      archiveUnobservedPartitions: [{ topic: 'unobserved', partition: 0 }],
+    }),
+  ).toEqual(['original-stream-arrivals-not-observed', 'unobserved-source-partitions'])
+})
+
+test('original capture admission preserves independent receipt identity, coverage, cuts and byte verification', async () => {
+  const data = gapSourceFixture(sixBarFixture(), sixBarOpenMs, sixBarObservedMs)
+  for (const manifest of [
+    { ...data.manifest, transport: 'captured-kafka' as const },
+    { ...data.manifest, transport: 'archive-reconstruction' as const },
+    { ...data.manifest, origin: 'different origin' },
+    { ...data.manifest, coverageEndMs: data.manifest.coverageEndMs + 1 },
+    { ...data.manifest, dataSha256: 'b'.repeat(64) },
+    { ...data.manifest, positions: data.manifest.positions.slice(1) },
+    { ...data.manifest, nativeVisiblePartitions: [] },
+  ])
+    expect(Result.isFailure(validateBacktestSourceCuts(manifest, data.receipt))).toBeTrue()
+  const changedReceipt = data.receiptText + ' '
+  expect(Result.isFailure(validateBacktestSourceReceipt(changedReceipt, data.receiptHash))).toBeTrue()
+  expect(sha256(changedReceipt)).not.toBe(data.receiptHash)
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, Buffer.from('corrupt capture bytes'))
+      expect(
+        Result.isFailure(yield* Effect.result(openBacktestSource(path, data.manifest, 'a'.repeat(64), data.receipt))),
+      ).toBeTrue()
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
 })

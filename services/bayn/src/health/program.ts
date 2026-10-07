@@ -177,14 +177,16 @@ const collectHealthProbeResults = (
             'continuous-health',
           ),
         ),
-        observe(
-          withinDeadline(
-            dependencies.marketData.check.pipe(Effect.asVoid),
-            config.operationTimeoutMs,
-            'market-data',
-            'continuous-health',
-          ),
-        ),
+        dependencies.marketData === undefined
+          ? Effect.void
+          : observe(
+              withinDeadline(
+                dependencies.marketData.check.pipe(Effect.asVoid),
+                config.operationTimeoutMs,
+                'market-data',
+                'continuous-health',
+              ),
+            ),
         observe(withinDeadline(dependencies.journal.check, config.operationTimeoutMs, 'journal', 'continuous-health')),
         observe(
           cycleBindingId === undefined
@@ -231,7 +233,7 @@ const collectHealthProbeResults = (
     ),
     ([postgresql, signal, tigerBeetle, cycle, brokerResult, executionControllerResult]) => ({
       postgresql,
-      signal,
+      ...(signal === undefined ? {} : { signal }),
       tigerBeetle,
       cycle,
       broker: brokerResult,

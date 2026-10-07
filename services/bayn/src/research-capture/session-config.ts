@@ -1,6 +1,6 @@
 import { Config, Option, Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { CaptureSessionDeclarationSchema, ResearchCaptureFailure, ResearchCaptureIdSchema } from './capture'
@@ -20,6 +20,7 @@ export const ResearchCaptureSessionConfigSchema = Schema.Struct({
       const selected = value.calendar.sessions.find(({ date }) => date === value.sessionDate)
       const weekday = new Date(`${value.sessionDate}T00:00:00.000Z`).getUTCDay()
       const partitions = value.expectedPartitions.map(({ topic, partition }) => `${topic}:${partition}`)
+      const calendarHash = canonicalHashV1Result(material)
       return (
         selected !== undefined &&
         weekday !== 0 &&
@@ -33,7 +34,8 @@ export const ResearchCaptureSessionConfigSchema = Schema.Struct({
             session.openAt < session.closeAt &&
             (index === 0 || (rows[index - 1]?.date ?? '') < session.date),
         ) &&
-        canonicalHashV1(material) === normalizedResponseHash &&
+        Result.isSuccess(calendarHash) &&
+        calendarHash.success === normalizedResponseHash &&
         value.calendarHash === normalizedResponseHash &&
         Date.parse(value.calendarObservedAt) < value.bootstrapDeadlineMs &&
         value.coverageStartMs === Date.parse(selected.openAt) &&

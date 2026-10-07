@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect, Result } from 'effect'
 
 import { canonicalHashV1 } from './hash'
-import { inferenceCostConfig, parseInferenceCostArgs } from './inference-cost-command'
+import { parseInferenceCostArgs } from './inference-cost-command'
+import { researchReaderConfig } from './db/research-reader-config'
 import { InferenceCostCoverage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
 import { JevFailure } from './jev/contract'
 import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './jev/evidence'
@@ -84,6 +85,18 @@ const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
 })
 
 describe('inference operating-cost evidence', () => {
+  test('keeps command diagnostics on stderr and reserves stdout for report data', () => {
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, `${import.meta.dir}/inference-cost-command.ts`, '--invalid'],
+      env: {},
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(result.exitCode).toBe(1)
+    expect(new TextDecoder().decode(result.stdout)).toBe('')
+    expect(new TextDecoder().decode(result.stderr)).toContain('InferenceCostError')
+  })
+
   test('prices metered usage without adding output charges or rounding each call', () => {
     const result = Result.getOrThrow(makeInferenceCostReport(evidence([row()]), rateCard))
     expect(result.coverage).toBe(InferenceCostCoverage.Estimated)
@@ -207,7 +220,7 @@ describe('inference operating-cost evidence', () => {
 describe('inference-cost operator command', () => {
   test('uses the standard verified PostgreSQL CA without requiring broker or model credentials', () => {
     const config = Effect.runSync(
-      inferenceCostConfig.pipe(
+      researchReaderConfig.pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromUnknown({
@@ -223,6 +236,10 @@ describe('inference-cost operator command', () => {
 
   test('accepts an explicit session or offline evidence and requires a rate card', () => {
     expect(Result.getOrThrow(parseInferenceCostArgs(['--help']))._tag).toBe('Help')
+    expect(Result.getOrThrow(parseInferenceCostArgs(['--ledger-session', '2026-10-06']))).toEqual({
+      _tag: 'LedgerSession',
+      sessionDate: '2026-10-06',
+    })
     expect(
       Result.getOrThrow(parseInferenceCostArgs(['--session', '2026-01-02', '--rate-card', 'rates.json']))._tag,
     ).toBe('Session')
@@ -234,6 +251,8 @@ describe('inference-cost operator command', () => {
       ['--session', '2026-02-30', '--rate-card', 'rates.json'],
       ['--session', '2026-01-02'],
       ['--evidence', '--session', '--rate-card', 'rates.json'],
+      ['--ledger-session', '2026-02-30'],
+      ['--ledger-session', '2026-10-06', '--rate-card', 'replacement.json'],
     ])
       expect(Result.isFailure(parseInferenceCostArgs(args))).toBe(true)
   })

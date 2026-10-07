@@ -276,6 +276,8 @@ cephObjectStores:
       gateway:
         port: 80
         instances: 2
+        rgwCommandFlags:
+          rgw_frontends: "beast port=8080 tcp_nodelay=1"
         priorityClassName: system-cluster-critical
         resources:
           requests:

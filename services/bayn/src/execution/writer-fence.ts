@@ -72,7 +72,7 @@ const acquire = Effect.gen(function* () {
           message: 'another PostgreSQL transaction owns the execution writer fence',
         })
       }
-    })
+    }).pipe(withObservedStage('bayn.postgres.writer-lease.acquire', { dependency: 'postgresql', operation }))
 
   const checkHeld = (connection: Connection, operation: 'check' | 'transaction') =>
     Effect.gen(function* () {
@@ -102,7 +102,7 @@ const acquire = Effect.gen(function* () {
           message: 'PostgreSQL execution writer fence is no longer held',
         })
       }
-    })
+    }).pipe(withObservedStage('bayn.postgres.writer-lease.check', { dependency: 'postgresql', operation }))
 
   const runTransaction = <A, E, R>(
     operation: 'check' | 'transaction',

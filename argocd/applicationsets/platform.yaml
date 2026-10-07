@@ -246,6 +246,14 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false
+              - name: tengri-devices
+                path: argocd/applications/tengri-devices
+                namespace: kube-system
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "1"
+                automation: auto
+                enabled: "true"
               - name: devbox
                 path: argocd/applications/devbox
                 namespace: codex-devbox

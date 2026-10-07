@@ -150,6 +150,27 @@ const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
     }
   })
 
+/** Exact 30-minute absolute/relative momentum, before any model output is available. */
+export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, protocol: JevProtocol) =>
+  Result.gen(function* () {
+    const benchmark = yield* signalFor(snapshot, protocol.benchmarkSymbol)
+    const signals = []
+    for (const symbol of snapshot.manifest.candidateSymbols ?? []) {
+      if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) continue
+      const candidate = yield* signalFor(snapshot, symbol)
+      const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
+      const quote = snapshot.latestQuotes[symbol]
+      if (quote === undefined) return yield* unavailable('Momentum candidate has no verified quote')
+      if (
+        (yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)) === null &&
+        candidate.prices.bid + candidate.prices.ask > 2n * candidate.prices.reference &&
+        excessReturn.numerator > 0n
+      )
+        signals.push({ symbol, excessReturn })
+    }
+    return signals
+  })
+
 export const jevTradingQuestions = {
   regime: {
     type: 'choice',
@@ -367,6 +388,13 @@ const batchFromObservation = (
   Result.gen(function* () {
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
+    const momentumFirst =
+      observation.schemaVersion === 'bayn.jev-observation.v1' &&
+      observation.protocol.schemaVersion === 'bayn.jev.protocol.v2'
+    if (momentumFirst !== (planVersion === JevBatchPlanVersion.V4))
+      return yield* unavailable(
+        'Momentum-first protocol v2 requires batch v4; retained protocols require their original batches',
+      )
     if (
       observation.schemaVersion === 'bayn.jev-observation.v1' &&
       Date.parse(expiresAt) !== Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs
@@ -374,6 +402,12 @@ const batchFromObservation = (
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
       return yield* unavailable('Jev batch requires the complete recorded candidate universe')
+    const momentumCandidates =
+      momentumFirst &&
+      observation.schemaVersion === 'bayn.jev-observation.v1' &&
+      observation.portfolio.purpose === JevPurpose.Entry
+        ? new Set((yield* jevMomentumEntryCandidates(snapshot, observation.protocol)).map(({ symbol }) => symbol))
+        : null
     const candidates = []
     for (const symbol of manifest.candidateSymbols) {
       const excluded = manifest.candidateExclusions?.find((candidate) => candidate.symbol === symbol)
@@ -381,12 +415,16 @@ const batchFromObservation = (
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
         continue
       }
-      const prepared = yield* requestFromSnapshot(
-        snapshot,
-        symbol,
-        protocol.benchmarkSymbol,
-        observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
-      )
+      // The new entry gate has already validated pricing for every available candidate.
+      // Retained versions preserve their original validate-before-exclude behavior.
+      const prepareRequest = () =>
+        requestFromSnapshot(
+          snapshot,
+          symbol,
+          protocol.benchmarkSymbol,
+          observation.schemaVersion === 'bayn.jev-observation.v1' ? observation : undefined,
+        )
+      const retainedRequest = momentumCandidates === null ? yield* prepareRequest() : undefined
       if (
         planVersion !== JevBatchPlanVersion.V1 &&
         observation.schemaVersion === 'bayn.jev-observation.v1' &&
@@ -409,6 +447,16 @@ const batchFromObservation = (
           }
         }
       }
+      if (momentumCandidates !== null && !momentumCandidates.has(symbol)) {
+        candidates.push({
+          symbol,
+          status: JevCandidatePlanStatus.Excluded,
+          reason: JevEntryExclusion.Momentum,
+          message: 'Verified candidate lacks strictly positive exact own and benchmark-relative 30-minute return',
+        })
+        continue
+      }
+      const prepared = retainedRequest ?? (yield* prepareRequest())
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
         cycleId: observation.cycleId,

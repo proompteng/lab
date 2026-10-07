@@ -18,6 +18,7 @@ type Client = proto::nanoagent_service_client::NanoagentServiceClient<Channel>;
 pub struct RpcClient {
     client: Client,
     authorization: MetadataValue<tonic::metadata::Ascii>,
+    claim: Option<crate::slot::Claim>,
 }
 
 impl RpcClient {
@@ -32,6 +33,7 @@ impl RpcClient {
                 .max_decoding_message_size(MAX_GUEST_JSON_BYTES)
                 .max_encoding_message_size(MAX_GUEST_JSON_BYTES),
             authorization,
+            claim: None,
         })
     }
 
@@ -51,31 +53,20 @@ impl RpcClient {
         request
             .metadata_mut()
             .insert("authorization", self.authorization.clone());
+        if let Some(claim) = &self.claim {
+            request.metadata_mut().insert(
+                crate::slot::supervisor::CLAIM_UID_HEADER,
+                claim.microvm_uid.parse().expect("validated claim UID"),
+            );
+            request.metadata_mut().insert(
+                crate::slot::supervisor::CLAIM_EPOCH_HEADER,
+                claim.epoch.to_string().parse().expect("numeric epoch"),
+            );
+        }
         if let Some(timeout) = timeout {
             request.set_timeout(timeout);
         }
         request
-    }
-
-    pub async fn refresh_spire_bootstrap(
-        &self,
-        pod_uid: &str,
-        token: Vec<u8>,
-        trust_bundle: Vec<u8>,
-    ) -> Result<(), GuestError> {
-        self.client
-            .clone()
-            .refresh_spire_bootstrap(self.request(
-                proto::SpireBootstrap {
-                    pod_uid: pod_uid.to_owned(),
-                    token,
-                    trust_bundle,
-                },
-                Some(GUEST_UNARY_TIMEOUT),
-            ))
-            .await
-            .map_err(rpc_error)?;
-        Ok(())
     }
 
     pub async fn verify_identity(&self, pod_uid: &str) -> Result<(), GuestError> {
@@ -96,11 +87,15 @@ impl RpcClient {
                 message: "Nanoagent identity does not match the current guest Pod".into(),
             });
         }
-        if info.protocol_version != 1 {
+        if info.protocol_version != 2 {
             return Err(GuestError::Api { status: StatusCode::BAD_GATEWAY,
                 message: "Nanoagent uses an unsupported guest protocol version. Sleep and resume the agent to use the current guest image.".into() });
         }
         Ok(())
+    }
+
+    pub fn bind_claim(&mut self, claim: crate::slot::Claim) {
+        self.claim = Some(claim);
     }
 
     pub async fn open_editor(&self) -> Result<(), GuestError> {
@@ -348,7 +343,7 @@ impl RpcClient {
             .map_err(rpc_error)?;
         Ok(())
     }
-    pub(super) async fn codex_call(
+    pub(crate) async fn codex_call(
         &self,
         method: &str,
         params: Value,
