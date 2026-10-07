@@ -286,7 +286,7 @@ export const makeCycleQueries = (
     const riskState = document.mode === legacyExecutionAuthorityToken ? document.deltaRisk[0]?.facts?.state : undefined
     const riskContextEvidence =
       riskContext === undefined
-        ? sql`true`
+        ? sql`${document.mode !== legacyExecutionAuthorityToken}`
         : sql`
             ${
               riskState === undefined

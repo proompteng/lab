@@ -109,6 +109,7 @@ export interface ObserveShadowDecisionInput {
 
 export interface ExecutionDecisionInput extends ObserveShadowDecisionInput {
   readonly authorityGenerationHash: string
+  readonly riskContext: NonNullable<ExecutionDecisionDocument['bindings']['riskContext']>
   readonly entryLimitSlippageBps?: number
   readonly closeLimitSlippageBps?: number
   /** The immutable signal/session binding retained for restart-safe close construction. */
@@ -1009,6 +1010,7 @@ const assembleExecutionDecisionDocument = (
   reduction: ShadowReduction,
   authorityGenerationHash: string,
   executionSession: ExecutionSessionBinding,
+  riskContext: ExecutionDecisionInput['riskContext'],
   submissionCutoffAt: string,
   replanGenerationHash?: string,
   entryLimitSlippageBps?: number,
@@ -1020,7 +1022,6 @@ const assembleExecutionDecisionDocument = (
     (cause) => error('contract', 'planning broker state hash could not be derived', cause),
   )
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
-  const initialRiskState = input.riskInputs[0]?.state
   return Result.mapError(
     makeExecutionDecisionDocument({
       schemaVersion: legacyCycleDecisionSchemaVersion,
@@ -1041,18 +1042,7 @@ const assembleExecutionDecisionDocument = (
         reconciliationId: input.plannerInput.brokerState.reconciliation.reconciliationId,
         reconciliationHash: input.plannerInput.brokerState.reconciliation.contentHash,
         authorityGenerationHash,
-        ...(initialRiskState === undefined
-          ? {}
-          : {
-              riskContext: {
-                authority: initialRiskState.authority,
-                authorityObservedAt: initialRiskState.authorityObservedAt,
-                unknownMutationCount: initialRiskState.unknownMutationCount,
-                dailyTradedNotionalMicros: initialRiskState.dailyTradedNotionalMicros,
-                dayStartEquityMicros: initialRiskState.dayStartEquityMicros,
-                peakEquityMicros: initialRiskState.peakEquityMicros,
-              },
-            }),
+        riskContext,
         ...(input.decisionMarketData === undefined ? {} : { decisionMarketData: input.decisionMarketData }),
         ...(input.executionMarketData === undefined ? {} : { executionMarketData: input.executionMarketData }),
       },
@@ -1116,6 +1106,7 @@ export const buildExecutionDecision = (
                   reduction,
                   input.authorityGenerationHash,
                   input.executionSession,
+                  input.riskContext,
                   input.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
                   input.replanGenerationHash,
                   input.entryLimitSlippageBps,

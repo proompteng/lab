@@ -68,7 +68,10 @@ The same warning records `plannedIntentCount`, `riskEvaluationCount`, `riskConte
 `firstRiskStatePresent`. A decision with zero intent targets and zero risk evaluations validates its bound
 risk context against the exact reconciliation row. It needs no first per-intent risk state. A nonempty plan
 still requires that state and its matching reconciliation cutoff. Empty plans retain the authority, policy,
-turnover, day-start equity, peak equity and unresolved-mutation checks.
+turnover, day-start equity, peak equity and unresolved-mutation checks. Both entry and close constructors bind the risk context
+from their already-read reconciliation and authority observation, independently of order count. Native execution
+documents without that binding fail execution admission, including no-trade and blocked plans. Retained immutable
+no-trade records remain readable for investigation; reading one grants no permission to admit it again.
 
 ```logql
 {namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "bayn.decision-evidence-rejection.v1"
