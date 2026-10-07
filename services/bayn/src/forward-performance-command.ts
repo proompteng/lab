@@ -6,6 +6,11 @@ import { PostgresClientLive } from './db/postgres-client'
 import { canonicalJsonV1Result, renderCanonicalJsonFailure } from './hash'
 import { runForwardPerformanceReport, ForwardPerformanceProgramError } from './forward-performance/program'
 import { Sha256Schema } from './schemas'
+import {
+  makeForwardPerformanceReceiptEnvelope,
+  persistForwardPerformanceReceipt,
+} from './db/forward-performance-receipt'
+import { currentUtcInstant } from './time'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
 export { runForwardPerformance } from './forward-performance'
@@ -44,7 +49,30 @@ const runProof = (options: { readonly authorityGenerationHash?: string }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const config = yield* loadForwardPerformanceConfig()
-      const report = yield* runForwardPerformanceReport(config, undefined, options).pipe(
+      const report = yield* Effect.gen(function* () {
+        const report = yield* runForwardPerformanceReport(config, undefined, options)
+        if (options.authorityGenerationHash !== undefined && report.receipt.window.lastCycleId !== null) {
+          const envelope = yield* Effect.fromResult(
+            makeForwardPerformanceReceiptEnvelope({
+              schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
+              authorityGenerationHash: options.authorityGenerationHash,
+              cycleId: report.receipt.window.lastCycleId,
+              receiptHash: report.receipt.receiptHash,
+              receipt: report.receipt,
+              createdAt: yield* currentUtcInstant,
+            }),
+          ).pipe(
+            Effect.mapError(
+              () =>
+                new ForwardPerformanceCommandArgumentError({
+                  message: 'forward-performance receipt envelope construction failed',
+                }),
+            ),
+          )
+          yield* persistForwardPerformanceReceipt(envelope)
+        }
+        return report
+      }).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- command subprogram owns its scoped PostgreSQL layer
         Effect.provide(PostgresClientLive(config)),
       )

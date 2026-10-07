@@ -1,4 +1,5 @@
-import { Result } from 'effect'
+import { Effect, Result } from 'effect'
+import { PgClient } from '@effect/sql-pg'
 import { makeIntradayPerformanceFixture } from '../forward-performance/intraday-cycle.test-support'
 import { makeIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { describe, expect, test } from 'bun:test'
@@ -7,6 +8,7 @@ import { canonicalHashV1 } from '../hash'
 import {
   decodeForwardPerformanceReceiptEnvelopeResult,
   makeForwardPerformanceReceiptEnvelope,
+  persistForwardPerformanceReceipt,
 } from './forward-performance-receipt'
 
 const hash = 'a'.repeat(64)
@@ -90,6 +92,46 @@ const envelopeMaterial = {
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
 
 describe('forward-performance receipt persistence contract', () => {
+  test('persists once and accepts an exact idempotent replay', async () => {
+    const packet = Result.getOrThrow(makeForwardPerformanceReceiptEnvelope(envelopeMaterial))
+    const rows: Array<typeof packet> = []
+    const query = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
+      if (strings.join('').includes('INSERT INTO')) {
+        const incoming = values[2] as typeof packet
+        if (!rows.some((row) => row.authorityGenerationHash === incoming.authorityGenerationHash)) rows.push(incoming)
+        return Effect.succeed([])
+      }
+      const incoming = values[0] as typeof packet
+      const existing = rows.find((row) => row.authorityGenerationHash === incoming.authorityGenerationHash)
+      return Effect.succeed([{ matches: existing?.contentHash === incoming.contentHash }])
+    }
+    const sql = Object.assign(query, {
+      json: (value: unknown) => value,
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+    }) as unknown as PgClient.PgClient
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* persistForwardPerformanceReceipt(packet)
+        yield* persistForwardPerformanceReceipt(packet)
+      }).pipe(Effect.provideService(PgClient.PgClient, sql)),
+    )
+    expect(rows).toEqual([packet])
+  })
+
+  test('rejects a conflicting replay for the same authority generation', async () => {
+    const packet = Result.getOrThrow(makeForwardPerformanceReceiptEnvelope(envelopeMaterial))
+    const query = (strings: TemplateStringsArray, ..._values: readonly unknown[]) =>
+      Effect.succeed(strings.join('').includes('INSERT INTO') ? [] : [{ matches: false }])
+    const sql = Object.assign(query, {
+      json: (value: unknown) => value,
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
+    }) as unknown as PgClient.PgClient
+    const exit = await Effect.runPromiseExit(
+      persistForwardPerformanceReceipt(packet).pipe(Effect.provideService(PgClient.PgClient, sql)),
+    )
+    expect(exit._tag).toBe('Failure')
+  })
+
   test('round-trips unresolved operating costs with retained trading totals and stable hashes', () => {
     const material = {
       ...receiptMaterial,

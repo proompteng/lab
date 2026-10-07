@@ -1,6 +1,7 @@
 import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
 import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
-import { Result, Schema } from 'effect'
+import { Data, Effect, Result, Schema } from 'effect'
+import { PgClient } from '@effect/sql-pg'
 
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -270,3 +271,42 @@ export const decodeForwardPerformanceReceiptEnvelopeResult = (
   input: unknown,
 ): Result.Result<ForwardPerformanceReceiptEnvelope, unknown> =>
   decodeEnvelopeResult(input) as Result.Result<ForwardPerformanceReceiptEnvelope, unknown>
+
+export class ForwardPerformanceReceiptPersistenceError extends Data.TaggedError(
+  'ForwardPerformanceReceiptPersistenceError',
+)<{ readonly message: string; readonly cause?: unknown }> {}
+
+export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceReceiptEnvelope) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    const rows = yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO autonomous_forward_performance_receipts (
+            authority_generation_hash, cycle_id, document, created_at
+          ) VALUES (
+            ${envelope.authorityGenerationHash}, ${envelope.cycleId}, ${sql.json(envelope)}, ${envelope.createdAt}
+          )
+          ON CONFLICT (authority_generation_hash) DO NOTHING
+        `
+        return yield* sql<{ readonly matches: boolean }>`
+          SELECT document = ${sql.json(envelope)} AS matches
+          FROM autonomous_forward_performance_receipts
+          WHERE authority_generation_hash = ${envelope.authorityGenerationHash}
+        `
+      }),
+    )
+    if (rows.length !== 1 || rows[0]?.matches !== true)
+      return yield* new ForwardPerformanceReceiptPersistenceError({
+        message: 'A different forward-performance receipt already exists for this authority generation',
+      })
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof ForwardPerformanceReceiptPersistenceError
+        ? cause
+        : new ForwardPerformanceReceiptPersistenceError({
+            message: 'Failed to persist the forward-performance receipt',
+            cause,
+          }),
+    ),
+  )
