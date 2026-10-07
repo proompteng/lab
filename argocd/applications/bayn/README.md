@@ -41,6 +41,16 @@ The existing two-instance `bayn-db` cluster retains 100Gi per replica through `r
 primary's `pg_stat_replication`. The standby must be `streaming`, with `sync_state` of `sync` or `quorum`, and included
 in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`. Keep `synchronous_commit=on`.
 
+Bayn overrides CNPG's five-second WAL sender and receiver inactivity deadlines with PostgreSQL's sixty-second
+defaults. At 2026-10-06 23:11 UTC, storage stalls exceeded five seconds and caused repeated replication disconnects,
+quorum loss and recovery churn. The larger replication heartbeat window prevents that additional churn; it does
+not repair storage latency or extend application query, reconciliation, capture or trade deadlines. An inactive
+replication connection can now take sixty seconds to terminate. This is scoped to `bayn-db`; operator configuration,
+CNPG failover policy and synchronous durability stay unchanged. After GitOps reconciliation, verify both values
+on both instances, `pending_restart=false`, one streaming quorum standby, and exact financial readback.
+See [PostgreSQL replication settings](https://www.postgresql.org/docs/18/runtime-config-replication.html) and
+[CNPG configuration precedence](https://cloudnative-pg.io/docs/1.28/postgresql_conf/).
+
 Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
 fields. Let Rook provision its native claim and Bayn follow normal Kargo promotion. Require the common Rook sync
 operation to succeed. Report any pre-existing Ceph deep-scrub health warning separately. Preserve all retained storage

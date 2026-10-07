@@ -31,12 +31,14 @@ export enum JevSourceExclusion {
 export enum JevEntryExclusion {
   Spread = 'spread',
   DisplayedSize = 'displayed-size',
+  Momentum = 'momentum',
 }
 
 export enum JevBatchPlanVersion {
   V1 = 'bayn.jev-batch-plan.v1',
   V2 = 'bayn.jev-batch-plan.v2',
   V3 = 'bayn.jev-batch-plan.v3',
+  V4 = 'bayn.jev-batch-plan.v4',
 }
 
 const CandidatePlanSchema = Schema.Union([
@@ -115,6 +117,8 @@ export const makeJevBatchPlan = (input: unknown) =>
         return yield* invalid('Jev batch candidates must be unique, sorted and distinct from the benchmark')
       previous = candidate.symbol
       if (candidate.status === JevCandidatePlanStatus.Excluded) {
+        if (candidate.reason === JevEntryExclusion.Momentum && material.schemaVersion !== JevBatchPlanVersion.V4)
+          return yield* invalid('Momentum exclusions require version-four Jev batches')
         if (
           material.schemaVersion === JevBatchPlanVersion.V1 &&
           (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize)
@@ -225,7 +229,9 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
       !plan.candidates.every(
         (candidate) =>
           candidate.status === JevCandidatePlanStatus.Excluded &&
-          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize),
+          (candidate.reason === JevEntryExclusion.Spread ||
+            candidate.reason === JevEntryExclusion.DisplayedSize ||
+            (plan.schemaVersion === JevBatchPlanVersion.V4 && candidate.reason === JevEntryExclusion.Momentum)),
       )
     )
       return yield* invalid('No Jev candidate has usable inference evidence')

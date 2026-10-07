@@ -1,6 +1,6 @@
 import { Clock, Effect, Exit, Result, type Scope } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import type { KafkaMarketFailure } from '../market-data/streaming/kafka'
 import type { StreamingUniverse } from '../market-data/streaming/raw-events'
 import {
@@ -155,7 +155,9 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
           const now = clock.currentTimeMillisUnsafe()
           if (now < config.startAtMs) return finish(CaptureInvalidation.OutsideWindow)
           if (now >= config.bootstrapDeadlineMs) return finish(CaptureInvalidation.MissedBootstrap)
-          if (canonicalHashV1(universe) !== config.universeHash) return finish(CaptureInvalidation.InvalidEvent)
+          const universeHash = Result.getOrUndefined(canonicalHashV1Result(universe))
+          if (universeHash === undefined || universeHash !== config.universeHash)
+            return finish(CaptureInvalidation.InvalidEvent)
           state = { phase: 'acquiring' }
           return Effect.gen(function* () {
             const objectStore = yield* objects

@@ -99,7 +99,7 @@ func main() {
 		case "/app/services/bayn/dist/forward-performance-command.js":
 			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256>] | --help")
 		case "/app/services/bayn/dist/inference-cost-command.js":
-			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --help")
+			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --ledger-session YYYY-MM-DD | --help")
 		case "/app/services/bayn/dist/backtest-command.js":
 			fmt.Println("Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help")
 		case "/app/services/bayn/dist/control-study-command.js":

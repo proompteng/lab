@@ -54,21 +54,21 @@ export const InferenceRateCardSchema = Schema.Struct({
   rates: Schema.Array(InferenceRateSchema),
 })
 
+export const InferenceCostRequestSchema = Schema.Struct({
+  requestId: Sha256Schema,
+  cycleId: Sha256Schema,
+  authorityGenerationHash: Sha256Schema,
+  request: Schema.Unknown,
+  receipt: Schema.NullOr(Schema.Unknown),
+  resolution: Schema.NullOr(Schema.Unknown),
+})
+
 export const InferenceCostEvidenceSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.inference-cost-evidence.v1'),
   accountBindingHash: Sha256Schema,
   sessionDate: IsoDateSchema,
   asOf: UtcInstantSchema,
-  requests: Schema.Array(
-    Schema.Struct({
-      requestId: Sha256Schema,
-      cycleId: Sha256Schema,
-      authorityGenerationHash: Sha256Schema,
-      request: Schema.Unknown,
-      receipt: Schema.NullOr(Schema.Unknown),
-      resolution: Schema.NullOr(Schema.Unknown),
-    }),
-  ),
+  requests: Schema.Array(InferenceCostRequestSchema),
 })
 
 export type InferenceCostEvidence = typeof InferenceCostEvidenceSchema.Type
@@ -107,19 +107,21 @@ const meteredUsage = (receipt: JevEvaluationReceipt | null, model: string): Usag
   }
 }
 
-export interface InferenceCostLine {
-  readonly requestId: string
-  readonly cycleId: string
-  readonly receiptHash: string | null
-  readonly resolutionHash: string | null
-  readonly model: string
-  readonly purpose: InferencePurpose
-  readonly usageStatus: InferenceUsageStatus
-  readonly inputTokens: string | null
-  readonly outputTokens: string | null
-  readonly rateHash: string | null
-  readonly estimatedCostPicoUsd: string | null
-}
+export const InferenceCostLineSchema = Schema.Struct({
+  requestId: Sha256Schema,
+  cycleId: Sha256Schema,
+  receiptHash: Schema.NullOr(Sha256Schema),
+  resolutionHash: Schema.NullOr(Sha256Schema),
+  model: StrictNonEmptyStringSchema,
+  purpose: Schema.Enum(InferencePurpose),
+  usageStatus: Schema.Enum(InferenceUsageStatus),
+  inputTokens: Schema.NullOr(UnsignedMicrosSchema),
+  outputTokens: Schema.NullOr(UnsignedMicrosSchema),
+  rateHash: Schema.NullOr(Sha256Schema),
+  estimatedCostPicoUsd: Schema.NullOr(UnsignedMicrosSchema),
+})
+
+export type InferenceCostLine = typeof InferenceCostLineSchema.Type
 
 export interface InferenceCostReport {
   readonly schemaVersion: 'bayn.inference-cost-report.v1'

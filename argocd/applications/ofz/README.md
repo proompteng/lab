@@ -38,8 +38,13 @@ The database, its inherited resources, the backup ObjectStore, and the bucket cl
 or Application deletion. Ceph provides both database storage and the backup bucket. These backups do not protect
 against loss of the entire Ceph cluster.
 
-No application permission schema or service integration is installed. Define and review those contracts with the
-first consuming application.
+Tengri is the first consuming application. Its controller checks the `tengri_workspace.access` permission for
+GitHub subjects represented by their existing SHA-256 hashes. The owner-only schema is maintained in
+[`services/tengri/src/authz.zed`](../../../services/tengri/src/authz.zed). On the first rollout Tengri installs it only
+if the shared service has no schema, then enrolls retained workspaces. Existing shared schemas are preserved.
+See [Tengri's authorization contract](../../../services/tengri/README.md#workspace-authorization) for enrollment,
+revocation, credential rotation, and real SpiceDB acceptance tests. PostgreSQL persists the shared schema and
+relationships; application services call SpiceDB rather than querying that database directly.
 
 ## Validate before deployment
 
