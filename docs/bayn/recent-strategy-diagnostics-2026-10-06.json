@@ -1569,7 +1569,38 @@
         "actualOperatingCosts": "UNKNOWN",
         "qualification": "UNQUALIFIED"
       }
-    ]
+    ],
+    "discoveryFrozenProtocol": {
+      "classification": "FROZEN_RETROSPECTIVE_RESEARCH_ADAPTATION_NOT_NATIVE_QUALIFICATION",
+      "frozenBeforeStrategyOutcomeCalculation": true,
+      "sessionStart": "2026-09-01",
+      "sessionEnd": "2026-09-30",
+      "symbols": ["SPY", "QQQ"],
+      "policies": ["ATR_BREAKOUT_LONG_ONLY_15M", "ATR_BREAKOUT_ENTRY_PULLBACK_LONG_ONLY_15M"],
+      "sourcePaper": "https://concretumgroup.com/wp-content/uploads/2026/02/Improving-Performance-with-Fast-Alphas-A-Tactical-Overlay-for-Intraday-Trend-Trading.pdf",
+      "adaptation": "Long-only; one whole-share position; 20 percent gross exposure; 15-minute holding cap; entry-only pullback; immediate modelled protective exits; no volatility leverage or delayed stops",
+      "initialCapitalUsdPerIndependentPortfolio": 10000,
+      "maximumGrossWeight": 0.2,
+      "atrPeriod": 14,
+      "atrDefinition": "Wilder daily true-range average from strictly prior raw IEX daily bars; seeded with first 14 July observations; daily bars include provider session definition",
+      "atrMultiplier": 0.5,
+      "barMinutes": 5,
+      "entryDecisionMinutes": [0, 15, 30, 45],
+      "maximumHoldingMinutes": 15,
+      "entryPullback": "A negative completed five-minute close-to-close return while price remains above the breakout band; pending entry expires after 15 minutes or a close at/below the band",
+      "sessionOpenProxy": "First regular-session IEX five-minute bar open, not official auction price",
+      "protectiveStopBps": 50,
+      "breakoutStop": "Session opening proxy; protective trigger is the larger of this proxy and the 50bp price stop; bar gaps fill at the open and intrabar crossings at the trigger with declared costs",
+      "flattenMinutesBeforeClose": 5,
+      "fillProxy": "Next eligible five-minute bar open after the completed signal bar, with adverse one-way cost; zero extra-bar lag has unknown publication/transport latency and is not a verified fill",
+      "additionalFillLagBars": [0, 1],
+      "oneWayExecutionStressBps": [0, 0.5, 1, 2, 5],
+      "actualFeesAndOperatingCosts": "UNKNOWN; scenario cost is not broker-calibrated and excludes operating costs",
+      "barCoverageGate": "Require every expected regular-session bar for every retained symbol-session; no imputation or dropping gapped sessions",
+      "originalArrivalAvailability": "NOT_OBSERVED",
+      "qualification": "UNQUALIFIED",
+      "role": "Supplementary paired experiment; does not replace the required native Jev-plus-three-controls comparison"
+    }
   },
   "independentAccounting": {
     "trendReportSha256": "70a2d689f6b879a3145f366f1477b66e601bb7a384153c5e8adf6f6ab9dfde3d",
