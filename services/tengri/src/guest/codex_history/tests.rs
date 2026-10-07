@@ -345,6 +345,23 @@ async fn does_not_fetch_history_ahead_of_the_reader_and_stops_on_drop() {
 }
 
 #[test]
+fn bounds_aggregate_history_bytes_for_individually_valid_utf8_pages() {
+    let response = CodexCallResult {
+        result: json!({"text": "🌍".repeat(1024 * 1024)}),
+        event_sequence: 1,
+    };
+    assert!(serde_json::to_vec(&response.result).unwrap().len() < MAX_GUEST_JSON_BYTES);
+    let mut budget = HistoryBudget::default();
+    for _ in 0..15 {
+        budget.include(&response).unwrap();
+    }
+    assert!(matches!(
+        budget.include(&response),
+        Err(GuestError::ResponseTooLarge(limit)) if limit == 64 * 1024 * 1024
+    ));
+}
+
+#[test]
 fn bounds_each_history_page_and_the_number_of_pages() {
     let mut budget = HistoryBudget::default();
     let response = CodexCallResult {

@@ -55,6 +55,38 @@ test('restores more than 10 MiB across bounded pages without losing items, empty
   })
 })
 
+test('bounds total UTF-8 history bytes and cancels before retaining oversized history', async () => {
+  const text = '🌍'.repeat(1024 * 1024)
+  const encoder = new TextEncoder()
+  let page = 0
+  let cancelled = false
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const record =
+        page === 0
+          ? metadata
+          : page <= 16
+            ? items([item(`item-${page}`, text)], page === 16 ? null : `next-${page}`)
+            : page === 17
+              ? turns([turn()])
+              : { type: 'complete' }
+      controller.enqueue(encoder.encode(JSON.stringify(record) + '\n'))
+      if (page++ === 18) controller.close()
+    },
+    cancel() {
+      cancelled = true
+    },
+  })
+  const error = await read(new Response(body, { headers: { 'Content-Type': 'application/x-ndjson' } })).then(
+    () => undefined,
+    (error: unknown) => error,
+  )
+  expect(error).toMatchObject({
+    message: 'Codex conversation recovery returned invalid history: history exceeds 64 MiB',
+  })
+  expect(cancelled).toBe(true)
+})
+
 test('decodes fragmented UTF-8 and NDJSON records', async () => {
   const body = await response([metadata, items([item('unicode', '世界 🌍')], null), turns([turn()])]).arrayBuffer()
   const bytes = new Uint8Array(body)

@@ -12,6 +12,7 @@ mod tests;
 
 const PAGE_SIZE: usize = 100;
 const MAX_HISTORY_PAGES: usize = 256;
+const MAX_HISTORY_BYTES: usize = 64 << 20;
 const HISTORY_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Debug, PartialEq)]
@@ -31,6 +32,7 @@ type HistoryStream = Pin<Box<dyn Stream<Item = Result<CodexHistoryPage, GuestErr
 #[derive(Default)]
 struct HistoryBudget {
     pages: usize,
+    bytes: usize,
     sequence: u64,
 }
 
@@ -40,8 +42,13 @@ impl HistoryBudget {
         if self.pages > MAX_HISTORY_PAGES {
             return Err(GuestError::InvalidCodexHistory("too many history pages"));
         }
-        if serde_json::to_vec(&response.result)?.len() > MAX_GUEST_JSON_BYTES {
+        let bytes = serde_json::to_vec(&response.result)?.len();
+        if bytes > MAX_GUEST_JSON_BYTES {
             return Err(GuestError::ResponseTooLarge(MAX_GUEST_JSON_BYTES));
+        }
+        self.bytes += bytes;
+        if self.bytes > MAX_HISTORY_BYTES {
+            return Err(GuestError::ResponseTooLarge(MAX_HISTORY_BYTES));
         }
         if response.event_sequence < self.sequence {
             return Err(GuestError::InvalidCodexHistory(

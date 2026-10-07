@@ -9,6 +9,7 @@ export type CodexHistoryPage = {
 
 const MAX_RECORD_CHARACTERS = 32 * 1024 * 1024
 const MAX_HISTORY_PAGES = 256
+const MAX_HISTORY_BYTES = 64 * 1024 * 1024
 const PAGE_SIZE = 100
 
 type JsonRecord = Record<string, unknown>
@@ -63,6 +64,8 @@ class CodexHistory {
   private baseline = 0
   private sequence = 0
   private pages = 0
+  private bytes = 0
+  private readonly encoder = new TextEncoder()
   private mode?: 'paginated' | 'legacy'
   private part?: CodexHistoryPage['part']
   private nextCursor: string | null = null
@@ -81,6 +84,8 @@ class CodexHistory {
       throw invalidHistory('invalid event cursor')
     }
     if (++this.pages > MAX_HISTORY_PAGES) throw invalidHistory('too many history pages')
+    this.bytes += this.encoder.encode(record.rawJson).byteLength
+    if (this.bytes > MAX_HISTORY_BYTES) throw invalidHistory('history exceeds 64 MiB')
     this.sequence = sequence
     const result = object(JSON.parse(record.rawJson))
     if (record.part === 'thread') {
