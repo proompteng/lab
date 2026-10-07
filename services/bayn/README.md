@@ -83,6 +83,12 @@ Each waiting pass rechecks the projection without broker requests, model calls o
 wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
 authority restriction.
 
+Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
+wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the
+existing continuation qualifies. Elapsed, missing or invalid timestamps, other readiness reasons and failed passes
+keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
+does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
+
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute

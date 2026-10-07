@@ -17,6 +17,7 @@ import {
 } from '../cycle/runner'
 import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
+import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
@@ -393,6 +394,31 @@ export const closeQuoteContinuationDelayMs = (
   return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
 }
 
+/** A known future signal boundary may shorten one durable wait, without accelerating missing-data retries. */
+export const decisionReadinessContinuationDelayMs = (
+  result: CycleRunResult,
+  normalDelayMs: number,
+  observedAt: string,
+): number | undefined => {
+  if (
+    result.outcome !== 'RECOVERED' ||
+    result.action !== 'WAITING' ||
+    result.readiness === undefined ||
+    (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
+      result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved) ||
+    result.readiness.availableAt === undefined
+  )
+    return undefined
+  const availableAt = Date.parse(result.readiness.availableAt)
+  const remainingMs = availableAt - Date.parse(observedAt)
+  return Number.isSafeInteger(remainingMs) &&
+    remainingMs > 0 &&
+    remainingMs < normalDelayMs &&
+    availableAt < Date.parse(result.cycle.window.submissionCutoffAt)
+    ? remainingMs
+    : undefined
+}
+
 /** Projection health is checked after the pass; a later failure owns its continuation timing. */
 export const checkAdvancedMarketProjection = <R>(
   advanced: RecoveryFirstCycleAdvance,
@@ -559,7 +585,10 @@ const makeRecoveryFirstCycleDriverEffect = (
           return Effect.succeed(advanced)
         return currentUtcInstant.pipe(
           Effect.map((observedAt) => {
-            const continuation = closeQuoteContinuationDelayMs(advanced.result, nextDelayMs, observedAt)
+            const cadence = advanced.nextDelayMs ?? nextDelayMs
+            const continuation =
+              closeQuoteContinuationDelayMs(advanced.result, cadence, observedAt) ??
+              decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
             return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
           }),
         )
