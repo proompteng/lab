@@ -192,7 +192,7 @@ durableTest.each(
                 : []),
             ]
           : scenario === 'no-trade'
-            ? [{ at: initialAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0 }]
+            ? [{ at: initialAtMs + 1, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0 }]
             : scenario === 'no-trade-finalization'
               ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
               : []
