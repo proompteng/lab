@@ -94,9 +94,7 @@ the Deployment directly.
 
 Code keeps recoverable drafts scoped to the GitHub owner and agent creation identity. File reads include a SHA-256
 revision; saves require that base revision and verify the returned revision. A competing API save returns a conflict
-and preserves the local draft. Guests from before conditional-save support remain readable, but editing requires a
-sleep/resume update. Refresh the browser after both web and runtime promotion; older clients cannot submit
-unconditional writes to the updated runtime.
+and preserves the local draft.
 
 Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri
 keeps a temporary recovery copy and exposes a download on the desktop and lifecycle screens. A page-unload warning
