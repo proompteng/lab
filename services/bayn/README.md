@@ -4,12 +4,12 @@ Bayn is a single-writer intraday execution service. Restate schedules one accoun
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
+The source selects one active strategy, `jev`, using momentum-first `bayn.jev.protocol.v2`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
-The [momentum-first candidate](../../docs/bayn/momentum-first-candidate.md) adds an inactive protocol-v2 entry gate:
+The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a protocol-v2 entry gate:
 exact positive own and SPY-relative momentum before Jev, with current Jev selection, sizing and management preserved.
-Its native evaluation and immutable replay support do not change the selected strategy or grant capital authority.
+The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
 
 ## Profitability goal
 
@@ -169,22 +169,24 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
-Sandbox execution can select a $1,000,000 daily gross-turnover budget through its exact immutable mandate hash;
-the retained sandbox mandate stays at $200,000 until explicitly rebound. Live and unspecified environments stay at $200,000.
+The reviewed sandbox mandate selects a $1,000,000 daily gross-turnover budget through its exact immutable policy hash.
+Retained sandbox mandates stay at $200,000 until explicitly rebound. Live and unspecified environments remain at $200,000.
 At $100,000 equity and a 20% target, the sandbox budget supports about 25 full-size round trips across the entry
 window. This is bounded research capacity, not a profitability assumption. All other sizing, cost and risk checks
-are unchanged. The existing sandbox request remains usable across the code rollout; the increase requires a newly
-reviewed research request bound to the new policy hash. Unknown hashes and the increased hash on live fail closed.
+are unchanged. The paired research request binds the new strategy and policy hashes; historical requests and
+decisions remain immutable. Unknown hashes and the increased hash on live fail closed.
 Durable account/session turnover is retained across policy and worker changes, and completed
 decisions are not reopened. The image's policy-hash annotation verifies the available increased sandbox policy for its
 build-account sentinel; the durable mandate remains the authority for the active account policy.
-The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
-exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
-yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
+The runtime writes version-four Jev batches. Exact positive own and SPY-relative momentum gates precede Jev;
+Jev retains its probability-ranked accept/wait/avoid decision among eligible signals. Verified non-signals,
+wide-spread or zero-displayed-size entry quotes become explicit
+exclusions without a Jev call. An entry batch where every candidate is excluded for a verified momentum or entry-quote reason can
+yield a no-entry decision; missing source evidence cannot. Retained version-one through version-three batches keep their
 original identity and quote-deadline binding. Position management still evaluates its held symbol. A complete
-version-three batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
+version-four batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
 the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
-quote deadline for version-three decisions. These parameters have not established an economic advantage under the
+quote deadline for version-three or version-four decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
 
 After selecting a candidate, entry planning reapplies the same spread and positive displayed-size rules to its
