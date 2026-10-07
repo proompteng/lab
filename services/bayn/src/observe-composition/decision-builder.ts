@@ -71,6 +71,7 @@ import {
 import {
   buildObserveShadowDecision,
   buildExecutionDecision,
+  type ExecutionDecisionInput,
   type ShadowDecisionError,
   type ShadowDeltaRiskInput,
 } from '../shadow-decision'
@@ -1111,6 +1112,18 @@ export const prepareObservePlanner = <R>(
     ),
   )
 
+const executionRiskContext = (
+  reconciliation: ReconciliationPassResult,
+  authorityObservation: ObserveAuthorityObservation,
+): ExecutionDecisionInput['riskContext'] => ({
+  authority: authorityObservation.authority,
+  authorityObservedAt: authorityObservation.observedAt,
+  unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+  dailyTradedNotionalMicros: reconciliation.riskContext.dailyTradedNotionalMicros,
+  dayStartEquityMicros: reconciliation.riskContext.dayStartEquityMicros,
+  peakEquityMicros: reconciliation.riskContext.peakEquityMicros,
+})
+
 type RiskInputPreparation = {
   readonly limitSlippageBps: number
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
@@ -1401,6 +1414,7 @@ function buildCycleDecision<R>(
       ? yield* buildObserveShadowDecision(decisionInput)
       : yield* buildExecutionDecision({
           ...decisionInput,
+          riskContext: executionRiskContext(facts.reconciliation, executionAuthority),
           entryLimitSlippageBps: input.policy.maxAdverseSlippageBps,
           authorityGenerationHash: input.authorityGenerationHash,
           executionSession,
@@ -1833,6 +1847,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       ...(closeLimitSlippageBps === undefined ? {} : { closeLimitSlippageBps }),
       riskInputs,
       authorityGenerationHash: input.authorityGenerationHash,
+      riskContext: executionRiskContext(reconciliation, executionAuthority),
       executionSession,
       submissionCutoffAt: closeExpiresAt,
       ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
