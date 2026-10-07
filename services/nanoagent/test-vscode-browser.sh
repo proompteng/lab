@@ -30,6 +30,8 @@ cleanup() {
     docker cp "$fixture_container:/home/nanoagent/.tengri/browser/server.log" "$fixture_root/browser.log" 2>/dev/null || true
     docker cp "$fixture_container:/home/nanoagent/.tengri/vscode/server.log" "$fixture_root/vscode.log" 2>/dev/null || true
     docker rm "$fixture_container" >/dev/null 2>&1 || true
+  elif [[ -f "$fixture_root/home/.tengri/vscode/server.log" ]]; then
+    cp "$fixture_root/home/.tengri/vscode/server.log" "$fixture_root/vscode.log" || true
   fi
   printf 'VS Code acceptance logs: %s\n' "$fixture_root"
   if [[ "$result" != 0 ]]; then tail -n 60 "$fixture_root"/*.log 2>/dev/null || true; fi
