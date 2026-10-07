@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronRight, FileDiff, ListChecks, LoaderCircle, ShieldCheck, TerminalSquare, Wrench } from 'lucide-react'
+import { ChevronRight, FileDiff, ListChecks, LoaderCircle, TerminalSquare, Wrench } from 'lucide-react'
 import { useRef, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -44,63 +44,71 @@ export function CodexEventCard({
     return (
       <article
         aria-label="Codex approval request"
-        className="rounded-xl border border-white/[0.08] border-l-2 border-l-amber-300/50 bg-zinc-900/40 p-3.5 text-sm leading-6"
+        className="rounded-xl border border-white/[0.08] bg-zinc-950/50 px-3 py-2"
       >
-        <div className="flex items-center gap-2 text-xs font-medium tracking-wide text-zinc-400 uppercase">
-          <ShieldCheck className="size-3.5 text-amber-200/80" aria-hidden="true" />
-          Approval required
-        </div>
-        <p className="mt-2 whitespace-pre-wrap break-words text-zinc-300">{text || 'Codex is requesting approval.'}</p>
-        <div className="mt-3.5 flex flex-wrap gap-2">
-          {approvalDecisions.includes('approve-once') ? (
-            <ApprovalButton
-              disabled={resolvingApproval}
-              label="Approve once"
-              onClick={() => onResolveApproval('approve-once')}
-              primary
-            />
-          ) : null}
-          {approvalDecisions.includes('approve-session') ? (
-            <ApprovalButton
-              disabled={resolvingApproval}
-              label="Approve for session"
-              onClick={() => onResolveApproval('approve-session')}
-              primary={!approvalDecisions.includes('approve-once')}
-            />
-          ) : null}
-          {approvalDecisions.includes('approve-exec-policy-amendment') ? (
-            <ApprovalButton
-              disabled={resolvingApproval}
-              label="Apply command policy"
-              onClick={() => onResolveApproval('approve-exec-policy-amendment')}
-              primary={!approvalDecisions.includes('approve-once') && !approvalDecisions.includes('approve-session')}
-            />
-          ) : null}
-          {approvalDecisions.includes('approve-network-policy-amendment') ? (
-            <ApprovalButton
-              disabled={resolvingApproval}
-              label="Apply network policy"
-              onClick={() => onResolveApproval('approve-network-policy-amendment')}
-              primary={
-                !approvalDecisions.includes('approve-once') &&
-                !approvalDecisions.includes('approve-session') &&
-                !approvalDecisions.includes('approve-exec-policy-amendment')
-              }
-            />
-          ) : null}
-          {approvalDecisions.includes('deny') ? (
-            <ApprovalButton disabled={resolvingApproval} label="Deny" onClick={() => onResolveApproval('deny')} />
-          ) : null}
-          {approvalDecisions.length === 0 ? (
-            <span className="text-xs text-amber-100/58" role="status">
-              No supported response is available.
-            </span>
-          ) : null}
-          {resolvingApproval ? (
-            <span className="inline-flex items-center gap-1.5 px-1 text-xs text-white/48" role="status">
-              <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Resolving…
-            </span>
-          ) : null}
+        <div className="flex items-start gap-2">
+          <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-amber-400/65" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="text-[11px] font-medium text-zinc-400">Approval</span>
+            </div>
+            <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-5 text-zinc-300">
+              {text || 'Codex is requesting approval.'}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-1">
+              {approvalDecisions.includes('approve-once') ? (
+                <ApprovalButton
+                  disabled={resolvingApproval}
+                  label="Approve once"
+                  onClick={() => onResolveApproval('approve-once')}
+                  primary
+                />
+              ) : null}
+              {approvalDecisions.includes('approve-session') ? (
+                <ApprovalButton
+                  disabled={resolvingApproval}
+                  label="Approve for session"
+                  onClick={() => onResolveApproval('approve-session')}
+                  primary={!approvalDecisions.includes('approve-once')}
+                />
+              ) : null}
+              {approvalDecisions.includes('approve-exec-policy-amendment') ? (
+                <ApprovalButton
+                  disabled={resolvingApproval}
+                  label="Apply command policy"
+                  onClick={() => onResolveApproval('approve-exec-policy-amendment')}
+                  primary={
+                    !approvalDecisions.includes('approve-once') && !approvalDecisions.includes('approve-session')
+                  }
+                />
+              ) : null}
+              {approvalDecisions.includes('approve-network-policy-amendment') ? (
+                <ApprovalButton
+                  disabled={resolvingApproval}
+                  label="Apply network policy"
+                  onClick={() => onResolveApproval('approve-network-policy-amendment')}
+                  primary={
+                    !approvalDecisions.includes('approve-once') &&
+                    !approvalDecisions.includes('approve-session') &&
+                    !approvalDecisions.includes('approve-exec-policy-amendment')
+                  }
+                />
+              ) : null}
+              {approvalDecisions.includes('deny') ? (
+                <ApprovalButton disabled={resolvingApproval} label="Deny" onClick={() => onResolveApproval('deny')} />
+              ) : null}
+              {approvalDecisions.length === 0 ? (
+                <span className="px-1 text-[11px] text-zinc-400" role="status">
+                  No supported response is available.
+                </span>
+              ) : null}
+              {resolvingApproval ? (
+                <span className="inline-flex items-center gap-1 px-1 text-[11px] text-zinc-400" role="status">
+                  <LoaderCircle className="size-3 animate-spin" aria-hidden="true" /> Resolving…
+                </span>
+              ) : null}
+            </div>
+          </div>
         </div>
       </article>
     )
@@ -223,10 +231,10 @@ function ApprovalButton({
     <button
       type="button"
       className={cn(
-        'min-h-8 rounded-lg px-3 py-1.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-40 motion-reduce:transition-none',
+        'inline-flex min-h-7 items-center rounded-md px-2 text-[11px] font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40 motion-reduce:transition-none',
         primary
           ? 'bg-blue-600 text-white hover:bg-blue-500'
-          : 'border border-white/[0.08] bg-transparent text-zinc-300 hover:bg-white/[0.04] hover:text-zinc-100',
+          : 'border border-white/[0.08] text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200',
       )}
       disabled={disabled}
       onClick={onClick}

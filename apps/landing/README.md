@@ -62,8 +62,8 @@ thin, with status as muted micro text (Ready / Working / Approval needed / Recon
 hairline rounded-xl control with model/reasoning as secondary chrome beside a restrained circular send/stop button and
 a quiet Enter / Shift+Enter hint. Composer height updates before paint, preserves scrolling within long drafts, and
 observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
-starters. Commands, output, diffs, and reasoning summaries expand from compact activity cards. Approvals stay clear with
-calm borders rather than thick alarm frames.
+starters. Commands, output, diffs, and reasoning summaries expand from compact activity cards. Approvals are a small
+hairline card with a muted label and quiet Approve / Deny actions rather than thick alarm frames.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
 Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
