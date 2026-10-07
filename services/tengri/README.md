@@ -161,6 +161,13 @@ shellcheck services/tengri/network.sh services/tengri/test-kvm*.sh
 ```
 
 The ignored Linux KVM test requires explicitly authorized device grants and native paired boot/test images.
+The AMD64 PR image jobs retain `tengri-kvm-fixture-tengri-amd64` and
+`tengri-kvm-fixture-nanoagent-amd64` artifacts. Download both from the same workflow run and merge their contents into
+one directory. Check both `*-SHA256SUMS` files there, then load both `*-images.tar.gz` archives with `docker load`.
+The JSON receipts record the PR head, checked-out build revision, image reference, and image ID. Verify that both
+receipts match the requested PR head and build revision, and that the loaded image IDs match their receipts.
+CI builds these artifacts without executing the KVM fixture. It requires no SSH devbox. Device execution still
+requires the scoped approval below.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
 absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. It uses a private Docker
 network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.

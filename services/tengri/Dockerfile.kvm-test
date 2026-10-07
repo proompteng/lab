@@ -10,7 +10,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
 COPY src ./src
-RUN (cargo test --locked --release --no-run --bin tengri > /tmp/kvm-build.log 2>&1 || \
+RUN (CARGO_BUILD_JOBS=2 cargo test --locked --release --no-run --bin tengri > /tmp/kvm-build.log 2>&1 || \
     { cat /tmp/kvm-build.log; exit 1; }) && \
     kvm_test="$(sed -nE 's/^ *Executable unittests src\/main.rs \((.*)\)$/\1/p' /tmp/kvm-build.log)" && \
     test -n "$kvm_test" && cp "$kvm_test" /out-kvm-test

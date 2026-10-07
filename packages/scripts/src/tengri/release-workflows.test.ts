@@ -155,6 +155,44 @@ describe('Tengri image workflow', () => {
     expect(source).not.toContain('cosign sign')
   })
 
+  it.each(['save', 'inspect'])('rejects a failed fixture %s before writing its receipt', (failedCommand) => {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: { build: { steps: Array<{ name?: string; if?: string; run?: string }> } }
+    }
+    const steps = workflow.jobs.build.steps
+    const exported = steps.find((step) => step.name === 'Export native KVM fixture image')
+    const retained = steps.find((step) => step.name === 'Retain native KVM fixture image')
+    expect(exported?.if).toBe("${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}")
+    expect(retained?.if).toBe(exported?.if)
+    expect(exported?.run).not.toMatch(/--device|--cap-add|bash services\/tengri\/test-kvm.sh/)
+
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-fixture-export-failure-'))
+    try {
+      writeFileSync(
+        resolve(fixture, 'docker'),
+        '#!/bin/sh\nprintf partial-image\nif [ "$1" = "$FAIL_COMMAND" ] || [ "${2:-}" = "$FAIL_COMMAND" ]; then exit 42; fi\n',
+        { mode: 0o755 },
+      )
+      const result = Bun.spawnSync(['bash', '-c', exported?.run ?? ''], {
+        cwd: fixture,
+        env: {
+          ...process.env,
+          PATH: `${fixture}:${process.env.PATH}`,
+          SERVICE: 'nanoagent',
+          IMAGE_REPOSITORY: 'registry.example.test/nanoagent',
+          GITHUB_SHA: '1'.repeat(40),
+          PR_HEAD_REVISION: '2'.repeat(40),
+          FAIL_COMMAND: failedCommand,
+        },
+      })
+      expect(result.exitCode).toBe(42)
+      expect(existsSync(resolve(fixture, '.artifacts/kvm-fixture/nanoagent.json'))).toBe(false)
+      expect(existsSync(resolve(fixture, '.artifacts/kvm-fixture/nanoagent-SHA256SUMS'))).toBe(false)
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('uses the repository mirror instead of anonymous Docker Hub base pulls', () => {
     const nanoagent = readFileSync(nanoagentDockerfilePath, 'utf8')
     const tengri = readFileSync(tengriDockerfilePath, 'utf8')
