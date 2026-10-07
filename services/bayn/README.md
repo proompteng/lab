@@ -691,6 +691,8 @@ sequence, source revision, wall elapsed time, outcome, receipt and next delay wh
 `stageTimings` profile. Each stage includes its dependency and operation, call count, inclusive elapsed time, maximum
 call time, failures and interruptions. Nested stages overlap; their times must not be added to estimate wall time.
 The profile uses the existing stage clocks and in-memory pass scope, without additional database or network work.
+Execution-document construction uses the complete durable-document decoder's active-strategy check and returns its
+validated document directly. Durable reads retain the same evidence, identity and risk validation.
 Broker submission distinguishes `entry` and `close`, while its transport stage records `SUBMIT` or `CANCEL` through
 the complete response and classification. SQL transaction acquisition, lease checks, begin, commit and rollback have
 separate spans. SQL `server.address`, `server.port` and `db.namespace` identify the configured connection target,
