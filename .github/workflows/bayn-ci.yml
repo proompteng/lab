@@ -293,6 +293,7 @@ jobs:
           bun test services/bayn/src/intraday-replay/runtime.integration.test.ts
           bun test services/bayn/src/intraday-replay/backtest.integration.test.ts
           bun test services/bayn/src/intraday-replay/restart.integration.test.ts
+          bun test services/bayn/src/inference-expense-postgres.integration.test.ts services/bayn/src/inference-expense-tigerbeetle.integration.test.ts
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true

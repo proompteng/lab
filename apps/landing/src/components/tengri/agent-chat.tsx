@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from '@proompteng/design/ui'
 import { ArrowDown, ArrowUp, ArrowUpRight, Command, ExternalLink, LoaderCircle, Plus, Square, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   codexOptionsForSelection,
   codexReasoningLabels,
@@ -481,23 +481,33 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     return () => observer.disconnect()
   }, [active, events, followingConversation, historyItems])
 
+  const resizePrompt = useCallback(() => {
+    const textarea = promptRef.current
+    if (!textarea) return
+    const scrollTop = textarea.scrollTop
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`
+    // Measuring a capped draft must not reset the reader's position inside it.
+    textarea.scrollTop = scrollTop
+  }, [])
+
+  // Commit value and height together so wrapping never paints at the old height.
+  useLayoutEffect(() => {
+    resizePrompt()
+  }, [account?.authenticated, prompt, resizePrompt])
+
   useEffect(() => {
     const textarea = promptRef.current
     if (!textarea) return
-    const resize = () => {
-      textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`
-    }
-    resize()
     let width = textarea.clientWidth
     const observer = new ResizeObserver(([entry]) => {
       if (!entry || entry.contentRect.width === width) return
       width = entry.contentRect.width
-      resize()
+      resizePrompt()
     })
     observer.observe(textarea)
     return () => observer.disconnect()
-  }, [account?.authenticated, prompt])
+  }, [account?.authenticated, resizePrompt])
 
   const historyIds = useMemo(() => new Set(historyItems.map((item) => item.id)), [historyItems])
   const historyById = useMemo(() => new Map(historyItems.map((item) => [item.id, item])), [historyItems])

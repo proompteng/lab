@@ -1,5 +1,6 @@
 mod activity;
 mod auth;
+mod authz;
 mod controller;
 mod crd;
 mod gateway;
@@ -90,6 +91,14 @@ async fn main() -> anyhow::Result<()> {
     let client = Client::try_default()
         .await
         .context("create Kubernetes client")?;
+    let authorization = authz::WorkspaceAuthorization::new(
+        &required_env("TENGRI_AUTHZ_ENDPOINT")?,
+        PathBuf::from(required_env("TENGRI_AUTHZ_KEY_FILE")?),
+    )?;
+    authorization
+        .initialize(client.clone(), &namespace)
+        .await
+        .context("initialize Tengri authorization")?;
     let workload_identity = identity::WorkloadIdentity::from_environment(&namespace).await?;
     let grpc_tls = workload_identity.server_tls()?;
     let grpc_listener = TcpListener::bind(listen_address)
@@ -102,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
         client.clone(),
         ControlPlaneConfig {
             identity: workload_identity.clone(),
+            authorization: authorization.clone(),
             namespace: namespace.clone(),
             default_image,
             architecture,
@@ -128,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         activity,
         preview_origin,
         workload_identity.clone(),
+        authorization.clone(),
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
         .await
@@ -146,6 +157,7 @@ async fn main() -> anyhow::Result<()> {
             tickets,
             guest_image: controller_guest_image.into(),
             identity: workload_identity,
+            authorization,
         })
         .await;
         Ok::<(), anyhow::Error>(())

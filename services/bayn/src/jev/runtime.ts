@@ -199,7 +199,8 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         expiresAt: utcInstantFromEpochMillis(
           Date.parse(observation.payload.observedAt) + input.protocol.inferenceValidityMs,
         ),
-        planVersion: JevBatchPlanVersion.V3,
+        planVersion:
+          input.protocol.schemaVersion === 'bayn.jev.protocol.v2' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V3,
       }),
     )
     const saved = yield* evaluateJevBatch(batchPlan)

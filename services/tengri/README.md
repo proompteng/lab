@@ -32,7 +32,7 @@ only health probes; application/VS Code content uses HTTPS and secure WebSockets
 The trust domain is `proompteng.ai`. Tengri's identity is
 `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051 accepts only
 `spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. The BFF verifies the exact Tengri identity, and signed HMAC
-metadata continues to enforce GitHub ownership and replay protection. There is no plaintext production gRPC listener
+metadata authenticates the GitHub subject and enforces replay protection. There is no plaintext production gRPC listener
 or transport fallback.
 
 Normal Kubernetes workloads obtain their rotating X.509-SVID and trust bundle through the SPIFFE CSI Workload API socket.
@@ -113,8 +113,42 @@ can reach only the control listener. A guest application may therefore own paths
 without those requests reaching Tengri's own handlers.
 
 `/livez` reports process liveness. `/readyz` and the compatibility `/healthz` alias report success only while the
-Kubernetes control path and in-process ticket state are usable; deployment probes do not advertise an isolated process
+Kubernetes control path, SpiceDB permission API, and in-process ticket state are usable; deployment probes do not advertise an isolated process
 as ready to accept agent operations.
+
+## Workspace authorization
+
+The Rust controller uses the shared [Ofz SpiceDB service](../../argocd/applications/ofz/README.md).
+[`src/authz.zed`](src/authz.zed) defines `tengri_user`, `tengri_workspace`, an `owner` relationship, and
+`access = owner`. The user ID is the existing SHA-256 GitHub subject hash; the workspace ID is
+`<namespace>/<MicroVM name>`. Each workspace operation checks `access` with fully consistent reads. Local CR owner
+fields and labels supply initial enrollment metadata; they do not authorize a request.
+
+`TENGRI_AUTHZ_ENDPOINT` and `TENGRI_AUTHZ_KEY_FILE` are required. The deployment connects to
+`http://ofz.ofz.svc.cluster.local:8443` and mounts `tengri-spicedb-key` only in the controller. Requests read the
+projected key file each time so Secret rotation takes effect without a restart. The key permits the whole SpiceDB API;
+the browser, BFF, and guest never receive it. NetworkPolicy permits only the controller to reach Ofz's SpiceDB pods.
+
+Before serving, startup installs the embedded schema only when SpiceDB reports no schema. An existing schema is
+preserved and must already contain the Tengri definitions; a missing or incompatible permission contract stops startup.
+Future changes to the shared schema require an explicit reviewed migration. Startup enrolls existing non-deleting
+MicroVMs using their recorded owners. Creation enrolls new workspaces before returning success. Enrollment records
+`runtime.proompteng.ai/spicedb-enrolled: v1` on each CR after writing the relationship. Kubernetes status/finalizer write
+conflicts retry the annotation patch without repeating the grant. Interrupted enrollment is retried before the
+workspace is returned successfully.
+
+The marker prevents subsequent startup or repeated creation from restoring a revoked owner relationship. Keep the
+annotation when managing grants. To revoke a workspace, delete its `owner` relationship through the private SpiceDB
+API. Grant changes take effect on the next request. Open file/Codex streams and terminal/preview WebSockets recheck
+access every second and close on denial or authority failure; streaming preview response bodies use the same guard.
+Permission requests have a two-second deadline. Denial returns `PERMISSION_DENIED`; outages or invalid responses return
+`UNAVAILABLE`. There is no local authorization fallback or positive permission cache. Deletion removes all workspace
+relationships before deleting the guest resources and releasing the finalizer.
+
+Run `bash services/tengri/test-authz.sh` to test schema installation, enrollment with a Kubernetes write conflict,
+owner and foreign-user checks, namespace isolation, stream revocation, restart without re-granting, and preservation
+of another application's schema against the pinned real SpiceDB image. It creates and removes an isolated local
+Docker container and uses only a disposable test key. Both controller and image CI gates run this test.
 
 `TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
 authentication outage by sealing `new,current` into both namespace-scoped manifests in the same commit: the BFF signs
@@ -134,6 +168,15 @@ Only live receipts are retained and the bounded store fails closed. The deployme
 on that named ConfigMap.
 
 ## GitOps rollout and rollback
+
+The authorization cutover requires the Ofz service, its existing API key, the controller-only NetworkPolicy rule,
+and `tengri-spicedb-key` before the new controller starts. The committed strict-scope SealedSecret is generated with
+`nix develop -c python3 scripts/seal-tengri-authz.py --context galactic-tailscale`; the helper reads the existing Ofz key
+and writes ciphertext without applying resources. Rotate this copy whenever the shared Ofz key changes. Validate the
+sealed manifest, render the Tengri application, and publish/promote the reviewed controller image through Kargo.
+Verify exact deployed revisions, enrollment annotations, allowed and denied workspace operations, and open-session
+revocation after an authorized rollout. Preserve SpiceDB's PostgreSQL data and the enrollment annotations during
+recovery; do not clear them to recover an intentionally revoked grant.
 
 Deploy the SPIRE prerequisites first: host workload registrations and CSI mounts, the guest PSAT profile, the public
 bundle publisher, the `nanoagent` service account, and constrained registration/token RBAC. Verify the bundle in

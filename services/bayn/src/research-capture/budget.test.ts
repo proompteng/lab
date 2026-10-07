@@ -3,6 +3,7 @@ import { Deferred, Effect, Fiber, type Scope } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
+import { sha256 } from '../hash'
 import { CaptureInvalidation, ResearchCaptureFailure, captureKafkaTransport } from './capture'
 import { captureEvent, marketEvent } from './capture.test-support'
 import { makeResearchCaptureRecorder } from './recorder'
@@ -19,6 +20,51 @@ const options = {
 }
 const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
+
+test('a native-cadence burst drains before the periodic flush without expanding its retained limits', () =>
+  run(
+    Effect.gen(function* () {
+      const saved = sessionMemory()
+      const recorder = yield* makeResearchCaptureRecorder(saved.store, options, saved.objectStore)
+      recorder.record(captureEvent('STARTED'))
+      yield* TestClock.adjust(50)
+      const raw = Buffer.alloc(450, 120)
+      const rawValueSha256 = sha256(raw)
+      let now = 0
+      let maximumRetainedReceipts = 0
+      let maximumRetainedBytes = 0
+      for (let sequence = 1; sequence <= 4439; sequence++) {
+        const atMs = Math.floor(((sequence - 1) * 50) / 4439)
+        if (atMs > now) {
+          yield* TestClock.adjust(atMs - now)
+          now = atMs
+        }
+        if (sequence % 256 === 0) yield* Effect.yieldNow
+        recorder.record(
+          {
+            ...marketEvent,
+            consumerSequence: sequence,
+            originalTransport: captureKafkaTransport(0),
+            rawByteLength: raw.byteLength,
+            rawValueSha256,
+          },
+          undefined,
+          raw,
+        )
+        const status = yield* recorder.status
+        maximumRetainedReceipts = Math.max(maximumRetainedReceipts, status.retainedReceipts)
+        maximumRetainedBytes = Math.max(maximumRetainedBytes, status.retainedPayloadBytes)
+      }
+      yield* recorder.finish
+      const status = yield* recorder.status
+      expect(status.invalidations).toEqual([])
+      expect(status.observedReceipts).toBe(4440)
+      expect(status.persistedReceipts).toBe(4440)
+      expect(maximumRetainedReceipts <= 1024).toBe(true)
+      expect(maximumRetainedBytes <= 4 * 1024 * 1024).toBe(true)
+      expect(status.retainedReceipts).toBe(0)
+    }),
+  ))
 
 test('cumulative counters include raw, metadata, index, seal and manifest bytes plus every SQL payload', () =>
   run(

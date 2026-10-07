@@ -106,7 +106,11 @@ export const makeAutonomousServiceRuntime = (
                 autonomousRuntimeServices.pipe(
                   Effect.flatMap((runtimeServices) => {
                     const marketData = dependencies.intradayMarketData
-                    const cycleResources = makeAutonomousCycleResources(runtimeServices, marketData)
+                    const cycleResources = makeAutonomousCycleResources(
+                      runtimeServices,
+                      marketData,
+                      observePlan.config.operationTimeoutMs,
+                    )
                     const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                       Effect.gen(function* () {
                         if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {

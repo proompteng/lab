@@ -111,7 +111,8 @@ export const decodeRawMarketRecord = (
           : universe.topics.trades
     if (record.topic !== expectedTopic) return yield* Result.fail(fail('raw market topic does not match its channel'))
     const eventAt = yield* canonicalRawTimestamp(envelope.eventTs)
-    const ingestedAt = yield* canonicalRawTimestamp(envelope.ingestTs)
+    const ingestedAt =
+      envelope.ingestTs === envelope.eventTs ? eventAt : yield* canonicalRawTimestamp(envelope.ingestTs)
     if (
       record.timestampMs !== undefined &&
       (!Number.isSafeInteger(record.timestampMs) || Math.abs(record.timestampMs - Date.parse(ingestedAt)) > 5000)
