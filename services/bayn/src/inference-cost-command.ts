@@ -1,6 +1,6 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { DateTime, Effect, FileSystem, Redacted, Result, Schema, Stdio, Stream } from 'effect'
+import { Cause, DateTime, Effect, FileSystem, Logger, Redacted, Result, Schema, Stdio, Stream } from 'effect'
 
 import { PostgresClientLive } from './db/postgres-client'
 import { researchLedgerReaderConfig, researchReaderConfig } from './db/research-reader-config'
@@ -168,6 +168,10 @@ const main = Effect.scoped(
   }),
 )
 
-// @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the platform runtime
-const program = main.pipe(Effect.provide(NodeServices.layer))
-if (import.meta.main) NodeRuntime.runMain(program)
+const program = main.pipe(
+  // @effect-diagnostics-next-line strictEffectProvide:off -- command entry point owns the platform runtime
+  Effect.provide(NodeServices.layer),
+  Effect.tapCause((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logError(cause))),
+  Effect.provideService(Logger.LogToStderr, true),
+)
+if (import.meta.main) NodeRuntime.runMain(program, { disableErrorReporting: true })
