@@ -59,7 +59,7 @@ beforeAll(async () => {
         expiresAt: '2026-09-09T00:00:00Z',
       })
     },
-    revokeDesktopPreviews(
+    revokeEditorSessions(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
@@ -595,7 +595,7 @@ describe('Tengri gRPC BFF transport', () => {
     })
   })
 
-  test('revokes editor sessions for the authenticated subject without a caller-selected owner', async () => {
+  test('revokes desktop previews for the authenticated subject without a caller-selected owner', async () => {
     const { revokeDesktopPreviews } = await import('./grpc')
     await revokeDesktopPreviews('github:42')
     expect(receivedRequest).toEqual({})

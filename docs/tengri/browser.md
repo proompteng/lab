@@ -30,7 +30,7 @@ TCP listener. Its socket has mode `0600`, and the X display requires the guest's
 retains its origin checks, owner authorization, grant revocation, and SPIFFE mutual TLS to the slot supervisor. The
 supervisor forwards to Nanoagent over the slot's private vsock with its exact claim identity. The browser
 preview does not contain control-plane credentials.
-Sign-out revokes every pending and active Chrome and editor preview for the authenticated owner before clearing
+The existing `RevokeEditorSessions` logout RPC now revokes every pending and active Chrome and editor preview for the authenticated owner before clearing
 authentication. A revocation failure blocks sign-out; established browser WebSockets close after revocation.
 
 Sites load inside Chromium. Their framing restrictions do not prevent normal browser navigation. Chromium owns

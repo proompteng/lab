@@ -227,7 +227,7 @@ export async function POST(request: Request) {
       case 'browser-session':
         result = await issueBrowserSession(identity.subject, action.agentId)
         break
-      case 'revoke-desktop-previews':
+      case 'revoke-editor-sessions':
         await revokeDesktopPreviews(identity.subject)
         result = null
         break

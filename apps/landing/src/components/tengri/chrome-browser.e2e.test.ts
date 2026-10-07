@@ -83,8 +83,8 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
       expect(response.ok()).toBeTruthy()
       result = await response.json()
       browserOrigin = (result as { previewOrigin: string }).previewOrigin
-    } else if (action.action === 'revoke-desktop-previews') {
-      signOutActions.push('revoke-desktop-previews')
+    } else if (action.action === 'revoke-editor-sessions') {
+      signOutActions.push('revoke-editor-sessions')
       if (failRevocation) {
         await route.fulfill({ status: 503, json: { error: 'Desktop preview sessions could not be revoked' } })
         return
@@ -224,14 +224,14 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   await expect(
     page.getByRole('alert').filter({ hasText: 'Desktop preview sessions could not be revoked' }),
   ).toBeVisible()
-  expect(signOutActions).toEqual(['revoke-desktop-previews'])
+  expect(signOutActions).toEqual(['revoke-editor-sessions'])
   expect(authenticated).toBe(true)
   expect((await probeBrowser()).ok()).toBe(true)
   failRevocation = false
   await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
   await expect(chrome).toHaveCount(0)
-  expect(signOutActions).toEqual(['revoke-desktop-previews', 'revoke-desktop-previews', 'sign-out'])
+  expect(signOutActions).toEqual(['revoke-editor-sessions', 'revoke-editor-sessions', 'sign-out'])
   expect(authenticated).toBe(false)
   expect((await probeBrowser()).status()).toBe(401)
   expect(errors).toEqual([])

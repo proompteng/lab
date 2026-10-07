@@ -520,7 +520,7 @@ export async function issueEditorSession(
 }
 
 export async function revokeDesktopPreviews(subject: string) {
-  await unary('revokeDesktopPreviews', {}, subject)
+  await unary('revokeEditorSessions', {}, subject)
 }
 
 export async function issueBrowserSession(subject: string, agentId: string): Promise<TengriPreviewSession> {

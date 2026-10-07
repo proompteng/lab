@@ -118,7 +118,7 @@ function guestActionAgentId(action: TengriAction) {
     case 'create-agent':
     case 'delete-agent':
     case 'resume-agent':
-    case 'revoke-desktop-previews':
+    case 'revoke-editor-sessions':
     case 'revoke-preview-session':
     case 'sleep-agent':
     case 'update-power-settings':
