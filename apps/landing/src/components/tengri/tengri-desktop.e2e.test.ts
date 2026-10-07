@@ -2516,7 +2516,7 @@ test('reconciles paginated item snapshots while keeping the transcript compact a
   expect(userBounds.x + userBounds.width).toBeCloseTo(conversationBounds.x + conversationBounds.width, 0)
   expect(responseBounds.x).toBeCloseTo(conversationBounds.x, 0)
   await tengri.getByRole('button', { name: 'Close Tengri' }).hover()
-  await expect(tengri).toHaveScreenshot('tengri-compact-chat.png')
+  await expect.soft(tengri).toHaveScreenshot('tengri-compact-chat.png')
   await tengri.getByRole('button', { name: 'Approve once', exact: true }).click()
   await expect
     .poll(() =>
