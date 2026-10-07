@@ -48,19 +48,47 @@ discovery.relabel "cnpg_metrics" {
 	}
 }
 
+discovery.relabel "cnpg_bayn_metrics" {
+	targets = discovery.relabel.cnpg_metrics.output
+
+	rule {
+		action        = "keep"
+		source_labels = ["namespace", "cluster"]
+		regex         = "bayn;bayn-db"
+	}
+}
+
+discovery.relabel "cnpg_other_metrics" {
+	targets = discovery.relabel.cnpg_metrics.output
+
+	rule {
+		action        = "drop"
+		source_labels = ["namespace", "cluster"]
+		regex         = "bayn;bayn-db"
+	}
+}
+
 prometheus.relabel "cnpg_metrics" {
 	forward_to = [prometheus.remote_write.mimir.receiver]
 
 	rule {
 		action        = "keep"
 		source_labels = ["__name__", "name"]
-		regex         = "up;.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
+		regex         = "(up|scrape_duration_seconds);.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
 	}
+}
+
+prometheus.scrape "cnpg_bayn" {
+	job_name        = "cnpg-postgres"
+	targets         = discovery.relabel.cnpg_bayn_metrics.output
+	scrape_interval = "5s"
+	scrape_timeout  = "4s"
+	forward_to      = [prometheus.relabel.cnpg_metrics.receiver]
 }
 
 prometheus.scrape "cnpg" {
 	job_name        = "cnpg-postgres"
-	targets         = discovery.relabel.cnpg_metrics.output
+	targets         = discovery.relabel.cnpg_other_metrics.output
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
 	forward_to      = [prometheus.relabel.cnpg_metrics.receiver]
