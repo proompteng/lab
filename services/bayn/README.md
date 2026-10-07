@@ -9,6 +9,8 @@ rows remain decodable for audit and reconciliation, but they are not runtime fal
 
 ## Profitability goal
 
+The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
+
 Demonstrate repeatable positive net profit after execution, model, and allocated data costs on untouched prospective
 sessions. The working target remains the frozen
 [`jev-migration-acceptance-v2`](../../docs/bayn/jev-migration-acceptance-v2.json) contract: at least $5,000 net over
@@ -846,7 +848,7 @@ It uses the same offline portfolio and execution accounting, with a frozen exact
 poll-delayed 60-second exit target. It is not a profitability claim, qualification, production strategy registration,
 or trading activation. Legacy v2/v3 inputs retain their original three policies and definition hashes.
 
-`bun tools/control-study.ts` supports the strictly offline `MECHANICAL` management mode, which creates no provider
+`bayn-control-study` supports the strictly offline `MECHANICAL` management mode, which creates no provider
 client, broker account, database or capital authority. Its three fixed control policies share the native control
 portfolio's point-in-time quotes, finite displayed-liquidity consumption, IOC partial fills, fee accounting, loss and
 drawdown limits, close deadlines and explicit missing-data outcomes. A mechanical control is not an exact replay of
