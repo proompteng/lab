@@ -33,7 +33,7 @@ export function CodexEventCard({
     return (
       <article
         aria-label="Your message"
-        className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-2xl border border-white/[0.08] bg-white/[0.055] px-4 py-2.5 text-left text-sm leading-6 text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+        className="ml-auto w-fit min-w-0 max-w-[min(85%,456px)] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2 text-left text-sm leading-6 text-zinc-100"
       >
         <Markdown text={text} />
       </article>
@@ -44,15 +44,13 @@ export function CodexEventCard({
     return (
       <article
         aria-label="Codex approval request"
-        className="rounded-2xl border border-amber-300/25 bg-gradient-to-b from-amber-300/[0.07] to-amber-300/[0.02] p-4 text-sm leading-6 shadow-[0_8px_28px_rgba(0,0,0,0.22)] ring-1 ring-amber-200/5"
+        className="rounded-xl border border-white/[0.08] border-l-2 border-l-amber-300/50 bg-zinc-900/40 p-3.5 text-sm leading-6"
       >
-        <div className="flex items-center gap-2 text-sm font-semibold tracking-tight text-amber-50">
-          <ShieldCheck className="size-4 text-amber-200" aria-hidden="true" />
+        <div className="flex items-center gap-2 text-xs font-medium tracking-wide text-zinc-400 uppercase">
+          <ShieldCheck className="size-3.5 text-amber-200/80" aria-hidden="true" />
           Approval required
         </div>
-        <p className="mt-2 whitespace-pre-wrap break-words text-zinc-200/95">
-          {text || 'Codex is requesting approval.'}
-        </p>
+        <p className="mt-2 whitespace-pre-wrap break-words text-zinc-300">{text || 'Codex is requesting approval.'}</p>
         <div className="mt-3.5 flex flex-wrap gap-2">
           {approvalDecisions.includes('approve-once') ? (
             <ApprovalButton
@@ -225,10 +223,10 @@ function ApprovalButton({
     <button
       type="button"
       className={cn(
-        'min-h-9 rounded-xl px-3.5 py-2 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-40 motion-reduce:transition-none',
+        'min-h-8 rounded-lg px-3 py-1.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-40 motion-reduce:transition-none',
         primary
-          ? 'bg-blue-600 text-white shadow-sm shadow-blue-950/40 hover:bg-blue-500'
-          : 'bg-white/[0.07] text-white/80 ring-1 ring-white/10 hover:bg-white/[0.11]',
+          ? 'bg-blue-600 text-white hover:bg-blue-500'
+          : 'border border-white/[0.08] bg-transparent text-zinc-300 hover:bg-white/[0.04] hover:text-zinc-100',
       )}
       disabled={disabled}
       onClick={onClick}
@@ -251,9 +249,9 @@ function Markdown({ text }: { text: string }) {
 function CodeBlock({ children }: { children: ReactNode }) {
   const codeRef = useRef<HTMLPreElement | null>(null)
   return (
-    <div className="my-4 overflow-hidden rounded-xl border border-zinc-700/50 bg-zinc-950/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+    <div className="my-4 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-950/50">
       <div className="flex items-center justify-between border-b border-zinc-800/90 bg-zinc-900/40 px-3 py-1.5 text-xs text-zinc-400">
-        <span className="font-medium tracking-wide text-zinc-500 uppercase">Code</span>
+        <span className="font-medium tracking-wide text-zinc-400 uppercase">Code</span>
         <CodexCopyButton label="Copy code block" value={() => codeRef.current?.textContent || ''} />
       </div>
       <pre ref={codeRef} className="overflow-auto p-3.5 font-mono text-xs leading-6 text-zinc-200">

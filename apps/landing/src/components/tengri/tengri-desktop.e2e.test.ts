@@ -3113,8 +3113,16 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
       sessionStorage.setItem(`tengri:terminal:${agentId}:${desktopId}:terminal-4`, '{"sessionId":"stale"}')
       sessionStorage.setItem(`tengri:terminal-cleanup:${agentId}`, '[]')
       localStorage.setItem(`tengri-thread:${agentId}`, 'stale-thread')
+      localStorage.setItem(
+        `tengri-conversations:${agentId}`,
+        JSON.stringify([{ id: 'stale-thread', title: 'Stale', updatedAt: 1 }]),
+      )
       localStorage.setItem(`tengri:spotlight:${agentId}:recents`, '["app:chrome"]')
       localStorage.setItem('tengri-thread:other-agent', 'other-thread')
+      localStorage.setItem(
+        'tengri-conversations:other-agent',
+        JSON.stringify([{ id: 'other-thread', title: 'Other', updatedAt: 1 }]),
+      )
       localStorage.setItem('tengri:spotlight:other-agent:recents', '["app:finder"]')
     },
     { agentId: readyAgent.id, desktopId: staleDesktopId },
@@ -3144,16 +3152,20 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
     await page.evaluate(
       (agentId) => ({
         deletedThread: localStorage.getItem(`tengri-thread:${agentId}`),
+        deletedConversations: localStorage.getItem(`tengri-conversations:${agentId}`),
         deletedRecents: localStorage.getItem(`tengri:spotlight:${agentId}:recents`),
         otherThread: localStorage.getItem('tengri-thread:other-agent'),
+        otherConversations: localStorage.getItem('tengri-conversations:other-agent'),
         otherRecents: localStorage.getItem('tengri:spotlight:other-agent:recents'),
       }),
       readyAgent.id,
     ),
   ).toEqual({
     deletedThread: null,
+    deletedConversations: null,
     deletedRecents: null,
     otherThread: 'other-thread',
+    otherConversations: JSON.stringify([{ id: 'other-thread', title: 'Other', updatedAt: 1 }]),
     otherRecents: '["app:finder"]',
   })
 
@@ -4443,6 +4455,62 @@ test('keeps Mermaid configuration and markup from enabling active content', asyn
     ),
   ).toBe(false)
   expect(dialogs).toEqual([])
+})
+
+test('lists local conversations in the sidebar and switches or starts a new one', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-alpha',
+            status: 'completed',
+            items: [
+              {
+                id: 'user-alpha',
+                type: 'userMessage',
+                content: [{ type: 'text', text: 'Alpha conversation prompt' }],
+              },
+              { id: 'answer-alpha', type: 'agentMessage', text: 'Alpha reply from the saved thread.' },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([
+        { id: 'thread-alpha', title: 'Alpha conversation prompt', updatedAt: 2 },
+        { id: 'thread-beta', title: 'Beta conversation prompt', updatedAt: 1 },
+      ]),
+    )
+  })
+  await page.goto('/')
+  const chrome = page.getByRole('region', { name: 'Chrome window' })
+  const sidebar = chrome.getByTestId('agent-conversation-sidebar')
+  await expect(sidebar).toBeVisible()
+  await expect(sidebar.locator('[data-conversation-id="thread-alpha"]')).toBeVisible()
+  await expect(sidebar.locator('[data-conversation-id="thread-beta"]')).toBeVisible()
+  await expect(chrome.getByRole('article', { name: 'Your message' })).toContainText('Alpha conversation prompt')
+
+  await sidebar.locator('[data-conversation-id="thread-beta"]').click()
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'resume-thread' && action.threadId === 'thread-beta'))
+    .toBe(true)
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-beta')
+  await expect(sidebar.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
+
+  await sidebar.getByRole('button', { name: 'New conversation' }).click()
+  await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBeNull()
+  await expect(sidebar.locator('[data-conversation-id="thread-alpha"]')).toBeVisible()
+  await expect(sidebar.locator('[data-conversation-id="thread-beta"]')).toBeVisible()
+  await expect(chrome.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+  await chrome.getByRole('button', { name: 'Close Chrome' }).hover()
+  await expect(chrome).toHaveScreenshot('tengri-agent-conversations.png')
 })
 
 test('keeps opened tool output stable during streaming and renders copyable structured responses', async ({ page }) => {

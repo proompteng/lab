@@ -53,21 +53,24 @@ reconnect with their event cursor. HMAC metadata still binds every request to it
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
-The Codex view places user messages on the right with left-aligned text and a subtle bordered background, and agent
-responses on the left, without visible speaker headings. The header uses a compact status pill (Ready / Working /
-Approval needed / Reconnecting) with color semantics. The rounded composer uses a focus-within ring, keeps model and
-reasoning choices as secondary chrome beside the send/stop control, and shows a quiet Enter / Shift+Enter hint under
-the form. Composer height updates before paint, preserves scrolling within long drafts, and observes width changes
-without restarting the observer on each keystroke. The empty state offers starter prompts that prepare a draft for
-review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity cards.
+The Codex view follows a Vercel/Geist-inspired minimal chrome: near-black canvas, hairline `white/[0.08]` borders,
+quiet zinc typography, and blue reserved for primary actions. User messages sit on the right with a subtle bordered
+background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
+browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
+thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. The header is
+thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The composer is a flat
+hairline rounded-xl control with model/reasoning as secondary chrome beside a restrained circular send/stop button and
+a quiet Enter / Shift+Enter hint. Composer height updates before paint, preserves scrolling within long drafts, and
+observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
+starters. Commands, output, diffs, and reasoning summaries expand from compact activity cards. Approvals stay clear with
+calm borders rather than thick alarm frames.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
 Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
-Active turns show a Thinking label with a one-second highlight moving left to right and a short activity line; reduced
-motion keeps the label still. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
+Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
 dock keeps its blurred material stationary while its outline and icons magnify, with labels appearing without an
 opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
 blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and
