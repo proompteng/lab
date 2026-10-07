@@ -165,7 +165,7 @@ COPY --chmod=0444 developer-profile.sh /etc/profile.d/tengri-development.sh
 RUN test -x /usr/local/bin/bootstrap-codex && test -x /usr/local/bin/nanoagent
 
 # Resolve exact Ubuntu package URLs and digests without adding the graphical
-# stack to the 512 MiB guest rootfs. The guest extracts it on its retained home.
+# stack to the 1 GiB guest rootfs. The guest extracts it on its retained home.
 FROM runtime AS browser-runtime-manifest
 COPY browser-runtime-manifest.py /tmp/browser-runtime-manifest.py
 RUN set -eux; \
@@ -345,7 +345,7 @@ COPY --from=development-toolchain-layout /bundle /bundle
 
 RUN set -eux; \
     mkdir -p /out; \
-    XZ_OPT='-T2 -9' tar \
+    XZ_OPT='-T2 -8' tar \
       --create \
       --xz \
       --file /out/development-toolchain.tar.xz \

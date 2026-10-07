@@ -329,6 +329,22 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
     }
+    let rpc = guest(&identity, &claim, &token)?;
+    rpc.open_browser().await?;
+    let browser_mcp = rpc
+        .codex_call("mcpServerStatus/list", json!({"limit":50}))
+        .await?;
+    ensure!(
+        browser_mcp["data"]
+            .as_array()
+            .is_some_and(|servers| servers.iter().any(|server| {
+                server["name"] == "tengri_browser"
+                    && server["tools"]
+                        .as_object()
+                        .is_some_and(|tools| tools.values().any(|tool| tool["name"] == "computer"))
+            })),
+        "real guest Codex did not install its browser computer tool"
+    );
     client.lifecycle("stop", &claim).await?;
     timings.sort_by(f64::total_cmp);
     let p95 = timings[(samples * 95).div_ceil(100) - 1];
@@ -338,7 +354,8 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
         "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
-        "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true
+        "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true,
+        "browserStarted":true,"browserComputerToolInstalled":true
     }))?).await?;
     runner_task.abort();
     supervisor_task.abort();

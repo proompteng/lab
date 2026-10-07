@@ -27,7 +27,8 @@ port. The grant bootstraps a cookie on its isolated preview origin. Chrome rende
 
 Nanoagent forwards authenticated preview WebSocket traffic to TigerVNC's private Unix socket. TigerVNC exposes no
 TCP listener. Its socket has mode `0600`, and the X display requires the guest's Xauthority cookie. The gateway
-retains its origin checks, owner authorization, grant revocation, and SPIFFE mutual TLS to Nanoagent. The browser
+retains its origin checks, owner authorization, grant revocation, and SPIFFE mutual TLS to the slot supervisor. The
+supervisor forwards to Nanoagent over the slot's private vsock with its exact claim identity. The browser
 preview does not contain control-plane credentials.
 
 Sites load inside Chromium. Their framing restrictions do not prevent normal browser navigation. Chromium owns
@@ -47,7 +48,7 @@ image build. The guest verifies those hashes before extracting packages into a p
 home. The graphics runtime has scoped library, font, and keyboard paths. The `xkbcomp` wrapper handles TigerVNC's
 compiled absolute executable path.
 
-This arrangement preserves the existing 512 MiB root filesystem and its enforced headroom. The image build
+This arrangement keeps the graphical runtime outside the private 1 GiB root filesystem and preserves its enforced headroom. The image build
 validates the engine and extracted runtime through `browser-smoke`. A cold start requires network access to the
 pinned Ubuntu packages and Chromium download service. Startup failures remain visible and retryable.
 Downloads use the owner's `Downloads` folder. Closing the desktop view does not erase the profile.
@@ -79,9 +80,13 @@ uses the native remote display and the production stdio MCP socket. Its test web
 JavaScript form input. The suite verifies manual navigation, text clipboard, agent screenshots and mouse input, native tabs and history, cookies,
 local storage, workspace downloads, takeover, grant revocation, and reopening the same browser.
 
-The guest image independently validates its extracted graphics runtime and 512 MiB filesystem. The requested
-production rollout still requires the selected Kargo Freight, exact deployed images, a refreshed retained guest,
+The guest image independently validates its extracted graphics runtime and 1 GiB filesystem. The requested
+production rollout still requires the selected Kargo Freight, exact deployed images, an enrolled guest with the browser image,
 and actual browser and agent interaction on `proompteng.ai`.
+
+Prepared slots retain their boot image and processes across sleep and resume. An image change follows the fenced
+recovery procedure in [the operations guide](operations.md); sleep and resume do not upgrade an existing slot.
+The prepared-slot release hold remains in effect until its separately authorized cutover is complete.
 
 CI runs the guest fixture in a disposable Docker container. ARC's Talos host disables user namespaces, so the fixture
 installs Chromium's root-owned setuid sandbox and gives that container `SYS_ADMIN` for its PID and network namespaces.

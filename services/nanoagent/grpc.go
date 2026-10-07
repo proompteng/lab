@@ -105,7 +105,7 @@ func (server *guestRPCServer) GetInfo(context.Context, *pb.Empty) (*pb.GuestInfo
 }
 func (server *guestRPCServer) OpenBrowser(ctx context.Context, _ *pb.Empty) (*pb.Browser, error) {
 	if server.api.browser == nil {
-		return nil, status.Error(codes.Unavailable, "Chromium is not installed in this guest. Sleep and resume the agent to use the current guest image.")
+		return nil, status.Error(codes.Unavailable, "Chromium is unavailable in this guest. An operator must update the prepared slot's guest image.")
 	}
 	if err := server.api.browser.ensure(ctx); err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())

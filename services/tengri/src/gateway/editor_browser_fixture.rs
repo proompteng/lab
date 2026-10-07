@@ -97,7 +97,7 @@ async fn editor_browser_acceptance_fixture() {
                 state.client.clone(),
                 "tengri",
                 "editor-fixture",
-                &crate::identity::WorkloadIdentity::Fixture,
+                &crate::identity::WorkloadIdentity::Fixture(8080),
             )
             .await
             .unwrap();
