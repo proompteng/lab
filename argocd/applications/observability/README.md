@@ -122,6 +122,12 @@ and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn`. Compare th
 during the same execution trace window. An absent throttle series remains UNKNOWN, rather than zero throttling.
 The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic
 series declared by Bayn's catalog-only monitoring queries, including timing-enabled flags and statistics-reset times.
+Bayn's `bayn-db` instances are scraped every five seconds with a four-second scrape timeout; the other CNPG
+targets retain their thirty-second cadence. Complementary target filters prevent duplicate scrapes and preserve the
+`cnpg-postgres` job labels. `scrape_duration_seconds` is retained alongside exporter collection errors to expose the
+cost and availability of this sampling. These catalog reads run in the collector, outside the execution and closure
+paths. A wait shorter than five seconds can still be missed; correlate retained samples with application spans and
+PostgreSQL slow-statement logs before attributing a commit stall to WAL I/O or synchronous replication.
 It also retains bounded exporter collection errors and durations so a failed built-in collector cannot be mistaken
 for zero I/O. Unknown future metric families and unrelated PostgreSQL settings remain excluded. A new exporter
 metric requires both its query definition and this ingestion policy; direct endpoint availability is not Mimir proof.

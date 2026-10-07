@@ -82,6 +82,13 @@ Check Loki/Tempo retention and query completeness before calling the session rec
 missing CPU throttle metrics or an idle database sample remain UNKNOWN. Database waits and synchronous replication
 require the measurements below; a readiness endpoint or a fast idle pass does not prove session performance.
 
+The collector samples the `bayn-db` catalog diagnostics every five seconds and retains
+`scrape_duration_seconds{job="cnpg-postgres",namespace="bayn"}`. Verify `up`, exporter collection errors and sample
+timestamps for both database instances. A thirty-second or stale sample can miss an entire multi-second commit
+stall; even the five-second cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O counters
+and replication gauges with the `COMMIT` span and the server's slow-statement timestamp. Active query age is the
+age of the statement, rather than time spent in its current wait event. A missing wait sample remains UNKNOWN.
+
 When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
 exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
 `VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
