@@ -311,13 +311,22 @@ async fn patch_status(
     if microvm.status.as_ref() == Some(status) {
         return Ok(microvm.clone());
     }
-    Api::<MicroVM>::namespaced(client.clone(), namespace)
+    let updated = Api::<MicroVM>::namespaced(client.clone(), namespace)
         .patch_status(
             &microvm.name_any(),
             &PatchParams::default(),
             &Patch::Merge(json!({"metadata": {"resourceVersion": microvm.resource_version()}, "status": status})),
         )
-        .await.map_err(Into::into)
+        .await?;
+    if status.phase == MicroVMPhase::Failed
+        && microvm
+            .status
+            .as_ref()
+            .is_none_or(|s| s.phase != MicroVMPhase::Failed)
+    {
+        metrics::global().record_guest_failure();
+    }
+    Ok(updated)
 }
 
 pub async fn ensure_slot(
@@ -488,13 +497,20 @@ pub async fn prepared_slot(
         let pvc_uid = annotations
             .get(HOME_UID_ANNOTATION)
             .context("slot has no home UID")?;
-        if !matches!(
+        let status = match async {
             SlotClient::new(identity, namespace, &pod, pvc_uid, image)?
                 .status()
-                .await?
-                .state,
-            SlotState::Vacant { .. }
-        ) {
+                .await
+        }
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                tracing::warn!(slot = %lease.name_any(), error = %error, "prepared slot is unreachable");
+                continue;
+            }
+        };
+        if !matches!(status.state, SlotState::Vacant { .. }) {
             continue;
         }
         candidate = Some(MicroVMSlot {
@@ -1351,6 +1367,97 @@ mod tests {
             },
         ]);
         cleanup(&context(client), &microvm).await.unwrap();
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unreachable_vacancy_does_not_abort_the_remaining_pool_scan() {
+        let lease = |name: &str| {
+            json!({
+                "metadata": {"name": name, "annotations": {
+                    IMAGE_ANNOTATION: "guest-image",
+                    POD_UID_ANNOTATION: format!("{name}-pod"),
+                    HOME_UID_ANNOTATION: format!("{name}-home"),
+                    HOME_NAME_ANNOTATION: format!("{name}-pvc")
+                }}, "spec": {}
+            })
+        };
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases",
+                json!({"metadata": {}, "items": [lease("unreachable"), lease("preparing")]}),
+            ),
+            get(
+                "/api/v1/namespaces/tengri/pods/unreachable",
+                json!({"metadata":{"uid":"unreachable-pod"}, "status": {
+                    "podIP":"127.0.0.1", "conditions":[{"type":"Ready", "status":"True"}]
+                }}),
+            ),
+            get(
+                "/api/v1/namespaces/tengri/pods/preparing",
+                json!({"metadata":{"uid":"preparing-pod"}, "status": {
+                    "conditions":[{"type":"Ready", "status":"False"}]
+                }}),
+            ),
+        ]);
+        let result = prepared_slot(
+            &client,
+            "tengri",
+            "guest-image",
+            &WorkloadIdentity::Fixture(8080),
+        )
+        .await;
+        assert!(
+            result
+                .unwrap_err()
+                .downcast_ref::<NoPreparedSlot>()
+                .is_some()
+        );
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn persisted_failure_transitions_increment_the_counter_once() {
+        let failures = || {
+            metrics::global()
+                .render(&[], Default::default())
+                .lines()
+                .find_map(|line| line.strip_prefix("tengri_guest_failures_total "))
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+        };
+        let before = failures();
+        let microvm = agent();
+        let mut failed = microvm.clone();
+        failed.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Failed,
+            message: Some("snapshot write failed".into()),
+            ..Default::default()
+        });
+        let mut still_failed = failed.clone();
+        still_failed.status.as_mut().unwrap().message = Some("snapshot retry failed".into());
+        let patch = |response: &MicroVM| Exchange {
+            method: Method::PATCH,
+            path: "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test/status",
+            code: 200,
+            response: serde_json::to_value(response).unwrap(),
+            body: None,
+        };
+        let (client, pending) = mock(vec![patch(&failed), patch(&still_failed)]);
+        let updated = patch_status(&client, "tengri", &microvm, failed.status.as_ref().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(failures(), before + 1);
+        patch_status(
+            &client,
+            "tengri",
+            &updated,
+            still_failed.status.as_ref().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(failures(), before + 1);
         assert!(pending.lock().unwrap().is_empty());
     }
 

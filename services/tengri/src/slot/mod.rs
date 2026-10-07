@@ -176,13 +176,19 @@ impl Slot {
         let journal_path = config.directory.join("journal.json");
         let journal = match fs::read(&journal_path).await {
             Ok(bytes) => {
-                let journal: Journal =
+                let mut journal: Journal =
                     serde_json::from_slice(&bytes).context("read slot journal")?;
                 ensure!(
                     journal.identity == config.identity,
                     "snapshot identity changed; retain the claim and require explicit fenced recovery"
                 );
                 ensure!(journal.next_generation > 0, "invalid snapshot generation");
+                if matches!(journal.state, SlotState::Preparing) {
+                    journal.state = SlotState::Failed {
+                        claim: None,
+                        message: "runner restarted during slot preparation".into(),
+                    };
+                }
                 ensure!(
                     matches!(
                         journal.state,
@@ -246,10 +252,26 @@ impl Slot {
     }
 
     async fn transition(&mut self, state: SlotState) -> anyhow::Result<()> {
-        self.journal.state = state;
-        // Fence new operations even when the durability write fails.
+        let completed = matches!(
+            state,
+            SlotState::Vacant { .. }
+                | SlotState::Awake { .. }
+                | SlotState::Sleeping { .. }
+                | SlotState::Stopped { .. }
+        );
+        let previous = std::mem::replace(&mut self.journal.state, state);
+        if !completed {
+            // Fence traffic even when the durability write fails.
+            self.state_tx.send_replace(self.journal.state.clone());
+        }
+        if let Err(error) = self.persist().await {
+            if completed {
+                self.journal.state = previous;
+            }
+            return Err(error);
+        }
         self.state_tx.send_replace(self.journal.state.clone());
-        self.persist().await
+        Ok(())
     }
 
     pub async fn prepare(&mut self) -> anyhow::Result<()> {
@@ -606,6 +628,60 @@ mod tests {
         assert!(slot.stop(&claim("owner-b", 1)).await.is_err());
         slot.stop(&owner).await.unwrap();
         slot.stop(&owner).await.unwrap();
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_sleep_commit_is_not_published_and_can_be_retried() {
+        let config = config();
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let owner = claim("owner-a", 1);
+        let saving = SlotState::Saving {
+            claim: owner.clone(),
+        };
+        slot.transition(saving.clone()).await.unwrap();
+        let updates = slot.subscribe();
+        fs::create_dir(config.directory.join("journal.next"))
+            .await
+            .unwrap();
+        let sleeping = SlotState::Sleeping {
+            claim: owner,
+            snapshot: Snapshot { generation: 1 },
+        };
+        assert!(slot.transition(sleeping.clone()).await.is_err());
+        assert_eq!(slot.state(), &saving);
+        assert_eq!(*updates.borrow(), saving);
+        let journal: Journal = serde_json::from_slice(
+            &fs::read(config.directory.join("journal.json"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(journal.state, saving);
+        fs::remove_dir(config.directory.join("journal.next"))
+            .await
+            .unwrap();
+        slot.transition(sleeping.clone()).await.unwrap();
+        assert_eq!(*updates.borrow(), sleeping);
+        drop(slot);
+        assert_eq!(Slot::open(config.clone()).await.unwrap().state(), &sleeping);
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn interrupted_preparation_reopens_as_an_unclaimed_retireable_failure() {
+        let config = config();
+        let slot = Slot::open(config.clone()).await.unwrap();
+        assert_eq!(slot.state(), &SlotState::Preparing);
+        drop(slot);
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        assert!(matches!(
+            slot.state(),
+            SlotState::Failed { claim: None, .. }
+        ));
+        let retirement = claim("retirement-lease", 1);
+        slot.stop(&retirement).await.unwrap();
+        assert_eq!(slot.state(), &SlotState::Stopped { claim: retirement });
         fs::remove_dir_all(config.directory).await.unwrap();
     }
 
