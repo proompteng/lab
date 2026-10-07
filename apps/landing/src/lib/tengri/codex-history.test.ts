@@ -89,14 +89,16 @@ test('rejects incomplete, corrupt, mismatched, and out-of-order streams without 
     response([metadata, items([], 'same'), items([], 'same')]),
     response([metadata, items([], null), turns([]), { type: 'complete' }, metadata]),
   ]) {
-    await expect(read(input)).rejects.toThrow()
+    expect(await read(input).catch((error: unknown) => error)).toBeInstanceOf(Error)
   }
 })
 
 test('propagates a midstream authorization denial and cancels a pending reader on abort', async () => {
-  await expect(
-    read(response([metadata, { type: 'error', status: 403, error: 'Tengri request is not permitted' }], false)),
-  ).rejects.toThrow('Tengri request is not permitted')
+  expect(
+    await read(
+      response([metadata, { type: 'error', status: 403, error: 'Tengri request is not permitted' }], false),
+    ).catch((error: unknown) => error),
+  ).toMatchObject({ message: 'Tengri request is not permitted' })
   let cancelled = false
   const caller = new AbortController()
   const body = new ReadableStream<Uint8Array>({
@@ -106,7 +108,10 @@ test('propagates a midstream authorization denial and cancels a pending reader o
   })
   const pending = read(new Response(body, { headers: { 'Content-Type': 'application/x-ndjson' } }), caller.signal)
   caller.abort(new DOMException('Caller stopped waiting', 'AbortError'))
-  await expect(pending).rejects.toThrow('Caller stopped waiting')
+  expect(await pending.catch((error: unknown) => error)).toMatchObject({
+    name: 'AbortError',
+    message: 'Caller stopped waiting',
+  })
   expect(cancelled).toBe(true)
 })
 

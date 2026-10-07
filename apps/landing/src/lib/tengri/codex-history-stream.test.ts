@@ -89,8 +89,8 @@ test('does not emit completion after an upstream failure or abort', async () => 
 test('fails before HTTP success when the initial RPC fails and emits completion only on a clean end', async () => {
   const { codexHistoryResponse } = await import('./codex-history-stream')
   let cancelled = false
-  await expect(
-    codexHistoryResponse(
+  expect(
+    await codexHistoryResponse(
       {
         cancel() {
           cancelled = true
@@ -106,8 +106,8 @@ test('fails before HTTP success when the initial RPC fails and emits completion 
       new AbortController().signal,
       (page) => page,
       failure,
-    ),
-  ).rejects.toThrow('Conversation is missing')
+    ).catch((error: unknown) => error),
+  ).toMatchObject({ message: 'Conversation is missing' })
   expect(cancelled).toBe(true)
   const response = await codexHistoryResponse(
     {
