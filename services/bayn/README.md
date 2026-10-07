@@ -7,6 +7,10 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
+The [momentum-first candidate](../../docs/bayn/momentum-first-candidate.md) adds an inactive protocol-v2 entry gate:
+exact positive own and SPY-relative momentum before Jev, with current Jev selection, sizing and management preserved.
+Its native evaluation and immutable replay support do not change the selected strategy or grant capital authority.
+
 ## Profitability goal
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
@@ -46,6 +50,10 @@ hashes survive caching. Reconciliation reads one complete cut. Routine account, 
 projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
+
+Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
+the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
+without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
@@ -263,6 +271,15 @@ batches and checks the retained observation window before loading full signal hi
 signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
 the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
 
+A newly committed terminal Jev cycle makes one best-effort attempt to seal its own expired pending batches, across
+that cycle's recorded authority generations. This runs after the authoritative cycle mutation and uses the existing
+configured operation timeout and cancellation-aware deadline clock. It never calls the model, waits for an original
+deadline, revives a decision, or scans historical terminal cycles. Unattempted and abandoned outcomes retain the
+original evidence semantics. A missing, unexpired, foreign-cycle or failed cleanup remains explicitly logged as
+incomplete; typed failures, defects and cleanup timeout do not replace the committed terminal receipt. External
+interruption still cancels and joins cleanup without undoing the terminal state. This is evidence closure, not a
+durable retry queue or a guarantee against process death after the terminal commit.
+
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
 deadlines. An invalid historical bar remains invalid while it is in the rolling window; waiting only helps once a
@@ -473,7 +490,10 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
-  authority.
+  authority. Its readiness checks PostgreSQL, ledger, broker reconciliation, and the bound execution controller.
+  It acquires no archive client and performs no ClickHouse probes. Without a direct market-data observation,
+  `/v1/status` omits the `signal` dependency and reports `data.status: UNKNOWN`; archive connectivity cannot certify
+  live Kafka availability. Trading retains the worker's direct Kafka checks and all entry and position-management gates.
 - Broker egress is restricted to the configured Alpaca endpoint through the dedicated CONNECT proxy. Credentials and
   plaintext account identity must never appear in logs, metrics, traces, or status responses.
 
@@ -510,7 +530,8 @@ recovery behavior, and evidence boundaries.
 
 The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
 does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
-required for archive health and evidence reads; this separation does not alter broker, authority, risk or provenance
+required by the shared configuration for offline evidence reads; they cause no archive acquisition in public status.
+This separation does not alter broker, authority, risk or provenance
 configuration. The three live manifests omit all eight historical settings below; a running service container does
 not supply a historical report context implicitly.
 
@@ -569,6 +590,40 @@ It does not acquire a broker client, inference client, writer fence, or executio
 filter execute in a repeatable-read, read-only transaction. More than 10,000 claimed requests fails explicitly rather
 than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
 endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
+
+The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
+most 64 resolved requests for its bound account, freezes the original request/receipt/resolution hashes and tariff
+in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. That ledger's unit is
+**USD_PICO**: one USD is 1,000,000,000,000 units, so a single input token at the current Jev list price records 42,000
+units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
+estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
+
+This projection starts with sessions on 2026-10-05 and the reviewed, frozen Jev 1.13.0 list-price assumption:
+$0.042 per million input tokens and zero output charge, verified at `https://docs.typesafe.ai/models` on
+2026-10-07 UTC. Its tariff interval identifies where Bayn applies that assumption; it is not evidence that the
+provider has guaranteed future prices. Later reviewed tariff changes apply to new quotes. Existing quotes cannot
+be repriced or deleted. A transfer ID binds the account and request independently of tariff revisions. A lost
+TigerBeetle or PostgreSQL acknowledgement replays the same record and verifies all metadata before completing.
+`verified_at` means the frozen quote was checked against its expected ledger records, not against an invoice.
+Retained rejected or abandoned responses with valid usage are included. Missing usage and unpriced models remain
+explicit quote gaps; they produce no fabricated zero charge. An immutable late receipt can add a priced quote to
+an abandoned gap without posting the request twice. Earlier sessions remain outside this projection's coverage.
+
+The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
+Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
+
+```sh
+node dist/inference-cost-command.js --ledger-session 2026-10-06
+```
+
+This mode needs the database/account settings above plus `BAYN_TIGERBEETLE_ADDRESSES` and the normal cluster ID
+(default 2001). It reads the frozen tariff rather than accepting a replacement rate card. It verifies every original
+request graph, the full scoped TigerBeetle account and transfer sets, and posted balances. `coverage` lists missing
+quotes, pending verification and priced-usage gaps; `completeMeteredCoverage` requires all three to be zero.
+The report gives the source cut and ledger observation times separately. Concurrent posting can fail reconciliation
+and must be retried rather than accepted as a matching subset. Even complete metered coverage remains an estimate:
+`invoiceReconciled` is false. Prepaid credit refills, provider invoice allocation, data, infrastructure and research
+expenses need their own evidence; this projection alone cannot populate complete economic profit or qualify a policy.
 
 Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has `provider: "typesafe"`, an exact `model`,
 `currency: "USD"`, a `source` description, canonical UTC `effectiveFrom` / exclusive `effectiveUntil` instants, and

@@ -120,7 +120,7 @@ fi
 cost_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
   --env NODE_ENV=production --entrypoint /bin/bayn-inference-cost "${image_id}" --help)"
-expected_cost='Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --help'
+expected_cost='Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --ledger-session YYYY-MM-DD | --help'
 if [[ "${cost_actual}" != "${expected_cost}" ]]; then
   printf 'Unexpected Bayn inference-cost help output: %s\n' "${cost_actual}" >&2
   exit 1

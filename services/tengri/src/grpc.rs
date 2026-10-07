@@ -25,6 +25,7 @@ use crate::{
         idle_deadline_passed, last_activity_at,
     },
     auth::{Authenticator, Principal, deterministic_agent_id},
+    authz::WorkspaceAuthorization,
     crd::{
         IDLE_MINUTES, MicroVM, MicroVMArchitecture, MicroVMDesiredState, MicroVMPhase,
         MicroVMPowerSettings, MicroVMResources, MicroVMSpec,
@@ -80,6 +81,7 @@ pub struct ControlPlane {
     default_image: Arc<str>,
     architecture: MicroVMArchitecture,
     auth: Authenticator,
+    authorization: WorkspaceAuthorization,
     tickets: TicketStore,
     preview_origin: PreviewOrigin,
     activity: ActivityTracker,
@@ -90,6 +92,7 @@ pub struct ControlPlane {
 
 pub struct ControlPlaneConfig {
     pub identity: crate::identity::WorkloadIdentity,
+    pub authorization: WorkspaceAuthorization,
     pub namespace: String,
     pub default_image: String,
     pub architecture: MicroVMArchitecture,
@@ -124,6 +127,7 @@ impl ControlPlane {
             default_image: config.default_image.into(),
             architecture: config.architecture,
             auth,
+            authorization: config.authorization,
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             preview_origin: config.preview_origin,
             activity,
@@ -150,22 +154,20 @@ impl ControlPlane {
         self.auth.authorize(request, &rpc_path).await
     }
 
-    async fn owned_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
+    async fn authorized_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
         validate_resource_id(id)?;
-        if id != deterministic_agent_id(&principal.owner_hash) {
-            return Err(Status::permission_denied(
-                "agent belongs to another identity",
-            ));
-        }
+        self.authorization
+            .access(&self.namespace, id, &principal.owner_hash)
+            .require()
+            .await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         let agent = api.get(id).await.map_err(map_kube_error)?;
-        ensure_owner(principal, &agent)?;
         Ok(agent)
     }
 
     async fn wake_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
         for _ in 0..3 {
-            let agent = self.owned_agent(principal, id).await?;
+            let agent = self.authorized_agent(principal, id).await?;
             let now = Utc::now();
             let needs_wake_patch = agent.spec.desired_state != MicroVMDesiredState::Running
                 || idle_deadline_passed(&agent, now);
@@ -220,7 +222,10 @@ impl ControlPlane {
                 Status::unavailable(format!("failed watching agent readiness: {error}"))
             })?
             .ok_or_else(|| Status::not_found("agent was deleted while starting"))?;
-        ensure_owner(principal, &agent)?;
+        self.authorization
+            .access(&self.namespace, id, &principal.owner_hash)
+            .require()
+            .await?;
         if agent.meta().deletion_timestamp.is_some() {
             return Err(Status::failed_precondition("agent is terminating"));
         }
@@ -306,7 +311,18 @@ impl MicroVmControlPlane for ControlPlane {
         let _create_guard = self.create_lock.lock().await;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         if let Some(existing) = api.get_opt(&id).await.map_err(map_kube_error)? {
-            ensure_owner(&principal, &existing)?;
+            self.authorization
+                .enroll(self.client.clone(), &self.namespace, &existing)
+                .await
+                .map_err(|error| {
+                    Status::unavailable(format!(
+                        "workspace authorization enrollment failed: {error:#}"
+                    ))
+                })?;
+            self.authorization
+                .access(&self.namespace, &id, &principal.owner_hash)
+                .require()
+                .await?;
             return Ok(Response::new(agent_from_microvm(&existing)));
         }
         let count = api
@@ -347,9 +363,7 @@ impl MicroVmControlPlane for ControlPlane {
         let created = match api.create(&PostParams::default(), &microvm).await {
             Ok(created) => created,
             Err(kube::Error::Api(response)) if response.code == 409 => {
-                let existing = api.get(&id).await.map_err(map_kube_error)?;
-                ensure_owner(&principal, &existing)?;
-                existing
+                api.get(&id).await.map_err(map_kube_error)?
             }
             Err(error) => {
                 let status = map_kube_error(error);
@@ -359,6 +373,18 @@ impl MicroVmControlPlane for ControlPlane {
                 return Err(status);
             }
         };
+        self.authorization
+            .enroll(self.client.clone(), &self.namespace, &created)
+            .await
+            .map_err(|error| {
+                Status::unavailable(format!(
+                    "workspace authorization enrollment failed: {error:#}"
+                ))
+            })?;
+        self.authorization
+            .access(&self.namespace, &id, &principal.owner_hash)
+            .require()
+            .await?;
         Ok(Response::new(agent_from_microvm(&created)))
     }
 
@@ -368,16 +394,24 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<ListAgentsResponse>, Status> {
         let principal = self.authorize(&request, "ListAgents").await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-        let selector = format!("{OWNER_LABEL}={}", &principal.owner_hash[..32]);
-        let mut agents = api
-            .list(&ListParams::default().labels(&selector))
+        let mut agents = Vec::new();
+        for agent in api
+            .list(&ListParams::default())
             .await
             .map_err(map_kube_error)?
             .items
-            .iter()
-            .filter(|agent| agent.spec.owner_hash == principal.owner_hash)
-            .map(agent_from_microvm)
-            .collect::<Vec<_>>();
+        {
+            match self
+                .authorization
+                .access(&self.namespace, &agent.name_any(), &principal.owner_hash)
+                .require()
+                .await
+            {
+                Ok(()) => agents.push(agent_from_microvm(&agent)),
+                Err(error) if error.code() == tonic::Code::PermissionDenied => {}
+                Err(error) => return Err(error),
+            }
+        }
         agents.sort_by(|left, right| right.created_at.cmp(&left.created_at));
         Ok(Response::new(ListAgentsResponse { agents }))
     }
@@ -387,7 +421,9 @@ impl MicroVmControlPlane for ControlPlane {
         request: Request<GetAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
         let principal = self.authorize(&request, "GetAgent").await?;
-        let agent = self.owned_agent(&principal, &request.get_ref().id).await?;
+        let agent = self
+            .authorized_agent(&principal, &request.get_ref().id)
+            .await?;
         Ok(Response::new(agent_from_microvm(&agent)))
     }
 
@@ -399,12 +435,12 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Self::WatchAgentStream>, Status> {
         let principal = self.authorize(&request, "WatchAgent").await?;
         let id = request.into_inner().id;
-        self.owned_agent(&principal, &id).await?;
+        self.authorized_agent(&principal, &id).await?;
         let service = self.clone();
         let stream = try_stream! {
             let mut previous = String::new();
             loop {
-                let agent = service.owned_agent(&principal, &id).await?;
+                let agent = service.authorized_agent(&principal, &id).await?;
                 let current = serde_json::to_string(&agent).map_err(|error| Status::internal(error.to_string()))?;
                 if current != previous {
                     previous = current;
@@ -423,7 +459,7 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "SleepAgent").await?;
         let id = request.get_ref().id.clone();
         for _ in 0..3 {
-            let agent = self.owned_agent(&principal, &id).await?;
+            let agent = self.authorized_agent(&principal, &id).await?;
             if agent.spec.desired_state == MicroVMDesiredState::Sleeping {
                 return Ok(Response::new(agent_from_microvm(&agent)));
             }
@@ -466,7 +502,7 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let power = power_settings_from_request(&request)?;
         for _ in 0..3 {
-            let agent = self.owned_agent(&principal, &request.id).await?;
+            let agent = self.authorized_agent(&principal, &request.id).await?;
             let now = Utc::now();
             let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
             let patch = json!({
@@ -499,7 +535,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Empty>, Status> {
         let principal = self.authorize(&request, "DeleteAgent").await?;
         let id = request.get_ref().id.clone();
-        self.owned_agent(&principal, &id).await?;
+        self.authorized_agent(&principal, &id).await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         api.delete(&id, &DeleteParams::default())
             .await
@@ -638,6 +674,9 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let activity = self.activity.clone();
         let agent_id = request.agent_id.clone();
+        let access = self
+            .authorization
+            .access(&self.namespace, &agent_id, &principal.owner_hash);
         let stream = self
             .guest(&principal, &request.agent_id)
             .await?
@@ -658,7 +697,7 @@ impl MicroVmControlPlane for ControlPlane {
                     })
                     .map_err(map_guest_error)
             });
-        Ok(Response::new(Box::pin(stream)))
+        Ok(Response::new(access.guard_stream(stream)))
     }
 
     async fn create_terminal(
@@ -1069,6 +1108,9 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let activity = self.activity.clone();
         let agent_id = request.agent_id.clone();
+        let access = self
+            .authorization
+            .access(&self.namespace, &agent_id, &principal.owner_hash);
         let stream = self
             .guest(&principal, &request.agent_id)
             .await?
@@ -1081,7 +1123,7 @@ impl MicroVmControlPlane for ControlPlane {
                 }
                 event.map(codex_event).map_err(map_guest_error)
             });
-        Ok(Response::new(Box::pin(stream)))
+        Ok(Response::new(access.guard_stream(stream)))
     }
 
     async fn issue_editor_session(
@@ -1099,7 +1141,7 @@ impl MicroVmControlPlane for ControlPlane {
         {
             return Err(Status::invalid_argument("invalid editor window identity"));
         }
-        let agent = self.owned_agent(&principal, &request.agent_id).await?;
+        let agent = self.authorized_agent(&principal, &request.agent_id).await?;
         let incarnation = agent
             .uid()
             .ok_or_else(|| Status::unavailable("agent identity is unavailable"))?;
@@ -1173,7 +1215,7 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "RevokePreviewSession").await?;
         let request = request.into_inner();
         validate_preview_session_id(&request.session_id)?;
-        self.owned_agent(&principal, &request.agent_id).await?;
+        self.authorized_agent(&principal, &request.agent_id).await?;
         if request.revocation_token.len() > 256 {
             return Err(Status::invalid_argument("invalid revocation token"));
         }
@@ -1774,15 +1816,6 @@ fn architecture_to_proto(architecture: MicroVMArchitecture) -> Architecture {
         MicroVMArchitecture::Amd64 => Architecture::Amd64,
         MicroVMArchitecture::Arm64 => Architecture::Arm64,
     }
-}
-
-fn ensure_owner(principal: &Principal, agent: &MicroVM) -> Result<(), Status> {
-    if agent.spec.owner_hash != principal.owner_hash {
-        return Err(Status::permission_denied(
-            "agent belongs to another identity",
-        ));
-    }
-    Ok(())
 }
 
 fn validate_display_name(value: &str) -> Result<String, Status> {
@@ -2578,6 +2611,7 @@ mod tests {
             client.clone(),
             ControlPlaneConfig {
                 identity: crate::identity::WorkloadIdentity::Fixture,
+                authorization: WorkspaceAuthorization::Fixture,
                 namespace: namespace.clone(),
                 default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
@@ -2596,10 +2630,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_access_uses_spicedb_instead_of_local_owner_metadata() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let fixture = crate::authz::tests::SpiceFixture::new().await;
+        let mut control = test_control_plane(Client::new(service, "tengri"));
+        control.authorization = fixture.authorization.clone();
+        let agent = provisional_terminal_test_agent(Utc::now());
+        let id = agent.name_any();
+        let principal = Principal {
+            owner_hash: agent.spec.owner_hash.clone(),
+        };
+        fixture.mode.store(1, Ordering::SeqCst);
+        assert_eq!(
+            control
+                .authorized_agent(&principal, &id)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::PermissionDenied
+        );
+        fixture.mode.store(4, Ordering::SeqCst);
+        assert_eq!(
+            control
+                .authorized_agent(&principal, &id)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unavailable
+        );
+
+        fixture.mode.store(0, Ordering::SeqCst);
+        let principal = Principal {
+            owner_hash: owner_hash("github:central-grant"),
+        };
+        assert_ne!(principal.owner_hash, agent.spec.owner_hash);
+        let expected = id.clone();
+        let task = tokio::spawn(async move { control.authorized_agent(&principal, &id).await });
+        let (request, response) = handle.next_request().await.unwrap();
+        assert!(request.uri().path().ends_with(&expected));
+        response.send_response(
+            HttpResponse::builder()
+                .header("content-type", "application/json")
+                .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                .unwrap(),
+        );
+        assert_eq!(task.await.unwrap().unwrap().name_any(), expected);
+    }
+
+    #[tokio::test]
     async fn power_settings_persist_without_waking_and_reject_other_owners() {
         let (service, mut handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let control = test_control_plane(Client::new(service, "tengri"));
+        let fixture = crate::authz::tests::SpiceFixture::new().await;
+        let mut control = test_control_plane(Client::new(service, "tengri"));
+        control.authorization = fixture.authorization.clone();
         let mut sleeping = provisional_terminal_test_agent(Utc::now());
         sleeping.spec.owner_hash = owner_hash("github:42");
         let id = deterministic_agent_id(&sleeping.spec.owner_hash);
@@ -2615,6 +2700,7 @@ mod tests {
             (id.clone(), true),
             (deterministic_agent_id(&owner_hash("github:43")), false),
         ] {
+            fixture.mode.store(u8::from(!allowed), Ordering::SeqCst);
             let mut request = Request::new(UpdatePowerSettingsRequest {
                 id: requested_id,
                 idle_timeout_minutes: Some(0),

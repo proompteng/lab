@@ -425,6 +425,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const sql = yield* PgClient.PgClient
         const store = yield* JevEvaluationStore
         yield* store.begin(request)
+        yield* sql`DROP TABLE inference_expense_quotes`
         yield* sql`DROP TABLE jev_evaluation_resolutions`
         yield* sql`ALTER TABLE jev_evaluation_receipts DROP CONSTRAINT jev_receipt_request_hash`
         yield* sql`INSERT INTO jev_evaluation_receipts (request_id, receipt_hash, payload)
