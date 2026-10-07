@@ -36,6 +36,15 @@ import {
   type TengriCodexImage,
 } from '@/lib/tengri/codex-images'
 import { cn } from '@/lib/utils'
+import {
+  conversationTitleFromRegistry,
+  markStoredConversationUnavailable,
+  readStoredConversations,
+  touchStoredConversation,
+  truncateConversationTitle,
+  upsertStoredConversation,
+  type StoredConversation,
+} from './agent-conversation-storage'
 import { CodexEventCard } from './codex-event-card'
 import { CodexCopyButton } from './codex-copy-button'
 import {
@@ -65,13 +74,6 @@ import { runTengriAction, TengriRequestError } from './client'
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
 type DraftImage = { id: string; name: string; size: number; input: TengriCodexImage | null }
-
-type StoredConversation = {
-  id: string
-  title: string
-  updatedAt: number
-  unavailable?: boolean
-}
 
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
   const composerHelpId = useId()
@@ -108,6 +110,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const rootRef = useRef<HTMLDivElement | null>(null)
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const promptRef = useRef<HTMLTextAreaElement | null>(null)
+  const focusComposerAfterDrawerClose = useRef(false)
   const accountRefreshGeneration = useRef(0)
   const completedTurns = useRef(new Set<string>())
   const loginIdRef = useRef('')
@@ -273,7 +276,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   useEffect(() => {
     if (!conversationMissing || !threadId) return
-    setConversations(markStoredConversationUnavailable(agentId, threadId))
+    setConversations((current) => markStoredConversationUnavailable(agentId, threadId, current))
   }, [agentId, conversationMissing, threadId])
 
   useLayoutEffect(() => {
@@ -293,6 +296,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     observer.observe(root)
     return () => observer.disconnect()
   }, [account?.authenticated])
+
+  useEffect(() => {
+    if (!focusComposerAfterDrawerClose.current) return
+    if (!sidebarWide && sidebarOpen) return
+    focusComposerAfterDrawerClose.current = false
+    requestAnimationFrame(() => promptRef.current?.focus())
+  }, [sidebarOpen, sidebarWide])
 
   useEffect(() => {
     if (!active) return
@@ -364,10 +374,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       const restoredActiveTurnId = codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current)
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
       if (commitActiveTurn) setCurrentActiveTurnId(activeTurnId)
-      const title = truncateConversationTitle(
-        titleFromTranscript(restored.historyItems) || titleHint || existingConversationTitle(agentId, thread.id),
-      )
-      setConversations(upsertStoredConversation(agentId, { id: thread.id, title, updatedAt: Date.now() }))
+      setConversations((current) => {
+        const title = truncateConversationTitle(
+          titleFromTranscript(restored.historyItems) || titleHint || conversationTitleFromRegistry(current, thread.id),
+        )
+        return upsertStoredConversation(agentId, { id: thread.id, title, updatedAt: Date.now() }, current)
+      })
       return { ...restored, activeTurnId }
     },
     [agentId, setCurrentActiveTurnId],
@@ -577,7 +589,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
     return (
       <CodexEventCard
-        key={codexEventWrapperKey({ event, text })}
+        key={codexEventWrapperKey(event)}
         approvalDecisions={codexApprovalDecisions(event)}
         approvalId={event.approvalId}
         kind={event.kind}
@@ -679,7 +691,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   async function ensureThread(titleHint = '') {
     if (threadId && threadReady) {
-      setConversations(touchStoredConversation(agentId, threadId))
+      setConversations((current) => touchStoredConversation(agentId, threadId, current))
       return { id: threadId, activeTurnId: activeTurnIdRef.current }
     }
     const resumeSequence = lastEventSequence.current
@@ -754,8 +766,15 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     completedTurns.current.clear()
   }
 
-  function closeCompactConversationDrawer() {
-    if (!sidebarWide) setSidebarOpen(false)
+  function focusComposerAfterConversationChange() {
+    // Compact overlay unmounts on the next paint after sidebarOpen flips; wait for that
+    // before focusing so keyboard input is not trapped behind the drawer backdrop.
+    if (!sidebarWide && sidebarOpen) {
+      focusComposerAfterDrawerClose.current = true
+      setSidebarOpen(false)
+      return
+    }
+    requestAnimationFrame(() => promptRef.current?.focus())
   }
 
   function newConversation() {
@@ -771,8 +790,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     }
     removeStoredThread(agentId)
     resetTranscriptUi('')
-    closeCompactConversationDrawer()
-    requestAnimationFrame(() => promptRef.current?.focus())
+    focusComposerAfterConversationChange()
   }
 
   function switchConversation(nextThreadId: string) {
@@ -789,8 +807,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     }
     writeStoredThread(agentId, nextThreadId)
     resetTranscriptUi(nextThreadId)
-    closeCompactConversationDrawer()
-    requestAnimationFrame(() => promptRef.current?.focus())
+    focusComposerAfterConversationChange()
   }
 
   function selectOptions(next: TengriCodexSelection) {
@@ -1585,109 +1602,15 @@ function removeStoredThread(agentId: string) {
   }
 }
 
-function conversationsKey(agentId: string) {
-  return `tengri-conversations:${agentId}`
-}
-
-function codexEventWrapperKey(update: CodexBufferedEvent) {
-  if (update.event.approvalId) return `wrap-approval-${update.event.approvalId}`
-  if (update.event.itemId) return `wrap-${update.event.threadId}-${update.event.itemId}-${update.event.kind}`
-  return `wrap-${update.event.sequence}-${update.event.method}`
-}
-
-function truncateConversationTitle(value: string) {
-  const title = value.trim().replace(/\s+/g, ' ')
-  if (!title) return 'New conversation'
-  return title.length > 48 ? `${title.slice(0, 45).trimEnd()}…` : title
+function codexEventWrapperKey(event: TengriCodexEvent) {
+  if (event.approvalId) return `wrap-approval-${event.approvalId}`
+  if (event.itemId) return `wrap-${event.threadId}-${event.itemId}-${event.kind}`
+  return `wrap-${event.sequence}-${event.method}`
 }
 
 function titleFromTranscript(items: readonly CodexTranscriptItem[]) {
   const firstUser = items.find((item) => item.kind === 'user-message' && item.text.trim())
   return firstUser ? truncateConversationTitle(firstUser.text) : ''
-}
-
-function existingConversationTitle(agentId: string, threadId: string) {
-  return readStoredConversations(agentId).find((conversation) => conversation.id === threadId)?.title || ''
-}
-
-function readStoredConversations(agentId: string): StoredConversation[] {
-  try {
-    const raw = localStorage.getItem(conversationsKey(agentId))
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .flatMap((entry) => {
-        if (!entry || typeof entry !== 'object') return []
-        const candidate = entry as Record<string, unknown>
-        if (typeof candidate.id !== 'string' || !candidate.id) return []
-        if (typeof candidate.title !== 'string' || !candidate.title.trim()) return []
-        if (typeof candidate.updatedAt !== 'number' || !Number.isFinite(candidate.updatedAt)) return []
-        const conversation: StoredConversation = {
-          id: candidate.id,
-          title: candidate.title.trim(),
-          updatedAt: candidate.updatedAt,
-        }
-        if (candidate.unavailable === true) conversation.unavailable = true
-        return [conversation]
-      })
-      .slice(0, 50)
-  } catch {
-    return []
-  }
-}
-
-function writeStoredConversations(agentId: string, conversations: StoredConversation[]) {
-  try {
-    localStorage.setItem(conversationsKey(agentId), JSON.stringify(conversations.slice(0, 50)))
-  } catch {
-    // Conversation switching still works for the current browser lifetime when storage is unavailable.
-  }
-  return conversations.slice(0, 50)
-}
-
-function upsertStoredConversation(agentId: string, next: StoredConversation) {
-  const current = readStoredConversations(agentId)
-  const existing = current.find((conversation) => conversation.id === next.id)
-  const preferredTitle =
-    next.title && next.title !== 'New conversation'
-      ? next.title
-      : existing?.title && existing.title !== 'New conversation'
-        ? existing.title
-        : next.title || existing?.title || 'New conversation'
-  const merged: StoredConversation = {
-    id: next.id,
-    title: preferredTitle,
-    updatedAt: next.updatedAt,
-  }
-  if (next.unavailable) merged.unavailable = true
-  const conversations = [merged, ...current.filter((conversation) => conversation.id !== next.id)]
-  return writeStoredConversations(agentId, conversations)
-}
-
-function touchStoredConversation(agentId: string, threadId: string) {
-  const current = readStoredConversations(agentId)
-  const existing = current.find((conversation) => conversation.id === threadId)
-  const updated: StoredConversation = existing
-    ? { id: existing.id, title: existing.title, updatedAt: Date.now() }
-    : { id: threadId, title: 'New conversation', updatedAt: Date.now() }
-  return writeStoredConversations(agentId, [updated, ...current.filter((conversation) => conversation.id !== threadId)])
-}
-
-function markStoredConversationUnavailable(agentId: string, threadId: string) {
-  const current = readStoredConversations(agentId)
-  if (!current.some((conversation) => conversation.id === threadId)) {
-    return writeStoredConversations(agentId, [
-      { id: threadId, title: 'Unavailable conversation', updatedAt: Date.now(), unavailable: true },
-      ...current,
-    ])
-  }
-  return writeStoredConversations(
-    agentId,
-    current.map((conversation) =>
-      conversation.id === threadId ? { ...conversation, unavailable: true } : conversation,
-    ),
-  )
 }
 
 function safeVerificationUrl(value: string) {
