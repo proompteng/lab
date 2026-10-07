@@ -58,6 +58,8 @@ spec:
       log_parameter_max_length_on_error: "0"
       track_io_timing: "on"
       track_wal_io_timing: "on"
+      wal_sender_timeout: 60s
+      wal_receiver_timeout: 60s
   monitoring:
     customQueriesConfigMap:
       - name: cnpg-default-monitoring
