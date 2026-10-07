@@ -69,6 +69,15 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(127)
 		}
+	case "bayn-jev-study-export":
+		if exists("/study-wrapper-fail") {
+			os.Exit(43)
+		}
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/jev-study-export-command.js"}, os.Args[1:]...)
+		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(127)
+		}
 	case "node":
 		if exists("/node-fail") {
 			os.Exit(99)
@@ -88,6 +97,11 @@ func main() {
 			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256>] | --help")
 		case "/app/services/bayn/dist/inference-cost-command.js":
 			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --help")
+		case "/app/services/bayn/dist/jev-study-export-command.js":
+			if exists("/study-command-fail") {
+				os.Exit(44)
+			}
+			fmt.Println("Usage: bayn-jev-study-export --session YYYY-MM-DD --output <new-private-directory> | --help")
 		case "/app/services/bayn/dist/backtest-command.js":
 			fmt.Println("Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help")
 		case "/app/services/bayn/dist/streaming-diagnostics-command.js":
@@ -111,12 +125,12 @@ mkdir -p \
 
 install -m 0555 "${work}/runtime" "${root}/nix/store/test-node/bin/node"
 ln -s /nix/store/test-node/bin/node "${root}/bin/node"
-for command in forward-performance backtest inference-cost; do
+for command in forward-performance backtest inference-cost jev-study-export; do
   mkdir -p "${root}/nix/store/test-bayn-${command}/bin"
   install -m 0555 "${work}/runtime" "${root}/nix/store/test-bayn-${command}/bin/bayn-${command}"
   ln -s "/nix/store/test-bayn-${command}/bin/bayn-${command}" "${root}/bin/bayn-${command}"
 done
-for command in forward-performance-command inference-cost-command backtest-command restate-execution-server streaming-diagnostics-command; do
+for command in forward-performance-command inference-cost-command jev-study-export-command backtest-command restate-execution-server streaming-diagnostics-command; do
   : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   chmod 0444 "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   ln -s "/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js" \
@@ -138,6 +152,25 @@ verify_image() {
 
 pack_image
 test "$(verify_image)" = 'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
+
+study_command="${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/jev-study-export-command.js"
+mv "${study_command}" "${work}/retained-study-command.js"
+pack_image
+if verify_image >/dev/null 2>&1; then
+  echo 'Bayn image verification accepted a missing study-export command.' >&2
+  exit 1
+fi
+mv "${work}/retained-study-command.js" "${study_command}"
+
+for marker in study-wrapper-fail study-command-fail; do
+  touch "${root}/${marker}"
+  pack_image
+  if verify_image >/dev/null 2>&1; then
+    echo "Bayn image verification accepted a broken study export: ${marker}." >&2
+    exit 1
+  fi
+  rm "${root}/${marker}"
+done
 
 chmod u+w "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 cat > "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance" <<'EOF'
