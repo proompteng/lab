@@ -47,6 +47,10 @@ projection. Final submission reads account, positions and orders from one payloa
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
+Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
+the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
+without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
 for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
@@ -262,6 +266,15 @@ remain eligible on every management pass. Position management checks those prote
 batches and checks the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
 signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
 the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
+
+A newly committed terminal Jev cycle makes one best-effort attempt to seal its own expired pending batches, across
+that cycle's recorded authority generations. This runs after the authoritative cycle mutation and uses the existing
+configured operation timeout and cancellation-aware deadline clock. It never calls the model, waits for an original
+deadline, revives a decision, or scans historical terminal cycles. Unattempted and abandoned outcomes retain the
+original evidence semantics. A missing, unexpired, foreign-cycle or failed cleanup remains explicitly logged as
+incomplete; typed failures, defects and cleanup timeout do not replace the committed terminal receipt. External
+interruption still cancels and joins cleanup without undoing the terminal state. This is evidence closure, not a
+durable retry queue or a guarantee against process death after the terminal commit.
 
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing

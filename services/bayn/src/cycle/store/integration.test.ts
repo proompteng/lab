@@ -4,6 +4,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
+import type { Statement } from 'effect/sql/Statement'
 
 import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca'
 import { discoverAutonomousCyclePass } from '../runner/program'
@@ -333,6 +334,67 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     })
     expect(result.replayed).toMatchObject({ changed: false, cycle: { state: CycleState.Blocked } })
     expect(Option.isNone(result.after)).toBeTrue()
+  })
+
+  test('unfinished recovery avoids historical decision payload reads', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+        const candidate = draft()
+        yield* store.acquire(candidate, acquiredAt)
+        yield* store.activate(candidate.identity.cycleId, activatedAt)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+              cycle_id text PRIMARY KEY, decision_hash text NOT NULL, document jsonb NOT NULL
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+              SELECT md5(n::text) || md5('cycle-' || n::text),
+                md5('decision-' || n::text) || md5(n::text),
+                jsonb_build_object(
+                  'schemaVersion', 'bayn.paper-cycle-decision.v1', 'mode', 'PAPER',
+                  'targetPlan', jsonb_build_object('status', 'PLANNED'),
+                  'retainedEvidence', (SELECT jsonb_agg(md5(k::text)) FROM generate_series(1, 512) AS k)
+                )
+              FROM generate_series(1, 128) AS n`
+            yield* sql`ANALYZE autonomous_cycle_shadow_decisions`
+            let lookup: Statement<Record<string, unknown>> | undefined
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                if (statement.compile()[0].includes('WITH cycle_candidates AS')) lookup = statement
+                return statement
+              },
+            })
+            const cycles = yield* makeCycleQueries(monitored).selectOldestUnfinishedCycle({
+              qualificationRunId,
+              accountId,
+            })
+            expect(cycles.map((cycle) => cycle.identity.cycleId)).toEqual([candidate.identity.cycleId])
+            if (lookup === undefined) throw new Error('Recovery did not read unfinished cycles')
+            const [query, parameters] = lookup.compile()
+            const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+            const plans = yield* Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+                }),
+              ),
+            )(explanation)
+            const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+            if (root === undefined) throw new Error('PostgreSQL did not return the recovery query plan')
+            const touchedBlocks = [
+              'Shared Hit Blocks',
+              'Shared Read Blocks',
+              'Local Hit Blocks',
+              'Local Read Blocks',
+            ].reduce((sum, key) => sum + Number(root[key] ?? 0), 0)
+            expect(touchedBlocks).toBeLessThan(32)
+          }),
+        )
+      }),
+    )
   })
 
   test('rejects conflicting authority-slot content and invalid lifecycle transitions', async () => {

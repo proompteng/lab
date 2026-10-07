@@ -1,5 +1,6 @@
 mod activity;
 mod auth;
+mod authz;
 mod controller;
 mod crd;
 mod gateway;
@@ -114,6 +115,14 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|spec| spec.containers.iter().find(|c| c.name == "tengri"))
         .and_then(|container| container.image.clone())
         .context("controller Pod has no Tengri image")?;
+    let authorization = authz::WorkspaceAuthorization::new(
+        &required_env("TENGRI_AUTHZ_ENDPOINT")?,
+        PathBuf::from(required_env("TENGRI_AUTHZ_KEY_FILE")?),
+    )?;
+    authorization
+        .initialize(client.clone(), &namespace)
+        .await
+        .context("initialize Tengri authorization")?;
     let workload_identity = identity::WorkloadIdentity::from_environment(&namespace).await?;
     let grpc_tls = workload_identity.server_tls()?;
     let grpc_listener = TcpListener::bind(listen_address)
@@ -126,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
         client.clone(),
         ControlPlaneConfig {
             identity: workload_identity.clone(),
+            authorization: authorization.clone(),
             namespace: namespace.clone(),
             default_image,
             architecture,
@@ -152,6 +162,7 @@ async fn main() -> anyhow::Result<()> {
         activity,
         preview_origin,
         workload_identity.clone(),
+        authorization.clone(),
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
         .await
@@ -172,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
             runtime_image: runtime_image.into(),
             architecture,
             identity: workload_identity,
+            authorization,
         })
         .await;
         Ok::<(), anyhow::Error>(())

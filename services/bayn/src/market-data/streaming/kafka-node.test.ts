@@ -50,7 +50,7 @@ test.each(['drain', 'invalidate', 'interrupt'])(
   10_000,
 )
 
-test.each(['late', 'construct', 'closed', 'shutdown'])(
+test.each(['late', 'construct', 'closed', 'shutdown', 'payloads'])(
   'Node owns real Kafka streams during %s',
   async (mode) => {
     const directory = await mkdtemp(join(import.meta.dir, '.node-transport-'))

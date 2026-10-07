@@ -59,6 +59,7 @@ async fn editor_browser_acceptance_fixture() {
         )
         .unwrap(),
         crate::identity::WorkloadIdentity::Fixture(8080),
+        crate::authz::WorkspaceAuthorization::Fixture,
     )
     .unwrap();
     let issue_state = state.clone();

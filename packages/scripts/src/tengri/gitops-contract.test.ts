@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
+import { isMap, parseDocument } from 'yaml'
 
 type Rule = {
   resources?: string[]
@@ -37,6 +38,14 @@ type NetworkPolicy = {
   spec?: {
     ingress?: Array<{
       from?: Array<{ namespaceSelector?: { matchLabels?: Record<string, string> } }>
+      ports?: Array<{ port?: number; protocol?: string }>
+    }>
+    egress?: Array<{
+      to?: Array<{
+        namespaceSelector?: { matchLabels?: Record<string, string> }
+        podSelector?: { matchLabels?: Record<string, string> }
+        ipBlock?: { cidr?: string; except?: string[] }
+      }>
       ports?: Array<{ port?: number; protocol?: string }>
     }>
   }
@@ -113,4 +122,58 @@ test('Traefik can reach both public listeners while observability remains contro
     { protocol: 'TCP', port: 8081 },
   ])
   expect(ingressFrom('observability')?.ports).toEqual([{ protocol: 'TCP', port: 8080 }])
+})
+
+test('only the controller can reach the shared SpiceDB API', () => {
+  const controller = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-control-plane')
+  const ofz = controller?.spec?.egress?.find((rule) =>
+    rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),
+  )
+  expect(ofz).toEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'ofz' } },
+        podSelector: { matchLabels: { 'authzed.com/cluster': 'ofz', 'authzed.com/cluster-component': 'spicedb' } },
+      },
+    ],
+    ports: [{ protocol: 'TCP', port: 8443 }],
+  })
+  const guest = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-microvm-guests')
+  expect(
+    guest?.spec?.egress?.some((rule) =>
+      rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),
+    ),
+  ).toBe(false)
+  const internet = guest?.spec?.egress?.flatMap((rule) => rule.to ?? []).find((target) => target.ipBlock)
+  expect(internet?.ipBlock?.except).toContain('10.0.0.0/8')
+  expect(internet?.ipBlock?.except).toContain('100.64.0.0/10')
+})
+
+test('the SpiceDB credential is sealed for the controller namespace and mounted as a file', () => {
+  const manifest = (path: string) =>
+    parseDocument(readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8'))
+  const sealed = manifest('argocd/applications/tengri/spicedb-key-sealedsecret.yaml')
+  expect(sealed.errors).toEqual([])
+  expect(sealed.get('kind')).toBe('SealedSecret')
+  expect(sealed.getIn(['metadata', 'namespace'])).toBe('tengri')
+  expect(sealed.getIn(['spec', 'template', 'metadata', 'name'])).toBe('tengri-spicedb-key')
+  expect(sealed.getIn(['spec', 'encryptedData', 'preshared_key'])).toBeString()
+  expect(sealed.getIn(['spec', 'template', 'data'])).toBeUndefined()
+  const deployment = manifest('argocd/applications/tengri/deployment.yaml')
+  const pod = deployment.getIn(['spec', 'template', 'spec'])
+  if (!isMap(pod)) throw new Error('Deployment pod spec must be a mapping')
+  expect(pod.toJSON()).toMatchObject({
+    containers: [
+      expect.objectContaining({
+        env: expect.arrayContaining([
+          { name: 'TENGRI_AUTHZ_ENDPOINT', value: 'http://ofz.ofz.svc.cluster.local:8443' },
+          { name: 'TENGRI_AUTHZ_KEY_FILE', value: '/var/run/secrets/tengri-authz/preshared_key' },
+        ]),
+        volumeMounts: expect.arrayContaining([
+          { name: 'authz-secret', mountPath: '/var/run/secrets/tengri-authz', readOnly: true },
+        ]),
+      }),
+    ],
+    volumes: expect.arrayContaining([{ name: 'authz-secret', secret: { secretName: 'tengri-spicedb-key' } }]),
+  })
 })

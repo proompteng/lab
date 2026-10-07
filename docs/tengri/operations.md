@@ -26,10 +26,19 @@ and KVM acceptance pass. No operator-created image alias or digest promotion PR 
 
 ## Required secrets and configuration
 
-Tengri stores production credentials in two strict-scope SealedSecrets:
+Tengri stores production credentials in three strict-scope SealedSecrets:
 
 - `argocd/applications/tengri/sealed-secret.yaml` creates `tengri/tengri-runtime`.
 - `argocd/applications/proompteng/sealed-secret.yaml` creates `proompteng/tengri-bff`.
+- `argocd/applications/tengri/spicedb-key-sealedsecret.yaml` creates `tengri/tengri-spicedb-key`, mounted only by the
+  controller. It copies the existing Ofz API credential. Regenerate it with
+  `nix develop -c python3 scripts/seal-tengri-authz.py --context galactic-tailscale` when that credential rotates.
+
+Workspace access uses the shared Ofz SpiceDB service. The first controller startup installs the Tengri schema into an
+empty service and enrolls retained workspaces before accepting traffic. Later startups preserve grants and revocations.
+See the [workspace authorization contract](../../services/tengri/README.md#workspace-authorization) for schema,
+enrollment, failure behavior, revocation, and rollout verification. The controller requires `TENGRI_AUTHZ_ENDPOINT` and
+`TENGRI_AUTHZ_KEY_FILE`; the committed Deployment sets both. SpiceDB failure makes authorization and readiness fail.
 
 The plaintext inputs are these case-sensitive environment variables:
 

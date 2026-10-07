@@ -46,6 +46,7 @@ pub struct ControllerContext {
     pub runtime_image: Arc<str>,
     pub architecture: MicroVMArchitecture,
     pub identity: WorkloadIdentity,
+    pub authorization: crate::authz::WorkspaceAuthorization,
 }
 
 pub async fn run(context: ControllerContext) {
@@ -660,6 +661,11 @@ async fn bound_pod(client: &Client, namespace: &str, microvm: &MicroVM) -> anyho
 }
 
 async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Result<()> {
+    context
+        .authorization
+        .remove(&context.namespace, &microvm.name_any())
+        .await
+        .context("remove workspace authorization")?;
     context.tickets.remove_agent(&microvm.name_any())?;
     metrics::global().clear_pty_sessions(&microvm.name_any());
     let client = &context.client;
@@ -1199,6 +1205,7 @@ mod tests {
             )
             .unwrap(),
             identity: WorkloadIdentity::Fixture(8080),
+            authorization: crate::authz::WorkspaceAuthorization::Fixture,
             guest_image: Arc::from("guest-image"),
             runtime_image: Arc::from("runtime-image"),
             architecture: MicroVMArchitecture::Amd64,
@@ -1272,6 +1279,18 @@ mod tests {
                 .to_string()
                 .contains("retained home requires explicit slot enrollment")
         );
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_authorization_removal_keeps_the_slot_and_home() {
+        let (client, pending) = mock(vec![]);
+        let mut context = context(client);
+        let fixture = crate::authz::tests::SpiceFixture::new().await;
+        context.authorization = fixture.authorization.clone();
+        fixture.mode.store(4, std::sync::atomic::Ordering::SeqCst);
+        let error = cleanup(&context, &agent()).await.unwrap_err();
+        assert!(error.to_string().contains("remove workspace authorization"));
         assert!(pending.lock().unwrap().is_empty());
     }
 

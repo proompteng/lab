@@ -67,6 +67,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked --all-targets
+          bash test-authz.sh
           bash test-rpc-interop.sh
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
