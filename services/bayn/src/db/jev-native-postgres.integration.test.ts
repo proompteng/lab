@@ -258,11 +258,30 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   })
 
   test('inactive momentum-first v2 persists native v4 evidence without evaluating non-signals', async () => {
-    const protocol = Result.getOrThrow(decodeJevProtocol(momentumFirstJevProtocolDocument))
+    const candidate = fixtureForAccount(
+      JevPurpose.Entry,
+      undefined,
+      replayAccountId,
+      momentumFirstJevProtocolDocument,
+      '4'.repeat(64),
+    )
+    const { protocol } = candidate
     const calls: string[] = []
     await runtime.runPromise(
       Effect.gen(function* () {
-        const result = yield* evaluateJevObservation({ ...nativeInput, protocol })
+        // The legacy cycle cannot inherit a changed policy. A separately bound cycle is required.
+        expect(Result.isFailure(yield* evaluateJevObservation({ ...nativeInput, protocol }).pipe(Effect.result))).toBe(
+          true,
+        )
+        expect(calls).toEqual([])
+        yield* (yield* CycleStore).acquire(candidate.draft, candidate.draft.window.executionOpenAt)
+        const result = yield* evaluateJevObservation({
+          cycleId: candidate.draft.identity.cycleId,
+          authorityGenerationHash: candidate.observation.payload.authorityGenerationHash,
+          protocol,
+          portfolio: candidate.portfolio,
+          snapshot: candidate.snapshot,
+        })
         expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V4)
         expect(calls.toSorted()).toEqual(['AAPL', 'AMZN'])
         expect(result.batchPlan.candidates.filter((candidate) => candidate.status === 'EXCLUDED')).toHaveLength(
@@ -331,7 +350,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           research_plan_hash, activated_at
         ) VALUES (
           ${generationHash}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
-          ${nativeInput.authorityGenerationHash}, 'EXECUTION', ${version}, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
+          ${nativeInput.authorityGenerationHash}, ${Authority.Execution}, ${version}, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${'4'.repeat(64)}`}, ${strategy}, ${momentumFirstJevBehaviorHash}, ${parameterHash},
           ${protocol.schemaVersion}, ${strategyProtocolHash}, ${replayAccountId},
           'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${'9'.repeat(64)},
