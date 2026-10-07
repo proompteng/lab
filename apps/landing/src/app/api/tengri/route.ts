@@ -21,7 +21,7 @@ import {
   moveFile,
   readFile,
   resolveCodexApproval,
-  revokeEditorSessions,
+  revokeDesktopPreviews,
   revokePreviewSession,
   resumeAgent,
   resumeCodexThread,
@@ -227,8 +227,8 @@ export async function POST(request: Request) {
       case 'browser-session':
         result = await issueBrowserSession(identity.subject, action.agentId)
         break
-      case 'revoke-editor-sessions':
-        await revokeEditorSessions(identity.subject)
+      case 'revoke-desktop-previews':
+        await revokeDesktopPreviews(identity.subject)
         result = null
         break
       case 'revoke-preview-session':

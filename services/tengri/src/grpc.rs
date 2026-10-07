@@ -1236,12 +1236,13 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    async fn revoke_editor_sessions(
+    async fn revoke_desktop_previews(
         &self,
         request: Request<Empty>,
     ) -> Result<Response<Empty>, Status> {
-        let principal = self.authorize(&request, "RevokeEditorSessions").await?;
-        self.tickets.revoke_editors(&principal.owner_hash)?;
+        let principal = self.authorize(&request, "RevokeDesktopPreviews").await?;
+        self.tickets
+            .revoke_desktop_previews(&principal.owner_hash)?;
         Ok(Response::new(Empty {}))
     }
 

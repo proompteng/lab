@@ -519,8 +519,8 @@ export async function issueEditorSession(
   }
 }
 
-export async function revokeEditorSessions(subject: string) {
-  await unary('revokeEditorSessions', {}, subject)
+export async function revokeDesktopPreviews(subject: string) {
+  await unary('revokeDesktopPreviews', {}, subject)
 }
 
 export async function issueBrowserSession(subject: string, agentId: string): Promise<TengriPreviewSession> {

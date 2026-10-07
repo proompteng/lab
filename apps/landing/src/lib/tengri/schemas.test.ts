@@ -40,8 +40,8 @@ describe('Tengri BFF action schema', () => {
   })
 
   test('editor logout revocation cannot select another owner', () => {
-    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions' }).success).toBe(true)
-    expect(tengriActionSchema.safeParse({ action: 'revoke-editor-sessions', ownerId: 'someone-else' }).success).toBe(
+    expect(tengriActionSchema.safeParse({ action: 'revoke-desktop-previews' }).success).toBe(true)
+    expect(tengriActionSchema.safeParse({ action: 'revoke-desktop-previews', ownerId: 'someone-else' }).success).toBe(
       false,
     )
   })

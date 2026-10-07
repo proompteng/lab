@@ -30,6 +30,8 @@ TCP listener. Its socket has mode `0600`, and the X display requires the guest's
 retains its origin checks, owner authorization, grant revocation, and SPIFFE mutual TLS to the slot supervisor. The
 supervisor forwards to Nanoagent over the slot's private vsock with its exact claim identity. The browser
 preview does not contain control-plane credentials.
+Sign-out revokes every pending and active Chrome and editor preview for the authenticated owner before clearing
+authentication. A revocation failure blocks sign-out; established browser WebSockets close after revocation.
 
 Sites load inside Chromium. Their framing restrictions do not prevent normal browser navigation. Chromium owns
 its native tabs, history, address bar, cookies, JavaScript, forms, and downloads. Its process keeps the user namespace
@@ -64,6 +66,9 @@ The stdio MCP server exposes one
 actions. Each successful input action returns a screenshot and its dimensions. Coordinates include the native
 browser toolbar. Input validation rejects missing coordinates, invalid buttons, unsupported key syntax, and
 navigation URLs outside HTTP and HTTPS.
+Large PNG screenshots use bounded JPEG encoding at the original resolution, keeping computer coordinates unchanged.
+If screenshot capture fails after an input succeeds, the tool explicitly reports the completed action and the
+observation failure so the agent can request a screenshot without repeating a potentially consequential input.
 
 The MCP process reaches only the current guest's `~/.tengri/browser/control.sock`, with mode `0600`. It has no
 control-plane connection or credentials. Actions serialize on the shared display. **Take control** pauses both

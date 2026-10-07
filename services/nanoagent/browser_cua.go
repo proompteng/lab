@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net"
@@ -154,7 +155,14 @@ func (browser *browserSupervisor) perform(ctx context.Context, action computerAc
 			return nil, err
 		}
 	}
-	return browser.screenshot(ctx)
+	result, err := browser.screenshot(ctx)
+	if err != nil && action.Action != "screenshot" {
+		return map[string]any{
+			"content":           []any{map[string]any{"type": "text", "text": fmt.Sprintf("Browser %s action completed. Screenshot unavailable: %v. Do not repeat the completed input; request a screenshot to observe the result.", action.Action, err)}},
+			"structuredContent": map[string]any{"action": action.Action, "actionCompleted": true, "screenshotAvailable": false, "userControl": false},
+		}, nil
+	}
+	return result, err
 }
 
 func validateComputerAction(action computerAction) error {
@@ -275,15 +283,39 @@ func (browser *browserSupervisor) screenshot(ctx context.Context) (map[string]an
 	if err != nil {
 		return nil, fmt.Errorf("read browser screenshot: %w", err)
 	}
-	if len(data) > maxComputerScreenshotBytes {
-		return nil, errors.New("browser screenshot exceeds 5 MiB; reduce the Chrome window size and retry")
-	}
 	configuration, err := png.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
+	if configuration.Width < 1 || configuration.Height < 1 || configuration.Width > 8192 || configuration.Height > 8192 {
+		return nil, errors.New("browser screenshot dimensions exceed the computer coordinate range")
+	}
+	mimeType := "image/png"
+	if len(data) > maxComputerScreenshotBytes {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+		picture, err := png.Decode(file)
+		if err != nil {
+			return nil, err
+		}
+		for _, quality := range []int{70, 30, 10} {
+			var encoded bytes.Buffer
+			if err := jpeg.Encode(&encoded, picture, &jpeg.Options{Quality: quality}); err != nil {
+				return nil, err
+			}
+			if encoded.Len() <= maxComputerScreenshotBytes {
+				data = encoded.Bytes()
+				mimeType = "image/jpeg"
+				break
+			}
+		}
+		if len(data) > maxComputerScreenshotBytes {
+			return nil, errors.New("browser screenshot exceeds 5 MiB; reduce the Chrome preview size before requesting another screenshot")
+		}
+	}
 	return map[string]any{
-		"content":           []any{map[string]any{"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(data)}, map[string]any{"type": "text", "text": fmt.Sprintf("Chrome screenshot: %d x %d. Coordinates include the native browser toolbar.", configuration.Width, configuration.Height)}},
+		"content":           []any{map[string]any{"type": "image", "mimeType": mimeType, "data": base64.StdEncoding.EncodeToString(data)}, map[string]any{"type": "text", "text": fmt.Sprintf("Chrome screenshot: %d x %d. Coordinates include the native browser toolbar.", configuration.Width, configuration.Height)}},
 		"structuredContent": map[string]any{"width": configuration.Width, "height": configuration.Height, "userControl": false},
 	}, nil
 }

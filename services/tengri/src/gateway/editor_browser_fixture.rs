@@ -149,11 +149,14 @@ async fn editor_browser_acceptance_fixture() {
             StatusCode::NO_CONTENT
         }
     });
-    let revoke_editors_state = state.clone();
-    let revoke_editors = post(move || {
-        let state = revoke_editors_state.clone();
+    let revoke_desktop_previews_state = state.clone();
+    let revoke_desktop_previews = post(move || {
+        let state = revoke_desktop_previews_state.clone();
         async move {
-            state.tickets.revoke_editors(&"a".repeat(64)).unwrap();
+            state
+                .tickets
+                .revoke_desktop_previews(&"a".repeat(64))
+                .unwrap();
             StatusCode::NO_CONTENT
         }
     });
@@ -163,7 +166,7 @@ async fn editor_browser_acceptance_fixture() {
         .route("/_test/browser", browser)
         .route("/_test/files", files)
         .route("/_test/revoke", revoke)
-        .route("/_test/revoke-editors", revoke_editors)
+        .route("/_test/revoke-desktop-previews", revoke_desktop_previews)
         .route(
             "/_test/shutdown",
             post(move || {

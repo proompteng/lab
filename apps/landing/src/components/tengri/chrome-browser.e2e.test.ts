@@ -12,7 +12,7 @@ test.afterEach(async ({ request }, testInfo) => {
   if (image)
     await testInfo.attach('guest-display-on-failure', {
       body: Buffer.from(image.data, 'base64'),
-      contentType: 'image/png',
+      contentType: image.mimeType,
     })
 })
 
@@ -25,35 +25,55 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   test.setTimeout(240_000)
   const sockets: WebSocket[] = []
   const errors: string[] = []
+  const signOutActions: string[] = []
+  let authenticated = true
+  let failRevocation = true
+  let browserOrigin = ''
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('websocket', (socket) => {
     if (socket.url().includes('/websockify')) sockets.push(socket)
+  })
+  const probeBrowser = () => context.request.get(browserOrigin, { ignoreHTTPSErrors: true })
+  await page.route('**/api/auth/sign-out', async (route) => {
+    signOutActions.push('sign-out')
+    await expect.poll(() => sockets.every((socket) => socket.isClosed())).toBe(true)
+    expect((await probeBrowser()).status()).toBe(401)
+    authenticated = false
+    await route.fulfill({ json: { success: true } })
   })
   await page.route('**/api/tengri', async (route) => {
     if (route.request().method() === 'GET') {
       await route.fulfill({
         json: {
-          authenticated: true,
+          authenticated,
           authConfigured: true,
           controlPlaneConfigured: true,
           previewGatewayOrigin: 'https://gateway.tengri.localhost:3443',
-          user: { id: 'browser-test-owner', name: 'Browser test', email: 'browser@example.test', image: null },
-          agents: [
-            {
-              id: 'editor-fixture',
-              displayName: 'Tengri',
-              phase: 'ready',
-              architecture: 'amd64',
-              cpuMillis: 4000,
-              memoryMib: 8192,
-              workspaceGib: 16,
-              power: { idleTimeoutMinutes: 60 },
-              createdAt: '2026-09-08T00:00:00Z',
-              conditions: [],
-            },
-          ],
+          user: authenticated
+            ? { id: 'browser-test-owner', name: 'Browser test', email: 'browser@example.test', image: null }
+            : null,
+          agents: authenticated
+            ? [
+                {
+                  id: 'editor-fixture',
+                  displayName: 'Tengri',
+                  phase: 'ready',
+                  architecture: 'amd64',
+                  cpuMillis: 4000,
+                  memoryMib: 8192,
+                  workspaceGib: 16,
+                  power: { idleTimeoutMinutes: 60 },
+                  createdAt: '2026-09-08T00:00:00Z',
+                  conditions: [],
+                },
+              ]
+            : [],
         },
       })
+      return
+    }
+    if (!authenticated) {
+      await route.fulfill({ status: 401, json: { error: 'Authentication is required' } })
       return
     }
     const action = route.request().postDataJSON()
@@ -62,6 +82,15 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
       const response = await request.get('http://127.0.0.1:33082/_test/browser', { timeout: 300_000 })
       expect(response.ok()).toBeTruthy()
       result = await response.json()
+      browserOrigin = (result as { previewOrigin: string }).previewOrigin
+    } else if (action.action === 'revoke-desktop-previews') {
+      signOutActions.push('revoke-desktop-previews')
+      if (failRevocation) {
+        await route.fulfill({ status: 503, json: { error: 'Desktop preview sessions could not be revoked' } })
+        return
+      }
+      const response = await request.post('http://127.0.0.1:33082/_test/revoke-desktop-previews')
+      expect(response.ok()).toBeTruthy()
     } else if (action.action === 'revoke-preview-session') {
       const response = await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
       expect(response.ok()).toBeTruthy()
@@ -189,5 +218,21 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   expect((await state()).loaded.previousCookie).toContain('browser-proof=persistent')
   expect((await state()).loaded.previousStorage).toBe('persistent')
   await page.screenshot({ path: testInfo.outputPath('separate-tengri-and-chrome.png') })
+  expect((await probeBrowser()).ok()).toBe(true)
+  await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'Desktop preview sessions could not be revoked' }),
+  ).toBeVisible()
+  expect(signOutActions).toEqual(['revoke-desktop-previews'])
+  expect(authenticated).toBe(true)
+  expect((await probeBrowser()).ok()).toBe(true)
+  failRevocation = false
+  await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
+  await expect(chrome).toHaveCount(0)
+  expect(signOutActions).toEqual(['revoke-desktop-previews', 'revoke-desktop-previews', 'sign-out'])
+  expect(authenticated).toBe(false)
+  expect((await probeBrowser()).status()).toBe(401)
   expect(errors).toEqual([])
 })

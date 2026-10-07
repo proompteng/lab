@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"io"
 	"net"
@@ -180,7 +182,7 @@ func TestBrowserMCPFramesMaximumEscapedTextWithoutExiting(t *testing.T) {
 	}
 }
 
-func TestBrowserScreenshotRejectsImageThatWouldBreakAppServerFraming(t *testing.T) {
+func TestBrowserScreenshotFitsAppServerFrameWithoutChangingCoordinates(t *testing.T) {
 	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
 	defer browser.close()
 	root := filepath.Join(browser.home, ".tengri", "browser")
@@ -192,8 +194,15 @@ func TestBrowserScreenshotRejectsImageThatWouldBreakAppServerFraming(t *testing.
 		t.Fatal(err)
 	}
 	picture := image.NewRGBA(image.Rect(0, 0, 1600, 1400))
-	for i := 3; i < len(picture.Pix); i += 4 {
-		picture.Pix[i] = 255
+	var noise uint32 = 1
+	for i := 0; i < len(picture.Pix); i++ {
+		noise ^= noise << 13
+		noise ^= noise >> 17
+		noise ^= noise << 5
+		picture.Pix[i] = byte(noise)
+		if i%4 == 3 {
+			picture.Pix[i] = 255
+		}
 	}
 	path := filepath.Join(root, "large-valid.png")
 	file, err := os.Create(path)
@@ -208,8 +217,77 @@ func TestBrowserScreenshotRejectsImageThatWouldBreakAppServerFraming(t *testing.
 	if err := os.WriteFile(filepath.Join(runtime, "usr/bin/scrot"), []byte(fmt.Sprintf("#!/bin/sh\n/bin/cp %q \"$3\"\n", path)), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := browser.screenshot(context.Background()); err == nil || !strings.Contains(err.Error(), "reduce the Chrome window size") {
-		t.Fatalf("oversized screenshot must return a tool error before breaking app-server framing: %v", err)
+	result, err := browser.screenshot(context.Background())
+	if err != nil {
+		t.Fatalf("large screenshot must remain observable: %v", err)
+	}
+	content := result["content"].([]any)[0].(map[string]any)
+	if content["mimeType"] != "image/jpeg" {
+		t.Fatal("large PNG must use bounded JPEG encoding")
+	}
+	encoded, err := base64.StdEncoding.DecodeString(content["data"].(string))
+	if err != nil || len(encoded) > maxComputerScreenshotBytes {
+		t.Fatalf("invalid bounded image: %v, %d bytes", err, len(encoded))
+	}
+	configuration, err := jpeg.DecodeConfig(bytes.NewReader(encoded))
+	if err != nil || configuration.Width != 1600 || configuration.Height != 1400 {
+		t.Fatalf("CUA coordinate dimensions changed: %+v, %v", configuration, err)
+	}
+	frame, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": result})
+	if err != nil || len(frame) >= 8<<20 {
+		t.Fatalf("screenshot exceeded app-server framing: %d bytes, %v", len(frame), err)
+	}
+}
+
+func TestBrowserMCPPreservesCompletedInputWhenScreenshotFails(t *testing.T) {
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	defer browser.close()
+	root := filepath.Join(browser.home, ".tengri", "browser")
+	runtime := filepath.Join(root, "libraries-test")
+	if err := os.MkdirAll(filepath.Join(runtime, "usr/bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime-path"), []byte(runtime), 0600); err != nil {
+		t.Fatal(err)
+	}
+	inputs := filepath.Join(root, "inputs")
+	if err := os.WriteFile(filepath.Join(runtime, "usr/bin/xdotool"), []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\n", inputs)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtime, "usr/bin/scrot"), []byte("#!/bin/sh\necho 'fixture screenshot interrupted' >&2\nexit 7\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ready, done := make(chan struct{}), make(chan struct{})
+	close(ready)
+	close(done)
+	browser.running = true
+	browser.current = &browserRun{ready: ready, done: done}
+	if err := browser.listenCUA(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	input := strings.NewReader("{\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"computer\",\"arguments\":{\"action\":\"key\",\"key\":\"Return\"}}}\n")
+	if err := runBrowserMCP(input, &output, browser.home); err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Result struct {
+			IsError           bool `json:"isError"`
+			StructuredContent struct {
+				ActionCompleted     bool `json:"actionCompleted"`
+				ScreenshotAvailable bool `json:"screenshotAvailable"`
+			} `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &response); err != nil || response.Result.IsError || !response.Result.StructuredContent.ActionCompleted || response.Result.StructuredContent.ScreenshotAvailable {
+		t.Fatalf("completed input reported as failure: %s, %v", output.Bytes(), err)
+	}
+	data, err := os.ReadFile(inputs)
+	if err != nil || string(data) != "key --clearmodifiers Return\n" {
+		t.Fatalf("input was not performed exactly once: %q, %v", data, err)
+	}
+	if !strings.Contains(output.String(), "fixture screenshot interrupted") {
+		t.Fatal("screenshot failure must remain visible")
 	}
 }
 

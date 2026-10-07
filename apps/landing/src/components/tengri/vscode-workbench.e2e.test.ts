@@ -90,13 +90,13 @@ test('runs the upstream VS Code workbench against real guest files and terminals
       expect(response.ok()).toBeTruthy()
       result = await response.json()
       editorOrigin = (result as { previewOrigin: string }).previewOrigin
-    } else if (action.action === 'revoke-editor-sessions') {
-      signOutActions.push('revoke-editors')
+    } else if (action.action === 'revoke-desktop-previews') {
+      signOutActions.push('revoke-desktop-previews')
       if (failRevocation) {
         await route.fulfill({ status: 503, json: { error: 'Editor sessions could not be revoked' } })
         return
       }
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke-editors')
+      const response = await request.post('http://127.0.0.1:33082/_test/revoke-desktop-previews')
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'revoke-preview-session') {
       await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
@@ -229,14 +229,14 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
   await expect(page.getByRole('alert').filter({ hasText: 'Editor sessions could not be revoked' })).toBeVisible()
-  expect(signOutActions).toEqual(['revoke-editors'])
+  expect(signOutActions).toEqual(['revoke-desktop-previews'])
   expect(authenticated).toBe(true)
   expect((await probeEditor()).ok()).toBe(true)
   failRevocation = false
   await page.getByRole('menuitem', { name: 'Tengri menu', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Sign Out', exact: true }).click()
   await expect(code).toHaveCount(0)
-  expect(signOutActions).toEqual(['revoke-editors', 'revoke-editors', 'sign-out'])
+  expect(signOutActions).toEqual(['revoke-desktop-previews', 'revoke-desktop-previews', 'sign-out'])
   expect(authenticated).toBe(false)
   expect((await probeEditor()).status()).toBe(401)
   expect(errors).toEqual([])
