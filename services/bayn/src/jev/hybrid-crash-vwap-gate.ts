@@ -70,7 +70,7 @@ const parseMode = (raw: string | undefined): HybridCrashVwapMode => {
 
 export const resolveHybridCrashVwapMode = (
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
-): HybridCrashVwapMode => parseMode(env.BAYN_HYBRID_CRASH_VWAP)
+): HybridCrashVwapMode => parseMode(env['BAYN_HYBRID_CRASH_VWAP'])
 
 /** Session VWAP from typical price × volume (honest cumulative). */
 export const sessionVwapSeries = (bars: readonly HybridBar[]): number[] => {
