@@ -1,6 +1,7 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import { Cause, Config, Context, Effect, Exit, Layer, Logger, Option } from 'effect'
 import { OtlpSerialization, OtlpTracer } from 'effect/observability'
+import { HttpClient, type HttpClientError } from 'effect/http'
 import { operationCurrentTimeMillis } from './operation-timeout'
 
 export type OtlpTraceEndpoint =
@@ -85,8 +86,33 @@ const resourceAttributes = (options: TelemetryRuntimeOptions): Record<string, st
   ...(options.instanceId === undefined ? {} : { 'service.instance.id': options.instanceId }),
 })
 
-const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
-  OtlpTracer.layer({
+const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) => {
+  const exportFailure = (
+    failureReason: 'http-status' | HttpClientError.HttpClientError['reason']['_tag'],
+    httpStatus?: number,
+  ) =>
+    Effect.logWarning('Bayn OTLP trace export attempt failed').pipe(
+      Effect.annotateLogs({
+        stage: 'bayn.telemetry.export',
+        dependency: 'telemetry',
+        serviceName: options.serviceName,
+        ...(options.serviceVersion === undefined ? {} : { sourceRevision: options.serviceVersion }),
+        failureReason,
+        ...(httpStatus === undefined ? {} : { httpStatus }),
+      }),
+    )
+  const httpClient = Layer.effect(
+    HttpClient.HttpClient,
+    Effect.map(HttpClient.HttpClient, (client) =>
+      client.pipe(
+        HttpClient.tap((response) =>
+          response.status >= 200 && response.status < 300 ? Effect.void : exportFailure('http-status', response.status),
+        ),
+        HttpClient.tapError((error) => exportFailure(error.reason._tag)),
+      ),
+    ),
+  ).pipe(Layer.provide(NodeHttpClient.layerNodeHttp))
+  return OtlpTracer.layer({
     url: endpoint,
     resource: {
       serviceName: options.serviceName,
@@ -96,7 +122,8 @@ const traceLayer = (options: TelemetryRuntimeOptions, endpoint: string) =>
     exportInterval: '1 second',
     maxBatchSize: 128,
     shutdownTimeout: '3 seconds',
-  }).pipe(Layer.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, OtlpSerialization.layerProtobuf)))
+  }).pipe(Layer.provide(Layer.mergeAll(httpClient, OtlpSerialization.layerProtobuf)))
+}
 
 const optionalText = (name: string) =>
   Config.option(Config.String(name)).pipe(
