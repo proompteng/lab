@@ -69,6 +69,18 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(127)
 		}
+	case "bayn-control-study":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/control-study-command.js"}, os.Args[1:]...)
+		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(127)
+		}
+	case "bayn-jev-study-export":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/jev-study-export-command.js"}, os.Args[1:]...)
+		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(127)
+		}
 	case "node":
 		if exists("/node-fail") {
 			os.Exit(99)
@@ -90,6 +102,10 @@ func main() {
 			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --help")
 		case "/app/services/bayn/dist/backtest-command.js":
 			fmt.Println("Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help")
+		case "/app/services/bayn/dist/control-study-command.js":
+			fmt.Println("Usage: bayn-control-study --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> [--mode study|preflight] [--evidence-directory <new-directory-required-for-JEV-study>] | --help")
+		case "/app/services/bayn/dist/jev-study-export-command.js":
+			fmt.Println("Usage: bayn-jev-study-export --session YYYY-MM-DD --output <new-private-directory> | --help")
 		case "/app/services/bayn/dist/streaming-diagnostics-command.js":
 			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
 		default:
@@ -111,12 +127,12 @@ mkdir -p \
 
 install -m 0555 "${work}/runtime" "${root}/nix/store/test-node/bin/node"
 ln -s /nix/store/test-node/bin/node "${root}/bin/node"
-for command in forward-performance backtest inference-cost; do
+for command in forward-performance backtest inference-cost control-study jev-study-export; do
   mkdir -p "${root}/nix/store/test-bayn-${command}/bin"
   install -m 0555 "${work}/runtime" "${root}/nix/store/test-bayn-${command}/bin/bayn-${command}"
   ln -s "/nix/store/test-bayn-${command}/bin/bayn-${command}" "${root}/bin/bayn-${command}"
 done
-for command in forward-performance-command inference-cost-command backtest-command restate-execution-server streaming-diagnostics-command; do
+for command in forward-performance-command inference-cost-command backtest-command control-study-command jev-study-export-command restate-execution-server streaming-diagnostics-command; do
   : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   chmod 0444 "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   ln -s "/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js" \
@@ -165,6 +181,34 @@ fi
 
 install -m 0555 "${work}/runtime" \
   "${root}/nix/store/test-bayn-backtest/bin/bayn-backtest"
+
+chmod u+w "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study"
+cat > "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+chmod 0555 "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study"
+pack_image
+if verify_image >/dev/null 2>&1; then
+  echo 'Bayn image verification accepted a broken control-study wrapper.' >&2
+  exit 1
+fi
+install -m 0555 "${work}/runtime" \
+  "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study"
+
+chmod u+w "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export"
+cat > "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+chmod 0555 "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export"
+pack_image
+if verify_image >/dev/null 2>&1; then
+  echo 'Bayn image verification accepted a broken Jev study-export wrapper.' >&2
+  exit 1
+fi
+install -m 0555 "${work}/runtime" \
+  "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export"
 
 install -m 0555 "${work}/runtime" \
   "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
