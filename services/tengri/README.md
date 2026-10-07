@@ -65,9 +65,11 @@ already permits this narrowly constrained profile; no namespace policy change is
 attestation, the `nanoagent` ServiceAccount, token/registration RBAC, admission restrictions and bundle publication remain
 until the final old guest has stopped.
 
-The image workflow withholds both Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
+The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
 is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
 retained homes against the staged immutable image pair. Kargo's existing automatic promotion policy remains in place.
+Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
+cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
 Nanoagent runs as UID 1000 in the guest, with passwordless sudo inside that guest. Guest root edits and processes
 survive snapshot sleep. Root and memory are local to the slot Pod and reset after an explicitly fenced cold replacement;
