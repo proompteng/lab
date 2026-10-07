@@ -199,6 +199,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
     rpc.codex_call("model/list", json!({})).await?;
     let create_ms = started.elapsed().as_secs_f64() * 1000.0;
+    eprintln!("real KVM prepared creation: {create_ms:.2} ms");
     let mut foreign = claim.clone();
     foreign.microvm_uid = "another-owner-uid".into();
     ensure!(
@@ -248,6 +249,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             "sleep not committed"
         );
         ensure!(firecracker_rss().await?.is_none(), "sleep left a live VMM");
+        eprintln!("real KVM sleep {}: {sleep_ms:.2} ms; VMM gone", index + 1);
         memory.push(
             json!({"awakeVmmRssBytes":vmm_rss, "awakeCgroup":awake_memory,
             "sleepCgroup":cgroup_memory().await?, "sleepMs":sleep_ms}),
@@ -274,8 +276,9 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         ensure!(restored_pid == pid, "resume replaced the shell process");
         reconnect = next_token;
         rpc.codex_call("model/list", json!({})).await?;
-        timings.push(started.elapsed().as_secs_f64() * 1000.0);
-        eprintln!("real KVM sample {} complete", index + 1);
+        let resume_ms = started.elapsed().as_secs_f64() * 1000.0;
+        timings.push(resume_ms);
+        eprintln!("real KVM resume {}: {resume_ms:.2} ms", index + 1);
     }
     client.lifecycle("stop", &claim).await?;
     timings.sort_by(f64::total_cmp);
