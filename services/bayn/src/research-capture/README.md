@@ -81,7 +81,10 @@ Terminal observations distinguish whether that runtime action ran in this worker
 completeness. Consumers must retain repetitions and join by native identity rather than treating them as additional execution.
 
 Admission is synchronous and bounded by receipt count and UTF8 byte size. A scoped Effect worker persists text chunks
-outside execution. Chunks bind the preceding exact-byte hash. The append-only database identity is capture plus ordinal;
+outside execution. A one-slot dropping notification wakes it when retained receipts or reserved bytes reach one quarter
+of their configured ceiling. The periodic flush remains the idle deadline. Admission never waits for this notification
+or persistence, and in-flight raw writes keep their original reservations. Chunks bind the preceding exact-byte hash.
+The append-only database identity is capture plus ordinal;
 duplicate retries compare both SHA-256 and exact payload text. Different formatting is different evidence. Seals bind
 the committed frontier. PostgreSQL triggers reject updates, deletes, truncation, and appends after a seal.
 
