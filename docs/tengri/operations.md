@@ -149,6 +149,12 @@ fixture require their explicit scoped authorization. Review the exact rendered d
 registration, container capabilities, namespace, image digests, target, resource limits, and cleanup before applying them.
 Production cutover requires separate authorization. An isolated Docker fixture grant does not authorize a cluster rollout.
 
+Image delivery is held independently of source merge. The image workflow still requires component and strict KVM
+acceptance and can publish verified immutable `sha-<source>` images and their retained indexes. It withholds both
+discoverable `kargo-sha-<source>` aliases unless the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY` is exactly
+`true`; an unset or false value keeps the current automatic Kargo policy from selecting this migration. Leave it held
+until the approved old writers are fenced and every retained home is enrolled with the exact staged guest digest.
+
 The device plugin supplies only KVM/TUN, using existing ready-node labels. The TAP init container gets NET_ADMIN only in
 the Pod network namespace. The runner starts with MKNOD/SETUID/SETGID only to create its private block-device inode and
 drop UID/GID. Runtime and Firecracker capability sets must all be empty. The supervisor alone receives SPIFFE CSI access.
@@ -166,12 +172,19 @@ A reviewed cutover follows this order:
    supervisor identity without modifying nodes. Do not remove registrations used by running old guests yet.
 3. Stop only the approved old Tengri guests at the owner/maintenance boundary. Prove the old VMM/process and its
    storage writer are fenced. Retain every original MicroVM UID, home PVC UID, filesystem, ownership, and contents.
+   Keep the old controller quiesced throughout fencing and enrollment so it cannot restart old writers or recreate bootstrap Secrets.
+   After each old Pod is gone, remove only its `<MicroVM name>-bootstrap` Secret with matching MicroVM owner UID
+   and Secret UID/resourceVersion preconditions. Preserve the two controller credential Secrets. At six agents,
+   this frees the six legacy bootstrap allocations before creating six new slot tokens under the unchanged eight-Secret quota.
 4. Enroll each retained home before starting the new controller. A reserved slot Lease uses the existing selector,
    `holderIdentity` JSON `{microvmId, microvmUid, epoch}`, and annotations `runtime.proompteng.ai/home-name`,
    `runtime.proompteng.ai/home-uid`, and `runtime.proompteng.ai/image` for the approved immutable boot image. Set the home initialization annotation to `complete`.
    Update that MicroVM's image to the same boot digest and retain its owner/finalizer. Do not set a new Pod UID yet.
    An operator enrollment must contain external proof of old-writer fencing; Lease creation itself supplies none.
-5. Promote the matching new runtime/guest through Kargo and reconcile its generated branch. The pool prepares the
+5. After the approved fencing, Secret cleanup and enrollment are complete, set `TENGRI_PREPARED_SLOT_CUTOVER_READY`
+   to `true` and rerun the image workflow for the same approved `main` commit and staged image pair. Require all
+   validation/signing gates again; the workflow then exposes both aliases through the normal publication path.
+   Kargo's existing automatic policy promotes that pair and Argo reconciles its generated branch. The pool prepares the
    reserved retained home, records the new Pod UID, and binds/adopts it. Open lifecycle traffic only after those slots
    are prepared. The old Kata path has no transferable snapshot, so existing processes restart once at cutover.
 6. Remove the old `nanoagent` ServiceAccount, its token-issuance Role rule, `tengri-guest-identities` ClusterRole/Binding

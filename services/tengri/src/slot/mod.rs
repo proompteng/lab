@@ -296,6 +296,7 @@ impl Slot {
             .wait_guest(&self.config.vsock(), Duration::from_secs(35 * 60))
             .await?;
         let snapshot = self.save_vm().await?;
+        self.remove_old_snapshots(snapshot.generation).await?;
         self.transition(SlotState::Vacant { snapshot }).await
     }
 
@@ -439,6 +440,7 @@ impl Slot {
             "completed sleep requires a stopped VMM and the same owner"
         );
         self.pending_sleep = Some(snapshot.clone());
+        self.remove_old_snapshots(snapshot.generation).await?;
         self.transition(SlotState::Sleeping {
             claim: claim.clone(),
             snapshot,
@@ -485,7 +487,6 @@ impl Slot {
         self.vm = None;
         let memory = directory.join("memory.bin");
         tokio::task::spawn_blocking(move || vmm::evict_memory(&memory)).await??;
-        self.remove_old_snapshots(generation).await?;
         Ok(Snapshot { generation })
     }
 
@@ -691,6 +692,61 @@ mod tests {
             .unwrap();
         slot.sleep(&owner).await.unwrap();
         assert_eq!(*updates.borrow(), sleeping);
+        assert!(slot.pending_sleep.is_none());
+        drop(slot);
+        assert_eq!(Slot::open(config.clone()).await.unwrap().state(), &sleeping);
+        fs::remove_dir_all(config.directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn obsolete_snapshot_cleanup_cannot_discard_completed_sleep() {
+        let config = config();
+        let mut slot = Slot::open(config.clone()).await.unwrap();
+        let owner = claim("owner-a", 1);
+        let saving = SlotState::Saving {
+            claim: owner.clone(),
+        };
+        slot.transition(saving.clone()).await.unwrap();
+        fs::write(config.snapshot_dir(0), b"cleanup fault")
+            .await
+            .unwrap();
+        fs::create_dir(config.snapshot_dir(1)).await.unwrap();
+        fs::write(
+            config.snapshot_dir(1).join("state.bin"),
+            b"completed snapshot",
+        )
+        .await
+        .unwrap();
+        assert!(
+            slot.commit_sleep(&owner, Snapshot { generation: 1 })
+                .await
+                .is_err()
+        );
+        assert_eq!(slot.state(), &saving);
+        assert_eq!(slot.pending_sleep, Some(Snapshot { generation: 1 }));
+        assert!(slot.sleep(&owner).await.is_err());
+        assert!(slot.sleep(&claim("owner-b", 1)).await.is_err());
+        assert!(slot.sleep(&claim("owner-a", 2)).await.is_err());
+        assert_eq!(
+            fs::read(config.snapshot_dir(1).join("state.bin"))
+                .await
+                .unwrap(),
+            b"completed snapshot"
+        );
+        fs::remove_file(config.snapshot_dir(0)).await.unwrap();
+        fs::create_dir(config.snapshot_dir(0)).await.unwrap();
+        slot.sleep(&owner).await.unwrap();
+        let sleeping = SlotState::Sleeping {
+            claim: owner,
+            snapshot: Snapshot { generation: 1 },
+        };
+        assert_eq!(slot.state(), &sleeping);
+        assert!(!fs::try_exists(config.snapshot_dir(0)).await.unwrap());
+        assert!(
+            fs::try_exists(config.snapshot_dir(1).join("state.bin"))
+                .await
+                .unwrap()
+        );
         assert!(slot.pending_sleep.is_none());
         drop(slot);
         assert_eq!(Slot::open(config.clone()).await.unwrap().state(), &sleeping);

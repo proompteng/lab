@@ -104,6 +104,55 @@ describe('Tengri image workflow', () => {
     expect(steps[exposed]?.run).toContain('publish_kargo_alias "${NANOAGENT_IMAGE}" "${NANOAGENT_DIGEST}"')
   })
 
+  it('holds automatic discovery until prepared-slot cutover is explicitly ready', () => {
+    const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      jobs: { publish: { steps: Array<{ name?: string; run?: string; env?: Record<string, string> }> } }
+    }
+    const exposed = images.jobs.publish.steps.find((step) => step.name === 'Expose both verified images to Kargo')
+    if (!exposed?.run) throw new Error('Kargo exposure step is missing')
+    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-cutover-hold-'))
+    const calls = resolve(fixture, 'calls')
+    const summary = resolve(fixture, 'summary')
+    try {
+      for (const command of ['crane', 'docker']) {
+        writeFileSync(resolve(fixture, command), '#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$CALLS"\nexit 42\n', {
+          mode: 0o755,
+        })
+      }
+      for (const ready of ['', 'false', 'TRUE', 'true']) {
+        const result = Bun.spawnSync(['bash', '-c', exposed.run], {
+          cwd: fixture,
+          env: {
+            ...process.env,
+            PATH: `${fixture}:${process.env.PATH}`,
+            CALLS: calls,
+            GITHUB_STEP_SUMMARY: summary,
+            TENGRI_PREPARED_SLOT_CUTOVER_READY: ready,
+            SOURCE_SHA: '1'.repeat(40),
+            GITHUB_SHA: '1'.repeat(40),
+            TENGRI_DIGEST: `sha256:${'2'.repeat(64)}`,
+            NANOAGENT_DIGEST: `sha256:${'3'.repeat(64)}`,
+            TENGRI_IMAGE: 'registry.example.test/tengri',
+            NANOAGENT_IMAGE: 'registry.example.test/nanoagent',
+          },
+        })
+        if (ready === 'true') {
+          expect(result.exitCode).not.toBe(0)
+          expect(readFileSync(calls, 'utf8')).toContain('crane digest registry.example.test/tengri:kargo-sha-')
+        } else {
+          expect(result.exitCode).toBe(0)
+          expect(existsSync(calls)).toBe(false)
+          expect(readFileSync(summary, 'utf8')).toContain('publication held')
+        }
+      }
+      expect(exposed.env?.TENGRI_PREPARED_SLOT_CUTOVER_READY).toBe(
+        "${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY || 'false' }}",
+      )
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('propagates an image preparation failure out of command substitution', () => {
     const images = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: { publish: { steps: Array<{ id?: string; run?: string }> } }

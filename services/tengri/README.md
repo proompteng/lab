@@ -26,7 +26,8 @@ sets the guest clock, binds the owner, and checks files, a PTY round trip, and i
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
 If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
-Only the same owner and epoch can retry it; the slot remains fenced until the journal is durable. A runner restart
+Obsolete-generation cleanup also runs after retaining the completed snapshot, so a transient pruning failure can
+retry that same commit. Only the same owner and epoch can retry it; the slot remains fenced until the journal is durable. A runner restart
 still requires explicit fenced recovery for an interrupted save.
 
 Loss of an active runner, Pod, or node retains the owner and home for explicit fenced recovery. Lease age, missing
@@ -59,6 +60,10 @@ the controller's wave 2. Verify actual device allocations before an authorized c
 already permits this narrowly constrained profile; no namespace policy change is required. Existing guest SPIRE
 attestation, the `nanoagent` ServiceAccount, token/registration RBAC, admission restrictions and bundle publication remain
 until the final old guest has stopped.
+
+The image workflow withholds both Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
+is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
+retained homes against the staged immutable image pair. Kargo's existing automatic promotion policy remains in place.
 
 Nanoagent runs as UID 1000 in the guest, with passwordless sudo inside that guest. Guest root edits and processes
 survive snapshot sleep. Root and memory are local to the slot Pod and reset after an explicitly fenced cold replacement;

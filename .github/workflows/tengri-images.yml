@@ -404,11 +404,16 @@ jobs:
 
       - name: Expose both verified images to Kargo
         env:
+          TENGRI_PREPARED_SLOT_CUTOVER_READY: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY || 'false' }}
           SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           TENGRI_DIGEST: ${{ steps.images.outputs.tengri_digest }}
           NANOAGENT_DIGEST: ${{ steps.images.outputs.nanoagent_digest }}
         run: |
           set -euo pipefail
+          if [[ "${TENGRI_PREPARED_SLOT_CUTOVER_READY}" != 'true' ]]; then
+            echo 'Prepared-slot publication held: both Kargo aliases require approved old-writer fencing and retained-home enrollment. Set TENGRI_PREPARED_SLOT_CUTOVER_READY=true only after that cutover prerequisite is complete.' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
           [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
           [[ "${TENGRI_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${NANOAGENT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
