@@ -155,6 +155,9 @@ the SQL or export frontier. All three verifications must succeed before the SQL 
 acknowledge before the frontier advances. A failed write interrupts both siblings; orphan objects remain `UNQUALIFIED`.
 The one-second aggregate write deadline, byte reservations and receipt admission bounds are unchanged. The existing
 64 KiB envelope covers three bounded 8 KiB SDK response collectors; concurrency does not qualify storage capacity.
+The deadline invalidates admission immediately, before waiting for write interruption or transaction cleanup.
+An uninterruptible COMMIT may finish later; that outcome cannot acknowledge a chunk or advance the recorder's frontier.
+Cleanup remains owned and awaited, and later receipts are counted as observed without retaining their payloads.
 
 The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
 ambient credential provider. Session wiring must use the verified native OBC's actual `BUCKET_NAME`,

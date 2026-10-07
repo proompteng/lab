@@ -221,15 +221,14 @@ export const makeResearchCaptureRecorder = (
             ? options.session.bootstrapDeadlineMs - clock.currentTimeMillisUnsafe()
             : Number.POSITIVE_INFINITY
         const expired = () => {
+          invalidate(CaptureInvalidation.Persistence)
           if (remaining <= options.writeTimeoutMs) invalidate(CaptureInvalidation.MissedBootstrap)
           return Effect.fail(new ResearchCaptureFailure({ message: 'Capture write outcome is unknown' }))
         }
         if (remaining <= 0) return expired()
-        return Effect.suspend(write).pipe(
-          Effect.timeoutOrElse({
-            duration: Math.min(options.writeTimeoutMs, remaining),
-            orElse: expired,
-          }),
+        return Effect.raceFirst(
+          Effect.suspend(write),
+          Effect.sleep(Math.min(options.writeTimeoutMs, remaining)).pipe(Effect.andThen(expired)),
         )
       }).pipe(
         Effect.catchCause(() =>
