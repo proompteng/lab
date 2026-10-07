@@ -15,6 +15,8 @@ use tokio::{
 
 use super::{Claim, FIRECRACKER_VERSION, Slot, SlotConfig, SlotIdentity, SlotState};
 
+pub(super) const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
+
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "camelCase", deny_unknown_fields)]
 pub enum CommandRequest {
@@ -44,7 +46,7 @@ pub fn sockets_directory() -> PathBuf {
 
 pub async fn command(request: &CommandRequest) -> anyhow::Result<SlotStatus> {
     let stream = UnixStream::connect(sockets_directory().join("control.sock")).await?;
-    timeout(Duration::from_secs(300), async {
+    timeout(COMMAND_TIMEOUT, async {
         let (reader, mut writer) = stream.into_split();
         let mut bytes = serde_json::to_vec(request)?;
         bytes.push(b'\n');
@@ -150,7 +152,7 @@ pub(super) async fn serve(config: SlotConfig) -> anyhow::Result<()> {
                         if same_operation {
                             let mut updates = state.clone();
                             match timeout(
-                                Duration::from_secs(300),
+                                COMMAND_TIMEOUT,
                                 updates.wait_for(|s| {
                                     !matches!(
                                         s,

@@ -7,7 +7,7 @@ use anyhow::{Context, ensure};
 use k8s_openapi::api::core::v1::Pod;
 use kube::ResourceExt;
 
-use super::{Claim, runner::SlotStatus};
+use super::{Claim, runner, runner::SlotStatus};
 use crate::{crd::MicroVM, identity::WorkloadIdentity};
 
 pub struct SlotClient {
@@ -43,7 +43,7 @@ impl SlotClient {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(2))
-            .timeout(Duration::from_secs(300))
+            .timeout(runner::COMMAND_TIMEOUT + Duration::from_secs(10))
             .build()?;
         Ok(Self {
             http,

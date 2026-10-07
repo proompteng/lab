@@ -492,6 +492,9 @@ pub async fn prepared_slot(
         let Some(pod) = pods.get_opt(&lease.name_any()).await? else {
             continue;
         };
+        if pod.metadata.deletion_timestamp.is_some() {
+            continue;
+        }
         let Some(pod_uid) = annotations.get(POD_UID_ANNOTATION) else {
             continue;
         };
@@ -1567,7 +1570,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unreachable_vacancy_does_not_abort_the_remaining_pool_scan() {
+    async fn terminating_and_unreachable_vacancies_do_not_abort_the_pool_scan() {
         let lease = |name: &str| {
             json!({
                 "metadata": {"name": name, "annotations": {
@@ -1578,10 +1581,24 @@ mod tests {
                 }}, "spec": {}
             })
         };
+        let mut terminating = lease("terminating");
+        // Skip terminating Pods before consulting their home or supervisor.
+        terminating["metadata"]["annotations"]
+            .as_object_mut()
+            .unwrap()
+            .remove(HOME_UID_ANNOTATION);
         let (client, pending) = mock(vec![
             get(
                 "/apis/coordination.k8s.io/v1/namespaces/tengri/leases",
-                json!({"metadata": {}, "items": [lease("unreachable"), lease("preparing")]}),
+                json!({"metadata": {}, "items": [terminating, lease("unreachable"), lease("preparing")]}),
+            ),
+            get(
+                "/api/v1/namespaces/tengri/pods/terminating",
+                json!({"metadata":{
+                    "uid":"terminating-pod", "deletionTimestamp":"2026-10-07T00:00:00Z"
+                }, "status": {
+                    "podIP":"127.0.0.1", "conditions":[{"type":"Ready", "status":"True"}]
+                }}),
             ),
             get(
                 "/api/v1/namespaces/tengri/pods/unreachable",
