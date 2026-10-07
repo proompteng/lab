@@ -27,7 +27,7 @@ import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
 import { JevBatchPlanVersion, JevEntryExclusion, makeJevBatchPlan } from '../jev/batch'
-import { decideJevEntry, decideJevManagement, JevManagementAction } from '../jev/decision'
+import { decideJevEntry, decideJevManagement, JevManagementAction, makeJevDefinition } from '../jev/decision'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
@@ -44,8 +44,13 @@ import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgr
 import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
 import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
 import { JevExitReason } from '../jev/exit'
-import { decodeJevProtocol, momentumFirstJevProtocolDocument, momentumFirstJevBehaviorHash } from '../jev/protocol'
-import { makeStrategyProtocolHashResult } from '../contracts'
+import {
+  decodeJevProtocol,
+  jevBehaviorHash,
+  momentumFirstJevProtocolDocument,
+  momentumFirstJevBehaviorHash,
+} from '../jev/protocol'
+import { makeRuntimeProvenance, makeStrategyProtocolHashResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import {
@@ -72,6 +77,19 @@ const replayAccountId = `replay-${'e'.repeat(64)}`
 const nativeJevFixture = (purpose: JevPurpose = JevPurpose.Entry, observedAt?: string) =>
   fixtureForAccount(purpose, observedAt, replayAccountId)
 const fixture = nativeJevFixture()
+// Persist and recover retained v1 cycles with their original identity even after active composition changes.
+const retainedRuntime = {
+  definition: makeJevDefinition(fixture.protocol),
+  provenance: makeRuntimeProvenance({
+    ...fixtureRuntime.provenance,
+    strategy: {
+      name: 'jev',
+      behaviorHash: jevBehaviorHash,
+      parameterHash: canonicalHashV1(fixture.protocol),
+      parameterSchemaVersion: fixture.protocol.schemaVersion,
+    },
+  }),
+}
 const observed = Date.parse(fixture.observation.payload.observedAt)
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   TestClock.setTime(observed).pipe(Effect.andThen(effect), Effect.provide(TestClock.layer()))
@@ -1096,7 +1114,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             fixture.protocol.universe,
             fixture.protocol.executionModel,
           ),
-          strategy: fixtureRuntime,
+          strategy: retainedRuntime,
           reconcile: Effect.sync(() => {
             reconciliations += 1
             return reconciliation
@@ -1212,7 +1230,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             pollIntervalMs: 1000,
             reconciliationIntervalMs: 1000,
             reconciliationPassTimeoutMs: 1000,
-            strategy: fixtureRuntime,
+            strategy: retainedRuntime,
             intradayMarketData: marketData,
           },
           preparation: {

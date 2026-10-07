@@ -1,7 +1,8 @@
 # Momentum-first Jev candidate
 
-Status: implemented research candidate, inactive by default. No qualification, broker order, capital grant, or active
-mandate follows from these changes. The retained control has not established positive net economics.
+Status: source-selected PAPER research policy, paired to an explicitly approved sandbox mandate with a $1,000,000
+daily gross-turnover budget. Source selection and mechanical readiness do not establish economic qualification.
+The retained control has not established positive net economics.
 
 ## Exact entry policy
 
@@ -40,14 +41,16 @@ prompt ambiguity is not changed here.
   observation, protocol and batch identities bind the changed admission rule; management question payloads stay unchanged
 - The candidate behavior hash is `sha256('bayn.jev.momentum-first.behavior.v1')`. Execution-decision validation accepts
   only the exact source-controlled candidate protocol paired with that behavior and batch v4. This is evidence
-  compatibility, not authority. Default strategy composition continues the existing protocol v1 and behavior v3
+  compatibility, not authority. Default strategy composition selects protocol v2 and the momentum-first behavior;
+  retained v1 decisions remain reproducible and cannot start new active cycles
 - Native evaluation and control-management replay select the matching batch version from the supplied protocol. New
   entry pricing keeps the existing v3 separate fresh-quote lifetime, with unchanged final spread/size and risk checks
 - Keep one durable observation per completed signal minute/purpose/cycle, the existing minute-plus-two-second window,
   pending-batch recovery, ten-second original deadline, at most fifteen eligible concurrent requests, and no queued
   historical catch-up. Every requested result must finish validly before selection. No top-K cutoff is introduced
 - Preserve polling budgets and protective/reconciliation checks. This candidate does not shorten controller or broker
-  polling intervals, add model retries, add quote subscriptions, or activate the separate turnover-cap change
+  polling intervals, add model retries or add quote subscriptions. The paired sandbox mandate activates the separately
+  approved $1,000,000 daily turnover limit; all other limits remain unchanged
 
 The exposed workload projection retained 132 of 300 entry requests; 127 belonged to usable batches. These are
 same-state workload counts, not a causal forecast of saved money or activity. Smaller batches can change execution
@@ -55,16 +58,17 @@ latency and later portfolio state. Count every attempted, rejected, failed and l
 
 ## Review and bounded PAPER activation
 
-This change does not select the candidate in `strategy.ts` or alter deployment configuration, default strategy,
-mandates, grants or broker risk limits. Activation is a separate reviewed source/mandate pairing, not an environment
-toggle or generic strategy registry.
+Activation pairs `strategy.ts`, the compiled Nix strategy identities, runtime manifests and a newly sealed research
+mandate. It does not add an environment toggle or generic strategy registry. The mandate retains the same sandbox
+account, credentials, exposure/loss limits, protective exits and existing account/day turnover history.
 
-The existing backtest CLI deliberately remains bound to the active source protocol. It does not silently select this
-inactive candidate. Tests exercise the native candidate evaluator and PostgreSQL persistence directly; an empirical
-research run still requires the separately reviewed source/mandate pairing below. Migration 0090 permits v2/v4 evidence
+The existing backtest CLI remains bound to the active source protocol and therefore follows the selected v2 policy.
+Tests exercise the native evaluator and PostgreSQL persistence directly. Migration 0090 permits v2/v4 evidence
 and preserves all existing payload, strategy-pair and append-only constraints; it does not modify any retained row.
 
-Before activating an authorized PAPER research attempt:
+PAPER research activation requires an explicit immutable Research mandate, current build/strategy/account/risk bindings,
+and fresh exact, flat sandbox reconciliation. It does not require a previously profitable result. Before making an
+economic qualification claim:
 
 1. Review the exact merged source and passing unit, type, lint, build, native persistence and CI evidence. Verify old
    decision replay and new source/behavior/protocol/mandate hashes end to end. Drain/reconcile existing cycles through
@@ -72,8 +76,9 @@ Before activating an authorized PAPER research attempt:
 2. Freeze candidate, all mandatory controls, source, parameters, unchanged questions/input representation plus the
    admission policy, timing, costs, universe, execution assumptions and registered calendar before the first untouched open.
    Preserve the [frozen acceptance contract](jev-migration-acceptance-v2.json), including every failed attempt, the
-   $100,000 PAPER allocation, its activity/risk criteria and all twenty consecutive prospective sessions. An unresolved
-   larger turnover-cap authorization is separate and supplies no authority here
+   $100,000 PAPER allocation, its activity/risk criteria and all twenty consecutive prospective sessions. That frozen
+   document retains its original $200,000 turnover ceiling. The newly authorized $1,000,000 research budget must be
+   explicitly accounted for in any new registration; it cannot silently be reported as satisfying the old risk contract
 3. Compare both delay-matched same-opportunity selection and native-clock independent-portfolio all-in results. Include
    submitted-but-unfilled attempts, partial fills, failed/late model charges, allocated data costs, adverse execution
    stress, full batch completion plus persistence/routing time and reconciled flat closes. Do not present retained-state

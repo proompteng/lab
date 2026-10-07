@@ -54,7 +54,10 @@ import {
 import { prepareObserveStartup } from './startup'
 
 const generationHash = 'b'.repeat(64)
-const native = nativeJevFixture()
+// This suite exercises the active startup path; historical v1 fixtures stay v1 elsewhere.
+const activeNativeFixture = (purpose: JevPurpose = JevPurpose.Entry) =>
+  nativeJevFixture(purpose, undefined, 'jev-native-test', fixtureRuntime.definition.parameters)
+const native = activeNativeFixture()
 const accountId = native.portfolio.brokerState.account.accountId
 const at = native.query.observedAt
 const activeCycle = Effect.runSync(
@@ -69,7 +72,7 @@ const activeCycle = Effect.runSync(
 )
 
 const factsAt = (observedAt: string, held = false): ReconciliationPassResult => {
-  const source = held ? nativeJevFixture(JevPurpose.Manage).portfolio.brokerState : native.portfolio.brokerState
+  const source = held ? activeNativeFixture(JevPurpose.Manage).portfolio.brokerState : native.portfolio.brokerState
   const state = {
     ...source,
     account: { ...source.account, observedAt },
@@ -299,7 +302,7 @@ describe('closing market-data fallback boundaries', () => {
                   sessionDate: request.cycle.identity.executionSessionDate,
                   protocol: native.protocol,
                   portfolio: {
-                    ...nativeJevFixture(JevPurpose.Manage).portfolio,
+                    ...activeNativeFixture(JevPurpose.Manage).portfolio,
                     entryDecisionHash: request.entryDocument.contentHash,
                     brokerState: factsAt(before, true).brokerState,
                   },
