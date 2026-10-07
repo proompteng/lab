@@ -6,6 +6,10 @@ if ! mountpoint -q /dev; then
   mount -t devtmpfs devtmpfs /dev
 fi
 mkdir -p /dev/pts /run /tmp
+ln -sfn /proc/self/fd /dev/fd
+ln -sfn /proc/self/fd/0 /dev/stdin
+ln -sfn /proc/self/fd/1 /dev/stdout
+ln -sfn /proc/self/fd/2 /dev/stderr
 mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=0755 tmpfs /run
 mount -t tmpfs -o mode=1777 tmpfs /tmp
