@@ -3,6 +3,7 @@ import { Effect, Layer, Option, Schema, type Result } from 'effect'
 
 import { operationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
+import { withObservedStage } from '../telemetry'
 import {
   decodeJevEvaluationReceipt,
   decodeJevEvaluationRequest,
@@ -73,7 +74,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
           return yield* persistError('Jev candidate observation content differs from its committed identity')
       }
       return rows
-    })
+    }).pipe(withObservedStage('bayn.jev.observation-integrity', { dependency: 'postgresql' }))
   const read = (input: string) =>
     Effect.gen(function* () {
       const requestId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
@@ -123,7 +124,9 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
           // requireCandidateObservation checks the freshly read bytes against this identity on every call.
           // Retain only the latest reproduction so concurrent candidates share its verified source cut.
           if (verifiedObservation?.contentHash !== observation.content_hash)
-            verifiedObservation = yield* Effect.fromResult(reproduceJevCandidateObservation(observation.payload))
+            verifiedObservation = yield* Effect.suspend(() =>
+              Effect.fromResult(reproduceJevCandidateObservation(observation.payload)),
+            ).pipe(withObservedStage('bayn.jev.observation-reproduction'))
           yield* Effect.fromResult(reproduceJevRequestFromVerifiedObservation(request, verifiedObservation))
         }
         return yield* sql.withTransaction(

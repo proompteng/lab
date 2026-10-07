@@ -55,6 +55,17 @@ Find the pass in Loki and inspect its profile and child stage logs:
 Use the trace waterfall for ordering, parallel work and gaps. Stage profiles are scoped to each advance and do
 not include the separate inference-expense background worker.
 
+Construction and verification have their own bounded stages. `bayn.market-data.snapshot` covers the source read
+and snapshot construction, with `bayn.operation` set to `signal`, `ENTRY_PRICING` or `LIQUIDATION`.
+`bayn.jev.observation` covers observation construction and durable recording; `bayn.jev.batch-plan` covers batch
+preparation. `bayn.jev.observation-integrity` covers each fresh persisted observation read and content-hash check;
+its count exposes repeated candidate verification. `bayn.jev.observation-reproduction` measures reconstruction
+when the existing verified-observation cut changes. `bayn.execution.decision-build` covers schema validation,
+risk reduction, immutable evidence reproduction and document hashing for entry and close, with operation
+`OBSERVE` or `PAPER`. Construction begins inside its Effect so synchronous work stays inside the span and pass
+profile. These stages reuse the existing aggregate profile and slow/failure diagnostics; they add no source,
+database or model requests and no healthy completion log.
+
 A rejected decision emits `Bayn decision evidence rejected` with schema
 `bayn.decision-evidence-rejection.v1`, a `mismatch` code and the cycle, snapshot and reconciliation hashes.
 `RECONCILIATION` means its exact durable identity, account, state hash, status or time cutoff did not match;
