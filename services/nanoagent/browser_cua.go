@@ -38,6 +38,9 @@ type computerAction struct {
 
 const maxComputerRequestBytes = 512 << 10
 
+// Base64 plus the action envelope must fit Codex's 8 MiB protocol line.
+const maxComputerScreenshotBytes = 5 << 20
+
 var computerKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9_+]+$`)
 
 func (browser *browserSupervisor) listenCUA() error {
@@ -256,9 +259,12 @@ func (browser *browserSupervisor) screenshot(ctx context.Context) (map[string]an
 		return nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, 8<<20+1))
-	if err != nil || len(data) > 8<<20 {
-		return nil, errors.New("browser screenshot exceeds 8 MiB")
+	data, err := io.ReadAll(io.LimitReader(file, maxComputerScreenshotBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read browser screenshot: %w", err)
+	}
+	if len(data) > maxComputerScreenshotBytes {
+		return nil, errors.New("browser screenshot exceeds 5 MiB; reduce the Chrome window size and retry")
 	}
 	configuration, err := png.DecodeConfig(bytes.NewReader(data))
 	if err != nil {

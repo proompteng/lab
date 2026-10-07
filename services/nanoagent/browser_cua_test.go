@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -174,6 +177,39 @@ func TestBrowserMCPFramesMaximumEscapedTextWithoutExiting(t *testing.T) {
 		if err := decoder.Decode(&statusResult); err != nil || len(statusResult.Error) > 0 || !statusResult.Result.StructuredContent.UserControl {
 			t.Fatalf("MCP did not continue after large request: %v %s", err, output.Bytes())
 		}
+	}
+}
+
+func TestBrowserScreenshotRejectsImageThatWouldBreakAppServerFraming(t *testing.T) {
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	defer browser.close()
+	root := filepath.Join(browser.home, ".tengri", "browser")
+	runtime := filepath.Join(root, "libraries-test")
+	if err := os.MkdirAll(filepath.Join(runtime, "usr/bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runtime-path"), []byte(runtime), 0600); err != nil {
+		t.Fatal(err)
+	}
+	picture := image.NewRGBA(image.Rect(0, 0, 1600, 1400))
+	for i := 3; i < len(picture.Pix); i += 4 {
+		picture.Pix[i] = 255
+	}
+	path := filepath.Join(root, "large-valid.png")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoder := png.Encoder{CompressionLevel: png.NoCompression}
+	if err := encoder.Encode(file, picture); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	if err := os.WriteFile(filepath.Join(runtime, "usr/bin/scrot"), []byte(fmt.Sprintf("#!/bin/sh\n/bin/cp %q \"$3\"\n", path)), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := browser.screenshot(context.Background()); err == nil || !strings.Contains(err.Error(), "reduce the Chrome window size") {
+		t.Fatalf("oversized screenshot must return a tool error before breaking app-server framing: %v", err)
 	}
 }
 
