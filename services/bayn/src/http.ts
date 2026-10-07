@@ -50,8 +50,8 @@ const textDecision = (
   ...(headers === undefined ? {} : { headers }),
 })
 
-const verifiedState = (dependency: DependencyHealth) => {
-  if (dependency.status === 'UNKNOWN') return 'UNKNOWN'
+const verifiedState = (dependency: DependencyHealth | undefined) => {
+  if (dependency === undefined || dependency.status === 'UNKNOWN') return 'UNKNOWN'
   return dependency.status === 'AVAILABLE' ? 'CURRENT' : 'INVALID'
 }
 

@@ -473,7 +473,10 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
-  authority.
+  authority. Its readiness checks PostgreSQL, ledger, broker reconciliation, and the bound execution controller.
+  It acquires no archive client and performs no ClickHouse probes. Without a direct market-data observation,
+  `/v1/status` omits the `signal` dependency and reports `data.status: UNKNOWN`; archive connectivity cannot certify
+  live Kafka availability. Trading retains the worker's direct Kafka checks and all entry and position-management gates.
 - Broker egress is restricted to the configured Alpaca endpoint through the dedicated CONNECT proxy. Credentials and
   plaintext account identity must never appear in logs, metrics, traces, or status responses.
 
@@ -510,7 +513,8 @@ recovery behavior, and evidence boundaries.
 
 The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
 does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
-required for archive health and evidence reads; this separation does not alter broker, authority, risk or provenance
+required by the shared configuration for offline evidence reads; they cause no archive acquisition in public status.
+This separation does not alter broker, authority, risk or provenance
 configuration. The three live manifests omit all eight historical settings below; a running service container does
 not supply a historical report context implicitly.
 
