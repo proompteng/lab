@@ -815,7 +815,8 @@ async fn release_unclaimed_slot(
         .and_then(|spec| spec.holder_identity.as_deref())
         .map(serde_json::from_str::<Claim>)
         .transpose()?;
-    if holder.as_ref() == Some(&claim_for(microvm)?) {
+    let expected = claim_for(microvm)?;
+    if holder.as_ref() == Some(&expected) {
         return Ok(false);
     }
     ensure!(
@@ -827,10 +828,11 @@ async fn release_unclaimed_slot(
     );
     if let Some(holder) = holder {
         ensure!(
-            holder.epoch > slot.epoch,
+            holder.epoch > slot.epoch
+                || (holder.epoch == slot.epoch && holder.microvm_uid != expected.microvm_uid),
             "slot is claimed by another agent"
         );
-        // A later epoch can only be claimed after this candidate was cancelled.
+        // Another UID at this epoch won the claim CAS; a later epoch follows cancellation.
         return Ok(true);
     }
     ensure_asset_owner(&lease.metadata, None)?;
@@ -1470,10 +1472,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_deletion_retries_do_not_touch_a_later_owners_assets() {
+    async fn unclaimed_losers_finalize_without_touching_another_owners_assets() {
         let microvm = agent();
         for holder in [
             None,
+            Some(Claim {
+                microvm_id: "winning-agent".into(),
+                microvm_uid: "winning-owner".into(),
+                epoch: 2,
+            }),
             Some(Claim {
                 microvm_id: "next-agent".into(),
                 microvm_uid: "next-owner".into(),
@@ -1484,7 +1491,7 @@ mod tests {
                 get(
                     "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
                     json!({"metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"21"}, "spec":{
-                        "leaseTransitions": if holder.is_some() {3} else {2},
+                        "leaseTransitions": holder.as_ref().map_or(2, |claim| claim.epoch),
                         "holderIdentity": holder.map(|claim| serde_json::to_string(&claim).unwrap())
                     }}),
                 ),
@@ -1501,6 +1508,37 @@ mod tests {
                 },
             ]);
             cleanup(&context(client), &microvm).await.unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reassigned_active_slot_keeps_the_home_and_finalizer() {
+        for status in [
+            MicroVMStatus {
+                pod_uid: Some("original-pod".into()),
+                ..Default::default()
+            },
+            MicroVMStatus {
+                pvc_name: Some("original-home".into()),
+                ..Default::default()
+            },
+        ] {
+            let mut microvm = agent();
+            microvm.status = Some(status);
+            let holder = Claim {
+                microvm_id: "another-agent".into(),
+                microvm_uid: "another-owner".into(),
+                epoch: 2,
+            };
+            let (client, pending) = mock(vec![get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                json!({"metadata":{"uid":"lease-uid", "resourceVersion":"21"}, "spec":{
+                    "leaseTransitions":2, "holderIdentity":serde_json::to_string(&holder).unwrap()
+                }}),
+            )]);
+            let error = cleanup(&context(client), &microvm).await.unwrap_err();
+            assert!(error.to_string().contains("active slot claim changed"));
             assert!(pending.lock().unwrap().is_empty());
         }
     }
