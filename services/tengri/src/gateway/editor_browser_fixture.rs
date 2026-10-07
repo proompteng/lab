@@ -57,7 +57,7 @@ async fn editor_browser_acceptance_fixture() {
             .to_owned(),
         )
         .unwrap(),
-        crate::identity::WorkloadIdentity::Fixture,
+        crate::identity::WorkloadIdentity::Fixture(8080),
     )
     .unwrap();
     let issue_state = state.clone();
@@ -68,7 +68,7 @@ async fn editor_browser_acceptance_fixture() {
                 state.client.clone(),
                 "tengri",
                 "editor-fixture",
-                &crate::identity::WorkloadIdentity::Fixture,
+                &crate::identity::WorkloadIdentity::Fixture(8080),
             )
             .await
             .unwrap();
@@ -95,7 +95,7 @@ async fn editor_browser_acceptance_fixture() {
                 state.client.clone(),
                 "tengri",
                 "editor-fixture",
-                &crate::identity::WorkloadIdentity::Fixture,
+                &crate::identity::WorkloadIdentity::Fixture(8080),
             )
             .await
             .unwrap();

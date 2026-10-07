@@ -14,10 +14,10 @@ async fn identity_is_verified_over_authenticated_grpc() {
     use super::test_server::{TestServer, TestService};
     use std::sync::Arc;
     for (id, version, expected) in [
-        ("expected", 1, true),
-        ("wrong", 1, false),
+        ("expected", 2, true),
+        ("wrong", 2, false),
         ("expected", 0, false),
-        ("expected", 2, false),
+        ("expected", 1, false),
     ] {
         let fixture = TestServer::start(TestService {
             get_info: Some(Arc::new(move |request| {
@@ -280,6 +280,7 @@ async fn fixture() -> (Fixture, GuestClient) {
         token: "test-bootstrap-token".into(),
         http,
         preview_tls: Some(std::sync::Arc::new(preview)),
+        claim_headers: Default::default(),
     };
     child.identity = Some(identity);
     (child, guest)
@@ -311,7 +312,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                     get_info: Some(Arc::new(|_| {
                         Ok(proto::GuestInfo {
                             microvm_id: "tls-fixture".into(),
-                            protocol_version: 1,
+                            protocol_version: 2,
                         })
                     })),
                     ..Default::default()

@@ -101,6 +101,7 @@ jobs:
           bash -n bootstrap-toolchain.sh
           bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
           bash -n validate-rootfs.sh validate-rootfs.test.sh
+          bash -n build-boot-artifacts.sh tengri-init.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
           test -z "$(gofmt -l .)"
@@ -156,16 +157,67 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: Verify guest administrator access
+      - name: Verify boot artifact checksums
         if: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
         env:
-          GUEST_ADMIN_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          GUEST_BOOT_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
         run: |
           set -euo pipefail
-          docker run --rm --interactive --user 1000:1000 \
-            --cap-add ALL --security-opt seccomp=unconfined \
-            --entrypoint /bin/bash "$GUEST_ADMIN_IMAGE" -s -- --runtime \
-            < services/nanoagent/test-guest-admin.sh
+          docker run --rm --read-only --cap-drop ALL \
+            --entrypoint /usr/bin/sha256sum "$GUEST_BOOT_IMAGE" --check /guest/SHA256SUMS
+
+  validate-kvm:
+    name: Validate KVM slot (${{ matrix.architecture }})
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build native KVM test harness
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          runtime="${TENGRI_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
+          guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
+          docker pull "$runtime"
+          docker pull "$guest"
+          docker build --platform "linux/${ARCHITECTURE}" --target build \
+            --tag tengri-nanoagent-tests:validation services/nanoagent
+          docker build --platform "linux/${ARCHITECTURE}" \
+            --file services/tengri/Dockerfile.kvm-test \
+            --build-arg "RUNTIME_IMAGE=$runtime" \
+            --build-arg NANOAGENT_TEST_IMAGE=tengri-nanoagent-tests:validation \
+            --tag tengri-kvm-test:validation services/tengri
+
+      - name: Verify real guest administration and snapshot lifecycle
+        env:
+          TENGRI_KVM_TEST_IMAGE: tengri-kvm-test:validation
+          TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
+          TENGRI_KVM_SAMPLES: '50'
+        run: bash services/tengri/test-kvm.sh
+
+      - name: Retain KVM diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-kvm-${{ matrix.architecture }}-${{ github.sha }}
+          path: .artifacts/kvm/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -173,6 +225,7 @@ jobs:
       - build
       - validate-tengri
       - validate-nanoagent
+      - validate-kvm
     runs-on: arc-arm64
     timeout-minutes: 30
     permissions:

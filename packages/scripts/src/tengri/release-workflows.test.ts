@@ -47,7 +47,7 @@ describe('Tengri image workflow', () => {
     expect(source).not.toContain('latest_digest')
     expect(source).not.toContain('sha256sum "${index_path}"')
     expect(source).not.toContain('release-contract.json')
-    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent'])
+    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent', 'validate-kvm'])
     expect(existsSync(resolve(repositoryRoot, 'argocd/applications/kargo'))).toBe(true)
   })
 
@@ -71,6 +71,7 @@ describe('Tengri image workflow', () => {
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
     expect(images.jobs?.publish?.needs).toContain('validate-tengri')
     expect(images.jobs?.publish?.needs).toContain('validate-nanoagent')
+    expect(images.jobs?.publish?.needs).toContain('validate-kvm')
   })
 
   it('withholds Kargo aliases until both images and their retained indexes succeed', () => {
@@ -182,7 +183,8 @@ describe('Tengri image workflow', () => {
     expect(nanoagent).toContain('cargo new --quiet --lib /tmp/cargo-library-smoke')
     expect(nanoagent).toContain('(cd /tmp/cargo-library-smoke && cargo test --quiet)')
     expect(nanoagent).not.toContain('/bundle/rust/bin/rustdoc;')
-    expect(nanoagent).toContain('ENTRYPOINT ["/usr/local/bin/nanoagent"]')
+    expect(nanoagent).toContain('COPY --from=boot-artifacts /guest /guest')
+    expect(nanoagent).toContain('build-boot-artifacts "$TARGETARCH"')
     expect(tengri).toContain('ARG DEBIAN_BASE_IMAGE=mirror.gcr.io/debian')
     expect(tengri).toContain('ARG RUST_BASE_IMAGE=mirror.gcr.io/rust')
   })

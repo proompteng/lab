@@ -28,7 +28,6 @@ const readyAgent = {
   readyAt: '2026-08-26T12:00:08.000Z',
   lastActivityAt: '2026-08-26T12:30:00.000Z',
   idleDeadline: '2026-08-26T13:30:00.000Z',
-  expiresAt: '2026-08-26T16:00:00.000Z',
   conditions: [
     { type: 'Ready', status: 'True', reason: 'GuestReady', message: '', lastTransitionAt: '2026-08-26T12:00:08.000Z' },
   ],

@@ -56,8 +56,6 @@ type RawAgent = RawRecord & {
   readyAt?: string
   lastActivityAt?: string
   idleDeadline?: string
-  expiresAt?: string
-  pendingImage?: string
   conditions?: RawRecord[]
 }
 
@@ -127,11 +125,11 @@ export async function getAgent(subject: string, id: string) {
 }
 
 export async function sleepAgent(subject: string, id: string) {
-  return normalizeAgent(await unary<RawAgent>('sleepAgent', { id }, subject))
+  return normalizeAgent(await unary<RawAgent>('sleepAgent', { id }, subject, 310_000))
 }
 
 export async function resumeAgent(subject: string, id: string) {
-  return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject, 130_000))
+  return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject))
 }
 
 export async function updatePowerSettings(subject: string, id: string, power: TengriPowerSettings) {
@@ -810,8 +808,6 @@ function normalizeAgent(agent: RawAgent): TengriAgent {
     readyAt: stringValue(agent.readyAt),
     lastActivityAt: stringValue(agent.lastActivityAt),
     idleDeadline: stringValue(agent.idleDeadline),
-    expiresAt: stringValue(agent.expiresAt),
-    pendingImage: stringValue(agent.pendingImage),
     conditions: (agent.conditions ?? []).map(normalizeCondition),
   }
 }

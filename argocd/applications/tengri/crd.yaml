@@ -49,12 +49,6 @@ spec:
                 maxLength: 64
                 minLength: 1
                 type: string
-              expiresAt:
-                default: ""
-                description: |-
-                  Legacy compatibility field. New retained agents leave this empty; it
-                  is never used to delete or block an agent.
-                type: string
               idleDeadline:
                 format: date-time
                 type: string
@@ -101,6 +95,41 @@ spec:
                 - cpuMillis
                 - memoryMib
                 - workspaceGib
+                type: object
+              slot:
+                nullable: true
+                properties:
+                  epoch:
+                    format: uint64
+                    maximum: 2147483647.0
+                    minimum: 1.0
+                    type: integer
+                  name:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  podUid:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  pvcName:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  pvcUid:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                required:
+                - epoch
+                - name
+                - podUid
+                - pvcName
+                - pvcUid
                 type: object
             required:
             - architecture
@@ -158,10 +187,6 @@ spec:
                 default: 0
                 format: int64
                 type: integer
-              pendingImage:
-                description: Configured Nanoagent image waiting for a safe replacement of a running guest.
-                nullable: true
-                type: string
               phase:
                 enum:
                 - Pending
@@ -205,10 +230,8 @@ spec:
           rule: self.spec.architecture == oldSelf.spec.architecture
         - message: workspace size is immutable
           rule: self.spec.resources.workspaceGib == oldSelf.spec.resources.workspaceGib
-        - message: creation and legacy expiry fields are immutable
-          rule: >-
-            self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt ==
-            oldSelf.spec.expiresAt
+        - message: creation time is immutable
+          rule: self.spec.createdAt == oldSelf.spec.createdAt
     served: true
     storage: true
     subresources:
