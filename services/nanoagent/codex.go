@@ -190,6 +190,9 @@ func (supervisor *codexSupervisor) runProcess() error {
 		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
+		"-c", `mcp_servers.relay.command="/usr/local/bin/nanoagent"`,
+		"-c", `mcp_servers.relay.args=["--relay-mcp"]`,
+		"-c", `mcp_servers.relay.required=true`,
 		"app-server",
 	)
 	command.Dir = supervisor.cwd

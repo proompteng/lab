@@ -40,6 +40,13 @@ type evidence struct {
 type fileReader func(string) ([]byte, error)
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--relay-mcp" {
+		if err := runRelayMCP(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "Relay MCP transport unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
 		logger.Error("nanoagent stopped", "error", err)

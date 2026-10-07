@@ -262,6 +262,22 @@ spec:
                     pod-security.kubernetes.io/warn: privileged
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: relay
+                path: argocd/applications/relay
+                namespace: relay
+                targetRevision: kargo/relay
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:relay
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: tengri
                 path: argocd/applications/tengri
                 namespace: tengri

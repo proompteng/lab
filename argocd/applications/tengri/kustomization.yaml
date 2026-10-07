@@ -8,6 +8,7 @@ resources:
   - service-account.yaml
   - auth-nonces.yaml
   - rbac.yaml
+  - relay-access.yaml
   - spire-admission.yaml
   - deployment.yaml
   - services.yaml
