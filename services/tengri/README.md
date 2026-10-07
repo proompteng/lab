@@ -25,13 +25,17 @@ snapshot generation, and owner/epoch. Snapshot restore consumes the generation b
 sets the guest clock, binds the owner, and checks files, a PTY round trip, and initialized Codex. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
+If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
+Only the same owner and epoch can retry it; the slot remains fenced until the journal is durable. A runner restart
+still requires explicit fenced recovery for an interrupted save.
+
 Loss of an active runner, Pod, or node retains the owner and home for explicit fenced recovery. Lease age, missing
 Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
 unchanged runtime and disk identities. An exited VMM fences traffic and reports failure.
 
-Deletion persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
+Deletion of a claimed slot persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
 and resourceVersion preconditions. A retry after Pod deletion uses the durable receipt. No stop proof means no disk
-or finalizer removal. A replacement slot always gets a fresh Pod, home, token, and snapshot. Image updates recycle
+or finalizer removal for an owned slot. A replacement slot always gets a fresh Pod, home, token, and snapshot. Image updates recycle
 only unused slots; claimed guests retain their runtime through ordinary sleep/resume.
 
 ## Host and guest boundaries

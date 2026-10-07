@@ -158,6 +158,7 @@ pub struct Slot {
     config: SlotConfig,
     journal: Journal,
     vm: Option<Vmm>,
+    pending_sleep: Option<Snapshot>,
     state_tx: watch::Sender<SlotState>,
 }
 
@@ -213,6 +214,7 @@ impl Slot {
             config,
             journal,
             vm: None,
+            pending_sleep: None,
             state_tx,
         };
         slot.persist().await?;
@@ -372,6 +374,13 @@ impl Slot {
         if matches!(self.state(), SlotState::Sleeping { claim: owner, .. } if owner == claim) {
             return Ok(());
         }
+        if matches!(self.state(), SlotState::Saving { claim: owner } if owner == claim) {
+            let snapshot = self
+                .pending_sleep
+                .clone()
+                .context("sleep has no completed snapshot to commit")?;
+            return self.commit_sleep(claim, snapshot).await;
+        }
         ensure!(
             self.state().serves(claim),
             "slot is not awake for this owner and epoch"
@@ -382,13 +391,7 @@ impl Slot {
         .await?;
         let generation = self.journal.next_generation;
         match self.save_vm().await {
-            Ok(snapshot) => {
-                self.transition(SlotState::Sleeping {
-                    claim: claim.clone(),
-                    snapshot,
-                })
-                .await
-            }
+            Ok(snapshot) => self.commit_sleep(claim, snapshot).await,
             Err(error) => {
                 // Only the still-live VM can recover. An older snapshot has stale disk state.
                 let recovered = match &mut self.vm {
@@ -427,6 +430,22 @@ impl Slot {
                 Err(error)
             }
         }
+    }
+
+    async fn commit_sleep(&mut self, claim: &Claim, snapshot: Snapshot) -> anyhow::Result<()> {
+        ensure!(
+            self.vm.is_none()
+                && matches!(self.state(), SlotState::Saving { claim: owner } if owner == claim),
+            "completed sleep requires a stopped VMM and the same owner"
+        );
+        self.pending_sleep = Some(snapshot.clone());
+        self.transition(SlotState::Sleeping {
+            claim: claim.clone(),
+            snapshot,
+        })
+        .await?;
+        self.pending_sleep = None;
+        Ok(())
     }
 
     async fn save_vm(&mut self) -> anyhow::Result<Snapshot> {
@@ -535,7 +554,9 @@ impl Slot {
         self.transition(SlotState::Stopped {
             claim: claim.clone(),
         })
-        .await
+        .await?;
+        self.pending_sleep = None;
+        Ok(())
     }
 }
 
@@ -645,10 +666,14 @@ mod tests {
             .await
             .unwrap();
         let sleeping = SlotState::Sleeping {
-            claim: owner,
+            claim: owner.clone(),
             snapshot: Snapshot { generation: 1 },
         };
-        assert!(slot.transition(sleeping.clone()).await.is_err());
+        assert!(
+            slot.commit_sleep(&owner, Snapshot { generation: 1 })
+                .await
+                .is_err()
+        );
         assert_eq!(slot.state(), &saving);
         assert_eq!(*updates.borrow(), saving);
         let journal: Journal = serde_json::from_slice(
@@ -658,11 +683,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(journal.state, saving);
+        assert!(slot.sleep(&claim("owner-b", 1)).await.is_err());
+        assert!(slot.sleep(&claim("owner-a", 2)).await.is_err());
+        assert!(slot.sleep(&owner).await.is_err());
         fs::remove_dir(config.directory.join("journal.next"))
             .await
             .unwrap();
-        slot.transition(sleeping.clone()).await.unwrap();
+        slot.sleep(&owner).await.unwrap();
         assert_eq!(*updates.borrow(), sleeping);
+        assert!(slot.pending_sleep.is_none());
         drop(slot);
         assert_eq!(Slot::open(config.clone()).await.unwrap().state(), &sleeping);
         fs::remove_dir_all(config.directory).await.unwrap();

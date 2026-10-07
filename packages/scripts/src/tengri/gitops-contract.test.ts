@@ -36,8 +36,12 @@ type NetworkPolicy = {
   kind?: string
   metadata?: { name?: string; annotations?: Record<string, string> }
   spec?: {
+    podSelector?: { matchLabels?: Record<string, string> }
     ingress?: Array<{
-      from?: Array<{ namespaceSelector?: { matchLabels?: Record<string, string> } }>
+      from?: Array<{
+        namespaceSelector?: { matchLabels?: Record<string, string> }
+        podSelector?: { matchLabels?: Record<string, string> }
+      }>
       ports?: Array<{ port?: number; protocol?: string }>
     }>
     egress?: Array<{
@@ -136,10 +140,38 @@ test('Tengri preserves retained network policies during the runtime migration', 
     'tengri-control-plane',
     'tengri-default-deny',
     'tengri-microvm-guests',
+    'tengri-slots',
   ])
   for (const policy of policies) {
     expect(policy.metadata?.annotations?.['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')
   }
+  const existing = policies.find((policy) => policy.metadata?.name === 'tengri-microvm-guests')
+  expect(existing?.spec?.podSelector?.matchLabels).toEqual({
+    'app.kubernetes.io/name': 'nanoagent',
+    'app.kubernetes.io/component': 'microvm',
+  })
+  expect(existing?.spec?.egress).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        to: expect.arrayContaining([
+          expect.objectContaining({
+            namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'spire-server' } },
+          }),
+        ]),
+      }),
+    ]),
+  )
+  const controller = policies.find((policy) => policy.metadata?.name === 'tengri-control-plane')
+  expect(controller?.spec?.egress).toEqual(
+    expect.arrayContaining([
+      {
+        to: [{ podSelector: { matchLabels: existing?.spec?.podSelector?.matchLabels } }],
+        ports: [{ protocol: 'TCP', port: 8443 }],
+      },
+    ]),
+  )
+  const slots = policies.find((policy) => policy.metadata?.name === 'tengri-slots')
+  expect(slots?.spec?.podSelector?.matchLabels).toEqual({ 'app.kubernetes.io/name': 'tengri-slot' })
 })
 
 test('public control and preview traffic use isolated Services and routes', () => {
@@ -197,7 +229,7 @@ test('only the controller can reach the shared SpiceDB API', () => {
     ],
     ports: [{ protocol: 'TCP', port: 8443 }],
   })
-  const guest = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-microvm-guests')
+  const guest = networkPolicies.find((policy) => policy.metadata?.name === 'tengri-slots')
   expect(
     guest?.spec?.egress?.some((rule) =>
       rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),

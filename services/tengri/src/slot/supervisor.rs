@@ -46,7 +46,7 @@ impl Supervisor {
                 claim,
                 matches!(current, SlotState::Vacant { .. })
                     || current.serves(claim)
-                    || matches!(current, SlotState::Sleeping { claim: owner, .. } if owner == claim),
+                    || matches!(current, SlotState::Sleeping { claim: owner, .. } | SlotState::Saving { claim: owner } if owner == claim),
                 SlotState::Saving {
                     claim: claim.clone(),
                 },
@@ -368,6 +368,43 @@ mod tests {
         let response = forward(State(supervisor), request);
         futures::pin_mut!(response);
         assert!(futures::poll!(response).is_pending());
+    }
+
+    #[test]
+    fn a_pending_sleep_commit_can_only_be_retried_by_its_owner() {
+        let owner = Claim {
+            microvm_id: "agent-a".into(),
+            microvm_uid: "owner-a".into(),
+            epoch: 7,
+        };
+        let saving = SlotState::Saving {
+            claim: owner.clone(),
+        };
+        let (state, _) = watch::channel(saving.clone());
+        let supervisor = Supervisor {
+            state,
+            gate: Arc::new(Mutex::new(())),
+        };
+        for claim in [
+            Claim {
+                microvm_uid: "owner-b".into(),
+                ..owner.clone()
+            },
+            Claim {
+                epoch: 8,
+                ..owner.clone()
+            },
+        ] {
+            assert!(
+                supervisor
+                    .fence(&saving, &CommandRequest::Sleep { claim })
+                    .is_err()
+            );
+        }
+        supervisor
+            .fence(&saving, &CommandRequest::Sleep { claim: owner })
+            .unwrap();
+        assert_eq!(*supervisor.state.borrow(), saving);
     }
 
     #[test]
