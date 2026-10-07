@@ -190,6 +190,7 @@ RUN set -eux; \
       tigervnc-standalone-server \
       x11-utils \
       xauth \
+      xclip \
       xdotool > /tmp/browser-packages; \
     apt-cache dumpavail > /tmp/browser-available; \
     python3 /tmp/browser-runtime-manifest.py /tmp/browser-packages /tmp/browser-available > /out/browser-runtime.manifest; \
@@ -344,7 +345,7 @@ COPY --from=development-toolchain-layout /bundle /bundle
 
 RUN set -eux; \
     mkdir -p /out; \
-    XZ_OPT='-T2 -8' tar \
+    XZ_OPT='-T2 -9' tar \
       --create \
       --xz \
       --file /out/development-toolchain.tar.xz \

@@ -179,6 +179,42 @@ func (browser *browserSupervisor) close() {
 }
 
 func (browser *browserSupervisor) serve(writer http.ResponseWriter, request *http.Request, path string) {
+	if path == "/paste" {
+		if request.Method != http.MethodPost {
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var value struct {
+			Text string `json:"text"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, maxComputerRequestBytes))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil || validateComputerAction(computerAction{Action: "type", Text: value.Text}) != nil {
+			writeAPIError(writer, http.StatusBadRequest, "invalid clipboard text")
+			return
+		}
+		browser.cuaMu.Lock()
+		defer browser.cuaMu.Unlock()
+		ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
+		defer cancel()
+		if err := browser.ensure(ctx); err != nil {
+			writeAPIError(writer, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		clipboard := exec.CommandContext(ctx, browser.program("xclip"), "-selection", "clipboard", "-in")
+		clipboard.Env = browser.environment()
+		clipboard.Stdin = strings.NewReader(value.Text)
+		if err := clipboard.Run(); err != nil {
+			writeAPIError(writer, http.StatusServiceUnavailable, "Could not update browser clipboard")
+			return
+		}
+		if err := browser.input(ctx, "key", "--clearmodifiers", "ctrl+v"); err != nil {
+			writeAPIError(writer, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if path == "/control" {
 		browser.cuaMu.Lock()
 		defer browser.cuaMu.Unlock()

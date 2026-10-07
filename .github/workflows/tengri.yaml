@@ -57,7 +57,7 @@ jobs:
           toolchain: 1.90.0
 
       - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler tigervnc-standalone-server openbox scrot x11-utils xauth xdotool
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends protobuf-compiler
 
       - name: Run Tengri desktop browser suite
         run: bun run --cwd apps/landing test:e2e
@@ -82,8 +82,8 @@ jobs:
             /tmp/tengri-vscode.*/gateway.log
             /tmp/tengri-vscode.*/desktop.log
             /tmp/tengri-vscode.*/proxy.log
-            /tmp/tengri-vscode.*/home/.tengri/vscode/server.log
-            /tmp/tengri-vscode.*/home/.tengri/browser/server.log
+            /tmp/tengri-vscode.*/vscode.log
+            /tmp/tengri-vscode.*/browser.log
             /tmp/tengri-vscode.*/browser-results
           if-no-files-found: ignore
           retention-days: 7

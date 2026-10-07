@@ -213,6 +213,24 @@ func TestBrowserScreenshotRejectsImageThatWouldBreakAppServerFraming(t *testing.
 	}
 }
 
+func TestBrowserPasteRejectsInvalidInputWithoutStarting(t *testing.T) {
+	browser := newBrowserSupervisor("not-launched", "", browserTestHome(t), "", "")
+	defer browser.close()
+	for _, input := range []string{`{}`, `{"text":""}`, `{"text":"a\u0000b"}`, `{"text":"hello","command":"sh"}`} {
+		request := httptest.NewRequest(http.MethodPost, "/paste", strings.NewReader(input))
+		response := httptest.NewRecorder()
+		browser.serve(response, request, "/paste")
+		if response.Code != http.StatusBadRequest || browser.current != nil {
+			t.Fatalf("invalid paste started a browser or succeeded: %s, %d", input, response.Code)
+		}
+	}
+	response := httptest.NewRecorder()
+	browser.serve(response, httptest.NewRequest(http.MethodGet, "/paste", nil), "/paste")
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET must not paste: %d", response.Code)
+	}
+}
+
 func browserTestHome(t *testing.T) string {
 	t.Helper()
 	home, err := os.MkdirTemp("/tmp", "browser-test-")

@@ -82,3 +82,8 @@ local storage, workspace downloads, takeover, grant revocation, and reopening th
 The guest image independently validates its extracted graphics runtime and 512 MiB filesystem. The requested
 production rollout still requires the selected Kargo Freight, exact deployed images, a refreshed retained guest,
 and actual browser and agent interaction on `proompteng.ai`.
+
+CI runs the guest fixture in a disposable Docker container. ARC's Talos host disables user namespaces, so the fixture
+installs Chromium's root-owned setuid sandbox and gives that container `SYS_ADMIN` for its PID and network namespaces.
+Chromium's sandbox remains enabled. The production MicroVM uses user namespaces and does not receive this test
+configuration. Browser and editor startup logs are copied out before the fixture container is removed.

@@ -28,6 +28,7 @@ if [[ "${1:-}" == --validate-install ]]; then
   "$CHROMIUM_BINARY" --version
   Xtigervnc -version
   xdotool --version
+  xclip -version
   scrot --version
   exit 0
 fi

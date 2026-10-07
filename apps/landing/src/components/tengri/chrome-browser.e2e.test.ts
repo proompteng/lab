@@ -106,10 +106,11 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   await expect(chrome.getByRole('textbox', { name: 'Message your agent' })).toHaveCount(0)
   await canvas.click({ position: { x: 350, y: 60 } })
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  const humanUrl = `http://127.0.0.1:8080/_test/site?human=1&run=${Date.now()}`
   await page.keyboard.press(`${modifier}+a`)
-  await page.keyboard.type('http://127.0.0.1:8080/_test/site?human=1')
+  await page.keyboard.type(humanUrl)
   await page.keyboard.press('Enter')
-  await expect.poll(async () => (await state()).loaded?.url).toContain('?human=1')
+  await expect.poll(async () => (await state()).loaded?.url).toBe(humanUrl)
   await expect.poll(async () => (await state()).loaded?.userAgent).toContain('Chrome/')
   await page.keyboard.type('Human input works')
   await page.keyboard.press('Enter')

@@ -2,6 +2,15 @@
 set -euo pipefail
 
 repository="$(cd "$(dirname "$0")/../.." && pwd)"
+if [[ "$(uname -s)" == Linux && -z "${TENGRI_BROWSER_TEST_IMAGE:-}" && "${1:-}" != --editor-only ]]; then
+  # Native editor acceptance shares files with the test driver. Browser acceptance
+  # gets a separate container because ARC's host disables user namespaces.
+  bash "$0" --editor-only
+  fixture_image="tengri-browser-test:$RANDOM-$RANDOM"
+  docker build --file "$repository/services/nanoagent/Dockerfile.browser-test" \
+    --tag "$fixture_image" "$repository/services/nanoagent"
+  TENGRI_BROWSER_TEST_IMAGE="$fixture_image" exec bash "$0"
+fi
 fixture_root="$(mktemp -d "/tmp/tengri-vscode.XXXXXX")"
 fixture_pids=""
 cleanup() {
@@ -15,7 +24,13 @@ cleanup() {
   done
   for fixture_pid in $fixture_pids; do kill "$fixture_pid" 2>/dev/null || true; done
   for fixture_pid in $fixture_pids; do wait "$fixture_pid" 2>/dev/null || true; done
-  if [[ -n "${fixture_container:-}" ]]; then docker stop --time 10 "$fixture_container" >/dev/null 2>&1 || true; fi
+  if [[ -n "${fixture_container:-}" ]]; then
+    docker stop --time 10 "$fixture_container" >/dev/null 2>&1 || true
+    docker logs "$fixture_container" >"$fixture_root/guest.log" 2>&1 || true
+    docker cp "$fixture_container:/home/nanoagent/.tengri/browser/server.log" "$fixture_root/browser.log" 2>/dev/null || true
+    docker cp "$fixture_container:/home/nanoagent/.tengri/vscode/server.log" "$fixture_root/vscode.log" 2>/dev/null || true
+    docker rm "$fixture_container" >/dev/null 2>&1 || true
+  fi
   printf 'VS Code acceptance logs: %s\n' "$fixture_root"
   if [[ "$result" != 0 ]]; then tail -n 60 "$fixture_root"/*.log 2>/dev/null || true; fi
   exit "$result"
@@ -41,44 +56,39 @@ export TENGRI_EDITOR_BROWSER_FIXTURE=1
 export TENGRI_EDITOR_TEST_HTTPS=1
 export TENGRI_PLAYWRIGHT_BASE_URL=https://desktop.tengri.localhost:3443
 export TENGRI_PLAYWRIGHT_SKIP_WEBSERVER=1
-fixture_test_filter='@vscode|@browser'
+fixture_bootstrap='bootstrap-toolchain --install-only'
+fixture_container_options=()
 if [[ -n "${TENGRI_BROWSER_TEST_IMAGE:-}" ]]; then
-  # A Linux guest on macOS, with its Unix display sockets on a Linux volume.
-  # The container relaxes Docker's user-namespace syscall filter for this test;
-  # Chromium itself keeps its sandbox enabled, as it does in the real guest.
+  # Keep Unix display sockets on a Linux volume. The sandbox remains enabled;
+  # the container permits its namespace setup independently of Docker's filter.
+  if [[ "$(docker image inspect --format '{{index .Config.Labels "ai.proompteng.tengri.browser-test"}}' "$TENGRI_BROWSER_TEST_IMAGE")" == true ]]; then
+    fixture_bootstrap='bootstrap-browser --install-only'
+    fixture_container_options+=(--cap-add SYS_ADMIN)
+  fi
   fixture_test_filter='@browser'
   fixture_arch="$(docker image inspect --format '{{.Architecture}}' "$TENGRI_BROWSER_TEST_IMAGE")"
   fixture_volume="${TENGRI_BROWSER_TEST_VOLUME:-tengri-browser-acceptance-$fixture_arch}"
   fixture_container="tengri-browser-${fixture_root##*.}"
   (cd "$repository/services/nanoagent" && GOWORK=off GOOS=linux GOARCH="$fixture_arch" go test -c -o "$fixture_root/nanoagent.test")
-  docker run --rm --name "$fixture_container" --hostname tengri-browser-acceptance --user 1000:1000 --security-opt seccomp=unconfined --shm-size=256m \
+  docker create --name "$fixture_container" --hostname tengri-browser-acceptance --user 1000:1000 --security-opt seccomp=unconfined --shm-size=256m \
+    "${fixture_container_options[@]}" \
     --publish 127.0.0.1:8080:8080 \
     --mount "type=volume,source=$fixture_volume,target=/home/nanoagent" \
-    --mount "type=bind,source=$fixture_root/nanoagent.test,target=/tmp/nanoagent.test,readonly" \
-    --mount "type=bind,source=$repository/services/nanoagent/launch-browser.sh,target=/usr/local/bin/launch-browser,readonly" \
     -e HOME=/home/nanoagent -e TENGRI_EDITOR_TEST_HOME=/home/nanoagent -e TENGRI_EDITOR_TEST_BINARY=/usr/bin/false \
     -e TENGRI_EDITOR_TEST_BIND_ADDR=0.0.0.0:8080 -e TENGRI_BROWSER_TEST_BINARY=/usr/local/bin/launch-browser \
     -e TENGRI_BROWSER_TEST_BOOTSTRAP=/usr/local/bin/bootstrap-browser -e TENGRI_BROWSER_TEST_ASSETS=/usr/share/nanoagent/novnc \
     --entrypoint /bin/bash "$TENGRI_BROWSER_TEST_IMAGE" \
-    -c 'bootstrap-toolchain --install-only && exec /tmp/nanoagent.test -test.run "^TestEditorBrowserFixture$" -test.timeout 0 -test.v' \
+    -c "$fixture_bootstrap && mkdir -p /home/nanoagent/workspace && exec /tmp/nanoagent.test -test.run '^TestEditorBrowserFixture$' -test.timeout 0 -test.v" >/dev/null
+  docker cp "$fixture_root/nanoagent.test" "$fixture_container:/tmp/nanoagent.test"
+  docker cp "$repository/services/nanoagent/launch-browser.sh" "$fixture_container:/usr/local/bin/launch-browser"
+  docker start "$fixture_container" >/dev/null
+  docker logs --follow "$fixture_container" \
     >"$fixture_root/guest.log" 2>&1 &
 else
   fixture_install_home="${TENGRI_EDITOR_INSTALL_HOME:-$repository/node_modules/.cache/tengri-code-server}"
   env HOME="$fixture_install_home" bash "$repository/services/nanoagent/bootstrap-code-server.sh" --install-only
   export TENGRI_EDITOR_TEST_BINARY="$fixture_install_home/.local/bin/code-server"
-  if [[ "$(uname -s)" == Linux ]]; then
-    export TENGRI_BROWSER_TEST_BINARY="$repository/services/nanoagent/launch-browser.sh"
-    export TENGRI_BROWSER_TEST_BOOTSTRAP="$repository/services/nanoagent/bootstrap-browser.sh"
-    export TENGRI_BROWSER_TEST_ASSETS="$fixture_root/novnc"
-    export CHROMIUM_BINARY="$TENGRI_EDITOR_TEST_HOME/.local/bin/chromium"
-    mkdir -p "$TENGRI_BROWSER_TEST_ASSETS"
-    curl --fail --location --silent --show-error --retry 3 --output "$fixture_root/novnc.tgz" \
-      https://registry.npmjs.org/@novnc/novnc/-/novnc-1.7.0.tgz
-    printf '%s  %s\n' 32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903 "$fixture_root/novnc.tgz" | sha256sum --check --status -
-    tar -xzf "$fixture_root/novnc.tgz" -C "$TENGRI_BROWSER_TEST_ASSETS" --strip-components=1
-  else
-    fixture_test_filter='@vscode'
-  fi
+  fixture_test_filter='@vscode'
   (cd "$repository/services/nanoagent" && GOWORK=off go test -c -o "$fixture_root/nanoagent.test")
   SHELL=/bin/bash "$fixture_root/nanoagent.test" -test.run '^TestEditorBrowserFixture$' -test.timeout 0 -test.v >"$fixture_root/guest.log" 2>&1 &
 fi

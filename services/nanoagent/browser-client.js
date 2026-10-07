@@ -56,11 +56,13 @@ rfb.addEventListener('disconnect', () => {
 })
 rfb.addEventListener('securityfailure', () => notify('error', 'Chrome could not establish a browser session.'))
 document.addEventListener('pointerdown', () => notify('focus'), { capture: true })
-const pasteText = (text) => {
-  rfb.clipboardPasteFrom(text)
-  rfb.sendKey(0xffe3, 'ControlLeft', true)
-  rfb.sendKey(0x76, 'KeyV')
-  rfb.sendKey(0xffe3, 'ControlLeft', false)
+const pasteText = async (text) => {
+  const response = await fetch('/paste', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!response.ok) throw new Error('Could not paste into Chrome')
 }
 document.addEventListener(
   'paste',
@@ -68,7 +70,7 @@ document.addEventListener(
     const text = event.clipboardData?.getData('text/plain')
     if (!text) return
     event.preventDefault()
-    pasteText(text)
+    pasteText(text).catch((error) => notify('error', error.message))
   },
   { capture: true },
 )
