@@ -41,6 +41,16 @@ The existing two-instance `bayn-db` cluster retains 100Gi per replica through `r
 primary's `pg_stat_replication`. The standby must be `streaming`, with `sync_state` of `sync` or `quorum`, and included
 in `synchronous_standby_names`. CNPG's `ANY 1` configuration uses `quorum`. Keep `synchronous_commit=on`.
 
+Bayn overrides CNPG's five-second WAL sender and receiver inactivity deadlines with PostgreSQL's sixty-second
+defaults. At 2026-10-06 23:11 UTC, storage stalls exceeded five seconds and caused repeated replication disconnects,
+quorum loss and recovery churn. The larger replication heartbeat window prevents that additional churn; it does
+not repair storage latency or extend application query, reconciliation, capture or trade deadlines. An inactive
+replication connection can now take sixty seconds to terminate. This is scoped to `bayn-db`; operator configuration,
+CNPG failover policy and synchronous durability stay unchanged. After GitOps reconciliation, verify both values
+on both instances, `pending_restart=false`, one streaming quorum standby, and exact financial readback.
+See [PostgreSQL replication settings](https://www.postgresql.org/docs/18/runtime-config-replication.html) and
+[CNPG configuration precedence](https://cloudnative-pg.io/docs/1.28/postgresql_conf/).
+
 Apply the reviewed `bootstrap` ApplicationSet change so Argo preserves the new Rook-managed Secret and ConfigMap
 fields. Let Rook provision its native claim and Bayn follow normal Kargo promotion. Require the common Rook sync
 operation to succeed. Report any pre-existing Ceph deep-scrub health warning separately. Preserve all retained storage
@@ -48,14 +58,22 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v1` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol
+The active implementation uses momentum-first `bayn.jev.protocol.v2` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol
 hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
 The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
-subsequent reviewed releases. Preserve the existing sandbox broker identity, risk policy, and limits when rotating it.
+subsequent reviewed releases. Preserve the existing sandbox broker identity and every limit outside an explicitly reviewed mandate change.
 
-The candidate quote/window-trade policy is bound to Jev behavior v3 and its parameter identity. Its build hashes,
-sealed mandate, and all three runtime lineages change together. The mandate keeps the existing authored build anchor,
-sandbox account, Research authority type, risk policy, and limits; broker and model credentials are unchanged.
+The active entry gate requires exact positive own and SPY-relative 30-minute momentum before Jev. It is bound to
+`bayn.jev.momentum-first.behavior.v1`, protocol v2 and batch v4; Jev's probability ranking, questions, sizing and
+position management remain unchanged. Its build hashes, sealed mandate and all three runtime lineages change together.
+The paired Research mandate selects the approved $1,000,000 sandbox daily gross-turnover budget, with the same account,
+credentials, exposure/loss limits and exits. Account/day turnover is retained across the rotation.
+
+Verify strategy protocol hash `3b062274793e0a13b97334dbb38858e7322cc045280d0a8ed36b533aa8f38111` and mandate request hash
+`8f85240c1a0f8d54650b0914cbfadf3245311c32c650f2a295cc76dabad7063f` against the runtime and sealed identity annotation.
+The image's build-account policy hash is not the account-bound risk hash in the mandate. Retained v1-v3 evidence remains
+immutable and decodable. Rollback needs a reviewed source/mandate pair through native drain and fresh flat/exact
+preflight; never restore obsolete identity expectations, rewrite evidence or reset turnover to make a binary start.
 
 The Jev mandate preserves the existing published build as its lineage anchor and binds the new strategy explicitly.
 Kargo writes the exact newly published source and image into the activation endpoint of every runtime lineage. The

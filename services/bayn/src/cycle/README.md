@@ -10,6 +10,11 @@ This directory owns the complete autonomous-cycle subsystem. Internal filenames 
 - `runner/` owns autonomous pass discovery, admission, recovery, and loop orchestration. Use `Effect` for service composition and interruption-aware runtime work; keep decisions pure where possible.
 - `store/` owns PostgreSQL persistence and database-backed observability. It may depend on the pure cycle core, but the pure core must not depend on persistence.
 
+Unfinished-cycle recovery restricts each decision lookup to the candidate cycle ID and bound decision hash before
+checking its JSON execution fields. The correlated lookup retains a one-row limit because the durable cycle ID is
+unique. This keeps historical decision payloads out of each recovery pass while preserving planned-mutation priority,
+superseded-generation recovery, and account and qualification-run selection.
+
 ## Dependency direction
 
 Prefer `model/construction/transitions/recovery-decisions -> observability/readiness -> runner -> composition`. Persistence is an infrastructure dependency consumed by orchestration, not a home for domain decisions. Internal cycle code should import the narrow file it needs; consumers outside this directory should use `./cycle`, `./cycle/runner`, `./cycle/observability`, or `./cycle/store` as the intended boundaries.

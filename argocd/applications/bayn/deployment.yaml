@@ -75,16 +75,16 @@ spec:
             - name: BAYN_IMAGE_DIGEST
               value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "a63b43489d8d386319e0816157766da9225ced9482cef51f547beb6cee3254c0"
+              value: "48517ebba573e0e2b6fbf57c135ec56f5bf5198e0d5e936a05065cb23c39f001"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd"
+              value: "f787f21d7824f533ae9e6fc9266f0f9fddadc5e85d0df019a15670a61bbb804a"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "131371357a091ac5d09f5a3dd1585b84cb5509e334beef99ee9d5f14600cf908"
+              value: "3b062274793e0a13b97334dbb38858e7322cc045280d0a8ed36b533aa8f38111"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
-              value: "2e60270036900493a121a87c73730960154278778a8aa71b663b138effd82227"
+              value: "b6fa12aa74014cb122a525ddbde52ee93d31f17096b88ffad507791a83ea4ce1"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -93,7 +93,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"44a58a1d26ec2cad62fae863739d8101a919ef74272770ae93fb2d8fb5e89bf5\",\"authoredActivation\":{\"sourceRevision\":\"ca4d32859b0ffbca3bf2e2d5a61d2f265eb95263\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f42804b5e010a708fa1f27dc623d23977910e4e06c08a71182e1efec98bd20c9\"},\"activation\":{\"sourceRevision\":\"ca4d32859b0ffbca3bf2e2d5a61d2f265eb95263\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:f42804b5e010a708fa1f27dc623d23977910e4e06c08a71182e1efec98bd20c9\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"8f85240c1a0f8d54650b0914cbfadf3245311c32c650f2a295cc76dabad7063f\",\"authoredActivation\":{\"sourceRevision\":\"808bfa84609959712042174b6fd176fc56f8edb2\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:4802491b70fce1d0cece839c7ee0a1400f4f605c9e8179ad0ea1ffd27f5198cc\"},\"activation\":{\"sourceRevision\":\"808bfa84609959712042174b6fd176fc56f8edb2\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:4802491b70fce1d0cece839c7ee0a1400f4f605c9e8179ad0ea1ffd27f5198cc\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

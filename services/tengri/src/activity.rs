@@ -157,7 +157,7 @@ mod tests {
                 power: Default::default(),
                 created_at: (now - chrono::Duration::hours(2)).to_rfc3339(),
                 idle_deadline: (now - chrono::Duration::hours(1)).to_rfc3339(),
-                expires_at: (now + chrono::Duration::hours(2)).to_rfc3339(),
+                slot: None,
             },
         )
     }

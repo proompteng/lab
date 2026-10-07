@@ -81,7 +81,10 @@ Terminal observations distinguish whether that runtime action ran in this worker
 completeness. Consumers must retain repetitions and join by native identity rather than treating them as additional execution.
 
 Admission is synchronous and bounded by receipt count and UTF8 byte size. A scoped Effect worker persists text chunks
-outside execution. Chunks bind the preceding exact-byte hash. The append-only database identity is capture plus ordinal;
+outside execution. A one-slot dropping notification wakes it when retained receipts or reserved bytes reach one quarter
+of their configured ceiling. The periodic flush remains the idle deadline. Admission never waits for this notification
+or persistence, and in-flight raw writes keep their original reservations. Chunks bind the preceding exact-byte hash.
+The append-only database identity is capture plus ordinal;
 duplicate retries compare both SHA-256 and exact payload text. Different formatting is different evidence. Seals bind
 the committed frontier. PostgreSQL triggers reject updates, deletes, truncation, and appends after a seal.
 
@@ -145,6 +148,16 @@ establish a verified export. Metadata-only seal bytes and hashes remain unchange
 
 The existing whole-worker verifier still requires genuine consumer closure. Deriving a manifest from an UNQUALIFIED
 sealed prefix does not fabricate `STOPPED`, prove a complete session, or authorize an original-arrival replay source.
+
+Each chunk verifies its raw, metadata and immutable index objects concurrently, with at most three object operations
+in flight. The index binds content hashes computed before these writes; an early index acknowledgement does not advance
+the SQL or export frontier. All three verifications must succeed before the SQL chunk append, and that append must
+acknowledge before the frontier advances. A failed write interrupts both siblings; orphan objects remain `UNQUALIFIED`.
+The one-second aggregate write deadline, byte reservations and receipt admission bounds are unchanged. The existing
+64 KiB envelope covers three bounded 8 KiB SDK response collectors; concurrency does not qualify storage capacity.
+The deadline invalidates admission immediately, before waiting for write interruption or transaction cleanup.
+An uninterruptible COMMIT may finish later; that outcome cannot acknowledge a chunk or advance the recorder's frontier.
+Cleanup remains owned and awaited, and later receipts are counted as observed without retaining their payloads.
 
 The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
 ambient credential provider. Session wiring must use the verified native OBC's actual `BUCKET_NAME`,

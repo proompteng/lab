@@ -55,7 +55,8 @@ requires an attested SPIRE identity too. Native tests use a private fixture Work
 
 The Codex view places user messages on the right with left-aligned text and a subtle background, and agent responses
 on the left, without visible speaker headings. The rounded composer uses a subtle border and keeps model and reasoning
-choices beside the send/stop control. Prompt suggestions prepare a
+choices beside the send/stop control. Composer height updates before paint, preserves scrolling within long drafts,
+and observes width changes without restarting the observer on each keystroke. Prompt suggestions prepare a
 draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
@@ -94,9 +95,7 @@ the Deployment directly.
 
 Code keeps recoverable drafts scoped to the GitHub owner and agent creation identity. File reads include a SHA-256
 revision; saves require that base revision and verify the returned revision. A competing API save returns a conflict
-and preserves the local draft. Guests from before conditional-save support remain readable, but editing requires a
-sleep/resume update. Refresh the browser after both web and runtime promotion; older clients cannot submit
-unconditional writes to the updated runtime.
+and preserves the local draft.
 
 Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri
 keeps a temporary recovery copy and exposes a download on the desktop and lifecycle screens. A page-unload warning

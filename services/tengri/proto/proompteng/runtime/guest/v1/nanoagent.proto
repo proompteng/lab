@@ -7,7 +7,6 @@ option go_package = "github.com/proompteng/lab/services/nanoagent/internal/guest
 // The authenticated API of one MicroVM. Ownership is enforced by Tengri before
 // dialing the guest; every RPC also requires that VM's bootstrap credential.
 service NanoagentService {
-  rpc RefreshSpireBootstrap(SpireBootstrap) returns (Empty);
   rpc GetInfo(Empty) returns (GuestInfo);
   rpc OpenEditor(Empty) returns (Editor);
   rpc ListFiles(Path) returns (FileList);
@@ -27,12 +26,6 @@ service NanoagentService {
   rpc CodexLogin(Empty) returns (CodexLoginState);
   rpc ResolveCodexApproval(CodexApproval) returns (Empty);
   rpc WatchCodexEvents(CodexWatch) returns (stream CodexEvent);
-}
-
-message SpireBootstrap {
-  string pod_uid = 1;
-  bytes token = 2;
-  bytes trust_bundle = 3;
 }
 
 message Empty {}

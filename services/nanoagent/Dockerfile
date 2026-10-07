@@ -23,6 +23,7 @@ RUN go mod download
 COPY *.go ./
 COPY internal ./internal
 COPY vscode-extension ./vscode-extension
+COPY test-guest-admin.sh /out/test-guest-admin.sh
 RUN go test ./... && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       go build -trimpath -ldflags='-s -w' -o /out/nanoagent . && \
@@ -64,8 +65,6 @@ FROM ${UBUNTU_BASE_IMAGE}:24.04 AS runtime
 
 ENV CARGO_HOME=/home/nanoagent/.cargo \
     CODE_SERVER_BINARY=/home/nanoagent/.local/bin/code-server \
-    SPIRE_AGENT_BINARY=/home/nanoagent/.local/bin/spire-agent \
-    SPIRE_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-spire-agent \
     CODE_SERVER_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-code-server \
     CODEX_BINARY=/home/nanoagent/.local/bin/codex \
     CODEX_BOOTSTRAP_COMMAND=/usr/local/bin/bootstrap-codex \
@@ -89,6 +88,7 @@ RUN set -eux; \
       bubblewrap \
       ca-certificates \
       curl \
+      e2fsprogs \
       file \
       git \
       gzip \
@@ -104,6 +104,7 @@ RUN set -eux; \
       sudo \
       tar \
       tini \
+      util-linux \
       xz-utils; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
@@ -138,7 +139,7 @@ RUN set -eux; \
 COPY --from=build /out/nanoagent /usr/local/bin/nanoagent
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
-COPY --chmod=0555 bootstrap-spire-agent.sh /usr/local/bin/bootstrap-spire-agent
+COPY --chmod=0555 tengri-init.sh /usr/local/sbin/tengri-init
 COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-developer-tools
 COPY --chmod=0444 astronvim-init.lua /usr/share/nanoagent/astronvim-init.lua
 RUN chmod 0755 /usr/share/nanoagent
@@ -389,14 +390,6 @@ USER 1000:1000
 RUN mkdir -p "$HOME" && bootstrap-code-server --install-only && \
     "$HOME/.local/bin/code-server" --config "$HOME/config.yaml" --version > /tmp/code-server-version
 
-FROM runtime-with-toolchain AS spire-agent-smoke
-ENV HOME=/home/nanoagent/.spire-smoke
-COPY --from=build /out/nanoagent-tests /tmp/nanoagent-tests
-RUN mkdir -p "$HOME" && bootstrap-spire-agent --install-only && \
-    "$HOME/.local/bin/spire-agent" --version > /tmp/spire-agent-version && \
-    SPIRE_AGENT_VALIDATE_BINARY="$HOME/.local/bin/spire-agent" \
-      /tmp/nanoagent-tests -test.run '^TestSPIREAgentConfiguration$' -test.v
-
 FROM runtime-with-toolchain AS developer-tools-smoke
 COPY --chmod=0555 test-developer-tools-cache.sh /usr/local/bin/test-developer-tools-cache
 USER 1000:1000
@@ -427,7 +420,6 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
 FROM runtime-with-toolchain AS guest-rootfs
 
 COPY --from=guest-admin-smoke /tmp/guest-admin-validation.txt /usr/share/nanoagent/guest-admin-validation.txt
-COPY --from=spire-agent-smoke /tmp/spire-agent-version /usr/share/nanoagent/spire-agent-version
 COPY --from=code-server-smoke /tmp/code-server-version /usr/share/nanoagent/code-server-version
 COPY --from=codex-smoke /tmp/codex-version /usr/share/nanoagent/codex-version
 COPY --from=toolchain-smoke /tmp/toolchain-version /usr/share/nanoagent/toolchain-version
@@ -436,16 +428,18 @@ COPY --from=developer-tools-smoke /tmp/developer-tools-version /usr/share/nanoag
 FROM --platform=$BUILDPLATFORM ${UBUNTU_BASE_IMAGE}:24.04 AS rootfs-check
 
 RUN apt-get update -o Acquire::Retries=3 && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends e2fsprogs curl ca-certificates && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 COPY --from=guest-rootfs / /rootfs/
 COPY --chmod=0555 validate-rootfs.sh /usr/local/bin/validate-rootfs
 RUN validate-rootfs /rootfs /rootfs-validation.txt
 
-FROM guest-rootfs
+FROM rootfs-check AS boot-artifacts
+ARG TARGETARCH
+COPY --chmod=0555 build-boot-artifacts.sh /usr/local/bin/build-boot-artifacts
+RUN build-boot-artifacts "$TARGETARCH"
 
-COPY --from=rootfs-check /rootfs-validation.txt /usr/share/nanoagent/rootfs-validation.txt
-USER 1000:1000
-WORKDIR /home/nanoagent
-EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/nanoagent"]
+FROM ${UBUNTU_BASE_IMAGE}:24.04
+COPY --from=boot-artifacts /guest /guest
+USER 65532:65532
+ENTRYPOINT ["/bin/cp", "/guest/rootfs.ext4", "/guest/vmlinux", "/artifacts/"]

@@ -30,6 +30,10 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
           url.searchParams.getAll('host').at(-1) ??
           (decodeURIComponent(url.hostname.replace(/^\[|\]$/g, '')) || 'localhost'),
         port: Number(url.searchParams.getAll('port').at(-1) ?? (url.port || '5432')),
+        username: url.searchParams.getAll('user').at(-1) ?? (decodeURIComponent(url.username) || undefined),
+        database:
+          url.searchParams.getAll('dbname').at(-1) ??
+          (decodeURIComponent(url.pathname.replace(/^\//, '')) || undefined),
       }
     },
     catch: () =>
@@ -52,15 +56,20 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
       ),
       Effect.flatMap((ca) =>
         sessionConnection.pipe(
-          Effect.map(({ url, host, port }) =>
+          Effect.map(({ url, host, port, username, database }) =>
             PgClient.layerFrom(
               PgClient.make({
                 url,
+                host,
+                port,
+                username,
+                database,
                 ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
                 applicationName: 'bayn',
                 connectTimeout: statementTimeoutMs,
                 stream: () => {
                   const socket = new Socket()
+                  socket.setNoDelay(true)
                   socket.setTimeout(socketTimeoutMs, () => {
                     socket.destroy(new Error('PostgreSQL connection exceeded its inactivity deadline'))
                   })

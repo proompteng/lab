@@ -29,12 +29,7 @@ export type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './intraday/model'
-export {
-  IntradayMarketData,
-  MarketDataHealth,
-  IntradaySnapshotFailure,
-  IntradaySnapshotPurpose,
-} from './intraday/model'
+export { IntradayMarketData, IntradaySnapshotFailure, IntradaySnapshotPurpose } from './intraday/model'
 export { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './intraday/time'
 export {
   persistIntradaySnapshotRows,

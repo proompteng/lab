@@ -29,6 +29,67 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
 4. Treat a missing segment as an observability failure: verify the workload's exact source revision, its OTLP endpoint,
    and the namespace-scoped NetworkPolicy path to the Tempo distributor. A partial trace is not execution proof.
 
+## Execution critical path
+
+Start with the completed or failed `bayn.execution.advance` pass for the exact deployed source revision. Its JSON
+log carries `controllerKey`, `epoch`, `sequence`, `sourceRevision`, `elapsedMs`, `outcome` and `stageTimings`, plus
+the receipt, waiting/blocking reason and next delay on a returned outcome. A failure or interruption retains the
+finished and interrupted stages after finalization. A retry has a new trace; correlate it by controller identity
+and sequence instead of treating it as a second successful execution.
+
+Use a bounded session window and the verified worker source in Tempo:
+
+```traceql
+{ resource.service.name = "bayn-execution-controller" && resource.service.version = "<source-revision>" && name = "bayn.execution.advance" && trace:duration > 5s }
+```
+
+Find the pass in Loki and inspect its profile and child stage logs:
+
+```logql
+{namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "<trace_id>"
+```
+
+`stageTimings` groups only stages and operations executed in that pass. `count` reveals repeated work;
+`inclusiveElapsedMs` includes child stages; `maxElapsedMs` identifies its slowest call. `failures` and
+`interruptions` retain unsuccessful calls. These times overlap and must not be summed into a critical-path total.
+Use the trace waterfall for ordering, parallel work and gaps. Stage profiles are scoped to each advance and do
+not include the separate inference-expense background worker.
+
+1. Separate `bayn.execution.bounded-pass` and `bayn.execution.cycle-pass` from the root advance. They retain the
+   deadline and cycle scopes without repeating the root span name.
+2. Inspect `bayn.execution.submit` with `bayn.operation=entry` or `close`. Slow and failed submission logs include
+   `intentId` and `closeOnly`. Use the durable intent/mutation history to bind its request and order afterward.
+   Keep the identifiers in log payloads and persisted evidence, not Prometheus or Loki labels.
+3. Compare intent commit, final authorization and persistence with `bayn.alpaca.mutation`, whose
+   `bayn.operation` is `SUBMIT` or `CANCEL`. The broker stage includes response-body completion and classification.
+   Its duration is not time from signal to order acknowledgement. An interrupted or unknown response still needs
+   durable recovery; do not transmit a replacement order from a timing diagnosis.
+4. Distinguish connection acquisition, writer-lease acquisition/check, `BEGIN`, `COMMIT` and `ROLLBACK` spans.
+   Broker persistence reuses its owned writer transaction; healthy native snapshot passes need no nested savepoints.
+   Standalone store mutations acquire their own fence. A held-lock check remains a real database round trip.
+5. `bayn.execution-store.operation`, `bayn.postgres.operation`, `bayn.alpaca.read` and `bayn.tigerbeetle.request`
+   have bounded `bayn.dependency` and `bayn.operation` span attributes. Separate expensive operations before
+   attributing all database time to commit or all broker time to transmission.
+6. Compare `rate(container_cpu_cfs_throttled_periods_total{namespace="bayn"}[1m])` with
+   `rate(container_cpu_cfs_periods_total{namespace="bayn"}[1m])` on the same pod/container, and inspect
+   `rate(container_cpu_cfs_throttled_seconds_total{namespace="bayn"}[1m])`, CPU usage and configured limits.
+   The existing collector retains these counters for Bayn. Verify fresh series and scrape health before diagnosing
+   either throttling or its absence. `bayn.jev.inference` separately records the model request and response duration.
+
+For a post-session investigation, preserve the exact time bounds, source revision, trace completeness, correlated
+logs, durable cycle/intent/mutation/reconciliation records, broker state and accounting receipts in private evidence.
+Check Loki/Tempo retention and query completeness before calling the session reconstructed. Missing traces,
+missing CPU throttle metrics or an idle database sample remain UNKNOWN. Database waits and synchronous replication
+require the measurements below; a readiness endpoint or a fast idle pass does not prove session performance.
+
+When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
+exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
+`VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
+therefore remain distinguishable after cancellation. The span records only the dependency, operation, byte length
+and phase; credentials, endpoint, bucket, object keys and raw payloads are excluded. A verified object does not prove
+that its chunk committed to PostgreSQL, and an invalidated capture or unknown write outcome never qualifies a source.
+These background capture spans are outside the execution-stage profile and retain the one-second object deadline.
+
 ## Alert actions
 
 - `BaynMetricsUnavailable`: verify the Bayn pod, the observability Alloy pod-discovery target, and the NetworkPolicy.

@@ -20,6 +20,7 @@ import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
+  UtcSourceTimestampSchema,
   strictParseOptions,
 } from '../../schemas'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../accounting-rows'
@@ -167,6 +168,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.intraday-momentum.protocol.v2',
       'bayn.intraday-momentum.protocol.v3',
       'bayn.jev.protocol.v1',
+      'bayn.jev.protocol.v2',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
@@ -197,7 +199,7 @@ export const MutationBaselineRow = Schema.Tuple([
     latest_mutation_at: Schema.NullOr(Schema.Date),
   }),
 ])
-export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: Schema.Date })])
+export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: UtcSourceTimestampSchema })])
 export const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 const decodeEventInputDataFirst = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)

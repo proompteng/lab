@@ -58,6 +58,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked --all-targets
+          bash test-authz.sh
           bash test-rpc-interop.sh
 
       - name: Verify generated CRD

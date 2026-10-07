@@ -25,7 +25,7 @@ import {
   type MatchedTerms,
 } from './matched-entry-lifecycle'
 import { prepareSignalStudyBatch, SignalScreenRule, SignalStudyFailure, SignalStudyInputSchema } from './signal-study'
-import { openBacktestSource, type BacktestSourceReceipt } from './source'
+import { openBacktestSource, type BacktestSourceManifest, type BacktestSourceReceipt } from './source'
 
 export enum MatchedDataRole {
   Development = 'DEVELOPMENT',
@@ -289,6 +289,14 @@ export const matchedObservationMaterial = (snapshot: StrategyMarketSnapshot) => 
   })),
 })
 
+export const matchedSourceCompletenessProblems = (source: BacktestSourceManifest): string[] => {
+  const problems: string[] = []
+  if (source.transport !== 'captured-kafka' && source.transport !== 'original-capture')
+    problems.push('original-stream-arrivals-not-observed')
+  if ((source.archiveUnobservedPartitions?.length ?? 0) > 0) problems.push('unobserved-source-partitions')
+  return problems
+}
+
 export const runMatchedEntryStudy = (
   raw: unknown,
   registered: unknown,
@@ -318,9 +326,7 @@ export const runMatchedEntryStudy = (
     const dates = registration.sessionDates
     const sourceHash = yield* Effect.fromResult(canonicalHashV1Result(input.study.source))
     const batches = yield* Effect.forEach(input.study.batches, (b) => Effect.fromResult(prepareSignalStudyBatch(b)))
-    const problems: string[] = []
-    if (input.study.source.transport !== 'captured-kafka') problems.push('original-stream-arrivals-not-observed')
-    if ((input.study.source.archiveUnobservedPartitions?.length ?? 0) > 0) problems.push('unobserved-source-partitions')
+    const problems = matchedSourceCompletenessProblems(input.study.source)
     const ids = new Set<string>()
     for (const batch of batches) {
       const manifest = batch.snapshot.manifest

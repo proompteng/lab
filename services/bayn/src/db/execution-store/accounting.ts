@@ -9,6 +9,7 @@ import type { FillEventInput } from '../../broker/observations'
 import type { JournalService } from '../../ledger'
 import { currentUtcInstant } from '../../time'
 import type { AccountingReceipt } from '../../execution/contracts'
+import type { WriterFenceService } from '../../execution/writer-fence'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../accounting-rows'
 import type { BrokerEventInterpreter } from './broker-events'
 import type { ExecutionStoreError, ExecutionStoreRuntimeConfig } from './contract'
@@ -44,6 +45,7 @@ const makeAccountingInterpreterDataFirst = (
   journal: JournalService,
   config: ExecutionStoreRuntimeConfig,
   events: Pick<BrokerEventInterpreter, 'append'>,
+  writerFence: WriterFenceService,
 ): AccountingInterpreter => {
   const economicallyPrecedes = (input: FillEventInput) => sql`
     (
@@ -190,7 +192,7 @@ const makeAccountingInterpreterDataFirst = (
   const prepare = (input: FillEventInput): Effect.Effect<PreparedAccounting, ExecutionStoreError> =>
     runExecutionOperation(
       'account',
-      sql.withTransaction(
+      writerFence.transaction(
         Effect.gen(function* () {
           const event = yield* events.append(input)
           const stored = yield* readPrepared(event.eventId)
@@ -238,7 +240,7 @@ const makeAccountingInterpreterDataFirst = (
         planAccountingReceipt(prepared, config.tigerBeetle.clusterId.toString(), config.tigerBeetle.ledger),
       ).pipe(
         Effect.flatMap((planned) =>
-          sql.withTransaction(
+          writerFence.transaction(
             Effect.gen(function* () {
               const recordedAt = yield* currentUtcInstant
               const candidate = yield* decodeReceipt({ ...planned, recordedAt })
@@ -293,7 +295,7 @@ const makeAccountingInterpreterDataFirst = (
           return yield* failExecutionStore('account', 'invariant', 'completed fill history spans multiple accounts')
         }
 
-        yield* sql.withTransaction(
+        yield* writerFence.transaction(
           Effect.gen(function* () {
             yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
             const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
@@ -366,4 +368,4 @@ const makeAccountingInterpreterDataFirst = (
   return { account, verifyCompleted }
 }
 
-export const makeAccountingInterpreter = Pipeable.dual(4, makeAccountingInterpreterDataFirst)
+export const makeAccountingInterpreter = Pipeable.dual(5, makeAccountingInterpreterDataFirst)

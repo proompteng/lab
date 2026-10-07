@@ -316,7 +316,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
-        withObservedStage('bayn.alpaca.read', { dependency: 'alpaca' }),
+        withObservedStage('bayn.alpaca.read', { dependency: 'alpaca', operation }),
         Effect.annotateLogs({ operation }),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )

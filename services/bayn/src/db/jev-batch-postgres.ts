@@ -281,10 +281,11 @@ export const makeJevBatchStore = Effect.gen(function* () {
       )
     }).pipe(Effect.mapError(persistError))
 
-  const pending = (cycleId: string, authorityGenerationHash: string) =>
+  const pending = (cycleId: string, authorityGenerationHash?: string) =>
     Effect.gen(function* () {
       yield* Schema.decodeUnknownEffect(Sha256Schema)(cycleId)
-      yield* Schema.decodeUnknownEffect(Sha256Schema)(authorityGenerationHash)
+      if (authorityGenerationHash !== undefined)
+        yield* Schema.decodeUnknownEffect(Sha256Schema)(authorityGenerationHash)
       const rows = yield* Schema.decodeUnknownEffect(
         Schema.Array(Schema.Struct({ batch_id: Sha256Schema })),
         strictParseOptions,
@@ -292,7 +293,8 @@ export const makeJevBatchStore = Effect.gen(function* () {
         yield* sql`
           SELECT plan.batch_id FROM jev_batch_plans AS plan
           LEFT JOIN jev_batch_results AS result USING (batch_id)
-          WHERE plan.cycle_id = ${cycleId} AND plan.authority_generation_hash = ${authorityGenerationHash}
+          WHERE plan.cycle_id = ${cycleId}
+            AND ${authorityGenerationHash === undefined ? sql`true` : sql`plan.authority_generation_hash = ${authorityGenerationHash}`}
             AND result.batch_id IS NULL
           ORDER BY plan.payload->>'observedAt', plan.batch_id COLLATE "C"
         `,

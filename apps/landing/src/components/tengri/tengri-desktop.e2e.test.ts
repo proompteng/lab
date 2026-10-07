@@ -28,7 +28,6 @@ const readyAgent = {
   readyAt: '2026-08-26T12:00:08.000Z',
   lastActivityAt: '2026-08-26T12:30:00.000Z',
   idleDeadline: '2026-08-26T13:30:00.000Z',
-  expiresAt: '2026-08-26T16:00:00.000Z',
   conditions: [
     { type: 'Ready', status: 'True', reason: 'GuestReady', message: '', lastTransitionAt: '2026-08-26T12:00:08.000Z' },
   ],
@@ -3165,25 +3164,24 @@ test('renders truthful booting, sleeping, and failed lifecycle states', async ({
   expect(mock.actions.some((action) => action.action === 'resume-thread')).toBe(false)
 })
 
-test('stops a failed agent without deleting its persistent workspace', async ({ page }) => {
+test('refreshes a failed agent without requesting unsupported recovery or deleting its workspace', async ({ page }) => {
   const failedAgent = {
     ...readyAgent,
     phase: 'failed',
     message: 'No proven Firecracker node can schedule this agent.',
   }
-  const mock = await mockTengri(page, { agent: failedAgent, deferSleepReconciliation: true })
+  const mock = await mockTengri(page, { agent: failedAgent })
   await page.goto('/')
 
   const failed = page.getByRole('dialog', { name: 'Agent could not start' })
-  await failed.getByRole('button', { name: 'Sleep and Keep Workspace' }).click()
-
-  await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
+  await expect(failed.getByRole('button', { name: 'Sleep and Keep Workspace' })).toHaveCount(0)
+  const snapshotsBeforeRefresh = mock.getSnapshotRequestCount()
+  await failed.getByRole('button', { name: 'Refresh Status' }).click()
+  await expect.poll(() => mock.getSnapshotRequestCount()).toBeGreaterThan(snapshotsBeforeRefresh)
+  await expect(failed).toBeVisible()
+  expect(mock.actions.some((action) => action.action === 'sleep-agent')).toBe(false)
   expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
-  await expect(page.getByRole('status', { name: 'Putting agent to sleep' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Delete Failed Agent' })).toHaveCount(0)
-
-  mock.completeSleepReconciliation()
-  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+  await expect(failed.getByRole('button', { name: 'Delete Failed Agent' })).toBeVisible()
 })
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
@@ -4602,6 +4600,51 @@ test('keeps streamed output expanded when replay recovery moves it into restored
   await expect(chrome.getByRole('textbox', { name: 'Steer the current turn' })).toBeEnabled()
   await expect(output.locator('pre')).toBeVisible()
   await expect(output.locator('pre')).toHaveText(text)
+})
+
+test('keeps the composer stable while typing and resizing multiline drafts', async ({ page }) => {
+  await mockTengri(page)
+  await page.addInitScript(() => {
+    const state = { observations: 0 }
+    Object.defineProperty(window, '__composerResizeState', { value: state })
+    const NativeResizeObserver = window.ResizeObserver
+    window.ResizeObserver = class extends NativeResizeObserver {
+      observe(target: Element, options?: ResizeObserverOptions) {
+        if (target instanceof HTMLTextAreaElement) state.observations += 1
+        super.observe(target, options)
+      }
+    }
+  })
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Message your agent' })
+  await expect(prompt).toBeEnabled()
+  const observationCount = () =>
+    page.evaluate(
+      () =>
+        (window as typeof window & { __composerResizeState: { observations: number } }).__composerResizeState
+          .observations,
+    )
+  await expect.poll(observationCount).toBeGreaterThan(0)
+  const observations = await observationCount()
+  await prompt.pressSequentially('A draft that stays in place', { delay: 20 })
+  await expect(prompt).toBeFocused()
+  await expect(prompt).toHaveValue('A draft that stays in place')
+  expect(await observationCount()).toBe(observations)
+  await prompt.fill('Line of a long draft\n'.repeat(16))
+  await expect(prompt).toHaveCSS('height', '160px')
+  await prompt.press('ControlOrMeta+End')
+  await prompt.pressSequentially('typing at the bottom', { delay: 20 })
+  await expect(prompt).toBeFocused()
+  await expect(prompt).toHaveCSS('height', '160px')
+  expect(await prompt.evaluate((element: HTMLTextAreaElement) => element.scrollTop)).toBeGreaterThan(0)
+  await prompt.fill('Short again')
+  await expect(prompt).toHaveCSS('height', '48px')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await prompt.fill('A wrapped draft '.repeat(20))
+  await expect(prompt).toHaveCSS('height', '160px')
+  await prompt.pressSequentially(' more', { delay: 20 })
+  await expect(prompt).toBeFocused()
+  expect(await observationCount()).toBe(observations)
 })
 
 test('preserves the reading position while new events arrive and returns to the latest message on request', async ({
