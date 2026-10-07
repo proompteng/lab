@@ -35,8 +35,10 @@ import {
   readCodexImage,
   type TengriCodexImage,
 } from '@/lib/tengri/codex-images'
+import { cn } from '@/lib/utils'
 import { CodexEventCard } from './codex-event-card'
 import { CodexCopyButton } from './codex-copy-button'
+import { TengriMark } from './tengri-mark'
 import {
   appendCodexEventAfterRestore,
   codexAccountRefreshIsCurrent,
@@ -737,23 +739,24 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   if (!account) {
     return (
-      <div className="grid h-full place-items-center p-8">
+      <div className="grid h-full place-items-center bg-zinc-950 p-8">
         {error ? (
-          <div className="text-center">
-            <p className="text-sm text-red-200" role="alert">
+          <div className="max-w-sm text-center">
+            <p className="text-sm leading-6 text-red-200" role="alert">
               {errorMessage}
             </p>
             <button
               type="button"
-              className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-xs text-white/76 hover:bg-white/13"
+              className="mt-4 rounded-xl bg-white/9 px-4 py-2 text-xs text-white/76 outline-none transition-colors hover:bg-white/13 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
               onClick={() => void refreshAccountAndRecoverLogin()}
             >
               Retry
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-sm text-white/45" role="status">
-            <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> Checking Codex login…
+          <div className="flex items-center gap-2 text-sm text-zinc-400" role="status">
+            <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Checking
+            Codex login…
           </div>
         )}
       </div>
@@ -772,32 +775,59 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     )
   }
 
+  const approvalPending = renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId)
+  const agentStatus =
+    eventStreamState === 'reconnecting'
+      ? 'Reconnecting'
+      : replayRecovering
+        ? 'Recovering'
+        : approvalPending
+          ? 'Approval needed'
+          : activeTurnId || submitting
+            ? 'Working'
+            : eventStreamState === 'connecting'
+              ? 'Connecting'
+              : 'Ready'
+  const agentStatusTone =
+    agentStatus === 'Approval needed' || agentStatus === 'Reconnecting' || agentStatus === 'Recovering'
+      ? 'amber'
+      : agentStatus === 'Working'
+        ? 'blue'
+        : agentStatus === 'Connecting'
+          ? 'zinc'
+          : 'ready'
+
   return (
     <div className="@container/agent flex h-full min-h-0 flex-col bg-zinc-950">
-      <div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-zinc-800 px-4">
-        <span className="text-sm font-medium text-zinc-200">Codex</span>
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-400" aria-label="Agent status">
+      <div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-zinc-800/90 px-4">
+        <span className="text-sm font-medium tracking-tight text-zinc-100">Codex</span>
+        <span
+          className={cn(
+            'inline-flex min-w-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1',
+            agentStatusTone === 'amber' && 'bg-amber-300/10 text-amber-100 ring-amber-300/20',
+            agentStatusTone === 'blue' && 'bg-blue-400/10 text-blue-100 ring-blue-400/20',
+            agentStatusTone === 'zinc' && 'bg-zinc-800/80 text-zinc-300 ring-zinc-700/80',
+            agentStatusTone === 'ready' && 'bg-zinc-900/80 text-zinc-400 ring-zinc-800',
+          )}
+          aria-label="Agent status"
+        >
           <span
-            className={`size-1.5 shrink-0 rounded-full ${eventStreamState === 'reconnecting' ? 'bg-amber-300' : activeTurnId || submitting ? 'bg-blue-400 motion-safe:animate-pulse' : 'bg-zinc-500'}`}
+            className={cn(
+              'size-1.5 shrink-0 rounded-full',
+              agentStatusTone === 'amber' && 'bg-amber-300',
+              agentStatusTone === 'blue' && 'bg-blue-400 motion-safe:animate-pulse',
+              agentStatusTone === 'zinc' && 'bg-zinc-400 motion-safe:animate-pulse',
+              agentStatusTone === 'ready' && 'bg-emerald-400/80',
+            )}
             aria-hidden="true"
           />
-          {eventStreamState === 'reconnecting'
-            ? 'Reconnecting'
-            : replayRecovering
-              ? 'Recovering'
-              : renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId)
-                ? 'Approval needed'
-                : activeTurnId || submitting
-                  ? 'Working'
-                  : eventStreamState === 'connecting'
-                    ? 'Connecting'
-                    : 'Ready'}
+          {agentStatus}
         </span>
         <button
           type="button"
           disabled={!canStartNewConversation}
           onClick={newConversation}
-          className="ml-auto inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-zinc-400 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
+          className="ml-auto inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs text-zinc-400 outline-none transition-colors hover:bg-zinc-800/90 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-35 motion-reduce:transition-none"
         >
           <Plus className="size-3.5" aria-hidden="true" />{' '}
           <span className="hidden @[420px]/agent:inline">New conversation</span>
@@ -807,9 +837,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       </div>
       <div className="relative min-h-0 flex-1">
         <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-7 bg-gradient-to-b from-zinc-950 via-zinc-950/70 to-transparent"
+        />
+        <div
           ref={conversationRef}
           data-testid="agent-conversation-scroll"
-          className="h-full overflow-auto px-4 py-6 [scrollbar-gutter:stable] @[540px]/agent:px-8"
+          className="h-full overflow-auto px-4 pt-6 pb-12 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-8"
           onScroll={(event) => {
             const conversation = event.currentTarget
             setFollowingConversation(
@@ -830,7 +864,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             />
           ) : null}
           <div
-            className="mx-auto w-full max-w-3xl space-y-6"
+            className="mx-auto w-full max-w-3xl space-y-5"
             role="log"
             aria-label="Conversation"
             aria-live="polite"
@@ -840,27 +874,52 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               ...historyItems.map((item) => {
                 const update = restoredItemUpdates.get(item.id)
                 return update ? (
-                  renderEvent(update)
+                  <div key={`history-${item.id}`} className="tengri-message-enter">
+                    {renderEvent(update)}
+                  </div>
                 ) : (
-                  <CodexEventCard key={`${threadId}-${item.id}-${item.kind}`} kind={item.kind} text={item.text} />
+                  <div key={`${threadId}-${item.id}-${item.kind}`} className="tengri-message-enter">
+                    <CodexEventCard kind={item.kind} text={item.text} />
+                  </div>
                 )
               }),
               ...renderedEvents
                 .filter((update) => restoredItemUpdates.get(update.event.itemId) !== update)
-                .map(renderEvent),
+                .map((update) => (
+                  <div
+                    key={
+                      update.event.approvalId
+                        ? `wrap-approval-${update.event.approvalId}`
+                        : update.event.itemId
+                          ? `wrap-${update.event.threadId}-${update.event.itemId}-${update.event.kind}`
+                          : `wrap-${update.event.sequence}-${update.event.method}`
+                    }
+                    className="tengri-message-enter"
+                  >
+                    {renderEvent(update)}
+                  </div>
+                )),
             ]}
-            {activeTurnId && !renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId) ? (
-              <div className="text-sm leading-6 text-zinc-400" role="status" aria-label="Agent activity">
+            {activeTurnId && !approvalPending ? (
+              <div
+                className="tengri-message-enter text-sm leading-6 text-zinc-400"
+                role="status"
+                aria-label="Agent activity"
+              >
                 <span className="tengri-thinking-shimmer inline-block">Thinking</span>
+                <span
+                  aria-hidden="true"
+                  className="tengri-thinking-activity mt-2.5 block h-px w-16 rounded-full bg-zinc-500/70"
+                />
               </div>
             ) : null}
           </div>
         </div>
         {!followingConversation ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
+          <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
             <button
               type="button"
-              className="pointer-events-auto inline-flex min-h-8 items-center gap-2 rounded-full border border-zinc-700 bg-zinc-800 px-3 text-xs text-zinc-200 shadow-lg outline-none hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-400"
+              className="pointer-events-auto inline-flex min-h-8 items-center gap-2 rounded-full border border-white/10 bg-zinc-900/75 px-3 text-xs text-zinc-200 shadow-[0_8px_28px_rgba(0,0,0,0.35)] outline-none backdrop-blur-md transition-colors hover:bg-zinc-800/90 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
               onClick={() => setFollowingConversation(true)}
             >
               <ArrowDown className="size-3.5" aria-hidden="true" />
@@ -869,7 +928,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           </div>
         ) : null}
       </div>
-      <div className="shrink-0 px-4 pt-2 pb-4 @[540px]/agent:px-8">
+      <div className="shrink-0 border-t border-zinc-900/80 bg-zinc-950/95 px-4 pt-3 pb-4 @[540px]/agent:px-8">
         <div className="mx-auto w-full max-w-3xl">
           {selectionWarning ? (
             <p role="status" className="mb-2 text-xs text-amber-200/80">
@@ -913,13 +972,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <form
             aria-label="Message composer"
             aria-busy={replayRecovering}
-            className="w-full rounded-2xl border border-white/[0.06] bg-zinc-900/60 shadow-sm transition-colors focus-within:border-white/15 motion-reduce:transition-none"
+            className="w-full rounded-2xl border border-white/[0.07] bg-zinc-900/70 shadow-[0_10px_36px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] focus-within:border-blue-400/35 focus-within:shadow-[0_0_0_1px_rgba(96,165,250,0.18),0_12px_40px_rgba(0,0,0,0.34)] motion-reduce:transition-none"
             onSubmit={(event) => {
               event.preventDefault()
               void send()
             }}
           >
-            <div className="px-4 pt-3 pb-1">
+            <div className="px-4 pt-3.5 pb-1">
               <textarea
                 ref={promptRef}
                 data-window-default-focus
@@ -959,21 +1018,21 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                       ? 'Steer the current turn…'
                       : 'Message your agent…'
                 }
-                className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+                className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-500 disabled:opacity-60"
               />
               {images.length ? (
                 <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
                   {images.map((image) => (
                     <li
                       key={image.id}
-                      className="relative flex h-20 w-24 items-center justify-center overflow-hidden rounded-lg bg-white/5 ring-1 ring-white/10"
+                      className="relative flex h-20 w-24 items-center justify-center overflow-hidden rounded-xl bg-white/5 ring-1 ring-white/10"
                     >
                       {image.input ? (
                         <img alt={image.name} src={codexImageUrl(image.input)} className="h-full w-full object-cover" />
                       ) : (
                         <LoaderCircle
                           aria-label={`Reading ${image.name}`}
-                          className="size-4 animate-spin text-zinc-400"
+                          className="size-4 animate-spin text-zinc-400 motion-reduce:animate-none"
                         />
                       )}
                       <button
@@ -981,16 +1040,16 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                         aria-label={`Remove image ${image.name}`}
                         disabled={submitting}
                         onClick={() => commitImages(imagesRef.current.filter((candidate) => candidate.id !== image.id))}
-                        className="absolute top-1 right-1 grid size-6 place-items-center rounded-full bg-zinc-900/85 text-zinc-200 outline-none hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-white/50"
+                        className="absolute top-1 right-1 grid size-7 place-items-center rounded-full bg-zinc-950/90 text-zinc-100 outline-none ring-1 ring-white/15 transition-colors hover:bg-zinc-700 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
                       >
-                        <X className="size-3" aria-hidden="true" />
+                        <X className="size-3.5" aria-hidden="true" />
                       </button>
                     </li>
                   ))}
                 </ul>
               ) : null}
             </div>
-            <div className="flex items-end gap-2 px-2 pb-2">
+            <div className="flex items-end gap-2 border-t border-white/[0.04] px-2 pt-1.5 pb-2">
               <CodexModelPicker
                 disabled={Boolean(activeTurnId) || submitting || replayRecovering}
                 error={modelError}
@@ -1012,10 +1071,15 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   Boolean(threadId && !threadReady)
                 }
                 onClick={showStopAction ? () => void interruptTurn() : undefined}
-                className="grid size-8 shrink-0 place-items-center rounded-full bg-zinc-100 text-zinc-900 outline-none transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-400 disabled:bg-zinc-700 disabled:text-zinc-400 motion-reduce:transition-none"
+                className={cn(
+                  'mb-0.5 grid size-8 shrink-0 place-items-center rounded-full outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-400 disabled:bg-zinc-700 disabled:text-zinc-400 motion-reduce:transition-none',
+                  showStopAction
+                    ? 'bg-zinc-100 text-zinc-900 hover:bg-white'
+                    : 'bg-zinc-100 text-zinc-900 hover:bg-white enabled:shadow-[0_0_0_1px_rgba(255,255,255,0.08)]',
+                )}
               >
                 {submitting || interrupting ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <LoaderCircle className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 ) : showStopAction ? (
                   <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
                 ) : (
@@ -1024,9 +1088,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               </button>
             </div>
           </form>
-          <p id={composerHelpId} className="sr-only">
+          <p id={composerHelpId} className="mt-2 text-center text-[11px] leading-4 text-zinc-600">
             {activeTurnId
-              ? 'Send a message to steer, or stop the response.'
+              ? 'Enter to steer · Stop ends the response'
               : 'Enter to send · Shift + Enter for a new line · Paste images to attach'}
           </p>
         </div>
@@ -1050,24 +1114,32 @@ export function CodexLogin({
 }) {
   const verificationUrl = safeVerificationUrl(login?.verificationUrl || '')
   return (
-    <div className="grid h-full overflow-auto bg-zinc-900 px-6 py-8">
-      <div className="m-auto w-full max-w-sm">
-        <Command className="mb-6 size-8 text-zinc-300" aria-hidden="true" />
-        <h2 className="text-2xl font-semibold tracking-tight text-zinc-100">Connect Codex</h2>
+    <div className="relative grid h-full overflow-auto bg-zinc-950 px-6 py-8">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-48 bg-[radial-gradient(ellipse_at_top,rgba(59,130,246,0.12),transparent_65%)]"
+      />
+      <div className="relative m-auto w-full max-w-sm">
+        <div className="mb-6 inline-flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-zinc-900/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <Command className="size-5 text-zinc-200" aria-hidden="true" />
+        </div>
+        <h2 className="text-2xl font-semibold tracking-tight text-zinc-50">Connect Codex</h2>
         <p className="mt-3 text-sm leading-6 text-zinc-400">
           Sign in with your ChatGPT account. Your login stays in this workspace.
         </p>
         {login ? (
           <div className="mt-7 space-y-4">
-            <p className="text-xs font-medium text-zinc-400">1. Copy your device code</p>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-3">
-              <code className="font-mono text-xl tracking-widest text-zinc-100">{login.userCode}</code>
+            <p className="text-xs font-medium tracking-wide text-zinc-500 uppercase">1. Copy your device code</p>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-700/80 bg-zinc-900/70 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+              <code className="font-mono text-xl tracking-widest text-zinc-50">{login.userCode}</code>
               <CodexCopyButton key={login.loginId} label="Copy code" value={login.userCode} />
             </div>
-            <p className="pt-2 text-xs font-medium text-zinc-400">2. Authorize Codex in your browser</p>
+            <p className="pt-2 text-xs font-medium tracking-wide text-zinc-500 uppercase">
+              2. Authorize Codex in your browser
+            </p>
             {verificationUrl ? (
               <a
-                className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-300 motion-reduce:transition-none"
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-2 focus-visible:ring-blue-300 motion-reduce:transition-none"
                 href={verificationUrl}
                 target="_blank"
                 rel="noreferrer noopener"
@@ -1089,7 +1161,9 @@ export function CodexLogin({
               onClick={onStart}
               className="inline-flex min-h-8 items-center gap-1.5 rounded-md text-xs text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-40"
             >
-              {busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+              {busy ? (
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              ) : null}
               Restart device login
             </button>
           </div>
@@ -1098,7 +1172,7 @@ export function CodexLogin({
             type="button"
             disabled={busy}
             onClick={onStart}
-            className="mt-7 inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-500 px-5 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-300 disabled:opacity-45 motion-reduce:transition-none"
+            className="mt-7 inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-medium text-white outline-none transition-colors hover:bg-blue-500 focus-visible:ring-2 focus-visible:ring-blue-300 disabled:opacity-45 motion-reduce:transition-none"
           >
             {busy ? (
               <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -1115,7 +1189,10 @@ export function CodexLogin({
           I’ve completed login
         </button>
         {error ? (
-          <p role="alert" className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <p
+            role="alert"
+            className="mt-3 rounded-xl bg-red-500/10 px-3 py-2 text-xs text-red-200 ring-1 ring-red-400/20"
+          >
             {error}
           </p>
         ) : null}
@@ -1132,26 +1209,37 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
       text: 'Help me build a feature in this workspace. Start by understanding the project.',
     },
     { label: 'Review recent changes', text: 'Review the recent changes in this workspace for bugs and regressions.' },
+    {
+      label: 'Fix a failing test',
+      text: 'Find a failing test in this workspace, explain the failure, and propose a focused fix.',
+    },
   ]
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col items-center justify-center py-6 text-center">
-      <h2 className="text-2xl font-medium tracking-tight text-zinc-100">Let’s build</h2>
-      <p className="mt-2 max-w-md text-sm leading-6 text-zinc-400">
-        Explore, change, or run something in your workspace.
+    <div className="relative mx-auto flex min-h-full w-full max-w-3xl flex-col items-center justify-center py-8 text-center">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 left-1/2 h-56 w-56 -translate-x-1/2 -translate-y-[62%] rounded-full bg-[radial-gradient(circle,rgba(96,165,250,0.14),transparent_68%)] blur-2xl"
+      />
+      <div className="relative mb-5 inline-flex size-12 items-center justify-center rounded-2xl border border-white/10 bg-zinc-900/70 shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
+        <TengriMark />
+      </div>
+      <h2 className="relative text-2xl font-semibold tracking-tight text-zinc-50">Let’s build</h2>
+      <p className="relative mt-2 max-w-md text-sm leading-6 text-zinc-400">
+        Explore, change, or run something in your workspace. Pick a starter or write your own.
       </p>
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
+      <div className="relative mt-7 grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
         {suggestions.map((suggestion) => (
           <button
             key={suggestion.label}
             type="button"
             onClick={() => onSelectPrompt(suggestion.text)}
-            className="group inline-flex min-h-9 items-center gap-2 rounded-full border border-zinc-700/60 bg-zinc-800/30 px-3 text-xs text-zinc-300 outline-none transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
+            className="group inline-flex min-h-11 items-center justify-between gap-3 rounded-2xl border border-zinc-800/90 bg-zinc-900/45 px-3.5 text-left text-xs text-zinc-300 outline-none transition-colors hover:border-zinc-700 hover:bg-zinc-800/70 hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-blue-400 motion-reduce:transition-none"
           >
+            <span className="min-w-0 font-medium">{suggestion.label}</span>
             <ArrowUpRight
-              className="size-3.5 text-zinc-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 motion-reduce:transition-none"
+              className="size-3.5 shrink-0 text-zinc-500 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-zinc-300 motion-reduce:transition-none"
               aria-hidden="true"
             />
-            {suggestion.label}
           </button>
         ))}
       </div>
@@ -1177,7 +1265,7 @@ function CodexModelPicker({
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
   const triggerClass =
-    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-xs text-zinc-500 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
   const menuClass =
     'font-system w-72 max-w-[calc(100vw-2rem)] rounded-xl bg-zinc-900/95 p-1 text-zinc-200 shadow-[0_12px_40px_rgba(0,0,0,0.45)] ring-white/10 backdrop-blur-xl motion-reduce:animate-none'
   const itemClass =
@@ -1190,7 +1278,7 @@ function CodexModelPicker({
       : `${codexReasoningLabels[selection.reasoningEffort]}${model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? '' : ' (unavailable)'}`
   return (
     <div className="min-w-0 flex-1 space-y-1">
-      <div className="flex flex-wrap items-center justify-end gap-1">
+      <div className="flex flex-wrap items-center justify-end gap-0.5 rounded-xl bg-white/[0.02] p-0.5">
         <Select
           disabled={disabled || !models?.length}
           onValueChange={(value) => {

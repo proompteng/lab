@@ -53,27 +53,28 @@ reconnect with their event cursor. HMAC metadata still binds every request to it
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
-The Codex view places user messages on the right with left-aligned text and a subtle background, and agent responses
-on the left, without visible speaker headings. The rounded composer uses a subtle border and keeps model and reasoning
-choices beside the send/stop control. Composer height updates before paint, preserves scrolling within long drafts,
-and observes width changes without restarting the observer on each keystroke. Prompt suggestions prepare a
-draft for review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity rows.
+The Codex view places user messages on the right with left-aligned text and a subtle bordered background, and agent
+responses on the left, without visible speaker headings. The header uses a compact status pill (Ready / Working /
+Approval needed / Reconnecting) with color semantics. The rounded composer uses a focus-within ring, keeps model and
+reasoning choices as secondary chrome beside the send/stop control, and shows a quiet Enter / Shift+Enter hint under
+the form. Composer height updates before paint, preserves scrolling within long drafts, and observes width changes
+without restarting the observer on each keystroke. The empty state offers starter prompts that prepare a draft for
+review before submission. Commands, output, diffs, and reasoning summaries expand from compact activity cards.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
 Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
-Active turns show a Thinking label with a one-second highlight moving left to right; reduced motion keeps the label still.
-Usage shows the remaining weekly percentage and rounds credits up to a whole number. The dock keeps its blurred
-material stationary while its outline and icons magnify, with labels appearing without an opacity animation.
-Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid` blocks render as
-flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and diagrams with
-images or remote CSS resources keep their copyable source visible; invalid or incomplete diagrams do too. Accepted
-types have explicit pre-layout resource checks. SVG sanitization and the existing CSP remain enforced.
-The conversation follows new events
-while the reader is at the bottom. Reading earlier messages preserves the scroll position until the reader chooses
-**Jump to latest**.
+Active turns show a Thinking label with a one-second highlight moving left to right and a short activity line; reduced
+motion keeps the label still. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
+dock keeps its blurred material stationary while its outline and icons magnify, with labels appearing without an
+opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
+blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and
+diagrams with images or remote CSS resources keep their copyable source visible; invalid or incomplete diagrams do too.
+Accepted types have explicit pre-layout resource checks. SVG sanitization and the existing CSP remain enforced.
+The conversation follows new events while the reader is at the bottom. Reading earlier messages preserves the scroll
+position until the reader chooses **Jump to latest**.
 
 1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
    The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway
