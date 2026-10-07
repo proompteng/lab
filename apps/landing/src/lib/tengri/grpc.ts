@@ -34,6 +34,7 @@ import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
+const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
 const NO_PRESERVED_SCALAR_DEFAULTS = new Set<string>()
@@ -117,7 +118,7 @@ export async function listAgents(subject: string): Promise<TengriAgent[]> {
 }
 
 export async function createAgent(subject: string, displayName: string) {
-  return normalizeAgent(await unary<RawAgent>('createAgent', { displayName }, subject))
+  return normalizeAgent(await unary<RawAgent>('createAgent', { displayName }, subject, LIFECYCLE_GRPC_DEADLINE_MS))
 }
 
 export async function getAgent(subject: string, id: string) {
@@ -125,11 +126,11 @@ export async function getAgent(subject: string, id: string) {
 }
 
 export async function sleepAgent(subject: string, id: string) {
-  return normalizeAgent(await unary<RawAgent>('sleepAgent', { id }, subject, 310_000))
+  return normalizeAgent(await unary<RawAgent>('sleepAgent', { id }, subject, LIFECYCLE_GRPC_DEADLINE_MS))
 }
 
 export async function resumeAgent(subject: string, id: string) {
-  return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject))
+  return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject, LIFECYCLE_GRPC_DEADLINE_MS))
 }
 
 export async function updatePowerSettings(subject: string, id: string, power: TengriPowerSettings) {
