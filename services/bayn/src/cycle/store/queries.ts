@@ -220,12 +220,16 @@ export const makeCycleQueries = (
             )
           END AS has_mutation_work
         FROM autonomous_cycles AS cycle
-        LEFT JOIN autonomous_cycle_shadow_decisions AS decision
-          ON decision.cycle_id = cycle.cycle_id
-          AND decision.decision_hash = cycle.decision_hash
-          AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
-          AND decision.document ->> 'mode' = 'PAPER'
-          AND decision.document #>> '{targetPlan,status}' = 'PLANNED'
+        LEFT JOIN LATERAL (
+          SELECT stored.document
+          FROM autonomous_cycle_shadow_decisions AS stored
+          WHERE stored.cycle_id = cycle.cycle_id
+            AND stored.decision_hash = cycle.decision_hash
+            AND stored.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+            AND stored.document ->> 'mode' = 'PAPER'
+            AND stored.document #>> '{targetPlan,status}' = 'PLANNED'
+          LIMIT 1
+        ) AS decision ON true
         WHERE cycle.account_id = ${scope.accountId}
           AND cycle.state IN (${CycleState.Pending}, ${CycleState.Active})
       ), eligible_cycles AS (
