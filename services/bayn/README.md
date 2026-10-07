@@ -47,6 +47,10 @@ projection. Final submission reads account, positions and orders from one payloa
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
+Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
+the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
+without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
 for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
