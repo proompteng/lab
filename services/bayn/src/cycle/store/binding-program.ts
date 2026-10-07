@@ -9,6 +9,7 @@ import {
   snapshotReferenceIssueTags,
 } from '../../db/snapshot-reference'
 import { decodeInputManifestArtifact } from '../../evidence-contracts'
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest } from '../../types'
@@ -212,6 +213,12 @@ const makeCycleBindingProgramsDataFirst = (
                 cycleId: document.bindings.cycleId,
                 snapshotId: document.bindings.snapshotId,
                 reconciliationId: document.bindings.reconciliationId,
+                plannedIntentCount: document.targetPlan.intentTargets.length,
+                riskEvaluationCount: document.deltaRisk.length,
+                riskContextBound:
+                  document.mode === legacyExecutionAuthorityToken && document.bindings.riskContext !== undefined,
+                firstRiskStatePresent:
+                  document.mode === legacyExecutionAuthorityToken && document.deltaRisk[0]?.facts?.state !== undefined,
               }),
               Effect.andThen(
                 failCycleStore(

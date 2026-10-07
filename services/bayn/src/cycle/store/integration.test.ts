@@ -747,6 +747,47 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           ...document,
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
+        const emptyPlan = {
+          ...document,
+          targetPlan: { intentTargets: [] },
+          deltaRisk: [],
+        } as unknown as ExecutionDecisionDocument
+        const exactEmptyPlan = yield* queries.decisionEvidenceMismatch(emptyPlan)
+        const forgedEmptyPlanAuthority = yield* queries.decisionEvidenceMismatch({
+          ...emptyPlan,
+          bindings: {
+            ...emptyPlan.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...riskContext.authority, version: riskContext.authority.version + 1 },
+            },
+          },
+        })
+        const forgedEmptyPlanEquity = yield* queries.decisionEvidenceMismatch({
+          ...emptyPlan,
+          bindings: {
+            ...emptyPlan.bindings,
+            riskContext: { ...riskContext, dayStartEquityMicros: (BigInt(equityMicros) + 1n).toString() },
+          },
+        })
+        const forgedEmptyPlanTurnover = yield* queries.decisionEvidenceMismatch({
+          ...emptyPlan,
+          bindings: {
+            ...emptyPlan.bindings,
+            riskContext: { ...riskContext, dailyTradedNotionalMicros: '1' },
+          },
+        })
+        const forgedEmptyPlanUnknownMutations = yield* queries.decisionEvidenceMismatch({
+          ...emptyPlan,
+          bindings: {
+            ...emptyPlan.bindings,
+            riskContext: { ...riskContext, unknownMutationCount: 0 },
+          },
+        })
+        const nonemptyPlanMissingRiskFacts = yield* queries.decisionEvidenceMismatch({
+          ...emptyPlan,
+          targetPlan: { intentTargets: [{}] },
+        } as unknown as ExecutionDecisionDocument)
         return {
           missingStreamReference,
           exact,
@@ -759,6 +800,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           forgedEquity,
           forgedPolicyHash,
           forgedReconciliationCutoff,
+          exactEmptyPlan,
+          forgedEmptyPlanAuthority,
+          forgedEmptyPlanEquity,
+          forgedEmptyPlanTurnover,
+          forgedEmptyPlanUnknownMutations,
+          nonemptyPlanMissingRiskFacts,
         }
       }),
     )
@@ -775,6 +822,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       forgedEquity: DecisionEvidenceMismatch.RiskContext,
       forgedPolicyHash: DecisionEvidenceMismatch.RiskContext,
       forgedReconciliationCutoff: DecisionEvidenceMismatch.RiskContext,
+      exactEmptyPlan: null,
+      forgedEmptyPlanAuthority: DecisionEvidenceMismatch.RiskContext,
+      forgedEmptyPlanEquity: DecisionEvidenceMismatch.RiskContext,
+      forgedEmptyPlanTurnover: DecisionEvidenceMismatch.RiskContext,
+      forgedEmptyPlanUnknownMutations: DecisionEvidenceMismatch.RiskContext,
+      nonemptyPlanMissingRiskFacts: DecisionEvidenceMismatch.RiskContext,
     })
   })
 
