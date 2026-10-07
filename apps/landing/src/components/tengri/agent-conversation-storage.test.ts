@@ -6,6 +6,7 @@ import {
   markStoredConversationUnavailable,
   mergeConversationRegistry,
   mergePersistedConversationRegistry,
+  mergeSameIdStoredConversations,
   readStoredConversations,
   touchStoredConversation,
   truncateConversationTitle,
@@ -141,6 +142,42 @@ describe('agent conversation storage', () => {
       { id: 'a', title: 'Alpha', updatedAt: 5 },
       { id: 'b', title: 'Beta', updatedAt: 4 },
     ])
+  })
+
+  test('keeps the newer same-ID record when merging across tabs', () => {
+    const newerPersisted = mergePersistedConversationRegistry(
+      [{ id: 'a', title: 'Stale local', updatedAt: 1 }],
+      [{ id: 'a', title: 'Tab B newer', updatedAt: 5, unavailable: true }],
+    )
+    expect(newerPersisted).toEqual([{ id: 'a', title: 'Tab B newer', updatedAt: 5, unavailable: true }])
+
+    const newerLocal = mergePersistedConversationRegistry(
+      [{ id: 'a', title: 'Local newer', updatedAt: 9 }],
+      [{ id: 'a', title: 'Persisted older', updatedAt: 2, unavailable: true }],
+    )
+    expect(newerLocal).toEqual([{ id: 'a', title: 'Local newer', updatedAt: 9 }])
+
+    const tied = mergeSameIdStoredConversations(
+      { id: 'a', title: 'New conversation', updatedAt: 3 },
+      { id: 'a', title: 'Richer title', updatedAt: 3, unavailable: true },
+    )
+    expect(tied).toEqual({ id: 'a', title: 'Richer title', updatedAt: 3, unavailable: true })
+  })
+
+  test('repairs malformed stored registries on write', () => {
+    const storage = new MemoryStorage()
+    const key = conversationsStorageKey('agent-1')
+    storage.setItem(key, '{not-json')
+    expect(readStoredConversations('agent-1', storage)).toEqual([])
+
+    const written = writeStoredConversations('agent-1', [{ id: 'thread-a', title: 'Alpha', updatedAt: 1 }], storage)
+    expect(written).toEqual([{ id: 'thread-a', title: 'Alpha', updatedAt: 1 }])
+    expect(JSON.parse(storage.getItem(key)!)).toEqual([{ id: 'thread-a', title: 'Alpha', updatedAt: 1 }])
+
+    storage.setItem(key, '"not-an-array"')
+    const repaired = writeStoredConversations('agent-1', [{ id: 'thread-b', title: 'Beta', updatedAt: 2 }], storage)
+    expect(repaired).toEqual([{ id: 'thread-b', title: 'Beta', updatedAt: 2 }])
+    expect(JSON.parse(storage.getItem(key)!)).toEqual([{ id: 'thread-b', title: 'Beta', updatedAt: 2 }])
   })
 
   test('survives SecurityError when resolving the localStorage global', () => {

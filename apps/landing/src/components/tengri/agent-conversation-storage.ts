@@ -19,24 +19,29 @@ export function truncateConversationTitle(value: string) {
 
 function parseStoredConversations(raw: string | null): StoredConversation[] {
   if (!raw) return []
-  const parsed = JSON.parse(raw)
-  if (!Array.isArray(parsed)) return []
-  return parsed
-    .flatMap((entry) => {
-      if (!entry || typeof entry !== 'object') return []
-      const candidate = entry as Record<string, unknown>
-      if (typeof candidate.id !== 'string' || !candidate.id) return []
-      if (typeof candidate.title !== 'string' || !candidate.title.trim()) return []
-      if (typeof candidate.updatedAt !== 'number' || !Number.isFinite(candidate.updatedAt)) return []
-      const conversation: StoredConversation = {
-        id: candidate.id,
-        title: candidate.title.trim(),
-        updatedAt: candidate.updatedAt,
-      }
-      if (candidate.unavailable === true) conversation.unavailable = true
-      return [conversation]
-    })
-    .slice(0, MAX_STORED_CONVERSATIONS)
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .flatMap((entry) => {
+        if (!entry || typeof entry !== 'object') return []
+        const candidate = entry as Record<string, unknown>
+        if (typeof candidate.id !== 'string' || !candidate.id) return []
+        if (typeof candidate.title !== 'string' || !candidate.title.trim()) return []
+        if (typeof candidate.updatedAt !== 'number' || !Number.isFinite(candidate.updatedAt)) return []
+        const conversation: StoredConversation = {
+          id: candidate.id,
+          title: candidate.title.trim(),
+          updatedAt: candidate.updatedAt,
+        }
+        if (candidate.unavailable === true) conversation.unavailable = true
+        return [conversation]
+      })
+      .slice(0, MAX_STORED_CONVERSATIONS)
+  } catch {
+    // Malformed JSON / unexpected shape — treat as empty so writers can repair storage.
+    return []
+  }
 }
 
 /** Merge this tab's desired registry with whatever another tab already persisted. */
@@ -52,7 +57,7 @@ export function mergePersistedConversationRegistry(
       byId.set(entry.id, entry)
       continue
     }
-    byId.set(entry.id, mergeConversationRegistry([existing], entry)[0]!)
+    byId.set(entry.id, mergeSameIdStoredConversations(existing, entry))
   }
   return [...byId.values()]
     .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
@@ -87,6 +92,34 @@ export function writeStoredConversations(
     // Persistence is best-effort; callers keep `next` as the React source of truth.
     return next
   }
+}
+
+function pickRicherConversationTitle(left: string, right: string) {
+  const leftReal = Boolean(left && left !== 'New conversation')
+  const rightReal = Boolean(right && right !== 'New conversation')
+  if (leftReal && rightReal) return left.length >= right.length ? left : right
+  if (leftReal) return left
+  if (rightReal) return right
+  return left || right || 'New conversation'
+}
+
+/** Prefer the newer same-ID record; on equal updatedAt, keep the richer fields. */
+export function mergeSameIdStoredConversations(
+  left: StoredConversation,
+  right: StoredConversation,
+): StoredConversation {
+  if (left.updatedAt !== right.updatedAt) {
+    const newer = left.updatedAt > right.updatedAt ? left : right
+    const older = newer === left ? right : left
+    return mergeConversationRegistry([older], newer)[0]!
+  }
+  const merged: StoredConversation = {
+    id: left.id,
+    title: pickRicherConversationTitle(left.title, right.title),
+    updatedAt: left.updatedAt,
+  }
+  if (left.unavailable || right.unavailable) merged.unavailable = true
+  return merged
 }
 
 export function mergeConversationRegistry(

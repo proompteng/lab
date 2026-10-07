@@ -70,6 +70,7 @@ import {
   type CodexTranscriptItem,
 } from './codex-events'
 import { runTengriAction, TengriRequestError } from './client'
+import { useModalFocus } from './modal-focus'
 
 type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
@@ -111,6 +112,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const conversationRef = useRef<HTMLDivElement | null>(null)
   const promptRef = useRef<HTMLTextAreaElement | null>(null)
   const focusComposerAfterDrawerClose = useRef(false)
+  const compactDrawerOpen = Boolean(account?.authenticated) && !sidebarWide && sidebarOpen
+  const drawerFocus = useModalFocus<HTMLElement>(compactDrawerOpen)
   const accountRefreshGeneration = useRef(0)
   const completedTurns = useRef(new Set<string>())
   const loginIdRef = useRef('')
@@ -874,16 +877,32 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               : 'Ready'
   return (
     <div ref={rootRef} className="@container/agent relative flex h-full min-h-0 bg-zinc-950 text-zinc-100">
-      {sidebarOpen && !sidebarWide ? (
-        <button
-          type="button"
-          aria-label="Close conversations"
+      {compactDrawerOpen ? (
+        <div
+          aria-hidden="true"
           className="absolute inset-0 z-20 bg-black/50"
           onClick={() => setSidebarOpen(false)}
+          role="presentation"
         />
       ) : null}
       <aside
+        ref={drawerFocus.ref}
         data-testid="agent-conversation-sidebar"
+        role={compactDrawerOpen ? 'dialog' : undefined}
+        aria-modal={compactDrawerOpen || undefined}
+        aria-label="Conversations"
+        tabIndex={compactDrawerOpen ? -1 : undefined}
+        onKeyDown={
+          compactDrawerOpen
+            ? (event) => {
+                drawerFocus.onKeyDown(event)
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setSidebarOpen(false)
+                }
+              }
+            : undefined
+        }
         className={cn(
           'z-30 min-h-0 w-[240px] flex-col border-r border-white/[0.08] bg-zinc-950 @[720px]/agent:w-[260px]',
           sidebarOpen ? 'flex' : 'hidden',
@@ -939,7 +958,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         </nav>
       </aside>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={compactDrawerOpen || undefined}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/[0.08] px-3">
           <button
             type="button"
