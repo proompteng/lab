@@ -62,12 +62,12 @@ test('Tengri can create and clean up agent Pods, Secrets, and PVCs', () => {
   expect(persistentResourceRule?.verbs).toEqual(['create', 'delete', 'get', 'list', 'patch', 'watch'])
 })
 
-test('Tengri network isolation survives Application deletion', () => {
+test('Tengri preserves retained network policies during the runtime migration', () => {
   const policies = networkPolicies.filter((document) => document.kind === 'NetworkPolicy')
   expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
     'tengri-control-plane',
     'tengri-default-deny',
-    'tengri-slots',
+    'tengri-microvm-guests',
   ])
   for (const policy of policies) {
     expect(policy.metadata?.annotations?.['argocd.argoproj.io/sync-options']).toBe('Prune=false,Delete=false')

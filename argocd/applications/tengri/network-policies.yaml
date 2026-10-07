@@ -100,7 +100,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: tengri-slots
+  name: tengri-microvm-guests
   annotations:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
