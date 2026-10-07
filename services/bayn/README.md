@@ -463,6 +463,14 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
   with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
   transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
+- Bayn enables SQL span propagation. The pinned PostgreSQL adapter records `postgresql.pid` from the backend startup
+  packet on statement and writer-control spans. Transaction startup and finalization stay under their owning
+  `sql.transaction` span, including empty and failed transactions. Streams that acquire another connection report
+  that connection's PID. Correlate the PID, database pod and exact span interval with PostgreSQL logs and wait samples;
+  process IDs can be reused after a connection ends. This adds no SQL, network requests, polling or metric labels.
+  Clients without SQL propagation leave shared caller spans unlabelled, and tracing-disabled calls keep their results.
+  Slow and failed stage logs retain the PID when their own span carries it, including native writer controls, so
+  PostgreSQL correlation survives an unavailable trace. Other span data is omitted and fast successful stages stay quiet.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
