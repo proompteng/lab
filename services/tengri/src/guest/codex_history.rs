@@ -68,7 +68,7 @@ impl GuestClient {
             "config": options.thread_config(),
             "cwd": "/workspace",
             "runtimeWorkspaceRoots": ["/workspace"],
-            "approvalPolicy": "on-request",
+            "approvalPolicy": "never",
             "sandbox": "danger-full-access",
             "excludeTurns": true,
         });

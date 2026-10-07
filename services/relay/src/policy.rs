@@ -6,12 +6,12 @@ use url::Url;
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Grants {
-    pub connectors: Vec<Grant>,
+pub struct Catalog {
+    pub connectors: Vec<Connector>,
 }
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Grant {
+pub struct Connector {
     pub id: String,
     pub owner_hash: String,
     pub agent_id: String,
@@ -27,7 +27,17 @@ pub struct Tool {
     pub input_schema: Value,
     pub read_only: bool,
 }
-impl Grants {
+impl Tool {
+    pub fn validator(&self) -> anyhow::Result<jsonschema::Validator> {
+        jsonschema::options()
+            .offline()
+            .should_validate_formats(true)
+            .should_ignore_unknown_formats(false)
+            .build(&self.input_schema)
+            .map_err(|_| anyhow::anyhow!("invalid tool schema"))
+    }
+}
+impl Catalog {
     pub fn validate(&self) -> anyhow::Result<()> {
         ensure!(self.connectors.len() <= 128, "too many connectors");
         let mut ids = std::collections::HashSet::new();
@@ -65,6 +75,7 @@ impl Grants {
                         && t.description.len() <= 4096,
                     "only explicit read-only tools with object schemas are supported"
                 );
+                t.validator()?;
             }
         }
         Ok(())
@@ -198,13 +209,40 @@ mod tests {
     }
     #[test]
     fn configuration_fails_closed() {
-        let empty: Grants = serde_json::from_value(serde_json::json!({"connectors":[]})).unwrap();
+        let empty: Catalog = serde_json::from_value(serde_json::json!({"connectors":[]})).unwrap();
         assert!(empty.validate().is_ok());
-        let mut grants: Grants=serde_json::from_value(serde_json::json!({"connectors":[{"id":"docs","ownerHash":"a".repeat(64),"agentId":"agent-test","endpoint":"https://example.com/mcp","credentialKey":null,"tools":[{"name":"search","description":"Search","inputSchema":{"type":"object"},"readOnly":false}]}]})).unwrap();
+        let mut grants: Catalog=serde_json::from_value(serde_json::json!({"connectors":[{"id":"docs","ownerHash":"a".repeat(64),"agentId":"agent-test","endpoint":"https://example.com/mcp","credentialKey":null,"tools":[{"name":"search","description":"Search","inputSchema":{"type":"object"},"readOnly":false}]}]})).unwrap();
         assert!(grants.validate().is_err());
         grants.connectors[0].tools[0].read_only = true;
         assert!(grants.validate().is_ok());
         grants.connectors.push(grants.connectors[0].clone());
         assert!(grants.validate().is_err());
+    }
+    #[test]
+    fn schema_enforces_constraints_without_external_retrieval() {
+        let mut tool = Tool {
+            name: "search".into(),
+            description: "Search".into(),
+            read_only: true,
+            input_schema: serde_json::json!({"type":"object","required":["query"],"properties":{"query":{"type":"string","minLength":3,"maxLength":20},"scope":{"enum":["docs"]}},"additionalProperties":false}),
+        };
+        let validator = tool.validator().unwrap();
+        assert!(validator.is_valid(&serde_json::json!({"query":"relay","scope":"docs"})));
+        for args in [
+            serde_json::json!({}),
+            serde_json::json!({"query":"ab"}),
+            serde_json::json!({"query":42}),
+            serde_json::json!({"query":"relay","scope":"admin"}),
+            serde_json::json!({"query":"relay","target":"https://other.example"}),
+        ] {
+            assert!(!validator.is_valid(&args));
+        }
+        tool.input_schema =
+            serde_json::json!({"type":"object","$ref":"https://example.com/schema.json"});
+        assert!(tool.validator().is_err());
+        tool.input_schema = serde_json::json!({"type":"object","$ref":"file:///var/run/secrets/relay-credentials/token"});
+        assert!(tool.validator().is_err());
+        tool.input_schema = serde_json::json!({"type":"object","format":"unknown-security-format"});
+        assert!(tool.validator().is_err());
     }
 }

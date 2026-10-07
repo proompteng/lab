@@ -9,9 +9,10 @@ connector code inside the guest.
 
 Relay accepts only `spiffe://proompteng.ai/ns/tengri/nanoagent/pod/<Pod UID>`. Each request checks the live Pod and
 its controlling MicroVM, owner UID, current guest UID, desired state, and owner hash. Both discovery and execution
-require a grant for that exact owner and agent. Execution checks the current grant again before dispatch, including
-after upstream initialization. API errors deny access. Two replicas share authoritative Kubernetes configuration;
-there is no SQLite database, local authorization cache, or in-memory-only grant store.
+require SpiceDB permission for that exact owner, MicroVM creation UID, connector, and tool. Execution checks the
+current permission again before dispatch, including after upstream initialization. Every check requests fully
+consistent data. Denied, conditional, malformed, and unavailable decisions fail closed. Two replicas use the shared
+Ofz SpiceDB service, backed by external PostgreSQL; there is no local authorization cache or grant database.
 
 This initial release supports explicitly granted read-only HTTPS MCP tools, JSON and bounded SSE responses, and
 optional Bearer credentials. Write tools, server-initiated sampling/elicitation, executable connectors, and OAuth
@@ -26,7 +27,8 @@ and inference authorization outside the guest. Do not describe this release as a
 ## Enable a connector
 
 Configuration is operator-managed through GitOps for this release. No connector is enabled by default. The
-`relay-grants` ConfigMap contains `config.json`:
+`relay-catalog` ConfigMap contains endpoint, credential-reference, and reviewed tool metadata in `config.json`.
+Adding a catalog entry does not grant access:
 
 ```json
 {
@@ -55,12 +57,36 @@ account. Seal the token into a `relay-credentials` Secret in namespace `relay`, 
 Never commit plaintext tokens, mount this Secret into a guest, or copy a token into Codex MCP configuration. Public
 servers use `credentialKey: null`. Credentials are read from the projected Secret for each upstream session so
 rotation is picked up without restarting the service. Only the Relay Pods mount the Secret; the service account
-cannot read Secret objects through the Kubernetes API.
+cannot read connector Secret objects through the Kubernetes API. Its backend-only Ofz Role can get the single
+`ofz-spicedb-key` Secret to authenticate permission checks. That key grants access to the shared SpiceDB API, so
+Relay is a trusted backend service; the guest never receives it. Ofz currently uses HTTP inside the cluster.
+Relay's NetworkPolicy permits only the Ofz SpiceDB Pods on port 8443 for this connection.
+
+### Zanzibar authorization
+
+Install the reviewed `schema.zed` using `install-schema.py --endpoint http://127.0.0.1:18443 --apply` with an
+Ofz Service port-forward and `OFZ_TEST_TOKEN` supplied privately. The installer is idempotent and refuses to
+replace a different application schema. Future shared schemas require an additive reviewed migration.
+No owner, agent, connector, or tool grant is created by installation or service startup.
+
+Trusted control-plane services manage these relationships through Ofz; agents cannot write them:
+
+- `relay_agent:<MicroVM metadata.uid>#owner@relay_user:<ownerHash>`
+- `relay_connector:<agent UID>/<hex connector ID>#owner@relay_user:<ownerHash>`
+- `relay_connector:<agent UID>/<hex connector ID>#agent@relay_agent:<agent UID>`
+- `relay_tool:<agent UID>/<hex connector ID>/<hex tool name>#connector@relay_connector:<agent UID>/<hex connector ID>`
+- `relay_tool:<agent UID>/<hex connector ID>/<hex tool name>#agent@relay_agent:<agent UID>`
+
+Hex encoding uses lowercase UTF-8 bytes, without a prefix. It prevents delimiter collisions and supports provider
+tool names containing dots. A tool's `execute` permission requires both connector ownership and an agent grant.
+Deleting an owner, connector-agent, or tool-agent relationship revokes subsequent calls. Recreating an agent uses
+a new creation UID and receives no old grants. A restarted guest Pod retains its logical agent's permissions.
+The endpoint and credential remain catalog metadata; SpiceDB is authoritative for permission decisions.
 
 Tool names exposed to the agent are `<connector ID>__<upstream tool name>`. Grant and credential configuration must
 be reviewed and deployed before restarting the guest's MCP connection to discover newly added tools. Removing a
-grant takes effect on subsequent calls without restarting a guest, including tools already cached by Codex. A call
-already dispatched to a provider cannot be undone. Relay performs no automatic tool-call retries.
+SpiceDB relationship takes effect on subsequent calls without restarting a guest, including tools already cached
+by Codex. A call already dispatched to a provider cannot be undone. Relay performs no automatic tool-call retries.
 
 Endpoints must use HTTPS on port 443, with a public DNS name and no userinfo or fragment. Relay rejects mixed
 private/public DNS answers and pins the checked IPv4 addresses for the session. IPv6 upstreams, redirects, ambient
@@ -77,8 +103,8 @@ authorization and callback with owner-bound state and PKCE, server-side token ex
 per-agent tool grants, connection health, call audit, and disconnect/revocation. One account connection should be
 reusable across selected agents through independent grants. Custom HTTPS MCP endpoints use the same authorization
 and endpoint checks. Provider adapters hold OAuth metadata and authentication details, not separate guest plugins.
-At that scale, use a transactional external database for connection/grant/audit records and a dedicated encrypted
-credential store. Those UI and OAuth flows are not implemented in this first release.
+Connection and audit records need a transactional external database and a dedicated encrypted credential store;
+permissions remain SpiceDB relationships. Those UI and OAuth flows are not implemented in this first release.
 
 ## Validation and delivery
 
@@ -89,7 +115,8 @@ cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
 ```
 
 Tests exercise the real Kubernetes client against a local API fixture, including owner isolation, stale Pod UIDs,
-grant removal immediately before dispatch, ungranted tools, private-network targets, unsupported server requests,
+catalog removal and SpiceDB revocation immediately before dispatch, denied permissions, authorization outages,
+argument schema constraints, ungranted tools, private-network targets, unsupported server requests,
 and bounded SSE framing. Nanoagent's adapter tests check correlation IDs, notification handling, and error redaction.
 
 `Relay images` publishes signed amd64/arm64 indexes from reviewed `main`. Its immutable alias is exposed only after

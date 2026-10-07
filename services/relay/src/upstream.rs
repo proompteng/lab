@@ -1,4 +1,4 @@
-use crate::policy::{self, Grant};
+use crate::policy::{self, Connector};
 use anyhow::{Context, bail, ensure};
 use futures::StreamExt;
 use reqwest::{Client, header::HeaderValue};
@@ -8,7 +8,7 @@ const LIMIT: usize = 2 << 20;
 const PROTOCOL: &str = "2025-11-25";
 
 pub async fn call<F, Fut>(
-    grant: &Grant,
+    grant: &Connector,
     tool: &str,
     args: Value,
     authorize: F,

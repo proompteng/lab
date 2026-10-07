@@ -707,6 +707,12 @@ sleep 30
 			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
 				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
 			}
+			if !strings.Contains(string(args), "--ask-for-approval\nnever\n") {
+				t.Fatalf("Codex process did not disable routine approvals: %q", args)
+			}
+			if !strings.Contains(string(args), "mcp_servers.relay.required=true\n") {
+				t.Fatalf("Codex process did not require the Relay MCP adapter: %q", args)
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

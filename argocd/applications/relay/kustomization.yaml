@@ -5,7 +5,7 @@ resources:
   - deployment.yaml
   - access.yaml
   - network-policy.yaml
-  - grants.yaml
+  - catalog.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/relay
     newName: registry.ide-newton.ts.net/lab/relay

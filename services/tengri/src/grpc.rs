@@ -907,7 +907,7 @@ impl MicroVmControlPlane for ControlPlane {
                     "config": options.thread_config(),
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
-                    "approvalPolicy": "on-request",
+                    "approvalPolicy": "never",
                     "approvalsReviewer": null,
                     "sandbox": "danger-full-access",
                     "ephemeral": false,
@@ -971,7 +971,7 @@ impl MicroVmControlPlane for ControlPlane {
                     "input": input,
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
-                    "approvalPolicy": "on-request",
+                    "approvalPolicy": "never",
                     "sandboxPolicy": {"type": "dangerFullAccess"},
                 }),
             )

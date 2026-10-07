@@ -1,0 +1,20 @@
+// Only trusted control-plane services write these relationships.
+// Agent object IDs are MicroVM creation UIDs, not names or guest Pod UIDs.
+definition relay_user {}
+
+definition relay_agent {
+    relation owner: relay_user
+    permission use = owner
+}
+
+definition relay_connector {
+    relation owner: relay_user
+    relation agent: relay_agent
+    permission use = owner & agent->use
+}
+
+definition relay_tool {
+    relation connector: relay_connector
+    relation agent: relay_agent
+    permission execute = connector->use & agent->use
+}

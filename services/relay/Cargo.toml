@@ -8,6 +8,7 @@ anyhow = "1"
 axum = "0.8.7"
 futures = "0.3"
 hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
+jsonschema = { version = "0.58.6", default-features = false }
 k8s-openapi = { version = "0.28", features = ["v1_36"] }
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "aws-lc-rs"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }

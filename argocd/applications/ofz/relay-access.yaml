@@ -1,0 +1,22 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: relay-authorization
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [ofz-spicedb-key]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: relay-authorization
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: relay-authorization
+subjects:
+  - kind: ServiceAccount
+    name: relay
+    namespace: relay

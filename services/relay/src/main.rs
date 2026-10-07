@@ -1,3 +1,4 @@
+mod authz;
 mod policy;
 mod upstream;
 
@@ -18,7 +19,7 @@ use kube::{
     Api, Client,
     api::{ApiResource, DynamicObject, GroupVersionKind, ListParams},
 };
-use policy::{Grant, Grants};
+use policy::{Catalog, Connector};
 use serde_json::{Value, json};
 use spiffe::{
     SpiffeId, TrustDomain, X509Source, X509Svid, cert::Certificate, x509_source::SvidPicker,
@@ -34,6 +35,7 @@ struct App {
     domain: String,
     namespace: String,
     permits: Arc<Semaphore>,
+    authorizer: authz::Authorizer,
 }
 struct OwnIdentity(SpiffeId);
 impl SvidPicker for OwnIdentity {
@@ -67,8 +69,13 @@ async fn main() -> anyhow::Result<()> {
         .trust_domain_policy(TrustDomainPolicy::LocalOnly(domain.clone()))
         .with_alpn_protocols([b"h2".to_vec(), b"http/1.1".to_vec()])
         .build()?;
+    let client = Client::try_default().await?;
     let app = App {
-        client: Client::try_default().await?,
+        authorizer: authz::Authorizer::new(
+            client.clone(),
+            "http://ofz.ofz.svc.cluster.local:8443".into(),
+        )?,
+        client,
         domain: domain.to_string(),
         namespace,
         permits: Arc::new(Semaphore::new(32)),
@@ -76,6 +83,10 @@ async fn main() -> anyhow::Result<()> {
     app.grants()
         .await
         .context("validate initial connector grants")?;
+    app.authorizer
+        .ready()
+        .await
+        .context("validate SpiceDB authorization")?;
     let health_app = app.clone();
     let health = Router::new()
         .route("/livez", get(|| async { StatusCode::OK }))
@@ -84,9 +95,12 @@ async fn main() -> anyhow::Result<()> {
             get(move || {
                 let app = health_app.clone();
                 async move {
-                    if timeout(Duration::from_secs(3), app.grants())
-                        .await
-                        .is_ok_and(|r| r.is_ok())
+                    if timeout(Duration::from_secs(5), async {
+                        app.grants().await?;
+                        app.authorizer.ready().await
+                    })
+                    .await
+                    .is_ok_and(|r| r.is_ok())
                     {
                         StatusCode::OK
                     } else {
@@ -139,20 +153,20 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 impl App {
-    async fn grants(&self) -> anyhow::Result<Grants> {
+    async fn grants(&self) -> anyhow::Result<Catalog> {
         let cm: ConfigMap = Api::namespaced(self.client.clone(), &self.namespace)
-            .get("relay-grants")
+            .get("relay-catalog")
             .await?;
         let raw = cm
             .data
             .as_ref()
             .and_then(|d| d.get("config.json"))
             .context("missing connector grants")?;
-        let grants: Grants = serde_json::from_str(raw)?;
+        let grants: Catalog = serde_json::from_str(raw)?;
         grants.validate()?;
         Ok(grants)
     }
-    async fn agent(&self, peer: &str) -> anyhow::Result<(String, String)> {
+    async fn agent(&self, peer: &str) -> anyhow::Result<(String, String, String)> {
         let uid = policy::guest_uid(peer, &self.domain)?;
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), "tengri");
         let found = pods
@@ -197,17 +211,34 @@ impl App {
             .as_str()
             .context("missing owner")?
             .to_string();
-        Ok((owner.name.clone(), owner_hash))
+        Ok((owner.name.clone(), owner_hash, owner.uid.clone()))
     }
-    async fn permitted(&self, peer: &str) -> anyhow::Result<Vec<Grant>> {
-        let (agent, owner) = self.agent(peer).await?;
-        Ok(self
+    async fn permitted(&self, peer: &str) -> anyhow::Result<Vec<Connector>> {
+        let (agent, owner, uid) = self.agent(peer).await?;
+        let mut allowed = Vec::new();
+        for mut grant in self
             .grants()
             .await?
             .connectors
             .into_iter()
             .filter(|g| g.agent_id == agent && g.owner_hash == owner)
-            .collect())
+        {
+            let mut tools = Vec::new();
+            for tool in grant.tools {
+                if self
+                    .authorizer
+                    .allowed(&owner, &uid, &grant.id, &tool.name)
+                    .await?
+                {
+                    tools.push(tool);
+                }
+            }
+            grant.tools = tools;
+            if !grant.tools.is_empty() {
+                allowed.push(grant);
+            }
+        }
+        Ok(allowed)
     }
     async fn request(&self, peer: &str, request: &Value) -> anyhow::Result<Value> {
         let method = request["method"].as_str().context("missing method")?;
@@ -249,6 +280,14 @@ impl App {
                     .unwrap_or_else(|| json!({}));
                 if !args.is_object() {
                     bail!("invalid arguments");
+                }
+                let granted_tool = grant
+                    .tools
+                    .iter()
+                    .find(|t| t.name == tool)
+                    .context("tool not granted")?;
+                if !granted_tool.validator()?.is_valid(&args) {
+                    bail!("arguments violate tool schema");
                 }
                 // Re-read durable authorization immediately before sending any third-party call.
                 let still_granted = self.permitted(peer).await?.into_iter().any(|g| g == grant);
@@ -341,8 +380,14 @@ mod tests {
         pod_uid: String,
         revoke: bool,
         reads: Arc<AtomicUsize>,
+        authorization: Arc<AtomicUsize>,
     }
     async fn fixture_response(State(f): State<Fixture>, uri: axum::http::Uri) -> Json<Value> {
+        if uri.path().ends_with("/secrets/ofz-spicedb-key") {
+            return Json(
+                json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"ofz-spicedb-key"},"data":{"preshared_key":"dGVzdC1rZXk="}}),
+            );
+        }
         let owner_ref = json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","name":"agent-test","uid":"vm-uid","controller":true});
         if uri.path().ends_with("/pods") {
             return Json(
@@ -358,10 +403,10 @@ mod tests {
         let connectors = if f.revoke && read > 0 {
             json!([])
         } else {
-            json!([{"id":"docs","ownerHash":"a".repeat(64),"agentId":"agent-test","endpoint":"https://example.com/mcp","credentialKey":"docs-token","tools":[{"name":"search","description":"Search","inputSchema":{"type":"object"},"readOnly":true}]}])
+            json!([{"id":"docs","ownerHash":"a".repeat(64),"agentId":"agent-test","endpoint":"https://example.com/mcp","credentialKey":"docs-token","tools":[{"name":"search","description":"Search","inputSchema":{"type":"object","properties":{"query":{"type":"string","minLength":3},"scope":{"enum":["docs"]}},"additionalProperties":false},"readOnly":true}]}])
         };
         Json(
-            json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"relay-grants"},"data":{"config.json":json!({"connectors":connectors}).to_string()}}),
+            json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"relay-catalog"},"data":{"config.json":json!({"connectors":connectors}).to_string()}}),
         )
     }
     async fn app(
@@ -369,12 +414,48 @@ mod tests {
         pod_uid: &str,
         revoke: bool,
     ) -> (App, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        app_authorized(
+            owner,
+            pod_uid,
+            revoke,
+            Arc::new(AtomicUsize::new(usize::MAX)),
+        )
+        .await
+    }
+    async fn fixture_check(
+        State(f): State<Fixture>,
+        headers: axum::http::HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        assert_eq!(headers["authorization"], "Bearer test-key");
+        assert_eq!(body["consistency"], json!({"fullyConsistent":true}));
+        assert_eq!(body["subject"]["object"]["objectId"], "a".repeat(64));
+        assert_eq!(
+            body["resource"]["objectId"],
+            authz::tool_id("vm-uid", "docs", "search")
+        );
+        assert_eq!(body["permission"], "execute");
+        let allowed = f
+            .authorization
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok();
+        Json(
+            json!({"permissionship": if allowed {"PERMISSIONSHIP_HAS_PERMISSION"} else {"PERMISSIONSHIP_NO_PERMISSION"}}),
+        )
+    }
+    async fn app_authorized(
+        owner: &str,
+        pod_uid: &str,
+        revoke: bool,
+        authorization: Arc<AtomicUsize>,
+    ) -> (App, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
         let reads = Arc::new(AtomicUsize::new(0));
         let fixture = Fixture {
             owner: owner.into(),
             pod_uid: pod_uid.into(),
             revoke,
             reads: reads.clone(),
+            authorization,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -382,6 +463,7 @@ mod tests {
             axum::serve(
                 listener,
                 Router::new()
+                    .route("/v1/permissions/check", post(fixture_check))
                     .fallback(get(fixture_response))
                     .with_state(fixture),
             )
@@ -389,9 +471,12 @@ mod tests {
             .unwrap();
         });
         let config = kube::Config::new(format!("http://{address}").parse().unwrap());
+        let client = Client::try_from(config).unwrap();
         (
             App {
-                client: Client::try_from(config).unwrap(),
+                authorizer: authz::Authorizer::new(client.clone(), format!("http://{address}"))
+                    .unwrap(),
+                client,
                 namespace: "relay".into(),
                 domain: "proompteng.ai".into(),
                 permits: Arc::new(Semaphore::new(32)),
@@ -402,6 +487,61 @@ mod tests {
     }
     fn peer() -> String {
         format!("spiffe://proompteng.ai/ns/tengri/nanoagent/pod/{UID}")
+    }
+    #[tokio::test]
+    async fn spicedb_denial_hides_catalog_tools_and_blocks_calls() {
+        let (app, _, server) =
+            app_authorized(&"a".repeat(64), UID, false, Arc::new(AtomicUsize::new(0))).await;
+        assert_eq!(
+            app.request(&peer(), &json!({"method":"tools/list"}))
+                .await
+                .unwrap()["tools"],
+            json!([])
+        );
+        assert!(
+            app.request(
+                &peer(),
+                &json!({"method":"tools/call","params":{"name":"docs__search"}})
+            )
+            .await
+            .is_err()
+        );
+        server.abort();
+    }
+    #[tokio::test]
+    async fn spicedb_revocation_is_rechecked_before_upstream_dispatch() {
+        let (app, reads, server) =
+            app_authorized(&"a".repeat(64), UID, false, Arc::new(AtomicUsize::new(1))).await;
+        let error = app
+            .request(
+                &peer(),
+                &json!({"method":"tools/call","params":{"name":"docs__search"}}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "grant revoked");
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+    #[tokio::test]
+    async fn spicedb_outage_fails_closed_without_a_catalog_fallback() {
+        let (mut app, _, server) = app(&"a".repeat(64), UID, false).await;
+        app.authorizer =
+            authz::Authorizer::new(app.client.clone(), "http://127.0.0.1:1".into()).unwrap();
+        assert!(
+            app.request(&peer(), &json!({"method":"tools/list"}))
+                .await
+                .is_err()
+        );
+        assert!(
+            app.request(
+                &peer(),
+                &json!({"method":"tools/call","params":{"name":"docs__search"}})
+            )
+            .await
+            .is_err()
+        );
+        server.abort();
     }
     #[tokio::test]
     async fn discovery_is_owner_scoped_and_never_includes_credentials() {
@@ -470,6 +610,21 @@ mod tests {
         ] {
             assert!(app.request(&peer(), &request).await.is_err());
         }
+        server.abort();
+    }
+    #[tokio::test]
+    async fn invalid_arguments_are_denied_before_upstream_or_authorization_recheck() {
+        let (app, reads, server) = app(&"a".repeat(64), UID, false).await;
+        for args in [
+            json!({"target":"https://other.example"}),
+            json!({"query":"ab"}),
+            json!({"query":42}),
+            json!({"scope":"admin"}),
+        ] {
+            let error = app.request(&peer(), &json!({"method":"tools/call","params":{"name":"docs__search","arguments":args}})).await.unwrap_err();
+            assert_eq!(error.to_string(), "arguments violate tool schema");
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 4);
         server.abort();
     }
 }
