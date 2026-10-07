@@ -7,6 +7,10 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
 
+The [momentum-first candidate](../../docs/bayn/momentum-first-candidate.md) adds an inactive protocol-v2 entry gate:
+exact positive own and SPY-relative momentum before Jev, with current Jev selection, sizing and management preserved.
+Its native evaluation and immutable replay support do not change the selected strategy or grant capital authority.
+
 ## Profitability goal
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
