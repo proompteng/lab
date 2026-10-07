@@ -54,7 +54,9 @@ Downloads use the owner's `Downloads` folder. Closing the desktop view does not 
 
 ## Agent computer tool
 
-Nanoagent registers `nanoagent browser-mcp` with each Codex app-server process. The stdio MCP server exposes one
+Nanoagent registers `nanoagent browser-mcp` as a required server with each Codex app-server process. The 300-second
+tool timeout covers a cold browser installation. These settings use [Codex's documented MCP configuration](https://learn.chatgpt.com/docs/extend/mcp).
+The stdio MCP server exposes one
 `computer` tool with `screenshot`, `click`, `double_click`, `drag`, `scroll`, `key`, `type`, `navigate`, and `status`
 actions. Each successful input action returns a screenshot and its dimensions. Coordinates include the native
 browser toolbar. Input validation rejects missing coordinates, invalid buttons, unsupported key syntax, and

@@ -198,7 +198,12 @@ func (supervisor *codexSupervisor) runProcess() error {
 		if err != nil {
 			return fmt.Errorf("locate browser MCP executable: %w", err)
 		}
-		arguments = append(arguments, "-c", "mcp_servers.tengri_browser.command="+strconv.Quote(binary), "-c", `mcp_servers.tengri_browser.args=["browser-mcp"]`)
+		arguments = append(arguments,
+			"-c", "mcp_servers.tengri_browser.command="+strconv.Quote(binary),
+			"-c", `mcp_servers.tengri_browser.args=["browser-mcp"]`,
+			"-c", "mcp_servers.tengri_browser.tool_timeout_sec=300",
+			"-c", "mcp_servers.tengri_browser.required=true",
+		)
 	}
 	arguments = append(arguments, "app-server")
 	command := exec.Command(supervisor.binary, arguments...)
