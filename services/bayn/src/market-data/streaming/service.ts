@@ -32,7 +32,7 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
         const snapshot = yield* Effect.fromResult(constructStreamingSnapshot(cut, query)).pipe(
           Effect.tapError((cause) =>
             Effect.logWarning('Streaming market snapshot rejected').pipe(
-              Effect.annotateLogs(snapshotFailureMeasurement(cause, query)),
+              Effect.annotateLogs(snapshotFailureMeasurement(cause, query, cut.projection)),
             ),
           ),
           Effect.mapError((cause) => marketDataOperationError('load', 'Streaming snapshot verification failed', cause)),
