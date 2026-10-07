@@ -713,6 +713,14 @@ sleep 30
 			if !strings.Contains(string(args), "mcp_servers.relay.required=true\n") {
 				t.Fatalf("Codex process did not require the Relay MCP adapter: %q", args)
 			}
+			for _, setting := range []string{
+				`apps._default.default_tools_approval_mode="approve"`,
+				`mcp_servers.relay.default_tools_approval_mode="approve"`,
+			} {
+				if !strings.Contains(string(args), setting+"\n") {
+					t.Fatalf("Codex process did not configure tool approvals: missing %q", setting)
+				}
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
