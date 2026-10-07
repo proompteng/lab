@@ -710,8 +710,8 @@ sleep 30
 			if !strings.Contains(string(args), "--ask-for-approval\nnever\n") {
 				t.Fatalf("Codex process did not disable routine approvals: %q", args)
 			}
-			if !strings.Contains(string(args), "mcp_servers.relay.required=true\n") {
-				t.Fatalf("Codex process did not require the Relay MCP adapter: %q", args)
+			if !strings.Contains(string(args), "mcp_servers.relay.required=false\n") {
+				t.Fatalf("Codex process could block conversations on Relay startup: %q", args)
 			}
 			for _, setting := range []string{
 				`approval_policy="never"`,

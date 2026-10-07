@@ -13,6 +13,11 @@ require SpiceDB permission for that exact owner, MicroVM creation UID, connector
 current permission again before dispatch, including after upstream initialization. Every check requests fully
 consistent data. Denied, conditional, malformed, and unavailable decisions fail closed. Two replicas use the shared
 Ofz SpiceDB service, backed by external PostgreSQL; there is no local authorization cache or grant database.
+Discovery uses bulk permission checks in batches of 256, with at most four requests in flight and one authorization
+credential read per discovery request. Initialization and ping validate the live guest without scanning catalog
+tools. Execution checks only the selected tool and revalidates its metadata and permission before dispatch.
+Nanoagent registers Relay as an optional MCP server so backend provisioning or downtime does not block conversations;
+connector operations remain unavailable until Relay initializes and has durable permission grants.
 
 This initial release supports explicitly granted read-only HTTPS MCP tools, JSON and bounded SSE responses, and
 optional Bearer credentials. Write tools, server-initiated sampling/elicitation, executable connectors, and OAuth

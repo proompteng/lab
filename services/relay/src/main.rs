@@ -215,36 +215,55 @@ impl App {
     }
     async fn permitted(&self, peer: &str) -> anyhow::Result<Vec<Connector>> {
         let (agent, owner, uid) = self.agent(peer).await?;
-        let mut allowed = Vec::new();
-        for mut grant in self
+        let mut grants: Vec<Connector> = self
             .grants()
             .await?
             .connectors
             .into_iter()
             .filter(|g| g.agent_id == agent && g.owner_hash == owner)
-        {
-            let mut tools = Vec::new();
-            for tool in grant.tools {
-                if self
-                    .authorizer
-                    .allowed(&owner, &uid, &grant.id, &tool.name)
-                    .await?
-                {
-                    tools.push(tool);
-                }
-            }
-            grant.tools = tools;
-            if !grant.tools.is_empty() {
-                allowed.push(grant);
-            }
+            .collect();
+        let checks: Vec<(String, String)> = grants
+            .iter()
+            .flat_map(|g| g.tools.iter().map(|t| (g.id.clone(), t.name.clone())))
+            .collect();
+        let decisions = self.authorizer.allowed_many(&owner, &uid, &checks).await?;
+        let mut decisions = decisions.into_iter();
+        for grant in &mut grants {
+            grant.tools.retain(|_| decisions.next().unwrap_or(false));
         }
+        grants.retain(|g| !g.tools.is_empty());
+        let allowed = grants;
         Ok(allowed)
+    }
+    async fn selected(&self, peer: &str, connector: &str, tool: &str) -> anyhow::Result<Connector> {
+        let (agent, owner, uid) = self.agent(peer).await?;
+        let mut grant = self
+            .grants()
+            .await?
+            .connectors
+            .into_iter()
+            .find(|g| {
+                g.id == connector
+                    && g.agent_id == agent
+                    && g.owner_hash == owner
+                    && g.tools.iter().any(|t| t.name == tool)
+            })
+            .context("tool not granted")?;
+        grant.tools.retain(|t| t.name == tool);
+        if !self
+            .authorizer
+            .allowed(&owner, &uid, connector, tool)
+            .await?
+        {
+            bail!("tool not granted");
+        }
+        Ok(grant)
     }
     async fn request(&self, peer: &str, request: &Value) -> anyhow::Result<Value> {
         let method = request["method"].as_str().context("missing method")?;
-        let grants = self.permitted(peer).await?;
         match method {
             "initialize" => {
+                self.agent(peer).await?;
                 let protocol = request["params"]["protocolVersion"]
                     .as_str()
                     .context("missing protocol version")?;
@@ -255,10 +274,13 @@ impl App {
                     json!({"protocolVersion": protocol, "capabilities": {"tools": {}}, "serverInfo": {"name": "Relay", "version": env!("CARGO_PKG_VERSION")}, "instructions": "Connector tools are scoped to this agent. Credentials stay in Relay."}),
                 )
             }
-            "ping" => Ok(json!({})),
+            "ping" => {
+                self.agent(peer).await?;
+                Ok(json!({}))
+            }
             "tools/list" => {
                 let mut tools = Vec::new();
-                for grant in grants {
+                for grant in self.permitted(peer).await? {
                     for tool in grant.tools {
                         tools.push(json!({"name": format!("{}__{}", grant.id, tool.name), "description": tool.description, "inputSchema": tool.input_schema, "annotations": {"readOnlyHint": true, "openWorldHint": true}}));
                     }
@@ -270,10 +292,7 @@ impl App {
                     .as_str()
                     .context("missing tool name")?;
                 let (connector, tool) = name.split_once("__").context("invalid tool name")?;
-                let grant = grants
-                    .into_iter()
-                    .find(|g| g.id == connector && g.tools.iter().any(|t| t.name == tool))
-                    .context("tool not granted")?;
+                let grant = self.selected(peer, connector, tool).await?;
                 let args = request["params"]
                     .get("arguments")
                     .cloned()
@@ -290,12 +309,20 @@ impl App {
                     bail!("arguments violate tool schema");
                 }
                 // Re-read durable authorization immediately before sending any third-party call.
-                let still_granted = self.permitted(peer).await?.into_iter().any(|g| g == grant);
-                if !still_granted {
+                let current = self
+                    .selected(peer, connector, tool)
+                    .await
+                    .context("grant revoked")?;
+                if current != grant {
                     bail!("grant revoked");
                 }
                 upstream::call(&grant, tool, args, || async {
-                    if !self.permitted(peer).await?.into_iter().any(|g| g == grant) {
+                    if self
+                        .selected(peer, connector, tool)
+                        .await
+                        .context("grant revoked")?
+                        != grant
+                    {
                         bail!("grant revoked");
                     }
                     Ok(())
@@ -403,7 +430,7 @@ mod tests {
         let connectors = if f.revoke && read > 0 {
             json!([])
         } else {
-            json!([{"id":"docs","ownerHash":"a".repeat(64),"agentId":"agent-test","endpoint":"https://example.com/mcp","credentialKey":"docs-token","tools":[{"name":"search","description":"Search","inputSchema":{"type":"object","properties":{"query":{"type":"string","minLength":3},"scope":{"enum":["docs"]}},"additionalProperties":false},"readOnly":true}]}])
+            json!([{"id":"docs","ownerHash":"a".repeat(64),"agentId":"agent-test","endpoint":"https://example.com/mcp","credentialKey":"docs-token","tools":[{"name":"search","description":"Search","inputSchema":{"type":"object","properties":{"query":{"type":"string","minLength":3},"scope":{"enum":["docs"]}},"additionalProperties":false},"readOnly":true},{"name":"unrelated","description":"Other tool","inputSchema":{"type":"object"},"readOnly":true}]}])
         };
         Json(
             json!({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"relay-catalog"},"data":{"config.json":json!({"connectors":connectors}).to_string()}}),
@@ -430,17 +457,38 @@ mod tests {
         assert_eq!(headers["authorization"], "Bearer test-key");
         assert_eq!(body["consistency"], json!({"fullyConsistent":true}));
         assert_eq!(body["subject"]["object"]["objectId"], "a".repeat(64));
-        assert_eq!(
-            body["resource"]["objectId"],
-            authz::tool_id("vm-uid", "docs", "search")
+        let id = body["resource"]["objectId"].as_str().unwrap();
+        assert!(
+            [
+                authz::tool_id("vm-uid", "docs", "search"),
+                authz::tool_id("vm-uid", "docs", "unrelated")
+            ]
+            .iter()
+            .any(|expected| expected == id)
         );
         assert_eq!(body["permission"], "execute");
+        fixture_decision(&f)
+    }
+    fn fixture_decision(f: &Fixture) -> Json<Value> {
         let allowed = f
             .authorization
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
             .is_ok();
         Json(
             json!({"permissionship": if allowed {"PERMISSIONSHIP_HAS_PERMISSION"} else {"PERMISSIONSHIP_NO_PERMISSION"}}),
+        )
+    }
+    async fn fixture_bulk(
+        State(f): State<Fixture>,
+        headers: axum::http::HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        assert_eq!(headers["authorization"], "Bearer test-key");
+        assert_eq!(body["consistency"], json!({"fullyConsistent":true}));
+        let items = body["items"].as_array().unwrap();
+        assert!(items.len() <= 256);
+        Json(
+            json!({"pairs": items.iter().map(|item| json!({"request":item,"item":fixture_decision(&f).0})).collect::<Vec<_>>()}),
         )
     }
     async fn app_authorized(
@@ -464,6 +512,7 @@ mod tests {
                 listener,
                 Router::new()
                     .route("/v1/permissions/check", post(fixture_check))
+                    .route("/v1/permissions/checkbulk", post(fixture_bulk))
                     .fallback(get(fixture_response))
                     .with_state(fixture),
             )
@@ -625,6 +674,36 @@ mod tests {
             assert_eq!(error.to_string(), "arguments violate tool schema");
         }
         assert_eq!(reads.load(Ordering::SeqCst), 4);
+        server.abort();
+    }
+    #[tokio::test]
+    async fn initialization_and_ping_do_not_check_catalog_tools() {
+        let authorization = Arc::new(AtomicUsize::new(usize::MAX));
+        let (mut app, reads, server) =
+            app_authorized(&"a".repeat(64), UID, false, authorization.clone()).await;
+        app.authorizer =
+            authz::Authorizer::new(app.client.clone(), "http://127.0.0.1:1".into()).unwrap();
+        app.request(
+            &peer(),
+            &json!({"method":"initialize", "params":{"protocolVersion":"2025-11-25"}}),
+        )
+        .await
+        .unwrap();
+        app.request(&peer(), &json!({"method":"ping"}))
+            .await
+            .unwrap();
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert_eq!(authorization.load(Ordering::SeqCst), usize::MAX);
+        server.abort();
+    }
+    #[tokio::test]
+    async fn selected_call_does_not_authorize_unrelated_catalog_tools() {
+        let authorization = Arc::new(AtomicUsize::new(usize::MAX));
+        let (app, _, server) =
+            app_authorized(&"a".repeat(64), UID, false, authorization.clone()).await;
+        let error = app.request(&peer(), &json!({"method":"tools/call", "params":{"name":"docs__search", "arguments":{"query":1}}})).await.unwrap_err();
+        assert_eq!(error.to_string(), "arguments violate tool schema");
+        assert_eq!(authorization.load(Ordering::SeqCst), usize::MAX - 1);
         server.abort();
     }
 }

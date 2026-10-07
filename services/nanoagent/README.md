@@ -87,6 +87,8 @@ Tengri also selects `never` for conversation start, resume, and turns. App tools
 tools use `approve`, so routine tool calls do not require a permission popup. Explicit per-app and per-tool policies
 still take precedence over the app default. Guest isolation and Relay's SpiceDB tool
 authorization remain enforced. The UI does not silently approve or discard outstanding server requests.
+Relay MCP startup is optional: initial backend provisioning or an outage does not block ordinary conversations.
+Connector tools remain unavailable until Relay initializes; there is no direct-provider fallback.
 
 ## Firecracker rootfs and persistent tools
 
