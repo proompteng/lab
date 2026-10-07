@@ -18,6 +18,7 @@ import {
   CycleTerminalReason,
   type AutonomousCycle,
 } from '../model'
+import { DecisionEvidenceMismatch } from './model'
 
 const StoredCycleRowSchema = Schema.Struct({
   cycle_id: Sha256Schema,
@@ -108,6 +109,9 @@ const FinishInputSchema = Schema.Struct({
 })
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
 const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
+const DecisionEvidenceMismatchSchema = Schema.Tuple([
+  Schema.Struct({ mismatch: Schema.NullOr(Schema.Enum(DecisionEvidenceMismatch)) }),
+])
 const StoredDecisionDocumentRowsSchema = Schema.Array(
   Schema.Struct({
     document: CycleDecisionDocumentSchema,
@@ -153,6 +157,10 @@ const decodeDecisionEvidenceMatchDataFirst = Schema.decodeUnknownEffect(Decision
 
 export const decodeDecisionEvidenceMatch = Pipeable.dual(1, (input: unknown) =>
   decodeDecisionEvidenceMatchDataFirst(input),
+)
+export const decodeDecisionEvidenceMismatch = Schema.decodeUnknownEffect(
+  DecisionEvidenceMismatchSchema,
+  strictParseOptions,
 )
 const decodeStoredDecisionDocumentRowsDataFirst = Schema.decodeUnknownEffect(
   StoredDecisionDocumentRowsSchema,

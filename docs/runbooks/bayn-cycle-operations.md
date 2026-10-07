@@ -55,6 +55,19 @@ Find the pass in Loki and inspect its profile and child stage logs:
 Use the trace waterfall for ordering, parallel work and gaps. Stage profiles are scoped to each advance and do
 not include the separate inference-expense background worker.
 
+A rejected decision emits `Bayn decision evidence rejected` with schema
+`bayn.decision-evidence-rejection.v1`, a `mismatch` code and the cycle, snapshot and reconciliation hashes.
+`RECONCILIATION` means its exact durable identity, account, state hash, status or time cutoff did not match;
+`DECISION_MARKET_DATA` and `EXECUTION_MARKET_DATA` identify the respective immutable snapshot binding;
+`JEV` identifies the recorded observation, batch plan or result; `RISK_CONTEXT` identifies the retained
+authority, reconciliation time or accounting risk facts. The first failed check wins. Inspect the matching
+private evidence before changing the responsible path. The existing SQL request computes the reason and
+retains every admission check; it never logs the decision payload, account identity or raw query.
+
+```logql
+{namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "bayn.decision-evidence-rejection.v1"
+```
+
 1. Separate `bayn.execution.bounded-pass` and `bayn.execution.cycle-pass` from the root advance. They retain the
    deadline and cycle scopes without repeating the root span name.
 2. Inspect `bayn.execution.submit` with `bayn.operation=entry` or `close`. Slow and failed submission logs include
