@@ -32,7 +32,7 @@ spec:
               app.kubernetes.io/name: relay
       containers:
         - name: relay
-          image: registry.ide-newton.ts.net/lab/relay
+          image: registry.ide-newton.ts.net/lab/relay:bootstrap
           ports:
             - name: mcp
               containerPort: 8443
