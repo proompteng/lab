@@ -723,13 +723,11 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           await new Promise((resolve) => setTimeout(resolve, options.resumeThreadDelayMs))
         }
         resumeThreadResponses += 1
-        result = {
-          id: action.threadId,
-          rawJson: options.resumeThreadRawJson ?? '{"thread":{"turns":[]}}',
-          eventSequence: options.resumeThreadEventSequence ?? 0,
-          itemEventSequences: options.resumeThreadItemEventSequences ?? {},
-        }
-        break
+        await route.fulfill({
+          contentType: 'application/x-ndjson; charset=utf-8',
+          body: recoveryRecords(String(action.threadId), options),
+        })
+        return
       case 'send-turn':
         if (sendTurnFailuresRemaining) {
           sendTurnFailuresRemaining -= 1
@@ -4942,4 +4940,107 @@ test('bounds pasted images and removes attachments before sending', async ({ pag
     await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(count - 1)
   }
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
+})
+
+function recoveryRecords(threadId: string, options: MockOptions) {
+  const result = JSON.parse(options.resumeThreadRawJson ?? '{"thread":{"turns":[]}}') as Record<string, unknown>
+  const thread = result.thread as Record<string, unknown>
+  const turns = (thread.turns ?? []) as Array<Record<string, unknown>>
+  const baseline = options.resumeThreadEventSequence ?? 0
+  const records: Array<Record<string, unknown>> = [
+    {
+      type: 'page',
+      part: 'thread',
+      eventSequence: baseline,
+      rawJson: JSON.stringify({ ...result, thread: { ...thread, id: threadId, historyMode: 'paginated', turns: [] } }),
+    },
+  ]
+  const pages: Array<{ sequence: number; bytes: number; data: Array<Record<string, unknown>> }> = []
+  let sequence = baseline
+  for (const [index, turn] of turns.entries()) {
+    turn.id ??= `fixture-turn-${index}`
+    for (const item of (turn.items ?? []) as Array<Record<string, unknown>>) {
+      sequence = Math.max(sequence, options.resumeThreadItemEventSequences?.[String(item.id)] ?? baseline)
+      const entry = { turnId: turn.id, item }
+      const bytes = Buffer.byteLength(JSON.stringify(entry))
+      let page = pages.at(-1)
+      if (!page || page.sequence !== sequence || page.data.length === 100 || page.bytes + bytes > 8 * 1024 * 1024) {
+        page = { sequence, bytes: 0, data: [] }
+        pages.push(page)
+      }
+      page.data.push(entry)
+      page.bytes += bytes
+    }
+  }
+  if (!pages.length) pages.push({ sequence, bytes: 0, data: [] })
+  for (const [index, page] of pages.entries())
+    records.push({
+      type: 'page',
+      part: 'items',
+      eventSequence: page.sequence,
+      rawJson: JSON.stringify({
+        data: page.data,
+        nextCursor: index === pages.length - 1 ? null : `items-${index + 1}`,
+      }),
+    })
+  const turnPages = Math.max(1, Math.ceil(turns.length / 100))
+  for (let index = 0; index < turnPages; index++)
+    records.push({
+      type: 'page',
+      part: 'turns',
+      eventSequence: sequence,
+      rawJson: JSON.stringify({
+        data: turns.slice(index * 100, (index + 1) * 100).map((turn) => ({
+          ...turn,
+          status: turn.status ?? 'completed',
+          items: [],
+          itemsView: 'notLoaded',
+        })),
+        nextCursor: index === turnPages - 1 ? null : `turns-${index + 1}`,
+      }),
+    })
+  records.push({ type: 'complete' })
+  return records.map((record) => JSON.stringify(record)).join('\n') + '\n'
+}
+
+test('restores the existing conversation when paginated history exceeds the unary message limit', async ({ page }) => {
+  const output = 'x'.repeat(6 * 1024 * 1024)
+  const mock = await mockTengri(page, {
+    resumeThreadEventSequence: 10,
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'large-turn',
+            status: 'completed',
+            items: [
+              {
+                id: 'large-output-one',
+                type: 'commandExecution',
+                status: 'completed',
+                exitCode: 0,
+                aggregatedOutput: output,
+              },
+              { id: 'answer-one', type: 'agentMessage', text: 'Earlier history was restored.' },
+              {
+                id: 'large-output-two',
+                type: 'commandExecution',
+                status: 'completed',
+                exitCode: 0,
+                aggregatedOutput: output,
+              },
+              { id: 'answer-two', type: 'agentMessage', text: 'Latest history was restored.' },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'existing-large-thread'))
+  await page.goto('/')
+  await expect(page.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(page.getByText('Earlier history was restored.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Latest history was restored.', { exact: true })).toBeVisible()
+  expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
+  expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('existing-large-thread')
 })
