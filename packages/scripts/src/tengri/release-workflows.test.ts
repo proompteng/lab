@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -155,7 +156,7 @@ describe('Tengri image workflow', () => {
     expect(source).not.toContain('cosign sign')
   })
 
-  it.each(['save', 'inspect'])('rejects a failed fixture %s before writing its receipt', (failedCommand) => {
+  it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: { build: { steps: Array<{ name?: string; if?: string; run?: string }> } }
     }
@@ -168,9 +169,26 @@ describe('Tengri image workflow', () => {
 
     const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-fixture-export-failure-'))
     try {
+      const image = `registry.example.test/nanoagent:sha-${'1'.repeat(40)}-amd64`
+      const config = JSON.stringify({ architecture: 'amd64', os: 'linux', rootfs: { type: 'layers', diff_ids: [] } })
+      const digest = createHash('sha256').update(config).digest('hex')
+      const configPath = `blobs/sha256/${digest}`
+      mkdirSync(resolve(fixture, 'blobs/sha256'), { recursive: true })
+      writeFileSync(
+        resolve(fixture, 'manifest.json'),
+        JSON.stringify([{ Config: configPath, RepoTags: [image], Layers: [] }]),
+      )
+      const archive = resolve(fixture, 'image.tar')
+      const archiveFiles = ['manifest.json']
+      if (scenario !== 'config') {
+        writeFileSync(resolve(fixture, configPath), config)
+        archiveFiles.push(configPath)
+      }
+      const saved = Bun.spawnSync(['tar', '-cf', archive, '-C', fixture, ...archiveFiles])
+      expect(saved.exitCode).toBe(0)
       writeFileSync(
         resolve(fixture, 'docker'),
-        '#!/bin/sh\nprintf partial-image\nif [ "$1" = "$FAIL_COMMAND" ] || [ "${2:-}" = "$FAIL_COMMAND" ]; then exit 42; fi\n',
+        '#!/bin/sh\nif [ "$1" = save ]; then cat "$FIXTURE_ARCHIVE"; exit "$SAVE_EXIT"; fi\nprintf "sha256:%s\\n" "$MANIFEST_DIGEST"\n',
         { mode: 0o755 },
       )
       const result = Bun.spawnSync(['bash', '-c', exported?.run ?? ''], {
@@ -182,12 +200,29 @@ describe('Tengri image workflow', () => {
           IMAGE_REPOSITORY: 'registry.example.test/nanoagent',
           GITHUB_SHA: '1'.repeat(40),
           PR_HEAD_REVISION: '2'.repeat(40),
-          FAIL_COMMAND: failedCommand,
+          FIXTURE_ARCHIVE: archive,
+          SAVE_EXIT: scenario === 'save' ? '42' : '0',
+          MANIFEST_DIGEST: 'f'.repeat(64),
         },
       })
-      expect(result.exitCode).toBe(42)
-      expect(existsSync(resolve(fixture, '.artifacts/kvm-fixture/nanoagent.json'))).toBe(false)
-      expect(existsSync(resolve(fixture, '.artifacts/kvm-fixture/nanoagent-SHA256SUMS'))).toBe(false)
+      const receiptPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent.json')
+      const checksumsPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent-SHA256SUMS')
+      if (scenario === 'portable') {
+        expect(result.exitCode).toBe(0)
+        const receipt: unknown = JSON.parse(readFileSync(receiptPath, 'utf8'))
+        expect(receipt).toEqual({
+          sourceRevision: '1'.repeat(40),
+          prHeadRevision: '2'.repeat(40),
+          image,
+          configDigest: `sha256:${digest}`,
+        })
+        expect(existsSync(checksumsPath)).toBe(true)
+      } else {
+        if (scenario === 'save') expect(result.exitCode).toBe(42)
+        else expect(result.exitCode).not.toBe(0)
+        expect(existsSync(receiptPath)).toBe(false)
+        expect(existsSync(checksumsPath)).toBe(false)
+      }
     } finally {
       rmSync(fixture, { recursive: true, force: true })
     }

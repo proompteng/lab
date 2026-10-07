@@ -196,11 +196,16 @@ jobs:
             cp services/tengri/test-kvm.sh .artifacts/kvm-fixture/
           fi
           docker save "$image" | gzip -1 > ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz"
-          image_id="$(docker image inspect --format '{{.Id}}' "$image")"
-          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          config_path="$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" manifest.json | \
+            jq -er --arg image "$image" '[.[] | select(.RepoTags | index($image))] |
+              if length == 1 then .[0].Config | select(type == "string" and length > 0)
+              else error("fixture image must have exactly one saved configuration") end')"
+          config_digest="sha256:$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" -- "$config_path" | \
+            sha256sum | cut -d ' ' -f 1)"
+          [[ "$config_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           jq -n --arg revision "$GITHUB_SHA" --arg head "$PR_HEAD_REVISION" \
-            --arg image "$image" --arg id "$image_id" \
-            '{sourceRevision: $revision, prHeadRevision: $head, image: $image, imageId: $id}' \
+            --arg image "$image" --arg digest "$config_digest" \
+            '{sourceRevision: $revision, prHeadRevision: $head, image: $image, configDigest: $digest}' \
             > ".artifacts/kvm-fixture/${SERVICE}.json"
           cd .artifacts/kvm-fixture
           sha256sum "${SERVICE}-images.tar.gz" "${SERVICE}.json" > "${SERVICE}-SHA256SUMS"
