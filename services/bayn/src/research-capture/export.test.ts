@@ -25,6 +25,7 @@ import {
 import {
   buildResearchCaptureExportChunk,
   deriveResearchCaptureExportManifest,
+  persistResearchCaptureExportChunk,
   ResearchCaptureByteIndexSchema,
   researchCaptureObject,
   researchCaptureObjectKey,
@@ -87,6 +88,86 @@ const memory = () => {
   }
   return { chunks, seals, objects, store, objectStore, verify }
 }
+
+test('verifies raw and metadata concurrently before publishing their immutable index', () =>
+  run(
+    Effect.gen(function* () {
+      const objects = {
+        raw: researchCaptureObject('raw'),
+        metadata: researchCaptureObject('metadata'),
+        index: researchCaptureObject('index'),
+      }
+      const rawStarted = yield* Deferred.make<void>()
+      const metadataStarted = yield* Deferred.make<void>()
+      const releaseRaw = yield* Deferred.make<void>()
+      const releaseMetadata = yield* Deferred.make<void>()
+      const verified: string[] = []
+      const store: ResearchCaptureObjectStore = {
+        putVerified: (object) =>
+          Effect.gen(function* () {
+            if (object === objects.raw) {
+              yield* Deferred.succeed(rawStarted, undefined)
+              yield* Deferred.await(releaseRaw)
+            } else if (object === objects.metadata) {
+              yield* Deferred.succeed(metadataStarted, undefined)
+              yield* Deferred.await(releaseMetadata)
+            } else {
+              expect(verified).toContain(objects.raw.contentHash)
+              expect(verified).toContain(objects.metadata.contentHash)
+            }
+            verified.push(object.contentHash)
+          }),
+      }
+      const fiber = yield* persistResearchCaptureExportChunk(store, objects).pipe(Effect.forkScoped)
+      yield* Deferred.await(rawStarted)
+      yield* Effect.yieldNow
+      expect(yield* Deferred.isDone(metadataStarted)).toBe(true)
+      expect(verified).toEqual([])
+      yield* Deferred.succeed(releaseRaw, undefined)
+      yield* Effect.yieldNow
+      expect(verified).not.toContain(objects.index.contentHash)
+      yield* Deferred.succeed(releaseMetadata, undefined)
+      expect(yield* Fiber.join(fiber)).toBe(objects.index.contentHash)
+      expect(verified).toHaveLength(3)
+    }),
+  ))
+
+test('a failed raw write interrupts the concurrent metadata write and withholds the index', () =>
+  run(
+    Effect.gen(function* () {
+      const objects = {
+        raw: researchCaptureObject('raw'),
+        metadata: researchCaptureObject('metadata'),
+        index: researchCaptureObject('index'),
+      }
+      const metadataStarted = yield* Deferred.make<void>()
+      let metadataInterrupted = false
+      let indexWritten = false
+      const store: ResearchCaptureObjectStore = {
+        putVerified: (object) =>
+          object === objects.raw
+            ? Deferred.await(metadataStarted).pipe(
+                Effect.andThen(Effect.fail(new ResearchCaptureFailure({ message: 'raw write failed' }))),
+              )
+            : object === objects.metadata
+              ? Deferred.succeed(metadataStarted, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() =>
+                    Effect.sync(() => {
+                      metadataInterrupted = true
+                    }),
+                  ),
+                )
+              : Effect.sync(() => {
+                  indexWritten = true
+                }),
+      }
+      const result = yield* persistResearchCaptureExportChunk(store, objects).pipe(Effect.result)
+      expect(Result.isFailure(result)).toBe(true)
+      expect(metadataInterrupted).toBe(true)
+      expect(indexWritten).toBe(false)
+    }),
+  ))
 
 test.each(['acknowledged', 'seal-ack-lost', 'manifest-ack-lost', 'interrupted-prefix', 'empty'] as const)(
   'process-loss recovery uses only durable SQL and content-addressed Gets (%s)',

@@ -3,11 +3,15 @@ on:
   pull_request:
     paths:
       - argocd/applications/spire-server/migrate/**
+      - argocd/applications/spire-server/verify.py
+      - argocd/applications/spire-server/test_verify.py
       - .github/workflows/spire-migration.yml
   push:
     branches: [main]
     paths:
       - argocd/applications/spire-server/migrate/**
+      - argocd/applications/spire-server/verify.py
+      - argocd/applications/spire-server/test_verify.py
       - .github/workflows/spire-migration.yml
 permissions:
   contents: read
@@ -31,6 +35,9 @@ jobs:
       SPIRE_MIGRATION_TEST_DSN: postgres://postgres:migration-fixture@127.0.0.1:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v6
+      - name: Verify HA failure detection
+        working-directory: .
+        run: python3 -m unittest discover -s argocd/applications/spire-server -p test_verify.py
       - uses: actions/setup-go@v6
         with:
           go-version-file: argocd/applications/spire-server/migrate/go.mod
