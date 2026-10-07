@@ -149,10 +149,12 @@ establish a verified export. Metadata-only seal bytes and hashes remain unchange
 The existing whole-worker verifier still requires genuine consumer closure. Deriving a manifest from an UNQUALIFIED
 sealed prefix does not fabricate `STOPPED`, prove a complete session, or authorize an original-arrival replay source.
 
-Each chunk verifies its independent raw and metadata objects concurrently, with at most two object operations in
-flight. It writes the immutable index only after both verifications succeed, then commits the SQL chunk. A failed
-write interrupts its sibling and withholds the index and SQL frontier. The one-second aggregate write deadline,
-byte reservations and receipt admission bounds are unchanged; concurrency does not qualify storage capacity.
+Each chunk verifies its raw, metadata and immutable index objects concurrently, with at most three object operations
+in flight. The index binds content hashes computed before these writes; an early index acknowledgement does not advance
+the SQL or export frontier. All three verifications must succeed before the SQL chunk append, and that append must
+acknowledge before the frontier advances. A failed write interrupts both siblings; orphan objects remain `UNQUALIFIED`.
+The one-second aggregate write deadline, byte reservations and receipt admission bounds are unchanged. The existing
+64 KiB envelope covers three bounded 8 KiB SDK response collectors; concurrency does not qualify storage capacity.
 
 The scoped S3 adapter accepts explicit bucket, endpoint, region and redacted credentials. It has no environment reader,
 ambient credential provider. Session wiring must use the verified native OBC's actual `BUCKET_NAME`,
