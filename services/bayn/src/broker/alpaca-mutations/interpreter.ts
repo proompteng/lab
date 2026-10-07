@@ -22,6 +22,7 @@ import {
   unknownOutcome,
   type BrokerMutationShape,
 } from './model'
+import { withObservedStage } from '../../telemetry'
 import { Pipeable } from '../../pipeable'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
@@ -51,6 +52,7 @@ const withDeadline = <A, E>(
             cause,
           }),
     ),
+    withObservedStage('bayn.alpaca.mutation', { dependency: 'alpaca', operation }),
   )
 
 const responseHeaders = (

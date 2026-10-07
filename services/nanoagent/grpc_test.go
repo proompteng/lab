@@ -67,7 +67,7 @@ func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
 		t.Fatalf("unauthorized request mutated workspace: %v", err)
 	}
 	info, err := client.GetInfo(ctx, &pb.Empty{})
-	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != 1 {
+	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != guestProtocolVersion {
 		t.Fatalf("authenticated info = %v, %v", info, err)
 	}
 	response, err := http.Get(address + "/healthz")

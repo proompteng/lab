@@ -740,7 +740,7 @@ const frozenControlFixture = () => {
   return { retained, source, input, receipt }
 }
 
-test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
+test('active-build frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const { retained, source, input, receipt } = frozenControlFixture()
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -759,11 +759,12 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         receipt,
         { mode: ControlManagementMode.Mechanical },
       )
+      // These synthetic reports bind config.build's active strategy identity, not historical v1 batches.
       expect([report.runId, report.reportHash, legacyV3.runId, legacyV3.reportHash]).toEqual([
-        '4bf32cd85cced9fef200083d643a3a837c9968f84712041e407f4b6705afc1be',
-        '459e3a6a045311f6e83f7a97296feb3c4da65ec5f98e043cf433f1dc28aaed3e',
-        '85229c530965ae8502eda1419fba41bc4217e45b14bb220cf1a959260da7203c',
-        '563aad78ecb75ab371da1bc903b24cb2653299314cb7859efb9f4e9f13bd25d1',
+        '20d7d1aa8054ce83de0a4011fa84755000efcd7b420b032e0dcbee234618355d',
+        '67eabe4e498f7f35471e5d12348b295a27e392b506cc9ec4ea21e13206fa2377',
+        '5113c1bb50e370a650d4eac6a5323ed3baf4db2bd82f9907cf0672f049edf65c',
+        'f5cbd605574c6931bdc43f2e1c11eaf067e50282d34d94aba925d0f25209982e',
       ])
       expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
       expect(report.sessions).toHaveLength(6)
@@ -799,8 +800,8 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         mode: ControlManagementMode.Mechanical,
       })
       expect([falsification.runId, falsification.reportHash]).toEqual([
-        '978cc19244679d09ed1c588b2ab7702cc032f28b6aae937ae238277b6f24e98c',
-        'bc5a34cf3a1968ccf9a707df8c146cc9b4fa083a85c880a6b7fcb9d3b6cc99af',
+        'a4a3ae2f30bf2f5e72eb074404888742e1142bc5b41fcefea0b11fc4b7c3e64f',
+        'ab0abf356884995e632e72bd49d5a7e74b64140977d3a8d409a27c2ff872632e',
       ])
       expect(falsification.sessions).toHaveLength(8)
       expect(falsification.sessions.filter((session) => session.policy === ControlPolicy.ResidualShock)).toHaveLength(2)

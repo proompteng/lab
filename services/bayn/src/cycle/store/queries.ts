@@ -6,8 +6,18 @@ import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { CycleState, type AutonomousCycle } from '../model'
 import { attachCycleDecisionStoreEvidence } from './decision-contract'
-import type { CycleAuthoritySlot, CycleRecoveryScope, CycleStoreInternalError } from './model'
-import { decodeDecisionEvidenceMatch, decodeStoredCycles, decodeStoredDecisionDocumentRows } from './rows'
+import {
+  DecisionEvidenceMismatch,
+  type CycleAuthoritySlot,
+  type CycleRecoveryScope,
+  type CycleStoreInternalError,
+} from './model'
+import {
+  decodeDecisionEvidenceMatch,
+  decodeDecisionEvidenceMismatch,
+  decodeStoredCycles,
+  decodeStoredDecisionDocumentRows,
+} from './rows'
 
 export interface CycleQueries {
   readonly selectCycle: (
@@ -23,7 +33,9 @@ export interface CycleQueries {
   readonly selectOldestUnfinishedCycle: (
     scope: CycleRecoveryScope,
   ) => Effect.Effect<readonly AutonomousCycle[], CycleStoreInternalError>
-  readonly decisionEvidenceMatches: (document: CycleDecisionDocument) => Effect.Effect<boolean, CycleStoreInternalError>
+  readonly decisionEvidenceMismatch: (
+    document: CycleDecisionDocument,
+  ) => Effect.Effect<DecisionEvidenceMismatch | null, CycleStoreInternalError>
   readonly executionCompletionEvidenceMatches: (
     document: ExecutionDecisionDocument,
     observedAt: string,
@@ -267,7 +279,7 @@ export const makeCycleQueries = (
       LIMIT 1
     `.pipe(Effect.flatMap(decodeStoredCycles))
 
-  const decisionEvidenceMatches: CycleQueries['decisionEvidenceMatches'] = (document) => {
+  const decisionEvidenceMismatch: CycleQueries['decisionEvidenceMismatch'] = (document) => {
     const executionMarketData = document.bindings.executionMarketData
     const decisionMarketData = document.bindings.decisionMarketData ?? executionMarketData
     const riskContext = document.mode === legacyExecutionAuthorityToken ? document.bindings.riskContext : undefined
@@ -405,24 +417,26 @@ export const makeCycleQueries = (
         AND plan.cycle_id = ${document.bindings.cycleId}
     )`
     return sql<Record<string, unknown>>`
-      SELECT EXISTS (
-        SELECT 1
-        FROM reconciliations AS reconciliation
-        WHERE ${snapshotEvidence}
-          AND ${pricingEvidence}
-          AND ${jevEvidence}
-          AND ${riskContextEvidence}
-          AND reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
-          AND reconciliation.account_id = ${document.bindings.accountId}
-          AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}
-          AND reconciliation.observed_hash = ${document.bindings.planningBrokerStateHash}
-          AND reconciliation.content_hash = ${document.bindings.reconciliationHash}
-          AND reconciliation.status = 'EXACT'
-          AND reconciliation.reconciled_at <= ${document.createdAt}
-      ) AS matches
+      SELECT CASE
+        WHEN reconciliation.reconciliation_id IS NULL THEN ${DecisionEvidenceMismatch.Reconciliation}::text
+        WHEN NOT coalesce(${snapshotEvidence}, false) THEN ${DecisionEvidenceMismatch.DecisionMarketData}::text
+        WHEN NOT coalesce(${pricingEvidence}, false) THEN ${DecisionEvidenceMismatch.ExecutionMarketData}::text
+        WHEN NOT coalesce(${jevEvidence}, false) THEN ${DecisionEvidenceMismatch.Jev}::text
+        WHEN NOT coalesce(${riskContextEvidence}, false) THEN ${DecisionEvidenceMismatch.RiskContext}::text
+        ELSE NULL
+      END AS mismatch
+      FROM (VALUES (1)) AS scope(singleton)
+      LEFT JOIN reconciliations AS reconciliation
+        ON reconciliation.reconciliation_id = ${document.bindings.reconciliationId}
+        AND reconciliation.account_id = ${document.bindings.accountId}
+        AND reconciliation.expected_hash = ${document.bindings.planningBrokerStateHash}
+        AND reconciliation.observed_hash = ${document.bindings.planningBrokerStateHash}
+        AND reconciliation.content_hash = ${document.bindings.reconciliationHash}
+        AND reconciliation.status = 'EXACT'
+        AND reconciliation.reconciled_at <= ${document.createdAt}
     `.pipe(
-      Effect.flatMap(decodeDecisionEvidenceMatch),
-      Effect.map(([match]) => match.matches),
+      Effect.flatMap(decodeDecisionEvidenceMismatch),
+      Effect.map(([match]) => match.mismatch),
     )
   }
 
@@ -457,7 +471,7 @@ export const makeCycleQueries = (
     selectCycleByAuthoritySlot,
     selectDecisionDocuments,
     selectOldestUnfinishedCycle,
-    decisionEvidenceMatches,
+    decisionEvidenceMismatch,
     executionCompletionEvidenceMatches,
     executionGenerationIsSuperseded,
   }

@@ -141,7 +141,7 @@ export const defaultJevProtocolDocument = Object.freeze({
   executionModel: intradayExecutionModel,
 } as const)
 
-/** Inactive research candidate. Activation requires its own reviewed strategy and mandate identity. */
+/** Momentum-first research policy. Activation requires its own reviewed strategy and mandate identity. */
 export const momentumFirstJevProtocolDocument = Object.freeze({
   ...defaultJevProtocolDocument,
   schemaVersion: 'bayn.jev.protocol.v2',

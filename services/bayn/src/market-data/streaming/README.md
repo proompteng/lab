@@ -105,6 +105,16 @@ have been removed. See the [backtest workflow](../../../README.md#replay-and-bac
 
 ## Session measurements
 
+Native execution provides telemetry while acquiring its worker resources, so Kafka bootstrap, supervision and
+measurement fibers inherit the JSON logger and trace exporter. Retained projection measurements are one JSON line
+per sample rather than multiline console fragments.
+
+`Streaming market snapshot rejected` retains `bayn.market-snapshot-failure.v1` diagnostics for a rejected observation:
+the query window and observation time, query-bound symbol and topic, exact millisecond or nanosecond event and
+ingestion times, and the publication delay and governing bound when available. The allowlist excludes raw payloads,
+exception messages, arbitrary failure facts and credentials. Missing fields remain unknown. These warnings preserve
+the original typed failure and trading eligibility; late benchmark bars continue to block the observation.
+
 Each worker logs `Kafka feature incorporated` for accepted features before join-history retention can discard them.
 Retries of retained semantic IDs do not create another receipt; deduplicate by epoch and feature ID when aggregating. The
 `bayn.feature-availability.v1` record binds the feature ID and Kafka coordinates to its actual local receipt time,

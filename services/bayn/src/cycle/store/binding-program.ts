@@ -201,19 +201,28 @@ const makeCycleBindingProgramsDataFirst = (
     )
 
   const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
-    queries
-      .decisionEvidenceMatches(document)
-      .pipe(
-        Effect.flatMap((matches) =>
-          matches
-            ? Effect.void
-            : failCycleStore(
-                'bind-decision',
-                'invariant',
-                'decision does not match its durable market-data and exact reconciliation evidence',
+    queries.decisionEvidenceMismatch(document).pipe(
+      Effect.flatMap((mismatch) =>
+        mismatch === null
+          ? Effect.void
+          : Effect.logWarning('Bayn decision evidence rejected').pipe(
+              Effect.annotateLogs({
+                schemaVersion: 'bayn.decision-evidence-rejection.v1',
+                mismatch,
+                cycleId: document.bindings.cycleId,
+                snapshotId: document.bindings.snapshotId,
+                reconciliationId: document.bindings.reconciliationId,
+              }),
+              Effect.andThen(
+                failCycleStore(
+                  'bind-decision',
+                  'invariant',
+                  `decision does not match its durable market-data and exact reconciliation evidence [${mismatch}]`,
+                ),
               ),
-        ),
-      )
+            ),
+      ),
+    )
 
   const interpretSnapshotDecision = (
     manifest: InputManifest,

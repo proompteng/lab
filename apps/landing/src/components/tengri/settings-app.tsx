@@ -252,15 +252,6 @@ export function SettingsApp({
                     <span>{agent.message}</span>
                   </p>
                 ) : null}
-                {agent.pendingImage ? (
-                  <p
-                    role="status"
-                    className="mt-3 rounded-lg bg-blue-400/8 px-3 py-2 text-[11px] leading-5 text-blue-100/80"
-                  >
-                    A runtime update is available. Save your work, then sleep and resume the agent to update. The update
-                    will wait while this guest is running.
-                  </p>
-                ) : null}
               </section>
             </section>
 
@@ -279,13 +270,7 @@ export function SettingsApp({
                 label="Idle sleep"
                 value={agent.power.idleTimeoutMinutes === 0 ? 'Never' : formatAgentDate(agent.idleDeadline, hydrated)}
               />
-              <SettingRow
-                label="Workspace retention"
-                value={
-                  agent.expiresAt ? `Until ${formatAgentDate(agent.expiresAt, hydrated)}` : 'Until you delete the agent'
-                }
-                last
-              />
+              <SettingRow label="Workspace retention" value="Until you delete the agent" last />
             </SettingsSection>
 
             <SettingsSection
@@ -295,7 +280,7 @@ export function SettingsApp({
               }}
               title="Runtime"
             >
-              <SettingRow label="Isolation" value="Kata Firecracker (kata-fc)" />
+              <SettingRow label="Isolation" value="Firecracker" />
               <SettingRow label="Architecture" value={agent.architecture === 'unknown' ? '—' : agent.architecture} />
               <SettingRow label="Resources" value={formatAgentResources(agent)} />
               <SettingRow label="Workspace" value={`${agent.workspaceGib} GiB persistent`} />

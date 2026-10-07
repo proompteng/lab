@@ -74,7 +74,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v1')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v2')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
   const strategy = prepared.strategy.provenance.strategy
