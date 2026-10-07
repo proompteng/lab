@@ -121,7 +121,7 @@ export type KafkaProjectionTransportFactory = (
 ) => KafkaProjectionTransport
 
 export const decodeKafkaTransportValue = (
-  value: Buffer | string | undefined,
+  value: Buffer | undefined,
   captureRawIdentity = false,
   captureRawValues = false,
 ) => {
@@ -135,9 +135,12 @@ export const decodeKafkaTransportValue = (
       ...(captureRawValues ? { rawValue: null } : {}),
     }
   }
-  if (typeof value === 'string') return { value }
-  const rawIdentity = captureRawIdentity ? { rawValueSha256: sha256(value), rawByteLength: value.byteLength } : {}
-  return { ...rawIdentity, ...(captureRawValues ? { rawValue: value } : {}), value: value.toString('utf-8') }
+  return {
+    rawByteLength: value.byteLength,
+    ...(captureRawIdentity ? { rawValueSha256: sha256(value) } : {}),
+    ...(captureRawValues ? { rawValue: value } : {}),
+    value: value.toString('utf-8'),
+  }
 }
 
 export const kafkaCaptureDisposition = (previous: StreamingProjection, next: StreamingProjection) => {
@@ -163,13 +166,11 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
   captureRawIdentity = false,
   captureRawValues = false,
 ) => {
-  const consumer = new Consumer<string, string | Buffer, string, string>({
+  const consumer = new Consumer<string, Buffer, string, string>({
     clientId: `bayn-market-${epoch}`,
     groupId: `${config.groupPrefix}-${epoch}`,
     bootstrapBrokers: [...config.brokers],
-    deserializers: captureRawIdentity
-      ? { ...stringDeserializers, value: (data?: Buffer) => data }
-      : stringDeserializers,
+    deserializers: { ...stringDeserializers, value: (data?: Buffer) => data },
     sasl: { mechanism: 'SCRAM-SHA-512', username: config.username, password: Redacted.value(config.password) },
     autocreateTopics: false,
     timeout: config.operationTimeoutMs,
@@ -179,7 +180,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
     retryDelay: 250,
   })
   let closePromise: Promise<void> | undefined
-  let active: MessagesStream<string, string | Buffer, string, string> | undefined
+  let active: MessagesStream<string, Buffer, string, string> | undefined
   const close = (): Promise<void> => {
     if (closePromise === undefined) {
       active?.destroy()
@@ -207,7 +208,7 @@ export const platformaticProjectionTransport: KafkaProjectionTransportFactory = 
       consumer.on('consumer:heartbeat:stalled', () =>
         invalidated(new KafkaAssignmentInvalidation({ reason: KafkaInvalidationReason.HeartbeatStalled })),
       )
-      const source = await new Promise<MessagesStream<string, string | Buffer, string, string>>((resolve, reject) => {
+      const source = await new Promise<MessagesStream<string, Buffer, string, string>>((resolve, reject) => {
         if (closePromise !== undefined) {
           reject(new Error('Kafka consumer is closed'))
           return
@@ -340,6 +341,8 @@ export const makeKafkaMarketProjection = (
         const epoch = yield* Effect.sync(randomUUID)
         intervalCapture = undefined
         let consumerSequence = 0
+        let consumerKnownRawBytes = 0
+        let consumerUnknownRawByteLengthRecords = 0
         projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
         ready = false
         bootstrap = undefined
@@ -577,9 +580,15 @@ export const makeKafkaMarketProjection = (
                 recordsSinceYield = 0
                 yield* Effect.yieldNow
               }
+              consumerSequence++
+              if (record.tombstone !== true) {
+                const byteLength = record.rawByteLength
+                if (typeof byteLength === 'number' && Number.isSafeInteger(byteLength) && byteLength >= 0)
+                  consumerKnownRawBytes += byteLength
+                else consumerUnknownRawByteLengthRecords++
+              }
               if (invalidation !== undefined && capture === undefined) return
               const availableAtMs = clock.currentTimeMillisUnsafe()
-              consumerSequence++
               const previousProjection = projection
               const previousSequence = projection.sequence
               if (invalidation === undefined && record.tombstone !== true)
@@ -749,6 +758,9 @@ export const makeKafkaMarketProjection = (
               schemaVersion: 'bayn.kafka-projection-measurements.v1',
               epoch,
               sequence: projection.sequence,
+              consumerSequence,
+              consumerKnownRawBytes,
+              consumerUnknownRawByteLengthRecords,
               bootstrapComplete: ready,
               available: ready && lastFailure === undefined,
               failureOperation: lastFailure?.operation ?? null,
