@@ -1992,7 +1992,6 @@ const decodeDocumentFailure = (
 
 const decodeDocumentResult = Schema.decodeUnknownResult(ObserveShadowDecisionDocumentSchema, strictParseOptions)
 const decodeExecutionDocumentResult = Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema, strictParseOptions)
-const isRuntimeStrategyDecision = Schema.is(RuntimeStrategyDecisionSchema)
 
 export const makeObserveShadowDecisionDocument = (
   material: unknown,
@@ -2037,19 +2036,8 @@ export const makeExecutionDecisionDocument = (
       makeDocumentFailure('canonicalization', 'execution decision material is not canonicalizable', cause),
     ),
     (contentHash) =>
-      Result.flatMap(
-        Result.mapError(decodeExecutionDocumentResult({ ...material, contentHash }), (cause) =>
-          makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),
-        ),
-        (document) =>
-          document.strategyDecision !== undefined && !isRuntimeStrategyDecision(document.strategyDecision)
-            ? Result.fail(
-                makeDocumentFailure(
-                  'contract',
-                  'new execution decision material must use the active runtime strategy schema',
-                ),
-              )
-            : Result.succeed(document),
+      Result.mapError(decodeExecutionDocumentResult({ ...material, contentHash }), (cause) =>
+        makeDocumentFailure('contract', 'execution decision material failed its durable contract', cause),
       ),
   )
 }
