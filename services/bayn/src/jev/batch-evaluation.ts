@@ -15,7 +15,7 @@ export class JevBatchStore extends Context.Service<
     readonly read: (batchId: string) => Effect.Effect<JevBatchEvidence | null, OperationalError>
     readonly pending: (
       cycleId: string,
-      authorityGenerationHash: string,
+      authorityGenerationHash?: string,
     ) => Effect.Effect<readonly string[], OperationalError>
     readonly begin: (plan: JevBatchPlan) => Effect.Effect<JevBatchEvidence, OperationalError>
     readonly finish: (batchId: string) => Effect.Effect<JevBatchEvidence, OperationalError>
