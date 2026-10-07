@@ -372,7 +372,7 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <Moon className="h-7 w-7 text-[#b7a6ff]" />}
       title={busy ? 'Waking your agent' : `${agent.displayName} is sleeping`}
-      detail="The microVM Pod is stopped. Your workspace and Codex state remain on persistent storage."
+      detail="Your workspace, running processes, and Codex state are saved to disk."
       error={error}
       actionIcon={<Play aria-hidden="true" className="h-4 w-4 fill-current" />}
       actionBusy={busy}
